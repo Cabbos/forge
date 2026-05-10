@@ -7,6 +7,7 @@ pub mod permissions;
 pub mod capability;
 pub mod capabilities;
 pub mod db;
+pub mod registry;
 pub mod event_bus;
 
 use std::sync::Arc;
