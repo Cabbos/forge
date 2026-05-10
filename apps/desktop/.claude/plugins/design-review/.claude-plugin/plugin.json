@@ -1,0 +1,9 @@
+{
+  "name": "design-review",
+  "version": "1.0.0",
+  "description": "Visual design QA skill — screenshots your UI, extracts your design system, applies taste rules, and outputs severity-ranked findings with file:line references.",
+  "author": {
+    "name": "Ben Basche",
+    "url": "https://github.com/Bbasche/design-review"
+  }
+}
