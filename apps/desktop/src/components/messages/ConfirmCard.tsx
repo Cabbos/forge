@@ -53,7 +53,7 @@ export function ConfirmCard({ block }: { block: BlockState }) {
             </button>
             <button
               onClick={() => handleResponse(false)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium bg-destructive text-white hover:brightness-110 transition-all"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium bg-destructive text-destructive-foreground hover:brightness-110 transition-all"
             >
               <X className="size-3.5" />
               Deny

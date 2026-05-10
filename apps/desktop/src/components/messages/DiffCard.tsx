@@ -63,7 +63,7 @@ export function DiffCard({ block }: DiffCardProps) {
                         {isRemoved ? (
                           <span>{i + 1}</span>
                         ) : (
-                          <span className="text-muted-foreground/50">
+                          <span className="text-muted-foreground/70">
                             {i + 1}
                           </span>
                         )}
@@ -79,7 +79,7 @@ export function DiffCard({ block }: DiffCardProps) {
                       </td>
                       <td className="w-10 text-right pr-2 text-muted-foreground select-none border-r border-border shrink-0 align-top px-1">
                         {!isRemoved && (
-                          <span className="text-muted-foreground/50">
+                          <span className="text-muted-foreground/70">
                             {i + 1}
                           </span>
                         )}

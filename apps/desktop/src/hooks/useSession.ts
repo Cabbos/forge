@@ -1,21 +1,19 @@
 import { useCallback } from "react";
 import { useStore } from "../store";
-import {
-  createSession,
-  sendInput,
-  sendSignal,
-  killSession,
-} from "../lib/tauri";
+import { createSession, sendInput, killSession } from "../lib/tauri";
+
+const DEFAULT_MODEL = "deepseek-v4-pro";
 
 export function useSession() {
   const addSession = useStore((s) => s.addSession);
   const removeSession = useStore((s) => s.removeSession);
 
   const create = useCallback(
-    async (toolType: string, workingDir: string, toolPath?: string, model?: string) => {
+    async (workingDir: string, model?: string) => {
       try {
-        const result = await createSession(toolType, workingDir, toolPath, model);
-        addSession(result.session_id, toolType, model || "");
+        const m = model || DEFAULT_MODEL;
+        const result = await createSession(workingDir, "", m);
+        addSession(result.session_id, "deepseek", m);
         return result.session_id;
       } catch (e) {
         console.error("Failed to create session:", e);
@@ -33,14 +31,6 @@ export function useSession() {
     }
   }, []);
 
-  const interrupt = useCallback(async (sessionId: string) => {
-    try {
-      await sendSignal(sessionId, "interrupt");
-    } catch (e) {
-      console.error("Failed to send interrupt:", e);
-    }
-  }, []);
-
   const kill = useCallback(
     async (sessionId: string) => {
       try {
@@ -53,5 +43,5 @@ export function useSession() {
     [removeSession]
   );
 
-  return { create, send, interrupt, kill };
+  return { create, send, kill };
 }

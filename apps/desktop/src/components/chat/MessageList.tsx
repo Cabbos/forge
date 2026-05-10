@@ -1,5 +1,4 @@
-import { useRef, useEffect } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useRef, useEffect, useState } from "react";
 import type { BlockState } from "@/lib/protocol";
 import { ThinkingBlock } from "@/components/messages/ThinkingBlock";
 import { TextBlock } from "@/components/messages/TextBlock";
@@ -13,62 +12,41 @@ interface MessageListProps { blocks: BlockState[] }
 
 export function MessageList({ blocks }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const prevLenRef = useRef(blocks.length);
-  const prevContentRef = useRef("");
-  const shouldAutoScroll = useRef(true);
+  const [userScrolledUp, setUserScrolledUp] = useState(false);
 
-  const virtualizer = useVirtualizer({
-    count: blocks.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => 80,
-    overscan: 5,
-  });
-
-  const lastContent = blocks.length > 0 ? blocks[blocks.length - 1]?.content ?? "" : "";
-
+  // Auto-scroll to bottom on new content, unless user scrolled up
   useEffect(() => {
-    const len = blocks.length;
-    if (len > prevLenRef.current || lastContent !== prevContentRef.current) {
-      prevLenRef.current = len;
-      prevContentRef.current = lastContent;
-      if (shouldAutoScroll.current && scrollRef.current) {
-        requestAnimationFrame(() => {
-          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-        });
-      }
-    }
-  }, [blocks.length, lastContent]);
+    if (userScrolledUp) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [blocks.length, blocks[blocks.length - 1]?.content, userScrolledUp]);
 
   const handleScroll = () => {
-    if (!scrollRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-    shouldAutoScroll.current = scrollHeight - scrollTop - clientHeight < 80;
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setUserScrolledUp(!atBottom);
   };
 
   if (blocks.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-center text-muted-foreground/50">
+      <div className="flex-1 flex items-center justify-center" style={{ color: "#444" }}>
         <p className="text-sm">Send a message to begin.</p>
       </div>
     );
   }
 
   return (
-    <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-auto">
-      <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
-        {virtualizer.getVirtualItems().map((vi) => {
-          const block = blocks[vi.index];
-          return (
-            <div
-              key={`${block.block_id}-${vi.index}`}
-              data-index={vi.index}
-              ref={virtualizer.measureElement}
-              style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
-            >
-              <BlockRenderer block={block} />
-            </div>
-          );
-        })}
+    <div
+      ref={scrollRef}
+      onScroll={handleScroll}
+      className="flex-1 overflow-y-auto"
+      style={{ padding: "28px 40px" }}
+    >
+      <div className="flex flex-col gap-5" style={{ maxWidth: "100%" }}>
+        {blocks.map((block, i) => (
+          <BlockRenderer key={`${block.block_id}-${i}`} block={block} />
+        ))}
       </div>
     </div>
   );

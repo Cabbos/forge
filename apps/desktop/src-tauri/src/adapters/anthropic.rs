@@ -109,9 +109,15 @@ struct ThinkingConfig {
 
 #[derive(Serialize, Clone)]
 pub struct ToolDef {
-    name: String,
-    description: String,
-    input_schema: serde_json::Value,
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl ToolDef {
+    pub fn new(name: &str, description: &str, input_schema: serde_json::Value) -> Self {
+        Self { name: name.to_string(), description: description.to_string(), input_schema }
+    }
 }
 
 impl AnthropicAdapter {
@@ -520,7 +526,7 @@ impl AiAdapter for AnthropicAdapter {
 }
 
 /// Estimate cost based on model pricing (per 1M tokens).
-fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> f64 {
+pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> f64 {
     let (input_price, output_price): (f64, f64) = match model {
         m if m.contains("opus") => (15.0, 75.0),
         m if m.contains("sonnet") => (3.0, 15.0),

@@ -2,30 +2,25 @@ import { useStore } from "@/store";
 import { ChatView } from "@/components/chat/ChatView";
 import { InputBar } from "./InputBar";
 
-interface SessionViewProps {
-  sessionId: string;
-}
+interface SessionViewProps { sessionId: string }
 
 export function SessionView({ sessionId }: SessionViewProps) {
   const session = useStore((s) => s.sessions.get(sessionId));
-  const isAgent = session?.agentType === "claude" || session?.agentType === "codex" || session?.agentType === "hermes";
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="h-full flex flex-col" style={{ background: "#0D0D0D" }}>
+      {/* Model indicator — fixed height */}
+      <div className="flex items-center justify-center py-1 flex-shrink-0" style={{ borderBottom: "1px solid #141414" }}>
+        <span className="text-[10px] font-mono" style={{ color: "#555" }}>
+          🐋 {session?.model || "DeepSeek"}
+        </span>
+      </div>
+
+      {/* Chat scroll area — takes all remaining space */}
       <ChatView />
-      {isAgent && <AgentContext model={session?.model} />}
-      <InputBar sessionId={sessionId} />
-    </div>
-  );
-}
 
-function AgentContext({ model }: { model?: string }) {
-  if (!model) return null;
-  const display = model.replace("claude-", "").replace("deepseek-", "").replace("-20251001", "");
-  return (
-    <div className="flex items-center justify-center gap-2 py-1 text-[11px] text-muted-foreground/50">
-      <span className="size-1 rounded-full bg-emerald-400/60" />
-      {display}
+      {/* Input — fixed at bottom */}
+      <InputBar sessionId={sessionId} />
     </div>
   );
 }

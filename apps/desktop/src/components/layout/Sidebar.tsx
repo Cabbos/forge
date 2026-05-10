@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { Bot, Terminal, X, Plus, FolderOpen } from "lucide-react";
+import { X, Plus, FolderOpen } from "lucide-react";
 import { useStore, useSessionList } from "@/store";
 import { useSession } from "@/hooks/useSession";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -18,70 +17,80 @@ export function Sidebar() {
   const sessions = useSessionList();
   const { create, kill } = useSession();
 
-  const newSession = async (type: "claude" | "bash") => {
-    try { await create(type, workingDir); } catch (e) { console.error(e); }
+  const newSession = async () => {
+    try { await create(workingDir); }
+    catch (e) { alert("Failed to create session:\n" + String(e)); }
   };
 
   return (
-    <aside className="h-full bg-sidebar flex flex-col select-none">
-      <div className="px-4 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-[15px] font-semibold text-sidebar-foreground tracking-tight">TUI-to-GUI</h1>
-          <p className="text-[11px] text-muted-foreground/50 mt-0.5">AI Agent Desktop</p>
+    <aside className="h-full flex flex-col select-none" style={{ background: "#090909", borderRight: "1px solid #161616" }}>
+      {/* Brand */}
+      <div className="flex items-center justify-between px-4 py-5">
+        <div className="flex items-center gap-2.5">
+          {/* DeepSeek whale icon */}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M12 3C8 3 4 7 3 11C2 13 2 16 4 17.5C5 18.5 7 18 8 17C9 16 10 14.5 12 14.5C14 14.5 15 16 16 17C17 18 19 18.5 20 17.5C22 16 22 13 21 11C20 7 16 3 12 3Z"
+              fill="#4B9CD3" opacity="0.9" />
+            <path d="M5 13C4 14 4.5 15 6 15.5" stroke="#4B9CD3" strokeWidth="1.5" strokeLinecap="round" opacity="0.5"/>
+            <circle cx="9" cy="8" r="1.2" fill="#fff" opacity="0.7"/>
+          </svg>
+          <h1 className="text-sm font-semibold tracking-tight" style={{ color: "#E4E4E4" }}>Deep Agent</h1>
         </div>
         <SettingsDialog />
       </div>
 
-      <div className="px-3 pb-3 space-y-1.5">
-        <Button variant="default" size="sm" onClick={() => newSession("claude")}
-          className="w-full justify-start gap-2.5 h-9 rounded-xl text-[13px] font-medium shadow-sm">
-          <Bot className="size-4" />New Claude
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => newSession("bash")}
-          className="w-full justify-start gap-2.5 h-9 rounded-xl text-[13px] text-muted-foreground hover:text-sidebar-foreground font-normal">
-          <Terminal className="size-4" />New Terminal
-        </Button>
+      {/* New Session */}
+      <div className="px-3 pb-4">
+        <button onClick={newSession}
+          className="w-full flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-xl text-sm font-medium transition-all"
+          style={{ background: "#141414", border: "1px solid #1c1c1c", color: "#b0b0b0" }}>
+          <span className="text-base" style={{ color: "#D4A853" }}>+</span>
+          New Session
+        </button>
       </div>
 
-      <div className="px-3 pb-3">
+      {/* Working dir */}
+      <div className="px-3 pb-4">
         <div className="relative">
-          <FolderOpen className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground/30" />
-          <Input value={workingDir} onChange={(e) => setWorkingDir(e.target.value)} placeholder="Working directory"
-            className="pl-7 h-8 text-[12px] rounded-xl bg-sidebar-accent/30 border-transparent focus:bg-sidebar-accent/50 transition-all duration-200" />
+          <FolderOpen className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5" style={{ color: "#444" }} />
+          <Input value={workingDir} onChange={(e) => setWorkingDir(e.target.value)}
+            className="pl-7 h-8 text-[11px] rounded-lg border-0"
+            style={{ background: "#0f0f0f", color: "#b0b0b0" }} />
         </div>
       </div>
 
+      {/* Sessions */}
       <div className="flex-1 min-h-0 flex flex-col px-3 pb-3">
         <div className="flex items-center justify-between mb-2.5 px-1">
-          <span className="text-[11px] font-medium text-muted-foreground/40 uppercase tracking-wider">Sessions</span>
-          <span className="text-[11px] text-muted-foreground/30 tabular-nums">{sessions.length}</span>
+          <span className="text-[10px] font-medium uppercase tracking-widest" style={{ color: "#444" }}>Sessions</span>
+          <span className="text-[10px] tabular-nums" style={{ color: "#555" }}>{sessions.length}</span>
         </div>
         <ScrollArea className="flex-1 -mx-1 px-1">
           {sessions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground/20">
+            <div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: "#3a3a3a" }}>
               <Plus className="size-5" />
-              <p className="text-[12px]">No sessions yet</p>
+              <p className="text-[11px]">No sessions yet</p>
             </div>
           ) : (
             <div className="space-y-0.5">
               {sessions.map((s) => {
                 const isActive = s.id === activeSessionId;
-                const isAgent = s.agentType !== "bash";
                 return (
                   <div key={s.id} onClick={() => setActiveSession(s.id)}
                     className={cn(
-                      "group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200",
-                      isActive
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
-                    )}>
-                    {isAgent ? <Bot className="size-4 shrink-0" /> : <Terminal className="size-4 shrink-0" />}
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate text-[13px] font-medium capitalize">{s.agentType}</p>
-                      <p className="truncate text-[10px] text-muted-foreground/50 mt-0.5">{s.id.slice(0, 8)}</p>
+                      "group flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all",
+                      isActive ? "text-[#E4E4E4]" : "text-[#777] hover:text-[#aaa]"
+                    )}
+                    style={{ background: isActive ? "#121212" : "transparent" }}>
+                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                      style={{ background: s.status === "running" ? "#D4A853" : "#333" }} />
+                    <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                      <span className="text-[11px] truncate">{s.agentType || "deepseek"}</span>
+                      <span className="text-[10px] font-mono" style={{ color: "#555" }}>{s.id.slice(0, 8)}</span>
                     </div>
-                    <span className={cn("size-1.5 rounded-full shrink-0", s.status === "running" ? "bg-emerald-400" : "bg-muted-foreground/20")} />
-                    <span className="opacity-0 group-hover:opacity-100 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all flex-shrink-0" onClick={(e) => { e.stopPropagation(); kill(s.id); }}>
+                    <span onClick={(e) => { e.stopPropagation(); kill(s.id); }}
+                      className="opacity-0 group-hover:opacity-60 hover:opacity-100 rounded p-0.5 transition-all flex-shrink-0"
+                      style={{ color: "#777" }}>
                       <X className="size-3" />
                     </span>
                   </div>
@@ -92,8 +101,9 @@ export function Sidebar() {
         </ScrollArea>
       </div>
 
-      <div className="px-5 py-2.5 border-t border-sidebar-border/50">
-        <p className="text-[10px] text-muted-foreground/30 font-mono">v0.3</p>
+      {/* Version */}
+      <div className="px-5 py-2.5" style={{ borderTop: "1px solid #151515" }}>
+        <p className="text-[9px] font-mono" style={{ color: "#333" }}>v0.4 · DeepSeek</p>
       </div>
     </aside>
   );

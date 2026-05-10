@@ -55,7 +55,7 @@ export function ShellCard({ block }: ShellCardProps) {
 
       {expanded && block.content && (
         <div className="border-t border-border/30">
-          <pre className="p-4 text-xs font-mono text-[#c9d1d9] overflow-auto max-h-80 whitespace-pre-wrap break-all leading-relaxed">
+          <pre className="p-4 text-xs font-mono text-foreground overflow-auto max-h-80 whitespace-pre-wrap break-all leading-relaxed">
             {block.content}
           </pre>
         </div>

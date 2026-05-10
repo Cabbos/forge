@@ -1,45 +1,32 @@
-import { useEffect } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
 import { useStore } from "@/store";
 import { Sidebar } from "./Sidebar";
-import { StatusBar } from "./StatusBar";
 import { SessionView } from "@/components/session/SessionView";
+import { HubPanel } from "./HubPanel";
 import { useOutputStream } from "@/hooks/useOutputStream";
 
 export function AppShell() {
   const activeSessionId = useStore((s) => s.activeSessionId);
   const sessions = useStore((s) => s.sessions);
-  const theme = useStore((s) => s.theme);
-
   useOutputStream(activeSessionId);
 
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [theme]);
-
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground">
-      <Group orientation="horizontal" className="flex-1">
-        <Panel defaultSize="16" minSize="14" maxSize="28">
-          <Sidebar />
-        </Panel>
-        <Separator className="w-[2px] bg-transparent hover:bg-primary/10 transition-colors duration-300 cursor-col-resize" />
-        <Panel defaultSize="84" minSize="35">
-          <main className="flex flex-col h-full min-w-0">
-            {activeSessionId && sessions.has(activeSessionId) ? (
-              <SessionView sessionId={activeSessionId} />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground/30">
-                <div className="size-12 rounded-2xl bg-muted/30 flex items-center justify-center">
-                  <div className="size-5 rounded-lg border-2 border-muted-foreground/20" />
-                </div>
-                <p className="text-sm">Create a new session to begin</p>
-              </div>
-            )}
-          </main>
-        </Panel>
-      </Group>
-      <StatusBar />
+    <div className="h-screen grid bg-background" style={{ gridTemplateColumns: "240px 1fr 320px" }}>
+      <Sidebar />
+      <main className="flex flex-col h-full min-w-0 overflow-hidden border-r border-border">
+        {activeSessionId && sessions.has(activeSessionId) ? (
+          <SessionView sessionId={activeSessionId} />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full gap-4" style={{ color: "#555" }}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" opacity="0.3">
+              <path d="M12 3C8 3 4 7 3 11C2 13 2 16 4 17.5C5 18.5 7 18 8 17C9 16 10 14.5 12 14.5C14 14.5 15 16 16 17C17 18 19 18.5 20 17.5C22 16 22 13 21 11C20 7 16 3 12 3Z"
+                fill="#4B9CD3" />
+              <circle cx="9" cy="8" r="1.2" fill="#0D0D0D"/>
+            </svg>
+            <p className="text-sm">Create a session to begin</p>
+          </div>
+        )}
+      </main>
+      <HubPanel />
     </div>
   );
 }

@@ -1,33 +1,59 @@
 import { useState } from "react";
-import { ChevronRight, BrainCircuit } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 
 export function ThinkingBlock({ block }: { block: BlockState }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!block.isComplete); // auto-expand while streaming
   if (!block.content && block.isComplete) return null;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mb-5">
-      <div className="bg-muted/20 border border-border/10 rounded-xl overflow-hidden transition-all duration-200">
-        <CollapsibleTrigger className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/30 transition-colors duration-200 group rounded-xl">
-          <ChevronRight className={`size-3.5 shrink-0 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
-          <BrainCircuit className="size-3.5 shrink-0 text-primary/50" />
-          <span className="text-xs font-medium tracking-wide uppercase">Thinking</span>
-          {!block.isComplete && (
-            <span className="ml-auto flex gap-1">
-              <span className="size-1.5 rounded-full bg-amber-400/60 animate-pulse" />
-              <span className="size-1.5 rounded-full bg-amber-400/60 animate-pulse [animation-delay:200ms]" />
-              <span className="size-1.5 rounded-full bg-amber-400/60 animate-pulse [animation-delay:400ms]" />
-            </span>
-          )}
-          {block.isComplete && <span className="text-[10px] text-muted-foreground/40 ml-auto font-normal">done</span>}
-        </CollapsibleTrigger>
-        <CollapsibleContent className="overflow-hidden data-[panel-open]:animate-[collapsible-down_200ms_ease-out] data-[panel-closed]:animate-[collapsible-up_200ms_ease-out]">
-          <div className="px-4 pb-4 border-t border-border/10">
-            <div className="mt-3 text-sm text-muted-foreground/70 whitespace-pre-wrap leading-relaxed">{block.content || "Thinking..."}</div>
-          </div>
-        </CollapsibleContent>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <div className="flex gap-3">
+        {/* Avatar */}
+        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+          style={{ background: "rgba(212,168,83,0.12)", color: "#D4A853", fontSize: "0.65rem", fontWeight: 700 }}>
+          A
+        </div>
+
+        <div className="flex-1 min-w-0">
+          {/* Header */}
+          <CollapsibleTrigger className="flex items-center gap-2 text-[10px] uppercase tracking-wider cursor-pointer" style={{ color: "#777" }}>
+            <ChevronRight className={`size-3 transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
+            <span>Thinking</span>
+            {!block.isComplete ? (
+              <span className="flex gap-1 ml-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "#D4A853" }} />
+                <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "#D4A853", animationDelay: "200ms" }} />
+                <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "#D4A853", animationDelay: "400ms" }} />
+              </span>
+            ) : (
+              <span className="ml-1 text-[9px] normal-case" style={{ color: "#555" }}>done</span>
+            )}
+          </CollapsibleTrigger>
+
+          {/* Content */}
+          <CollapsibleContent>
+            <div className="mt-2 pl-1">
+              {block.isComplete ? (
+                <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#888" }}>
+                  {block.content}
+                </div>
+              ) : (
+                <div className="relative">
+                  <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#888" }}>
+                    {block.content || "..."}
+                  </div>
+                  {/* Shimmer bar at bottom while streaming */}
+                  <div className="h-px mt-2 overflow-hidden rounded-full" style={{ background: "#1c1c1c" }}>
+                    <div className="h-full w-1/3 rounded-full animate-[shimmer_1.5s_ease-in-out_infinite]"
+                      style={{ background: "linear-gradient(90deg, transparent, rgba(212,168,83,0.4), transparent)" }} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </CollapsibleContent>
+        </div>
       </div>
     </Collapsible>
   );

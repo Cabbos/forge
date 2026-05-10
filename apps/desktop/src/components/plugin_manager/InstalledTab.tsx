@@ -82,8 +82,8 @@ export function InstalledTab() {
 
 function PluginRow({ plugin: p }: { plugin: PluginEntry }) {
   const enabled =
-    typeof p.status === "object" && "installed" in p.status
-      ? (p.status as { installed: { enabled: boolean } }).installed.enabled
+    typeof p.status! === "object" && "installed" in p.status!
+      ? (p.status! as { installed: { enabled: boolean } }).installed.enabled
       : true;
 
   return (

@@ -1,124 +1,125 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
-import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
-import { useSession } from "../../hooks/useSession";
-import { useStore } from "../../store";
-import { Button } from "../ui/button";
-import { SendHorizonal } from "lucide-react";
-import { cn } from "../../lib/utils";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { useSession } from "@/hooks/useSession";
+import { useStore } from "@/store";
 
 interface InputBarProps { sessionId: string }
 
+const MODELS = [
+  { id: "deepseek-v4-pro", name: "V4 Pro" },
+  { id: "deepseek-v4-flash", name: "V4 Flash" },
+];
+
 export function InputBar({ sessionId }: InputBarProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<EditorView | null>(null);
-  const [isEmpty, setIsEmpty] = useState(true);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [value, setValue] = useState("");
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("deepseek-v4-pro");
+
   const { send } = useSession();
   const session = useStore((s) => s.sessions.get(sessionId));
   const isRunning = session?.status === "running";
-  const theme = useStore((s) => s.theme);
 
-  const sendRef = useRef(send);
-  sendRef.current = send;
-  const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
-  const docRef = useRef("");
-  const readOnlyCompartment = useRef(new Compartment());
-  const placeholderCompartment = useRef(new Compartment());
-
+  // Auto-focus textarea when session becomes active
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const isDark = theme === "dark";
+    if (isRunning) textareaRef.current?.focus();
+  }, [sessionId, isRunning]);
 
-    const sendBinding = {
-      key: "Enter",
-      run: (view: EditorView): boolean => {
-        const text = view.state.doc.toString();
-        if (!text.trim()) return true;
-        const sid = sessionIdRef.current;
-        useStore.getState().addUserMessage(sid, text);
-        sendRef.current(sid, text).then(() => {
-          view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
-          view.focus();
-        }).catch(() => view.focus());
-        return true;
-      },
-    };
+  // Auto-resize textarea
+  const adjustHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 140) + "px";
+  }, []);
 
-    const shiftEnterBinding = {
-      key: "Shift-Enter",
-      run: (view: EditorView): boolean => {
-        view.dispatch(view.state.replaceSelection("\n"));
-        return true;
-      },
-    };
-
-    const theme_ = EditorView.theme({
-      "&": { fontFamily: "'Geist Variable', monospace", fontSize: "14px", backgroundColor: "transparent", color: isDark ? "#e6edf3" : "#0d1117", border: "none" },
-      ".cm-content": { padding: "10px 14px", caretColor: isDark ? "#58a6ff" : "#4a6cf7", minHeight: "36px" },
-      ".cm-scroller": { overflow: "auto !important", maxHeight: "200px", fontFamily: "inherit", lineHeight: "1.6" },
-      ".cm-line": { lineHeight: "1.6" },
-      ".cm-placeholder": { color: isDark ? "#484f58" : "#8b949e", fontStyle: "italic" },
-      "&.cm-editor.cm-focused": { outline: "none" },
-      ".cm-gutters": { display: "none" },
-      "&.cm-focused .cm-selectionBackground, ::selection": { backgroundColor: isDark ? "rgba(88,166,255,0.2)" : "rgba(74,108,247,0.15)" },
-      ".cm-selectionBackground": { backgroundColor: isDark ? "rgba(88,166,255,0.12)" : "rgba(74,108,247,0.08)" },
-    }, { dark: isDark });
-
-    const extensions = [
-      history(),
-      keymap.of([...defaultKeymap, ...historyKeymap, sendBinding, shiftEnterBinding]),
-      EditorView.lineWrapping,
-      readOnlyCompartment.current.of(EditorState.readOnly.of(!isRunning)),
-      placeholderCompartment.current.of(cmPlaceholder(isRunning ? "Message... (Enter to send)" : "Session not running")),
-      theme_,
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) { docRef.current = update.state.doc.toString(); setIsEmpty(update.state.doc.toString().trim() === ""); }
-      }),
-    ];
-
-    const view = new EditorView({ state: EditorState.create({ doc: docRef.current, extensions }), parent: container });
-    editorRef.current = view;
-    return () => { editorRef.current = null; view.destroy(); };
-  }, [sessionId, theme]);
-
-  useEffect(() => {
-    const view = editorRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: [
-        readOnlyCompartment.current.reconfigure(EditorState.readOnly.of(!isRunning)),
-        placeholderCompartment.current.reconfigure(cmPlaceholder(isRunning ? "Message... (Enter to send)" : "Session not running")),
-      ],
-    });
-  }, [isRunning]);
-
-  const handleClick = useCallback(() => {
-    const view = editorRef.current;
-    if (!view) return;
-    const text = view.state.doc.toString();
-    if (!text.trim()) return;
+  const handleSend = useCallback(() => {
+    const text = value.trim();
+    if (!text || !isRunning) return;
     useStore.getState().addUserMessage(sessionId, text);
-    send(sessionId, text).then(() => {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
-      view.focus();
-    }).catch(() => view.focus());
-  }, [sessionId, send]);
+    send(sessionId, text);
+    setValue("");
+    // Reset height
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+  }, [value, sessionId, send, isRunning]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sends, Shift+Enter for newline
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+    // Escape blurs
+    if (e.key === "Escape") {
+      e.preventDefault();
+      (e.target as HTMLTextAreaElement).blur();
+    }
+  }, [handleSend]);
 
   return (
-    <div className="px-4 pb-4">
-      <div className="max-w-3xl mx-auto flex items-end gap-2">
-        <div ref={containerRef} className={cn(
-          "flex-1 rounded-xl bg-muted/30 border border-border/30 overflow-hidden transition-all duration-200",
-          "focus-within:ring-1 focus-within:ring-primary/30 focus-within:border-primary/30",
-          !isRunning && "opacity-40 pointer-events-none"
-        )} />
-        <Button onClick={handleClick} disabled={!isRunning || isEmpty} size="icon"
-          className="shrink-0 rounded-xl size-9 transition-all duration-200" title="Send (Enter)">
-          <SendHorizonal className="size-4" />
-        </Button>
+    <div className="px-10 pb-5 pt-3 flex-shrink-0" style={{ borderTop: "1px solid #1c1c1c" }}>
+      <div className="rounded-2xl overflow-hidden" style={{ background: "#0F0F0F", border: "1px solid #1c1c1c" }}>
+        {/* Textarea */}
+        <div className="px-4 pt-3 pb-1">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => { setValue(e.target.value); adjustHeight(); }}
+            onKeyDown={handleKeyDown}
+            placeholder={isRunning ? "Message @file /command..." : "Session not running"}
+            rows={1}
+            disabled={!isRunning}
+            className="w-full bg-transparent border-none outline-none resize-none text-sm leading-relaxed placeholder:text-[#555]"
+            style={{ color: "#E4E4E4", fontFamily: "'Geist Variable', system-ui, sans-serif", minHeight: "28px", maxHeight: "140px" }}
+          />
+        </div>
+
+        {/* Toolbar: hints + model selector + send */}
+        <div className="flex items-center justify-between px-4 pb-2.5">
+          <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "#555" }}>
+            <span className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999]" style={{ background: "#111" }}>@ files</span>
+            <span className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999]" style={{ background: "#111" }}>/ commands</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Model selector */}
+            <div className="relative">
+              <button onClick={() => setShowModelMenu(!showModelMenu)}
+                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-colors"
+                style={{ border: "1px solid #1c1c1c", color: "#999", background: "#0f0f0f" }}>
+                🐋 {MODELS.find(m => m.id === selectedModel)?.name ?? selectedModel}
+                <span style={{ fontSize: "7px", color: "#555" }}>▾</span>
+              </button>
+              {showModelMenu && (
+                <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1 min-w-[160px] shadow-xl z-20"
+                  style={{ background: "#141414", border: "1px solid #1c1c1c" }}>
+                  {MODELS.map(m => (
+                    <button key={m.id} onClick={() => { setSelectedModel(m.id); setShowModelMenu(false); }}
+                      className="w-full text-left px-3 py-1.5 text-xs transition-colors font-mono flex justify-between items-center"
+                      style={{ color: m.id === selectedModel ? "#D4A853" : "#c0c0c0" }}>
+                      {m.name}
+                      <span style={{ color: "#555", fontSize: "9px" }}>DS</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Send button */}
+            <button
+              onClick={handleSend}
+              disabled={!isRunning || !value.trim()}
+              className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+              style={{
+                background: !isRunning || !value.trim() ? "#141414" : "#D4A853",
+                color: !isRunning || !value.trim() ? "#666" : "#0D0D0D",
+                cursor: !isRunning || !value.trim() ? "default" : "pointer",
+              }}>
+              ↑
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

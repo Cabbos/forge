@@ -58,7 +58,7 @@ export function DiscoverTab() {
   }
 
   const isInstalled = (p: PluginEntry) =>
-    typeof p.status === "object" && "installed" in p.status;
+    typeof p.status! === "object" && "installed" in p.status!;
 
   return (
     <ScrollArea className="flex-1">

@@ -187,7 +187,7 @@ impl Settings {
             });
         }
         // Always include known providers, even if not set
-        for p in &["anthropic", "openai"] {
+        for p in &["deepseek"] {
             if !self.api_keys.contains_key(*p) {
                 status.push(KeyStatus {
                     provider: p.to_string(),

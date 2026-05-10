@@ -8,10 +8,14 @@ interface AppStore {
   activeSessionId: string | null;
   hydrated: boolean;
 
+  // Provider
+  selectedProvider: string;
+  setSelectedProvider: (p: string) => void;
+
   // Actions
   hydrate: () => Promise<void>;
   setActiveSession: (id: string | null) => void;
-  addSession: (id: string, agentType: string, model: string) => void;
+  addSession: (id: string, provider: string, model: string) => void;
   removeSession: (id: string) => void;
   updateSessionStatus: (id: string, status: SessionState["status"]) => void;
 
@@ -76,20 +80,27 @@ export const useStore = create<AppStore>((set, get) => ({
   activeSessionId: null,
   hydrated: false,
   pendingInput: "",
+  selectedProvider: "deepseek",
+
+  setSelectedProvider: (p) => {
+    set({ selectedProvider: p });
+    idbSet("tui-provider", p).catch(() => {});
+  },
 
   hydrate: async () => {
     try {
       const data = await idbGet<PersistedSession[]>(PERSIST_KEY);
       const savedTheme = await idbGet<string>("tui-theme").catch(() => null);
+      const savedProvider = await idbGet<string>("tui-provider").catch(() => null);
       if (data && data.length > 0) {
         const sessions = new Map<string, SessionState>();
         for (const s of data) {
           const blocks = await loadBlocks(s.id);
           sessions.set(s.id, { ...s, blocks, costUsd: 0 });
         }
-        set({ sessions, hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme });
+        set({ sessions, hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme, selectedProvider: savedProvider || "anthropic" });
       } else {
-        set({ hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme });
+        set({ hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme, selectedProvider: savedProvider || "deepseek" });
       }
     } catch {
       set({ hydrated: true });
@@ -102,10 +113,10 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setActiveSession: (id) => set({ activeSessionId: id }),
 
-  addSession: (id, agentType, model) => {
+  addSession: (id, provider, model) => {
     const sessions = new Map(get().sessions);
     sessions.set(id, {
-      id, agentType, model, status: "running", blocks: [], costUsd: 0,
+      id, agentType: provider, model, status: "running", blocks: [], costUsd: 0,
     });
     set({ sessions, activeSessionId: id });
     persistSessions(sessions);

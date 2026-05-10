@@ -334,48 +334,102 @@ fn browser_headers() -> reqwest::header::HeaderMap {
     headers
 }
 
-/// Search Google and return structured results (no API key required).
+/// Search DuckDuckGo Lite and return structured results (no API key required, no scraping blocks).
 async fn web_search(query: &str) -> String {
-    let url = format!("https://www.google.com/search?q={}&udm=14&num=10", urlencoding(query));
+    let url = format!(
+        "https://lite.duckduckgo.com/lite/?q={}",
+        urlencoding(query)
+    );
     let client = reqwest::Client::new();
-    match client.get(&url).headers(browser_headers()).timeout(std::time::Duration::from_secs(15)).send().await {
+    match client
+        .get(&url)
+        .headers(browser_headers())
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+    {
         Ok(resp) => {
             let html = resp.text().await.unwrap_or_default();
             let mut results = Vec::new();
 
-            // Parse Google result blocks: each result is typically in a div with class "g"
-            for block in html.split("class=\"g\"").skip(1) {
-                // Extract title from h3
-                let title = block.split("<h3").nth(1)
-                    .and_then(|s| s.split(">").nth(1))
-                    .and_then(|s| s.split("</h3").next())
-                    .map(|s| strip_html(s))
+            // DuckDuckGo Lite returns results in <a> tags with class "result-link" and snippets in <td> with class "result-snippet"
+            // Each result row: <tr> with class "result-snippet" containing title link + snippet
+            for block in html.split("class=\"result-snippet\"").skip(1) {
+                // Extract title + URL from the preceding result-link <a>
+                let title_and_link = html
+                    .split("class=\"result-link\"")
+                    .filter(|s| s.contains(block) || html.split("class=\"result-snippet\"").position(|b| b.as_ptr() == block.as_ptr()).unwrap_or(0) > 0)
+                    .last();
+
+                let title = title_and_link
+                    .and_then(|s| s.split('>').nth(1))
+                    .and_then(|s| s.split("</a").next())
+                    .map(|s| strip_html(s.trim()))
                     .unwrap_or_default();
 
-                // Extract URL
-                let link = block.split("href=\"").nth(1)
+                let title = if title.is_empty() {
+                    // Fallback: try finding any <a> with href in this block
+                    block.split("href=\"").nth(1)
+                        .and_then(|s| s.split('\"').next())
+                        .unwrap_or("")
+                } else {
+                    &title
+                };
+
+                // Simpler approach: extract all links + snippets from lite results
+                // Each result is: <a rel="nofollow" href="URL">Title</a> ... <td class="result-snippet">Snippet</td>
+            }
+
+            // Simpler parsing: find all result-link <a> tags
+            let mut titles_and_urls: Vec<(String, String)> = Vec::new();
+            for link_block in html.split("class=\"result-link\"").skip(1) {
+                let url = link_block
+                    .split("href=\"")
+                    .nth(1)
                     .and_then(|s| s.split('\"').next())
-                    .filter(|s| s.starts_with("http"))
-                    .unwrap_or("");
-
-                // Extract snippet
-                let snippet = block.split("class=\"VwiC3b").nth(1)
-                    .or_else(|| block.split("data-sncf").nth(1))
-                    .and_then(|s| s.split(">").nth(1))
-                    .and_then(|s| s.split("</").next())
-                    .map(|s| strip_html(s))
+                    .map(|s| s.replace("&amp;", "&"))
                     .unwrap_or_default();
+                let title = link_block
+                    .split('>')
+                    .nth(1)
+                    .and_then(|s| s.split("</a").next())
+                    .map(|s| strip_html(s.trim()))
+                    .unwrap_or_default();
+                if !title.is_empty() && !url.is_empty() {
+                    titles_and_urls.push((title, url));
+                }
+            }
 
-                if !title.is_empty() {
-                    results.push(format!("- {} ({})\n  {}", title, link, snippet));
+            // Find all snippets
+            let mut snippets: Vec<String> = Vec::new();
+            for snip_block in html.split("class=\"result-snippet\"").skip(1) {
+                let snip = snip_block
+                    .split('>')
+                    .nth(1)
+                    .and_then(|s| s.split("</td").next())
+                    .map(|s| strip_html(s.trim()))
+                    .unwrap_or_default();
+                snippets.push(snip);
+            }
+
+            // Pair titles with snippets
+            for (i, (title, url)) in titles_and_urls.iter().enumerate() {
+                let snip = snippets.get(i).map(|s| s.as_str()).unwrap_or("");
+                results.push(format!("- {} ({})\n  {}", title, url, snip));
+                if results.len() >= 5 {
+                    break;
                 }
             }
 
             if results.is_empty() {
                 format!("No results found for: {}", query)
             } else {
-                results.truncate(5);
-                results.iter().enumerate().map(|(i, r)| format!("{}. {}", i + 1, r)).collect::<Vec<_>>().join("\n\n")
+                results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| format!("{}. {}", i + 1, r))
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
             }
         }
         Err(e) => format!("Search failed: {}", e),

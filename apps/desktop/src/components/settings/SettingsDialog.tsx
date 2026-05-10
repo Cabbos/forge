@@ -77,7 +77,9 @@ export function SettingsDialog() {
   const providerLabel = (p: string) => {
     switch (p) {
       case "anthropic": return "Anthropic (Claude)";
-      case "openai": return "OpenAI (Codex)";
+      case "deepseek": return "DeepSeek";
+      case "openai": return "OpenAI (GPT)";
+      case "openrouter": return "OpenRouter";
       default: return p;
     }
   };
@@ -97,8 +99,8 @@ export function SettingsDialog() {
             API Keys
           </DialogTitle>
           <DialogDescription>
-            Configure API keys for AI providers. Keys are stored locally in
-            <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.tui-to-gui/config.json</code>.
+            Configure API keys for Anthropic, DeepSeek, OpenAI, and OpenRouter.
+            Keys stored in <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.tui-to-gui/config.json</code>.
           </DialogDescription>
         </DialogHeader>
 
