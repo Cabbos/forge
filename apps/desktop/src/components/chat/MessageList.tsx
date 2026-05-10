@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import type { BlockState } from "@/lib/protocol";
 import { ThinkingBlock } from "@/components/messages/ThinkingBlock";
 import { TextBlock } from "@/components/messages/TextBlock";
@@ -21,12 +21,12 @@ export function MessageList({ blocks }: MessageListProps) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [blocks.length, blocks[blocks.length - 1]?.content, userScrolledUp]);
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     setUserScrolledUp(!atBottom);
-  };
+  }, []);
 
   if (blocks.length === 0) {
     return (

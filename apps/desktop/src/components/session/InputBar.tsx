@@ -45,6 +45,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   }, [value, sessionId, send, isRunning]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return; // Skip during IME composition
     // Enter sends, Shift+Enter for newline
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
