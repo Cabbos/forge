@@ -20,6 +20,7 @@ use skills::SkillLoader;
 use permissions::PermissionGate;
 use event_bus::EventBus;
 use crate::executor::ToolExecutor;
+use crate::harness::capabilities::skills::SkillLoaderCap;
 use crate::harness::capabilities::tools;
 use crate::harness::db::Database;
 use crate::harness::registry::CapabilityRegistry;
@@ -65,12 +66,14 @@ impl Harness {
         let capability_registry = Arc::new(CapabilityRegistry::new(database.clone()));
 
         // Register all builtin capabilities
+        let skill_loader_for_cap = skill_loader.clone();
         let cr = capability_registry.clone();
         tokio::spawn(async move {
             cr.register(Box::new(tools::FileToolCap::new())).await;
             cr.register(Box::new(tools::WriteFileToolCap::new())).await;
             cr.register(Box::new(tools::ShellToolCap::new())).await;
             cr.register(Box::new(tools::SearchToolCap::new())).await;
+            cr.register(Box::new(SkillLoaderCap::new(skill_loader_for_cap))).await;
         });
 
         // Register built-in hooks
