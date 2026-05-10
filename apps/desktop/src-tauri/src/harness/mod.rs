@@ -41,7 +41,6 @@ pub struct Harness {
 impl Harness {
     pub fn new(working_dir: PathBuf) -> Self {
         let pending_confirms = Arc::new(RwLock::new(std::collections::HashMap::new()));
-        let permission_gate = Arc::new(PermissionGate::new());
         let hook_engine = Arc::new(HookEngine::new());
         let skill_loader = Arc::new(SkillLoader::new());
         let event_bus = EventBus::new();
@@ -59,6 +58,8 @@ impl Harness {
             Database::open(&db_path)
                 .expect("Failed to open registry database")
         );
+
+        let permission_gate = Arc::new(PermissionGate::new(database.clone()));
 
         // Create CapabilityRegistry backed by the database
         let capability_registry = Arc::new(CapabilityRegistry::new(database.clone()));
