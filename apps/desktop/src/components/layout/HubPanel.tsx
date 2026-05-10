@@ -1,16 +1,59 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
 
 type Tab = "skills" | "mcp" | "hooks";
+
+function getColor(kind: string): string {
+  switch (kind) {
+    case "skill":
+    case "tool":
+      return "#5B9BD5";
+    case "mcp_server":
+      return "#4A9E6B";
+    case "hook":
+      return "#D47777";
+    default:
+      return "#888";
+  }
+}
+
+function getIcon(kind: string): string {
+  switch (kind) {
+    case "skill":
+      return "☖";
+    case "tool":
+      return "⎔";
+    case "mcp_server":
+      return "◈";
+    case "hook":
+      return "⚙";
+    default:
+      return "●";
+  }
+}
 
 export function HubPanel() {
   const [tab, setTab] = useState<Tab>("skills");
   const [search, setSearch] = useState("");
+  const [counts, setCounts] = useState({ skills: 0, mcp: 0, hooks: 0 });
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
   const session = activeId ? sessions.get(activeId) : null;
+
+  useEffect(() => {
+    listCapabilities()
+      .then((all) => {
+        setCounts({
+          skills: all.filter((c) => c.kind === "skill" || c.kind === "tool").length,
+          mcp: all.filter((c) => c.kind === "mcp_server").length,
+          hooks: all.filter((c) => c.kind === "hook").length,
+        });
+      })
+      .catch(console.error);
+  }, []);
 
   return (
     <aside className="flex flex-col overflow-hidden bg-sidebar">
@@ -28,7 +71,7 @@ export function HubPanel() {
           >
             {t}
             <span className="ml-1 text-[10px] text-muted-foreground/60">
-              {t === "skills" ? "4" : t === "mcp" ? "3" : "2"}
+              {t === "skills" ? counts.skills : t === "mcp" ? counts.mcp : counts.hooks}
             </span>
           </button>
         ))}
@@ -64,17 +107,33 @@ export function HubPanel() {
 }
 
 function SkillsContent({ search }: { search: string }) {
-  const installed = [
-    { id: "code-review", desc: "Multi-axis code review", source: "github", icon: "☖", color: "#5B9BD5" },
-    { id: "security-audit", desc: "Vuln detection + threat modeling", source: "local", icon: "⚔", color: "#D47777" },
-  ];
-  const discoverable: Array<{ id: string; desc: string; source: string; stars: number; icon: string; color: string }> = [
-    { id: "huashu-design", desc: "HTML-native hi-fi design + motion", source: "alchaincyf", stars: 120, icon: "◆", color: "#D4A853" },
-    { id: "data-viz", desc: "Charts, infographics, dashboards", source: "github", stars: 89, icon: "↕", color: "#4A9E6B" },
-    { id: "tdd-agent", desc: "Test-driven development workflow", source: "community", stars: 340, icon: "⎔", color: "#5B9BD5" },
-  ];
-  const filterFn = <T extends { id: string; desc: string }>(list: T[]) =>
-    search ? list.filter(s => s.id.includes(search) || s.desc.includes(search)) : list;
+  const [caps, setCaps] = useState<CapabilityInfo[]>([]);
+
+  useEffect(() => {
+    listCapabilities().then(setCaps).catch(console.error);
+  }, []);
+
+  const handleToggle = async (id: string, enabled: boolean) => {
+    try {
+      await toggleCapability(id, enabled);
+      setCaps((prev) => prev.map((c) => (c.id === id ? { ...c, enabled } : c)));
+    } catch (e) {
+      console.error("Toggle failed:", e);
+    }
+  };
+
+  const skills = caps.filter((c) => c.kind === "skill" || c.kind === "tool");
+  const installed = skills.filter((s) => s.enabled !== false);
+  const discoverable = skills.filter((s) => s.enabled === false);
+
+  const filterFn = (list: CapabilityInfo[]) =>
+    search
+      ? list.filter(
+          (s) =>
+            s.name.toLowerCase().includes(search.toLowerCase()) ||
+            s.description.toLowerCase().includes(search.toLowerCase()),
+        )
+      : list;
 
   return (
     <div className="flex flex-col gap-5">
@@ -86,12 +145,17 @@ function SkillsContent({ search }: { search: string }) {
         <div className="flex flex-col gap-1.5">
           {filterFn(installed).map((s) => (
             <div key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors hover:bg-secondary border border-border">
-              <span className="w-6 h-6 rounded flex items-center justify-center text-xs" style={{ background: `${s.color}18`, color: s.color }}>{s.icon}</span>
+              <span className="w-6 h-6 rounded flex items-center justify-center text-xs" style={{ background: `${getColor(s.kind)}18`, color: getColor(s.kind) }}>{getIcon(s.kind)}</span>
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-foreground">{s.id}</div>
-                <div className="text-[10px] text-muted-foreground truncate">{s.desc}</div>
+                <div className="text-xs font-medium text-foreground">{s.name}</div>
+                <div className="text-[10px] text-muted-foreground truncate">{s.description}</div>
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400">on</span>
+              <button
+                onClick={() => handleToggle(s.id, false)}
+                className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400"
+              >
+                on
+              </button>
             </div>
           ))}
         </div>
@@ -101,15 +165,17 @@ function SkillsContent({ search }: { search: string }) {
         <div className="flex flex-col gap-1.5">
           {filterFn(discoverable).map((s) => (
             <div key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors hover:bg-secondary border border-transparent hover:border-border">
-              <span className="w-6 h-6 rounded flex items-center justify-center text-xs" style={{ background: `${s.color}18`, color: s.color }}>{s.icon}</span>
+              <span className="w-6 h-6 rounded flex items-center justify-center text-xs" style={{ background: `${getColor(s.kind)}18`, color: getColor(s.kind) }}>{getIcon(s.kind)}</span>
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-foreground">{s.id}</div>
+                <div className="text-xs font-medium text-foreground">{s.name}</div>
                 <div className="text-[10px] text-muted-foreground flex gap-2">
                   <span>{s.source}</span>
-                  <span className="text-primary">★ {s.stars}</span>
                 </div>
               </div>
-              <button className="text-[10px] px-2 py-1 rounded font-medium border border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors">
+              <button
+                onClick={() => handleToggle(s.id, true)}
+                className="text-[10px] px-2 py-1 rounded font-medium border border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+              >
                 install
               </button>
             </div>
@@ -121,22 +187,46 @@ function SkillsContent({ search }: { search: string }) {
 }
 
 function MCPContent({ search }: { search: string }) {
-  const servers = [
-    { id: "playwright-server", on: true },
-    { id: "github-tools", on: true },
-    { id: "postgres-explorer", on: false },
-  ];
-  const filtered = search ? servers.filter(s => s.id.includes(search)) : servers;
+  const [servers, setServers] = useState<CapabilityInfo[]>([]);
+
+  useEffect(() => {
+    listCapabilities()
+      .then((all) => setServers(all.filter((c) => c.kind === "mcp_server")))
+      .catch(console.error);
+  }, []);
+
+  const handleToggle = async (id: string, enabled: boolean) => {
+    try {
+      await toggleCapability(id, enabled);
+      setServers((prev) => prev.map((s) => (s.id === id ? { ...s, enabled } : s)));
+    } catch (e) {
+      console.error("Toggle failed:", e);
+    }
+  };
+
+  const filtered = search
+    ? servers.filter(
+        (s) =>
+          s.name.toLowerCase().includes(search.toLowerCase()) ||
+          s.id.toLowerCase().includes(search.toLowerCase()),
+      )
+    : servers;
+
   return (
     <section className="flex flex-col gap-0.5">
       {filtered.map((s) => (
         <div key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors hover:bg-secondary">
-          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: s.on ? "#4A9E6B" : "#444" }} />
-          <span className="flex-1 text-xs text-foreground font-mono">{s.id}</span>
-          <div className="relative w-7 h-4 rounded-full cursor-pointer transition-colors flex-shrink-0"
-            style={{ background: s.on ? "#D4A853" : "#333" }}>
-            <div className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all"
-              style={{ left: s.on ? "14px" : "2px" }} />
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: s.enabled !== false ? "#4A9E6B" : "#444" }} />
+          <span className="flex-1 text-xs text-foreground font-mono">{s.name}</span>
+          <div
+            className="relative w-7 h-4 rounded-full cursor-pointer transition-colors flex-shrink-0"
+            style={{ background: s.enabled !== false ? "#D4A853" : "#333" }}
+            onClick={() => handleToggle(s.id, s.enabled === false)}
+          >
+            <div
+              className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all"
+              style={{ left: s.enabled !== false ? "14px" : "2px" }}
+            />
           </div>
         </div>
       ))}
@@ -145,20 +235,50 @@ function MCPContent({ search }: { search: string }) {
 }
 
 function HooksContent({ search }: { search: string }) {
-  const hooks = [
-    { id: "logging", trigger: "pre+post", enabled: true },
-    { id: "fs-audit", trigger: "post", enabled: true },
-  ];
-  const filtered = search ? hooks.filter(h => h.id.includes(search)) : hooks;
+  const [hooks, setHooks] = useState<CapabilityInfo[]>([]);
+
+  useEffect(() => {
+    listCapabilities()
+      .then((all) => setHooks(all.filter((c) => c.kind === "hook")))
+      .catch(console.error);
+  }, []);
+
+  const handleToggle = async (id: string, enabled: boolean) => {
+    try {
+      await toggleCapability(id, enabled);
+      setHooks((prev) => prev.map((h) => (h.id === id ? { ...h, enabled } : h)));
+    } catch (e) {
+      console.error("Toggle failed:", e);
+    }
+  };
+
+  const filtered = search
+    ? hooks.filter(
+        (h) =>
+          h.name.toLowerCase().includes(search.toLowerCase()) ||
+          h.id.toLowerCase().includes(search.toLowerCase()),
+      )
+    : hooks;
+
   return (
     <section className="flex flex-col gap-1.5">
       {filtered.map((h) => (
         <div key={h.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors hover:bg-secondary border border-border">
           <div className="flex-1">
-            <div className="text-xs font-medium text-foreground">{h.id}</div>
-            <div className="text-[10px] text-muted-foreground font-mono">{h.trigger}</div>
+            <div className="text-xs font-medium text-foreground">{h.name}</div>
+            <div className="text-[10px] text-muted-foreground font-mono">{h.version || h.source}</div>
           </div>
-          <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400">on</span>
+          <button
+            onClick={() => handleToggle(h.id, h.enabled === false)}
+            className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded font-medium",
+              h.enabled !== false
+                ? "bg-emerald-500/10 text-emerald-400"
+                : "bg-muted/20 text-muted-foreground",
+            )}
+          >
+            {h.enabled !== false ? "on" : "off"}
+          </button>
         </div>
       ))}
     </section>
