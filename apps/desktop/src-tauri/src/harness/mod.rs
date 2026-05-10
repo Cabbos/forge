@@ -10,16 +10,19 @@ pub mod db;
 pub mod registry;
 pub mod event_bus;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tauri::AppHandle;
 
-use hooks::HookEngine;
+use hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
 use skills::SkillLoader;
 use permissions::PermissionGate;
 use event_bus::EventBus;
-use crate::adapters::base::AiAdapter;
 use crate::executor::ToolExecutor;
+use crate::harness::capabilities::tools;
+use crate::harness::db::Database;
+use crate::harness::registry::CapabilityRegistry;
 
 /// Central harness that wires together all agent subsystems.
 pub struct Harness {
@@ -27,28 +30,53 @@ pub struct Harness {
     pub skill_loader: Arc<SkillLoader>,
     pub permission_gate: Arc<PermissionGate>,
     pub event_bus: EventBus,
-    pub tool_executor: Arc<ToolExecutor>,
+    pub capability_registry: Arc<CapabilityRegistry>,
+    pub database: Arc<Database>,
     /// Pending confirmations (block_id → oneshot sender)
     pub pending_confirms: Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    /// Internal tool executor — used by the execute_tool pipeline.
+    tool_executor: Arc<ToolExecutor>,
 }
 
 impl Harness {
-    pub fn new(working_dir: std::path::PathBuf) -> Self {
+    pub fn new(working_dir: PathBuf) -> Self {
         let pending_confirms = Arc::new(RwLock::new(std::collections::HashMap::new()));
         let permission_gate = Arc::new(PermissionGate::new());
         let hook_engine = Arc::new(HookEngine::new());
         let skill_loader = Arc::new(SkillLoader::new());
         let event_bus = EventBus::new();
         let tool_executor = Arc::new(ToolExecutor::new(
-            working_dir,
+            working_dir.clone(),
             pending_confirms.clone(),
         ));
 
-        // Load built-in hooks
+        // Open SQLite database at <working_dir>/.ai-studio/registry.db
+        let db_path = working_dir.join(".ai-studio").join("registry.db");
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let database = Arc::new(
+            Database::open(&db_path)
+                .expect("Failed to open registry database")
+        );
+
+        // Create CapabilityRegistry backed by the database
+        let capability_registry = Arc::new(CapabilityRegistry::new(database.clone()));
+
+        // Register all builtin capabilities
+        let cr = capability_registry.clone();
+        tokio::spawn(async move {
+            cr.register(Box::new(tools::FileToolCap::new())).await;
+            cr.register(Box::new(tools::WriteFileToolCap::new())).await;
+            cr.register(Box::new(tools::ShellToolCap::new())).await;
+            cr.register(Box::new(tools::SearchToolCap::new())).await;
+        });
+
+        // Register built-in hooks
         let he = hook_engine.clone();
         tokio::spawn(async move {
-            he.register(hooks::LoggingHook);
-            he.register(hooks::FileSystemAuditHook);
+            he.register(LoggingHook).await;
+            he.register(FileSystemAuditHook).await;
         });
 
         Harness {
@@ -56,6 +84,8 @@ impl Harness {
             skill_loader,
             permission_gate,
             event_bus,
+            capability_registry,
+            database,
             tool_executor,
             pending_confirms,
         }
