@@ -5,6 +5,8 @@ pub mod hooks;
 pub mod skills;
 pub mod permissions;
 pub mod capability;
+pub mod capabilities;
+pub mod db;
 pub mod event_bus;
 
 use std::sync::Arc;
