@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata, Event, EventType};
 use crate::harness::db::Database;
 
@@ -13,7 +12,7 @@ impl CapabilityRegistry {
         Self { capabilities: RwLock::new(Vec::new()), db }
     }
 
-    pub async fn register(&self, cap: Box<dyn Capability>) {
+    pub fn register(&self, cap: Box<dyn Capability>) {
         let meta = cap.metadata().clone();
         let kind_str = match meta.kind {
             CapabilityKind::Skill => "skill",
@@ -22,21 +21,21 @@ impl CapabilityRegistry {
             CapabilityKind::Tool => "tool",
         };
         let _ = self.db.upsert_capability(&meta.id, &meta.name, kind_str, &meta.source, cap.enabled());
-        self.capabilities.write().await.push(cap);
+        self.capabilities.write().unwrap().push(cap);
     }
 
-    pub async fn all(&self) -> Vec<CapabilityMetadata> {
-        self.capabilities.read().await.iter().map(|c| c.metadata().clone()).collect()
+    pub fn all(&self) -> Vec<CapabilityMetadata> {
+        self.capabilities.read().unwrap().iter().map(|c| c.metadata().clone()).collect()
     }
 
-    pub async fn get(&self, id: &str) -> Option<CapabilityMetadata> {
-        self.capabilities.read().await.iter()
+    pub fn get(&self, id: &str) -> Option<CapabilityMetadata> {
+        self.capabilities.read().unwrap().iter()
             .find(|c| c.metadata().id == id)
             .map(|c| c.metadata().clone())
     }
 
-    pub async fn toggle(&self, id: &str, enabled: bool) -> Result<(), String> {
-        let mut caps = self.capabilities.write().await;
+    pub fn toggle(&self, id: &str, enabled: bool) -> Result<(), String> {
+        let mut caps = self.capabilities.write().unwrap();
         let cap = caps.iter_mut().find(|c| c.metadata().id == id)
             .ok_or_else(|| format!("Capability not found: {id}"))?;
         cap.set_enabled(enabled);
@@ -44,17 +43,21 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    pub async fn remove(&self, id: &str) -> Result<(), String> {
-        let mut caps = self.capabilities.write().await;
+    pub fn remove(&self, id: &str) -> Result<(), String> {
+        let mut caps = self.capabilities.write().unwrap();
         caps.retain(|c| c.metadata().id != id);
         let _ = self.db.delete_capability(id);
         Ok(())
     }
 
     pub async fn dispatch_event(&self, event: &Event) {
-        for cap in self.capabilities.read().await.iter() {
-            if cap.enabled() && cap.subscribed_events().iter().any(|e| matches_event(e, event)) {
-                let _ = cap.on_event(event).await;
+        let caps = self.capabilities.read().unwrap();
+        for cap in caps.iter() {
+            if cap.enabled() {
+                let subscribed = cap.subscribed_events();
+                if subscribed.iter().any(|e| matches_event(e, event)) {
+                    let _ = cap.on_event(event).await;
+                }
             }
         }
     }

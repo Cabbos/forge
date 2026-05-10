@@ -65,23 +65,16 @@ impl Harness {
         // Create CapabilityRegistry backed by the database
         let capability_registry = Arc::new(CapabilityRegistry::new(database.clone()));
 
-        // Register all builtin capabilities
-        let skill_loader_for_cap = skill_loader.clone();
-        let cr = capability_registry.clone();
-        tokio::spawn(async move {
-            cr.register(Box::new(tools::FileToolCap::new())).await;
-            cr.register(Box::new(tools::WriteFileToolCap::new())).await;
-            cr.register(Box::new(tools::ShellToolCap::new())).await;
-            cr.register(Box::new(tools::SearchToolCap::new())).await;
-            cr.register(Box::new(SkillLoaderCap::new(skill_loader_for_cap))).await;
-        });
+        // Register all builtin capabilities synchronously (before tokio runtime starts)
+        capability_registry.register(Box::new(tools::FileToolCap::new()));
+        capability_registry.register(Box::new(tools::WriteFileToolCap::new()));
+        capability_registry.register(Box::new(tools::ShellToolCap::new()));
+        capability_registry.register(Box::new(tools::SearchToolCap::new()));
+        capability_registry.register(Box::new(SkillLoaderCap::new(skill_loader.clone())));
 
         // Register built-in hooks
-        let he = hook_engine.clone();
-        tokio::spawn(async move {
-            he.register(LoggingHook).await;
-            he.register(FileSystemAuditHook).await;
-        });
+        hook_engine.register(LoggingHook);
+        hook_engine.register(FileSystemAuditHook);
 
         Harness {
             hook_engine,

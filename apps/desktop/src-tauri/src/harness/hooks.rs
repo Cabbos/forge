@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 /// Decision from a hook: proceed (possibly with modified data) or block.
 #[derive(Debug, Clone)]
@@ -44,8 +43,8 @@ impl HookEngine {
         Self { hooks: RwLock::new(Vec::new()) }
     }
 
-    pub async fn register(&self, hook: impl Hook + 'static) {
-        self.hooks.write().await.push(Arc::new(hook));
+    pub fn register(&self, hook: impl Hook + 'static) {
+        self.hooks.write().unwrap().push(Arc::new(hook));
     }
 
     fn matches(hook: &dyn Hook, tool: &str, trigger: &HookTrigger) -> bool {
@@ -57,26 +56,35 @@ impl HookEngine {
     }
 
     pub async fn run_pre_tool(&self, session_id: &str, tool: &str, input: &serde_json::Value) -> HookDecision {
-        let hooks = self.hooks.read().await;
+        // Collect matching hooks first, drop read guard before awaiting
+        let matching: Vec<Arc<dyn Hook>> = {
+            let hooks = self.hooks.read().unwrap();
+            hooks.iter()
+                .filter(|h| Self::matches(h.as_ref(), tool, &HookTrigger::PreTool))
+                .cloned()
+                .collect()
+        };
         let mut current = input.clone();
-        for h in hooks.iter() {
-            if Self::matches(h.as_ref(), tool, &HookTrigger::PreTool) {
-                match h.on_pre_tool(session_id, tool, current).await {
-                    HookDecision::Block(reason) => return HookDecision::Block(reason),
-                    HookDecision::Proceed(modified) => current = modified,
-                }
+        for h in matching {
+            match h.on_pre_tool(session_id, tool, current).await {
+                HookDecision::Block(reason) => return HookDecision::Block(reason),
+                HookDecision::Proceed(modified) => current = modified,
             }
         }
         HookDecision::Proceed(current)
     }
 
     pub async fn run_post_tool(&self, session_id: &str, tool: &str, result: &str) -> String {
-        let hooks = self.hooks.read().await;
+        let matching: Vec<Arc<dyn Hook>> = {
+            let hooks = self.hooks.read().unwrap();
+            hooks.iter()
+                .filter(|h| Self::matches(h.as_ref(), tool, &HookTrigger::PostTool))
+                .cloned()
+                .collect()
+        };
         let mut current = result.to_string();
-        for h in hooks.iter() {
-            if Self::matches(h.as_ref(), tool, &HookTrigger::PostTool) {
-                current = h.on_post_tool(session_id, tool, current).await;
-            }
+        for h in matching {
+            current = h.on_post_tool(session_id, tool, current).await;
         }
         current
     }

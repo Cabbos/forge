@@ -1,0 +1,40 @@
+<h2>Harness 架构重构 — 三个方向</h2>
+<p class="subtitle">从"单向接入"到"可插拔平台"</p>
+
+<div class="section">
+  <h3>当前状态</h3>
+  <div class="mockup">
+    <div class="mockup-body" style="padding:16px;font-family:monospace;font-size:13px;">
+      Agent Loop → harness.execute_tool() → HookEngine.pre → PermissionGate → ToolExecutor → HookEngine.post<br/>
+      <span style="color:#D4A853">问题：Harness 只参与了工具执行，skills 扫描了但 prompt 不走它，MCP 完全没接，permission 规则不持久化</span>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>渐进增强</h3>
+      <p>保持现有 Harness 接口不变，逐个模块增强。SkillLoader 接真实 registry，HookEngine 加可视化编辑器，PermissionGate 加规则持久化。改动小，风险低，但 Harness 的 API 设计可能不够干净。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>事件总线重构</h3>
+      <p>用 EventBus 作为中枢，所有子系统（Agent、Skill、Hook、MCP、Permission）都通过事件通信。Harness 本身变薄，只负责初始化各子系统。优点是解耦彻底，缺点是大量重写。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Capability Registry</h3>
+      <p>把 Skills、Hooks、MCP、Tools 统一为"Capability"抽象，用一个 Registry 管理。每种 Capability 有自己的生命周期（install/enable/disable/configure/upgrade）。Harness 变成 Capability 的调度器。最干净的抽象，但设计成本最高。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <p class="subtitle">推荐 B + C 的混合：用 EventBus 解耦通信，用 Capability trait 统一 Skills/Hooks/MCP/Tools 的管理。这是 Claude Code 和 Hermes 融合后的自然演进方向。</p>
+</div>

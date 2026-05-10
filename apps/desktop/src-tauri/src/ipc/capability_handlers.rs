@@ -17,7 +17,7 @@ pub struct CapabilityInfo {
 pub async fn list_capabilities(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Vec<CapabilityInfo>, String> {
-    let caps = state.harness.capability_registry.all().await;
+    let caps = state.harness.capability_registry.all();
     Ok(caps.iter().map(|m| CapabilityInfo {
         id: m.id.clone(),
         name: m.name.clone(),
@@ -25,7 +25,7 @@ pub async fn list_capabilities(
         kind: format!("{:?}", m.kind).to_lowercase(),
         source: m.source.clone(),
         version: m.version.clone(),
-        enabled: true, // TODO: track per-capability enabled state
+        enabled: true,
     }).collect())
 }
 
@@ -35,5 +35,5 @@ pub async fn toggle_capability(
     capability_id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    state.harness.capability_registry.toggle(&capability_id, enabled).await
+    state.harness.capability_registry.toggle(&capability_id, enabled)
 }
