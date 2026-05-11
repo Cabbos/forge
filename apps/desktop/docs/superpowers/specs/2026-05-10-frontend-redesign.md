@@ -93,21 +93,30 @@
 - Color: `#ccc`, font-size: 14px
 - Markdown rendered inline
 
-**Tool execution (center-aligned, system style):**
-- `display: inline-block; background: #111; border: 1px solid #1a1a1a; border-radius: 8px`
-- Icon + tool name + status (Running/Done/Error)
-- Expandable to show input/output
-- Animated: Running = amber spinner, Done = green check, Error = red X
+**All AI-side content stays left-aligned** in a unified vertical flow:
+- User: right-aligned, amber-tinted bubble
+- AI text: left-aligned, dark bubble with avatar
+- Thinking: left-aligned, subtle left-border, collapsible
+- Tool cards: left-aligned (indented under AI avatar), inline monospace chip style
+- Shell blocks: left-aligned (indented), terminal-style dark block
 
-**Thinking block:**
-- Collapsed by default: "▶ Thinking ···" dim text
-- Expanded: border-left 2px amber, `color: #888`
-- Streaming: auto-expand, dots animate
+**Tool card (left-aligned, inline chip):**
+- `background: #0a0a0a; border: 1px solid #181818; border-radius: 6px; padding: 10px 14px`
+- Font: Geist Mono 12px
+- Lucide icon + tool name + args (dim) + status badge (right)
+- Status: `Loader2` spin = running, `CheckCircle2` green = done, `XCircle` red = error
+- Click to expand → show input/output
 
-**Shell output:**
-- `background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 8px`
-- Green dot indicator for success, red for failure
-- Monospace output, max-height 300px overflow
+**Thinking block (left-aligned, collapsible):**
+- `border-left: 2px solid #222; padding: 6px 0 6px 14px; color: #777`
+- Collapsed: only title "Thinking" + pulsing dots visible
+- Expanded: full text, `color: #888`, font-size 12px
+- Streaming: auto-expand, dots animate with `pulse` keyframe
+
+**Shell output (left-aligned, terminal style):**
+- `background: #060606; border: 1px solid #181818; border-radius: 6px`
+- Green `Circle` dot for success, red for error
+- Monospace output, `color: #999`, max-height 300px overflow
 
 **Date separators:**
 - Center-aligned: `── 2026-05-10 ──`
@@ -208,6 +217,27 @@ AppShell
 | Delete | `src/components/widgets/` | Deprecated |
 | Delete | `src/components/layout/StatusBar.tsx` | Replaced by HubPanel session info |
 | Delete | `src/components/plugin_manager/` | Replaced by HubPanel skills tab |
+
+## Icon System
+
+使用项目已安装的 **Lucide Icons** (MIT, 1000+ icons)。所有 emoji 占位符替换为对应 Lucide 组件：
+
+| 用途 | Lucide Icon | 替换 |
+|------|------------|------|
+| 文件读取 | `FileText` | 📄 |
+| 搜索 | `Search` | 🔍 |
+| 文件写入 | `Pencil` | ✏️ |
+| 终端 | `Terminal` | Shell emoji |
+| 发送 | `ArrowUp` | ↑ emoji |
+| 设置 | `Settings` | ⚙ |
+| 折叠/展开 | `ChevronRight` / `ChevronDown` | ▶ |
+| 模型选择 | `Cpu` | 🐋 |
+| 成功 | `CheckCircle2` | ✓ |
+| 错误 | `XCircle` | ✗ |
+| 运行中 | `Loader2` (animate-spin) | ··· dots |
+| 新会话 | `Plus` | + |
+| 删除 | `Trash2` | × |
+| DeepSeek logo | 保留 SVG whale（品牌识别） | 🐋 |
 
 ## Non-Goals
 
