@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { X } from "lucide-react";
 import { useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ function getIcon(kind: string): string {
 }
 
 export function HubPanel() {
+  const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("skills");
   const [search, setSearch] = useState("");
   const [counts, setCounts] = useState({ skills: 0, mcp: 0, hooks: 0 });
@@ -55,54 +57,93 @@ export function HubPanel() {
       .catch(console.error);
   }, []);
 
+  // Listen for toggle from toolbar or keyboard shortcut
+  useEffect(() => {
+    const handler = () => setOpen((v) => !v);
+    window.addEventListener("toggle-hub", handler);
+    return () => window.removeEventListener("toggle-hub", handler);
+  }, []);
+
+  if (!open) return null;
+
   return (
-    <aside className="flex flex-col overflow-hidden bg-sidebar">
-      <div className="flex border-b border-sidebar-border sticky top-0 z-10 bg-sidebar">
-        {(["skills", "mcp", "hooks"] as Tab[]).map((t) => (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/20 z-40"
+        onClick={() => setOpen(false)}
+      />
+
+      {/* Panel */}
+      <aside
+        className="fixed top-0 right-0 h-full w-[280px] z-50 flex flex-col overflow-hidden animate-[slide-in-right_0.25s_ease-out]"
+        style={{
+          background: "rgba(10,10,10,0.88)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          borderLeft: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        {/* Header with close button */}
+        <div className="flex items-center justify-between px-4 py-3 flex-shrink-0">
+          <span className="text-xs font-semibold text-foreground">Capabilities</span>
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn(
-              "flex-1 py-3 text-center text-xs font-medium border-b-2 transition-colors uppercase tracking-wider",
-              tab === t
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground/60 hover:text-muted-foreground"
-            )}
+            onClick={() => setOpen(false)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
           >
-            {t}
-            <span className="ml-1 text-[10px] text-muted-foreground/60">
-              {t === "skills" ? counts.skills : t === "mcp" ? counts.mcp : counts.hooks}
-            </span>
+            <X className="size-4" />
           </button>
-        ))}
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="p-4 flex flex-col gap-4">
-          <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs bg-background border border-border">
-            <span className="text-muted-foreground">⌕</span>
-            <input
-              type="text" placeholder={`Search ${tab}...`}
-              value={search} onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground/60 text-xs"
-            />
-          </div>
-
-          {tab === "skills" && <SkillsContent search={search} />}
-          {tab === "mcp" && <MCPContent search={search} />}
-          {tab === "hooks" && <HooksContent search={search} />}
-
-          {session && (
-            <div className="pt-4 border-t border-border flex flex-col gap-1">
-              <div className="flex justify-between text-xs text-muted-foreground font-mono">
-                <span>{session.model}</span>
-                <span className="text-primary">${session.costUsd.toFixed(2)}</span>
-              </div>
-            </div>
-          )}
         </div>
-      </ScrollArea>
-    </aside>
+
+        {/* Tab bar */}
+        <div className="flex border-b border-sidebar-border flex-shrink-0">
+          {(["skills", "mcp", "hooks"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "flex-1 py-3 text-center text-xs font-medium border-b-2 transition-colors uppercase tracking-wider",
+                tab === t
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground/60 hover:text-muted-foreground"
+              )}
+            >
+              {t}
+              <span className="ml-1 text-[10px] text-muted-foreground/60">
+                {t === "skills" ? counts.skills : t === "mcp" ? counts.mcp : counts.hooks}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <ScrollArea className="flex-1">
+          <div className="p-4 flex flex-col gap-4">
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs bg-background border border-border">
+              <span className="text-muted-foreground">⌕</span>
+              <input
+                type="text" placeholder={`Search ${tab}...`}
+                value={search} onChange={(e) => setSearch(e.target.value)}
+                className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground/60 text-xs"
+              />
+            </div>
+
+            {tab === "skills" && <SkillsContent search={search} />}
+            {tab === "mcp" && <MCPContent search={search} />}
+            {tab === "hooks" && <HooksContent search={search} />}
+
+            {session && (
+              <div className="pt-4 border-t border-border flex flex-col gap-1">
+                <div className="flex justify-between text-xs text-muted-foreground font-mono">
+                  <span>{session.model}</span>
+                  <span className="text-primary">${session.costUsd.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </aside>
+    </>
   );
 }
 

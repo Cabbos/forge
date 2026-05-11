@@ -1,3 +1,4 @@
+import { PanelRightOpen } from "lucide-react";
 import { useStore } from "@/store";
 import { Sidebar } from "./Sidebar";
 import { SessionView } from "@/components/session/SessionView";
@@ -10,9 +11,20 @@ export function AppShell() {
   useOutputStream(activeSessionId);
 
   return (
-    <div className="h-screen grid bg-background" style={{ gridTemplateColumns: "240px 1fr 320px" }}>
+    <div className="h-screen grid bg-background" style={{ gridTemplateColumns: "240px 1fr" }}>
       <Sidebar />
       <main className="flex flex-col h-full min-w-0 overflow-hidden border-r border-border">
+        {/* Toolbar */}
+        <div className="flex items-center justify-end px-3 py-2 border-b border-border flex-shrink-0">
+          <button
+            onClick={() => window.dispatchEvent(new Event("toggle-hub"))}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            title="Toggle Capabilities panel"
+          >
+            <PanelRightOpen className="size-4" />
+          </button>
+        </div>
+
         {activeSessionId && sessions.has(activeSessionId) ? (
           <SessionView sessionId={activeSessionId} />
         ) : (
