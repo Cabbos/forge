@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
+import { Cpu, ArrowUp, AtSign, Slash, ChevronDown } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
 
@@ -13,7 +14,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState("");
   const [showModelMenu, setShowModelMenu] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("deepseek-v4-pro");
+  const [selectedModel, setSelectedModel] = useState("deepseek-v4-flash");
 
   const { send } = useSession();
   const session = useStore((s) => s.sessions.get(sessionId));
@@ -79,8 +80,8 @@ export function InputBar({ sessionId }: InputBarProps) {
         {/* Toolbar: hints + model selector + send */}
         <div className="flex items-center justify-between px-4 pb-2.5">
           <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "#555" }}>
-            <span className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999]" style={{ background: "#111" }}>@ files</span>
-            <span className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999]" style={{ background: "#111" }}>/ commands</span>
+            <span className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999] inline-flex items-center gap-1" style={{ background: "#111" }}><AtSign className="size-3" /> files</span>
+            <span className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999] inline-flex items-center gap-1" style={{ background: "#111" }}><Slash className="size-3" /> commands</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -89,8 +90,8 @@ export function InputBar({ sessionId }: InputBarProps) {
               <button onClick={() => setShowModelMenu(!showModelMenu)}
                 className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-colors"
                 style={{ border: "1px solid #1c1c1c", color: "#999", background: "#0f0f0f" }}>
-                🐋 {MODELS.find(m => m.id === selectedModel)?.name ?? selectedModel}
-                <span style={{ fontSize: "7px", color: "#555" }}>▾</span>
+                <Cpu className="size-3" style={{ color: "#D4A853" }} /> {MODELS.find(m => m.id === selectedModel)?.name ?? selectedModel}
+                <ChevronDown className="size-3" style={{ color: "#555" }} />
               </button>
               {showModelMenu && (
                 <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1 min-w-[160px] shadow-xl z-20"
@@ -114,10 +115,10 @@ export function InputBar({ sessionId }: InputBarProps) {
               className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
               style={{
                 background: !isRunning || !value.trim() ? "#141414" : "#D4A853",
-                color: !isRunning || !value.trim() ? "#666" : "#0D0D0D",
+                color: !isRunning || !value.trim() ? "#666" : "#fff",
                 cursor: !isRunning || !value.trim() ? "default" : "pointer",
               }}>
-              ↑
+              <ArrowUp className="size-4" />
             </button>
           </div>
         </div>
