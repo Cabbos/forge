@@ -113,18 +113,27 @@ impl AgentSession {
                 m
             } else { messages };
 
-            let result = match self.adapter.stream_message(&self.id, &msgs_with_context, app_handle).await {
-                Ok(r) => r,
-                Err(e) => {
-                    let err_msg = format!("API error: {}", e);
-                    // Don't stop the session — let user retry
-                    let _ = app_handle.emit("session-output", StreamEvent::Error {
-                        session_id: self.id.clone(),
-                        block_id: BlockId::new().to_string(),
-                        message: err_msg.clone(),
-                        code: "api_error".to_string(),
-                    });
-                    return Err(err_msg);
+            let mut retries = 0;
+            let result = loop {
+                match self.adapter.stream_message(&self.id, &msgs_with_context, app_handle).await {
+                    Ok(r) => break r,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if retries < 2 && (msg.contains("500") || msg.contains("503") || msg.contains("429") || msg.contains("timed out")) {
+                            retries += 1;
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        let err_msg = format!("API error: {}", msg);
+                        // Don't stop the session — let user retry
+                        let _ = app_handle.emit("session-output", StreamEvent::Error {
+                            session_id: self.id.clone(),
+                            block_id: BlockId::new().to_string(),
+                            message: err_msg.clone(),
+                            code: "api_error".to_string(),
+                        });
+                        return Err(err_msg);
+                    }
                 }
             };
 
