@@ -35,7 +35,7 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
 
   return (
     <div
-      className="shiki-wrapper [&_.shiki]:!p-3 [&_.shiki]:!rounded-lg [&_.shiki]:overflow-x-auto [&_.shiki]:border [&_.shiki]:border-border [&_code]:!text-[13px] [&_code]:font-mono"
+      className="shiki-wrapper max-w-full [&_.shiki]:!p-3 [&_.shiki]:!rounded-lg [&_.shiki]:overflow-x-auto [&_.shiki]:border [&_.shiki]:border-border [&_code]:!text-[13px] [&_code]:font-mono [&_code]:whitespace-pre-wrap [&_code]:break-all"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

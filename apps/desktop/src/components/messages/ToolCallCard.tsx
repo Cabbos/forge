@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronRight, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 
 export function ToolCallCard({ block }: { block: BlockState }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(block.isComplete);
+  // Auto-expand when block completes with content
+  useEffect(() => {
+    if (block.isComplete && block.content) setOpen(true);
+  }, [block.isComplete, block.content]);
   const isError = Boolean(block.metadata.is_error ?? false);
   const toolName = (block.metadata.tool_name as string) || "tool";
   const status = block.isComplete ? (isError ? "error" : "done") : "running";
@@ -15,7 +19,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
   const statusText = { running: "running", done: "done", error: "error" }[status];
 
   return (
-    <div className="mb-3" style={{ paddingLeft: "40px" }}>
+    <div className="mb-3">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="inline-flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors border font-mono text-xs"
           style={{ background: "#0a0a0a", borderColor: "#181818", color: "#D4A853" }}>
@@ -30,8 +34,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
           </span>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-1.5 p-3 rounded-md border font-mono text-xs whitespace-pre-wrap"
-            style={{ background: "#060606", borderColor: "#181818", color: "#999", maxHeight: "200px", overflow: "auto" }}>
+          <div className="mt-1.5 p-3 rounded-md border font-mono text-xs whitespace-pre-wrap break-all"
+            style={{ background: "#060606", borderColor: "#181818", color: "#999", maxHeight: "200px", overflow: "auto", maxWidth: "100%" }}>
             {block.content || (status === "running" ? "Waiting..." : "")}
           </div>
         </CollapsibleContent>

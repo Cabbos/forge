@@ -8,6 +8,7 @@ import { UserMessage } from "@/components/messages/UserMessage";
 import { ShellCard } from "@/components/messages/ShellCard";
 import { DiffCard } from "@/components/messages/DiffCard";
 import { ConfirmCard } from "@/components/messages/ConfirmCard";
+import { PendingBlock } from "@/components/messages/PendingBlock";
 
 interface MessageListProps { blocks: BlockState[] }
 
@@ -34,16 +35,16 @@ export function MessageList({ blocks }: MessageListProps) {
 
   if (blocks.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ color: "#333" }}>
+      <div className="flex-1 min-h-0 flex items-center justify-center" style={{ color: "#333" }}>
         <p className="text-sm">Send a message to begin.</p>
       </div>
     );
   }
 
   return (
-    <div className="relative flex-1">
+    <div className="relative flex-1 min-h-0">
       <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto" style={{ padding: "28px 48px" }}>
-        <div className="flex flex-col" style={{ maxWidth: "780px", margin: "0 auto" }}>
+        <div className="flex flex-col" style={{ paddingLeft: "48px", paddingRight: "48px" }}>
           {blocks.map((block, i) => (
             <BlockRenderer key={`${block.block_id}-${i}`} block={block} />
           ))}
@@ -69,6 +70,7 @@ function BlockRenderer({ block }: { block: BlockState }) {
     case "shell": return <ShellCard block={block} />;
     case "diff_view": return <DiffCard block={block} />;
     case "confirm_ask": return <ConfirmCard block={block} />;
+    case "pending": return <PendingBlock />;
     default: return block.content ? <TextBlock block={block} /> : null;
   }
 }

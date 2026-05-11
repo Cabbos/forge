@@ -124,6 +124,44 @@ pub async fn confirm_response(
 }
 
 #[tauri::command]
+pub async fn search_workspace_files(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: String,
+) -> Result<Vec<String>, String> {
+    // Search the harness working dir for files matching the query
+    let dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let results = find_files(&dir, &query, 20);
+    Ok(results)
+}
+
+fn find_files(dir: &std::path::Path, query: &str, limit: usize) -> Vec<String> {
+    let mut results = Vec::new();
+    let lower_query = query.to_lowercase();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if results.len() >= limit { break; }
+            let path = entry.path();
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            // Skip hidden, node_modules, target
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" { continue; }
+            let rel = path.strip_prefix(dir).unwrap_or(&path).to_string_lossy().to_string();
+            if name.to_lowercase().contains(&lower_query) || rel.to_lowercase().contains(&lower_query) {
+                if path.is_dir() {
+                    results.push(format!("{}/", rel));
+                    // Also search one level deep
+                    results.extend(find_files(&path, query, limit - results.len()).into_iter().map(|f| format!("{}/{}", rel, f)));
+                } else {
+                    results.push(rel);
+                }
+            }
+            if results.len() >= limit { break; }
+        }
+    }
+    results.truncate(limit);
+    results
+}
+
+#[tauri::command]
 pub async fn get_api_key_status() -> Result<Vec<settings::KeyStatus>, String> {
     Ok(settings::Settings::load().key_status())
 }

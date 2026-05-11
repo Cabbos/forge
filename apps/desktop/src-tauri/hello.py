@@ -1,15 +1,31 @@
-def fibonacci(n):
-    """返回前 n 个斐波那契数"""
-    if n <= 0:
-        return []
-    elif n == 1:
-        return [0]
-    seq = [0, 1]
-    for i in range(2, n):
-        seq.append(seq[-1] + seq[-2])
-    return seq
+def is_palindrome(s: str) -> bool:
+    """检查字符串是否为回文（忽略大小写和空格）。"""
+    # 去空格并转小写
+    cleaned = "".join(s.split()).lower()
+    return cleaned == cleaned[::-1]
 
 
 if __name__ == "__main__":
-    print("斐波那契数列前 15 项：")
-    print(fibonacci(15))
+    test_cases = [
+        ("racecar", True),
+        ("hello", False),
+        ("A man a plan a canal Panama", True),
+        ("上海自来水来自海上", True),
+        ("Python", False),
+        ("", True),
+    ]
+
+    all_pass = True
+    for text, expected in test_cases:
+        result = is_palindrome(text)
+        status = "PASS" if result == expected else "FAIL"
+        if result != expected:
+            all_pass = False
+        print(f"{status}: is_palindrome({text!r}) = {result} (expected {expected})")
+
+    print()
+    if all_pass:
+        print("所有测试通过！")
+    else:
+        print("存在失败的测试！")
+        exit(1)

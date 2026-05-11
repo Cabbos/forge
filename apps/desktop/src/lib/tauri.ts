@@ -70,3 +70,8 @@ export async function listCapabilities(): Promise<CapabilityInfo[]> {
 export async function toggleCapability(id: string, enabled: boolean): Promise<void> {
   return invoke("toggle_capability", { capabilityId: id, enabled });
 }
+
+/** Search workspace files for @ autocomplete */
+export async function searchWorkspaceFiles(query: string): Promise<string[]> {
+  return invoke("search_workspace_files", { query });
+}

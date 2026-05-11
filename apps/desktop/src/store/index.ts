@@ -150,16 +150,27 @@ export const useStore = create<AppStore>((set, get) => ({
     const session = sessions.get(sessionId);
     if (!session) return;
     const blocks = [...session.blocks];
-    blocks.push({
+    // Remove any stale pending blocks
+    const filtered = blocks.filter(b => b.event_type !== "pending");
+    // Add user message
+    filtered.push({
       block_id: crypto.randomUUID(),
       event_type: "user_message",
       content: text,
       isComplete: true,
       metadata: {},
     });
-    sessions.set(sessionId, { ...session, blocks });
+    // Add pending indicator — removed when first real event arrives
+    filtered.push({
+      block_id: "pending-" + crypto.randomUUID(),
+      event_type: "pending",
+      content: "",
+      isComplete: false,
+      metadata: {},
+    });
+    sessions.set(sessionId, { ...session, blocks: filtered });
     set({ sessions });
-    persistBlocks(sessionId, blocks);
+    persistBlocks(sessionId, filtered);
   },
 
   dispatchOutputEvent: (event) => {
@@ -180,7 +191,13 @@ export const useStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    const blocks = [...session.blocks];
+    let blocks = [...session.blocks];
+
+    // Remove pending indicator when first real event arrives
+    if ((event_type as string) !== "pending" && event_type !== "session_started"
+        && event_type !== "session_status" && event_type !== "session_stopped") {
+      blocks = blocks.filter(b => b.event_type !== "pending");
+    }
 
     // Handle block accumulation for streaming events
     const chunkTypes = [
@@ -271,11 +288,22 @@ export const useStore = create<AppStore>((set, get) => ({
     // For tool_call_result, find the tool_call block and merge
     if (event_type === "tool_call_result") {
       const resultEvent = event as Extract<StreamEvent, { event_type: "tool_call_result" }>;
-      const existingIdx = blocks.findIndex((b) =>
-        b.event_type === "tool_call" && b.block_id === resultEvent.block_id
+      // Try exact block_id match first, then fall back to last empty tool/shell/thinking/read block
+      let existingIdx = blocks.findIndex((b) =>
+        (b.event_type === "tool_call" || b.event_type === "shell" || b.event_type === "thinking") && b.block_id === resultEvent.block_id
       );
+      if (existingIdx < 0) {
+        // Block IDs from streaming vs execution don't match — find the most recent block
+        // of any tool-related type that hasn't received its result yet
+        existingIdx = [...blocks].reverse().findIndex((b) =>
+          (b.event_type === "tool_call" || b.event_type === "shell" || b.event_type === "thinking")
+          && (!b.content || b.content === "")
+        );
+        if (existingIdx >= 0) {
+          existingIdx = blocks.length - 1 - existingIdx;
+        }
+      }
       if (existingIdx >= 0) {
-        // Merge result into tool_call block
         blocks[existingIdx] = {
           ...blocks[existingIdx],
           content: resultEvent.result,
@@ -287,10 +315,10 @@ export const useStore = create<AppStore>((set, get) => ({
           },
         };
       } else {
-        // Fallback: create standalone block
+        // Fallback: create standalone block with content
         blocks.push({
           block_id: resultEvent.block_id,
-          event_type: "tool_call_result",
+          event_type: "tool_call",
           content: resultEvent.result,
           isComplete: true,
           metadata: {
@@ -336,12 +364,14 @@ export const useStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    // For end events, mark block as complete
+    // For end events, mark block as complete (except tool_call_end — results set isComplete later)
     if (endTypes.includes(event_type)) {
       const blockIdEvent = event as { block_id: string };
       const existingIdx = blocks.findIndex((b) => b.block_id === blockIdEvent.block_id);
       if (existingIdx >= 0) {
-        blocks[existingIdx] = { ...blocks[existingIdx], isComplete: true };
+        if (event_type !== "tool_call_end") {
+          blocks[existingIdx] = { ...blocks[existingIdx], isComplete: true };
+        }
         // Capture exit_code for shell blocks
         if (event_type === "shell_end") {
           const se = event as Extract<StreamEvent, { event_type: "shell_end" }>;

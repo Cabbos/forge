@@ -10,7 +10,7 @@ export function ShellCard({ block }: { block: BlockState }) {
   const isError = exitCode !== undefined && exitCode !== 0;
 
   return (
-    <div className="mb-3" style={{ paddingLeft: "40px" }}>
+    <div className="mb-3">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <div className="rounded-md overflow-hidden border" style={{ borderColor: "#181818" }}>
           <CollapsibleTrigger className="w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors"

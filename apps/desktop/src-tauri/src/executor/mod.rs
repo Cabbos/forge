@@ -15,6 +15,8 @@ use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use tauri::Emitter;
 
+// TEST: audit marker
+
 /// Unified executor that handles AI tool calls.
 pub struct ToolExecutor {
     pub file: FileExecutor,

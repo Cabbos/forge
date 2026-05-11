@@ -42,6 +42,7 @@ pub fn run() {
             ipc::handlers::kill_session,
             ipc::handlers::list_sessions,
             ipc::handlers::confirm_response,
+            ipc::handlers::search_workspace_files,
             ipc::handlers::get_api_key_status,
             ipc::handlers::set_api_key,
             ipc::capability_handlers::list_capabilities,

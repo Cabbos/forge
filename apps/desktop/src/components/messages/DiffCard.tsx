@@ -19,7 +19,7 @@ export function DiffCard({ block }: DiffCardProps) {
   const maxLen = Math.max(oldLines.length, newLines.length);
 
   return (
-    <div className="my-4 border border-border rounded-xl overflow-hidden bg-card">
+    <div className="mb-3 border border-border rounded-xl overflow-hidden bg-card">
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
