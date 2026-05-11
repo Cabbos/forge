@@ -35,6 +35,17 @@ impl ChatMessage {
             }]),
         }
     }
+
+    /// Create a tool result message with OpenAI-compatible role and tool_call_id tracking.
+    pub fn tool(tool_use_id: &str, result: &str) -> Self {
+        ChatMessage {
+            role: "tool".to_string(),
+            content: serde_json::json!({
+                "tool_call_id": tool_use_id,
+                "content": result,
+            }),
+        }
+    }
 }
 
 /// A tool call extracted from the streaming response.

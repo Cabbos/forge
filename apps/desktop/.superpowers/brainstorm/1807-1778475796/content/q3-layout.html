@@ -1,0 +1,41 @@
+<h2>B 暗色沉浸 — 布局比例</h2>
+<p class="subtitle">三栏结构保留，但比例和可见性需要重新权衡</p>
+
+<div class="section">
+  <h3>当前问题</h3>
+  <div class="pros-cons">
+    <div class="cons"><h4>痛点</h4><ul>
+      <li>Sidebar 240px 太宽，session 名称被截断也看不全</li>
+      <li>HubPanel 320px 占了大量空间但内容不总需要看</li>
+      <li>Chat 区域只有 ~800px，长文本阅读体验差</li>
+      <li>三栏同时存在时，视觉焦点分散</li>
+    </ul></div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>关键决策：HubPanel 的默认状态是什么？</h3>
+  <div class="options">
+    <div class="option" data-choice="a" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>默认隐藏，需要时滑出</h3>
+        <p>HubPanel 默认收起（只留一个小图标），需要看 Skills/MCP 时从右侧滑出覆盖。Chat 始终全宽。参考 Arc Browser 侧边栏。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="b" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>始终可见，更窄</h3>
+        <p>HubPanel 缩到 260px，始终显示。适合你经常开关 Skills 的使用习惯。Chat 区域会略窄。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="c" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>底部面板替代侧面板</h3>
+        <p>去掉右侧 HubPanel，Skills/MCP 改为底部 Tab 栏或 ⌘K 命令面板打开。Chat 获得最大空间。类似 VS Code 终端面板。</p>
+      </div>
+    </div>
+  </div>
+</div>

@@ -59,53 +59,7 @@ impl ToolExecutor {
             "write_file" | "write_to_file" | "write" => {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 let content = get_str(tool_input, "content").unwrap_or("");
-
-                // Permission check
-                {
-                    let gate = self.permission.lock().await;
-                    match gate.check_file_write(path) {
-                        crate::executor::permission::PermissionDecision::Deny { reason } => {
-                            return format!("Denied: {}", reason);
-                        }
-                        crate::executor::permission::PermissionDecision::Ask {
-                            question,
-                            kind,
-                        } => {
-                            // Create oneshot channel and wait for frontend response
-                            let (tx, rx) = tokio::sync::oneshot::channel();
-                            {
-                                let mut confirms = self.pending_confirms.write().await;
-                                confirms.insert(block_id.clone(), tx);
-                            }
-                            let _ = app_handle.emit(
-                                "session-output",
-                                StreamEvent::ConfirmAsk {
-                                    session_id: session_id.to_string(),
-                                    block_id: block_id.clone(),
-                                    question,
-                                    kind,
-                                },
-                            );
-                            // Wait for user to click Yes/No (with 120s timeout)
-                            match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-                                Ok(Ok(true)) => {
-                                    self.pending_confirms.write().await.remove(&block_id);
-                                }
-                                Ok(Ok(false)) => {
-                                    let mut confirms = self.pending_confirms.write().await;
-                                    confirms.remove(&block_id);
-                                    return "Denied by user".to_string();
-                                }
-                                Ok(Err(_)) | Err(_) => {
-                                    let mut confirms = self.pending_confirms.write().await;
-                                    confirms.remove(&block_id);
-                                    return "Cancelled: timeout or session closed".to_string();
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // Permission handled by Harness (HookEngine + PermissionGate) — not duplicated here
 
                 match self.file.write_file(path, content) {
                     Ok(wr) => {
@@ -126,46 +80,7 @@ impl ToolExecutor {
             }
             "run_shell" | "bash" | "execute_command" | "shell" => {
                 let command = get_str(tool_input, "command").unwrap_or("");
-
-                // Permission check for dangerous commands
-                {
-                    let gate = self.permission.lock().await;
-                    match gate.check_shell_command(command) {
-                        crate::executor::permission::PermissionDecision::Deny { reason } => {
-                            return format!("Denied: {}", reason);
-                        }
-                        crate::executor::permission::PermissionDecision::Ask { question, kind } => {
-                            let (tx, rx) = tokio::sync::oneshot::channel();
-                            {
-                                let mut confirms = self.pending_confirms.write().await;
-                                confirms.insert(block_id.clone(), tx);
-                            }
-                            let _ = app_handle.emit(
-                                "session-output",
-                                StreamEvent::ConfirmAsk {
-                                    session_id: session_id.to_string(),
-                                    block_id: block_id.clone(),
-                                    question,
-                                    kind,
-                                },
-                            );
-                            match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-                                Ok(Ok(true)) => {
-                                    self.pending_confirms.write().await.remove(&block_id);
-                                }
-                                Ok(Ok(false)) => {
-                                    self.pending_confirms.write().await.remove(&block_id);
-                                    return "Denied by user".to_string();
-                                }
-                                Ok(Err(_)) | Err(_) => {
-                                    self.pending_confirms.write().await.remove(&block_id);
-                                    return "Cancelled".to_string();
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // Permission handled by Harness (HookEngine + PermissionGate) — not duplicated here
 
                 match self.shell.execute(command).await {
                     Ok(sr) => {
@@ -205,10 +120,8 @@ impl ToolExecutor {
                                 exit_code: sr.exit_code,
                             },
                         );
-                        format!(
-                            "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
-                            sr.exit_code, sr.stdout, sr.stderr
-                        )
+                        let trunc = |s: &str, max: usize| if s.len() > max { format!("{}... [truncated {} bytes]", &s[..max], s.len() - max) } else { s.to_string() };
+                        format!("Exit code: {}\nStdout:\n{}\nStderr:\n{}", sr.exit_code, trunc(&sr.stdout, 5000), trunc(&sr.stderr, 2000))
                     }
                     Err(e) => format!("Error: {}", e),
                 }
@@ -217,23 +130,8 @@ impl ToolExecutor {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 let old_str = get_str(tool_input, "old_string").unwrap_or("");
                 let new_str = get_str(tool_input, "new_string").unwrap_or("");
-                // Permission check
-                {
-                    let gate = self.permission.lock().await;
-                    match gate.check_file_write(path) {
-                        crate::executor::permission::PermissionDecision::Deny { reason } => return format!("Denied: {}", reason),
-                        crate::executor::permission::PermissionDecision::Ask { question, kind } => {
-                            let (tx, rx) = tokio::sync::oneshot::channel();
-                            { self.pending_confirms.write().await.insert(block_id.clone(), tx); }
-                            let _ = app_handle.emit("session-output", StreamEvent::ConfirmAsk { session_id: session_id.to_string(), block_id: block_id.clone(), question, kind });
-                            match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-                                Ok(Ok(true)) => { self.pending_confirms.write().await.remove(&block_id); }
-                                _ => { self.pending_confirms.write().await.remove(&block_id); return "Denied by user".to_string(); }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // Permission handled by Harness
+
                 match self.file.edit_file(path, old_str, new_str) {
                     Ok(msg) => msg,
                     Err(e) => format!("Error: {}", e),
@@ -334,105 +232,51 @@ fn browser_headers() -> reqwest::header::HeaderMap {
     headers
 }
 
-/// Search DuckDuckGo Lite and return structured results (no API key required, no scraping blocks).
+/// Search the web and return structured results.
+/// Tries Bing first, falls back to DuckDuckGo Lite.
+/// Uses a cache to avoid re-searching identical queries within the same session.
 async fn web_search(query: &str) -> String {
-    let url = format!(
-        "https://lite.duckduckgo.com/lite/?q={}",
-        urlencoding(query)
-    );
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    static CACHE: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    if let Some(cached) = CACHE.lock().unwrap().get(query) {
+        return format!("[cached] {}", cached);
+    }
+
+    // Try Bing first (more accessible globally), fallback to DDG
+    let bing_url = format!("https://www.bing.com/search?q={}&count=10", urlencoding(query));
+    let result = try_search(&bing_url, "Bing").await;
+    if !result.contains("No results") && !result.contains("unavailable") {
+        let _ = CACHE.lock().unwrap().insert(query.to_string(), result.clone());
+        return result;
+    }
+    let ddg_url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
+    let result = try_search(&ddg_url, "DDG").await;
+    let _ = CACHE.lock().unwrap().insert(query.to_string(), result.clone());
+    result
+}
+
+async fn try_search(url: &str, engine: &str) -> String {
     let client = reqwest::Client::new();
-    match client
-        .get(&url)
-        .headers(browser_headers())
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-    {
+    match client.get(url).headers(browser_headers()).timeout(std::time::Duration::from_secs(10)).send().await {
         Ok(resp) => {
             let html = resp.text().await.unwrap_or_default();
-            let mut results = Vec::new();
-
-            // DuckDuckGo Lite returns results in <a> tags with class "result-link" and snippets in <td> with class "result-snippet"
-            // Each result row: <tr> with class "result-snippet" containing title link + snippet
-            for block in html.split("class=\"result-snippet\"").skip(1) {
-                // Extract title + URL from the preceding result-link <a>
-                let title_and_link = html
-                    .split("class=\"result-link\"")
-                    .filter(|s| s.contains(block) || html.split("class=\"result-snippet\"").position(|b| b.as_ptr() == block.as_ptr()).unwrap_or(0) > 0)
-                    .last();
-
-                let title = title_and_link
-                    .and_then(|s| s.split('>').nth(1))
-                    .and_then(|s| s.split("</a").next())
-                    .map(|s| strip_html(s.trim()))
-                    .unwrap_or_default();
-
-                let title = if title.is_empty() {
-                    // Fallback: try finding any <a> with href in this block
-                    block.split("href=\"").nth(1)
-                        .and_then(|s| s.split('\"').next())
-                        .unwrap_or("")
-                } else {
-                    &title
-                };
-
-                // Simpler approach: extract all links + snippets from lite results
-                // Each result is: <a rel="nofollow" href="URL">Title</a> ... <td class="result-snippet">Snippet</td>
-            }
-
-            // Simpler parsing: find all result-link <a> tags
-            let mut titles_and_urls: Vec<(String, String)> = Vec::new();
-            for link_block in html.split("class=\"result-link\"").skip(1) {
-                let url = link_block
-                    .split("href=\"")
-                    .nth(1)
-                    .and_then(|s| s.split('\"').next())
-                    .map(|s| s.replace("&amp;", "&"))
-                    .unwrap_or_default();
-                let title = link_block
-                    .split('>')
-                    .nth(1)
-                    .and_then(|s| s.split("</a").next())
-                    .map(|s| strip_html(s.trim()))
-                    .unwrap_or_default();
-                if !title.is_empty() && !url.is_empty() {
-                    titles_and_urls.push((title, url));
+            let mut results: Vec<(String, String)> = Vec::new();
+            for part in html.split("<a ").skip(1) {
+                let href = part.split("href=\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or("");
+                let visible = part.split('>').nth(1).and_then(|s| s.split("</a>").next())
+                    .map(|s| strip_html(s).trim().to_string()).unwrap_or_default();
+                if href.starts_with("http") && visible.len() > 10 && visible.len() < 300 {
+                    results.push((visible, href.to_string()));
                 }
             }
-
-            // Find all snippets
-            let mut snippets: Vec<String> = Vec::new();
-            for snip_block in html.split("class=\"result-snippet\"").skip(1) {
-                let snip = snip_block
-                    .split('>')
-                    .nth(1)
-                    .and_then(|s| s.split("</td").next())
-                    .map(|s| strip_html(s.trim()))
-                    .unwrap_or_default();
-                snippets.push(snip);
-            }
-
-            // Pair titles with snippets
-            for (i, (title, url)) in titles_and_urls.iter().enumerate() {
-                let snip = snippets.get(i).map(|s| s.as_str()).unwrap_or("");
-                results.push(format!("- {} ({})\n  {}", title, url, snip));
-                if results.len() >= 5 {
-                    break;
-                }
-            }
-
-            if results.is_empty() {
-                format!("No results found for: {}", query)
-            } else {
-                results
-                    .iter()
-                    .enumerate()
-                    .map(|(i, r)| format!("{}. {}", i + 1, r))
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            }
+            results.truncate(8);
+            if results.is_empty() { format!("No results from {}", engine) }
+            else { results.iter().enumerate().map(|(i,(t,u))| format!("{}. {} - {}", i+1, t, u)).collect::<Vec<_>>().join("\n") }
         }
-        Err(e) => format!("Search failed: {}", e),
+        Err(e) => format!("Search unavailable via {}: {}", engine, e),
     }
 }
 

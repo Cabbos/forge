@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useStore } from "../store";
 import { createSession, sendInput, killSession } from "../lib/tauri";
 
-const DEFAULT_MODEL = "deepseek-v4-pro";
+const DEFAULT_MODEL = "deepseek-v4-flash";
 
 export function useSession() {
   const addSession = useStore((s) => s.addSession);

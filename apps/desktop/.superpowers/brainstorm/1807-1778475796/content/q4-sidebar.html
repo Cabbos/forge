@@ -1,0 +1,26 @@
+<h2>左侧栏设计</h2>
+<p class="subtitle">HubPanel 默认隐藏后，左侧 Session 侧边栏怎么处理？</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>收起为图标栏（推荐）</h3>
+      <p>默认只显示 48px 宽的图标列：🐋 DeepSeek logo、session 列表的圆点指示器、新建按钮。鼠标 hover 或快捷键展开为完整 sidebar。参考 Arc / Discord。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>保持可见，缩小宽度</h3>
+      <p>Sidebar 缩到 180px，只显示 session 标题（单行）+ 状态圆点。所有操作通过 ⌘K 完成。始终保持可见。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>完全可拖拽</h3>
+      <p>三栏都可通过拖拽调整宽度。默认比例 200px / 1fr / 0px（隐藏 HubPanel）。用户自己决定每个面板大小。</p>
+    </div>
+  </div>
+</div>

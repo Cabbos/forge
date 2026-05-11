@@ -1,0 +1,45 @@
+<h2>前端重设计 — 方向选择</h2>
+<p class="subtitle">当前痛点：侧边栏 + 三栏布局占了太多空间，chat 区域被挤压</p>
+
+<div class="section">
+  <h3>当前架构</h3>
+  <table style="width:100%;font-size:13px;border-collapse:collapse;">
+    <tr><td style="padding:6px 10px;border:1px solid var(--border);background:var(--bg-hover)">Sidebar (240px)</td><td style="padding:6px 10px;border:1px solid var(--border);">Session 列表 + New Session 按钮</td></tr>
+    <tr><td style="padding:6px 10px;border:1px solid var(--border);background:var(--bg-hover)">Chat (1fr)</td><td style="padding:6px 10px;border:1px solid var(--border);">MessageList + InputBar</td></tr>
+    <tr><td style="padding:6px 10px;border:1px solid var(--border);background:var(--bg-hover)">HubPanel (320px)</td><td style="padding:6px 10px;border:1px solid var(--border);">Skills / MCP / Hooks 管理</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <h3>你最想改什么？</h3>
+  <div class="options">
+    <div class="option" data-choice="a" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>简化布局</h3>
+        <p>Sidebar 缩到最小（仅 session 切换图标），HubPanel 可收起，Chat 占满屏幕。像 VS Code 的禅模式。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="b" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>Claude Code TUI 风格</h3>
+        <p>终端感设计，等宽字体为主，极简 chrome，全键盘操作。消息流密集紧凑。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="c" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>现代 AI 工作台</h3>
+        <p>保留三栏但重新设计比例和视觉。参考 Claude.ai / ChatGPT 的干净卡片风格。更圆润、更多留白。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="d" onclick="toggleSelect(this)">
+      <div class="letter">D</div>
+      <div class="content">
+        <h3>先不动布局，改细节</h3>
+        <p>修颜色、间距、字体、动画过渡。当前布局能用，先打磨到好看。</p>
+      </div>
+    </div>
+  </div>
+</div>

@@ -13,7 +13,7 @@ pub mod event_bus;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
 use skills::SkillLoader;
@@ -130,12 +130,44 @@ impl Harness {
                 return format!("Tool execution blocked by hook: {reason}");
             }
             hooks::HookDecision::Proceed(input) => {
-                // 2. Permission check
+                // 2. Permission check — ask user if not pre-approved
                 if !self.permission_gate.is_allowed(session_id, tool_name, &input).await {
-                    return "Permission denied".to_string();
+                    // Emit ConfirmAsk and wait for user response
+                    let question = format!("Allow {}?\n{:?}", tool_name, tool_input);
+                    let kind = match tool_name {
+                        "run_shell" | "bash" => "dangerous_cmd",
+                        "write_to_file" | "write_file" | "edit_file" => "file_write",
+                        _ => "confirm",
+                    };
+                    let block_id = uuid::Uuid::now_v7().to_string();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    {
+                        self.pending_confirms.write().await.insert(block_id.clone(), tx);
+                    }
+                    let _ = app_handle.emit("session-output",
+                        crate::protocol::events::StreamEvent::ConfirmAsk {
+                            session_id: session_id.to_string(),
+                            block_id: block_id.clone(),
+                            question,
+                            kind: kind.to_string(),
+                        });
+                    // Wait 120s for user response
+                    let approved = match tokio::time::timeout(
+                        std::time::Duration::from_secs(120), rx).await
+                    {
+                        Ok(Ok(true)) => {
+                            self.permission_gate.approve_in_session(session_id, tool_name).await;
+                            true
+                        }
+                        _ => false,
+                    };
+                    self.pending_confirms.write().await.remove(&block_id);
+                    if !approved {
+                        return "Permission denied by user".to_string();
+                    }
                 }
 
-                // 3. Execute via tool executor (emit events via event_bus)
+                // 3. Execute via tool executor
                 let result = self.tool_executor.execute(
                     session_id, tool_name, &input, app_handle,
                 ).await;

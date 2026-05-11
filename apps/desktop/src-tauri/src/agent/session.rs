@@ -82,10 +82,12 @@ impl AgentSession {
             return Err("Session is not running".to_string());
         }
 
+        crate::app_log!("INFO", "Agent received user message, history size: {}", self.messages.lock().unwrap().len());
+
         // Add user message to history
         self.messages.lock().unwrap().push(ChatMessage::user(text));
 
-        // Agent loop: up to 10 tool-call round-trips
+        // Agent loop: up to 10 tool-call round-trips with final text summary fallback
         for _round in 0..10 {
             if !self.running.load(Ordering::SeqCst) { break; }
 
@@ -115,16 +117,12 @@ impl AgentSession {
                 Ok(r) => r,
                 Err(e) => {
                     let err_msg = format!("API error: {}", e);
-                    *self.status.lock().unwrap() = SessionStatus::Error(err_msg.clone());
+                    // Don't stop the session — let user retry
                     let _ = app_handle.emit("session-output", StreamEvent::Error {
                         session_id: self.id.clone(),
                         block_id: BlockId::new().to_string(),
                         message: err_msg.clone(),
                         code: "api_error".to_string(),
-                    });
-                    let _ = app_handle.emit("session-output", StreamEvent::SessionStopped {
-                        session_id: self.id.clone(),
-                        reason: err_msg.clone(),
                     });
                     return Err(err_msg);
                 }
@@ -138,7 +136,12 @@ impl AgentSession {
             }
 
             // No tool calls = done
-            if result.tool_calls.is_empty() { break; }
+            if result.tool_calls.is_empty() {
+                crate::app_log!("INFO", "Agent turn {}: no tool calls, done", _round);
+                break;
+            }
+
+            crate::app_log!("INFO", "Agent turn {}: {} tool calls to execute: {:?}", _round, result.tool_calls.len(), result.tool_calls.iter().map(|tc| tc.name.clone()).collect::<Vec<_>>());
 
             // Execute all tools through the harness (with hooks + permission gating)
             let (reads, writes): (Vec<_>, Vec<_>) = result.tool_calls.iter()
@@ -187,10 +190,26 @@ impl AgentSession {
                     wi += 1;
                     r
                 };
-                self.messages.lock().unwrap().push(ChatMessage::tool_result(&tc.id, &exec_result));
+                crate::app_log!("INFO", "Agent tool '{}' result ({} chars)", tc.name, exec_result.len());
+                self.messages.lock().unwrap().push(ChatMessage::tool(&tc.id, &exec_result));
+            }
+
+            // Yield briefly so frontend receives & renders events before next API call
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        // Ensure final text response: append instruction, call API one more time if needed
+        {
+            let mut msgs = self.messages.lock().unwrap().clone();
+            let last_role = msgs.last().map(|m| m.role.clone()).unwrap_or_default();
+            if last_role == "tool" || last_role == "user" {
+                msgs.push(ChatMessage::user("Based on the above, provide your final answer as plain text. Do not use tools."));
+                crate::app_log!("INFO", "Agent loop complete — requesting text-only summary");
+                let _ = self.adapter.stream_message(&self.id, &msgs, app_handle).await;
             }
         }
 
+        crate::app_log!("INFO", "Agent loop complete");
         Ok(())
     }
 

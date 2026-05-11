@@ -1,0 +1,57 @@
+<h2>消息流 — 三个更有创意的方向</h2>
+<p class="subtitle">不止左对齐 avatar，试试不同的叙事方式</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>杂志排版风</h3>
+      <p>像读一篇编辑过的文章。AI 回复有引导式标题、段落间距大、重要代码块有视觉强调（边框亮色）。用户消息像"旁注"一样出现在侧边而非上方。信息层级分明。</p>
+      <div class="mockup" style="margin-top:8px;">
+        <div class="mockup-body" style="padding:12px;background:#0D0D0D;font-size:11px;">
+          <div style="color:#888;font-style:italic;font-size:10px;margin-bottom:8px;">▸ User asked: "重构 auth 模块"</div>
+          <div style="color:#D4A853;font-size:16px;font-weight:600;margin-bottom:6px;">JWT Migration Plan</div>
+          <div style="color:#ccc;line-height:1.7;margin-bottom:8px;">当前 session 系统在 <code style="color:#D4A853;">src/auth/session.ts</code>。建议分三个阶段迁移...</div>
+          <div style="border-left:3px solid #D4A853;padding:8px 12px;background:rgba(212,168,83,0.05);border-radius:0 6px 6px 0;font-family:monospace;font-size:11px;color:#aaa;margin-bottom:6px;">// Phase 1: Add JWT alongside cookies</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>时间线对话流</h3>
+      <p>像 iMessage/微信但更成熟。用户右侧（琥珀色气泡），AI 左侧（暗色气泡）。Tool 执行像"系统消息"居中显示。每条消息有时间戳。滚动时有日期分隔符。不是 Web 聊天，更像专业的对话式工作台。</p>
+      <div class="mockup" style="margin-top:8px;">
+        <div class="mockup-body" style="padding:12px;background:#0D0D0D;font-size:11px;">
+          <div style="text-align:center;color:#444;font-size:9px;margin-bottom:8px;">── 2026-05-10 ──</div>
+          <div style="display:flex;justify-content:flex-end;margin-bottom:8px;"><div style="max-width:70%;background:rgba(212,168,83,0.1);border-radius:14px 14px 4px 14px;padding:10px 14px;color:#ddd;font-size:12px;">重构 auth 模块</div></div>
+          <div style="text-align:center;margin-bottom:8px;"><div style="display:inline-block;background:#111;border:1px solid #1a1a1a;border-radius:8px;padding:6px 12px;font-family:monospace;font-size:10px;color:#D4A853;">📄 read_file · src/auth/session.ts</div></div>
+          <div style="display:flex;margin-bottom:8px;"><div style="max-width:80%;background:#111;border-radius:14px 14px 14px 4px;padding:10px 14px;color:#ccc;font-size:12px;">当前使用 cookie-based session。我将逐步迁移到 JWT...</div></div>
+          <div style="text-align:center;color:#444;font-size:9px;">12:34 AM</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>IDE 审查模式</h3>
+      <p>像在 VS Code 里看 git diff。消息不是对话而是"变更记录"。AI 的每次操作（读文件→修改→运行）组成一个 change group，有独立的 diff 预览和 accept/reject 按钮。适合"AI 帮我在代码库做改动"的心智模型。</p>
+      <div class="mockup" style="margin-top:8px;">
+        <div class="mockup-body" style="padding:12px;background:#0D0D0D;font-size:11px;">
+          <div style="color:#888;font-size:10px;margin-bottom:6px;">Change #3 · 2026-05-10 · 4 files</div>
+          <div style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:8px;padding:10px;margin-bottom:4px;">
+            <div style="color:#ccc;font-size:12px;margin-bottom:4px;">src/auth/session.ts <span style="color:#4A9E6B;">+12 -3</span></div>
+            <div style="font-family:monospace;font-size:10px;color:#888;">+ export class JwtManager {<br/>+   sign(payload): string {<br/>+     return jwt.sign(payload, SECRET)</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:4px;"><span style="background:rgba(74,158,107,0.1);color:#4A9E6B;padding:2px 8px;border-radius:4px;font-size:10px;">✓ Accept all</span><span style="background:rgba(200,80,80,0.1);color:#D47777;padding:2px 8px;border-radius:4px;font-size:10px;">✗ Reject</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:12px;">
+  <p class="subtitle">我个人推荐 <strong>B (时间线对话流)</strong>：它保留了对话的自然感，同时把 tool 执行作为"系统事件"居中展示，让思考 → 执行 → 结果三个阶段有清晰的视觉节奏。</p>
+</div>

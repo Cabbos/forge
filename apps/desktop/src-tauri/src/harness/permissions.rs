@@ -19,12 +19,13 @@ impl PermissionGate {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             allowed_patterns: RwLock::new(vec![
-                "read_file".into(),
-                "list_directory".into(),
-                "search_files".into(),
-                "search_content".into(),
-                "web_search".into(),
-                "web_fetch".into(),
+                "read_file".into(), "read".into(),
+                "list_directory".into(), "ls".into(), "list".into(),
+                "search_files".into(), "glob".into(),
+                "search_content".into(), "grep".into(),
+                "web_search".into(), "web_fetch".into(),
+                "write_to_file".into(), "write_file".into(), "write".into(),
+                "edit_file".into(), "edit".into(),
             ]),
             session_cache: RwLock::new(HashMap::new()),
             db,

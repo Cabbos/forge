@@ -9,7 +9,7 @@ use crate::state::AppState;
 use crate::settings;
 
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL: &str = "deepseek-v4-pro";
+const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 
 fn build_adapter(api_key: &str, model: Option<&str>) -> Result<Box<dyn AiAdapter>, String> {
     let mut a = OpenAiCompatibleAdapter::new(api_key.to_string())

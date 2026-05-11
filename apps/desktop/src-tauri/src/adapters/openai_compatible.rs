@@ -7,7 +7,7 @@ use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
-const DEFAULT_MODEL: &str = "deepseek-chat";
+const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 
 const SYSTEM_PROMPT: &str = "\
 You are a powerful AI coding agent running in a desktop GUI application. You have direct access to the user's filesystem and shell.
@@ -73,6 +73,8 @@ struct OpenAiMessage {
     tool_calls: Option<Vec<OpenAiToolCallMsg>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -122,7 +124,9 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         messages: &[ChatMessage],
         app_handle: &tauri::AppHandle,
     ) -> Result<StreamResult, AdapterError> {
+        crate::app_log!("INFO", "OpenAI adapter streaming — {} messages, model={}", messages.len(), self.model);
         let openai_msgs = convert_messages(messages);
+        crate::app_log!("INFO", "Converted to {} OpenAI messages", openai_msgs.len());
 
         let tools: Vec<OpenAiTool> = tool_definitions().into_iter().map(|td| OpenAiTool {
             type_: "function".to_string(),
@@ -141,11 +145,15 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             tools: if tools.is_empty() { None } else { Some(tools) },
         };
 
+        // Debug: log request body for troubleshooting tool message issues
+        let body_json = serde_json::to_string_pretty(&request).unwrap_or_default();
+        log::info!("OpenAI request body ({} bytes): {}", body_json.len(), &body_json[..body_json.len().min(2000)]);
+
         let response = self.client
             .post(format!("{}/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&request)
+            .body(body_json)
             .send()
             .await
             .map_err(|e| AdapterError::Http(e.to_string()))?;
@@ -163,6 +171,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         let mut assistant_content: Vec<serde_json::Value> = Vec::new();
         let mut stop_reason: Option<String> = None;
         let mut current_text = String::new();
+        let mut current_reasoning = String::new();
         let mut active_text_block_id: Option<String> = None;
         let mut tool_call_buffers: Vec<(usize, String, String, String)> = Vec::new(); // (idx, id, name, args_json)
 
@@ -198,6 +207,11 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                         }
 
                         let delta = &choice["delta"];
+
+                        // Capture reasoning_content for thinking mode echo-back
+                        if let Some(rc) = delta["reasoning_content"].as_str() {
+                            current_reasoning.push_str(rc);
+                        }
 
                         // Text content — reuse same block_id for streaming continuity
                         if let Some(content) = delta["content"].as_str() {
@@ -263,11 +277,23 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                 StreamEvent::TextEnd { session_id: session_id.to_string(), block_id: bid });
         }
 
-        // Convert completed tool call buffers
-        for (idx, id, name, args_json) in &tool_call_buffers {
+        // Store reasoning_content in assistant_content for DeepSeek think mode echo-back
+        if !current_reasoning.is_empty() {
+            assistant_content.push(serde_json::json!({"type":"reasoning","reasoning_content":current_reasoning}));
+        }
+
+        // Convert completed tool call buffers and add to assistant_content
+        for (_idx, id, name, args_json) in &tool_call_buffers {
             if !id.is_empty() && !name.is_empty() {
                 let input: serde_json::Value = serde_json::from_str(args_json)
                     .unwrap_or(serde_json::Value::Object(Default::default()));
+                // Add tool_use block to assistant content (critical for message format)
+                assistant_content.push(serde_json::json!({
+                    "type": "tool_use",
+                    "id": id,
+                    "name": name,
+                    "input": input,
+                }));
                 tool_calls.push(ToolCall { id: id.clone(), name: name.clone(), input: input.clone() });
                 let bid = BlockId::new().to_string();
                 let _ = app_handle.emit("session-output",
@@ -287,6 +313,7 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
         content: serde_json::Value::String(SYSTEM_PROMPT.to_string()),
         tool_calls: None,
         tool_call_id: None,
+        reasoning_content: None,
     }];
 
     for msg in messages {
@@ -297,18 +324,35 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
                     content: serde_json::Value::String(s.clone()),
                     tool_calls: None,
                     tool_call_id: None,
+                    reasoning_content: None,
+                });
+            }
+            serde_json::Value::Object(ref obj) if msg.role == "tool" => {
+                // Direct pass-through for tool messages
+                let tool_call_id = obj.get("tool_call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let content = obj.get("content").cloned().unwrap_or(serde_json::Value::String("".into()));
+                result.push(OpenAiMessage {
+                    role: "tool".to_string(),
+                    content,
+                    tool_calls: None,
+                    tool_call_id,
+                    reasoning_content: None,
                 });
             }
             serde_json::Value::Array(blocks) => {
                 if msg.role == "assistant" {
                     let mut text_parts = Vec::new();
                     let mut tool_calls: Vec<OpenAiToolCallMsg> = Vec::new();
+                    let mut reasoning = None;
                     for block in blocks {
                         match block["type"].as_str() {
                             Some("text") => {
                                 if let Some(t) = block["text"].as_str() {
                                     text_parts.push(t.to_string());
                                 }
+                            }
+                            Some("reasoning") => {
+                                reasoning = block["reasoning_content"].as_str().map(|s| s.to_string());
                             }
                             Some("tool_use") => {
                                 let id = block["id"].as_str().unwrap_or("").to_string();
@@ -322,16 +366,13 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
                             _ => {}
                         }
                     }
-                    let content = if !text_parts.is_empty() {
-                        serde_json::Value::String(text_parts.join("\n"))
-                    } else {
-                        serde_json::Value::Null
-                    };
+                    let content = serde_json::Value::String(text_parts.join("\n"));
                     result.push(OpenAiMessage {
                         role: "assistant".to_string(),
                         content,
                         tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
                         tool_call_id: None,
+                        reasoning_content: reasoning,
                     });
                 } else if msg.role == "user" {
                     for block in blocks {
@@ -346,10 +387,22 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
                                 content,
                                 tool_calls: None,
                                 tool_call_id: Some(id),
+                                reasoning_content: None,
                             });
                         }
                     }
                 }
+            }
+            serde_json::Value::Object(ref obj) if msg.role == "tool" => {
+                let tool_call_id = obj.get("tool_call_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let content = obj.get("content").cloned().unwrap_or(serde_json::Value::String("".into()));
+                result.push(OpenAiMessage {
+                    role: "tool".to_string(),
+                    content,
+                    tool_calls: None,
+                    tool_call_id,
+                    reasoning_content: None,
+                });
             }
             _ => {}
         }
