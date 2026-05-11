@@ -82,50 +82,99 @@ impl ToolExecutor {
             }
             "run_shell" | "bash" | "execute_command" | "shell" => {
                 let command = get_str(tool_input, "command").unwrap_or("");
-                // Permission handled by Harness (HookEngine + PermissionGate) — not duplicated here
 
-                match self.shell.execute(command).await {
-                    Ok(sr) => {
-                        let _ = app_handle.emit(
-                            "session-output",
-                            StreamEvent::ShellStart {
-                                session_id: session_id.to_string(),
-                                block_id: block_id.clone(),
-                                command: sr.command.clone(),
-                            },
-                        );
-                        if !sr.stdout.is_empty() {
-                            let _ = app_handle.emit(
+                // Emit ShellStart before execution so the frontend creates the block immediately
+                let _ = app_handle.emit(
+                    "session-output",
+                    StreamEvent::ShellStart {
+                        session_id: session_id.to_string(),
+                        block_id: block_id.clone(),
+                        command: command.to_string(),
+                    },
+                );
+
+                // Collectors accumulate output for the AI response string
+                let stdout_captured: Arc<std::sync::Mutex<String>> =
+                    Arc::new(std::sync::Mutex::new(String::new()));
+                let stderr_captured: Arc<std::sync::Mutex<String>> =
+                    Arc::new(std::sync::Mutex::new(String::new()));
+                let stdout_for_cb = stdout_captured.clone();
+                let stderr_for_cb = stderr_captured.clone();
+                let sid_for_cb = session_id.to_string();
+                let bid_for_cb = block_id.clone();
+                let ah_for_cb = app_handle.clone();
+
+                match self
+                    .shell
+                    .execute_streaming(
+                        command,
+                        move |line: String, is_stderr: bool| {
+                            // Accumulate for AI response
+                            let cap = if is_stderr {
+                                &stderr_for_cb
+                            } else {
+                                &stdout_for_cb
+                            };
+                            {
+                                let mut guard = cap.lock().unwrap();
+                                guard.push_str(&line);
+                                guard.push('\n');
+                            }
+
+                            // Emit to frontend line by line
+                            let _ = ah_for_cb.emit(
                                 "session-output",
                                 StreamEvent::ShellOutput {
-                                    session_id: session_id.to_string(),
-                                    block_id: block_id.clone(),
-                                    content: sr.stdout.clone(),
+                                    session_id: sid_for_cb.clone(),
+                                    block_id: bid_for_cb.clone(),
+                                    content: line,
                                 },
                             );
-                        }
-                        if !sr.stderr.is_empty() {
-                            let _ = app_handle.emit(
-                                "session-output",
-                                StreamEvent::ShellOutput {
-                                    session_id: session_id.to_string(),
-                                    block_id: block_id.clone(),
-                                    content: sr.stderr.clone(),
-                                },
-                            );
-                        }
+                        },
+                    )
+                    .await
+                {
+                    Ok(exit_code) => {
                         let _ = app_handle.emit(
                             "session-output",
                             StreamEvent::ShellEnd {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
-                                exit_code: sr.exit_code,
+                                exit_code,
                             },
                         );
-                        let trunc = |s: &str, max: usize| if s.len() > max { format!("{}... [truncated {} bytes]", &s[..max], s.len() - max) } else { s.to_string() };
-                        format!("Exit code: {}\nStdout:\n{}\nStderr:\n{}", sr.exit_code, trunc(&sr.stdout, 5000), trunc(&sr.stderr, 2000))
+                        let stdout = stdout_captured.lock().unwrap().clone();
+                        let stderr = stderr_captured.lock().unwrap().clone();
+                        let trunc = |s: &str, max: usize| {
+                            if s.len() > max {
+                                format!(
+                                    "{}... [truncated {} bytes]",
+                                    &s[..max],
+                                    s.len() - max
+                                )
+                            } else {
+                                s.to_string()
+                            }
+                        };
+                        format!(
+                            "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
+                            exit_code,
+                            trunc(&stdout, 5000),
+                            trunc(&stderr, 2000)
+                        )
                     }
-                    Err(e) => format!("Error: {}", e),
+                    Err(e) => {
+                        // Emit ShellEnd to close the block since ShellStart was already sent
+                        let _ = app_handle.emit(
+                            "session-output",
+                            StreamEvent::ShellEnd {
+                                session_id: session_id.to_string(),
+                                block_id: block_id.clone(),
+                                exit_code: -1,
+                            },
+                        );
+                        format!("Error: {}", e)
+                    }
                 }
             }
             "edit_file" | "edit" => {
