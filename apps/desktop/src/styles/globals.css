@@ -15,40 +15,38 @@ html, body, #root {
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #1e1e1e; border-radius: 2px; }
-::selection { background: rgba(212,168,83,0.25); color: #fff; }
+::selection { background: rgba(212,168,83,0.2); color: #fff; }
 
 @layer base {
   :root, .dark {
     --background: #0D0D0D;
-    --foreground: #e0e0e0;
-    --card: #0F0F0F;
-    --card-foreground: #e0e0e0;
+    --foreground: #E4E4E4;
+    --card: #111;
+    --card-foreground: #E4E4E4;
     --popover: #141414;
-    --popover-foreground: #e0e0e0;
-    --primary: oklch(0.73 0.14 85);
+    --popover-foreground: #E4E4E4;
+    --primary: #D4A853;
     --primary-foreground: #0D0D0D;
     --secondary: #141414;
     --secondary-foreground: #c0c0c0;
-    --muted: #111;
-    --muted-foreground: #888;
+    --muted: #0a0a0a;
+    --muted-foreground: #999;
     --accent: rgba(212,168,83,0.10);
     --accent-foreground: #D4A853;
-    --destructive: #d96c6c;
+    --destructive: #D47777;
     --destructive-foreground: #0D0D0D;
     --border: #1c1c1c;
     --input: #1c1c1c;
     --ring: #D4A853;
     --radius: 8px;
-
-    --sidebar: #090909;
+    --sidebar: #0a0a0a;
     --sidebar-foreground: #d0d0d0;
     --sidebar-primary: #D4A853;
     --sidebar-primary-foreground: #0D0D0D;
-    --sidebar-accent: #121212;
+    --sidebar-accent: #111;
     --sidebar-accent-foreground: #c0c0c0;
     --sidebar-border: #161616;
     --sidebar-ring: #D4A853;
-
     --color-surface: #0F0F0F;
     --color-surface-alt: #141414;
     --color-surface-hover: #1A1A1A;
@@ -59,24 +57,29 @@ html, body, #root {
     --color-accent: #D4A853;
     --color-accent-hover: #deb866;
     --color-warning: #D4A853;
-    --color-success: #4a9e6b;
-    --chart-1: #D4A853; --chart-2: #5B9BD5; --chart-3: #4A9E6B; --chart-4: #D47777; --chart-5: #9B6BD4;
+    --color-success: #4A9E6B;
   }
-
   * { @apply border-border; }
   body { @apply bg-background text-foreground; }
 }
 
-code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; }
+code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 13px; }
 pre {
-  background: #0A0A0A; border: 1px solid #1c1c1c;
+  background: #0a0a0a; border: 1px solid #1c1c1c;
   border-radius: 6px; padding: 12px 16px;
-  overflow-x: auto; font-family: "Geist Mono", "SF Mono", monospace;
+  overflow-x: auto; font-family: "Geist Mono", monospace;
   font-size: 13px; line-height: 1.55; color: #c0c0c0;
 }
 
-/* Thinking shimmer animation */
 @keyframes shimmer {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(400%); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
