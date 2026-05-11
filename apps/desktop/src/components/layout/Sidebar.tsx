@@ -17,9 +17,10 @@ export function Sidebar() {
   const setActiveSession = useStore((s) => s.setActiveSession);
   const sessions = useSessionList();
   const { create, kill } = useSession();
+  const selectedModel = useStore((s) => s.selectedModel);
 
   const newSession = async () => {
-    try { await create(workingDir); }
+    try { await create(workingDir, selectedModel); }
     catch (e) { alert("Failed: " + String(e)); }
   };
 

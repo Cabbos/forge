@@ -27,7 +27,8 @@ export function InputBar({ sessionId }: InputBarProps) {
   const [value, setValue] = useState("");
   const [chips, setChips] = useState<Chip[]>([]);
   const [showModelMenu, setShowModelMenu] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("deepseek-v4-flash");
+  const selectedModel = useStore((s) => s.selectedModel);
+  const setSelectedModel = useStore((s) => s.setSelectedModel);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
   const [atResults, setAtResults] = useState<string[]>([]);
   const valueRef = useRef("");

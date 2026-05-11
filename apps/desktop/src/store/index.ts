@@ -11,6 +11,8 @@ interface AppStore {
   // Provider
   selectedProvider: string;
   setSelectedProvider: (p: string) => void;
+  selectedModel: string;
+  setSelectedModel: (m: string) => void;
 
   // Actions
   hydrate: () => Promise<void>;
@@ -81,11 +83,14 @@ export const useStore = create<AppStore>((set, get) => ({
   hydrated: false,
   pendingInput: "",
   selectedProvider: "deepseek",
+  selectedModel: "deepseek-v4-flash",
 
   setSelectedProvider: (p) => {
     set({ selectedProvider: p });
     idbSet("tui-provider", p).catch(() => {});
   },
+
+  setSelectedModel: (m) => set({ selectedModel: m }),
 
   hydrate: async () => {
     try {
