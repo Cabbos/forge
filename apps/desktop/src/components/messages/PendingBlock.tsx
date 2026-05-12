@@ -2,16 +2,14 @@ import { useEffect, useState } from "react";
 import { WhaleSVG } from "./WhaleSVG";
 
 const HINTS = [
-  "Thinking...",
-  "好的代码不需要注释",
-  "Reading the codebase...",
-  "少即是多 · Less is more",
-  "Analyzing context...",
-  "每一个 tool 调用都是可审查的",
-  "Planning the approach...",
-  "Crafting the solution...",
-  "Almost there...",
-  "YAGNI",
+  "正在理解你的需求...",
+  "正在查看相关文件...",
+  "正在判断哪里需要改...",
+  "正在整理下一步操作...",
+  "正在检查可能的风险...",
+  "正在把技术细节翻译成人话...",
+  "正在确认改动是否合理...",
+  "快好了，正在收尾...",
 ];
 
 export function PendingBlock() {

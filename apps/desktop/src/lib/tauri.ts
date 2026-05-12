@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
+const WORKING_DIR_KEY = "tui-to-gui-working-dir";
+const FILE_OPEN_TEMPLATE_KEY = "tui-to-gui-file-open-template";
+const DEFAULT_FILE_OPEN_TEMPLATE = "vscode://file/{path}{lineSuffix}";
+
 export interface SessionCreated { session_id: string }
 
 export interface SessionInfo {
@@ -7,7 +11,23 @@ export interface SessionInfo {
   status: string; created_at: string;
 }
 
+export interface FilePreviewLine {
+  number: number;
+  content: string;
+  is_target: boolean;
+}
+
+export interface FilePreview {
+  path: string;
+  display_path: string;
+  requested_line: number | null;
+  start_line: number;
+  total_lines: number;
+  lines: FilePreviewLine[];
+}
+
 export async function createSession(workingDir: string, apiKey: string, model: string): Promise<SessionCreated> {
+  rememberWorkingDir(workingDir);
   return invoke<SessionCreated>("create_session", {
     workingDir, apiKey: apiKey || "", model,
   });
@@ -23,6 +43,10 @@ export async function killSession(sessionId: string): Promise<void> {
 
 export async function listSessions(): Promise<SessionInfo[]> {
   return invoke("list_sessions");
+}
+
+export async function getDefaultWorkingDir(): Promise<string> {
+  return invoke("get_default_working_dir");
 }
 
 export async function confirmResponse(blockId: string, approved: boolean): Promise<void> {
@@ -79,4 +103,103 @@ export async function searchWorkspaceFiles(query: string): Promise<string[]> {
 /** Install a skill from GitHub (owner/repo) */
 export async function installSkill(repo: string): Promise<CapabilityInfo> {
   return invoke("install_skill", { repo });
+}
+
+/** Open a file in the system editor at an optional line number */
+export async function openFile(path: string, line?: number, sessionId?: string): Promise<void> {
+  if (!hasTauriRuntime() && openFileViaUrlScheme(path, line)) return;
+
+  try {
+    return await invoke("open_file", { path, line: line ?? null, sessionId: sessionId ?? null });
+  } catch (error) {
+    if (openFileViaUrlScheme(path, line)) return;
+    throw error;
+  }
+}
+
+/** Read a small, beginner-friendly preview around a file reference */
+export async function previewFile(path: string, line?: number, sessionId?: string): Promise<FilePreview> {
+  return invoke("preview_file", { path, line: line ?? null, context: 40, sessionId: sessionId ?? null });
+}
+
+function hasTauriRuntime(): boolean {
+  if (typeof window === "undefined") return false;
+  return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
+}
+
+export function rememberWorkingDir(workingDir: string) {
+  if (typeof window === "undefined" || !workingDir.trim()) return;
+  window.localStorage.setItem(WORKING_DIR_KEY, workingDir.trim());
+}
+
+export function getRememberedWorkingDir(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(WORKING_DIR_KEY);
+}
+
+function openFileViaUrlScheme(path: string, line?: number): boolean {
+  if (typeof window === "undefined") return false;
+
+  const absolutePath = resolveFallbackPath(path);
+  if (!absolutePath) return false;
+
+  const template = getFileOpenTemplate();
+  if (!template) return false;
+
+  window.location.href = formatFileOpenUrl(template, absolutePath, line);
+  return true;
+}
+
+function getFileOpenTemplate(): string | null {
+  const envTemplate = import.meta.env.VITE_OPEN_FILE_URL_TEMPLATE as string | undefined;
+  const template =
+    window.localStorage.getItem(FILE_OPEN_TEMPLATE_KEY) ||
+    envTemplate ||
+    DEFAULT_FILE_OPEN_TEMPLATE;
+  const normalized = template.trim();
+
+  if (!normalized || ["none", "off", "disabled"].includes(normalized.toLowerCase())) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function formatFileOpenUrl(template: string, path: string, line?: number): string {
+  const normalizedPath = path.replace(/\\/g, "/");
+  const lineValue = line ? String(line) : "";
+  const lineSuffix = line ? `:${line}` : "";
+
+  return [
+    ["{path}", encodeURI(normalizedPath)],
+    ["{rawPath}", normalizedPath],
+    ["{pathEncoded}", encodeURIComponent(normalizedPath)],
+    ["{line}", lineValue],
+    ["{lineSuffix}", lineSuffix],
+  ].reduce((url, [token, value]) => url.split(token).join(value), template);
+}
+
+function resolveFallbackPath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/")) return trimmed;
+
+  const workingDir = window.localStorage.getItem(WORKING_DIR_KEY);
+  if (!workingDir) return null;
+
+  if (trimmed.startsWith("@/")) {
+    return joinPath(workingDir, "src", trimmed.slice(2));
+  }
+
+  return joinPath(workingDir, trimmed);
+}
+
+function joinPath(...parts: string[]): string {
+  return parts
+    .map((part, index) => {
+      if (index === 0) return part.replace(/\/+$/, "");
+      return part.replace(/^\/+|\/+$/g, "");
+    })
+    .filter(Boolean)
+    .join("/");
 }

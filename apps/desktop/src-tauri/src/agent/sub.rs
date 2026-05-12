@@ -43,17 +43,29 @@ impl SubAgent {
         harness: Arc<Harness>,
         app_handle: &tauri::AppHandle,
         cancel: Arc<Notify>,
+        working_dir: &std::path::Path,
     ) -> String {
+        // Build context: project CLAUDE.md if available, plus working directory
+        let project_ctx = crate::harness::read_project_context(working_dir)
+            .unwrap_or_default();
+        let context_section = if project_ctx.is_empty() {
+            format!("Working directory: {}\n", working_dir.display())
+        } else {
+            format!("Working directory: {}\n\nProject context:\n{}\n",
+                working_dir.display(), project_ctx)
+        };
+
         let system = ChatMessage {
             role: "system".to_string(),
-            content: serde_json::Value::String(
+            content: serde_json::Value::String(format!(
                 "You are a focused research sub-agent. Your task is to investigate a specific \
-                question and return a concise answer. You have read-only tools: read_file, \
-                search_content, search_files, list_directory, web_search, web_fetch.\n\
-                Do NOT use write_to_file, edit_file, or run_shell.\n\
-                Be thorough but concise. Return your findings as plain text."
-                    .to_string(),
-            ),
+                question and return a concise answer.\n\
+                You have read-only tools: read_file, search_content, search_files, list_directory, \
+                web_search, web_fetch, git_diff.\n\
+                Do NOT use write_to_file, edit_file, run_shell, or delegate_task.\n\
+                Be thorough but concise. Return your findings as plain text.\n\n\
+                {context_section}"
+            )),
         };
 
         let task_msg = ChatMessage::user(task);
@@ -108,13 +120,13 @@ impl SubAgent {
                 let input = tc.input.clone();
                 let input_str = serde_json::to_string(&tc.input).unwrap_or_default();
                 let tool_id = tc.id.clone();
-                let is_blocked = matches!(name.as_str(), "run_shell" | "write_to_file" | "edit_file" | "bash");
+                let is_blocked = matches!(name.as_str(), "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task");
                 let app = app_handle.clone();
                 handles.push(tokio::spawn(async move {
                     let result = if is_blocked {
                         format!("Tool '{}' is blocked for sub-agents (read-only access only)", name)
                     } else {
-                        h.execute_tool("sub", &name, &input, &app).await
+                        h.execute_tool_with_block_id("sub", &name, &input, &app, Some(&tool_id)).await
                     };
                     (i, name, input_str, result, tool_id)
                 }));
@@ -175,7 +187,7 @@ impl SubAgent {
 }
 
 fn extract_by_type(content: &[serde_json::Value], target_type: &str) -> String {
-    content
+    let result = content
         .iter()
         .filter_map(|block| {
             let t = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -186,7 +198,12 @@ fn extract_by_type(content: &[serde_json::Value], target_type: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    // Fallback: if no text blocks found, try thinking blocks (AI may return thinking-only)
+    if !result.is_empty() || target_type != "text" {
+        return result;
+    }
+    extract_by_type(content, "thinking")
 }
 
 fn build_result_json(text: &str, traces: &[RoundTrace]) -> String {

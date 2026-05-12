@@ -2,6 +2,12 @@ use std::sync::{Arc, RwLock};
 use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata, Event, EventType};
 use crate::harness::db::Database;
 
+#[derive(Clone)]
+pub struct CapabilityEntry {
+    pub metadata: CapabilityMetadata,
+    pub enabled: bool,
+}
+
 pub struct CapabilityRegistry {
     capabilities: RwLock<Vec<Box<dyn Capability>>>,
     db: Arc<Database>,
@@ -20,12 +26,27 @@ impl CapabilityRegistry {
             CapabilityKind::McpServer => "mcp_server",
             CapabilityKind::Tool => "tool",
         };
-        let _ = self.db.upsert_capability(&meta.id, &meta.name, kind_str, &meta.source, cap.enabled());
+        let enabled = self.db.get_capability_enabled(&meta.id).unwrap_or(None).unwrap_or(cap.enabled());
+        let _ = self.db.upsert_capability(&meta.id, &meta.name, kind_str, &meta.source, enabled);
+        let mut cap = cap;
+        cap.set_enabled(enabled);
         self.capabilities.write().unwrap().push(cap);
     }
 
     pub fn all(&self) -> Vec<CapabilityMetadata> {
         self.capabilities.read().unwrap().iter().map(|c| c.metadata().clone()).collect()
+    }
+
+    pub fn all_entries(&self) -> Vec<CapabilityEntry> {
+        self.capabilities
+            .read()
+            .unwrap()
+            .iter()
+            .map(|c| CapabilityEntry {
+                metadata: c.metadata().clone(),
+                enabled: c.enabled(),
+            })
+            .collect()
     }
 
     pub fn get(&self, id: &str) -> Option<CapabilityMetadata> {
@@ -41,6 +62,17 @@ impl CapabilityRegistry {
         cap.set_enabled(enabled);
         let _ = self.db.set_enabled(id, enabled);
         Ok(())
+    }
+
+    pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        let id = capability_id_for_tool(tool_name);
+        self.capabilities
+            .read()
+            .unwrap()
+            .iter()
+            .find(|c| c.metadata().id == id)
+            .map(|c| c.enabled())
+            .unwrap_or(true)
     }
 
     pub fn remove(&self, id: &str) -> Result<(), String> {
@@ -60,6 +92,19 @@ impl CapabilityRegistry {
                 }
             }
         }
+    }
+}
+
+fn capability_id_for_tool(tool_name: &str) -> &str {
+    match tool_name {
+        "read" => "read_file",
+        "write" | "write_file" => "write_to_file",
+        "edit" => "edit_file",
+        "ls" | "list" => "list_directory",
+        "glob" => "search_files",
+        "grep" => "search_content",
+        "bash" | "execute_command" | "shell" => "run_shell",
+        other => other,
     }
 }
 

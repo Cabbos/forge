@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import { getHighlighter, highlightCode } from "@/lib/shiki";
 import { useStore } from "@/store";
+import { cn } from "@/lib/utils";
 
 interface CodeBlockProps {
   code: string;
@@ -10,6 +12,9 @@ interface CodeBlockProps {
 export function CodeBlock({ code, lang }: CodeBlockProps) {
   const theme = useStore((s) => s.theme);
   const [html, setHtml] = useState("");
+  const [copied, setCopied] = useState(false);
+  const label = formatLanguageLabel(lang);
+  const lineCount = code ? code.split("\n").length : 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -24,19 +29,70 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
     };
   }, [code, lang, theme]);
 
-  if (!html) {
-    // Fallback before Shiki loads
-    return (
-      <pre className="!bg-muted !border !border-border !rounded-lg !p-3 overflow-x-auto">
-        <code className={`language-${lang}`}>{code}</code>
-      </pre>
-    );
-  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   return (
-    <div
-      className="shiki-wrapper max-w-full [&_.shiki]:!p-3 [&_.shiki]:!rounded-lg [&_.shiki]:overflow-x-auto [&_.shiki]:border [&_.shiki]:border-border [&_code]:!text-[13px] [&_code]:font-mono [&_code]:whitespace-pre-wrap [&_code]:break-all"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <figure className="code-surface group my-3 overflow-hidden rounded-lg border border-[#22252b] bg-[#090b0f] shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]">
+      <figcaption className="flex min-h-9 items-center justify-between gap-3 border-b border-[#1a1d23] bg-[#0d1117] px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-[#4A9E6B]" />
+          <span className="truncate font-mono text-[11px] font-medium uppercase tracking-normal text-[#9aa4b2]">
+            {label}
+          </span>
+          {lineCount > 1 && (
+            <span className="hidden font-mono text-[10px] text-[#596271] sm:inline">
+              {lineCount} lines
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={copy}
+          className={cn(
+            "inline-flex h-6 w-6 items-center justify-center rounded-md text-[#7f8997] transition-colors",
+            "hover:bg-[#1a1f29] hover:text-[#e5e7eb] focus:outline-none focus:ring-1 focus:ring-[#D4A853]/60"
+          )}
+          aria-label={copied ? "Copied" : "Copy code"}
+          title={copied ? "Copied" : "Copy code"}
+        >
+          {copied ? <Check className="size-3.5 text-[#4A9E6B]" /> : <Copy className="size-3.5" />}
+        </button>
+      </figcaption>
+      <div className="code-scroll max-h-[520px] overflow-auto">
+        {html ? (
+          <div className="shiki-wrapper" dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <pre className="code-fallback">
+            <code className={`language-${lang}`}>{code}</code>
+          </pre>
+        )}
+      </div>
+    </figure>
   );
+}
+
+function formatLanguageLabel(lang: string): string {
+  const value = lang.trim().toLowerCase();
+  if (!value) return "text";
+  const labels: Record<string, string> = {
+    js: "javascript",
+    jsx: "jsx",
+    ts: "typescript",
+    tsx: "tsx",
+    rs: "rust",
+    sh: "shell",
+    bash: "shell",
+    zsh: "shell",
+    md: "markdown",
+    yml: "yaml",
+  };
+  return labels[value] || value;
 }

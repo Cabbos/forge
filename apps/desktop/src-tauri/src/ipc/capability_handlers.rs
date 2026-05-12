@@ -23,16 +23,19 @@ pub async fn list_capabilities(
     let _ = state.harness.skill_loader.scan_all().await;
 
     // 1. Get registry capabilities (tools, hooks, mcp)
-    let mut result: Vec<CapabilityInfo> = state.harness.capability_registry.all()
+    let mut result: Vec<CapabilityInfo> = state.harness.capability_registry.all_entries()
         .iter()
-        .map(|m| CapabilityInfo {
-            id: m.id.clone(), name: m.name.clone(), description: m.description.clone(),
-            kind: format!("{:?}", m.kind).to_lowercase(), source: m.source.clone(),
-            version: m.version.clone(), enabled: true,
+        .map(|entry| {
+            let m = &entry.metadata;
+            CapabilityInfo {
+                id: m.id.clone(), name: m.name.clone(), description: m.description.clone(),
+                kind: format!("{:?}", m.kind).to_lowercase(), source: m.source.clone(),
+                version: m.version.clone(), enabled: entry.enabled,
+            }
         }).collect();
 
     // 2. Get discovered skills from SkillLoader
-    let skills = state.harness.skill_loader.enabled_skills().await;
+    let skills = state.harness.skill_loader.all_skills().await;
     for s in skills {
         if !result.iter().any(|c| c.id == s.id) {
             result.push(CapabilityInfo {
@@ -53,12 +56,22 @@ pub async fn toggle_capability(
 ) -> Result<(), String> {
     // Try registry first, then skill loader
     match state.harness.capability_registry.toggle(&capability_id, enabled) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            let sessions = state.sessions.read().await.values().cloned().collect::<Vec<_>>();
+            for session in sessions {
+                let _ = session.harness.capability_registry.toggle(&capability_id, enabled);
+            }
+            Ok(())
+        }
         Err(reg_err) => {
             state.harness.skill_loader.toggle(&capability_id, enabled).await;
             // Verify the toggle actually found the skill
-            let skills = state.harness.skill_loader.enabled_skills().await;
+            let skills = state.harness.skill_loader.all_skills().await;
             if skills.iter().any(|s| s.id == capability_id) {
+                let sessions = state.sessions.read().await.values().cloned().collect::<Vec<_>>();
+                for session in sessions {
+                    session.harness.skill_loader.toggle(&capability_id, enabled).await;
+                }
                 Ok(())
             } else {
                 Err(format!("Capability not found in registry or skills: {} ({})", capability_id, reg_err))

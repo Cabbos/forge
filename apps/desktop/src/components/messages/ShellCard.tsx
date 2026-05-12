@@ -1,13 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, Terminal } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 
 export function ShellCard({ block }: { block: BlockState }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const exitCode = block.metadata.exit_code as number | undefined;
   const isError = exitCode !== undefined && exitCode !== 0;
+
+  useEffect(() => {
+    if (block.isComplete && isError) setExpanded(true);
+  }, [block.isComplete, isError]);
 
   return (
     <div className="mb-3">

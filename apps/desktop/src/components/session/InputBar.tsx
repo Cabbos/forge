@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Cpu, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, Puzzle } from "lucide-react";
+import { Cpu, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, Puzzle, Sparkles } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
 import { searchWorkspaceFiles, listCapabilities, type CapabilityInfo } from "@/lib/tauri";
@@ -14,12 +14,18 @@ const MODELS = [
 ];
 
 const COMMANDS = [
-  { prefix: "/cr", text: "/code-review", desc: "审查代码" },
-  { prefix: "/fix", text: "/fix", desc: "修复 bug" },
-  { prefix: "/explain", text: "/explain", desc: "解释代码" },
-  { prefix: "/refactor", text: "/refactor", desc: "重构" },
-  { prefix: "/test", text: "/test", desc: "写测试" },
-  { prefix: "/docs", text: "/docs", desc: "写文档" },
+  { prefix: "/cr", text: "/code-review", desc: "检查有没有风险" },
+  { prefix: "/fix", text: "/fix", desc: "帮我修一个问题" },
+  { prefix: "/explain", text: "/explain", desc: "用人话解释" },
+  { prefix: "/refactor", text: "/refactor", desc: "整理代码结构" },
+  { prefix: "/test", text: "/test", desc: "确认改动没坏" },
+  { prefix: "/docs", text: "/docs", desc: "补充说明文档" },
+];
+
+const QUICK_PROMPTS = [
+  "先帮我看懂当前项目，告诉我它能做什么、哪里最重要。",
+  "帮我检查当前改动有没有明显风险，并用小白能懂的话总结。",
+  "帮我把界面往小白友好方向优化，先列出你准备改哪里。",
 ];
 
 export function InputBar({ sessionId }: InputBarProps) {
@@ -112,6 +118,15 @@ export function InputBar({ sessionId }: InputBarProps) {
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   }, [value, chips, sessionId, send, isRunning]);
 
+  const useQuickPrompt = useCallback((prompt: string) => {
+    setValue(prompt);
+    valueRef.current = prompt;
+    setTimeout(() => {
+      textareaRef.current?.focus();
+      adjustHeight();
+    }, 0);
+  }, [adjustHeight]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -127,14 +142,30 @@ export function InputBar({ sessionId }: InputBarProps) {
 
   return (
     <div className="px-10 pb-5 pt-3 flex-shrink-0 relative" style={{ borderTop: "1px solid #1c1c1c" }}>
+      {isRunning && !value.trim() && chips.length === 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {QUICK_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              onClick={() => useQuickPrompt(prompt)}
+              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] transition-colors hover:text-foreground"
+              style={{ borderColor: "#1c1c1c", background: "#101010", color: "#777" }}
+            >
+              <Sparkles className="size-3" style={{ color: "#D4A853" }} />
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Suggestion popup */}
       {showSuggestions && (
         <div className="absolute left-10 right-10 rounded-lg py-1 shadow-xl z-20 max-h-[200px] overflow-y-auto"
           style={{ bottom: "calc(100% - 8px)", background: "#141414", border: "1px solid #1c1c1c" }}>
           {showSuggestions === "@" && (
             <>
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40">Files</div>
-              {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/40 font-mono">Type to search...</div>}
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40">选择相关文件</div>
+              {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/40">输入文件名来搜索</div>}
               {atResults.map(f => (
                 <button key={f} onClick={() => addChip("file", f)}
                   className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary font-mono flex items-center gap-2">
@@ -146,7 +177,7 @@ export function InputBar({ sessionId }: InputBarProps) {
           )}
           {showSuggestions === "/" && (
             <>
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40">Commands</div>
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40">常用请求</div>
               {COMMANDS.map(cmd => (
                 <button key={cmd.prefix} onClick={() => addChip("command", cmd.text)}
                   className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary flex justify-between items-center">
@@ -188,7 +219,7 @@ export function InputBar({ sessionId }: InputBarProps) {
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={isRunning ? "Message... @ for files · / for commands" : "Session not running"}
+            placeholder={isRunning ? "描述你想完成的事，比如：帮我把登录页面改得更清楚" : "这个会话已停止"}
             rows={1}
             disabled={!isRunning}
             className="w-full bg-transparent border-none outline-none resize-none text-sm leading-relaxed placeholder:text-[#555]"
@@ -201,11 +232,11 @@ export function InputBar({ sessionId }: InputBarProps) {
           <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "#555" }}>
             <button onClick={() => { textareaRef.current?.focus(); setShowSuggestions((s) => s === "@" ? null : "@"); }}
               className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999] inline-flex items-center gap-1 transition-colors" style={{ background: "#111" }}>
-              <AtSign className="size-3" /> files
+              <AtSign className="size-3" /> 添加文件
             </button>
             <button onClick={() => { textareaRef.current?.focus(); setShowSuggestions((s) => s === "/" ? null : "/"); }}
               className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999] inline-flex items-center gap-1 transition-colors" style={{ background: "#111" }}>
-              <Slash className="size-3" /> commands
+              <Slash className="size-3" /> 常用请求
             </button>
           </div>
 

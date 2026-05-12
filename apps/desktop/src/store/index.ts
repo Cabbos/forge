@@ -38,6 +38,8 @@ interface AppStore {
 const PERSIST_KEY = "tui-to-gui-sessions";
 const BLOCKS_PREFIX = "tui-to-gui-blocks:";
 const MAX_PERSISTED_BLOCKS = 100;
+const BLOCK_PERSIST_DEBOUNCE_MS = 350;
+const blockPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 interface PersistedSession {
   id: string;
@@ -60,12 +62,34 @@ function persistSessions(sessions: Map<string, SessionState>) {
   return idbSet(PERSIST_KEY, data).catch(() => {});
 }
 
-// Save blocks for a session to IndexedDB (capped at MAX_PERSISTED_BLOCKS)
-function persistBlocks(sessionId: string, blocks: BlockState[]) {
-  const capped = blocks.length > MAX_PERSISTED_BLOCKS
+function cappedBlocks(blocks: BlockState[]) {
+  return blocks.length > MAX_PERSISTED_BLOCKS
     ? blocks.slice(blocks.length - MAX_PERSISTED_BLOCKS)
     : blocks;
-  idbSet(BLOCKS_PREFIX + sessionId, capped).catch(() => {});
+}
+
+function clearPendingBlockPersist(sessionId: string) {
+  const timer = blockPersistTimers.get(sessionId);
+  if (timer) {
+    clearTimeout(timer);
+    blockPersistTimers.delete(sessionId);
+  }
+}
+
+// Save blocks for a session to IndexedDB (capped at MAX_PERSISTED_BLOCKS).
+// Streaming can produce dozens of chunks per second, so debounce disk writes.
+function persistBlocks(sessionId: string, blocks: BlockState[]) {
+  const snapshot = cappedBlocks(blocks);
+  clearPendingBlockPersist(sessionId);
+  blockPersistTimers.set(sessionId, setTimeout(() => {
+    blockPersistTimers.delete(sessionId);
+    idbSet(BLOCKS_PREFIX + sessionId, snapshot).catch(() => {});
+  }, BLOCK_PERSIST_DEBOUNCE_MS));
+}
+
+function persistBlocksNow(sessionId: string, blocks: BlockState[]) {
+  clearPendingBlockPersist(sessionId);
+  return idbSet(BLOCKS_PREFIX + sessionId, cappedBlocks(blocks)).catch(() => {});
 }
 
 // Load blocks for a session from IndexedDB
@@ -135,6 +159,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const activeSessionId =
       get().activeSessionId === id ? null : get().activeSessionId;
     set({ sessions, activeSessionId });
+    clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
       persistSessions(sessions),
@@ -256,7 +281,7 @@ export const useStore = create<AppStore>((set, get) => ({
       });
       set({ sessions });
       persistSessions(sessions);
-      persistBlocks(session_id, blocks);
+      persistBlocksNow(session_id, blocks);
       return;
     }
 
@@ -282,7 +307,7 @@ export const useStore = create<AppStore>((set, get) => ({
         streaming: statusEvent.status === "working",
       });
       set({ sessions });
-      persistBlocks(session_id, blocks);
+      persistBlocksNow(session_id, blocks);
       return;
     }
 
@@ -303,7 +328,7 @@ export const useStore = create<AppStore>((set, get) => ({
         blocks: newBlocks,
       });
       set({ sessions });
-      persistBlocks(session_id, newBlocks);
+      persistBlocksNow(session_id, newBlocks);
       return;
     }
 
@@ -352,7 +377,7 @@ export const useStore = create<AppStore>((set, get) => ({
       }
       sessions.set(session_id, { ...session, blocks });
       set({ sessions });
-      persistBlocks(session_id, blocks);
+      persistBlocksNow(session_id, blocks);
       return;
     }
 
@@ -405,7 +430,7 @@ export const useStore = create<AppStore>((set, get) => ({
       }
       sessions.set(session_id, { ...session, blocks });
       set({ sessions });
-      persistBlocks(session_id, blocks);
+      persistBlocksNow(session_id, blocks);
       return;
     }
 
