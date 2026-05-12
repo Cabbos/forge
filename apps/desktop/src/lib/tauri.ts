@@ -75,3 +75,8 @@ export async function toggleCapability(id: string, enabled: boolean): Promise<vo
 export async function searchWorkspaceFiles(query: string): Promise<string[]> {
   return invoke("search_workspace_files", { query });
 }
+
+/** Install a skill from GitHub (owner/repo) */
+export async function installSkill(repo: string): Promise<CapabilityInfo> {
+  return invoke("install_skill", { repo });
+}

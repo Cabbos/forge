@@ -49,14 +49,18 @@ impl SkillLoader {
     /// Scan all registered directories for SKILL.md files.
     pub async fn scan_all(&self) -> Vec<LoadedSkill> {
         let dirs = self.scan_dirs.read().await.clone();
+        crate::app_log!("INFO", "[scan_all] scanning {} dirs: {:?}", dirs.len(), dirs);
         let mut discovered = Vec::new();
 
         for dir in &dirs {
+            crate::app_log!("INFO", "[scan_all] scanning dir: {:?} (exists={})", dir, dir.exists());
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let skill_md = entry.path().join("SKILL.md");
-                    if skill_md.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                    let claude_md = entry.path().join("CLAUDE.md");
+                    let md_path = if skill_md.exists() { skill_md } else if claude_md.exists() { claude_md } else { continue; };
+                    {
+                        if let Ok(content) = std::fs::read_to_string(&md_path) {
                             let name = entry.file_name().to_string_lossy().to_string();
                             let (desc, tools) = parse_skill_metadata(&content);
                             discovered.push(LoadedSkill {
@@ -82,8 +86,10 @@ impl SkillLoader {
                     if let Ok(entries) = std::fs::read_dir(&builtin) {
                         for entry in entries.flatten() {
                             let skill_md = entry.path().join("SKILL.md");
-                            if skill_md.exists() {
-                                if let Ok(content) = std::fs::read_to_string(&skill_md) {
+                            let claude_md = entry.path().join("CLAUDE.md");
+                            let md_path = if skill_md.exists() { skill_md } else if claude_md.exists() { claude_md } else { continue; };
+                            {
+                                if let Ok(content) = std::fs::read_to_string(&md_path) {
                                     let name = entry.file_name().to_string_lossy().to_string();
                                     let (desc, tools) = parse_skill_metadata(&content);
                                     discovered.push(LoadedSkill {
@@ -103,11 +109,17 @@ impl SkillLoader {
             }
         }
 
+        crate::app_log!("INFO", "[scan_all] discovered {} skills: {:?}",
+            discovered.len(),
+            discovered.iter().map(|s| format!("{} ({} chars)", s.name, s.instruction.len())).collect::<Vec<_>>());
         *self.skills.write().await = discovered.clone();
         discovered
     }
 
     pub async fn enabled_skills(&self) -> Vec<LoadedSkill> {
+        let all: Vec<_> = self.skills.read().await.iter().cloned().collect();
+        crate::app_log!("INFO", "[enabled_skills] total={}, enabled={}",
+            all.len(), all.iter().filter(|s| s.enabled).count());
         self.skills.read().await.iter()
             .filter(|s| s.enabled)
             .cloned()

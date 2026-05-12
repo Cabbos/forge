@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 import { useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
+import { listCapabilities, toggleCapability, installSkill, type CapabilityInfo } from "@/lib/tauri";
 
 type Tab = "skills" | "mcp" | "hooks";
 
@@ -154,18 +154,34 @@ function SkillsContent({ search }: { search: string }) {
     listCapabilities().then(setCaps).catch(console.error);
   }, []);
 
+  const [installing, setInstalling] = useState<string | null>(null);
+
   const handleToggle = async (id: string, enabled: boolean) => {
     try {
       await toggleCapability(id, enabled);
       setCaps((prev) => prev.map((c) => (c.id === id ? { ...c, enabled } : c)));
-    } catch (e) {
-      console.error("Toggle failed:", e);
-    }
+    } catch (e) { console.error("Toggle failed:", e); }
+  };
+
+  const handleInstall = async (repo: string) => {
+    setInstalling(repo);
+    try {
+      await installSkill(repo);
+      // Refresh full capability list after install
+      const all = await listCapabilities();
+      setCaps(all);
+    } catch (e) { console.error("Install failed:", e); }
+    setInstalling(null);
   };
 
   const skills = caps.filter((c) => c.kind === "skill" || c.kind === "tool");
   const installed = skills.filter((s) => s.enabled !== false);
-  const discoverable = skills.filter((s) => s.enabled === false);
+
+  // Static discoverable skills
+  const DISCOVERABLE = [
+    { id: "huashu-design", name: "huashu-design", description: "HTML hi-fi prototypes + animations", source: "alchaincyf/huashu-design", kind: "skill" },
+    { id: "karpathy", name: "karpathy", description: "4 coding principles for LLM agents", source: "forrestchang/andrej-karpathy-skills", kind: "skill" },
+  ];
 
   const filterFn = (list: CapabilityInfo[]) =>
     search
@@ -204,7 +220,7 @@ function SkillsContent({ search }: { search: string }) {
       <section>
         <h5 className="text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2.5">Discover</h5>
         <div className="flex flex-col gap-1.5">
-          {filterFn(discoverable).map((s) => (
+          {DISCOVERABLE.filter(s => !caps.some(c => c.name === s.name)).map((s) => (
             <div key={s.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-pointer transition-colors hover:bg-secondary border border-transparent hover:border-border">
               <span className="w-6 h-6 rounded flex items-center justify-center text-xs" style={{ background: `${getColor(s.kind)}18`, color: getColor(s.kind) }}>{getIcon(s.kind)}</span>
               <div className="flex-1 min-w-0">
@@ -214,10 +230,11 @@ function SkillsContent({ search }: { search: string }) {
                 </div>
               </div>
               <button
-                onClick={() => handleToggle(s.id, true)}
-                className="text-[10px] px-2 py-1 rounded font-medium border border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+                onClick={() => handleInstall(s.source)}
+                disabled={installing === s.source}
+                className="text-[10px] px-2 py-1 rounded font-medium border border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors disabled:opacity-50"
               >
-                install
+                {installing === s.source ? "..." : "install"}
               </button>
             </div>
           ))}

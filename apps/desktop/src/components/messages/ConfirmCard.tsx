@@ -2,10 +2,14 @@ import { useState } from "react";
 import { ShieldAlert, Check, X } from "lucide-react";
 import type { BlockState } from "@/lib/protocol";
 import { confirmResponse } from "@/lib/tauri";
+import { useStore } from "@/store";
 
-export function ConfirmCard({ block }: { block: BlockState }) {
-  const [responded, setResponded] = useState(false);
-  const [answer, setAnswer] = useState<boolean | null>(null);
+export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId?: string }) {
+  const updateBlock = useStore((s) => s.updateBlock);
+  const alreadyResolved = block.metadata.confirmed === true;
+  const savedAnswer = block.metadata.answer as boolean | undefined;
+  const [responded, setResponded] = useState(alreadyResolved);
+  const [answer, setAnswer] = useState<boolean | null>(savedAnswer ?? null);
   const question = block.content || "Allow this operation?";
   const kind = (block.metadata.kind as string) || "operation";
 
@@ -16,6 +20,16 @@ export function ConfirmCard({ block }: { block: BlockState }) {
       await confirmResponse(block.block_id, approved);
     } catch (e) {
       console.error("confirmResponse failed:", e);
+      // Revert UI on error
+      setResponded(false);
+      setAnswer(null);
+      return;
+    }
+    // Persist confirmation state so it survives session reload
+    if (sessionId) {
+      updateBlock(sessionId, block.block_id, {
+        metadata: { ...block.metadata, confirmed: true, answer: approved },
+      });
     }
   };
 

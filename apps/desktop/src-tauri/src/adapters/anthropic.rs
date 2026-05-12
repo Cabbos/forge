@@ -1,9 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::Serialize;
 use tauri::Emitter;
+use tokio::sync::Notify;
 
 use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
 use crate::protocol::events::StreamEvent;
@@ -47,6 +49,8 @@ pub struct AnthropicAdapter {
     client: reqwest::Client,
     /// Extra tools from MCP servers or other external sources
     external_tools: Vec<ToolDef>,
+    /// Disable anthropic thinking extension (DeepSeek may not support it)
+    disable_thinking: bool,
 }
 
 impl AnthropicAdapter {
@@ -67,6 +71,7 @@ impl AnthropicAdapter {
             max_tokens: 8192,
             client,
             external_tools: Vec::new(),
+            disable_thinking: false,
         })
     }
 
@@ -82,6 +87,21 @@ impl AnthropicAdapter {
 
     pub fn with_external_tools(mut self, tools: Vec<ToolDef>) -> Self {
         self.external_tools = tools;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    pub fn with_thinking_budget_tokens(mut self, budget: u32) -> Self {
+        self.thinking_budget_tokens = budget;
+        self
+    }
+
+    pub fn with_thinking_disabled(mut self) -> Self {
+        self.disable_thinking = true;
         self
     }
 }
@@ -173,6 +193,11 @@ impl AnthropicAdapter {
             description: "Ask the user a question when you need clarification, decisions, or more context. Use sparingly — only when truly needed.".to_string(),
             input_schema: serde_json::json!({"type":"object","properties":{"question":{"type":"string","description":"Question to ask the user"},"options":{"type":"array","items":{"type":"string"},"description":"Optional list of choices for the user"}},"required":["question"]}),
         },
+        ToolDef {
+            name: "delegate_task".to_string(),
+            description: "Dispatch an independent research subtask that runs in parallel with other subtasks. The sub-agent has read-only access (read_file, search_content, search_files, list_directory, web_search, web_fetch) and returns a text answer. Use this when you need to investigate multiple areas simultaneously — for example, searching for different patterns across the codebase, or reading multiple related files at once. Each delegate_task runs concurrently. Input: a clear, focused task description.".to_string(),
+            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to find or investigate."}},"required":["task"]}),
+        },
     ];
     tools.extend(self.external_tools.clone());
     tools
@@ -188,6 +213,8 @@ impl AiAdapter for AnthropicAdapter {
     fn model_name(&self) -> &str {
         match self.model.as_str() {
             "deepseek-v4-pro[1m]" => "DeepSeek V4 Pro",
+            "deepseek-v4-pro" => "DeepSeek V4 Pro",
+            "deepseek-v4-flash[1m]" => "DeepSeek V4 Flash",
             "deepseek-v4-flash" => "DeepSeek V4 Flash",
             "claude-opus-4-7" => "Claude Opus 4.7",
             "claude-sonnet-4-6" => "Claude Sonnet 4.6",
@@ -197,22 +224,136 @@ impl AiAdapter for AnthropicAdapter {
         }
     }
 
+    /// Non-streaming API call — no frontend events. Used by sub-agents.
+    async fn call(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        let mut system_parts: Vec<String> = vec![SYSTEM_PROMPT.to_string()];
+        let filtered: Vec<ChatMessage> = messages
+            .iter()
+            .filter(|m| {
+                if m.role == "system" {
+                    if let serde_json::Value::String(ref s) = m.content {
+                        if !s.is_empty() { system_parts.push(s.clone()); }
+                    }
+                    false
+                } else { true }
+            })
+            .cloned()
+            .collect();
+
+        let body = AnthropicRequest {
+            model: &self.model,
+            max_tokens: self.max_tokens,
+            stream: false,
+            messages: &filtered,
+            thinking: Some(ThinkingConfig { type_: "enabled".to_string(), budget_tokens: 2000 }),
+            system: Some(system_parts.join("\n\n")),
+            tools: Some(self.tool_definitions()),
+        };
+
+        // Race HTTP call against cancel token
+        let url = format!("{}/v1/messages", self.base_url);
+        let request = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body);
+
+        let response = tokio::select! {
+            r = request.send() => r,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        };
+        let response = response.map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text = match tokio::select! {
+                t = response.text() => t,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            } {
+                Ok(t) => t,
+                Err(_) => String::new(),
+            };
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = match tokio::select! {
+            j = response.json() => j,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        } {
+            Ok(v) => v,
+            Err(e) => return Err(AdapterError::Stream(e.to_string())),
+        };
+
+        let content = parsed["content"].as_array()
+            .cloned()
+            .unwrap_or_default();
+
+        let tool_calls: Vec<ToolCall> = content.iter()
+            .filter(|b| b["type"].as_str() == Some("tool_use"))
+            .map(|b| ToolCall {
+                id: b["id"].as_str().unwrap_or("").to_string(),
+                name: b["name"].as_str().unwrap_or("").to_string(),
+                input: b["input"].clone(),
+            })
+            .collect();
+
+        let stop_reason = parsed["stop_reason"].as_str().map(|s| s.to_string());
+
+        Ok(StreamResult {
+            assistant_content: content,
+            tool_calls,
+            stop_reason,
+        })
+    }
+
     async fn stream_message(
         &self,
         session_id: &str,
         messages: &[ChatMessage],
         app_handle: &tauri::AppHandle,
+        cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
+        // Extract system messages and build the combined system prompt
+        let mut system_parts: Vec<String> = vec![SYSTEM_PROMPT.to_string()];
+        let filtered: Vec<ChatMessage> = messages
+            .iter()
+            .filter(|m| {
+                if m.role == "system" {
+                    if let serde_json::Value::String(ref s) = m.content {
+                        if !s.is_empty() {
+                            system_parts.push(s.clone());
+                        }
+                    }
+                    false // remove from messages list
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+
+        let system = system_parts.join("\n\n");
+
         let body = AnthropicRequest {
             model: &self.model,
             max_tokens: self.max_tokens,
             stream: true,
-            messages,
-            thinking: Some(ThinkingConfig {
-                type_: "enabled".to_string(),
-                budget_tokens: self.thinking_budget_tokens,
-            }),
-            system: Some(SYSTEM_PROMPT.to_string()),
+            messages: &filtered,
+            thinking: if self.disable_thinking {
+                None
+            } else {
+                Some(ThinkingConfig {
+                    type_: "enabled".to_string(),
+                    budget_tokens: self.thinking_budget_tokens,
+                })
+            },
+            system: Some(system),
             tools: Some(self.tool_definitions()),
         };
 
@@ -253,7 +394,18 @@ impl AiAdapter for AnthropicAdapter {
         let mut current_thinking = String::new();
         let mut total_input_tokens: u32 = 0;
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let chunk = tokio::select! {
+                c = stream.next() => c,
+                _ = cancel.notified() => {
+                    crate::app_log!("INFO", "[anthropic] Stream cancelled for session {}", session_id);
+                    return Err(AdapterError::Stream("Cancelled".to_string()));
+                }
+            };
+            let chunk = match chunk {
+                Some(c) => c,
+                None => break,
+            };
             let chunk = chunk.map_err(|e| AdapterError::Stream(e.to_string()))?;
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text.replace("\r\n", "\n"));

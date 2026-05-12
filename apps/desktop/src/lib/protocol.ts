@@ -43,6 +43,7 @@ export interface SessionState {
   agentType: string;
   model: string;
   status: "running" | "stopped" | "error";
+  streaming: boolean;
   blocks: BlockState[];
   costUsd: number;
 }

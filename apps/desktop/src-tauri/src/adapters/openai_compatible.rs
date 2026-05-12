@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::Serialize;
 use tauri::Emitter;
+use tokio::sync::Notify;
 
 use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
 use crate::protocol::events::StreamEvent;
@@ -118,11 +121,21 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         }
     }
 
+    async fn call(
+        &self,
+        _messages: &[ChatMessage],
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        // Not used for sub-agents — AnthropicAdapter::call handles it
+        Err(AdapterError::Stream("OpenAI adapter does not support call()".into()))
+    }
+
     async fn stream_message(
         &self,
         session_id: &str,
         messages: &[ChatMessage],
         app_handle: &tauri::AppHandle,
+        cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
         crate::app_log!("INFO", "OpenAI adapter streaming — {} messages, model={}", messages.len(), self.model);
         let openai_msgs = convert_messages(messages);
@@ -147,7 +160,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
         // Debug: log request body for troubleshooting tool message issues
         let body_json = serde_json::to_string_pretty(&request).unwrap_or_default();
-        log::info!("OpenAI request body ({} bytes): {}", body_json.len(), &body_json[..body_json.len().min(2000)]);
+        crate::app_log!("INFO", "OpenAI request body ({} bytes): {}", body_json.len(), &body_json[..body_json.len().min(2000)]);
 
         let response = self.client
             .post(format!("{}/chat/completions", self.base_url))
@@ -175,7 +188,18 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         let mut active_text_block_id: Option<String> = None;
         let mut tool_call_buffers: Vec<(usize, String, String, String)> = Vec::new(); // (idx, id, name, args_json)
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let chunk = tokio::select! {
+                c = stream.next() => c,
+                _ = cancel.notified() => {
+                    crate::app_log!("INFO", "[openai] Stream cancelled for session {}", session_id);
+                    return Err(AdapterError::Stream("Cancelled".to_string()));
+                }
+            };
+            let chunk = match chunk {
+                Some(c) => c,
+                None => break,
+            };
             let chunk = chunk.map_err(|e| AdapterError::Stream(e.to_string()))?;
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text);
@@ -308,13 +332,26 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 }
 
 fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
-    let mut result = vec![OpenAiMessage {
-        role: "system".to_string(),
-        content: serde_json::Value::String(SYSTEM_PROMPT.to_string()),
-        tool_calls: None,
-        tool_call_id: None,
-        reasoning_content: None,
-    }];
+    let mut result = Vec::new();
+    // Use the first ChatMessage as system prompt if it has role "system", otherwise use default
+    let has_system = messages.first().map(|m| m.role == "system").unwrap_or(false);
+    let roles: Vec<&str> = messages.iter().map(|m| m.role.as_str()).collect();
+    crate::app_log!("INFO", "[convert_messages] {} messages, roles: {:?}, has_system: {}", messages.len(), roles, has_system);
+    if !has_system {
+        crate::app_log!("INFO", "[convert_messages] using default SYSTEM_PROMPT (no system message found)");
+        result.push(OpenAiMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String(SYSTEM_PROMPT.to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+        });
+    } else {
+        if let serde_json::Value::String(ref s) = messages[0].content {
+            crate::app_log!("INFO", "[convert_messages] using custom system prompt: {} chars, has 'Active Skills': {}",
+                s.len(), s.contains("Active Skills"));
+        }
+    }
 
     for msg in messages {
         match &msg.content {

@@ -1,0 +1,222 @@
+use std::sync::Arc;
+use serde::Serialize;
+use tokio::sync::Notify;
+
+use crate::adapters::base::{AiAdapter, ChatMessage};
+use crate::harness::Harness;
+
+const MAX_ROUNDS: usize = 3;
+const MAX_RESULT_CHARS: usize = 8000;
+
+/// Structured trace of one sub-agent round for the frontend viewer.
+#[derive(Debug, Clone, Serialize)]
+struct RoundTrace {
+    round: usize,
+    thinking: String,
+    text: String,
+    tool_calls: Vec<ToolCallTrace>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ToolCallTrace {
+    name: String,
+    input: String,
+    result: String,
+}
+
+/// Final JSON payload returned to the frontend.
+#[derive(Debug, Clone, Serialize)]
+struct SubAgentResult {
+    result: String,
+    steps: Vec<RoundTrace>,
+}
+
+/// A lightweight ephemeral agent for read-only subtasks.
+/// Runs in parallel with other sub-agents via tokio::spawn.
+/// Returns JSON with full conversation trace for frontend rendering.
+pub struct SubAgent;
+
+impl SubAgent {
+    pub async fn run(
+        task: &str,
+        adapter: Arc<Box<dyn AiAdapter>>,
+        harness: Arc<Harness>,
+        app_handle: &tauri::AppHandle,
+        cancel: Arc<Notify>,
+    ) -> String {
+        let system = ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String(
+                "You are a focused research sub-agent. Your task is to investigate a specific \
+                question and return a concise answer. You have read-only tools: read_file, \
+                search_content, search_files, list_directory, web_search, web_fetch.\n\
+                Do NOT use write_to_file, edit_file, or run_shell.\n\
+                Be thorough but concise. Return your findings as plain text."
+                    .to_string(),
+            ),
+        };
+
+        let task_msg = ChatMessage::user(task);
+        let mut messages: Vec<ChatMessage> = vec![system, task_msg];
+        let mut traces: Vec<RoundTrace> = Vec::new();
+
+        for round in 0..MAX_ROUNDS {
+            let stream_result = match adapter.call(&messages, cancel.clone()).await {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::app_log!("INFO", "[subagent] API error: {}", e);
+                    return build_error_json(&format!("API error: {e}"), &traces);
+                }
+            };
+
+            let thinking = extract_by_type(&stream_result.assistant_content, "thinking");
+            let text = extract_by_type(&stream_result.assistant_content, "text");
+
+            if !stream_result.assistant_content.is_empty() {
+                messages.push(ChatMessage::assistant(serde_json::Value::Array(
+                    stream_result.assistant_content.clone(),
+                )));
+            }
+
+            if stream_result.tool_calls.is_empty() {
+                crate::app_log!("INFO", "[subagent] round {}: done, no tool calls", round);
+                traces.push(RoundTrace {
+                    round,
+                    thinking: truncate_each(thinking, 1000),
+                    text: truncate_each(text.clone(), 2000),
+                    tool_calls: vec![],
+                });
+                let result_text = text.clone();
+                return build_result_json(&result_text, &traces);
+            }
+
+            crate::app_log!(
+                "INFO",
+                "[subagent] round {}: {} tool calls — {:?}",
+                round,
+                stream_result.tool_calls.len(),
+                stream_result.tool_calls.iter().map(|tc| tc.name.clone()).collect::<Vec<_>>()
+            );
+
+            // Execute tools in parallel (block dangerous tools)
+            // Track by index so each result maps to the correct tool_use_id
+            let tool_count = stream_result.tool_calls.len();
+            let mut handles = Vec::new();
+            for (i, tc) in stream_result.tool_calls.iter().enumerate() {
+                let h = harness.clone();
+                let name = tc.name.clone();
+                let input = tc.input.clone();
+                let input_str = serde_json::to_string(&tc.input).unwrap_or_default();
+                let tool_id = tc.id.clone();
+                let is_blocked = matches!(name.as_str(), "run_shell" | "write_to_file" | "edit_file" | "bash");
+                let app = app_handle.clone();
+                handles.push(tokio::spawn(async move {
+                    let result = if is_blocked {
+                        format!("Tool '{}' is blocked for sub-agents (read-only access only)", name)
+                    } else {
+                        h.execute_tool("sub", &name, &input, &app).await
+                    };
+                    (i, name, input_str, result, tool_id)
+                }));
+            }
+
+            let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+            let mut tool_results: Vec<serde_json::Value> = vec![serde_json::Value::Null; tool_count];
+
+            for handle in handles {
+                match handle.await {
+                    Ok((i, name, input_str, result, tool_id)) => {
+                        crate::app_log!("INFO", "[subagent] tool '{}' result ({} chars)", name, result.len());
+                        let truncated_input = truncate_each(input_str, 200);
+                        let truncated_result = truncate_each(result.clone(), 1500);
+                        tool_traces.push(ToolCallTrace {
+                            name,
+                            input: truncated_input,
+                            result: truncated_result,
+                        });
+                        tool_results[i] = serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": result,
+                        });
+                    }
+                    Err(e) => {
+                        crate::app_log!("INFO", "[subagent] tool panicked: {}", e);
+                    }
+                }
+            }
+            // Remove any Null entries from tool_results (panicked tools)
+            tool_results.retain(|v| !v.is_null());
+
+            traces.push(RoundTrace {
+                round,
+                thinking: truncate_each(thinking.clone(), 1000),
+                text: truncate_each(text.clone(), 2000),
+                tool_calls: tool_traces,
+            });
+
+            messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: serde_json::Value::Array(tool_results),
+            });
+        }
+
+        // Max rounds — request final summary
+        messages.push(ChatMessage::user("Summarize your findings concisely. Do not use tools."));
+        match adapter.call(&messages, cancel.clone()).await {
+            Ok(r) => {
+                let text = extract_by_type(&r.assistant_content, "text");
+                crate::app_log!("INFO", "[subagent] complete: {} chars", text.len());
+                build_result_json(&text, &traces)
+            }
+            Err(e) => build_error_json(&format!("Final error: {e}"), &traces),
+        }
+    }
+}
+
+fn extract_by_type(content: &[serde_json::Value], target_type: &str) -> String {
+    content
+        .iter()
+        .filter_map(|block| {
+            let t = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if t == target_type {
+                block.get(target_type).and_then(|v| v.as_str()).map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_result_json(text: &str, traces: &[RoundTrace]) -> String {
+    let payload = SubAgentResult {
+        result: truncate_any(text.to_string(), MAX_RESULT_CHARS),
+        steps: traces.to_vec(),
+    };
+    serde_json::to_string(&payload).unwrap_or_else(|_| text.to_string())
+}
+
+fn build_error_json(error: &str, traces: &[RoundTrace]) -> String {
+    let payload = SubAgentResult {
+        result: error.to_string(),
+        steps: traces.to_vec(),
+    };
+    serde_json::to_string(&payload).unwrap_or_else(|_| error.to_string())
+}
+
+fn truncate_each(s: String, max: usize) -> String {
+    if s.len() <= max { s } else {
+        let mut t = s.chars().take(max).collect::<String>();
+        t.push_str("...");
+        t
+    }
+}
+
+fn truncate_any(s: String, max: usize) -> String {
+    if s.len() <= max { s } else {
+        let mut t = s.chars().take(max).collect::<String>();
+        t.push_str("\n\n... (truncated)");
+        t
+    }
+}

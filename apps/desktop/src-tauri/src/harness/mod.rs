@@ -37,6 +37,8 @@ pub struct Harness {
     pub pending_confirms: Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     /// Internal tool executor — used by the execute_tool pipeline.
     tool_executor: Arc<ToolExecutor>,
+    /// Working directory for this session — used to discover project files (CLAUDE.md etc.)
+    working_dir: PathBuf,
 }
 
 impl Harness {
@@ -85,30 +87,50 @@ impl Harness {
             database,
             tool_executor,
             pending_confirms,
+            working_dir,
         }
     }
 
     /// Full agent lifecycle: load skills, run hooks, build system prompt.
-    pub async fn build_system_prompt(&self, provider: &str) -> String {
+    pub async fn build_system_prompt(&self, provider: &str, working_dir: &std::path::Path) -> String {
+        // Ensure skills are scanned before reading
+        self.skill_loader.scan_all().await;
         let skills = self.skill_loader.enabled_skills().await;
         let skill_prompts: Vec<String> = skills.iter().map(|s| s.instruction.clone()).collect();
 
-        let base = format!(
-            "You are a powerful AI coding agent. Provider: {}. \
-            You have direct filesystem and shell access.\n\n\
-            Core rules:\n\
-            - Read files before editing\n\
-            - Make targeted edits\n\
-            - Verify with build/test commands\n\
-            - Keep responses concise\n",
-            provider
-        );
+        // Read project context from working directory (CLAUDE.md, AGENTS.md, etc.)
+        let project_ctx = read_project_context(working_dir);
 
-        if skill_prompts.is_empty() {
-            return base;
+        let mut parts: Vec<String> = Vec::new();
+
+        // Always include a minimal role prompt
+        parts.push(format!(
+            "You are a coding agent running in a desktop app with filesystem and shell access. Provider: {}.\n\
+            You have tools for reading/writing files, running shell commands, searching code, and web access.\n\
+            Default to reading files before editing, making targeted edits, and verifying with build/test commands.",
+            provider
+        ));
+
+        // Project context (CLAUDE.md etc.)
+        if let Some(ctx) = &project_ctx {
+            parts.push(format!("## Project Context\n\n{}", ctx));
+            crate::app_log!("INFO", "[harness] Loaded project context: {} chars", ctx.len());
+        } else {
+            crate::app_log!("INFO", "[harness] No project context file found in {}", self.working_dir.display());
         }
 
-        format!("{}\n\n## Active Skills\n\n{}", base, skill_prompts.join("\n\n---\n\n"))
+        // Active skills
+        if !skill_prompts.is_empty() {
+            let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+            crate::app_log!("INFO", "[harness] Active skills: {:?}", names);
+            parts.push(format!("## Active Skills\n\n{}", skill_prompts.join("\n\n---\n\n")));
+        } else {
+            crate::app_log!("INFO", "[harness] No active skills");
+        }
+
+        let result = parts.join("\n\n");
+        crate::app_log!("INFO", "[harness] System prompt built: {} chars total", result.len());
+        result
     }
 
     /// Dispatch a tool execution through the full hook + permission pipeline.
@@ -181,4 +203,19 @@ impl Harness {
             }
         }
     }
+}
+
+/// Read project context from working directory.
+/// Tries CLAUDE.md first, then AGENTS.md, GEMINI.md.
+fn read_project_context(working_dir: &std::path::Path) -> Option<String> {
+    let candidates = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
+    for name in &candidates {
+        let path = working_dir.join(name);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if !content.trim().is_empty() {
+                return Some(content.trim().to_string());
+            }
+        }
+    }
+    None
 }

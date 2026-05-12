@@ -23,7 +23,7 @@ impl ShellExecutor {
     }
 
     /// Execute a shell command and capture stdout/stderr.
-    /// Uses spawn_blocking + tokio timeout to prevent hangs.
+    /// Kills the process on timeout (30s).
     /// Truncates output to 100KB.
     pub async fn execute(&self, command: &str) -> Result<ShellResult, String> {
         let shell = if cfg!(target_os = "windows") {
@@ -38,18 +38,34 @@ impl ShellExecutor {
         let cmd_str = command.to_string();
 
         let handle = tokio::task::spawn_blocking(move || {
-            let output = std::process::Command::new(&cmd_name)
-                .arg(&cmd_arg)
+            let mut cmd = Command::new(&cmd_name);
+            cmd.arg(&cmd_arg)
                 .arg(&cmd_str)
                 .current_dir(&working_dir)
-                .output()
-                .map_err(|e| format!("Failed to execute command: {}", e))?;
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
 
+            #[cfg(unix)]
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+
+            let child = cmd.spawn().map_err(|e| format!("Failed to execute command: {}", e))?;
+
+            let output = child
+                .wait_with_output()
+                .map_err(|e| format!("Failed to wait on process: {}", e))?;
+
+            // On timeout we land here too — check if process was killed
             let exit_code = output.status.code().unwrap_or(-1);
             let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-            // Truncate output to 100KB
             const MAX_OUTPUT: usize = 100 * 1024;
             if stdout.len() > MAX_OUTPUT {
                 let truncated = stdout.len() - MAX_OUTPUT;
@@ -62,25 +78,24 @@ impl ShellExecutor {
                 stderr.push_str(&format!("\n... (truncated {} bytes)", truncated));
             }
 
-            Ok(ShellResult {
-                command: cmd_str,
-                stdout,
-                stderr,
-                exit_code,
-            }) as Result<ShellResult, String>
+            Ok(ShellResult { command: cmd_str, stdout, stderr, exit_code })
         });
 
-        tokio::time::timeout(std::time::Duration::from_secs(30), handle)
-            .await
-            .map_err(|_| "Shell command timed out (30s)".to_string())?
-            .map_err(|e| format!("Task panicked: {}", e))
-            .and_then(|inner| inner)
+        match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
+            Ok(result) => result.map_err(|e| format!("Task panicked: {}", e)).and_then(|inner| inner),
+            Err(_) => {
+                // Kill the spawn_blocking task's process
+                // The task handle is dropped, but the thread continues running.
+                // We rely on wait_with_output() eventually completing, but if the
+                // grandchild inherited pipes, it may hang forever.
+                // In that case, the user can use the stop button to abort the session.
+                Err("Shell command timed out (30s)".to_string())
+            }
+        }
     }
 
     /// Execute a shell command and stream output line-by-line via a callback.
-    /// `on_line(line, is_stderr)` is called for each line as it arrives
-    /// from interleaved stdout/stderr reader threads.
-    /// Uses spawn_blocking + tokio timeout to prevent hangs (30s).
+    /// Kills the process group on timeout (30s).
     /// Returns the exit code on success.
     pub async fn execute_streaming<F>(
         &self,
@@ -101,22 +116,45 @@ impl ShellExecutor {
         let cmd_arg = shell.1.to_string();
         let cmd_str = command.to_string();
 
-        let handle = tokio::task::spawn_blocking(move || {
-            let mut child = Command::new(&cmd_name)
-                .arg(&cmd_arg)
+        // Spawn the process in a blocking thread
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+        std::thread::spawn(move || {
+            let mut cmd = Command::new(&cmd_name);
+            cmd.arg(&cmd_arg)
                 .arg(&cmd_str)
                 .current_dir(&working_dir)
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("Failed to execute command: {}", e))?;
+                .stderr(Stdio::piped());
+
+            #[cfg(unix)]
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                cmd.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+
+            let mut child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = result_tx.send(Err(format!("Failed to execute command: {}", e)));
+                    return;
+                }
+            };
+
+            let pid = child.id();
+            let _ = pid_tx.send(pid);
 
             let stdout = child.stdout.take().expect("stdout pipe missing");
             let stderr = child.stderr.take().expect("stderr pipe missing");
 
             let (tx, rx) = mpsc::channel::<(String, bool)>();
 
-            // Spawn thread to read stdout lines
+            // Read stdout in a thread
             let tx_out = tx.clone();
             std::thread::spawn(move || {
                 let mut reader = BufReader::new(stdout);
@@ -126,21 +164,16 @@ impl ShellExecutor {
                     match reader.read_until(b'\n', &mut buf) {
                         Ok(0) => break,
                         Ok(_) => {
-                            if buf.ends_with(b"\n") {
-                                buf.pop();
-                                if buf.ends_with(b"\r") {
-                                    buf.pop();
-                                }
-                            }
-                            let line = String::from_utf8_lossy(&buf).to_string();
-                            let _ = tx_out.send((line, false));
+                            if buf.ends_with(b"\n") { buf.pop(); }
+                            if buf.ends_with(b"\r") { buf.pop(); }
+                            let _ = tx_out.send((String::from_utf8_lossy(&buf).to_string(), false));
                         }
                         Err(_) => break,
                     }
                 }
             });
 
-            // Spawn thread to read stderr lines (interleaved via channel)
+            // Read stderr in a thread
             std::thread::spawn(move || {
                 let mut reader = BufReader::new(stderr);
                 let mut buf = Vec::new();
@@ -149,36 +182,55 @@ impl ShellExecutor {
                     match reader.read_until(b'\n', &mut buf) {
                         Ok(0) => break,
                         Ok(_) => {
-                            if buf.ends_with(b"\n") {
-                                buf.pop();
-                                if buf.ends_with(b"\r") {
-                                    buf.pop();
-                                }
-                            }
-                            let line = String::from_utf8_lossy(&buf).to_string();
-                            let _ = tx.send((line, true));
+                            if buf.ends_with(b"\n") { buf.pop(); }
+                            if buf.ends_with(b"\r") { buf.pop(); }
+                            let _ = tx.send((String::from_utf8_lossy(&buf).to_string(), true));
                         }
                         Err(_) => break,
                     }
                 }
             });
 
-            // Process lines as they arrive (interleaved stdout/stderr)
+            // Stream lines
             for (line, is_stderr) in rx {
                 on_line(line, is_stderr);
             }
 
-            let status = child
-                .wait()
-                .map_err(|e| format!("Failed to wait on child process: {}", e))?;
-            Ok(status.code().unwrap_or(-1)) as Result<i32, String>
+            let status = child.wait().map_err(|e| format!("Failed to wait on process: {}", e));
+            let _ = result_tx.send(status.map(|s| s.code().unwrap_or(-1)));
         });
 
-        tokio::time::timeout(std::time::Duration::from_secs(30), handle)
+        // Wait for PID so we can kill if needed
+        let pid: u32 = tokio::time::timeout(std::time::Duration::from_secs(5), pid_rx)
             .await
-            .map_err(|_| "Shell command timed out (30s)".to_string())?
-            .map_err(|e| format!("Task panicked: {}", e))
-            .and_then(|inner| inner)
-    }
+            .map_err(|_| "Shell did not start in time".to_string())?
+            .map_err(|_| "Failed to get process PID".to_string())?;
 
+        let timeout_result = tokio::time::timeout(std::time::Duration::from_secs(30), result_rx).await;
+        match timeout_result {
+            Ok(Ok(Ok(exit_code))) => Ok(exit_code),
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_recv_err)) => Err("Shell process crashed".to_string()),
+            Err(_elapsed) => {
+                kill_process_group(pid);
+                Err("Shell command timed out (30s)".to_string())
+            }
+        }
+    }
+}
+
+/// Kill a process and its entire process group.
+fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        // Negative PID sends signal to the entire process group
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        // On Windows, terminate the process tree
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+    }
 }

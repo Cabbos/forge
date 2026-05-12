@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 /// A chat message in the format expected by AI APIs.
 /// Content can be a plain string (for simple text) or a JSON value
@@ -22,6 +23,13 @@ impl ChatMessage {
         ChatMessage {
             role: "assistant".to_string(),
             content,
+        }
+    }
+
+    pub fn system(text: &str) -> Self {
+        ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String(text.to_string()),
         }
     }
 
@@ -84,12 +92,20 @@ pub enum AdapterError {
 #[async_trait]
 pub trait AiAdapter: Send + Sync {
     /// Stream a message to the AI API and emit events to the frontend.
-    /// Returns the assistant content blocks and any tool calls detected.
     async fn stream_message(
         &self,
         session_id: &str,
         messages: &[ChatMessage],
         app_handle: &tauri::AppHandle,
+        cancel: std::sync::Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError>;
+
+    /// Call the AI API without emitting any frontend events.
+    /// Used by sub-agents that shouldn't pollute the main UI.
+    async fn call(
+        &self,
+        messages: &[ChatMessage],
+        cancel: std::sync::Arc<Notify>,
     ) -> Result<StreamResult, AdapterError>;
 
     /// Model identifier (e.g. "claude-sonnet-4-6").

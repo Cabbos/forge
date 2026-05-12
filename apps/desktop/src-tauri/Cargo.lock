@@ -507,6 +507,7 @@ dependencies = [
  "async-trait",
  "env_logger",
  "futures",
+ "libc",
  "log",
  "portable-pty",
  "regex",

@@ -1,6 +1,7 @@
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
 
 use tauri::Emitter;
+use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::harness::Harness;
@@ -33,19 +34,20 @@ pub struct AgentSession {
     pub agent_type: String,
     pub model: String,
     pub status: Arc<Mutex<SessionStatus>>,
-    pub(crate) adapter: Box<dyn AiAdapter>,
+    pub(crate) adapter: Arc<Box<dyn AiAdapter>>,
     pub(crate) messages: Arc<Mutex<Vec<ChatMessage>>>,
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) harness: Arc<Harness>,
     pub(crate) system_prompt: Mutex<String>,
     pub(crate) summary: Mutex<Option<String>>,
+    pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
 }
 
 impl AgentSession {
     pub fn new(
         id: String,
         agent_type: String,
-        adapter: Box<dyn AiAdapter>,
+        adapter: Arc<Box<dyn AiAdapter>>,
         harness: Arc<Harness>,
         system_prompt: String,
     ) -> Self {
@@ -62,6 +64,7 @@ impl AgentSession {
             harness,
             system_prompt: Mutex::new(system_prompt),
             summary: Mutex::new(None),
+            cancel: Mutex::new(None),
         };
 
         *session.status.lock().unwrap() = SessionStatus::Running;
@@ -87,6 +90,10 @@ impl AgentSession {
         // Add user message to history
         self.messages.lock().unwrap().push(ChatMessage::user(text));
 
+        // Fresh cancel token for this request
+        let cancel = Arc::new(Notify::new());
+        *self.cancel.lock().unwrap() = Some(cancel.clone());
+
         // Agent loop: up to 10 tool-call round-trips with final text summary fallback
         for _round in 0..10 {
             if !self.running.load(Ordering::SeqCst) { break; }
@@ -107,15 +114,22 @@ impl AgentSession {
             }
 
             let summary_ctx = self.summary.lock().unwrap().clone();
-            let msgs_with_context = if let Some(ref s) = summary_ctx {
+            let mut msgs_with_context = if let Some(ref s) = summary_ctx {
                 let mut m = messages.clone();
                 m.insert(0, ChatMessage::user(&format!("## Previous conversation summary\n{}", s)));
                 m
             } else { messages };
+            // Prepend system prompt with skill instructions
+            let sp = self.system_prompt.lock().unwrap().clone();
+            crate::app_log!("INFO", "[send_message] system_prompt length: {} chars, has 'Active Skills': {}",
+                sp.len(), sp.contains("Active Skills"));
+            if !sp.is_empty() {
+                msgs_with_context.insert(0, ChatMessage::system(&sp));
+            }
 
             let mut retries = 0;
             let result = loop {
-                match self.adapter.stream_message(&self.id, &msgs_with_context, app_handle).await {
+                match self.adapter.stream_message(&self.id, &msgs_with_context, app_handle, cancel.clone()).await {
                     Ok(r) => break r,
                     Err(e) => {
                         let msg = e.to_string();
@@ -137,7 +151,7 @@ impl AgentSession {
                 }
             };
 
-            // Save assistant response
+            // Save assistant response (DeepSeek Anthropic API requires thinking blocks in history)
             if !result.assistant_content.is_empty() {
                 self.messages.lock().unwrap().push(
                     ChatMessage::assistant(serde_json::Value::Array(result.assistant_content.clone()))
@@ -152,12 +166,52 @@ impl AgentSession {
 
             crate::app_log!("INFO", "Agent turn {}: {} tool calls to execute: {:?}", _round, result.tool_calls.len(), result.tool_calls.iter().map(|tc| tc.name.clone()).collect::<Vec<_>>());
 
-            // Execute all tools through the harness (with hooks + permission gating)
-            let (reads, writes): (Vec<_>, Vec<_>) = result.tool_calls.iter()
+            // Separate delegate_task calls from regular tool calls
+            let (delegated, regular): (Vec<_>, Vec<_>) = result.tool_calls.iter()
+                .partition(|tc| tc.name == "delegate_task");
+
+            // Run delegated tasks as sub-agents in parallel
+            let mut sub_results: Vec<(usize, String)> = Vec::new();
+            if !delegated.is_empty() {
+                let mut handles = Vec::new();
+                for tc in &delegated {
+                    let task = tc.input.get("task")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Investigate and report findings")
+                        .to_string();
+                    let adapter = self.adapter.clone();
+                    let harness = self.harness.clone();
+                    let app = app_handle.clone();
+                    let cancel = self.cancel.lock().unwrap().clone().unwrap_or_else(|| Arc::new(Notify::new()));
+                    let idx = result.tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
+                    handles.push(tokio::spawn(async move {
+                        let r = crate::agent::sub::SubAgent::run(&task, adapter, harness, &app, cancel).await;
+                        (idx, r)
+                    }));
+                }
+                for handle in handles {
+                    if let Ok((idx, r)) = handle.await {
+                        crate::app_log!("INFO", "Agent sub-agent result ({} chars)", r.len());
+                        // Emit result to frontend so the delegate_task block gets content
+                        if let Some(tc) = result.tool_calls.get(idx) {
+                            let _ = app_handle.emit("session-output", StreamEvent::ToolCallResult {
+                                session_id: self.id.clone(),
+                                block_id: tc.id.clone(),
+                                result: r.clone(),
+                                is_error: false,
+                                duration_ms: 0,
+                            });
+                        }
+                        sub_results.push((idx, r));
+                    }
+                }
+            }
+
+            // Execute regular tools through the harness
+            let (reads, writes): (Vec<&crate::adapters::base::ToolCall>, Vec<&crate::adapters::base::ToolCall>) = regular.iter()
                 .partition(|tc| is_read_only_tool(&tc.name));
 
-            // Run reads in parallel through harness
-            let mut read_results: Vec<String> = Vec::new();
+            let mut read_results: Vec<(String, String)> = Vec::new();
             {
                 let mut handles = Vec::new();
                 for tc in &reads {
@@ -166,42 +220,51 @@ impl AgentSession {
                     let name = tc.name.clone();
                     let input = tc.input.clone();
                     let app = app_handle.clone();
+                    let id = tc.id.clone();
                     handles.push(tokio::spawn(async move {
-                        h.execute_tool(&sid, &name, &input, &app).await
+                        (id, h.execute_tool(&sid, &name, &input, &app).await)
                     }));
                 }
                 for handle in handles {
-                    if let Ok(result) = handle.await {
-                        read_results.push(result);
+                    if let Ok((id, result)) = handle.await {
+                        read_results.push((id, result));
                     }
                 }
             }
 
-            // Run writes sequentially through harness
-            let mut write_results: Vec<String> = Vec::new();
+            let mut write_results: Vec<(String, String)> = Vec::new();
             for tc in &writes {
                 let result = self.harness.execute_tool(
                     &self.id, &tc.name, &tc.input, app_handle
                 ).await;
-                write_results.push(result);
+                write_results.push((tc.id.clone(), result));
             }
 
-            // Feed results back in original order
-            let mut ri = 0usize;
-            let mut wi = 0usize;
-            for tc in &result.tool_calls {
-                let exec_result = if is_read_only_tool(&tc.name) {
-                    let r = read_results[ri].clone();
-                    ri += 1;
-                    r
-                } else {
-                    let r = write_results[wi].clone();
-                    wi += 1;
-                    r
-                };
-                crate::app_log!("INFO", "Agent tool '{}' result ({} chars)", tc.name, exec_result.len());
-                self.messages.lock().unwrap().push(ChatMessage::tool(&tc.id, &exec_result));
+            // Build results map: tool_call_id → result string
+            let mut result_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            for (id, r) in read_results { result_map.insert(id, r); }
+            for (id, r) in write_results { result_map.insert(id, r); }
+            for (idx, r) in sub_results {
+                if let Some(tc) = result.tool_calls.get(idx) {
+                    result_map.insert(tc.id.clone(), r);
+                }
             }
+
+            // Feed results back in original order, grouped into one user message
+            let mut tool_results: Vec<serde_json::Value> = Vec::new();
+            for tc in &result.tool_calls {
+                let exec_result = result_map.get(&tc.id).cloned().unwrap_or_else(|| "Tool result missing".to_string());
+                crate::app_log!("INFO", "Agent tool '{}' result ({} chars)", tc.name, exec_result.len());
+                tool_results.push(serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": &tc.id,
+                    "content": exec_result,
+                }));
+            }
+            self.messages.lock().unwrap().push(ChatMessage {
+                role: "user".to_string(),
+                content: serde_json::Value::Array(tool_results),
+            });
 
             // Yield briefly so frontend receives & renders events before next API call
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -214,7 +277,7 @@ impl AgentSession {
             if last_role == "tool" || last_role == "user" {
                 msgs.push(ChatMessage::user("Based on the above, provide your final answer as plain text. Do not use tools."));
                 crate::app_log!("INFO", "Agent loop complete — requesting text-only summary");
-                let _ = self.adapter.stream_message(&self.id, &msgs, app_handle).await;
+                let _ = self.adapter.stream_message(&self.id, &msgs, app_handle, cancel.clone()).await;
             }
         }
 
@@ -225,6 +288,10 @@ impl AgentSession {
     pub fn kill(&self, app_handle: &tauri::AppHandle) {
         self.running.store(false, Ordering::SeqCst);
         *self.status.lock().unwrap() = SessionStatus::Stopped;
+        // Cancel in-flight HTTP stream
+        if let Some(cancel) = self.cancel.lock().unwrap().take() {
+            cancel.notify_one();
+        }
         let _ = app_handle.emit("session-output",
             StreamEvent::SessionStopped { session_id: self.id.clone(), reason: "killed".to_string() });
     }

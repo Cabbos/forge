@@ -20,6 +20,7 @@ interface AppStore {
   addSession: (id: string, provider: string, model: string) => void;
   removeSession: (id: string) => void;
   updateSessionStatus: (id: string, status: SessionState["status"]) => void;
+  updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => void;
 
   // Output events
   dispatchOutputEvent: (event: StreamEvent) => void;
@@ -83,7 +84,7 @@ export const useStore = create<AppStore>((set, get) => ({
   hydrated: false,
   pendingInput: "",
   selectedProvider: "deepseek",
-  selectedModel: "deepseek-v4-flash",
+  selectedModel: "deepseek-v4-flash[1m]",
 
   setSelectedProvider: (p) => {
     set({ selectedProvider: p });
@@ -101,7 +102,8 @@ export const useStore = create<AppStore>((set, get) => ({
         const sessions = new Map<string, SessionState>();
         for (const s of data) {
           const blocks = await loadBlocks(s.id);
-          sessions.set(s.id, { ...s, blocks, costUsd: 0 });
+          // Backend sessions don't survive restarts — force stopped
+          sessions.set(s.id, { ...s, blocks, costUsd: 0, streaming: false, status: "stopped" as const });
         }
         set({ sessions, hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme, selectedProvider: savedProvider || "anthropic" });
       } else {
@@ -121,7 +123,7 @@ export const useStore = create<AppStore>((set, get) => ({
   addSession: (id, provider, model) => {
     const sessions = new Map(get().sessions);
     sessions.set(id, {
-      id, agentType: provider, model, status: "running", blocks: [], costUsd: 0,
+      id, agentType: provider, model, status: "running", blocks: [], costUsd: 0, streaming: false,
     });
     set({ sessions, activeSessionId: id });
     persistSessions(sessions);
@@ -138,6 +140,19 @@ export const useStore = create<AppStore>((set, get) => ({
       persistSessions(sessions),
       idbDel(BLOCKS_PREFIX + id).catch(() => {}),
     ]).catch(() => {});
+  },
+
+  updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => {
+    const sessions = new Map(get().sessions);
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    const blocks = session.blocks.map((b) =>
+      b.block_id === blockId ? { ...b, ...patch } : b
+    );
+    sessions.set(sessionId, { ...session, blocks });
+    set({ sessions });
+    persistSessions(sessions);
+    persistBlocks(sessionId, blocks);
   },
 
   updateSessionStatus: (id, status) => {
@@ -187,7 +202,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // If session_started arrives before addSession, create it from the event
       if (event_type === "session_started") {
         const se = event as Extract<StreamEvent, { event_type: "session_started" }>;
-        session = { id: session_id, agentType: se.agent_type, model: se.model, status: "running", blocks: [], costUsd: 0 };
+        session = { id: session_id, agentType: se.agent_type, model: se.model, status: "running", blocks: [], costUsd: 0, streaming: false };
         sessions.set(session_id, session);
         set({ sessions });
         persistSessions(sessions);
@@ -237,6 +252,7 @@ export const useStore = create<AppStore>((set, get) => ({
         ...session,
         status: "stopped",
         blocks,
+        streaming: false,
       });
       set({ sessions });
       persistSessions(sessions);
@@ -263,6 +279,7 @@ export const useStore = create<AppStore>((set, get) => ({
         ...session,
         status,
         blocks,
+        streaming: statusEvent.status === "working",
       });
       set({ sessions });
       persistBlocks(session_id, blocks);

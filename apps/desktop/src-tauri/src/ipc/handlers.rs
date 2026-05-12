@@ -1,22 +1,28 @@
 use std::sync::Arc;
 use tauri::Emitter;
 
-use crate::adapters::openai_compatible::OpenAiCompatibleAdapter;
+use crate::adapters::anthropic::AnthropicAdapter;
 use crate::adapters::base::AiAdapter;
 use crate::agent::session::AgentSession;
 use crate::protocol::commands::SessionCreated;
+use crate::protocol::events::StreamEvent;
+use crate::protocol::BlockId;
 use crate::state::AppState;
 use crate::settings;
 
-const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+/// DeepSeek Anthropic-compatible API (recommended by DeepSeek docs)
+const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/anthropic";
+const DEFAULT_MODEL: &str = "deepseek-v4-flash[1m]";
 
-fn build_adapter(api_key: &str, model: Option<&str>) -> Result<Box<dyn AiAdapter>, String> {
-    let mut a = OpenAiCompatibleAdapter::new(api_key.to_string())
-        .map_err(|e| format!("API key error: {e}"))?;
-    a = a.with_base_url(DEEPSEEK_BASE_URL);
-    a = a.with_model(model.unwrap_or(DEFAULT_MODEL));
-    Ok(Box::new(a))
+fn build_adapter(api_key: &str, model: Option<&str>) -> Result<Arc<Box<dyn AiAdapter>>, String> {
+    let model = model.unwrap_or(DEFAULT_MODEL);
+    let a = AnthropicAdapter::new(api_key.to_string())
+        .map_err(|e| format!("API key error: {e}"))?
+        .with_base_url(DEEPSEEK_BASE_URL)
+        .with_model(model)
+        .with_max_tokens(384_000)
+        .with_thinking_budget_tokens(16_000);
+    Ok(Arc::new(Box::new(a) as Box<dyn AiAdapter>))
 }
 
 #[tauri::command]
@@ -41,8 +47,9 @@ pub async fn create_session(
     let adapter = build_adapter(&key, model.as_deref())?;
     let model_str = model.unwrap_or(DEFAULT_MODEL.to_string());
 
-    // Build system prompt from harness (active skills merged in)
-    let system_prompt = state.harness.build_system_prompt("deepseek").await;
+    // Build system prompt from harness (active skills + project CLAUDE.md)
+    let wd = std::path::Path::new(&working_dir);
+    let system_prompt = state.harness.build_system_prompt("deepseek", wd).await;
 
     let harness = state.harness.clone();
     let session = AgentSession::new(
@@ -54,12 +61,23 @@ pub async fn create_session(
     );
 
     let _ = app_handle.emit("session-output",
-        crate::protocol::events::StreamEvent::SessionStarted {
+        StreamEvent::SessionStarted {
             session_id: session_id.clone(),
             agent_type: "deepseek".to_string(),
             model: model_str,
         },
     );
+
+    // Emit active skills as a visible info block in the conversation
+    let skills = state.harness.skill_loader.enabled_skills().await;
+    if !skills.is_empty() {
+        let names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
+        let info = format!("Active Skills: {}", names.join(", "));
+        let bid = BlockId::new().to_string();
+        let _ = app_handle.emit("session-output", StreamEvent::TextStart { session_id: session_id.clone(), block_id: bid.clone() });
+        let _ = app_handle.emit("session-output", StreamEvent::TextChunk { session_id: session_id.clone(), block_id: bid.clone(), content: info });
+        let _ = app_handle.emit("session-output", StreamEvent::TextEnd { session_id: session_id.clone(), block_id: bid });
+    }
 
     state.sessions.write().await.insert(session_id.clone(), Arc::new(session));
     Ok(SessionCreated { session_id })

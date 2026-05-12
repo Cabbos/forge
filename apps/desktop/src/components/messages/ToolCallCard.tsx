@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { ChevronRight, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
+import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
 import { cn } from "@/lib/utils";
 
 export function ToolCallCard({ block }: { block: BlockState }) {
@@ -34,10 +35,14 @@ export function ToolCallCard({ block }: { block: BlockState }) {
           </span>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-1.5 p-3 rounded-md border font-mono text-xs whitespace-pre-wrap break-all"
-            style={{ background: "#060606", borderColor: "#181818", color: "#999", maxHeight: "200px", overflow: "auto", maxWidth: "100%" }}>
-            {block.content || (status === "running" ? "Waiting..." : "")}
-          </div>
+          {toolName === "delegate_task" ? (
+            <SubAgentTrace content={block.content} />
+          ) : (
+            <div className="mt-1.5 p-3 rounded-md border font-mono text-xs whitespace-pre-wrap break-all"
+              style={{ background: "#060606", borderColor: "#181818", color: "#999", maxHeight: "200px", overflow: "auto", maxWidth: "100%" }}>
+              {block.content || (status === "running" ? "Waiting..." : "")}
+            </div>
+          )}
         </CollapsibleContent>
       </Collapsible>
     </div>

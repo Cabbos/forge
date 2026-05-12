@@ -1,16 +1,16 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Cpu, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal } from "lucide-react";
+import { Cpu, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, Puzzle } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
-import { searchWorkspaceFiles } from "@/lib/tauri";
+import { searchWorkspaceFiles, listCapabilities, type CapabilityInfo } from "@/lib/tauri";
 
 interface InputBarProps { sessionId: string }
 
 interface Chip { id: string; type: "file" | "command"; value: string; }
 
 const MODELS = [
-  { id: "deepseek-v4-pro", name: "V4 Pro" },
-  { id: "deepseek-v4-flash", name: "V4 Flash" },
+  { id: "deepseek-v4-pro[1m]", name: "V4 Pro" },
+  { id: "deepseek-v4-flash[1m]", name: "V4 Flash" },
 ];
 
 const COMMANDS = [
@@ -33,9 +33,17 @@ export function InputBar({ sessionId }: InputBarProps) {
   const [atResults, setAtResults] = useState<string[]>([]);
   const valueRef = useRef("");
 
-  const { send } = useSession();
+  const { send, kill } = useSession();
   const session = useStore((s) => s.sessions.get(sessionId));
   const isRunning = session?.status === "running";
+  const isStreaming = session?.streaming ?? false;
+  const [activeSkills, setActiveSkills] = useState<CapabilityInfo[]>([]);
+
+  useEffect(() => {
+    listCapabilities()
+      .then((all) => setActiveSkills(all.filter((c) => c.kind === "skill" && c.enabled !== false)))
+      .catch(() => {});
+  }, [sessionId]);
 
   useEffect(() => { if (isRunning) textareaRef.current?.focus(); }, [sessionId, isRunning]);
 
@@ -224,11 +232,40 @@ export function InputBar({ sessionId }: InputBarProps) {
               )}
             </div>
 
-            <button onClick={handleSend} disabled={!isRunning || (!value.trim() && chips.length === 0)}
-              className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
-              style={{ background: !isRunning || (!value.trim() && chips.length === 0) ? "#141414" : "#D4A853", color: !isRunning || (!value.trim() && chips.length === 0) ? "#666" : "#fff", cursor: !isRunning || (!value.trim() && chips.length === 0) ? "default" : "pointer" }}>
-              <ArrowUp className="size-4" />
-            </button>
+            {/* Active skills badge */}
+            {activeSkills.length > 0 && (
+              <div className="relative group">
+                <span
+                  className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono cursor-default"
+                  style={{ border: "1px solid rgba(91,155,213,0.3)", color: "#5B9BD5", background: "rgba(91,155,213,0.08)" }}>
+                  <Puzzle className="size-3" />
+                  {activeSkills.length}
+                </span>
+                <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1.5 px-3 min-w-[160px] shadow-xl z-20 hidden group-hover:block"
+                  style={{ background: "#141414", border: "1px solid #1c1c1c" }}>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/40 mb-1">Active Skills</div>
+                  {activeSkills.map((s) => (
+                    <div key={s.id} className="text-xs text-foreground py-0.5 font-mono" style={{ color: "#5B9BD5" }}>
+                      {s.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {isStreaming ? (
+              <button onClick={() => kill(sessionId)}
+                className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors animate-pulse"
+                style={{ background: "#D47777", color: "#fff", cursor: "pointer" }}>
+                <X className="size-4" />
+              </button>
+            ) : (
+              <button onClick={handleSend} disabled={!isRunning || (!value.trim() && chips.length === 0)}
+                className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+                style={{ background: !isRunning || (!value.trim() && chips.length === 0) ? "#141414" : "#D4A853", color: !isRunning || (!value.trim() && chips.length === 0) ? "#666" : "#fff", cursor: !isRunning || (!value.trim() && chips.length === 0) ? "default" : "pointer" }}>
+                <ArrowUp className="size-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>

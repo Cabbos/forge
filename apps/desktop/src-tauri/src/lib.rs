@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     logger::setup_panic_hook();
     logger::log("INFO", &format!("App starting, log at {}", logger::log_path_str()));
 
@@ -33,7 +33,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(app_state)
         .setup(|_app| {
-            log::info!("DeepSeek Agent started");
+            crate::app_log!("INFO", "DeepSeek Agent started");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,6 +47,7 @@ pub fn run() {
             ipc::handlers::set_api_key,
             ipc::capability_handlers::list_capabilities,
             ipc::capability_handlers::toggle_capability,
+            ipc::capability_handlers::install_skill,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
