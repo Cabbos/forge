@@ -17,6 +17,13 @@ use tauri::Emitter;
 
 // TEST: audit marker
 
+const SEARCH_RESULT_LIMIT: usize = 200;
+const SEARCH_TIMEOUT_SECS: u64 = 8;
+const GIT_DIFF_TEXT_LIMIT: usize = 120_000;
+const SHELL_CAPTURE_LIMIT: usize = 120_000;
+const SHELL_STREAM_LIMIT: usize = 120_000;
+const WEB_BODY_LIMIT: usize = 1_500_000;
+
 /// Unified executor that handles AI tool calls.
 pub struct ToolExecutor {
     pub file: FileExecutor,
@@ -46,9 +53,20 @@ impl ToolExecutor {
         tool_name: &str,
         tool_input: &serde_json::Value,
         app_handle: &tauri::AppHandle,
+        tool_block_id: Option<&str>,
     ) -> String {
-        let block_id = BlockId::new().to_string();
+        let block_id = tool_block_id
+            .map(str::to_string)
+            .unwrap_or_else(|| BlockId::new().to_string());
         let start = std::time::Instant::now();
+        crate::app_log!(
+            "INFO",
+            "[tool] start session={} block={} tool={} {}",
+            session_id,
+            block_id,
+            tool_name,
+            summarize_tool_input(tool_name, tool_input)
+        );
 
         let result = match tool_name {
             "read_file" | "read" => {
@@ -80,6 +98,45 @@ impl ToolExecutor {
                     Err(e) => format!("Error: {}", e),
                 }
             }
+            "git_diff" => {
+                let staged = tool_input.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let file_path = get_str(tool_input, "path").unwrap_or("");
+                let mut cmd = std::process::Command::new("git");
+                cmd.arg("diff").arg("-U3");
+                if staged { cmd.arg("--cached"); }
+                cmd.arg("--");
+                if !file_path.is_empty() { cmd.arg(file_path); }
+                cmd.current_dir(self.file.working_dir());
+                match cmd.output() {
+                    Ok(output) if output.status.success() => {
+                        let diff = String::from_utf8_lossy(&output.stdout).to_string();
+                        if diff.trim().is_empty() {
+                            "No changes (working tree clean)".to_string()
+                        } else {
+                            let diff = truncate_text(&diff, GIT_DIFF_TEXT_LIMIT);
+                            let file = if file_path.is_empty() { "all files".to_string() } else { file_path.to_string() };
+                            let _ = app_handle.emit("session-output",
+                                StreamEvent::DiffView {
+                                    session_id: session_id.to_string(),
+                                    block_id: block_id.clone(),
+                                    file_path: file.clone(),
+                                    old_content: String::new(),
+                                    new_content: diff.clone(),
+                                });
+                            diff
+                        }
+                    }
+                    Ok(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                        if stderr.is_empty() {
+                            format!("git diff failed with exit code {}", output.status.code().unwrap_or(-1))
+                        } else {
+                            format!("git diff failed: {}", stderr)
+                        }
+                    }
+                    Err(e) => format!("git diff failed: {}", e),
+                }
+            }
             "run_shell" | "bash" | "execute_command" | "shell" => {
                 let command = get_str(tool_input, "command").unwrap_or("");
 
@@ -98,8 +155,14 @@ impl ToolExecutor {
                     Arc::new(std::sync::Mutex::new(String::new()));
                 let stderr_captured: Arc<std::sync::Mutex<String>> =
                     Arc::new(std::sync::Mutex::new(String::new()));
+                let emitted_bytes: Arc<std::sync::Mutex<usize>> =
+                    Arc::new(std::sync::Mutex::new(0));
+                let emitted_truncation_notice: Arc<std::sync::Mutex<bool>> =
+                    Arc::new(std::sync::Mutex::new(false));
                 let stdout_for_cb = stdout_captured.clone();
                 let stderr_for_cb = stderr_captured.clone();
+                let emitted_for_cb = emitted_bytes.clone();
+                let notice_for_cb = emitted_truncation_notice.clone();
                 let sid_for_cb = session_id.to_string();
                 let bid_for_cb = block_id.clone();
                 let ah_for_cb = app_handle.clone();
@@ -117,19 +180,25 @@ impl ToolExecutor {
                             };
                             {
                                 let mut guard = cap.lock().unwrap();
-                                guard.push_str(&line);
-                                guard.push('\n');
+                                append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
                             }
 
                             // Emit to frontend line by line
-                            let _ = ah_for_cb.emit(
-                                "session-output",
-                                StreamEvent::ShellOutput {
-                                    session_id: sid_for_cb.clone(),
-                                    block_id: bid_for_cb.clone(),
-                                    content: line,
-                                },
-                            );
+                            if let Some(content) = next_stream_line(
+                                &line,
+                                &emitted_for_cb,
+                                &notice_for_cb,
+                                SHELL_STREAM_LIMIT,
+                            ) {
+                                let _ = ah_for_cb.emit(
+                                    "session-output",
+                                    StreamEvent::ShellOutput {
+                                        session_id: sid_for_cb.clone(),
+                                        block_id: bid_for_cb.clone(),
+                                        content,
+                                    },
+                                );
+                            }
                         },
                     )
                     .await
@@ -159,8 +228,8 @@ impl ToolExecutor {
                         format!(
                             "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
                             exit_code,
-                            trunc(&stdout, 5000),
-                            trunc(&stderr, 2000)
+                            trunc(&stdout, 8000),
+                            trunc(&stderr, 4000)
                         )
                     }
                     Err(e) => {
@@ -198,22 +267,32 @@ impl ToolExecutor {
             "search_files" | "glob" => {
                 let pattern = get_str(tool_input, "pattern").unwrap_or("*");
                 let path = get_str(tool_input, "path").unwrap_or("");
-                let dir = if path.is_empty() {
-                    self.file.working_dir().to_path_buf()
-                } else {
-                    std::path::PathBuf::from(path)
-                };
-                let results = simple_glob(&dir, pattern);
-                if results.is_empty() { "No files matched".to_string() } else { results.join("\n") }
+                match resolve_search_path(self.file.working_dir(), path) {
+                    Ok(dir) => {
+                        let results = search_files_with_rg(&dir, pattern)
+                            .await
+                            .unwrap_or_else(|| simple_glob(&dir, pattern));
+                        if !results.is_empty() {
+                            results.join("\n")
+                        } else if looks_like_plain_search(pattern) {
+                            search_content_with_rg(&dir, pattern)
+                                .await
+                                .unwrap_or_else(|| "Search failed: ripgrep (rg) is unavailable".to_string())
+                        } else {
+                            "No files matched".to_string()
+                        }
+                    }
+                    Err(e) => e,
+                }
             }
             "search_content" | "grep" => {
                 let pattern = get_str(tool_input, "pattern").unwrap_or("");
-                match self.file.search_files(pattern) {
-                    Ok(matches) => {
-                        if matches.is_empty() { "No matches found".to_string() }
-                        else { matches.iter().map(|m| format!("{}:{}: {}", m.file_path, m.line_number, m.line_content)).collect::<Vec<_>>().join("\n") }
-                    }
-                    Err(e) => format!("Error: {}", e),
+                let path = get_str(tool_input, "path").unwrap_or("");
+                match resolve_search_path(self.file.working_dir(), path) {
+                    Ok(dir) => search_content_with_rg(&dir, pattern)
+                        .await
+                        .unwrap_or_else(|| "Search failed: ripgrep (rg) is unavailable".to_string()),
+                    Err(e) => e,
                 }
             }
             "web_search" => {
@@ -253,7 +332,21 @@ impl ToolExecutor {
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
-        let is_error = result.starts_with("Error:") || result.starts_with("Denied:");
+        let is_error = result.starts_with("Error:")
+            || result.starts_with("Denied:")
+            || result.starts_with("Search blocked:")
+            || result.starts_with("Search failed:")
+            || result.starts_with("Search timed out");
+        crate::app_log!(
+            "INFO",
+            "[tool] end session={} block={} tool={} duration_ms={} result_chars={} error={}",
+            session_id,
+            block_id,
+            tool_name,
+            duration_ms,
+            result.len(),
+            is_error
+        );
 
         let _ = app_handle.emit(
             "session-output",
@@ -272,6 +365,125 @@ impl ToolExecutor {
 
 fn get_str<'a>(val: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     val.get(key)?.as_str()
+}
+
+fn summarize_tool_input(tool_name: &str, val: &serde_json::Value) -> String {
+    match tool_name {
+        "search_content" | "grep" | "search_files" | "glob" => {
+            let pattern = get_str(val, "pattern").unwrap_or("");
+            let path = get_str(val, "path").unwrap_or("");
+            format!("pattern={} path={}", preview_for_log(pattern), preview_for_log(path))
+        }
+        "read_file" | "read" | "list_directory" | "ls" | "list" => {
+            format!("path={}", preview_for_log(get_str(val, "path").unwrap_or("")))
+        }
+        "run_shell" | "bash" | "execute_command" | "shell" => {
+            format!("command={}", preview_for_log(get_str(val, "command").unwrap_or("")))
+        }
+        "write_file" | "write_to_file" | "write" => {
+            let path = get_str(val, "path").unwrap_or("");
+            let content_len = get_str(val, "content").map(str::len).unwrap_or(0);
+            format!("path={} content_len={}", preview_for_log(path), content_len)
+        }
+        "edit_file" | "edit" => {
+            let path = get_str(val, "path").unwrap_or("");
+            let old_len = get_str(val, "old_string").map(str::len).unwrap_or(0);
+            let new_len = get_str(val, "new_string").map(str::len).unwrap_or(0);
+            format!("path={} old_len={} new_len={}", preview_for_log(path), old_len, new_len)
+        }
+        _ => String::new(),
+    }
+}
+
+fn preview_for_log(value: &str) -> String {
+    let trimmed = value.replace('\n', "\\n");
+    let preview = trimmed.chars().take(80).collect::<String>();
+    if trimmed.chars().count() > 80 {
+        format!("\"{}...\"", preview)
+    } else {
+        format!("\"{}\"", preview)
+    }
+}
+
+fn truncate_text(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!(
+        "{}\n... [truncated {} bytes]",
+        &text[..end],
+        text.len().saturating_sub(end)
+    )
+}
+
+fn append_line_capped(buf: &mut String, line: &str, max_bytes: usize) {
+    if buf.len() >= max_bytes {
+        return;
+    }
+    let remaining = max_bytes - buf.len();
+    let line_with_newline = line.len().saturating_add(1);
+    if line_with_newline <= remaining {
+        buf.push_str(line);
+        buf.push('\n');
+        return;
+    }
+
+    let notice = "\n... [output truncated]";
+    let available = remaining.saturating_sub(notice.len());
+    let mut end = available.min(line.len());
+    while !line.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    if end > 0 {
+        buf.push_str(&line[..end]);
+    }
+    buf.push_str(notice);
+}
+
+fn next_stream_line(
+    line: &str,
+    emitted_bytes: &Arc<std::sync::Mutex<usize>>,
+    truncation_notice: &Arc<std::sync::Mutex<bool>>,
+    max_bytes: usize,
+) -> Option<String> {
+    let mut emitted = emitted_bytes.lock().unwrap();
+    if *emitted >= max_bytes {
+        let mut notice_sent = truncation_notice.lock().unwrap();
+        if *notice_sent {
+            return None;
+        }
+        *notice_sent = true;
+        return Some(format!("... output truncated after {} bytes", max_bytes));
+    }
+
+    let remaining = max_bytes - *emitted;
+    let line_len = line.len().saturating_add(1);
+    if line_len <= remaining {
+        *emitted += line_len;
+        return Some(line.to_string());
+    }
+
+    *emitted = max_bytes;
+    let mut notice_sent = truncation_notice.lock().unwrap();
+    *notice_sent = true;
+
+    let suffix = format!("... output truncated after {} bytes", max_bytes);
+    let available = remaining.saturating_sub(suffix.len().saturating_add(1));
+    let mut end = available.min(line.len());
+    while !line.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    let mut content = String::new();
+    if end > 0 {
+        content.push_str(&line[..end]);
+        content.push('\n');
+    }
+    content.push_str(&suffix);
+    Some(content)
 }
 
 fn browser_headers() -> reqwest::header::HeaderMap {
@@ -313,7 +525,7 @@ async fn try_search(url: &str, engine: &str) -> String {
     let client = reqwest::Client::new();
     match client.get(url).headers(browser_headers()).timeout(std::time::Duration::from_secs(10)).send().await {
         Ok(resp) => {
-            let html = resp.text().await.unwrap_or_default();
+            let (html, _) = read_body_limited(resp, WEB_BODY_LIMIT).await.unwrap_or_default();
             let mut results: Vec<(String, String)> = Vec::new();
             for part in html.split("<a ").skip(1) {
                 let href = part.split("href=\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or("");
@@ -334,6 +546,9 @@ async fn try_search(url: &str, engine: &str) -> String {
 /// Fetch a URL and return cleaned text content.
 async fn web_fetch(url_str: &str) -> String {
     let url = if !url_str.starts_with("http") { format!("https://{}", url_str) } else { url_str.to_string() };
+    if let Err(reason) = validate_fetch_url(&url) {
+        return reason;
+    }
     let client = reqwest::Client::new();
     match client.get(&url).headers(browser_headers()).timeout(std::time::Duration::from_secs(30)).send().await {
         Ok(resp) => {
@@ -341,7 +556,10 @@ async fn web_fetch(url_str: &str) -> String {
             let content_type = resp.headers().get("content-type")
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("").to_string();
-            let body = resp.text().await.unwrap_or_default();
+            let (body, body_truncated) = match read_body_limited(resp, WEB_BODY_LIMIT).await {
+                Ok(body) => body,
+                Err(e) => return format!("Fetch failed while reading response: {}", e),
+            };
 
             let text = if content_type.contains("text/html") {
                 // Strip HTML, extract meaningful text
@@ -354,7 +572,9 @@ async fn web_fetch(url_str: &str) -> String {
             };
 
             let text = text.chars().take(8000).collect::<String>();
-            if text.len() >= 8000 {
+            if body_truncated {
+                format!("HTTP {} — {}\n\n{}... [response truncated at {} bytes]", status, url, text, WEB_BODY_LIMIT)
+            } else if text.len() >= 8000 {
                 format!("HTTP {} — {}\n\n{}... [truncated]", status, url, text)
             } else {
                 format!("HTTP {} — {}\n\n{}", status, url, text)
@@ -362,6 +582,77 @@ async fn web_fetch(url_str: &str) -> String {
         }
         Err(e) => format!("Fetch failed: {}", e),
     }
+}
+
+fn validate_fetch_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|e| format!("Fetch blocked: invalid URL ({})", e))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("Fetch blocked: unsupported URL scheme '{}'", scheme)),
+    }
+
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    if host.is_empty() {
+        return Err("Fetch blocked: URL has no host".to_string());
+    }
+    if host == "localhost" || host.ends_with(".localhost") {
+        return Err("Fetch blocked: local hosts are not available to the AI web_fetch tool".to_string());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_private_or_local_ip(ip) {
+            return Err(format!("Fetch blocked: private/local address {}", ip));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_private_or_local_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || ip.is_unspecified()
+        }
+        std::net::IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+        }
+    }
+}
+
+async fn read_body_limited(
+    resp: reqwest::Response,
+    limit: usize,
+) -> Result<(String, bool), reqwest::Error> {
+    use futures::StreamExt;
+
+    let mut stream = resp.bytes_stream();
+    let mut bytes = Vec::new();
+    let mut truncated = false;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        let remaining = limit.saturating_sub(bytes.len());
+        if remaining == 0 {
+            truncated = true;
+            break;
+        }
+        if chunk.len() > remaining {
+            bytes.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    Ok((String::from_utf8_lossy(&bytes).to_string(), truncated))
 }
 
 fn strip_html(html: &str) -> String {
@@ -386,7 +677,192 @@ fn urlencoding(s: &str) -> String {
     }).collect()
 }
 
-/// Simple recursive glob — supports * (match any chars in filename) and ** (match any dirs).
+/// Resolve a search directory and keep it inside the session workspace.
+fn resolve_search_path(working_dir: &std::path::Path, path: &str) -> Result<std::path::PathBuf, String> {
+    let requested = std::path::Path::new(path);
+    let raw = if path.trim().is_empty() {
+        working_dir.to_path_buf()
+    } else if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        working_dir.join(requested)
+    };
+
+    let resolved = raw
+        .canonicalize()
+        .map_err(|e| format!("Search path is not available: {} ({})", raw.display(), e))?;
+    let workspace = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+
+    if !resolved.starts_with(&workspace) {
+        return Err(format!(
+            "Search blocked: path is outside the current workspace.\nPath: {}\nWorkspace: {}",
+            resolved.display(),
+            workspace.display()
+        ));
+    }
+    if !resolved.is_dir() {
+        return Err(format!("Search path is not a directory: {}", resolved.display()));
+    }
+    if is_too_broad_search_root(&resolved) {
+        return Err(format!(
+            "Search blocked: {} is too broad. Please choose a specific project folder first.",
+            resolved.display()
+        ));
+    }
+
+    Ok(resolved)
+}
+
+fn is_too_broad_search_root(path: &std::path::Path) -> bool {
+    if path.parent().is_none() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            let home_path = std::path::Path::new(&home);
+            if path == home_path {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+async fn search_files_with_rg(base: &std::path::Path, pattern: &str) -> Option<Vec<String>> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECS),
+        tokio::process::Command::new("rg")
+            .arg("--files")
+            .arg("-g")
+            .arg(pattern)
+            .arg("-g")
+            .arg("!node_modules/**")
+            .arg("-g")
+            .arg("!**/node_modules/**")
+            .arg("-g")
+            .arg("!target/**")
+            .arg("-g")
+            .arg("!**/target/**")
+            .arg("-g")
+            .arg("!dist/**")
+            .arg("-g")
+            .arg("!**/dist/**")
+            .arg("-g")
+            .arg("!.git/**")
+            .arg("-g")
+            .arg("!**/.git/**")
+            .current_dir(base)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    if !output.status.success() && output.status.code() != Some(1) {
+        return None;
+    }
+
+    let mut results = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .take(SEARCH_RESULT_LIMIT)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    results.sort();
+    Some(results)
+}
+
+async fn search_content_with_rg(base: &std::path::Path, pattern: &str) -> Option<String> {
+    if pattern.trim().is_empty() {
+        return Some("No matches found".to_string());
+    }
+
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECS),
+        tokio::process::Command::new("rg")
+            .arg("--line-number")
+            .arg("--no-heading")
+            .arg("--color")
+            .arg("never")
+            .arg("--max-filesize")
+            .arg("2M")
+            .arg("-g")
+            .arg("!node_modules/**")
+            .arg("-g")
+            .arg("!**/node_modules/**")
+            .arg("-g")
+            .arg("!target/**")
+            .arg("-g")
+            .arg("!**/target/**")
+            .arg("-g")
+            .arg("!dist/**")
+            .arg("-g")
+            .arg("!**/dist/**")
+            .arg("-g")
+            .arg("!.git/**")
+            .arg("-g")
+            .arg("!**/.git/**")
+            .arg("--")
+            .arg(pattern)
+            .current_dir(base)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(_)) => return None,
+        Err(_) => {
+            return Some(format!(
+                "Search timed out after {}s in {}. Try a narrower path or pattern.",
+                SEARCH_TIMEOUT_SECS,
+                base.display()
+            ));
+        }
+    };
+
+    if output.status.code() == Some(1) {
+        return Some("No matches found".to_string());
+    }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Some(if stderr.is_empty() {
+            "Search failed".to_string()
+        } else {
+            format!("Search failed: {}", stderr)
+        });
+    }
+
+    let lines = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .take(SEARCH_RESULT_LIMIT)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        Some("No matches found".to_string())
+    } else if String::from_utf8_lossy(&output.stdout).lines().nth(SEARCH_RESULT_LIMIT).is_some() {
+        Some(format!(
+            "{}\n... truncated to first {} matches",
+            lines.join("\n"),
+            SEARCH_RESULT_LIMIT
+        ))
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn looks_like_plain_search(pattern: &str) -> bool {
+    !pattern.trim().is_empty()
+        && !pattern.contains('*')
+        && !pattern.contains('?')
+        && !pattern.contains('[')
+        && !pattern.contains('{')
+        && !pattern.contains('/')
+        && !pattern.contains('\\')
+}
+
 fn simple_glob(base: &std::path::Path, pattern: &str) -> Vec<String> {
     let mut results = Vec::new();
     let _ = walk_glob(base, base, pattern, &mut results);
@@ -395,8 +871,14 @@ fn simple_glob(base: &std::path::Path, pattern: &str) -> Vec<String> {
 }
 
 fn walk_glob(root: &std::path::Path, dir: &std::path::Path, pattern: &str, results: &mut Vec<String>) -> Result<(), ()> {
+    if results.len() >= SEARCH_RESULT_LIMIT {
+        return Ok(());
+    }
     let entries = std::fs::read_dir(dir).map_err(|_| ())?;
     for entry in entries.flatten() {
+        if results.len() >= SEARCH_RESULT_LIMIT {
+            return Ok(());
+        }
         let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         if name.starts_with('.') || name == "target" || name == "node_modules" { continue; }
@@ -416,23 +898,30 @@ fn walk_glob(root: &std::path::Path, dir: &std::path::Path, pattern: &str, resul
 fn simple_match(name: &str, pattern: &str) -> bool {
     if pattern == "*" || pattern == "**" { return true; }
     if !pattern.contains('*') { return name.contains(pattern); }
-    // **/ — match any directory prefix (check this before prefix*/suffix*)
-    if let Some(suffix) = pattern.strip_prefix("**/") {
-        return name.ends_with(suffix) || name.contains(&format!("/{}", suffix));
+    // **/<rest> — match any directory prefix, then match the rest recursively
+    if let Some(rest) = pattern.strip_prefix("**/") {
+        if simple_match(name, rest) { return true; }
+        // Also check if name contains "/<rest>" (for paths with directories)
+        for (i, c) in name.char_indices() {
+            if c == '/' && simple_match(&name[i+1..], rest) {
+                return true;
+            }
+        }
+        return false;
     }
     // <prefix>/**
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return name.starts_with(prefix);
     }
-    // *.ext (check before prefix* to avoid false match)
+    // *.ext
     if let Some(ext) = pattern.strip_prefix("*.") {
         return name.ends_with(&format!(".{}", ext));
     }
-    // prefix* (strip trailing *)
+    // prefix*
     if let Some(prefix) = pattern.strip_suffix('*') {
         return name.starts_with(prefix);
     }
-    // *suffix (strip leading *)
+    // *suffix
     if let Some(suffix) = pattern.strip_prefix('*') {
         return name.ends_with(suffix);
     }

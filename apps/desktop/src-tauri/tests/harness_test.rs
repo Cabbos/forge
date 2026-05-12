@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod harness {
-    use crusted_spinning_lynx_agent::harness::permissions::PermissionGate;
+    use crusted_spinning_lynx_agent::harness::permissions::{PermissionDecision, PermissionGate};
     use crusted_spinning_lynx_agent::harness::hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
     use crusted_spinning_lynx_agent::harness::capability::{CapabilityKind, CapabilityMetadata};
     use crusted_spinning_lynx_agent::harness::db::Database;
@@ -11,13 +11,34 @@ mod harness {
     #[tokio::test]
     async fn test_read_tools_preapproved() {
         let db_path = std::env::temp_dir().join("test-perm.db");
+        let _ = std::fs::remove_file(&db_path);
         let db = Arc::new(Database::open(&db_path).unwrap());
         let gate = PermissionGate::new(db);
 
         assert!(gate.is_allowed("s1", "read_file", &serde_json::json!({})).await);
         assert!(gate.is_allowed("s1", "search_files", &serde_json::json!({})).await);
         assert!(gate.is_allowed("s1", "web_search", &serde_json::json!({})).await);
-        assert!(gate.is_allowed("s1", "write_to_file", &serde_json::json!({})).await);
+        assert!(gate.is_allowed("s1", "git_diff", &serde_json::json!({})).await);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
+    async fn test_write_tools_require_confirm() {
+        let db_path = std::env::temp_dir().join("test-perm-write.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = Arc::new(Database::open(&db_path).unwrap());
+        let gate = PermissionGate::new(db);
+        let working_dir = std::env::temp_dir();
+
+        assert!(!gate.is_allowed("s1", "write_to_file", &serde_json::json!({})).await);
+        let decision = gate.check(
+            "s1",
+            "write_to_file",
+            &serde_json::json!({"path":"test-write.txt","content":"hello"}),
+            &working_dir,
+        ).await;
+        assert!(matches!(decision, PermissionDecision::Ask { kind, .. } if kind == "file_write"));
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -25,6 +46,7 @@ mod harness {
     #[tokio::test]
     async fn test_shell_requires_confirm() {
         let db_path = std::env::temp_dir().join("test-perm2.db");
+        let _ = std::fs::remove_file(&db_path);
         let db = Arc::new(Database::open(&db_path).unwrap());
         let gate = PermissionGate::new(db);
 
@@ -35,8 +57,44 @@ mod harness {
     }
 
     #[tokio::test]
+    async fn test_shell_safety_classification() {
+        let db_path = std::env::temp_dir().join("test-perm-shell-safety.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = Arc::new(Database::open(&db_path).unwrap());
+        let gate = PermissionGate::new(db);
+        let working_dir = std::env::temp_dir();
+
+        let safe = gate.check(
+            "s1",
+            "run_shell",
+            &serde_json::json!({"command":"rg PermissionDecision src-tauri/src"}),
+            &working_dir,
+        ).await;
+        assert!(matches!(safe, PermissionDecision::Allow));
+
+        let chained = gate.check(
+            "s1",
+            "run_shell",
+            &serde_json::json!({"command":"ls && rm -rf target"}),
+            &working_dir,
+        ).await;
+        assert!(matches!(chained, PermissionDecision::Ask { kind, .. } if kind == "dangerous_cmd"));
+
+        let external_read = gate.check(
+            "s1",
+            "run_shell",
+            &serde_json::json!({"command":"cat /Users/example/.ssh/id_rsa"}),
+            &working_dir,
+        ).await;
+        assert!(matches!(external_read, PermissionDecision::Ask { kind, .. } if kind == "shell_cmd"));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
     async fn test_session_approval_cached() {
         let db_path = std::env::temp_dir().join("test-perm3.db");
+        let _ = std::fs::remove_file(&db_path);
         let db = Arc::new(Database::open(&db_path).unwrap());
         let gate = PermissionGate::new(db);
 
@@ -132,12 +190,13 @@ mod harness {
         println!("\n═══════════════════════════════════");
         println!("  Harness tests passed:");
         println!("  1. Pre-approved read tools    ✅");
-        println!("  2. Shell requires confirm     ✅");
-        println!("  3. Session approval cache     ✅");
-        println!("  4. Hook registration          ✅");
-        println!("  5. Capability metadata        ✅");
-        println!("  6. Database CRUD              ✅");
-        println!("  7. Permission persistence     ✅");
+        println!("  2. Writes require confirm     ✅");
+        println!("  3. Shell requires confirm     ✅");
+        println!("  4. Session approval cache     ✅");
+        println!("  5. Hook registration          ✅");
+        println!("  6. Capability metadata        ✅");
+        println!("  7. Database CRUD              ✅");
+        println!("  8. Permission persistence     ✅");
         println!("═══════════════════════════════════\n");
     }
 }

@@ -1,4 +1,5 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { WheelEvent } from "react";
 import { ArrowDown } from "lucide-react";
 import type { BlockState } from "@/lib/protocol";
 import { ThinkingBlock } from "@/components/messages/ThinkingBlock";
@@ -9,28 +10,71 @@ import { ShellCard } from "@/components/messages/ShellCard";
 import { DiffCard } from "@/components/messages/DiffCard";
 import { ConfirmCard } from "@/components/messages/ConfirmCard";
 import { PendingBlock } from "@/components/messages/PendingBlock";
+import { AcceptanceCard } from "@/components/messages/AcceptanceCard";
 
 interface MessageListProps { blocks: BlockState[]; sessionId?: string }
 
+const BOTTOM_LOCK_THRESHOLD = 96;
+
 export function MessageList({ blocks, sessionId }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const scrollRafRef = useRef<number | null>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
+  const showAcceptanceCard = shouldShowAcceptanceCard(blocks[blocks.length - 1]);
+  const lastBlock = blocks[blocks.length - 1];
 
-  useEffect(() => {
-    if (userScrolledUp) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [blocks.length, blocks[blocks.length - 1]?.content, userScrolledUp]);
+  const setScrolledUpIfChanged = useCallback((next: boolean) => {
+    setUserScrolledUp((current) => (current === next ? current : next));
+  }, []);
 
-  const handleScroll = useCallback(() => {
+  const updateStickiness = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    setUserScrolledUp(el.scrollHeight - el.scrollTop - el.clientHeight > 60);
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isAtBottom = distanceFromBottom <= BOTTOM_LOCK_THRESHOLD;
+    stickToBottomRef.current = isAtBottom;
+    setScrolledUpIfChanged(!isAtBottom);
+  }, [setScrolledUpIfChanged]);
+
+  useLayoutEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setScrolledUpIfChanged(false);
+  }, [blocks.length, lastBlock?.content, lastBlock?.isComplete, setScrolledUpIfChanged]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
   }, []);
+
+  const handleScroll = useCallback(() => {
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      updateStickiness();
+    });
+  }, [updateStickiness]);
+
+  const handleWheel = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) {
+      stickToBottomRef.current = false;
+      setScrolledUpIfChanged(true);
+    }
+  }, [setScrolledUpIfChanged]);
 
   const scrollToBottom = () => {
     const el = scrollRef.current;
-    if (el) { el.scrollTop = el.scrollHeight; setUserScrolledUp(false); }
+    if (el) {
+      stickToBottomRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      setScrolledUpIfChanged(false);
+    }
   };
 
   if (blocks.length === 0) {
@@ -43,11 +87,24 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto" style={{ padding: "28px 48px" }}>
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        onWheel={handleWheel}
+        className="h-full overflow-y-auto"
+        style={{
+          padding: "28px 48px",
+          scrollbarGutter: "stable",
+          overflowAnchor: userScrolledUp ? "auto" : "none",
+        }}
+      >
         <div className="flex flex-col" style={{ paddingLeft: "48px", paddingRight: "48px" }}>
           {blocks.map((block, i) => (
-            <BlockRenderer key={`${block.block_id}-${i}`} block={block} sessionId={sessionId} />
+            <div key={block.block_id || `${block.event_type}-${i}`}>
+              <MemoizedBlockRenderer block={block} sessionId={sessionId} />
+            </div>
           ))}
+          {showAcceptanceCard && <AcceptanceCard />}
         </div>
       </div>
       {userScrolledUp && (
@@ -61,16 +118,28 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
   );
 }
 
+function shouldShowAcceptanceCard(block?: BlockState) {
+  if (!block) return false;
+  if (block.event_type !== "text" || !block.isComplete) return false;
+  const content = block.content.trim();
+  if (content.length < 120) return false;
+  if (content.startsWith("Active Skills:")) return false;
+  return true;
+}
+
 function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: string }) {
   switch (block.event_type) {
     case "thinking": return <ThinkingBlock block={block} />;
-    case "text": case "error": return <TextBlock block={block} />;
+    case "text": case "error": return <TextBlock block={block} sessionId={sessionId} />;
     case "tool_call": case "tool_call_result": return <ToolCallCard block={block} />;
     case "user_message": return <UserMessage block={block} />;
     case "shell": return <ShellCard block={block} />;
     case "diff_view": return <DiffCard block={block} />;
     case "confirm_ask": return <ConfirmCard block={block} sessionId={sessionId} />;
     case "pending": return <PendingBlock />;
-    default: return block.content ? <TextBlock block={block} /> : null;
+    default: return block.content ? <TextBlock block={block} sessionId={sessionId} /> : null;
   }
 }
+
+const MemoizedBlockRenderer = memo(BlockRenderer);
+MemoizedBlockRenderer.displayName = "MemoizedBlockRenderer";

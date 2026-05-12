@@ -6,12 +6,12 @@ import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
 import { cn } from "@/lib/utils";
 
 export function ToolCallCard({ block }: { block: BlockState }) {
-  const [open, setOpen] = useState(block.isComplete);
-  // Auto-expand when block completes with content
-  useEffect(() => {
-    if (block.isComplete && block.content) setOpen(true);
-  }, [block.isComplete, block.content]);
   const isError = Boolean(block.metadata.is_error ?? false);
+  const [open, setOpen] = useState(false);
+  // Keep normal tool chatter compact; only surface errors automatically.
+  useEffect(() => {
+    if (block.isComplete && isError) setOpen(true);
+  }, [block.isComplete, isError]);
   const toolName = (block.metadata.tool_name as string) || "tool";
   const status = block.isComplete ? (isError ? "error" : "done") : "running";
 

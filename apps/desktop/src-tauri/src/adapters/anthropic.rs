@@ -141,6 +141,23 @@ impl ToolDef {
 }
 
 impl AnthropicAdapter {
+    /// Filtered tools for sub-agents — excludes dangerous/recursive tools.
+    /// The AI never sees these tools in its function list, so it can't call them.
+    fn sub_agent_tools(&self) -> Vec<ToolDef> {
+        const BLOCKED: &[&str] = &[
+            "delegate_task",
+            "write_to_file",
+            "edit_file",
+            "run_shell",
+            "bash",
+            "ask_user",
+        ];
+        self.tool_definitions()
+            .into_iter()
+            .filter(|t| !BLOCKED.contains(&t.name.as_str()))
+            .collect()
+    }
+
     fn tool_definitions(&self) -> Vec<ToolDef> {
     let mut tools = vec![
         ToolDef {
@@ -192,6 +209,11 @@ impl AnthropicAdapter {
             name: "ask_user".to_string(),
             description: "Ask the user a question when you need clarification, decisions, or more context. Use sparingly — only when truly needed.".to_string(),
             input_schema: serde_json::json!({"type":"object","properties":{"question":{"type":"string","description":"Question to ask the user"},"options":{"type":"array","items":{"type":"string"},"description":"Optional list of choices for the user"}},"required":["question"]}),
+        },
+        ToolDef {
+            name: "git_diff".to_string(),
+            description: "Show git diff of uncommitted changes. Without arguments shows unstaged changes. Use staged: true for staged changes, or path: 'file.rs' for a specific file.".to_string(),
+            input_schema: serde_json::json!({"type":"object","properties":{"staged":{"type":"boolean","description":"Show staged changes (git diff --cached)"},"path":{"type":"string","description":"Show diff for a specific file only"}},"required":[]}),
         },
         ToolDef {
             name: "delegate_task".to_string(),
@@ -251,7 +273,7 @@ impl AiAdapter for AnthropicAdapter {
             messages: &filtered,
             thinking: Some(ThinkingConfig { type_: "enabled".to_string(), budget_tokens: 2000 }),
             system: Some(system_parts.join("\n\n")),
-            tools: Some(self.tool_definitions()),
+            tools: Some(self.sub_agent_tools()),
         };
 
         // Race HTTP call against cancel token
@@ -481,12 +503,16 @@ impl AiAdapter for AnthropicAdapter {
                                     }
                                     "tool_use" => {
                                         block_type = Some("tool_use".to_string());
-                                        active_block_id = Some(bid.clone());
                                         current_tool_id =
                                             Some(cb["id"].as_str().unwrap_or("").to_string());
                                         current_tool_name = Some(
                                             cb["name"].as_str().unwrap_or("unknown").to_string(),
                                         );
+                                        let tool_block_id = current_tool_id
+                                            .clone()
+                                            .filter(|id| !id.is_empty())
+                                            .unwrap_or(bid);
+                                        active_block_id = Some(tool_block_id.clone());
                                         current_tool_input_json = String::new();
 
                                         let tool_input = cb["input"].clone();
@@ -503,7 +529,7 @@ impl AiAdapter for AnthropicAdapter {
                                             "session-output",
                                             StreamEvent::ToolCallStart {
                                                 session_id: session.clone(),
-                                                block_id: bid,
+                                                block_id: tool_block_id,
                                                 tool_name: current_tool_name.clone().unwrap(),
                                                 tool_input: cb["input"].clone(),
                                             },

@@ -184,15 +184,22 @@ impl AgentSession {
                     let app = app_handle.clone();
                     let cancel = self.cancel.lock().unwrap().clone().unwrap_or_else(|| Arc::new(Notify::new()));
                     let idx = result.tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
+                    let wd = self.harness.working_dir.clone();
                     handles.push(tokio::spawn(async move {
-                        let r = crate::agent::sub::SubAgent::run(&task, adapter, harness, &app, cancel).await;
+                        let r = crate::agent::sub::SubAgent::run(&task, adapter, harness, &app, cancel, &wd).await;
                         (idx, r)
                     }));
                 }
                 for handle in handles {
                     if let Ok((idx, r)) = handle.await {
-                        crate::app_log!("INFO", "Agent sub-agent result ({} chars)", r.len());
-                        // Emit result to frontend so the delegate_task block gets content
+                        // r is JSON: {"result": "...", "steps": [...]}
+                        // Extract just the result text for the main agent's context
+                        let api_text: String = serde_json::from_str::<serde_json::Value>(&r)
+                            .ok()
+                            .and_then(|v| v.get("result").and_then(|r| r.as_str()).map(|s| s.to_string()))
+                            .unwrap_or_else(|| r.clone());
+                        crate::app_log!("INFO", "Agent sub-agent result ({} chars, api_text {} chars)", r.len(), api_text.len());
+                        // Emit full JSON to frontend for SubAgentTrace rendering
                         if let Some(tc) = result.tool_calls.get(idx) {
                             let _ = app_handle.emit("session-output", StreamEvent::ToolCallResult {
                                 session_id: self.id.clone(),
@@ -202,7 +209,8 @@ impl AgentSession {
                                 duration_ms: 0,
                             });
                         }
-                        sub_results.push((idx, r));
+                        // Feed only the result text to the main agent
+                        sub_results.push((idx, api_text));
                     }
                 }
             }
@@ -222,7 +230,8 @@ impl AgentSession {
                     let app = app_handle.clone();
                     let id = tc.id.clone();
                     handles.push(tokio::spawn(async move {
-                        (id, h.execute_tool(&sid, &name, &input, &app).await)
+                        let result = h.execute_tool_with_block_id(&sid, &name, &input, &app, Some(&id)).await;
+                        (id, result)
                     }));
                 }
                 for handle in handles {
@@ -234,8 +243,8 @@ impl AgentSession {
 
             let mut write_results: Vec<(String, String)> = Vec::new();
             for tc in &writes {
-                let result = self.harness.execute_tool(
-                    &self.id, &tc.name, &tc.input, app_handle
+                let result = self.harness.execute_tool_with_block_id(
+                    &self.id, &tc.name, &tc.input, app_handle, Some(&tc.id)
                 ).await;
                 write_results.push((tc.id.clone(), result));
             }
@@ -330,7 +339,7 @@ fn build_summary(msgs: &[&ChatMessage]) -> Option<String> {
 fn is_read_only_tool(name: &str) -> bool {
     matches!(name, "read_file" | "read" | "list_directory" | "ls" | "list"
         | "search_files" | "glob" | "search_content" | "grep"
-        | "web_search" | "web_fetch")
+        | "web_search" | "web_fetch" | "git_diff")
 }
 
 fn is_tool_result(msg: &ChatMessage) -> bool {

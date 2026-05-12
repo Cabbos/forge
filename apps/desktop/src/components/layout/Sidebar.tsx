@@ -4,14 +4,25 @@ import { useStore, useSessionList } from "@/store";
 import { useSession } from "@/hooks/useSession";
 import { Input } from "@/components/ui/input";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
-import { homeDir } from "@tauri-apps/api/path";
 import { cn } from "@/lib/utils";
+import { getDefaultWorkingDir, getRememberedWorkingDir, rememberWorkingDir } from "@/lib/tauri";
 
 export function Sidebar() {
   const [expanded, setExpanded] = useState(false);
   const [workingDir, setWorkingDir] = useState("");
 
-  useEffect(() => { homeDir().then(setWorkingDir).catch(() => setWorkingDir("/")); }, []);
+  useEffect(() => {
+    getDefaultWorkingDir()
+      .then((defaultDir) => {
+        const remembered = getRememberedWorkingDir();
+        setWorkingDir(remembered && !isBroadLocalPath(remembered) ? remembered : defaultDir);
+      })
+      .catch(() => {
+        const remembered = getRememberedWorkingDir();
+        setWorkingDir(remembered && !isBroadLocalPath(remembered) ? remembered : "");
+      });
+  }, []);
+  useEffect(() => { rememberWorkingDir(workingDir); }, [workingDir]);
 
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSession = useStore((s) => s.setActiveSession);
@@ -20,6 +31,10 @@ export function Sidebar() {
   const selectedModel = useStore((s) => s.selectedModel);
 
   const newSession = async () => {
+    if (isBroadLocalPath(workingDir)) {
+      alert("请选择一个具体的项目文件夹，不要直接使用用户主目录。");
+      return;
+    }
     try { await create(workingDir, selectedModel); }
     catch (e) { alert("Failed: " + String(e)); }
   };
@@ -113,4 +128,10 @@ export function Sidebar() {
       </div>
     </aside>
   );
+}
+
+function isBroadLocalPath(path: string): boolean {
+  const normalized = path.trim().replace(/\/+$/, "");
+  if (!normalized || normalized === "/") return true;
+  return /^\/Users\/[^/]+$/.test(normalized) || /^\/home\/[^/]+$/.test(normalized);
 }

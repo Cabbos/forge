@@ -4,7 +4,7 @@ import type { BlockState } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 
 export function ThinkingBlock({ block }: { block: BlockState }) {
-  const [open, setOpen] = useState(!block.isComplete);
+  const [open, setOpen] = useState(false);
   if (!block.content && block.isComplete) return null;
 
   const isRunning = !block.isComplete;

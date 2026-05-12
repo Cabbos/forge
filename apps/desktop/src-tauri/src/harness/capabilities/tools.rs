@@ -1,6 +1,49 @@
 use async_trait::async_trait;
 use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata, Event, EventType};
 
+pub struct BuiltinToolCap {
+    enabled: bool,
+    meta: CapabilityMetadata,
+}
+
+impl BuiltinToolCap {
+    pub fn new(id: &str, name: &str, description: &str) -> Self {
+        Self {
+            enabled: true,
+            meta: CapabilityMetadata {
+                id: id.into(),
+                name: name.into(),
+                description: description.into(),
+                version: "1.0.0".into(),
+                source: "builtin".into(),
+                kind: CapabilityKind::Tool,
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl Capability for BuiltinToolCap {
+    fn id(&self) -> &str {
+        &self.meta.id
+    }
+    fn metadata(&self) -> &CapabilityMetadata {
+        &self.meta
+    }
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.enabled = e;
+    }
+    fn subscribed_events(&self) -> Vec<EventType> {
+        vec![EventType::PreTool]
+    }
+    async fn on_event(&self, _event: &Event) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 // FileTool
 pub struct FileToolCap {
     enabled: bool,

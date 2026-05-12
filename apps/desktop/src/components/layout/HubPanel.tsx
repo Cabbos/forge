@@ -117,7 +117,7 @@ export function HubPanel() {
         </div>
 
         {/* Content */}
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="p-4 flex flex-col gap-4">
             <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs bg-background border border-border">
               <span className="text-muted-foreground">⌕</span>
@@ -175,7 +175,7 @@ function SkillsContent({ search }: { search: string }) {
   };
 
   const skills = caps.filter((c) => c.kind === "skill" || c.kind === "tool");
-  const installed = skills.filter((s) => s.enabled !== false);
+  const installed = skills;
 
   // Static discoverable skills
   const DISCOVERABLE = [
@@ -208,13 +208,26 @@ function SkillsContent({ search }: { search: string }) {
                 <div className="text-[10px] text-muted-foreground truncate">{s.description}</div>
               </div>
               <button
-                onClick={() => handleToggle(s.id, false)}
-                className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleToggle(s.id, s.enabled === false);
+                }}
+                className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                  s.enabled !== false
+                    ? "bg-emerald-500/10 text-emerald-400"
+                    : "bg-muted/20 text-muted-foreground",
+                )}
               >
-                on
+                {s.enabled !== false ? "on" : "off"}
               </button>
             </div>
           ))}
+          {filterFn(installed).length === 0 && (
+            <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
+              没有匹配的已安装能力
+            </div>
+          )}
         </div>
       </section>
       <section>

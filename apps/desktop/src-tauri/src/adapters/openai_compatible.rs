@@ -319,7 +319,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     "input": input,
                 }));
                 tool_calls.push(ToolCall { id: id.clone(), name: name.clone(), input: input.clone() });
-                let bid = BlockId::new().to_string();
+                let bid = id.clone();
                 let _ = app_handle.emit("session-output",
                     StreamEvent::ToolCallStart { session_id: session_id.to_string(), block_id: bid.clone(), tool_name: name.clone(), tool_input: input.clone() });
                 let _ = app_handle.emit("session-output",

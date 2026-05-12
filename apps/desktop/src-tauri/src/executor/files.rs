@@ -1,5 +1,10 @@
 use std::path::{Path, PathBuf};
 
+const MAX_TEXT_FILE_BYTES: u64 = 2_000_000;
+const MAX_WRITE_FILE_BYTES: usize = 2_000_000;
+const MAX_LIST_ENTRIES: usize = 300;
+const MAX_SEARCH_MATCHES: usize = 200;
+
 /// Result of reading a file.
 #[derive(Debug, Clone)]
 pub struct FileReadResult {
@@ -41,6 +46,7 @@ impl FileExecutor {
     /// Read a file. Path can be absolute or relative to working_dir.
     pub fn read_file(&self, path: &str) -> Result<FileReadResult, String> {
         let resolved = self.resolve(path)?;
+        ensure_plain_text_size(&resolved)?;
         let content =
             std::fs::read_to_string(&resolved).map_err(|e| format!("Read error: {}", e))?;
         let line_count = content.lines().count();
@@ -54,6 +60,13 @@ impl FileExecutor {
     /// Write content to a file. Returns old and new content for diff display.
     pub fn write_file(&self, path: &str, content: &str) -> Result<FileWriteResult, String> {
         let resolved = self.resolve(path)?;
+        if content.len() > MAX_WRITE_FILE_BYTES {
+            return Err(format!(
+                "Refusing to write {} bytes through the AI file tool; limit is {} bytes.",
+                content.len(),
+                MAX_WRITE_FILE_BYTES
+            ));
+        }
 
         // Ensure parent directory exists
         if let Some(parent) = resolved.parent() {
@@ -62,6 +75,7 @@ impl FileExecutor {
         }
 
         let old_content = if resolved.exists() {
+            ensure_plain_text_size(&resolved)?;
             std::fs::read_to_string(&resolved).unwrap_or_default()
         } else {
             String::new()
@@ -100,6 +114,9 @@ impl FileExecutor {
         };
 
         for entry in entries.flatten() {
+            if results.len() >= MAX_SEARCH_MATCHES {
+                return Ok(());
+            }
             let path = entry.path();
             if path.is_dir() {
                 // Skip common non-source directories
@@ -109,6 +126,9 @@ impl FileExecutor {
                 }
                 self.walk_files(&path, regex, results)?;
             } else if path.is_file() {
+                if is_oversized_file(&path) {
+                    continue;
+                }
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     for (i, line) in content.lines().enumerate() {
                         if regex.is_match(line) {
@@ -117,6 +137,9 @@ impl FileExecutor {
                                 line_number: i + 1,
                                 line_content: line.to_string(),
                             });
+                            if results.len() >= MAX_SEARCH_MATCHES {
+                                return Ok(());
+                            }
                         }
                     }
                 }
@@ -129,13 +152,21 @@ impl FileExecutor {
     pub fn list_directory(&self, path: &str) -> Result<String, String> {
         let dir = if path.is_empty() { self.working_dir.clone() } else { self.resolve(path)? };
         let mut entries: Vec<String> = Vec::new();
+        let mut truncated = false;
         let iter = std::fs::read_dir(&dir).map_err(|e| format!("Cannot read directory: {}", e))?;
         for entry in iter.flatten() {
+            if entries.len() >= MAX_LIST_ENTRIES {
+                truncated = true;
+                break;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
             let ft = entry.file_type().map(|t| if t.is_dir() { "/" } else { "" }).unwrap_or("");
             entries.push(format!("{}{}", name, ft));
         }
         entries.sort();
+        if truncated {
+            entries.push(format!("... truncated to first {} entries", MAX_LIST_ENTRIES));
+        }
         Ok(entries.join("\n"))
     }
 
@@ -143,6 +174,14 @@ impl FileExecutor {
     /// Returns the updated content or an error if old_string not found.
     pub fn edit_file(&self, path: &str, old_str: &str, new_str: &str) -> Result<String, String> {
         let resolved = self.resolve(path)?;
+        ensure_plain_text_size(&resolved)?;
+        if new_str.len() > MAX_WRITE_FILE_BYTES {
+            return Err(format!(
+                "Refusing to insert {} bytes through the AI edit tool; limit is {} bytes.",
+                new_str.len(),
+                MAX_WRITE_FILE_BYTES
+            ));
+        }
         let content = std::fs::read_to_string(&resolved).map_err(|e| format!("Read error: {}", e))?;
         if !content.contains(old_str) {
             return Err("old_string not found in file".to_string());
@@ -171,4 +210,21 @@ impl FileExecutor {
         }
         Ok(canonical)
     }
+}
+
+fn ensure_plain_text_size(path: &Path) -> Result<(), String> {
+    if is_oversized_file(path) {
+        return Err(format!(
+            "File is too large for the AI file tool: {} (limit {} bytes)",
+            path.display(),
+            MAX_TEXT_FILE_BYTES
+        ));
+    }
+    Ok(())
+}
+
+fn is_oversized_file(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.len() > MAX_TEXT_FILE_BYTES)
+        .unwrap_or(false)
 }

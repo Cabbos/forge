@@ -47,11 +47,32 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_capability_description(&self, id: &str, description: &str) -> SqlResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE capabilities SET description = ?1 WHERE id = ?2",
+            rusqlite::params![description, id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_enabled(&self, id: &str, enabled: bool) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("UPDATE capabilities SET enabled = ?1 WHERE id = ?2",
             rusqlite::params![enabled as i32, id])?;
         Ok(())
+    }
+
+    pub fn get_capability_enabled(&self, id: &str) -> SqlResult<Option<bool>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT enabled FROM capabilities WHERE id = ?1")?;
+        let mut rows = stmt.query(rusqlite::params![id])?;
+        if let Some(row) = rows.next()? {
+            let enabled: i32 = row.get(0)?;
+            Ok(Some(enabled != 0))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn delete_capability(&self, id: &str) -> SqlResult<()> {

@@ -1,5 +1,8 @@
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
+
+use crate::harness::db::Database;
 
 /// A loaded skill from a SKILL.md file.
 #[derive(Debug, Clone)]
@@ -31,6 +34,7 @@ pub struct SkillLoader {
     skills: RwLock<Vec<LoadedSkill>>,
     /// Directories to scan for skills.
     scan_dirs: RwLock<Vec<PathBuf>>,
+    db: StdRwLock<Option<Arc<Database>>>,
 }
 
 impl SkillLoader {
@@ -40,10 +44,31 @@ impl SkillLoader {
         if let Ok(home) = std::env::var("HOME") {
             scan_dirs.push(PathBuf::from(home).join(".ai-studio/skills"));
         }
+        Self::with_scan_dirs(scan_dirs)
+    }
+
+    pub fn new_for_workspace(working_dir: &std::path::Path) -> Self {
+        let mut scan_dirs = Vec::new();
+        // User-level skills
+        if let Ok(home) = std::env::var("HOME") {
+            scan_dirs.push(PathBuf::from(home).join(".ai-studio/skills"));
+        }
+        scan_dirs.push(working_dir.join(".ai-studio/skills"));
+        scan_dirs.push(working_dir.join(".agents/skills"));
+        scan_dirs.push(working_dir.join("skills"));
+        Self::with_scan_dirs(scan_dirs)
+    }
+
+    fn with_scan_dirs(scan_dirs: Vec<PathBuf>) -> Self {
         Self {
             skills: RwLock::new(Vec::new()),
             scan_dirs: RwLock::new(scan_dirs),
+            db: StdRwLock::new(None),
         }
+    }
+
+    pub fn attach_database(&self, db: Arc<Database>) {
+        *self.db.write().unwrap() = Some(db);
     }
 
     /// Scan all registered directories for SKILL.md files.
@@ -63,13 +88,14 @@ impl SkillLoader {
                         if let Ok(content) = std::fs::read_to_string(&md_path) {
                             let name = entry.file_name().to_string_lossy().to_string();
                             let (desc, tools) = parse_skill_metadata(&content);
+                            let enabled = self.skill_enabled(&name);
                             discovered.push(LoadedSkill {
                                 id: name.clone(),
                                 name: name.clone(),
                                 description: desc,
                                 instruction: content,
                                 source: SkillSource::Local(entry.path()),
-                                enabled: true,
+                                enabled,
                                 tools,
                             });
                         }
@@ -92,13 +118,15 @@ impl SkillLoader {
                                 if let Ok(content) = std::fs::read_to_string(&md_path) {
                                     let name = entry.file_name().to_string_lossy().to_string();
                                     let (desc, tools) = parse_skill_metadata(&content);
+                                    let id = format!("builtin-{name}");
+                                    let enabled = self.skill_enabled(&id);
                                     discovered.push(LoadedSkill {
-                                        id: format!("builtin-{name}"),
+                                        id,
                                         name,
                                         description: desc,
                                         instruction: content,
                                         source: SkillSource::Local(entry.path()),
-                                        enabled: true,
+                                        enabled,
                                         tools,
                                     });
                                 }
@@ -126,15 +154,42 @@ impl SkillLoader {
             .collect()
     }
 
+    pub async fn all_skills(&self) -> Vec<LoadedSkill> {
+        self.skills.read().await.iter().cloned().collect()
+    }
+
     pub async fn toggle(&self, id: &str, enabled: bool) {
+        let mut found = None;
         if let Some(skill) = self.skills.write().await.iter_mut().find(|s| s.id == id) {
             skill.enabled = enabled;
+            found = Some((skill.name.clone(), skill.description.clone()));
         }
+        if let Some(db) = self.db.read().unwrap().clone() {
+            if let Some((name, description)) = found {
+                let _ = db.upsert_capability(id, &name, "skill", "local", enabled);
+                let _ = db.update_capability_description(id, &description);
+            } else {
+                let _ = db.set_enabled(id, enabled);
+            }
+        }
+    }
+
+    pub async fn get(&self, id: &str) -> Option<LoadedSkill> {
+        self.skills.read().await.iter().find(|s| s.id == id).cloned()
     }
 
     /// Add a scan directory (e.g., project-level .ai-studio/skills).
     pub async fn add_scan_dir(&self, dir: PathBuf) {
         self.scan_dirs.write().await.push(dir);
+    }
+
+    fn skill_enabled(&self, id: &str) -> bool {
+        self.db
+            .read()
+            .unwrap()
+            .clone()
+            .and_then(|db| db.get_capability_enabled(id).ok().flatten())
+            .unwrap_or(true)
     }
 }
 
