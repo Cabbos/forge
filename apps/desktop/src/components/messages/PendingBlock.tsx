@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { WhaleSVG } from "./WhaleSVG";
+import forgeMark from "@/assets/forge-mark.svg";
 
 const HINTS = [
   "正在理解你的需求...",
@@ -26,14 +26,12 @@ export function PendingBlock() {
 
   return (
     <div className="flex flex-col items-center gap-3 py-8 select-none">
-      <div className="relative overflow-hidden" style={{ width: 100, height: 48 }}>
-        <div className="absolute left-0 right-0" style={{ bottom: 8, borderTop: "1px solid rgba(91,155,213,0.12)" }} />
-        <div className="absolute animate-[dolphin-jump_2.2s_ease-in-out_infinite]" style={{ left: -24, bottom: 6 }}>
-          <WhaleSVG animate size={24} />
-        </div>
+      <div className="relative flex size-10 items-center justify-center">
+        <div className="absolute inset-0 rounded-lg border border-primary/20 bg-primary/5 animate-pulse" />
+        <img src={forgeMark} alt="" className="relative size-8 rounded-md" />
       </div>
       <span className="text-[12px] transition-opacity duration-500 text-center"
-        style={{ color: fadeOut ? "transparent" : "#555" }}>
+        style={{ color: fadeOut ? "transparent" : "var(--muted-foreground)" }}>
         {hint}
       </span>
     </div>

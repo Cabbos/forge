@@ -11,6 +11,7 @@ import { DiffCard } from "@/components/messages/DiffCard";
 import { ConfirmCard } from "@/components/messages/ConfirmCard";
 import { PendingBlock } from "@/components/messages/PendingBlock";
 import { AcceptanceCard } from "@/components/messages/AcceptanceCard";
+import { ContextCompactCard } from "@/components/messages/ContextCompactCard";
 
 interface MessageListProps { blocks: BlockState[]; sessionId?: string }
 
@@ -79,8 +80,13 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
 
   if (blocks.length === 0) {
     return (
-      <div className="flex-1 min-h-0 flex items-center justify-center" style={{ color: "#333" }}>
-        <p className="text-sm">Send a message to begin.</p>
+      <div className="flex-1 min-h-0 flex items-center justify-center px-8 text-center text-muted-foreground">
+        <div>
+          <p className="text-sm text-foreground/85">从一句话开始</p>
+          <p className="mt-1 max-w-[360px] text-xs leading-relaxed text-muted-foreground/75">
+            直接描述你想做成什么样，应用会把过程整理成进度、改动和验收步骤。
+          </p>
+        </div>
       </div>
     );
   }
@@ -110,7 +116,7 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
       {userScrolledUp && (
         <button onClick={scrollToBottom}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 p-2 rounded-full shadow-lg transition-all z-10"
-          style={{ background: "#1c1c1c", border: "1px solid #2a2a2a" }}>
+          style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
           <ArrowDown className="size-4" style={{ color: "#D4A853" }} />
         </button>
       )}
@@ -123,7 +129,7 @@ function shouldShowAcceptanceCard(block?: BlockState) {
   if (block.event_type !== "text" || !block.isComplete) return false;
   const content = block.content.trim();
   if (content.length < 120) return false;
-  if (content.startsWith("Active Skills:")) return false;
+  if (content.startsWith("Active Skills:") || content.startsWith("已启用插件:")) return false;
   return true;
 }
 
@@ -136,6 +142,7 @@ function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: st
     case "shell": return <ShellCard block={block} />;
     case "diff_view": return <DiffCard block={block} />;
     case "confirm_ask": return <ConfirmCard block={block} sessionId={sessionId} />;
+    case "context_compacted": return <ContextCompactCard block={block} />;
     case "pending": return <PendingBlock />;
     default: return block.content ? <TextBlock block={block} sessionId={sessionId} /> : null;
   }

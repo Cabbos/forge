@@ -26,11 +26,57 @@ export interface FilePreview {
   lines: FilePreviewLine[];
 }
 
-export async function createSession(workingDir: string, apiKey: string, model: string): Promise<SessionCreated> {
+export interface ProjectRuntimeStatus {
+  working_dir: string;
+  has_package_json: boolean;
+  package_manager: string;
+  dev_script: string | null;
+  command: string | null;
+  port: number;
+  url: string;
+  running: boolean;
+  managed: boolean;
+  pid: number | null;
+  can_start: boolean;
+  can_stop: boolean;
+  can_open: boolean;
+  message: string;
+  logs: string[];
+}
+
+export interface ProjectCheckpoint {
+  id: string;
+  created_at: number;
+  head: string;
+  status: string;
+  diff_patch: string;
+}
+
+export interface ProjectCheckpointStatus {
+  working_dir: string;
+  is_git_repo: boolean;
+  dirty: boolean;
+  last_checkpoint: ProjectCheckpoint | null;
+  message: string;
+}
+
+export async function createSession(
+  workingDir: string,
+  provider: string,
+  model: string,
+  apiKey = "",
+): Promise<SessionCreated> {
   rememberWorkingDir(workingDir);
   return invoke<SessionCreated>("create_session", {
-    workingDir, apiKey: apiKey || "", model,
+    workingDir,
+    provider,
+    apiKey: apiKey || "",
+    model,
   });
+}
+
+export async function resumeSession(sessionId: string): Promise<SessionCreated> {
+  return invoke<SessionCreated>("resume_session", { sessionId });
 }
 
 export async function sendInput(sessionId: string, text: string): Promise<void> {
@@ -88,6 +134,7 @@ export interface CapabilityInfo {
 }
 
 export async function listCapabilities(): Promise<CapabilityInfo[]> {
+  if (!hasTauriRuntime()) return [];
   return invoke("list_capabilities");
 }
 
@@ -122,9 +169,69 @@ export async function previewFile(path: string, line?: number, sessionId?: strin
   return invoke("preview_file", { path, line: line ?? null, context: 40, sessionId: sessionId ?? null });
 }
 
+export async function getProjectRuntimeStatus(sessionId?: string): Promise<ProjectRuntimeStatus> {
+  if (!hasTauriRuntime()) return fallbackProjectRuntimeStatus();
+  return invoke("get_project_runtime_status", { sessionId: sessionId ?? null });
+}
+
+export async function startProjectDevServer(sessionId?: string): Promise<ProjectRuntimeStatus> {
+  return invoke("start_project_dev_server", { sessionId: sessionId ?? null });
+}
+
+export async function stopProjectDevServer(sessionId?: string): Promise<ProjectRuntimeStatus> {
+  return invoke("stop_project_dev_server", { sessionId: sessionId ?? null });
+}
+
+export async function openProjectPreview(sessionId?: string): Promise<ProjectRuntimeStatus> {
+  return invoke("open_project_preview", { sessionId: sessionId ?? null });
+}
+
+export async function getProjectCheckpointStatus(sessionId?: string): Promise<ProjectCheckpointStatus> {
+  if (!hasTauriRuntime()) return fallbackProjectCheckpointStatus();
+  return invoke("get_project_checkpoint_status", { sessionId: sessionId ?? null });
+}
+
+export async function createProjectCheckpoint(sessionId?: string): Promise<ProjectCheckpointStatus> {
+  return invoke("create_project_checkpoint", { sessionId: sessionId ?? null });
+}
+
+export async function restoreProjectCheckpoint(sessionId?: string): Promise<ProjectCheckpointStatus> {
+  return invoke("restore_project_checkpoint", { sessionId: sessionId ?? null });
+}
+
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
+}
+
+function fallbackProjectRuntimeStatus(): ProjectRuntimeStatus {
+  return {
+    working_dir: getRememberedWorkingDir() ?? "",
+    has_package_json: false,
+    package_manager: "npm",
+    dev_script: null,
+    command: null,
+    port: 1420,
+    url: "http://localhost:1420",
+    running: false,
+    managed: false,
+    pid: null,
+    can_start: false,
+    can_stop: false,
+    can_open: false,
+    message: "在桌面应用中读取项目状态",
+    logs: [],
+  };
+}
+
+function fallbackProjectCheckpointStatus(): ProjectCheckpointStatus {
+  return {
+    working_dir: getRememberedWorkingDir() ?? "",
+    is_git_repo: false,
+    dirty: false,
+    last_checkpoint: null,
+    message: "在桌面应用中读取检查点",
+  };
 }
 
 export function rememberWorkingDir(workingDir: string) {

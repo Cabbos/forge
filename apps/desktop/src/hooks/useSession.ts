@@ -1,26 +1,40 @@
 import { useCallback } from "react";
 import { useStore } from "../store";
-import { createSession, sendInput, killSession } from "../lib/tauri";
-
-const DEFAULT_MODEL = "deepseek-v4-flash[1m]";
+import { createSession, resumeSession, sendInput, killSession } from "../lib/tauri";
 
 export function useSession() {
   const addSession = useStore((s) => s.addSession);
   const removeSession = useStore((s) => s.removeSession);
+  const updateSessionStatus = useStore((s) => s.updateSessionStatus);
+  const selectedProvider = useStore((s) => s.selectedProvider);
+  const selectedModel = useStore((s) => s.selectedModel);
 
   const create = useCallback(
-    async (workingDir: string, model?: string) => {
+    async (workingDir: string, provider = selectedProvider, model = selectedModel) => {
       try {
-        const m = model || DEFAULT_MODEL;
-        const result = await createSession(workingDir, "", m);
-        addSession(result.session_id, "deepseek", m);
+        const result = await createSession(workingDir, provider, model);
+        addSession(result.session_id, provider, model);
         return result.session_id;
       } catch (e) {
         console.error("Failed to create session:", e);
         throw e;
       }
     },
-    [addSession]
+    [addSession, selectedModel, selectedProvider]
+  );
+
+  const resume = useCallback(
+    async (sessionId: string) => {
+      try {
+        const result = await resumeSession(sessionId);
+        updateSessionStatus(result.session_id, "running");
+        return result.session_id;
+      } catch (e) {
+        console.error("Failed to resume session:", e);
+        throw e;
+      }
+    },
+    [updateSessionStatus]
   );
 
   const send = useCallback(async (sessionId: string, text: string) => {
@@ -43,5 +57,5 @@ export function useSession() {
     [removeSession]
   );
 
-  return { create, send, kill };
+  return { create, resume, send, kill };
 }

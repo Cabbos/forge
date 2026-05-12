@@ -91,7 +91,7 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
           <DialogDescription>{locationLabel}</DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-auto bg-[#070707]">
+        <div className="min-h-0 flex-1 overflow-auto bg-background">
           {loading && (
             <div className="flex h-full min-h-[240px] items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
@@ -121,7 +121,7 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
                 >
                   <div
                     className="select-none px-3 py-0.5 text-right"
-                    style={{ color: line.is_target ? "#8FC7FF" : "#555" }}
+                    style={{ color: line.is_target ? "#8FC7FF" : "var(--muted-foreground)" }}
                   >
                     {line.number}
                   </div>

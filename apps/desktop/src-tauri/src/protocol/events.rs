@@ -102,12 +102,25 @@ pub enum StreamEvent {
         kind: String, // "dangerous_cmd" | "file_delete" | "api_call"
     },
 
+    // ── Context Management ──
+    #[serde(rename = "context_compacted")]
+    ContextCompacted {
+        session_id: String,
+        block_id: String,
+        summary: String,
+        retained_messages: usize,
+        compacted_messages: usize,
+        estimated_tokens_before: u32,
+        estimated_tokens_after: u32,
+    },
+
     // ── Session Status ──
     #[serde(rename = "session_started")]
     SessionStarted {
         session_id: String,
         agent_type: String,
         model: String,
+        context_window_tokens: Option<u32>,
     },
     #[serde(rename = "session_status")]
     SessionStatus {
@@ -115,10 +128,7 @@ pub enum StreamEvent {
         status: String, // "thinking" | "working" | "idle" | "error"
     },
     #[serde(rename = "session_stopped")]
-    SessionStopped {
-        session_id: String,
-        reason: String,
-    },
+    SessionStopped { session_id: String, reason: String },
     #[serde(rename = "error")]
     Error {
         session_id: String,
@@ -154,6 +164,7 @@ impl StreamEvent {
             | ShellOutput { session_id, .. }
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
+            | ContextCompacted { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
             | SessionStopped { session_id, .. }

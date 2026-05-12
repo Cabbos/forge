@@ -37,18 +37,18 @@ function ToolStepRow({ step }: { step: ToolStep }) {
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 text-[10px] py-0.5 cursor-pointer transition-colors w-full text-left"
-        style={{ color: "#888" }}
+        style={{ color: "var(--muted-foreground)" }}
       >
         <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
         <ToolIcon name={step.name} />
         <span className="font-mono" style={{ color: "#5B9BD5" }}>{step.name}</span>
-        <span className="truncate" style={{ color: "#666" }}>{step.input.slice(0, 40)}</span>
-        <span style={{ color: "#555" }}>→</span>
-        <span className="truncate" style={{ color: "#999" }}>{shortResult}</span>
+        <span className="truncate" style={{ color: "var(--muted-foreground)" }}>{step.input.slice(0, 40)}</span>
+        <span style={{ color: "var(--muted-foreground)" }}>→</span>
+        <span className="truncate" style={{ color: "#D0D5DD" }}>{shortResult}</span>
       </button>
       {open && (
         <div className="ml-5 mt-0.5 mb-1 p-1.5 rounded text-[10px] font-mono whitespace-pre-wrap break-all"
-          style={{ background: "#060606", border: "1px solid #181818", color: "#777", maxHeight: "120px", overflow: "auto" }}>
+          style={{ background: "var(--background)", border: "1px solid var(--border)", color: "#D0D5DD", maxHeight: "120px", overflow: "auto" }}>
           {step.result}
         </div>
       )}
@@ -65,24 +65,24 @@ function RoundCard({ step }: { step: RoundStep }) {
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 text-[10px] py-1 cursor-pointer transition-colors w-full text-left"
-        style={{ color: "#999" }}
+        style={{ color: "var(--muted-foreground)" }}
       >
         <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
-        <span style={{ color: "#D4A853" }}>Round {step.round + 1}</span>
-        {step.thinking && <Brain className="size-2.5" style={{ color: "#888" }} />}
-        {step.text && <MessageSquare className="size-2.5" style={{ color: "#888" }} />}
-        <span style={{ color: "#666" }}>{step.tool_calls.length} tools</span>
+        <span style={{ color: "#D4A853" }}>第 {step.round + 1} 轮</span>
+        {step.thinking && <Brain className="size-2.5" style={{ color: "var(--muted-foreground)" }} />}
+        {step.text && <MessageSquare className="size-2.5" style={{ color: "var(--muted-foreground)" }} />}
+        <span style={{ color: "var(--muted-foreground)" }}>{step.tool_calls.length} 个工具</span>
       </button>
       {open && hasDetail && (
-        <div className="ml-3 pl-2" style={{ borderLeft: "1px solid #1c1c1c" }}>
+        <div className="ml-3 pl-2" style={{ borderLeft: "1px solid var(--border)" }}>
           {step.thinking && (
-            <div className="text-[10px] py-0.5" style={{ color: "#666" }}>
-              <span className="text-muted-foreground/40">thinking: </span>
+            <div className="text-[10px] py-0.5" style={{ color: "var(--muted-foreground)" }}>
+              <span className="text-muted-foreground/70">思考：</span>
               {step.thinking.slice(0, 300)}
             </div>
           )}
           {step.text && (
-            <div className="text-[10px] py-0.5" style={{ color: "#999" }}>
+            <div className="text-[10px] py-0.5" style={{ color: "#D0D5DD" }}>
               {step.text.slice(0, 300)}
             </div>
           )}
@@ -118,8 +118,8 @@ export function SubAgentTrace({ content }: { content: string }) {
       )}
       {/* Final result */}
       <div className="ml-2 p-2 rounded text-[11px] font-mono whitespace-pre-wrap break-all"
-        style={{ background: "#060606", border: "1px solid #181818", color: "#999", maxHeight: "200px", overflow: "auto" }}>
-        {payload.result || "(empty)"}
+        style={{ background: "var(--background)", border: "1px solid var(--border)", color: "#D0D5DD", maxHeight: "200px", overflow: "auto" }}>
+        {payload.result || "暂无结果"}
       </div>
     </div>
   );

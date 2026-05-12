@@ -21,8 +21,19 @@ export type StreamEvent =
   | { event_type: "shell_end"; session_id: string; block_id: string; exit_code: number }
   // ── Permission Confirmations ──
   | { event_type: "confirm_ask"; session_id: string; block_id: string; question: string; kind: string }
+  // ── Context Management ──
+  | {
+      event_type: "context_compacted";
+      session_id: string;
+      block_id: string;
+      summary: string;
+      retained_messages: number;
+      compacted_messages: number;
+      estimated_tokens_before: number;
+      estimated_tokens_after: number;
+    }
   // ── Session Status ──
-  | { event_type: "session_started"; session_id: string; agent_type: string; model: string }
+  | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }
   | { event_type: "session_status"; session_id: string; status: string }
   | { event_type: "session_stopped"; session_id: string; reason: string }
   | { event_type: "error"; session_id: string; block_id: string; message: string; code: string }
@@ -42,6 +53,7 @@ export interface SessionState {
   id: string;
   agentType: string;
   model: string;
+  contextWindowTokens?: number | null;
   status: "running" | "stopped" | "error";
   streaming: boolean;
   blocks: BlockState[];

@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import type { BlockState } from "@/lib/protocol";
 import { CodeBlock } from "@/components/messages/CodeBlock";
 import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
-import { WhaleSVG } from "./WhaleSVG";
+import { CheckCircle2, Loader2 } from "lucide-react";
 
 const STREAM_THROTTLE_MS = 220;
 const FILE_REF_PREFIX = "#file-ref=";
@@ -235,8 +235,8 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
   return (
     <div className="mb-4">
       {hasContent ? (
-        <div className="px-4 py-3 text-sm leading-relaxed break-words rounded-2xl rounded-bl-md border text-left min-w-0"
-          style={{ background: "#0f0f0f", borderColor: "#181818", color: "#ccc", overflowWrap: "anywhere" }}>
+        <div className="min-w-0 rounded-lg border px-4 py-3 text-left text-sm leading-relaxed break-words"
+          style={{ background: "var(--card)", borderColor: "var(--border)", color: "#E4E7EC", overflowWrap: "anywhere" }}>
           <div className="markdown-content">
             {block.isComplete ? (
               <MarkdownRenderer content={renderedContent} onOpenFileRef={setPreviewFileRef} />
@@ -248,15 +248,15 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
           </div>
         </div>
       ) : (
-        <div className="py-1">
-          <WhaleSVG animate size={14} />
+        <div className="py-1 text-muted-foreground/70">
+          <Loader2 className="size-4 animate-spin" />
         </div>
       )}
 
       {hasContent && block.isComplete && (
         <div className="flex items-center gap-1 mt-1.5 select-none">
-          <WhaleSVG done size={12} />
-          <span className="text-[9px] font-mono" style={{ color: "#4A9E6B", opacity: 0.3 }}>ok</span>
+          <CheckCircle2 className="size-3" style={{ color: "#4A9E6B", opacity: 0.65 }} />
+          <span className="text-[9px] font-mono" style={{ color: "#4A9E6B", opacity: 0.7 }}>完成</span>
         </div>
       )}
       <FilePreviewSheet fileRef={previewFileRef} sessionId={sessionId} onClose={() => setPreviewFileRef(null)} />

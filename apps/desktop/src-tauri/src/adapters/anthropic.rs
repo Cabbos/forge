@@ -136,7 +136,11 @@ pub struct ToolDef {
 
 impl ToolDef {
     pub fn new(name: &str, description: &str, input_schema: serde_json::Value) -> Self {
-        Self { name: name.to_string(), description: description.to_string(), input_schema }
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            input_schema,
+        }
     }
 }
 
@@ -159,7 +163,7 @@ impl AnthropicAdapter {
     }
 
     fn tool_definitions(&self) -> Vec<ToolDef> {
-    let mut tools = vec![
+        let mut tools = vec![
         ToolDef {
             name: "read_file".to_string(),
             description: "Read the contents of a file. Use this to inspect code, configs, logs, or any text file.".to_string(),
@@ -221,9 +225,9 @@ impl AnthropicAdapter {
             input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to find or investigate."}},"required":["task"]}),
         },
     ];
-    tools.extend(self.external_tools.clone());
-    tools
-}
+        tools.extend(self.external_tools.clone());
+        tools
+    }
 }
 
 #[async_trait]
@@ -234,9 +238,9 @@ impl AiAdapter for AnthropicAdapter {
 
     fn model_name(&self) -> &str {
         match self.model.as_str() {
-            "deepseek-v4-pro[1m]" => "DeepSeek V4 Pro",
+            "deepseek-v4-pro[1m]" => "DeepSeek V4 Pro 1M",
             "deepseek-v4-pro" => "DeepSeek V4 Pro",
-            "deepseek-v4-flash[1m]" => "DeepSeek V4 Flash",
+            "deepseek-v4-flash[1m]" => "DeepSeek V4 Flash 1M",
             "deepseek-v4-flash" => "DeepSeek V4 Flash",
             "claude-opus-4-7" => "Claude Opus 4.7",
             "claude-sonnet-4-6" => "Claude Sonnet 4.6",
@@ -258,10 +262,14 @@ impl AiAdapter for AnthropicAdapter {
             .filter(|m| {
                 if m.role == "system" {
                     if let serde_json::Value::String(ref s) = m.content {
-                        if !s.is_empty() { system_parts.push(s.clone()); }
+                        if !s.is_empty() {
+                            system_parts.push(s.clone());
+                        }
                     }
                     false
-                } else { true }
+                } else {
+                    true
+                }
             })
             .cloned()
             .collect();
@@ -271,7 +279,10 @@ impl AiAdapter for AnthropicAdapter {
             max_tokens: self.max_tokens,
             stream: false,
             messages: &filtered,
-            thinking: Some(ThinkingConfig { type_: "enabled".to_string(), budget_tokens: 2000 }),
+            thinking: Some(ThinkingConfig {
+                type_: "enabled".to_string(),
+                budget_tokens: 2000,
+            }),
             system: Some(system_parts.join("\n\n")),
             tools: Some(self.sub_agent_tools()),
         };
@@ -312,11 +323,10 @@ impl AiAdapter for AnthropicAdapter {
             Err(e) => return Err(AdapterError::Stream(e.to_string())),
         };
 
-        let content = parsed["content"].as_array()
-            .cloned()
-            .unwrap_or_default();
+        let content = parsed["content"].as_array().cloned().unwrap_or_default();
 
-        let tool_calls: Vec<ToolCall> = content.iter()
+        let tool_calls: Vec<ToolCall> = content
+            .iter()
             .filter(|b| b["type"].as_str() == Some("tool_use"))
             .map(|b| ToolCall {
                 id: b["id"].as_str().unwrap_or("").to_string(),
@@ -457,8 +467,11 @@ impl AiAdapter for AnthropicAdapter {
                             "message_start" => {
                                 // Capture input tokens for cost tracking
                                 if let Some(usage) = parsed["message"].get("usage") {
-                                    total_input_tokens = usage.get("input_tokens")
-                                        .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                    total_input_tokens = usage
+                                        .get("input_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as u32;
                                 }
                                 let _ = app_handle.emit(
                                     "session-output",
@@ -522,7 +535,8 @@ impl AiAdapter for AnthropicAdapter {
                                             && !tool_input.as_object().unwrap().is_empty()
                                         {
                                             current_tool_input_json =
-                                                serde_json::to_string(&tool_input).unwrap_or_default();
+                                                serde_json::to_string(&tool_input)
+                                                    .unwrap_or_default();
                                         }
 
                                         let _ = app_handle.emit(
@@ -546,8 +560,7 @@ impl AiAdapter for AnthropicAdapter {
 
                                 match delta_type {
                                     "thinking_delta" => {
-                                        let content =
-                                            delta["thinking"].as_str().unwrap_or("");
+                                        let content = delta["thinking"].as_str().unwrap_or("");
                                         current_thinking.push_str(content);
                                         let _ = app_handle.emit(
                                             "session-output",
@@ -571,8 +584,7 @@ impl AiAdapter for AnthropicAdapter {
                                         );
                                     }
                                     "input_json_delta" => {
-                                        let partial =
-                                            delta["partial_json"].as_str().unwrap_or("");
+                                        let partial = delta["partial_json"].as_str().unwrap_or("");
                                         current_tool_input_json.push_str(partial);
                                     }
                                     _ => {}
@@ -588,14 +600,26 @@ impl AiAdapter for AnthropicAdapter {
                                         if !current_thinking.is_empty() {
                                             assistant_content.push(serde_json::json!({"type":"thinking","thinking":current_thinking}));
                                         }
-                                        let _ = app_handle.emit("session-output", StreamEvent::ThinkingEnd { session_id: session.clone(), block_id: bid });
+                                        let _ = app_handle.emit(
+                                            "session-output",
+                                            StreamEvent::ThinkingEnd {
+                                                session_id: session.clone(),
+                                                block_id: bid,
+                                            },
+                                        );
                                     }
                                     Some("text") => {
                                         // Save text to conversation history
                                         if !current_text.is_empty() {
                                             assistant_content.push(serde_json::json!({"type":"text","text":current_text}));
                                         }
-                                        let _ = app_handle.emit("session-output", StreamEvent::TextEnd { session_id: session.clone(), block_id: bid });
+                                        let _ = app_handle.emit(
+                                            "session-output",
+                                            StreamEvent::TextEnd {
+                                                session_id: session.clone(),
+                                                block_id: bid,
+                                            },
+                                        );
                                     }
                                     Some("tool_use") => {
                                         // Parse accumulated tool input JSON
@@ -605,8 +629,7 @@ impl AiAdapter for AnthropicAdapter {
                                                     serde_json::Map::new(),
                                                 ));
 
-                                        let tool_id =
-                                            current_tool_id.clone().unwrap_or_default();
+                                        let tool_id = current_tool_id.clone().unwrap_or_default();
                                         let tool_name =
                                             current_tool_name.clone().unwrap_or_default();
 
@@ -648,15 +671,22 @@ impl AiAdapter for AnthropicAdapter {
                                     .map(|s| s.to_string());
                                 // Capture usage data and emit cost event
                                 if let Some(usage) = parsed["usage"].as_object() {
-                                    let output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                                    let cost = estimate_cost(&self.model, total_input_tokens, output);
-                                    let _ = app_handle.emit("session-output",
+                                    let output = usage
+                                        .get("output_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0)
+                                        as u32;
+                                    let cost =
+                                        estimate_cost(&self.model, total_input_tokens, output);
+                                    let _ = app_handle.emit(
+                                        "session-output",
                                         StreamEvent::Usage {
                                             session_id: session.to_string(),
                                             input_tokens: total_input_tokens,
                                             output_tokens: output,
                                             estimated_cost_usd: cost,
-                                        });
+                                        },
+                                    );
                                 }
                             }
 
@@ -717,11 +747,7 @@ pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> f64 
 }
 
 /// Flush accumulated text or thinking content into the assistant content list.
-fn flush_content(
-    block_type: Option<&str>,
-    text: &str,
-    content: &mut Vec<serde_json::Value>,
-) {
+fn flush_content(block_type: Option<&str>, text: &str, content: &mut Vec<serde_json::Value>) {
     match block_type {
         Some("text") if !text.is_empty() => {
             content.push(serde_json::json!({"type": "text", "text": text}));

@@ -3,13 +3,17 @@ use tauri::Emitter;
 
 use crate::adapters::anthropic::AnthropicAdapter;
 use crate::adapters::base::AiAdapter;
+use crate::adapters::openai_compatible::OpenAiCompatibleAdapter;
 use crate::agent::session::AgentSession;
+use crate::agent::snapshot::{
+    delete_session_snapshot, load_session_snapshot, save_session_snapshot,
+};
 use crate::harness::Harness;
 use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
-use crate::state::AppState;
 use crate::settings;
+use crate::state::AppState;
 
 #[derive(serde::Serialize)]
 pub struct FilePreviewLine {
@@ -30,17 +34,92 @@ pub struct FilePreview {
 
 /// DeepSeek Anthropic-compatible API (recommended by DeepSeek docs)
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/anthropic";
-const DEFAULT_MODEL: &str = "deepseek-v4-flash[1m]";
+const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+const DEFAULT_PROVIDER: &str = "deepseek";
 
-fn build_adapter(api_key: &str, model: Option<&str>) -> Result<Arc<Box<dyn AiAdapter>>, String> {
-    let model = model.unwrap_or(DEFAULT_MODEL);
-    let a = AnthropicAdapter::new(api_key.to_string())
-        .map_err(|e| format!("API key error: {e}"))?
-        .with_base_url(DEEPSEEK_BASE_URL)
-        .with_model(model)
-        .with_max_tokens(384_000)
-        .with_thinking_budget_tokens(16_000);
-    Ok(Arc::new(Box::new(a) as Box<dyn AiAdapter>))
+fn normalize_provider(provider: Option<&str>) -> String {
+    match provider
+        .unwrap_or(DEFAULT_PROVIDER)
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "anthropic" | "claude" => "anthropic".to_string(),
+        "openai" | "gpt" => "openai".to_string(),
+        "openrouter" => "openrouter".to_string(),
+        "deepseek" | "" => "deepseek".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn default_model(provider: &str) -> &'static str {
+    match provider {
+        "anthropic" => "claude-sonnet-4-6",
+        "openai" => "gpt-4o",
+        "openrouter" => "openai/gpt-4o-mini",
+        _ => "deepseek-v4-flash[1m]",
+    }
+}
+
+fn context_window_tokens(provider: &str, model: &str) -> Option<u32> {
+    match provider {
+        "deepseek" if model.contains("[1m]") => Some(1_000_000),
+        "deepseek" if model.contains("v4-pro") => Some(1_000_000),
+        "deepseek" => Some(128_000),
+        _ => None,
+    }
+}
+
+fn provider_label(provider: &str) -> &'static str {
+    match provider {
+        "anthropic" => "Anthropic",
+        "openai" => "OpenAI",
+        "openrouter" => "OpenRouter",
+        "deepseek" => "DeepSeek",
+        _ => "provider",
+    }
+}
+
+fn build_adapter(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+) -> Result<Arc<Box<dyn AiAdapter>>, String> {
+    match provider {
+        "deepseek" => {
+            let adapter = AnthropicAdapter::new(api_key.to_string())
+                .map_err(|e| format!("API key error: {e}"))?
+                .with_base_url(api_base.unwrap_or(DEEPSEEK_BASE_URL))
+                .with_model(model)
+                .with_max_tokens(384_000)
+                .with_thinking_budget_tokens(16_000);
+            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+        }
+        "anthropic" => {
+            let adapter = AnthropicAdapter::new(api_key.to_string())
+                .map_err(|e| format!("API key error: {e}"))?
+                .with_base_url(api_base.unwrap_or("https://api.anthropic.com"))
+                .with_model(model);
+            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+        }
+        "openai" => {
+            let adapter = OpenAiCompatibleAdapter::new(api_key.to_string())
+                .map_err(|e| format!("API key error: {e}"))?
+                .with_base_url(api_base.unwrap_or(OPENAI_BASE_URL))
+                .with_model(model);
+            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+        }
+        "openrouter" => {
+            let adapter = OpenAiCompatibleAdapter::new(api_key.to_string())
+                .map_err(|e| format!("API key error: {e}"))?
+                .with_base_url(api_base.unwrap_or(OPENROUTER_BASE_URL))
+                .with_model(model);
+            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+        }
+        other => Err(format!("Unsupported provider: {other}")),
+    }
 }
 
 #[tauri::command]
@@ -48,22 +127,31 @@ pub async fn create_session(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     working_dir: String,
+    provider: Option<String>,
     api_key: String,
     model: Option<String>,
 ) -> Result<SessionCreated, String> {
     let session_id = uuid::Uuid::now_v7().to_string();
+    let provider = normalize_provider(provider.as_deref());
+    let credentials = settings::detect_credentials(&provider);
 
     let key = if api_key.is_empty() {
-        settings::Settings::load().get_api_key("deepseek").unwrap_or("").to_string()
+        credentials.api_key
     } else {
         api_key
     };
     if key.is_empty() {
-        return Err("No DeepSeek API key configured. Open Settings (Cmd+,) to set one.".into());
+        return Err(format!(
+            "No {} API key configured. Open Settings (Cmd+,) to set one.",
+            provider_label(&provider)
+        ));
     }
 
-    let adapter = build_adapter(&key, model.as_deref())?;
-    let model_str = model.unwrap_or(DEFAULT_MODEL.to_string());
+    let model_str = model
+        .or(credentials.model)
+        .unwrap_or_else(|| default_model(&provider).to_string());
+    let context_window_tokens = context_window_tokens(&provider, &model_str);
+    let adapter = build_adapter(&provider, &key, &model_str, credentials.api_base.as_deref())?;
 
     let working_dir = resolve_working_dir(&working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
@@ -72,21 +160,24 @@ pub async fn create_session(
     ));
 
     // Build system prompt from harness (active skills + project CLAUDE.md)
-    let system_prompt = harness.build_system_prompt("deepseek", &working_dir).await;
+    let system_prompt = harness.build_system_prompt(&provider, &working_dir).await;
 
     let session = AgentSession::new(
         session_id.clone(),
-        "deepseek".to_string(),
+        provider.clone(),
         adapter,
         harness.clone(),
         system_prompt,
+        context_window_tokens,
     );
 
-    let _ = app_handle.emit("session-output",
+    let _ = app_handle.emit(
+        "session-output",
         StreamEvent::SessionStarted {
             session_id: session_id.clone(),
-            agent_type: "deepseek".to_string(),
+            agent_type: provider,
             model: model_str,
+            context_window_tokens,
         },
     );
 
@@ -96,19 +187,114 @@ pub async fn create_session(
         let names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
         let info = format!("Active Skills: {}", names.join(", "));
         let bid = BlockId::new().to_string();
-        let _ = app_handle.emit("session-output", StreamEvent::TextStart { session_id: session_id.clone(), block_id: bid.clone() });
-        let _ = app_handle.emit("session-output", StreamEvent::TextChunk { session_id: session_id.clone(), block_id: bid.clone(), content: info });
-        let _ = app_handle.emit("session-output", StreamEvent::TextEnd { session_id: session_id.clone(), block_id: bid });
+        let _ = app_handle.emit(
+            "session-output",
+            StreamEvent::TextStart {
+                session_id: session_id.clone(),
+                block_id: bid.clone(),
+            },
+        );
+        let _ = app_handle.emit(
+            "session-output",
+            StreamEvent::TextChunk {
+                session_id: session_id.clone(),
+                block_id: bid.clone(),
+                content: info,
+            },
+        );
+        let _ = app_handle.emit(
+            "session-output",
+            StreamEvent::TextEnd {
+                session_id: session_id.clone(),
+                block_id: bid,
+            },
+        );
     }
 
-    state.sessions.write().await.insert(session_id.clone(), Arc::new(session));
+    let session = Arc::new(session);
+    if let Err(error) = save_session_snapshot(&session.snapshot()) {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    state
+        .sessions
+        .write()
+        .await
+        .insert(session_id.clone(), session);
     Ok(SessionCreated { session_id })
+}
+
+#[tauri::command]
+pub async fn resume_session(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<SessionCreated, String> {
+    if state.sessions.read().await.contains_key(&session_id) {
+        return Ok(SessionCreated { session_id });
+    }
+
+    let snapshot = load_session_snapshot(&session_id)?;
+    let provider = normalize_provider(Some(&snapshot.provider));
+    let credentials = settings::detect_credentials(&provider);
+    if credentials.api_key.is_empty() {
+        return Err(format!(
+            "No {} API key configured. Open Settings (Cmd+,) to set one.",
+            provider_label(&provider)
+        ));
+    }
+
+    let model_str = snapshot.model.clone();
+    let context_window_tokens =
+        snapshot.context_window_tokens.or_else(|| context_window_tokens(&provider, &model_str));
+    let adapter = build_adapter(
+        &provider,
+        &credentials.api_key,
+        &model_str,
+        credentials.api_base.as_deref(),
+    )?;
+    let working_dir = resolve_working_dir(&snapshot.working_dir)?;
+    let harness = Arc::new(Harness::new_with_pending(
+        working_dir.clone(),
+        state.pending_confirms.clone(),
+    ));
+    let system_prompt = harness.build_system_prompt(&provider, &working_dir).await;
+
+    let session = AgentSession::new(
+        snapshot.session_id.clone(),
+        provider.clone(),
+        adapter,
+        harness,
+        system_prompt,
+        context_window_tokens,
+    );
+    session.restore_state(snapshot.messages, snapshot.summary);
+    let session = Arc::new(session);
+    state
+        .sessions
+        .write()
+        .await
+        .insert(snapshot.session_id.clone(), session);
+
+    let _ = app_handle.emit(
+        "session-output",
+        StreamEvent::SessionStarted {
+            session_id: snapshot.session_id.clone(),
+            agent_type: provider,
+            model: model_str,
+            context_window_tokens,
+        },
+    );
+
+    Ok(SessionCreated {
+        session_id: snapshot.session_id,
+    })
 }
 
 fn resolve_working_dir(working_dir: &str) -> Result<std::path::PathBuf, String> {
     let requested = working_dir.trim();
     if requested.is_empty() {
-        return std::env::current_dir().map_err(|e| format!("Cannot read current directory: {}", e));
+        return std::env::current_dir()
+            .map_err(|e| format!("Cannot read current directory: {}", e));
     }
 
     let path = std::path::PathBuf::from(requested);
@@ -116,7 +302,10 @@ fn resolve_working_dir(working_dir: &str) -> Result<std::path::PathBuf, String> 
         .canonicalize()
         .map_err(|e| format!("Cannot open project folder '{}': {}", requested, e))?;
     if !resolved.is_dir() {
-        return Err(format!("Project folder is not a directory: {}", resolved.display()));
+        return Err(format!(
+            "Project folder is not a directory: {}",
+            resolved.display()
+        ));
     }
     Ok(resolved)
 }
@@ -130,7 +319,13 @@ pub async fn send_input(
 ) -> Result<(), String> {
     let session = state.sessions.read().await.get(&session_id).cloned();
     match session {
-        Some(s) => s.send_message(&text, &app_handle).await,
+        Some(s) => {
+            let result = s.send_message(&text, &app_handle).await;
+            if let Err(error) = save_session_snapshot(&s.snapshot()) {
+                crate::app_log!("WARN", "[session_snapshot] {}", error);
+            }
+            result
+        }
         None => Err(format!("Session not found: {session_id}")),
     }
 }
@@ -145,6 +340,9 @@ pub async fn kill_session(
         s.kill(&app_handle);
     }
     state.sessions.write().await.remove(&session_id);
+    if let Err(error) = delete_session_snapshot(&session_id) {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
     Ok(())
 }
 
@@ -153,16 +351,19 @@ pub async fn list_sessions(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Vec<crate::protocol::commands::SessionInfo>, String> {
     let sessions = state.sessions.read().await;
-    let result: Vec<_> = sessions.iter().map(|(id, s)| {
-        let status = s.status.lock().unwrap();
-        crate::protocol::commands::SessionInfo {
-            id: id.clone(),
-            provider: "deepseek".into(),
-            model: s.model.clone(),
-            status: status.as_str().to_string(),
-            created_at: String::new(),
-        }
-    }).collect();
+    let result: Vec<_> = sessions
+        .iter()
+        .map(|(id, s)| {
+            let status = s.status.lock().unwrap();
+            crate::protocol::commands::SessionInfo {
+                id: id.clone(),
+                provider: s.agent_type.clone(),
+                model: s.model_id.clone(),
+                status: status.as_str().to_string(),
+                created_at: String::new(),
+            }
+        })
+        .collect();
     Ok(result)
 }
 
@@ -174,7 +375,10 @@ pub async fn confirm_response(
 ) -> Result<(), String> {
     let sender = { state.pending_confirms.write().await.remove(&block_id) };
     match sender {
-        Some(tx) => { let _ = tx.send(approved); Ok(()) }
+        Some(tx) => {
+            let _ = tx.send(approved);
+            Ok(())
+        }
         None => Err(format!("No pending confirm for: {block_id}")),
     }
 }
@@ -373,7 +577,11 @@ fn open_file_macos(path_str: &str, line: Option<u32>) -> Result<(), String> {
         }
     }
 
-    let mut app_names = vec!["Visual Studio Code".to_string(), "Code".to_string(), "Cursor".to_string()];
+    let mut app_names = vec![
+        "Visual Studio Code".to_string(),
+        "Code".to_string(),
+        "Cursor".to_string(),
+    ];
     if let Ok(editor) = std::env::var("EDITOR") {
         let editor = editor.trim();
         if !editor.is_empty() && !app_names.iter().any(|name| name == editor) {
@@ -384,7 +592,13 @@ fn open_file_macos(path_str: &str, line: Option<u32>) -> Result<(), String> {
     for app_name in app_names {
         attempts.push((
             "open".to_string(),
-            vec!["-a".into(), app_name, "--args".into(), "-g".into(), location.clone()],
+            vec![
+                "-a".into(),
+                app_name,
+                "--args".into(),
+                "-g".into(),
+                location.clone(),
+            ],
         ));
     }
 
@@ -394,7 +608,12 @@ fn open_file_macos(path_str: &str, line: Option<u32>) -> Result<(), String> {
     for (program, args) in attempts {
         match run_open_command(&program, &args) {
             Ok(()) => {
-                crate::app_log!("INFO", "[open_file] opened via {} {}", program, args.join(" "));
+                crate::app_log!(
+                    "INFO",
+                    "[open_file] opened via {} {}",
+                    program,
+                    args.join(" ")
+                );
                 return Ok(());
             }
             Err(error) => errors.push(error),
@@ -431,22 +650,43 @@ fn find_files(dir: &std::path::Path, query: &str, limit: usize) -> Vec<String> {
     let lower_query = query.to_lowercase();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if results.len() >= limit { break; }
+            if results.len() >= limit {
+                break;
+            }
             let path = entry.path();
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             // Skip hidden, node_modules, target
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" { continue; }
-            let rel = path.strip_prefix(dir).unwrap_or(&path).to_string_lossy().to_string();
-            if name.to_lowercase().contains(&lower_query) || rel.to_lowercase().contains(&lower_query) {
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist"
+            {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            if name.to_lowercase().contains(&lower_query)
+                || rel.to_lowercase().contains(&lower_query)
+            {
                 if path.is_dir() {
                     results.push(format!("{}/", rel));
                     // Also search one level deep
-                    results.extend(find_files(&path, query, limit - results.len()).into_iter().map(|f| format!("{}/{}", rel, f)));
+                    results.extend(
+                        find_files(&path, query, limit - results.len())
+                            .into_iter()
+                            .map(|f| format!("{}/{}", rel, f)),
+                    );
                 } else {
                     results.push(rel);
                 }
             }
-            if results.len() >= limit { break; }
+            if results.len() >= limit {
+                break;
+            }
         }
     }
     results.truncate(limit);

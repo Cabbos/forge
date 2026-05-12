@@ -2,12 +2,23 @@ use crate::agent::session::AgentSession;
 use crate::harness::Harness;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::process::Child;
 use tokio::sync::RwLock;
+
+pub struct ManagedDevServer {
+    pub child: Child,
+    pub working_dir: std::path::PathBuf,
+    pub port: u16,
+    pub url: String,
+    pub command: String,
+    pub logs: Arc<RwLock<Vec<String>>>,
+}
 
 pub struct AppState {
     pub sessions: RwLock<HashMap<String, Arc<AgentSession>>>,
     pub pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     pub harness: Arc<Harness>,
+    pub dev_server: Arc<RwLock<Option<ManagedDevServer>>>,
 }
 
 impl AppState {
@@ -17,6 +28,7 @@ impl AppState {
             sessions: RwLock::new(HashMap::new()),
             pending_confirms,
             harness,
+            dev_server: Arc::new(RwLock::new(None)),
         }
     }
 }

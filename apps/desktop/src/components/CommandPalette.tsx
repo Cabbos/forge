@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -7,12 +8,12 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-  CommandShortcut,
 } from "@/components/ui/command";
-import { Bot, Terminal, FileCode, Sparkles, Sun, Moon, Settings } from "lucide-react";
+import { MessageSquarePlus, Moon, Sun } from "lucide-react";
 import { useStore } from "@/store";
 import { useSession } from "@/hooks/useSession";
-import type { ToolType } from "@/lib/protocol";
+import { getDefaultWorkingDir, getRememberedWorkingDir } from "@/lib/tauri";
+import { getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -24,6 +25,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const setTheme = useStore((s) => s.setTheme);
   const setActiveSession = useStore((s) => s.setActiveSession);
   const sessions = useStore((s) => s.sessions);
+  const selectedProvider = useStore((s) => s.selectedProvider);
+  const selectedModel = useStore((s) => s.selectedModel);
   const { create } = useSession();
 
   // Keyboard shortcut
@@ -38,10 +41,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     return () => document.removeEventListener("keydown", down);
   }, [onOpenChange]);
 
-  const handleCreate = async (toolType: ToolType) => {
+  const handleCreate = async () => {
     onOpenChange(false);
     try {
-      await create(toolType, "/Users/cabbos");
+      const remembered = getRememberedWorkingDir();
+      const fallback = await getDefaultWorkingDir();
+      const workingDir = remembered && !isBroadLocalPath(remembered) ? remembered : fallback;
+      if (isBroadLocalPath(workingDir)) {
+        alert("请选择一个具体的项目文件夹，不要直接使用用户主目录。");
+        return;
+      }
+      await create(workingDir, selectedProvider, selectedModel);
     } catch (e) {
       console.error("Failed to create session:", e);
     }
@@ -51,76 +61,63 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <CommandInput placeholder="Type a command..." />
-      <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
+      <Command>
+        <CommandInput placeholder="搜索任务、命令或设置..." />
+        <CommandList>
+          <CommandEmpty>没有匹配结果</CommandEmpty>
 
-        <CommandGroup heading="New Session">
-          <CommandItem onSelect={() => handleCreate("claude")}>
-            <Bot className="size-4" />
-            New Claude Session
-            <CommandShortcut>⌘C</CommandShortcut>
-          </CommandItem>
-          <CommandItem onSelect={() => handleCreate("codex")}>
-            <FileCode className="size-4" />
-            New Codex Session
-            <CommandShortcut>⌘D</CommandShortcut>
-          </CommandItem>
-          <CommandItem onSelect={() => handleCreate("hermes")}>
-            <Sparkles className="size-4" />
-            New Hermes Session
-          </CommandItem>
-          <CommandItem onSelect={() => handleCreate("bash")}>
-            <Terminal className="size-4" />
-            New Bash Session
-          </CommandItem>
-        </CommandGroup>
+          <CommandGroup heading="操作">
+            <CommandItem onSelect={handleCreate}>
+              <MessageSquarePlus className="size-4" />
+              新建任务
+            </CommandItem>
+          </CommandGroup>
 
-        {sessionList.length > 0 && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Switch Session">
-              {sessionList.map((s) => (
-                <CommandItem
-                  key={s.id}
-                  onSelect={() => {
-                    setActiveSession(s.id);
-                    onOpenChange(false);
-                  }}
-                >
-                  <span className="size-2 rounded-full flex-shrink-0" style={{
-                    background: s.status === "running" ? "#22c55e" : s.status === "error" ? "#ef4444" : "#9ca3af",
-                  }} />
-                  <span className="capitalize">{s.agentType}</span>
-                  <span className="text-muted-foreground text-xs">{s.id.slice(0, 8)}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        )}
+          {sessionList.length > 0 && (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="切换任务">
+                {sessionList.map((s) => {
+                  const status = getSessionStatus(s);
+                  return (
+                    <CommandItem
+                      key={s.id}
+                      onSelect={() => {
+                        setActiveSession(s.id);
+                        onOpenChange(false);
+                      }}
+                    >
+                      <span className="size-2 flex-shrink-0 rounded-full" style={{ background: status.color }} />
+                      <span className="min-w-0 flex-1 truncate">{getSessionTitle(s)}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{getSessionMeta(s)}</span>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            </>
+          )}
 
-        <CommandSeparator />
-        <CommandGroup heading="Preferences">
-          <CommandItem
-            onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            {theme === "dark" ? (
-              <Sun className="size-4" />
-            ) : (
-              <Moon className="size-4" />
-            )}
-            Toggle Theme ({theme === "dark" ? "Light" : "Dark"})
-            <CommandShortcut>⌘T</CommandShortcut>
-          </CommandItem>
-          <CommandItem onSelect={() => {
-            // Open settings via the settings dialog — just toggle it quickly
-            onOpenChange(false);
-          }}>
-            <Settings className="size-4" />
-            API Key Settings
-          </CommandItem>
-        </CommandGroup>
-      </CommandList>
+          <CommandSeparator />
+          <CommandGroup heading="偏好设置">
+            <CommandItem
+              onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? (
+                <Sun className="size-4" />
+              ) : (
+                <Moon className="size-4" />
+              )}
+              切换主题（{theme === "dark" ? "浅色" : "深色"}）
+            </CommandItem>
+          </CommandGroup>
+        </CommandList>
+      </Command>
     </CommandDialog>
   );
+}
+
+function isBroadLocalPath(path: string): boolean {
+  const normalized = path.trim().replace(/\/+$/, "");
+  if (!normalized || normalized === "/") return true;
+  return /^\/Users\/[^/]+$/.test(normalized) || /^\/home\/[^/]+$/.test(normalized);
 }

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Settings, Key, Eye, EyeOff, Check, AlertCircle, Trash2 } from "lucide-react";
 import { getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
 import { useStore } from "@/store";
+import { PROVIDERS } from "@/lib/providers";
 
 export function SettingsDialog() {
   const [open, setOpen] = useState(false);
@@ -74,15 +75,11 @@ export function SettingsDialog() {
     setSaving(false);
   };
 
-  const providerLabel = (p: string) => {
-    switch (p) {
-      case "anthropic": return "Anthropic (Claude)";
-      case "deepseek": return "DeepSeek";
-      case "openai": return "OpenAI (GPT)";
-      case "openrouter": return "OpenRouter";
-      default: return p;
-    }
-  };
+  const sortedKeys = [...keys].sort((a, b) => {
+    const aIndex = PROVIDERS.findIndex((provider) => provider.id === a.provider);
+    const bIndex = PROVIDERS.findIndex((provider) => provider.id === b.provider);
+    return (aIndex < 0 ? 99 : aIndex) - (bIndex < 0 ? 99 : bIndex);
+  });
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -90,25 +87,27 @@ export function SettingsDialog() {
         render={<Button variant="ghost" size="icon-sm" />}
       >
         <Settings className="size-4" />
-        <span className="sr-only">Settings</span>
+        <span className="sr-only">设置</span>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Key className="size-4" />
-            API Keys
+            模型密钥
           </DialogTitle>
           <DialogDescription>
-            Configure API keys for Anthropic, DeepSeek, OpenAI, and OpenRouter.
-            Keys stored in <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.tui-to-gui/config.json</code>.
+            管理 Anthropic、DeepSeek、OpenAI 和 OpenRouter 的 API Key。
+            密钥保存在 <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.tui-to-gui/config.json</code>。
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          {keys.map((k) => (
+          {sortedKeys.map((k) => {
+            const provider = PROVIDERS.find((item) => item.id === k.provider);
+            return (
             <div key={k.provider} className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                {providerLabel(k.provider)}
+                {provider?.label ?? k.provider}
               </label>
               {editing === k.provider ? (
                 <div className="space-y-2">
@@ -117,7 +116,7 @@ export function SettingsDialog() {
                       type={visible ? "text" : "password"}
                       value={value}
                       onChange={(e) => setValue(e.target.value)}
-                      placeholder="sk-..."
+                      placeholder={provider?.keyPlaceholder ?? "sk-..."}
                       className="h-8 text-xs pr-16"
                       autoFocus
                     />
@@ -131,7 +130,7 @@ export function SettingsDialog() {
                   <div className="flex gap-1.5">
                     <Button size="xs" onClick={handleSave} disabled={saving}>
                       <Check className="size-3" />
-                      Save
+                      保存
                     </Button>
                     <Button
                       size="xs"
@@ -142,7 +141,7 @@ export function SettingsDialog() {
                         setError(null);
                       }}
                     >
-                      Cancel
+                      取消
                     </Button>
                   </div>
                 </div>
@@ -154,7 +153,7 @@ export function SettingsDialog() {
                     </span>
                   ) : (
                     <span className="text-xs text-muted-foreground italic flex-1">
-                      Not configured
+                      未配置
                     </span>
                   )}
                   <Button
@@ -166,7 +165,7 @@ export function SettingsDialog() {
                       setError(null);
                     }}
                   >
-                    {k.set ? "Edit" : "Set"}
+                    {k.set ? "编辑" : "设置"}
                   </Button>
                   {k.set && (
                     <Button
@@ -175,18 +174,19 @@ export function SettingsDialog() {
                       onClick={() => handleRemove(k.provider)}
                       className="text-destructive hover:text-destructive"
                     >
-                      Clear
+                      清除
                     </Button>
                   )}
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="pt-3 border-t border-border/40">
           <p className="text-xs text-muted-foreground mb-2">
-            Clear all session history data (IndexedDB).
+            清除本机保存的任务记录（IndexedDB）。
           </p>
           <Button
             size="sm"
@@ -196,7 +196,7 @@ export function SettingsDialog() {
             className="w-full"
           >
             <Trash2 className="size-3.5" />
-            {cleared ? "Cleared!" : `Clear All Data (${sessions.size} sessions)`}
+            {cleared ? "已清除" : `清除任务记录（${sessions.size}）`}
           </Button>
         </div>
 
