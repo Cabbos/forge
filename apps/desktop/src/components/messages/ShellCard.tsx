@@ -16,20 +16,20 @@ export function ShellCard({ block }: { block: BlockState }) {
   return (
     <div className="mb-3">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <div className="rounded-md overflow-hidden border" style={{ borderColor: "#181818" }}>
+        <div className="rounded-md overflow-hidden border" style={{ borderColor: "var(--border)" }}>
           <CollapsibleTrigger className="w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors"
-            style={{ background: "#0a0a0a", color: "#888" }}>
+            style={{ background: "var(--card)", color: "var(--muted-foreground)" }}>
             <ChevronRight className={cn("size-3 transition-transform", expanded && "rotate-90")} />
             <Terminal className="size-3" />
-            <span className="font-mono truncate">{(block.metadata.command as string) || "shell"}</span>
+            <span className="truncate font-mono">{(block.metadata.command as string) || "命令"}</span>
             {block.isComplete && (
               <span className="ml-auto" style={{ color: isError ? "#D47777" : "#4A9E6B", fontSize: "10px" }}>
-                {isError ? `exit ${exitCode}` : "ok"}
+                {isError ? `退出码 ${exitCode}` : "完成"}
               </span>
             )}
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all overflow-auto" style={{ color: "#999", maxHeight: "300px", background: "#060606" }}>
+            <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all overflow-auto" style={{ color: "#D0D5DD", maxHeight: "300px", background: "var(--background)" }}>
               {block.content}
             </pre>
           </CollapsibleContent>

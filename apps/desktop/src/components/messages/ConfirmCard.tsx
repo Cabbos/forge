@@ -10,7 +10,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
   const savedAnswer = block.metadata.answer as boolean | undefined;
   const [responded, setResponded] = useState(alreadyResolved);
   const [answer, setAnswer] = useState<boolean | null>(savedAnswer ?? null);
-  const question = block.content || "Allow this operation?";
+  const question = block.content || "是否允许这一步操作？";
   const kind = (block.metadata.kind as string) || "operation";
   const kindLabels: Record<string, string> = {
     file_write: "确认改文件",
@@ -19,6 +19,9 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
     ask_user: "需要你确认",
   };
   const kindLabel = kindLabels[kind] || "需要你确认";
+  const helperText = kind === "dangerous_cmd"
+    ? "这一步可能影响项目或本机环境。不确定时可以拒绝，再让 AI 解释原因。"
+    : "同意后 AI 会继续执行这一步；拒绝后这一步不会继续。";
 
   const handleResponse = async (approved: boolean) => {
     setResponded(true);
@@ -42,7 +45,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
 
   return (
     <div className="mb-3">
-      <div className="max-w-full rounded-xl border overflow-hidden" style={{ borderColor: "rgba(212,168,83,0.2)", background: "rgba(212,168,83,0.04)" }}>
+      <div className="max-w-full overflow-hidden rounded-lg border" style={{ borderColor: "rgba(212,168,83,0.2)", background: "rgba(212,168,83,0.04)" }}>
         {/* Header */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "rgba(212,168,83,0.15)", background: "rgba(212,168,83,0.06)" }}>
           <ShieldAlert className="size-4" style={{ color: "#D4A853" }} />
@@ -53,7 +56,8 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
 
         {/* Question */}
         <div className="px-4 py-3">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: "#ccc" }}>{question}</p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: "#E4E7EC" }}>{question}</p>
+          <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{helperText}</p>
         </div>
 
         {/* Actions */}
@@ -68,7 +72,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
             <button
               onClick={(e) => { e.stopPropagation(); handleResponse(true); }}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium transition-all cursor-pointer"
-              style={{ background: "#D4A853", color: "#0D0D0D" }}
+              style={{ background: "#D4A853", color: "#111216" }}
             >
               <Check className="size-3.5" />
               同意继续
@@ -76,7 +80,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
             <button
               onClick={(e) => { e.stopPropagation(); handleResponse(false); }}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium transition-all cursor-pointer"
-              style={{ background: "#D47777", color: "#0D0D0D" }}
+              style={{ background: "#D47777", color: "#111216" }}
             >
               <X className="size-3.5" />
               拒绝

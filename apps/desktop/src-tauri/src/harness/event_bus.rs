@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use tauri::Emitter;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
+use std::sync::Arc;
+use tauri::Emitter;
 
 /// Unified event dispatch for the harness.
 /// Wraps Tauri's event emitter with structured StreamEvent creation.
@@ -12,7 +12,9 @@ pub struct EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
-        Self { app_handle: Arc::new(std::sync::Mutex::new(None)) }
+        Self {
+            app_handle: Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     pub fn set_handle(&self, handle: tauri::AppHandle) {
@@ -69,7 +71,13 @@ impl EventBus {
         });
     }
 
-    pub fn tool_start(&self, session_id: &str, block_id: &str, name: &str, input: serde_json::Value) {
+    pub fn tool_start(
+        &self,
+        session_id: &str,
+        block_id: &str,
+        name: &str,
+        input: serde_json::Value,
+    ) {
         self.emit(StreamEvent::ToolCallStart {
             session_id: session_id.into(),
             block_id: block_id.into(),
@@ -78,7 +86,14 @@ impl EventBus {
         });
     }
 
-    pub fn tool_result(&self, session_id: &str, block_id: &str, result: &str, is_error: bool, duration_ms: u64) {
+    pub fn tool_result(
+        &self,
+        session_id: &str,
+        block_id: &str,
+        result: &str,
+        is_error: bool,
+        duration_ms: u64,
+    ) {
         self.emit(StreamEvent::ToolCallResult {
             session_id: session_id.into(),
             block_id: block_id.into(),
@@ -133,6 +148,7 @@ impl EventBus {
             session_id: session_id.into(),
             agent_type: agent_type.into(),
             model: model.into(),
+            context_window_tokens: None,
         });
     }
 

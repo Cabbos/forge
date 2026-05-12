@@ -1,31 +1,27 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Cpu, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, Puzzle, Sparkles } from "lucide-react";
+import { Cpu, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, Puzzle, Sparkles, RotateCcw } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
-import { searchWorkspaceFiles, listCapabilities, type CapabilityInfo } from "@/lib/tauri";
+import { createProjectCheckpoint, searchWorkspaceFiles, listCapabilities, type CapabilityInfo } from "@/lib/tauri";
+import { formatContextWindow, getModelContextWindow, getModelLabel, getProviderDefinition, PROVIDERS } from "@/lib/providers";
 
 interface InputBarProps { sessionId: string }
 
 interface Chip { id: string; type: "file" | "command"; value: string; }
 
-const MODELS = [
-  { id: "deepseek-v4-pro[1m]", name: "V4 Pro" },
-  { id: "deepseek-v4-flash[1m]", name: "V4 Flash" },
-];
-
 const COMMANDS = [
   { prefix: "/cr", text: "/code-review", desc: "检查有没有风险" },
   { prefix: "/fix", text: "/fix", desc: "帮我修一个问题" },
-  { prefix: "/explain", text: "/explain", desc: "用人话解释" },
+  { prefix: "/explain", text: "/explain", desc: "解释清楚" },
   { prefix: "/refactor", text: "/refactor", desc: "整理代码结构" },
-  { prefix: "/test", text: "/test", desc: "确认改动没坏" },
+  { prefix: "/test", text: "/test", desc: "运行相关检查" },
   { prefix: "/docs", text: "/docs", desc: "补充说明文档" },
 ];
 
 const QUICK_PROMPTS = [
-  "先帮我看懂当前项目，告诉我它能做什么、哪里最重要。",
-  "帮我检查当前改动有没有明显风险，并用小白能懂的话总结。",
-  "帮我把界面往小白友好方向优化，先列出你准备改哪里。",
+  "先梳理当前项目结构，并指出最重要的入口。",
+  "检查当前改动的风险，按严重程度排序。",
+  "继续优化最影响使用体验的一处问题。",
 ];
 
 export function InputBar({ sessionId }: InputBarProps) {
@@ -33,17 +29,25 @@ export function InputBar({ sessionId }: InputBarProps) {
   const [value, setValue] = useState("");
   const [chips, setChips] = useState<Chip[]>([]);
   const [showModelMenu, setShowModelMenu] = useState(false);
+  const selectedProvider = useStore((s) => s.selectedProvider);
+  const setSelectedProvider = useStore((s) => s.setSelectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
   const setSelectedModel = useStore((s) => s.setSelectedModel);
+  const pendingInput = useStore((s) => s.pendingInput);
+  const setPendingInput = useStore((s) => s.setPendingInput);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
   const [atResults, setAtResults] = useState<string[]>([]);
   const valueRef = useRef("");
 
-  const { send, kill } = useSession();
+  const { send, kill, resume } = useSession();
   const session = useStore((s) => s.sessions.get(sessionId));
   const isRunning = session?.status === "running";
   const isStreaming = session?.streaming ?? false;
+  const [isResuming, setIsResuming] = useState(false);
+  const [resumeError, setResumeError] = useState("");
   const [activeSkills, setActiveSkills] = useState<CapabilityInfo[]>([]);
+  const selectedProviderDef = getProviderDefinition(selectedProvider);
+  const selectedContextWindow = formatContextWindow(getModelContextWindow(selectedModel));
 
   useEffect(() => {
     listCapabilities()
@@ -59,6 +63,23 @@ export function InputBar({ sessionId }: InputBarProps) {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 140) + "px";
   }, []);
+
+  useEffect(() => {
+    if (!pendingInput) return;
+
+    setValue((current) => {
+      const next = current.trim()
+        ? `${current.trimEnd()}\n\n${pendingInput}`
+        : pendingInput;
+      valueRef.current = next;
+      return next;
+    });
+    setPendingInput("");
+    setTimeout(() => {
+      textareaRef.current?.focus();
+      adjustHeight();
+    }, 0);
+  }, [pendingInput, setPendingInput, adjustHeight]);
 
   const addChip = useCallback((type: "file" | "command", val: string) => {
     if (chips.some(c => c.value === val)) return;
@@ -99,7 +120,7 @@ export function InputBar({ sessionId }: InputBarProps) {
     }
   }, [adjustHeight, showSuggestions]);
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const text = value.trim();
     if (!text && chips.length === 0) return;
     if (!isRunning) return;
@@ -111,12 +132,27 @@ export function InputBar({ sessionId }: InputBarProps) {
     if (cmdChips.length > 0) message = cmdChips.map(c => c.value).join(" ") + (message ? "\n" + message : "");
     if (!message.trim()) return;
 
+    await createProjectCheckpoint(sessionId).catch(() => {});
     useStore.getState().addUserMessage(sessionId, message);
     send(sessionId, message);
     setValue("");
     setChips([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   }, [value, chips, sessionId, send, isRunning]);
+
+  const handleResume = useCallback(async () => {
+    if (isRunning || isResuming) return;
+    setResumeError("");
+    setIsResuming(true);
+    try {
+      await resume(sessionId);
+      setTimeout(() => textareaRef.current?.focus(), 0);
+    } catch (error) {
+      setResumeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsResuming(false);
+    }
+  }, [isRunning, isResuming, resume, sessionId]);
 
   const useQuickPrompt = useCallback((prompt: string) => {
     setValue(prompt);
@@ -126,6 +162,12 @@ export function InputBar({ sessionId }: InputBarProps) {
       adjustHeight();
     }, 0);
   }, [adjustHeight]);
+
+  const selectModel = useCallback((provider: string, model: string) => {
+    setSelectedProvider(provider);
+    setSelectedModel(model);
+    setShowModelMenu(false);
+  }, [setSelectedModel, setSelectedProvider]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return;
@@ -141,15 +183,15 @@ export function InputBar({ sessionId }: InputBarProps) {
   }, [handleSend, chips.length]);
 
   return (
-    <div className="px-10 pb-5 pt-3 flex-shrink-0 relative" style={{ borderTop: "1px solid #1c1c1c" }}>
+    <div className="relative flex-shrink-0 px-10 pb-5 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
       {isRunning && !value.trim() && chips.length === 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {QUICK_PROMPTS.map((prompt) => (
             <button
               key={prompt}
               onClick={() => useQuickPrompt(prompt)}
-              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] transition-colors hover:text-foreground"
-              style={{ borderColor: "#1c1c1c", background: "#101010", color: "#777" }}
+              className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] transition-colors hover:bg-secondary hover:text-foreground"
+              style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--muted-foreground)" }}
             >
               <Sparkles className="size-3" style={{ color: "#D4A853" }} />
               {prompt}
@@ -157,19 +199,25 @@ export function InputBar({ sessionId }: InputBarProps) {
           ))}
         </div>
       )}
+      {!isRunning && resumeError && (
+        <div className="mb-2 rounded-md border px-3 py-2 text-xs"
+          style={{ borderColor: "rgba(212,119,119,0.35)", background: "rgba(212,119,119,0.08)", color: "#D47777" }}>
+          {resumeError}
+        </div>
+      )}
 
       {/* Suggestion popup */}
       {showSuggestions && (
         <div className="absolute left-10 right-10 rounded-lg py-1 shadow-xl z-20 max-h-[200px] overflow-y-auto"
-          style={{ bottom: "calc(100% - 8px)", background: "#141414", border: "1px solid #1c1c1c" }}>
+          style={{ bottom: "calc(100% - 8px)", background: "var(--popover)", border: "1px solid var(--border)" }}>
           {showSuggestions === "@" && (
             <>
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40">选择相关文件</div>
-              {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/40">输入文件名来搜索</div>}
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">引用文件</div>
+              {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/65">输入文件名搜索</div>}
               {atResults.map(f => (
                 <button key={f} onClick={() => addChip("file", f)}
                   className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary font-mono flex items-center gap-2">
-                  {f.endsWith("/") ? <FileText className="size-3" style={{ color: "#5B9BD5" }} /> : <FileText className="size-3" style={{ color: "#888" }} />}
+                  {f.endsWith("/") ? <FileText className="size-3" style={{ color: "#5B9BD5" }} /> : <FileText className="size-3" style={{ color: "var(--muted-foreground)" }} />}
                   {f}
                 </button>
               ))}
@@ -177,7 +225,7 @@ export function InputBar({ sessionId }: InputBarProps) {
           )}
           {showSuggestions === "/" && (
             <>
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40">常用请求</div>
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">常用请求</div>
               {COMMANDS.map(cmd => (
                 <button key={cmd.prefix} onClick={() => addChip("command", cmd.text)}
                   className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary flex justify-between items-center">
@@ -190,7 +238,7 @@ export function InputBar({ sessionId }: InputBarProps) {
         </div>
       )}
 
-      <div className="rounded-2xl" style={{ background: "#0F0F0F", border: "1px solid #1c1c1c" }}>
+      <div className="rounded-lg" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
         {/* Chips row */}
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-4 pt-3 pb-0">
@@ -219,23 +267,23 @@ export function InputBar({ sessionId }: InputBarProps) {
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={isRunning ? "描述你想完成的事，比如：帮我把登录页面改得更清楚" : "这个会话已停止"}
+            placeholder={isRunning ? "描述要完成的任务，例如：把登录页的信息层级整理清楚" : "这个会话已停止，可以继续后再发送"}
             rows={1}
             disabled={!isRunning}
-            className="w-full bg-transparent border-none outline-none resize-none text-sm leading-relaxed placeholder:text-[#555]"
-            style={{ color: "#E4E4E4", fontFamily: "'Geist Variable', system-ui, sans-serif", minHeight: "28px", maxHeight: "140px", paddingTop: chips.length > 0 ? "4px" : undefined }}
+            className="w-full bg-transparent border-none outline-none resize-none text-sm leading-relaxed placeholder:text-muted-foreground/65"
+            style={{ color: "var(--foreground)", fontFamily: "'Geist Variable', system-ui, sans-serif", minHeight: "28px", maxHeight: "140px", paddingTop: chips.length > 0 ? "4px" : undefined }}
           />
         </div>
 
         {/* Toolbar */}
         <div className="flex items-center justify-between px-4 pb-2.5">
-          <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "#555" }}>
+          <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "var(--muted-foreground)" }}>
             <button onClick={() => { textareaRef.current?.focus(); setShowSuggestions((s) => s === "@" ? null : "@"); }}
-              className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999] inline-flex items-center gap-1 transition-colors" style={{ background: "#111" }}>
-              <AtSign className="size-3" /> 添加文件
+              className="px-1.5 py-0.5 rounded cursor-pointer hover:text-foreground inline-flex items-center gap-1 transition-colors" style={{ background: "var(--secondary)" }}>
+              <AtSign className="size-3" /> 引用文件
             </button>
             <button onClick={() => { textareaRef.current?.focus(); setShowSuggestions((s) => s === "/" ? null : "/"); }}
-              className="px-1.5 py-0.5 rounded cursor-pointer hover:text-[#999] inline-flex items-center gap-1 transition-colors" style={{ background: "#111" }}>
+              className="px-1.5 py-0.5 rounded cursor-pointer hover:text-foreground inline-flex items-center gap-1 transition-colors" style={{ background: "var(--secondary)" }}>
               <Slash className="size-3" /> 常用请求
             </button>
           </div>
@@ -244,20 +292,44 @@ export function InputBar({ sessionId }: InputBarProps) {
             <div className="relative">
               <button onClick={() => setShowModelMenu(!showModelMenu)}
                 className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-colors"
-                style={{ border: "1px solid #1c1c1c", color: "#999", background: "#0f0f0f" }}>
+                style={{ border: "1px solid var(--border)", color: "var(--muted-foreground)", background: "var(--card)" }}>
                 <Cpu className="size-3" style={{ color: "#D4A853" }} />
-                {MODELS.find(m => m.id === selectedModel)?.name ?? selectedModel}
-                <ChevronDown className="size-3" style={{ color: "#555" }} />
+                <span className="text-primary">{selectedProviderDef.shortLabel}</span>
+                <span>{getModelLabel(selectedModel)}</span>
+                {selectedContextWindow && <span className="text-muted-foreground">上下文 {selectedContextWindow}</span>}
+                <ChevronDown className="size-3" style={{ color: "var(--muted-foreground)" }} />
               </button>
               {showModelMenu && (
-                <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1 min-w-[140px] shadow-xl z-20"
-                  style={{ background: "#141414", border: "1px solid #1c1c1c" }}>
-                  {MODELS.map(m => (
-                    <button key={m.id} onClick={() => { setSelectedModel(m.id); setShowModelMenu(false); }}
-                      className="w-full text-left px-3 py-1.5 text-xs transition-colors font-mono flex justify-between items-center hover:bg-secondary"
-                      style={{ color: m.id === selectedModel ? "#D4A853" : "#c0c0c0" }}>
-                      {m.name}<span style={{ color: "#555", fontSize: "9px" }}>DS</span>
-                    </button>
+                <div className="absolute bottom-full right-0 mb-1 max-h-[320px] min-w-[260px] overflow-y-auto rounded-lg py-1.5 shadow-xl z-20"
+                  style={{ background: "var(--popover)", border: "1px solid var(--border)" }}>
+                  {PROVIDERS.map((provider) => (
+                    <div key={provider.id} className="py-1">
+                      <div className="flex items-center justify-between px-3 pb-1 pt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                        <span>{provider.label}</span>
+                        <span>{provider.shortLabel}</span>
+                      </div>
+                      {provider.models.map((model) => {
+                        const active = provider.id === selectedProvider && model.id === selectedModel;
+                        return (
+                          <button
+                            key={`${provider.id}:${model.id}`}
+                            onClick={() => selectModel(provider.id, model.id)}
+                            className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-secondary"
+                            style={{ color: active ? "#D4A853" : "#E4E7EC" }}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-mono">{model.name}</span>
+                              {active && <span className="text-[10px] text-primary">当前</span>}
+                            </div>
+                            {model.description && (
+                              <div className="mt-0.5 truncate text-[10px] text-muted-foreground/75">
+                                {[model.description, formatContextWindow(model.contextWindowTokens) && `上下文 ${formatContextWindow(model.contextWindowTokens)}`].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
                   ))}
                 </div>
               )}
@@ -273,8 +345,8 @@ export function InputBar({ sessionId }: InputBarProps) {
                   {activeSkills.length}
                 </span>
                 <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1.5 px-3 min-w-[160px] shadow-xl z-20 hidden group-hover:block"
-                  style={{ background: "#141414", border: "1px solid #1c1c1c" }}>
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/40 mb-1">Active Skills</div>
+                  style={{ background: "var(--popover)", border: "1px solid var(--border)" }}>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">已启用插件</div>
                   {activeSkills.map((s) => (
                     <div key={s.id} className="text-xs text-foreground py-0.5 font-mono" style={{ color: "#5B9BD5" }}>
                       {s.name}
@@ -284,7 +356,17 @@ export function InputBar({ sessionId }: InputBarProps) {
               </div>
             )}
 
-            {isStreaming ? (
+            {!isRunning ? (
+              <button
+                onClick={handleResume}
+                disabled={isResuming}
+                className="h-7 rounded-full px-3 text-[11px] font-medium flex items-center gap-1.5 flex-shrink-0 transition-colors"
+                style={{ background: isResuming ? "var(--secondary)" : "#D4A853", color: isResuming ? "#8C93A0" : "#111216", cursor: isResuming ? "default" : "pointer" }}
+              >
+                <RotateCcw className={isResuming ? "size-3 animate-spin" : "size-3"} />
+                {isResuming ? "恢复中" : "继续会话"}
+              </button>
+            ) : isStreaming ? (
               <button onClick={() => kill(sessionId)}
                 className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors animate-pulse"
                 style={{ background: "#D47777", color: "#fff", cursor: "pointer" }}>
@@ -293,7 +375,7 @@ export function InputBar({ sessionId }: InputBarProps) {
             ) : (
               <button onClick={handleSend} disabled={!isRunning || (!value.trim() && chips.length === 0)}
                 className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
-                style={{ background: !isRunning || (!value.trim() && chips.length === 0) ? "#141414" : "#D4A853", color: !isRunning || (!value.trim() && chips.length === 0) ? "#666" : "#fff", cursor: !isRunning || (!value.trim() && chips.length === 0) ? "default" : "pointer" }}>
+                style={{ background: !isRunning || (!value.trim() && chips.length === 0) ? "var(--secondary)" : "#D4A853", color: !isRunning || (!value.trim() && chips.length === 0) ? "#8C93A0" : "#111216", cursor: !isRunning || (!value.trim() && chips.length === 0) ? "default" : "pointer" }}>
                 <ArrowUp className="size-4" />
               </button>
             )}

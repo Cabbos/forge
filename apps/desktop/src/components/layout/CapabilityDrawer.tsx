@@ -1,0 +1,48 @@
+import { X } from "lucide-react";
+import { CapabilityManager, type CapabilityTab } from "@/components/settings/CapabilityManager";
+
+interface CapabilityDrawerProps {
+  open: boolean;
+  initialTab: CapabilityTab;
+  title: string;
+  onClose: () => void;
+}
+
+export function CapabilityDrawer({ open, initialTab, title, onClose }: CapabilityDrawerProps) {
+  if (!open) return null;
+
+  return (
+    <>
+      <div
+        className="fixed inset-y-0 left-[240px] right-0 z-40 bg-black/20"
+        onClick={onClose}
+      />
+      <aside
+        className="fixed left-[240px] top-0 z-50 flex h-full w-[360px] flex-col overflow-hidden animate-[slide-in-left_0.22s_ease-out]"
+        style={{
+          background: "rgba(18,19,24,0.94)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          borderRight: "1px solid rgba(255,255,255,0.12)",
+        }}
+      >
+        <div className="flex h-12 flex-shrink-0 items-center justify-between px-4">
+          <span className="text-xs font-semibold text-foreground">{title}</span>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+            title="关闭"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 px-3 pb-3">
+          <CapabilityManager
+            initialTab={initialTab}
+            className="h-full min-h-0 rounded-none border-0 bg-transparent"
+          />
+        </div>
+      </aside>
+    </>
+  );
+}

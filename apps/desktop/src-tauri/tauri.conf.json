@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/schemas/main/tauri/config.schema.json",
-  "productName": "TUI-to-GUI",
+  "productName": "Forge",
   "version": "0.1.0",
   "identifier": "com.crusted-spinning-lynx-agent",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TUI-to-GUI",
+        "title": "Forge",
         "width": 1200,
         "height": 800,
         "resizable": true,

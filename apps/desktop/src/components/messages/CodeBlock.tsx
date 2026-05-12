@@ -40,16 +40,16 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
   };
 
   return (
-    <figure className="code-surface group my-3 overflow-hidden rounded-lg border border-[#22252b] bg-[#090b0f] shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]">
-      <figcaption className="flex min-h-9 items-center justify-between gap-3 border-b border-[#1a1d23] bg-[#0d1117] px-3">
+    <figure className="code-surface group my-3 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]">
+      <figcaption className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-card px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-[#4A9E6B]" />
           <span className="truncate font-mono text-[11px] font-medium uppercase tracking-normal text-[#9aa4b2]">
             {label}
           </span>
           {lineCount > 1 && (
-            <span className="hidden font-mono text-[10px] text-[#596271] sm:inline">
-              {lineCount} lines
+            <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">
+              {lineCount} 行
             </span>
           )}
         </div>
@@ -60,8 +60,8 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
             "inline-flex h-6 w-6 items-center justify-center rounded-md text-[#7f8997] transition-colors",
             "hover:bg-[#1a1f29] hover:text-[#e5e7eb] focus:outline-none focus:ring-1 focus:ring-[#D4A853]/60"
           )}
-          aria-label={copied ? "Copied" : "Copy code"}
-          title={copied ? "Copied" : "Copy code"}
+          aria-label={copied ? "已复制" : "复制代码"}
+          title={copied ? "已复制" : "复制代码"}
         >
           {copied ? <Check className="size-3.5 text-[#4A9E6B]" /> : <Copy className="size-3.5" />}
         </button>
@@ -81,7 +81,7 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
 
 function formatLanguageLabel(lang: string): string {
   const value = lang.trim().toLowerCase();
-  if (!value) return "text";
+  if (!value) return "文本";
   const labels: Record<string, string> = {
     js: "javascript",
     jsx: "jsx",

@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
 import type { BlockState, StreamEvent, SessionState } from "../lib/protocol";
+import {
+  DEFAULT_PROVIDER_ID,
+  getDefaultModel,
+  getModelContextWindow,
+  modelBelongsToProvider,
+  normalizeProviderId,
+  type ProviderId,
+} from "../lib/providers";
 
 interface AppStore {
   // Sessions
@@ -9,7 +17,7 @@ interface AppStore {
   hydrated: boolean;
 
   // Provider
-  selectedProvider: string;
+  selectedProvider: ProviderId;
   setSelectedProvider: (p: string) => void;
   selectedModel: string;
   setSelectedModel: (m: string) => void;
@@ -37,6 +45,8 @@ interface AppStore {
 
 const PERSIST_KEY = "tui-to-gui-sessions";
 const BLOCKS_PREFIX = "tui-to-gui-blocks:";
+const PROVIDER_KEY = "tui-provider";
+const MODEL_KEY = "tui-model";
 const MAX_PERSISTED_BLOCKS = 100;
 const BLOCK_PERSIST_DEBOUNCE_MS = 350;
 const blockPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -45,6 +55,7 @@ interface PersistedSession {
   id: string;
   agentType: string;
   model: string;
+  contextWindowTokens?: number | null;
   status: SessionState["status"];
 }
 
@@ -56,6 +67,7 @@ function persistSessions(sessions: Map<string, SessionState>) {
       id: s.id,
       agentType: s.agentType,
       model: s.model,
+      contextWindowTokens: s.contextWindowTokens ?? null,
       status: s.status,
     });
   });
@@ -107,21 +119,35 @@ export const useStore = create<AppStore>((set, get) => ({
   activeSessionId: null,
   hydrated: false,
   pendingInput: "",
-  selectedProvider: "deepseek",
-  selectedModel: "deepseek-v4-flash[1m]",
+  selectedProvider: DEFAULT_PROVIDER_ID,
+  selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),
 
   setSelectedProvider: (p) => {
-    set({ selectedProvider: p });
-    idbSet("tui-provider", p).catch(() => {});
+    const selectedProvider = normalizeProviderId(p);
+    const currentModel = get().selectedModel;
+    const selectedModel = modelBelongsToProvider(selectedProvider, currentModel)
+      ? currentModel
+      : getDefaultModel(selectedProvider);
+    set({ selectedProvider, selectedModel });
+    idbSet(PROVIDER_KEY, selectedProvider).catch(() => {});
+    idbSet(MODEL_KEY, selectedModel).catch(() => {});
   },
 
-  setSelectedModel: (m) => set({ selectedModel: m }),
+  setSelectedModel: (m) => {
+    set({ selectedModel: m });
+    idbSet(MODEL_KEY, m).catch(() => {});
+  },
 
   hydrate: async () => {
     try {
       const data = await idbGet<PersistedSession[]>(PERSIST_KEY);
       const savedTheme = await idbGet<string>("tui-theme").catch(() => null);
-      const savedProvider = await idbGet<string>("tui-provider").catch(() => null);
+      const savedProvider = await idbGet<string>(PROVIDER_KEY).catch(() => null);
+      const savedModel = await idbGet<string>(MODEL_KEY).catch(() => null);
+      const selectedProvider = normalizeProviderId(savedProvider);
+      const selectedModel = savedModel && modelBelongsToProvider(selectedProvider, savedModel)
+        ? savedModel
+        : getDefaultModel(selectedProvider);
       if (data && data.length > 0) {
         const sessions = new Map<string, SessionState>();
         for (const s of data) {
@@ -129,9 +155,20 @@ export const useStore = create<AppStore>((set, get) => ({
           // Backend sessions don't survive restarts — force stopped
           sessions.set(s.id, { ...s, blocks, costUsd: 0, streaming: false, status: "stopped" as const });
         }
-        set({ sessions, hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme, selectedProvider: savedProvider || "anthropic" });
+        set({
+          sessions,
+          hydrated: true,
+          theme: (savedTheme as "light" | "dark") || get().theme,
+          selectedProvider,
+          selectedModel,
+        });
       } else {
-        set({ hydrated: true, theme: (savedTheme as "light" | "dark") || get().theme, selectedProvider: savedProvider || "deepseek" });
+        set({
+          hydrated: true,
+          theme: (savedTheme as "light" | "dark") || get().theme,
+          selectedProvider,
+          selectedModel,
+        });
       }
     } catch {
       set({ hydrated: true });
@@ -147,7 +184,14 @@ export const useStore = create<AppStore>((set, get) => ({
   addSession: (id, provider, model) => {
     const sessions = new Map(get().sessions);
     sessions.set(id, {
-      id, agentType: provider, model, status: "running", blocks: [], costUsd: 0, streaming: false,
+      id,
+      agentType: provider,
+      model,
+      contextWindowTokens: getModelContextWindow(model),
+      status: "running",
+      blocks: [],
+      costUsd: 0,
+      streaming: false,
     });
     set({ sessions, activeSessionId: id });
     persistSessions(sessions);
@@ -227,7 +271,16 @@ export const useStore = create<AppStore>((set, get) => ({
       // If session_started arrives before addSession, create it from the event
       if (event_type === "session_started") {
         const se = event as Extract<StreamEvent, { event_type: "session_started" }>;
-        session = { id: session_id, agentType: se.agent_type, model: se.model, status: "running", blocks: [], costUsd: 0, streaming: false };
+        session = {
+          id: session_id,
+          agentType: se.agent_type,
+          model: se.model,
+          contextWindowTokens: se.context_window_tokens ?? getModelContextWindow(se.model),
+          status: "running",
+          blocks: [],
+          costUsd: 0,
+          streaming: false,
+        };
         sessions.set(session_id, session);
         set({ sessions });
         persistSessions(sessions);
@@ -266,6 +319,9 @@ export const useStore = create<AppStore>((set, get) => ({
         ...session,
         agentType: startedEvent.agent_type,
         model: startedEvent.model,
+        contextWindowTokens: startedEvent.context_window_tokens ?? getModelContextWindow(startedEvent.model),
+        status: "running",
+        streaming: false,
       });
       set({ sessions });
       persistSessions(sessions);
@@ -508,6 +564,19 @@ function eventToBlock(event: StreamEvent): BlockState | null {
         event_type: "confirm_ask",
         content: event.question,
         metadata: { kind: event.kind },
+      };
+    case "context_compacted":
+      return {
+        ...base,
+        event_type: "context_compacted",
+        content: event.summary,
+        metadata: {
+          retained_messages: event.retained_messages,
+          compacted_messages: event.compacted_messages,
+          estimated_tokens_before: event.estimated_tokens_before,
+          estimated_tokens_after: event.estimated_tokens_after,
+        },
+        isComplete: true,
       };
     default:
       return null;

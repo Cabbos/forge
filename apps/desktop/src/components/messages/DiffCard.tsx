@@ -12,15 +12,15 @@ export function DiffCard({ block }: { block: BlockState }) {
   return (
     <div className="mb-3">
       <div className="flex items-center gap-2 px-3 py-2 rounded-t-md border border-b-0"
-        style={{ background: "#0a0a0a", borderColor: "#181818" }}>
+        style={{ background: "var(--card)", borderColor: "var(--border)" }}>
         <FileDiff className="size-3.5" style={{ color: "#5B9BD5" }} />
-        <span className="text-[11px] font-mono" style={{ color: "#999" }}>{filePath}</span>
+        <span className="text-[11px] font-mono" style={{ color: "var(--muted-foreground)" }}>{filePath}</span>
       </div>
       <div className="overflow-auto max-h-[300px] rounded-b-md border font-mono text-[11px] leading-relaxed"
-        style={{ background: "#060606", borderColor: "#181818" }}>
+        style={{ background: "var(--background)", borderColor: "var(--border)" }}>
         {lines.map((line, i) => {
           let bg = "transparent";
-          let fg = "#888";
+          let fg = "#AEB4BF";
           if (line.startsWith("+") && !line.startsWith("+++")) { bg = "rgba(74,158,107,0.08)"; fg = "#4A9E6B"; }
           else if (line.startsWith("-") && !line.startsWith("---")) { bg = "rgba(212,119,119,0.08)"; fg = "#D47777"; }
           else if (line.startsWith("@@")) { fg = "#D4A853"; }

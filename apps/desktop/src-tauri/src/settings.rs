@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+const KNOWN_PROVIDERS: &[&str] = &["deepseek", "anthropic", "openai", "openrouter"];
+
 /// Persisted user settings stored in ~/.tui-to-gui/config.json
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
@@ -77,31 +79,36 @@ pub fn detect_credentials(provider: &str) -> Credentials {
 
     // 3. Check process env vars (may be empty in Tauri GUI)
     let env_auth_token = std::env::var("ANTHROPIC_AUTH_TOKEN").ok();
+    let env_anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
+    let env_deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok();
     let env_openai_key = std::env::var("OPENAI_API_KEY").ok();
-    let env_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
+    let env_openrouter_key = std::env::var("OPENROUTER_API_KEY").ok();
+    let env_anthropic_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
+    let env_deepseek_base_url = std::env::var("DEEPSEEK_BASE_URL").ok();
+    let env_openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
+    let env_openrouter_base_url = std::env::var("OPENROUTER_BASE_URL").ok();
     let env_model = std::env::var("ANTHROPIC_MODEL").ok();
 
     let api_key = match provider {
-        "anthropic" | "claude" | "hermes" => {
-            stored_key
-                .or_else(|| claude_config.api_key())
-                .or(env_auth_token)
-                .or(env_openai_key)
-                .unwrap_or_default()
-        }
-        "openai" | "codex" => {
-            stored_key
-                .or(env_openai_key)
-                .unwrap_or_default()
-        }
+        "anthropic" | "claude" | "hermes" => stored_key
+            .or_else(|| claude_config.api_key())
+            .or(env_auth_token)
+            .or(env_anthropic_key)
+            .unwrap_or_default(),
+        "openai" | "codex" => stored_key.or(env_openai_key).unwrap_or_default(),
+        "openrouter" => stored_key.or(env_openrouter_key).unwrap_or_default(),
+        "deepseek" => stored_key.or(env_deepseek_key).unwrap_or_default(),
         _ => stored_key.unwrap_or_default(),
     };
 
     let api_base = match provider {
-        "anthropic" | "claude" | "hermes" => {
-            claude_config.api_base().map(|s| s.to_string())
-                .or(env_base_url)
-        }
+        "anthropic" | "claude" | "hermes" => claude_config
+            .api_base()
+            .map(|s| s.to_string())
+            .or(env_anthropic_base_url),
+        "deepseek" => env_deepseek_base_url,
+        "openai" | "codex" => env_openai_base_url,
+        "openrouter" => env_openrouter_base_url,
         _ => None,
     };
 
@@ -168,8 +175,11 @@ impl Settings {
     }
 
     pub fn set_api_key(&mut self, provider: &str, key: &str) -> Result<(), String> {
-        self.api_keys
-            .insert(provider.to_string(), key.to_string());
+        if key.trim().is_empty() {
+            self.api_keys.remove(provider);
+        } else {
+            self.api_keys.insert(provider.to_string(), key.to_string());
+        }
         self.save()
     }
 
@@ -187,7 +197,7 @@ impl Settings {
             });
         }
         // Always include known providers, even if not set
-        for p in &["deepseek"] {
+        for p in KNOWN_PROVIDERS {
             if !self.api_keys.contains_key(*p) {
                 status.push(KeyStatus {
                     provider: p.to_string(),
