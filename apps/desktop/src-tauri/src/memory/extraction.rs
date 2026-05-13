@@ -17,14 +17,22 @@ pub fn extract_candidates_from_user_message(
 
     if contains_any(
         &body,
-        &["以后", "我希望", "我喜欢", "不用验证", "我来验证", "默认", "优先"],
+        &[
+            "以后",
+            "我希望",
+            "我喜欢",
+            "不用验证",
+            "我来验证",
+            "默认",
+            "优先",
+        ],
     ) {
         candidates.push(candidate(
             session_id,
             None,
             MemoryCategory::Preference,
             MemoryScope::UserProfile,
-            "用户偏好",
+            &candidate_title("用户偏好", &body),
             &body,
             0.72,
             "preference",
@@ -34,14 +42,25 @@ pub fn extract_candidates_from_user_message(
 
     if contains_any(
         &body,
-        &["方向", "定", "选择", "就用", "方案", "产品", "兼容"],
+        &[
+            "方向",
+            "定了",
+            "已定",
+            "确定方向",
+            "决定",
+            "选择",
+            "就用",
+            "方案",
+            "产品",
+            "兼容",
+        ],
     ) {
         candidates.push(candidate(
             session_id,
             project_path,
             MemoryCategory::Decision,
             MemoryScope::Project,
-            "项目已定方案",
+            &candidate_title("项目已定方案", &body),
             &body,
             0.68,
             "decision",
@@ -49,13 +68,24 @@ pub fn extract_candidates_from_user_message(
         ));
     }
 
-    if contains_any(&body, &["继续", "接下来", "已经", "做到", "先把", "下一步"]) {
+    if contains_any(
+        &body,
+        &[
+            "继续",
+            "接下来",
+            "已经完成",
+            "已经做到",
+            "做到",
+            "先把",
+            "下一步",
+        ],
+    ) {
         candidates.push(candidate(
             session_id,
             project_path,
             MemoryCategory::TaskState,
             MemoryScope::Project,
-            "当前进度",
+            &candidate_title("当前进度", &body),
             &body,
             0.6,
             "task_state",
@@ -108,6 +138,20 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
+fn candidate_title(label: &str, body: &str) -> String {
+    format!("{label}：{}", short_summary(body))
+}
+
+fn short_summary(body: &str) -> String {
+    const MAX_CHARS: usize = 32;
+    let summary = truncate_chars(body, MAX_CHARS);
+    if body.chars().count() > MAX_CHARS {
+        format!("{summary}...")
+    } else {
+        summary
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::extract_candidates_from_user_message;
@@ -126,7 +170,7 @@ mod tests {
         assert_eq!(memory.category, MemoryCategory::Preference);
         assert_eq!(memory.scope, MemoryScope::UserProfile);
         assert_eq!(memory.status, MemoryStatus::Candidate);
-        assert_eq!(memory.title, "用户偏好");
+        assert!(memory.title.starts_with("用户偏好："));
         assert_eq!(memory.body, "以后 默认用中文回答，我来验证结果");
         assert_eq!(memory.project_path, None);
         assert_eq!(memory.source_session_id.as_deref(), Some("session-1"));
@@ -164,7 +208,7 @@ mod tests {
             memory.category == MemoryCategory::Decision
                 && memory.scope == MemoryScope::Project
                 && memory.project_path.as_deref() == Some("/tmp/project")
-                && memory.title == "项目已定方案"
+                && memory.title.starts_with("项目已定方案：")
                 && memory.confidence == 0.68
                 && memory.tags == vec!["decision"]
         }));
@@ -172,10 +216,32 @@ mod tests {
             memory.category == MemoryCategory::TaskState
                 && memory.scope == MemoryScope::Project
                 && memory.project_path.as_deref() == Some("/tmp/project")
-                && memory.title == "当前进度"
+                && memory.title.starts_with("当前进度：")
                 && memory.confidence == 0.6
                 && memory.tags == vec!["task_state"]
         }));
+    }
+
+    #[test]
+    fn avoids_routine_test_message_as_decision() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "一定要先跑测试",
+        );
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn avoids_low_value_lint_status() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "已经修了 lint",
+        );
+
+        assert!(candidates.is_empty());
     }
 
     #[test]

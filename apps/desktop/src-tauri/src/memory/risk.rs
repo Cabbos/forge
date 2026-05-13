@@ -18,6 +18,12 @@ pub fn should_reject_persistent_memory(text: &str) -> bool {
         "-----begin",
         "credit card",
         "身份证",
+        "密码",
+        "密钥",
+        "令牌",
+        "私钥",
+        "访问令牌",
+        "认证令牌",
         "客户名单",
         "客户资料",
         "商业机密",
@@ -100,6 +106,13 @@ mod tests {
             "access token abcdefghijklmnop"
         ));
         assert!(should_reject_persistent_memory("bearer abcdefghijklmnop"));
+    }
+
+    #[test]
+    fn rejects_chinese_password_phrase() {
+        assert!(should_reject_persistent_memory(
+            "以后默认数据库密码是 abcdefghijklmnop"
+        ));
     }
 
     #[test]

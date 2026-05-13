@@ -77,7 +77,7 @@ impl WikiMemoryStore {
         }
 
         let result = if let Some(existing) = next_memories.iter_mut().find(|memory| {
-            memory.status != MemoryStatus::Forgotten
+            memory.status == MemoryStatus::Candidate
                 && memory.category == candidate.category
                 && memory.scope == candidate.scope
                 && same_project_path(
@@ -427,6 +427,84 @@ mod tests {
             .expect("suppression should not error");
 
         assert!(suppressed.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn candidate_upsert_does_not_overwrite_accepted_memory() {
+        let path = temp_path("accepted-no-overwrite");
+        let store = WikiMemoryStore::new(path.clone());
+        let accepted = memory(
+            "accepted-memory",
+            MemoryStatus::Accepted,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        store.memories.write().unwrap().push(accepted.clone());
+
+        let mut candidate = memory(
+            "candidate-memory",
+            MemoryStatus::Candidate,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        candidate.body = "New candidate body".to_string();
+        store
+            .upsert_candidate(candidate)
+            .await
+            .expect("candidate should save");
+
+        let memories = store.list(MemoryListFilter::default()).await;
+        let accepted_after = memories
+            .iter()
+            .find(|memory| memory.id == "accepted-memory")
+            .expect("accepted memory should remain");
+        assert_eq!(accepted_after.status, MemoryStatus::Accepted);
+        assert_eq!(accepted_after.body, accepted.body);
+        assert!(memories.iter().any(|memory| {
+            memory.id == "candidate-memory"
+                && memory.status == MemoryStatus::Candidate
+                && memory.body == "New candidate body"
+        }));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn candidate_upsert_does_not_overwrite_pinned_memory() {
+        let path = temp_path("pinned-no-overwrite");
+        let store = WikiMemoryStore::new(path.clone());
+        let pinned = memory(
+            "pinned-memory",
+            MemoryStatus::Pinned,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        store.memories.write().unwrap().push(pinned.clone());
+
+        let mut candidate = memory(
+            "candidate-memory",
+            MemoryStatus::Candidate,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        candidate.body = "New candidate body".to_string();
+        store
+            .upsert_candidate(candidate)
+            .await
+            .expect("candidate should save");
+
+        let memories = store.list(MemoryListFilter::default()).await;
+        let pinned_after = memories
+            .iter()
+            .find(|memory| memory.id == "pinned-memory")
+            .expect("pinned memory should remain");
+        assert_eq!(pinned_after.status, MemoryStatus::Pinned);
+        assert_eq!(pinned_after.body, pinned.body);
+        assert!(memories.iter().any(|memory| {
+            memory.id == "candidate-memory"
+                && memory.status == MemoryStatus::Candidate
+                && memory.body == "New candidate body"
+        }));
         let _ = std::fs::remove_file(path);
     }
 
