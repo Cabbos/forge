@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ForgeWikiPage,
+  ForgeWikiState,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
+  SelectedForgeWikiPage,
   WikiMemory,
   WorkflowOverrideAction,
   WorkflowState,
@@ -248,6 +251,33 @@ export async function overrideWorkflowRoute(
   return invoke("override_workflow_route", { sessionId, action });
 }
 
+export async function getForgeWikiState(projectPath: string): Promise<ForgeWikiState> {
+  if (!hasTauriRuntime()) return fallbackForgeWikiState(projectPath);
+  return invoke("get_forge_wiki_state", { projectPath });
+}
+
+export async function initForgeWiki(projectPath: string): Promise<ForgeWikiState> {
+  return invoke("init_forge_wiki", { projectPath });
+}
+
+export async function listForgeWikiPages(projectPath: string): Promise<ForgeWikiPage[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("list_forge_wiki_pages", { projectPath });
+}
+
+export async function readForgeWikiPage(projectPath: string, pagePath: string): Promise<string> {
+  if (!hasTauriRuntime()) return "";
+  return invoke("read_forge_wiki_page", { projectPath, pagePath });
+}
+
+export async function selectForgeWikiContext(
+  projectPath: string,
+  message: string,
+): Promise<SelectedForgeWikiPage[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("select_forge_wiki_context", { projectPath, message });
+}
+
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
@@ -280,6 +310,17 @@ function fallbackProjectCheckpointStatus(): ProjectCheckpointStatus {
     dirty: false,
     last_checkpoint: null,
     message: "在桌面应用中读取检查点",
+  };
+}
+
+function fallbackForgeWikiState(projectPath: string): ForgeWikiState {
+  const normalizedProjectPath = projectPath || getRememberedWorkingDir() || "";
+  return {
+    project_path: normalizedProjectPath,
+    exists: false,
+    wiki_dir: normalizedProjectPath ? joinPath(normalizedProjectPath, ".forge", "wiki") : "",
+    pages: [],
+    message: "在桌面应用中读取 Forge Wiki",
   };
 }
 

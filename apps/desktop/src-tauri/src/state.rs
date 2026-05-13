@@ -1,4 +1,5 @@
 use crate::agent::session::AgentSession;
+use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
 use crate::memory::WikiMemoryStore;
 use crate::workflow::WorkflowState;
@@ -22,6 +23,7 @@ pub struct AppState {
     pub harness: Arc<Harness>,
     pub dev_server: Arc<RwLock<Option<ManagedDevServer>>>,
     pub wiki_memory: Arc<WikiMemoryStore>,
+    pub forge_wiki: Arc<ForgeWikiStore>,
     pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
 }
 
@@ -34,6 +36,7 @@ impl AppState {
             harness,
             dev_server: Arc::new(RwLock::new(None)),
             wiki_memory: Arc::new(WikiMemoryStore::default()),
+            forge_wiki: Arc::new(ForgeWikiStore::new()),
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
