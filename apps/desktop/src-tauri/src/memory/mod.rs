@@ -6,8 +6,7 @@ pub mod storage;
 
 pub use extraction::extract_candidates_from_user_message;
 pub use model::{
-    MemoryCategory, MemoryListFilter, MemoryPatch, MemoryScope, MemoryStatus, SelectedContextMemory,
-    WikiMemory,
+    MemoryCategory, MemoryListFilter, MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory,
 };
 pub use storage::WikiMemoryStore;
 
