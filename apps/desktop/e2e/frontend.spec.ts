@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { simulateStream, fullConversation } from "./mock-ipc";
+import type { WorkflowState } from "../src/lib/protocol";
 
 /** Setup: inject mock IPC before the app loads */
 async function setup(page: Page) {
@@ -64,6 +65,24 @@ async function setup(page: Page) {
           return projectCheckpointStatus;
         case "list_memories":
           return [];
+        case "get_workflow_state":
+          return null;
+        case "override_workflow_route":
+          return {
+            session_id: String(args.sessionId ?? "session"),
+            route: args.action === "debug" ? "recovery" : args.action === "verify" ? "verification" : args.action === "plan_first" ? "workflow" : "direct",
+            phase: args.action === "debug" ? "debugging" : args.action === "verify" ? "verifying" : args.action === "plan_first" ? "clarifying" : "idle",
+            beginner_label: args.action === "debug" ? "遇到问题，正在排查" : args.action === "verify" ? "正在检查结果" : args.action === "plan_first" ? "先梳理想法" : "直接回答",
+            developer_label: String(args.action ?? "direct"),
+            matched_signals: ["manual override"],
+            reason: "用户手动切换了当前工作方式。",
+            gate: "none",
+            override_actions: ["direct", "plan_first", "debug", "verify"],
+            spec_path: null,
+            plan_path: null,
+            checkpoint_id: null,
+            updated_at: Date.now(),
+          };
         default:
           return undefined;
       }
@@ -453,5 +472,58 @@ test.describe("Living Wiki context panel", () => {
     await expect(page.getByText("轻量")).toBeVisible();
     await expect(page.getByText("预览运行中")).toBeVisible();
     await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
+  });
+});
+
+test.describe("Workflow Router", () => {
+  test.beforeEach(async ({ page }) => {
+    await setup(page);
+  });
+
+  test("shows soft workflow state and allows command palette override", async ({ page }) => {
+    const sessionId = "workflow-router-session";
+    const softWorkflow: WorkflowState = {
+      session_id: sessionId,
+      route: "workflow",
+      phase: "clarifying",
+      beginner_label: "先梳理想法",
+      developer_label: "workflow",
+      matched_signals: ["multi-part request"],
+      reason: "这个需求会影响多个部分。",
+      gate: "soft",
+      override_actions: ["direct", "plan_first", "debug", "verify"],
+      spec_path: null,
+      plan_path: null,
+      checkpoint_id: null,
+      updated_at: Date.now(),
+    };
+
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "workflow_updated", session_id: sessionId, state: softWorkflow },
+    ], 5);
+
+    const topBar = page.locator("main > div").first();
+    await expect(topBar.getByText("先梳理想法", { exact: true })).toBeVisible();
+    await expect(page.getByText("这个需求会影响多个部分，我会先帮你梳理方案。你也可以选择直接做。", { exact: true })).toBeVisible();
+
+    await page.keyboard.down("Control");
+    await page.keyboard.press("k");
+    await page.keyboard.up("Control");
+    await page.getByRole("option", { name: "排查问题" }).click();
+
+    await expect(topBar.getByText("遇到问题，正在排查", { exact: true })).toBeVisible();
   });
 });
