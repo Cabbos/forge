@@ -73,8 +73,23 @@ impl ForgeWikiStore {
 
     pub async fn init(&self, project_path: &str) -> Result<ForgeWikiState, String> {
         let dir = wiki_dir(project_path);
-        fs::create_dir_all(&dir)
+        let parent = dir
+            .parent()
+            .ok_or_else(|| "Failed to resolve wiki directory parent".to_string())?;
+        fs::create_dir_all(parent)
             .map_err(|err| format!("Failed to create wiki directory: {err}"))?;
+        match fs::symlink_metadata(&dir) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err("Forge Wiki directory cannot be a symlink".to_string());
+                }
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                fs::create_dir(&dir)
+                    .map_err(|err| format!("Failed to create wiki directory: {err}"))?;
+            }
+            Err(err) => return Err(format!("Failed to inspect wiki directory: {err}")),
+        }
 
         for (path, _, content) in DEFAULT_PAGES {
             if contains_sensitive_wiki_content(content) {
@@ -563,6 +578,31 @@ mod tests {
         );
         assert!(!project.join("outside.md").exists());
         cleanup(&project);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn init_rejects_symlinked_wiki_root() {
+        let project = temp_project_dir("symlinked-root");
+        let external = temp_project_dir("symlinked-root-external");
+        let store = ForgeWikiStore::new();
+        fs::create_dir_all(project.join(".forge")).expect("create forge dir");
+        unix_fs::symlink(external.as_path(), project.join(".forge/wiki"))
+            .expect("create wiki root symlink");
+
+        let error = store
+            .init(project.to_str().unwrap())
+            .await
+            .expect_err("symlinked wiki root should be rejected");
+
+        assert!(
+            error.contains("symlink"),
+            "expected symlink rejection, got {error}"
+        );
+        assert!(!external.join("index.md").exists());
+        assert!(!external.join("tasks.md").exists());
+        cleanup(&project);
+        cleanup(&external);
     }
 
     #[tokio::test]
