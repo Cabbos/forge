@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::memory::model::{MemoryCategory, MemoryStatus, SelectedContextMemory, WikiMemory};
 
 pub fn select_relevant_memories(
@@ -108,14 +110,16 @@ fn contains_direction_signal(message: &str) -> bool {
 }
 
 fn terms(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+
     text.to_lowercase()
         .split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
         .filter_map(|term| {
-            let term = term.trim();
-            if term.len() < 2 {
+            let term = term.trim().to_string();
+            if term.len() < 2 || !seen.insert(term.clone()) {
                 None
             } else {
-                Some(term.to_string())
+                Some(term)
             }
         })
         .collect()
@@ -172,5 +176,17 @@ mod tests {
         let selected = select_relevant_memories(&memories, "继续做资料系统", Some("/tmp/forge"), 5);
 
         assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn repeated_query_terms_do_not_inflate_score() {
+        let memories = vec![memory("m1", MemoryStatus::Accepted, "forge")];
+
+        let repeated = select_relevant_memories(&memories, "forge forge forge", None, 5);
+        let single = select_relevant_memories(&memories, "forge", None, 5);
+
+        assert_eq!(repeated.len(), 1);
+        assert_eq!(single.len(), 1);
+        assert_eq!(repeated[0].score, single[0].score);
     }
 }

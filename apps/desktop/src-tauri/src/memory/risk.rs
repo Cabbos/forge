@@ -10,7 +10,6 @@ pub fn should_reject_persistent_memory(text: &str) -> bool {
     let sensitive_words = [
         "api key",
         "apikey",
-        "token",
         "password",
         "passwd",
         "secret",
@@ -31,9 +30,18 @@ pub fn should_reject_persistent_memory(text: &str) -> bool {
     let patterns = [
         r"sk-[A-Za-z0-9_\-]{16,}",
         r"ghp_[A-Za-z0-9_]{16,}",
+        r"gho_[A-Za-z0-9_]{16,}",
+        r"ghu_[A-Za-z0-9_]{16,}",
+        r"ghs_[A-Za-z0-9_]{16,}",
+        r"ghr_[A-Za-z0-9_]{16,}",
+        r"github_pat_[A-Za-z0-9_]{20,}",
         r"AIza[0-9A-Za-z_\-]{20,}",
         r"AKIA[0-9A-Z]{16}",
         r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
+        r"(?i)\btoken\s*[:=]\s*[A-Za-z0-9._~+/=-]{8,}",
+        r"(?i)\bmy\s+token\s+(?:is|=|:)\s*[A-Za-z0-9._~+/=-]{8,}",
+        r"(?i)\b(?:auth|access)\s+token(?:\s*(?:is|=|:))?\s+[A-Za-z0-9._~+/=-]{8,}",
+        r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}",
     ];
 
     patterns.iter().any(|pattern| {
@@ -57,6 +65,53 @@ mod tests {
         ));
         assert!(should_reject_persistent_memory(
             "-----BEGIN OPENSSH PRIVATE KEY-----"
+        ));
+    }
+
+    #[test]
+    fn rejects_raw_github_tokens_without_token_label() {
+        assert!(should_reject_persistent_memory(
+            "github_pat_1234567890abcdef_1234567890abcdef"
+        ));
+        assert!(should_reject_persistent_memory(
+            "gho_1234567890abcdefghijkl"
+        ));
+        assert!(should_reject_persistent_memory(
+            "ghu_1234567890abcdefghijkl"
+        ));
+        assert!(should_reject_persistent_memory(
+            "ghs_1234567890abcdefghijkl"
+        ));
+        assert!(should_reject_persistent_memory(
+            "ghr_1234567890abcdefghijkl"
+        ));
+    }
+
+    #[test]
+    fn rejects_secret_token_phrases() {
+        assert!(should_reject_persistent_memory("token: abcdefghijklmnop"));
+        assert!(should_reject_persistent_memory(
+            "my token is abcdefghijklmnop"
+        ));
+        assert!(should_reject_persistent_memory(
+            "auth token abcdefghijklmnop"
+        ));
+        assert!(should_reject_persistent_memory(
+            "access token abcdefghijklmnop"
+        ));
+        assert!(should_reject_persistent_memory("bearer abcdefghijklmnop"));
+    }
+
+    #[test]
+    fn allows_non_secret_token_phrases() {
+        assert!(!should_reject_persistent_memory(
+            "Use design tokens for color and spacing"
+        ));
+        assert!(!should_reject_persistent_memory(
+            "We need to lower the token budget"
+        ));
+        assert!(!should_reject_persistent_memory(
+            "Document the tokenization strategy"
         ));
     }
 
