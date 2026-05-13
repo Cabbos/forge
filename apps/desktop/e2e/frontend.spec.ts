@@ -739,3 +739,59 @@ test.describe("Task Mode", () => {
     await expect(currentTask.getByRole("button", { name: "检查结果" })).toBeVisible();
   });
 });
+
+test.describe("Context Activation", () => {
+  test("shows active memories and Forge Wiki pages for the current turn", async ({ page }) => {
+    const sessionId = "context-activation-session";
+    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const selectedMemory = {
+      memory_id: "memory-1",
+      title: "中文优先",
+      body: "用户偏好中文沟通，英文能力稍弱。",
+      category: "preference" as const,
+      scope: "user_profile" as const,
+      score: 0.93,
+      reason: "这是你固定的偏好",
+      injected: true,
+    };
+    const selectedPage = {
+      page_id: "tasks",
+      title: "当前任务",
+      path: "tasks.md",
+      kind: "tasks" as const,
+      summary: "当前正在做 Task Mode 和 Context Activation。",
+      score: 0.91,
+      reason: "这页项目记录与本轮请求相关",
+      injected: true,
+    };
+
+    await setup(page);
+    await page.addInitScript(({ sessionId, projectPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, { sessionId, projectPath });
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "memory_selection", session_id: sessionId, selected: [selectedMemory] },
+      { event_type: "forge_wiki_context_selected", session_id: sessionId, selected: [selectedPage] },
+    ], 5);
+
+    await page.getByTitle("打开上下文").click();
+    const activeContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
+
+    await expect(activeContext.getByText("已带入 2 条背景")).toBeVisible();
+    await expect(activeContext.getByText("中文优先")).toBeVisible();
+    await expect(activeContext.getByText("当前任务")).toBeVisible();
+    await expect(activeContext.getByText("这是你固定的偏好")).toBeVisible();
+    await expect(activeContext.getByText("这页项目记录与本轮请求相关")).toBeVisible();
+  });
+});
