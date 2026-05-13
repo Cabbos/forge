@@ -171,7 +171,7 @@ fn memory_category_label(category: &MemoryCategory) -> &'static str {
 }
 ```
 
-- [ ] **Step 3: Run a compile check and expect missing modules**
+- [ ] **Step 3: Run a compile check**
 
 Run:
 
@@ -179,7 +179,7 @@ Run:
 cd /Users/cabbos/project/crusted-spinning-lynx-agent/src-tauri && cargo check
 ```
 
-Expected: FAIL with missing module errors for `extraction`, `risk`, `scoring`, and `storage`.
+Expected: PASS. The new `memory` module is not registered in `src-tauri/src/lib.rs` until Task 5, so these files should not affect the crate yet.
 
 - [ ] **Step 4: Commit**
 
