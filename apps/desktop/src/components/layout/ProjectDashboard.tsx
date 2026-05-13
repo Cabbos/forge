@@ -49,7 +49,7 @@ interface DashboardSummary {
 }
 
 const NEXT_PROMPTS = [
-  "请根据当前项目状态，告诉我下一步最值得优化的一件事，并直接开始处理。",
+  "请根据当前交付状态，告诉我下一步最值得优化的一件事，并直接开始处理。",
   "请用小白能懂的话检查当前改动风险，并给我一份验收清单。",
   "请运行或指导我运行项目预览，然后根据结果继续修正体验问题。",
 ];
@@ -428,7 +428,7 @@ function RuntimePanel({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs" style={{ color: "#E4E7EC" }}>
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusColor }} />
-            <span>{runtime?.message ?? "正在检测项目运行状态"}</span>
+            <span>{runtime?.message ?? "正在检测交付状态"}</span>
           </div>
           <div className="mt-1 truncate font-mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>
             {runtime?.command ?? "未检测到 dev 命令"}
@@ -441,7 +441,7 @@ function RuntimePanel({
           type="button"
           onClick={() => onAction("refresh")}
           className="rounded p-1 transition-colors hover:bg-secondary"
-          title="刷新运行状态"
+          title="刷新交付状态"
         >
           <RefreshCw className={cn("size-3.5", busyAction === "refresh" && "animate-spin")} style={{ color: "var(--muted-foreground)" }} />
         </button>

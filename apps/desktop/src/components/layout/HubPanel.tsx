@@ -159,9 +159,10 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
       </div>
 
       <div className="overflow-hidden rounded-md border border-border bg-card">
-        <div className="grid grid-cols-[minmax(0,1fr)_48px_64px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-          <span>文件</span>
+        <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          <span>文件名</span>
           <span>类型</span>
+          <span>解析状态</span>
           <span className="text-right">上下文</span>
         </div>
 
@@ -187,14 +188,14 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
 
 function ContextFileRow({ file }: { file: ContextFile }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_48px_64px] items-center gap-2 px-3 py-2 text-xs">
+    <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] items-center gap-2 px-3 py-2 text-xs">
       <div className="min-w-0">
         <div className="truncate text-foreground">{file.name}</div>
-        <div className={cn("mt-0.5 text-[10px]", statusClass(file.status))}>
-          {statusLabel(file.status)}
-        </div>
       </div>
       <span className="truncate font-mono text-[10px] text-muted-foreground">{file.type}</span>
+      <span className={cn("truncate text-[10px]", statusClass(file.status))}>
+        {statusLabel(file.status)}
+      </span>
       <span className="text-right text-[10px] text-muted-foreground">
         {file.inContext ? "已加入" : "未加入"}
       </span>

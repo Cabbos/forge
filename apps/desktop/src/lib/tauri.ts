@@ -332,7 +332,7 @@ function fallbackProjectRuntimeStatus(): ProjectRuntimeStatus {
     can_start: false,
     can_stop: false,
     can_open: false,
-    message: "在桌面应用中读取项目状态",
+    message: "在桌面应用中读取交付状态",
     logs: [],
   };
 }

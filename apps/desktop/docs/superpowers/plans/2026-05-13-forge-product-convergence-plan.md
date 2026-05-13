@@ -4,6 +4,8 @@
 
 **Goal:** Make Forge's visible product model converge around 当前任务, 上下文, and 交付 without adding new capabilities.
 
+**Status:** Completed on `cabbos/resources-context-v1`. The visible product model now centers on 当前任务, 上下文, and 交付; the right panel is 工作台; the resource placeholder exposes the future file-list shape; and project running/checkpoint information is presented as lightweight delivery status.
+
 **Architecture:** Keep all backend behavior intact. Apply a frontend-only information architecture and copy pass over the existing Workflow, Memory, Forge Wiki, Context Activation, and Project Status surfaces.
 
 **Tech Stack:** React, TypeScript, Zustand, Playwright, Vite, existing Tauri IPC.
@@ -33,7 +35,7 @@
 
 ## Task 1: Right Panel Product Layers
 
-- [ ] **Step 1: Add a failing e2e assertion**
+- [x] **Step 1: Add a failing e2e assertion**
 
 In `e2e/frontend.spec.ts`, extend the top-level mode/context test to open the right panel and assert:
 
@@ -44,7 +46,7 @@ await expect(page.getByRole("heading", { name: "上下文", exact: true })).toBe
 await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
 ```
 
-- [ ] **Step 2: Run the focused test**
+- [x] **Step 2: Run the focused test**
 
 Run:
 
@@ -54,7 +56,7 @@ npx playwright test e2e/frontend.spec.ts -g "top-level mode pill"
 
 Expected: FAIL because the right panel title is still `上下文` and there is no `交付` heading.
 
-- [ ] **Step 3: Update `HubPanel.tsx`**
+- [x] **Step 3: Update `HubPanel.tsx`**
 
 Change the panel title to `工作台`. Add a compact `ProductLayerHeader` helper and render:
 
@@ -72,7 +74,7 @@ Change the panel title to `工作台`. Add a compact `ProductLayerHeader` helper
 
 Do not add new IPC or resource behavior.
 
-- [ ] **Step 4: Run the focused test again**
+- [x] **Step 4: Run the focused test again**
 
 Run:
 
@@ -82,7 +84,7 @@ npx playwright test e2e/frontend.spec.ts -g "top-level mode pill"
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/layout/HubPanel.tsx e2e/frontend.spec.ts
@@ -91,7 +93,7 @@ git commit -m "feat: converge workbench panel structure"
 
 ## Task 2: Hide Internal Wiki And Memory Terms
 
-- [ ] **Step 1: Add/update e2e assertions**
+- [x] **Step 1: Add/update e2e assertions**
 
 In the Living Wiki context panel tests, replace primary copy expectations:
 
@@ -101,7 +103,7 @@ await page.getByRole("button", { name: "建立项目记录" }).click();
 await expect(page.getByRole("heading", { name: "已保存背景" })).toBeVisible();
 ```
 
-- [ ] **Step 2: Run the focused test**
+- [x] **Step 2: Run the focused test**
 
 Run:
 
@@ -111,7 +113,7 @@ npx playwright test e2e/frontend.spec.ts -g "Living Wiki context panel"
 
 Expected: FAIL on old `项目 Wiki` / `上下文记忆` copy.
 
-- [ ] **Step 3: Update `WikiSections.tsx`**
+- [x] **Step 3: Update `WikiSections.tsx`**
 
 Replace only visible text:
 
@@ -123,7 +125,7 @@ Replace only visible text:
 
 Keep component names and backend types unchanged.
 
-- [ ] **Step 4: Run the focused test again**
+- [x] **Step 4: Run the focused test again**
 
 Run:
 
@@ -133,7 +135,7 @@ npx playwright test e2e/frontend.spec.ts -g "Living Wiki context panel"
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/context/WikiSections.tsx e2e/frontend.spec.ts
@@ -142,11 +144,11 @@ git commit -m "feat: hide internal context vocabulary"
 
 ## Task 3: Top-Level Copy Polish
 
-- [ ] **Step 1: Add/update assertions**
+- [x] **Step 1: Add/update assertions**
 
 Update tests that open the right panel to expect `工作台`. Keep the toolbar button allowed to say `工作台`.
 
-- [ ] **Step 2: Update user-facing copy**
+- [x] **Step 2: Update user-facing copy**
 
 In `WorkflowStatusPill.tsx`, replace the title with:
 
@@ -162,7 +164,7 @@ In `InputBar.tsx`, replace the active skills tooltip label:
 
 In `AppShell.tsx`, rename the right toolbar button visible copy from `上下文` to `工作台`.
 
-- [ ] **Step 3: Run task/context tests**
+- [x] **Step 3: Run task/context tests**
 
 Run:
 
@@ -172,7 +174,7 @@ npx playwright test e2e/frontend.spec.ts -g "Task Mode|Context Activation|Living
 
 Expected: PASS after assertion updates.
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 Run:
 
@@ -182,7 +184,7 @@ npm run build
 
 Expected: PASS. Existing Vite chunk-size warning is acceptable.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/workflow/WorkflowStatusPill.tsx src/components/session/InputBar.tsx src/components/layout/AppShell.tsx e2e/frontend.spec.ts

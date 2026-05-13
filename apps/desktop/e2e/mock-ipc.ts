@@ -168,7 +168,7 @@ function forgeWikiState(projectPath: string, exists: boolean): ForgeWikiState {
     exists,
     wiki_dir: `${projectPath}/.forge/wiki`,
     pages: exists ? forgeWikiPages(projectPath) : [],
-    message: exists ? "Forge Wiki is ready." : "还没有项目 Wiki",
+    message: exists ? "项目记录已就绪。" : "还没有项目记录",
   };
 }
 
@@ -201,9 +201,9 @@ function forgeWikiPage(
 }
 
 function forgeWikiPageContent(pagePath: string): string {
-  if (pagePath === "tasks.md") return "# 当前任务\n\n覆盖 Forge Wiki 上下文面板。";
+  if (pagePath === "tasks.md") return "# 当前任务\n\n覆盖工作台上下文面板。";
   if (pagePath === "decisions.md") return "# 决策记录\n\n保留关键方案。";
-  return "# 项目概览\n\nForge Wiki mock project overview.";
+  return "# 项目概览\n\n项目记录预览。";
 }
 
 function forgeWikiSelectedContext(projectPath: string): SelectedForgeWikiPage[] {
@@ -237,7 +237,7 @@ function forgeWikiProposal(projectPath: string, args: Record<string, unknown>): 
     project_path: projectPath,
     session_id: typeof args.sessionId === "string" ? args.sessionId : null,
     target_pages: Array.isArray(args.targetPages) ? args.targetPages.map(String) : ["tasks.md"],
-    title: String(args.title ?? "记录 Forge Wiki 更新"),
+    title: String(args.title ?? "记录项目进展"),
     summary: String(args.summary ?? "补充本轮任务产生的项目记录。"),
     patch_preview: typeof args.patchPreview === "string" ? args.patchPreview : null,
     status: "pending",
@@ -253,7 +253,7 @@ function applyMemoryPatch(args: Record<string, unknown>): WikiMemory {
     category: "project_fact",
     scope: "project",
     status: "accepted",
-    title: "Memory",
+    title: "背景记录",
     body: "",
     project_path: null,
     source_session_id: null,

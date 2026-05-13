@@ -79,7 +79,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
           type="button"
           onClick={refresh}
           className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          title="刷新项目状态"
+          title="刷新交付状态"
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </button>
