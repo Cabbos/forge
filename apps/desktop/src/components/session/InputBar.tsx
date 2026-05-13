@@ -20,9 +20,9 @@ const COMMANDS = [
 ];
 
 const QUICK_PROMPTS = [
-  "先梳理当前项目结构，并指出最重要的入口。",
-  "检查当前改动的风险，按严重程度排序。",
-  "继续优化最影响使用体验的一处问题。",
+  "梳理当前任务，告诉我下一步怎么做。",
+  "带着项目记录继续推进这个工具。",
+  "检查当前结果，并推进到可交付状态。",
 ];
 
 export function InputBar({ sessionId }: InputBarProps) {

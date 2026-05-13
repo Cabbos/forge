@@ -25,7 +25,7 @@ export function getSessionTitle(session?: SessionState | null): string {
 }
 
 export function getSessionMeta(session?: SessionState | null): string {
-  if (!session) return "创建一个任务开始";
+  if (!session) return "从当前任务开始";
   const blockCount = session.blocks.filter((block) => block.event_type !== "pending").length;
   const model = getProviderModelLabel(session.agentType, session.model);
   const contextWindow = formatContextWindow(session.contextWindowTokens ?? getModelContextWindow(session.model));

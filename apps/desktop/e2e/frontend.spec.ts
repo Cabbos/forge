@@ -244,7 +244,13 @@ test.describe("Timeline Message Flow", () => {
   });
 
   test("app loads and shows empty state", async ({ page }) => {
-    await expect(page.getByRole("main").getByText("创建一个任务开始").last()).toBeVisible();
+    const main = page.getByRole("main");
+    await expect(main.locator("p", { hasText: "从当前任务开始" })).toBeVisible();
+    await expect(main.getByText("Forge 会带着项目上下文，把结果推进到可预览、可检查、可继续。")).toBeVisible();
+    await expect(main.getByText("当前任务", { exact: true })).toBeVisible();
+    await expect(main.getByText("上下文", { exact: true })).toBeVisible();
+    await expect(main.getByText("交付", { exact: true })).toBeVisible();
+    await expect(main.getByText("创建一个任务开始")).toHaveCount(0);
   });
 
   test("creating a session shows chat input", async ({ page }) => {
@@ -253,6 +259,9 @@ test.describe("Timeline Message Flow", () => {
     await page.getByRole("button", { name: "新对话" }).click();
     // Input should appear
     await expect(page.locator("textarea")).toBeVisible();
+    await expect(page.getByRole("button", { name: "梳理当前任务，告诉我下一步怎么做。" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "带着项目记录继续推进这个工具。" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "检查当前结果，并推进到可交付状态。" })).toBeVisible();
   });
 
   test("timeline messages render correctly", async ({ page }) => {
