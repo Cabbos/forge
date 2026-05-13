@@ -257,15 +257,20 @@ impl ForgeWikiStore {
             &proposal.summary,
         );
         validate_proposal_for_accept(&proposal, &append_text)?;
+        let accepted_block = format_proposal_accepted_block(&proposal);
+        let marker = proposal_marker(&proposal.id);
         let mut page_updates = Vec::with_capacity(proposal.target_pages.len());
         for target in &proposal.target_pages {
             let page_path = resolve_wiki_page_path(project_path, target)?;
             let mut existing = fs::read_to_string(&page_path)
                 .map_err(|err| format!("Failed to read wiki page {target}: {err}"))?;
+            if existing.contains(&marker) {
+                continue;
+            }
             if !existing.ends_with('\n') {
                 existing.push('\n');
             }
-            existing.push_str(&append_text);
+            existing.push_str(&accepted_block);
             page_updates.push((target.clone(), page_path, existing));
         }
 
@@ -415,6 +420,18 @@ fn save_proposals(project_path: &str, proposals: &[ForgeWikiUpdateProposal]) -> 
 
 fn format_proposal_append_preview(created_at: &str, title: &str, summary: &str) -> String {
     format!("\n## {created_at} — {title}\n\n{summary}\n")
+}
+
+fn proposal_marker(proposal_id: &str) -> String {
+    format!("<!-- forge-wiki-proposal:{proposal_id} -->")
+}
+
+fn format_proposal_accepted_block(proposal: &ForgeWikiUpdateProposal) -> String {
+    format!(
+        "\n{}\n{}",
+        proposal_marker(&proposal.id),
+        format_proposal_append_preview(&proposal.created_at, &proposal.title, &proposal.summary)
+    )
 }
 
 fn validate_proposal_for_accept(
@@ -1105,6 +1122,94 @@ mod tests {
                 .count(),
             1
         );
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn accept_proposal_retry_skips_page_with_existing_marker() {
+        let project = temp_project_dir("proposal-retry-existing-marker");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let log_path = project.join(".forge/wiki/log.md");
+
+        let proposal = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "retry must not duplicate already applied proposal body".to_string(),
+            )
+            .await
+            .expect("create proposal");
+        let marker = format!("<!-- forge-wiki-proposal:{} -->", proposal.id);
+        fs::write(
+            &log_path,
+            format!(
+                "# 工作日志\n\n{marker}\n\n## {} — {}\n\n{}\n",
+                proposal.created_at, proposal.title, proposal.summary
+            ),
+        )
+        .expect("simulate applied page while proposal remains pending");
+
+        let accepted = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("retry accept");
+        let after = fs::read_to_string(&log_path).expect("read log");
+
+        assert_eq!(accepted.status, ForgeWikiProposalStatus::Accepted);
+        assert_eq!(after.matches(&proposal.summary).count(), 1);
+        assert_eq!(after.matches(&marker).count(), 1);
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn accept_multi_target_retry_does_not_duplicate_previously_applied_target() {
+        let project = temp_project_dir("proposal-multi-target-retry-marker");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let log_path = project.join(".forge/wiki/log.md");
+        let tasks_path = project.join(".forge/wiki/tasks.md");
+
+        let proposal = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string(), "tasks.md".to_string()],
+                "记录多页面工作".to_string(),
+                "retry applies missing target without duplicating existing target".to_string(),
+            )
+            .await
+            .expect("create proposal");
+        let marker = format!("<!-- forge-wiki-proposal:{} -->", proposal.id);
+        fs::write(
+            &log_path,
+            format!(
+                "# 工作日志\n\n{marker}\n\n## {} — {}\n\n{}\n",
+                proposal.created_at, proposal.title, proposal.summary
+            ),
+        )
+        .expect("simulate first target already applied");
+
+        let accepted = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("retry accept");
+        let log_after = fs::read_to_string(&log_path).expect("read log");
+        let tasks_after = fs::read_to_string(&tasks_path).expect("read tasks");
+
+        assert_eq!(accepted.status, ForgeWikiProposalStatus::Accepted);
+        assert_eq!(log_after.matches(&proposal.summary).count(), 1);
+        assert_eq!(log_after.matches(&marker).count(), 1);
+        assert_eq!(tasks_after.matches(&proposal.summary).count(), 1);
+        assert_eq!(tasks_after.matches(&marker).count(), 1);
         cleanup(&project);
     }
 
