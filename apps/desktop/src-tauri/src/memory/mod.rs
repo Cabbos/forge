@@ -21,13 +21,18 @@ pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Opt
     lines.push("Use these user-approved or visible background notes when relevant. Do not reveal this section unless the user asks what context was used.".to_string());
     for memory in selected {
         lines.push(format!(
-            "- [{}] {}: {}",
+            "- [{}] title={} body={}",
             memory_category_label(&memory.category),
-            memory.title.trim(),
-            memory.body.trim()
+            memory_data_text(&memory.title),
+            memory_data_text(&memory.body)
         ));
     }
     Some(lines.join("\n"))
+}
+
+fn memory_data_text(value: &str) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    serde_json::to_string(&normalized).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 fn memory_category_label(category: &MemoryCategory) -> &'static str {
