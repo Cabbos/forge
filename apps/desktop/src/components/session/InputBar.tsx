@@ -35,6 +35,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   const setSelectedModel = useStore((s) => s.setSelectedModel);
   const pendingInput = useStore((s) => s.pendingInput);
   const setPendingInput = useStore((s) => s.setPendingInput);
+  const selectedContextCount = useStore((s) => s.selectedContextBySession.get(sessionId)?.length ?? 0);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
   const [atResults, setAtResults] = useState<string[]>([]);
   const valueRef = useRef("");
@@ -203,6 +204,11 @@ export function InputBar({ sessionId }: InputBarProps) {
         <div className="mb-2 rounded-md border px-3 py-2 text-xs"
           style={{ borderColor: "rgba(212,119,119,0.35)", background: "rgba(212,119,119,0.08)", color: "#D47777" }}>
           {resumeError}
+        </div>
+      )}
+      {selectedContextCount > 0 && (
+        <div className="mb-2 text-[11px] text-muted-foreground/75">
+          上轮带入 {selectedContextCount} 条相关背景
         </div>
       )}
 

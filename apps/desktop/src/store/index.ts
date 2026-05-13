@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
-import type { BlockState, StreamEvent, SessionState } from "../lib/protocol";
+import type { BlockState, SelectedContextMemory, StreamEvent, SessionState, WikiMemory } from "../lib/protocol";
 import {
   DEFAULT_PROVIDER_ID,
   getDefaultModel,
@@ -15,6 +15,8 @@ interface AppStore {
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
   hydrated: boolean;
+  memories: WikiMemory[];
+  selectedContextBySession: Map<string, SelectedContextMemory[]>;
 
   // Provider
   selectedProvider: ProviderId;
@@ -27,6 +29,8 @@ interface AppStore {
   setActiveSession: (id: string | null) => void;
   addSession: (id: string, provider: string, model: string) => void;
   removeSession: (id: string) => void;
+  setMemories: (memories: WikiMemory[]) => void;
+  upsertMemory: (memory: WikiMemory) => void;
   updateSessionStatus: (id: string, status: SessionState["status"]) => void;
   updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => void;
 
@@ -118,6 +122,8 @@ export const useStore = create<AppStore>((set, get) => ({
   sessions: new Map(),
   activeSessionId: null,
   hydrated: false,
+  memories: [],
+  selectedContextBySession: new Map(),
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
   selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),
@@ -181,6 +187,26 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setActiveSession: (id) => set({ activeSessionId: id }),
 
+  setMemories: (memories) => set({ memories }),
+
+  upsertMemory: (memory) => {
+    const memories = get().memories.filter((existing) => existing.id !== memory.id);
+    if (memory.status === "forgotten" || memory.status === "archived") {
+      const selectedContextBySession = new Map(get().selectedContextBySession);
+      selectedContextBySession.forEach((selected, sessionId) => {
+        const nextSelected = selected.filter((item) => item.memory_id !== memory.id);
+        if (nextSelected.length === 0) {
+          selectedContextBySession.delete(sessionId);
+        } else if (nextSelected.length !== selected.length) {
+          selectedContextBySession.set(sessionId, nextSelected);
+        }
+      });
+      set({ memories, selectedContextBySession });
+      return;
+    }
+    set({ memories: [memory, ...memories] });
+  },
+
   addSession: (id, provider, model) => {
     const sessions = new Map(get().sessions);
     sessions.set(id, {
@@ -199,10 +225,12 @@ export const useStore = create<AppStore>((set, get) => ({
 
   removeSession: (id) => {
     const sessions = new Map(get().sessions);
+    const selectedContextBySession = new Map(get().selectedContextBySession);
     sessions.delete(id);
+    selectedContextBySession.delete(id);
     const activeSessionId =
       get().activeSessionId === id ? null : get().activeSessionId;
-    set({ sessions, activeSessionId });
+    set({ sessions, activeSessionId, selectedContextBySession });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
@@ -264,6 +292,19 @@ export const useStore = create<AppStore>((set, get) => ({
 
   dispatchOutputEvent: (event) => {
     const { session_id, event_type } = event;
+
+    if (event_type === "memory_selection") {
+      const selectedContextBySession = new Map(get().selectedContextBySession);
+      selectedContextBySession.set(session_id, event.selected);
+      set({ selectedContextBySession });
+      return;
+    }
+
+    if (event_type === "memory_candidate" || event_type === "memory_updated") {
+      get().upsertMemory(event.memory);
+      return;
+    }
+
     const sessions = new Map(get().sessions);
     let session = sessions.get(session_id);
 

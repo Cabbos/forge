@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { FilePlus2, FileText, X } from "lucide-react";
 import { useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { WikiSections } from "@/components/context/WikiSections";
 import { ProjectStatusCard } from "./ProjectStatusCard";
 import { cn } from "@/lib/utils";
 import { formatContextWindow, getModelContextWindow, getProviderModelLabel } from "@/lib/providers";
+import { getProjectRuntimeStatus } from "@/lib/tauri";
 
 type ParseStatus = "pending" | "parsed" | "failed";
 
@@ -20,6 +22,7 @@ const contextFiles: ContextFile[] = [];
 
 export function HubPanel() {
   const [open, setOpen] = useState(false);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
   const session = activeId ? sessions.get(activeId) : null;
@@ -31,6 +34,25 @@ export function HubPanel() {
     window.addEventListener("toggle-hub", handler);
     return () => window.removeEventListener("toggle-hub", handler);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setProjectPath(null);
+    if (!open || !activeId) return;
+
+    getProjectRuntimeStatus(activeId)
+      .then((status) => {
+        if (!cancelled) setProjectPath(status.working_dir || null);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectPath(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, open]);
 
   if (!open) return null;
 
@@ -62,6 +84,8 @@ export function HubPanel() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-4 p-4">
+            <WikiSections sessionId={activeId} projectPath={projectPath} />
+
             <ContextFilesSection files={contextFiles} />
 
             <section>

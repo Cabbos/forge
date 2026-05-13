@@ -1,3 +1,4 @@
+use crate::memory::{SelectedContextMemory, WikiMemory};
 use serde::{Deserialize, Serialize};
 
 /// Streaming events emitted from Rust backend to frontend.
@@ -114,6 +115,23 @@ pub enum StreamEvent {
         estimated_tokens_after: u32,
     },
 
+    // ── Living Wiki Memory ──
+    #[serde(rename = "memory_selection")]
+    MemorySelection {
+        session_id: String,
+        selected: Vec<SelectedContextMemory>,
+    },
+    #[serde(rename = "memory_candidate")]
+    MemoryCandidate {
+        session_id: String,
+        memory: WikiMemory,
+    },
+    #[serde(rename = "memory_updated")]
+    MemoryUpdated {
+        session_id: String,
+        memory: WikiMemory,
+    },
+
     // ── Session Status ──
     #[serde(rename = "session_started")]
     SessionStarted {
@@ -165,6 +183,9 @@ impl StreamEvent {
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
             | ContextCompacted { session_id, .. }
+            | MemorySelection { session_id, .. }
+            | MemoryCandidate { session_id, .. }
+            | MemoryUpdated { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
             | SessionStopped { session_id, .. }

@@ -1,13 +1,110 @@
 import { test, expect, type Page } from "@playwright/test";
-import { createMockIPC, simulateStream, fullConversation } from "./mock-ipc";
+import { simulateStream, fullConversation } from "./mock-ipc";
 
 /** Setup: inject mock IPC before the app loads */
 async function setup(page: Page) {
   await page.addInitScript(() => {
+    let callbackId = 0;
+    const callbacks = new Map<number, (data: unknown) => void>();
+    const workingDir = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const projectRuntimeStatus = {
+      working_dir: workingDir,
+      has_package_json: true,
+      package_manager: "npm",
+      dev_script: "dev",
+      command: "npm run dev",
+      port: 1420,
+      url: "http://localhost:1420",
+      running: false,
+      managed: false,
+      pid: null,
+      can_start: true,
+      can_stop: false,
+      can_open: true,
+      message: "Preview not running",
+      logs: [],
+    };
+    const projectCheckpointStatus = {
+      working_dir: workingDir,
+      is_git_repo: true,
+      dirty: false,
+      last_checkpoint: null,
+      message: "No checkpoint yet",
+    };
+    // @ts-expect-error mock
+    window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+      switch (cmd) {
+        case "create_session":
+          // @ts-expect-error mock
+          return { session_id: window.__mockSessionId ?? crypto.randomUUID() };
+        case "send_input":
+          // @ts-expect-error mock
+          window.__lastSentText = args.text;
+          return undefined;
+        case "kill_session":
+        case "confirm_response":
+        case "set_api_key":
+          return undefined;
+        case "list_sessions":
+          return [];
+        case "get_default_working_dir":
+          return workingDir;
+        case "list_capabilities":
+          return [
+            { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: true },
+            { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: true },
+          ];
+        case "toggle_capability":
+          return undefined;
+        case "get_api_key_status":
+          return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+        case "get_project_runtime_status":
+          return projectRuntimeStatus;
+        case "get_project_checkpoint_status":
+          return projectCheckpointStatus;
+        case "list_memories":
+          return [];
+        default:
+          return undefined;
+      }
+    };
     // @ts-expect-error mock
     window.__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "plugin:event|listen") {
+          // @ts-expect-error listeners
+          if (!window.__tauriListeners[args.event as string]) window.__tauriListeners[args.event as string] = [];
+          const callback = callbacks.get(args.handler as number);
+          if (callback) {
+            // @ts-expect-error listeners
+            window.__tauriListeners[args.event as string].push(callback);
+          }
+          return args.handler;
+        }
+        if (cmd === "plugin:event|unlisten") {
+          const event = args.event as string;
+          const id = args.eventId as number;
+          // @ts-expect-error listeners
+          window.__tauriListeners[event] = (window.__tauriListeners[event] ?? []).filter((fn: unknown) => fn !== callbacks.get(id));
+          callbacks.delete(id);
+          return undefined;
+        }
         return window.__tauriMockIPC?.(cmd, args);
+      },
+      transformCallback: (callback: (data: unknown) => void) => {
+        callbackId += 1;
+        callbacks.set(callbackId, callback);
+        return callbackId;
+      },
+      unregisterCallback: (id: number) => {
+        callbacks.delete(id);
+      },
+      callbacks,
+    };
+    // @ts-expect-error mock
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: (_event: string, id: number) => {
+        callbacks.delete(id);
       },
     };
     // @ts-expect-error listeners
@@ -36,46 +133,39 @@ test.describe("Timeline Message Flow", () => {
   });
 
   test("app loads and shows empty state", async ({ page }) => {
-    await expect(page.locator("text=Send a message to begin")).toBeVisible();
+    await expect(page.getByRole("main").getByText("创建一个任务开始").last()).toBeVisible();
   });
 
   test("creating a session shows chat input", async ({ page }) => {
-    await page.addInitScript(() => {
-      window.__tauriMockIPC = createMockIPC();
-    });
     await page.goto("http://localhost:1420");
     // Click new session button
-    await page.click('[class*="sidebar"] button');
+    await page.getByRole("button", { name: "新对话" }).click();
     // Input should appear
     await expect(page.locator("textarea")).toBeVisible();
   });
 
   test("timeline messages render correctly", async ({ page }) => {
     const sessionId = crypto.randomUUID();
-    const mockIPC = createMockIPC({
-      create_session: () => ({ session_id: sessionId }),
-    });
-    await page.addInitScript((fn) => {
-      const mockFn = new Function(`return (${fn})`)();
-      window.__tauriMockIPC = mockFn;
-    }, mockIPC.toString());
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
 
     await page.goto("http://localhost:1420");
     // Create session
-    await page.locator("[class*=sidebar] button:has(svg)").first().click();
-    await page.waitForTimeout(500);
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
 
     // Simulate a full conversation
     const events = fullConversation(sessionId);
     await simulateStream(page, sessionId, events, 30);
 
-    // User bubble should be right-aligned amber
-    const userBubble = page.locator("text=You").first();
-    await expect(userBubble).toBeVisible({ timeout: 5000 });
-
-    // AI text should be visible
-    const aiText = page.locator("text=Assistant").first();
-    await expect(aiText).toBeVisible();
+    await expect(page.getByRole("button", { name: /思考记录/ })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("I'll create a fibonacci function.")).toBeVisible();
 
     // Tool card should show write_to_file
     await expect(page.locator("text=write_to_file")).toBeVisible({ timeout: 5000 });
@@ -89,14 +179,17 @@ test.describe("Timeline Message Flow", () => {
 
   test("thinking block expands and shows content", async ({ page }) => {
     const sessionId = crypto.randomUUID();
-    await page.addInitScript(() => {
-      window.__tauriMockIPC = createMockIPC({
-        create_session: () => ({ session_id: crypto.randomUUID() }),
-      });
-    });
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
     await page.goto("http://localhost:1420");
-    await page.locator("[class*=sidebar] button:has(svg)").first().click();
-    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
 
     const thinkingId = crypto.randomUUID();
     await simulateStream(page, sessionId, [
@@ -110,7 +203,7 @@ test.describe("Timeline Message Flow", () => {
     ], 30);
 
     // Thinking trigger should be visible
-    const thinkingTrigger = page.locator("text=Thinking").first();
+    const thinkingTrigger = page.getByRole("button", { name: /思考记录/ });
     await expect(thinkingTrigger).toBeVisible({ timeout: 5000 });
 
     // Click to expand
@@ -118,19 +211,22 @@ test.describe("Timeline Message Flow", () => {
     await page.waitForTimeout(200);
 
     // Thinking content should be visible
-    await expect(page.locator("text=I need to analyze")).toBeVisible();
+    await expect(page.getByText("I need to analyze the auth system first.")).toBeVisible();
   });
 
   test("tool card shows running then done status", async ({ page }) => {
     const sessionId = crypto.randomUUID();
-    await page.addInitScript(() => {
-      window.__tauriMockIPC = createMockIPC({
-        create_session: () => ({ session_id: crypto.randomUUID() }),
-      });
-    });
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
     await page.goto("http://localhost:1420");
-    await page.locator("[class*=sidebar] button:has(svg)").first().click();
-    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
 
     const toolId = crypto.randomUUID();
     // Send tool_start first (running state)
@@ -140,32 +236,27 @@ test.describe("Timeline Message Flow", () => {
     ], 30);
 
     // Should show running status
-    await expect(page.locator("text=read_file")).toBeVisible({ timeout: 3000 });
-    await expect(page.locator("text=running")).toBeVisible();
+    await expect(page.getByRole("button", { name: /正在读取文件/ })).toBeVisible({ timeout: 3000 });
+    await expect(page.getByText("进行中")).toBeVisible();
 
     // Send tool_result (done state)
     await simulateStream(page, sessionId, [
-      { event_type: "tool_call_result", session_id: sessionId, block_id: crypto.randomUUID(), result: "fn main() {}", is_error: false, duration_ms: 100 },
+      { event_type: "tool_call_result", session_id: sessionId, block_id: toolId, result: "fn main() {}", is_error: false, duration_ms: 100 },
     ], 30);
 
     // Should show done
-    await expect(page.locator("text=done")).toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole("button", { name: /已读取文件/ })).toBeVisible({ timeout: 3000 });
+    await expect(page.getByText("完成")).toBeVisible();
   });
 
-  test("sidebar expands on hover", async ({ page }) => {
+  test("sidebar shows persistent navigation", async ({ page }) => {
     const sidebar = page.locator("aside").first();
 
-    // Initially collapsed (48px)
-    const initialWidth = (await sidebar.boundingBox())?.width ?? 0;
-    expect(initialWidth).toBeLessThan(60);
-
-    // Hover to expand
-    await sidebar.hover();
-    await page.waitForTimeout(400);
-
-    // Should be wider
-    const expandedWidth = (await sidebar.boundingBox())?.width ?? 0;
-    expect(expandedWidth).toBeGreaterThan(150);
+    const width = (await sidebar.boundingBox())?.width ?? 0;
+    expect(width).toBeGreaterThanOrEqual(220);
+    await expect(sidebar.getByRole("button", { name: "新对话" })).toBeVisible();
+    await expect(sidebar.getByRole("button", { name: "插件" })).toBeVisible();
+    await expect(sidebar.getByRole("button", { name: "自动化" })).toBeVisible();
   });
 });
 
@@ -176,34 +267,31 @@ test.describe("InputBar", () => {
 
   test("enter key sends message and clears input", async ({ page }) => {
     const sessionId = crypto.randomUUID();
-    let sentText = "";
-    await page.addInitScript(() => {
-      window.__tauriMockIPC = createMockIPC({
-        create_session: () => ({ session_id: crypto.randomUUID() }),
-        send_input: (args) => { sentText = args.text as string; },
-      });
-    });
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
     await page.goto("http://localhost:1420");
-    await page.locator("[class*=sidebar] button:has(svg)").first().click();
-    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
 
     const textarea = page.locator("textarea");
     await textarea.fill("Hello DeepSeek");
     await textarea.press("Enter");
 
     // User bubble should appear
-    await expect(page.locator("text=Hello DeepSeek")).toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole("main").getByText("Hello DeepSeek", { exact: true }).last()).toBeVisible({ timeout: 3000 });
   });
 
   test("shift+enter creates newline without sending", async ({ page }) => {
-    await page.addInitScript(() => {
-      window.__tauriMockIPC = createMockIPC({
-        create_session: () => ({ session_id: crypto.randomUUID() }),
-      });
-    });
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
     await page.goto("http://localhost:1420");
-    await page.locator("[class*=sidebar] button:has(svg)").first().click();
-    await page.waitForTimeout(300);
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
 
     const textarea = page.locator("textarea");
     await textarea.fill("line1");
@@ -212,5 +300,158 @@ test.describe("InputBar", () => {
 
     // Should still be in the textarea, not sent
     await expect(textarea).toContainText("line1\nline2");
+  });
+});
+
+test.describe("Living Wiki context panel", () => {
+  test("shows selected context, project wiki, project status, and scopes project memories", async ({ page }) => {
+    const sessionId = "living-wiki-session";
+    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const otherProjectPath = "/Users/cabbos/project/elsewhere";
+    const now = "2026-05-13T00:00:00.000Z";
+    const selectedMemory = {
+      id: "memory-selected-1",
+      category: "preference",
+      scope: "user_profile",
+      status: "accepted",
+      title: "Use Living Wiki context",
+      body: "Selected background should travel with the next prompt.",
+      project_path: null,
+      source_session_id: sessionId,
+      source_message_ids: [],
+      confidence: 0.91,
+      created_at: now,
+      updated_at: now,
+      last_used_at: now,
+      use_count: 2,
+      tags: ["context"],
+    };
+    const projectMemory = {
+      id: "memory-project-1",
+      category: "project_fact",
+      scope: "project",
+      status: "pinned",
+      title: "Project Wiki fact",
+      body: "The active project uses the HubPanel for Living Wiki review.",
+      project_path: projectPath,
+      source_session_id: sessionId,
+      source_message_ids: [],
+      confidence: 0.88,
+      created_at: now,
+      updated_at: now,
+      last_used_at: null,
+      use_count: 1,
+      tags: ["wiki"],
+    };
+    const otherProjectMemory = {
+      ...projectMemory,
+      id: "memory-other-project",
+      title: "Other project fact",
+      body: "This memory belongs to another project and should stay hidden.",
+      project_path: otherProjectPath,
+    };
+    const candidateMemory = {
+      ...projectMemory,
+      id: "memory-candidate-1",
+      category: "decision",
+      status: "candidate",
+      title: "Candidate Wiki note",
+      body: "This candidate should be visible before it is accepted.",
+      confidence: 0.72,
+      tags: ["candidate"],
+    };
+
+    await setup(page);
+    await page.addInitScript(({ sessionId, projectPath, memories }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string) => {
+        switch (cmd) {
+          case "create_session":
+            return { session_id: sessionId };
+          case "get_default_working_dir":
+            return projectPath;
+          case "get_project_runtime_status":
+            return {
+              working_dir: projectPath,
+              has_package_json: true,
+              package_manager: "npm",
+              dev_script: "dev",
+              command: "npm run dev",
+              port: 1420,
+              url: "http://localhost:1420",
+              running: true,
+              managed: true,
+              pid: 4242,
+              can_start: false,
+              can_stop: true,
+              can_open: true,
+              message: "Preview running",
+              logs: [],
+            };
+          case "get_project_checkpoint_status":
+            return {
+              working_dir: projectPath,
+              is_git_repo: true,
+              dirty: false,
+              last_checkpoint: null,
+              message: "No checkpoint yet",
+            };
+          case "list_memories":
+            return memories;
+          default:
+            return undefined;
+        }
+      };
+    }, { sessionId, projectPath, memories: [selectedMemory, projectMemory, otherProjectMemory, candidateMemory] });
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "memory_updated", session_id: sessionId, memory: selectedMemory },
+      { event_type: "memory_updated", session_id: sessionId, memory: projectMemory },
+      { event_type: "memory_updated", session_id: sessionId, memory: otherProjectMemory },
+      { event_type: "memory_candidate", session_id: sessionId, memory: candidateMemory },
+      {
+        event_type: "memory_selection",
+        session_id: sessionId,
+        selected: [
+          {
+            memory_id: selectedMemory.id,
+            title: selectedMemory.title,
+            body: selectedMemory.body,
+            category: selectedMemory.category,
+            scope: selectedMemory.scope,
+            score: 0.96,
+            reason: "Relevant to the active task",
+            injected: true,
+          },
+        ],
+      },
+    ], 5);
+
+    await expect(page.getByText("上轮带入 1 条相关背景")).toBeVisible();
+
+    await page.getByTitle("打开上下文").click();
+
+    await expect(page.getByRole("heading", { name: "相关背景" })).toBeVisible();
+    await expect(page.getByText(selectedMemory.body)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "待确认" })).toBeVisible();
+    await expect(page.getByText(candidateMemory.body)).toBeVisible();
+    await expect(page.getByTitle("确认记忆")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "项目 Wiki" })).toBeVisible();
+    await expect(page.getByText(projectMemory.body)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "项目状态" })).toBeVisible();
+    await expect(page.getByText("轻量")).toBeVisible();
+    await expect(page.getByText("预览运行中")).toBeVisible();
+    await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
   });
 });
