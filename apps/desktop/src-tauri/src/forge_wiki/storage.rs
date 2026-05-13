@@ -7,7 +7,8 @@ use crate::forge_wiki::model::{
     ForgeWikiPage, ForgeWikiPageKind, ForgeWikiState, SelectedForgeWikiPage,
 };
 use crate::forge_wiki::safety::{
-    contains_sensitive_wiki_content, resolve_wiki_page_path, wiki_dir,
+    contains_sensitive_wiki_content, ensure_wiki_root_is_normal_dir, resolve_wiki_page_path,
+    wiki_dir,
 };
 
 const DEFAULT_PAGES: [(&str, ForgeWikiPageKind, &str); 6] = [
@@ -52,7 +53,7 @@ impl ForgeWikiStore {
 
     pub async fn get_state(&self, project_path: &str) -> Result<ForgeWikiState, String> {
         let dir = wiki_dir(project_path);
-        let exists = dir.is_dir();
+        let exists = ensure_wiki_root_is_normal_dir(project_path)?;
         let pages = if exists {
             self.list_pages(project_path).await?
         } else {
@@ -119,7 +120,7 @@ impl ForgeWikiStore {
 
     pub async fn list_pages(&self, project_path: &str) -> Result<Vec<ForgeWikiPage>, String> {
         let dir = wiki_dir(project_path);
-        if !dir.is_dir() {
+        if !ensure_wiki_root_is_normal_dir(project_path)? {
             return Ok(Vec::new());
         }
 
@@ -601,6 +602,56 @@ mod tests {
         );
         assert!(!external.join("index.md").exists());
         assert!(!external.join("tasks.md").exists());
+        cleanup(&project);
+        cleanup(&external);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn get_state_rejects_symlinked_wiki_root() {
+        let project = temp_project_dir("symlinked-state-root");
+        let external = temp_project_dir("symlinked-state-root-external");
+        let store = ForgeWikiStore::new();
+        fs::create_dir_all(project.join(".forge")).expect("create forge dir");
+        fs::write(external.join("index.md"), "# Outside\n\nexternal summary")
+            .expect("write external page");
+        unix_fs::symlink(external.as_path(), project.join(".forge/wiki"))
+            .expect("create wiki root symlink");
+
+        let error = store
+            .get_state(project.to_str().unwrap())
+            .await
+            .expect_err("symlinked wiki root should be rejected");
+
+        assert!(
+            error.contains("symlink"),
+            "expected symlink rejection, got {error}"
+        );
+        cleanup(&project);
+        cleanup(&external);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn list_pages_rejects_symlinked_wiki_root() {
+        let project = temp_project_dir("symlinked-list-root");
+        let external = temp_project_dir("symlinked-list-root-external");
+        let store = ForgeWikiStore::new();
+        fs::create_dir_all(project.join(".forge")).expect("create forge dir");
+        fs::write(external.join("index.md"), "# Outside\n\nexternal summary")
+            .expect("write external page");
+        unix_fs::symlink(external.as_path(), project.join(".forge/wiki"))
+            .expect("create wiki root symlink");
+
+        let error = store
+            .list_pages(project.to_str().unwrap())
+            .await
+            .expect_err("symlinked wiki root should be rejected");
+
+        assert!(
+            error.contains("symlink"),
+            "expected symlink rejection, got {error}"
+        );
         cleanup(&project);
         cleanup(&external);
     }

@@ -8,6 +8,20 @@ pub fn wiki_dir(project_path: &str) -> PathBuf {
     Path::new(project_path).join(".forge").join("wiki")
 }
 
+pub fn ensure_wiki_root_is_normal_dir(project_path: &str) -> Result<bool, String> {
+    let root = wiki_dir(project_path);
+    match fs::symlink_metadata(&root) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err("Wiki directory cannot be a symlink".to_string());
+            }
+            Ok(metadata.file_type().is_dir())
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(format!("Failed to inspect wiki directory: {err}")),
+    }
+}
+
 pub fn resolve_wiki_page_path(project_path: &str, page_path: &str) -> Result<PathBuf, String> {
     let relative = Path::new(page_path);
     if page_path.trim().is_empty() {
