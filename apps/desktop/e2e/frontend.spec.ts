@@ -32,8 +32,61 @@ async function setup(page: Page) {
       last_checkpoint: null,
       message: "No checkpoint yet",
     };
+    let forgeWikiExists = false;
+    const forgeWikiPages = [
+      {
+        id: "index",
+        project_path: workingDir,
+        path: "index.md",
+        title: "项目概览",
+        kind: "index",
+        summary: "项目目标、边界和当前结构。",
+        updated_at: "2026-05-13T00:00:00.000Z",
+        token_estimate: 120,
+      },
+      {
+        id: "tasks",
+        project_path: workingDir,
+        path: "tasks.md",
+        title: "当前任务",
+        kind: "tasks",
+        summary: "当前任务、验收步骤和后续事项。",
+        updated_at: "2026-05-13T00:00:00.000Z",
+        token_estimate: 120,
+      },
+      {
+        id: "decisions",
+        project_path: workingDir,
+        path: "decisions.md",
+        title: "决策记录",
+        kind: "decisions",
+        summary: "重要方案和取舍。",
+        updated_at: "2026-05-13T00:00:00.000Z",
+        token_estimate: 120,
+      },
+    ];
+    const forgeWikiProposals = new Map<string, Record<string, unknown>>();
+    const forgeWikiState = (projectPath: string, exists: boolean) => ({
+      project_path: projectPath,
+      exists,
+      wiki_dir: `${projectPath}/.forge/wiki`,
+      pages: exists ? forgeWikiPages.map((page) => ({ ...page, project_path: projectPath })) : [],
+      message: exists ? "Forge Wiki is ready." : "还没有项目 Wiki",
+    });
+    const forgeWikiProposal = (projectPath: string, args: Record<string, unknown>) => ({
+      id: String(args.proposalId ?? args.id ?? "forge-wiki-proposal"),
+      project_path: projectPath,
+      session_id: typeof args.sessionId === "string" ? args.sessionId : null,
+      target_pages: Array.isArray(args.targetPages) ? args.targetPages.map(String) : ["tasks.md"],
+      title: String(args.title ?? "记录 Forge Wiki 更新"),
+      summary: String(args.summary ?? "补充本轮任务产生的项目记录。"),
+      patch_preview: typeof args.patchPreview === "string" ? args.patchPreview : null,
+      status: "pending",
+      created_at: "2026-05-13T00:00:00.000Z",
+    });
     // @ts-expect-error mock
     window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+      const projectPath = String(args.projectPath ?? workingDir);
       switch (cmd) {
         case "create_session":
           // @ts-expect-error mock
@@ -83,6 +136,45 @@ async function setup(page: Page) {
             checkpoint_id: null,
             updated_at: Date.now(),
           };
+        case "get_forge_wiki_state":
+          return forgeWikiState(projectPath, forgeWikiExists);
+        case "init_forge_wiki":
+          forgeWikiExists = true;
+          return forgeWikiState(projectPath, true);
+        case "list_forge_wiki_pages":
+          return forgeWikiExists ? forgeWikiPages.map((page) => ({ ...page, project_path: projectPath })) : [];
+        case "read_forge_wiki_page":
+          return args.pagePath === "tasks.md" ? "# 当前任务\n\n覆盖 Forge Wiki 上下文面板。" : "# 项目概览\n\nForge Wiki mock project overview.";
+        case "select_forge_wiki_context":
+          return [
+            {
+              page_id: "tasks",
+              title: "当前任务",
+              path: "tasks.md",
+              kind: "tasks",
+              summary: "当前任务、验收步骤和后续事项。",
+              score: 0.96,
+              reason: "和当前请求最相关",
+              injected: true,
+            },
+          ];
+        case "create_forge_wiki_update_proposal": {
+          const proposal = forgeWikiProposal(projectPath, args);
+          forgeWikiProposals.set(String(proposal.id), proposal);
+          return proposal;
+        }
+        case "accept_forge_wiki_update_proposal": {
+          const proposal = forgeWikiProposals.get(String(args.proposalId)) ?? forgeWikiProposal(projectPath, args);
+          const accepted = { ...proposal, status: "accepted" };
+          forgeWikiProposals.set(String(accepted.id), accepted);
+          return accepted;
+        }
+        case "discard_forge_wiki_update_proposal": {
+          const proposal = forgeWikiProposals.get(String(args.proposalId)) ?? forgeWikiProposal(projectPath, args);
+          const discarded = { ...proposal, status: "discarded" };
+          forgeWikiProposals.set(String(discarded.id), discarded);
+          return discarded;
+        }
         default:
           return undefined;
       }
@@ -323,6 +415,72 @@ test.describe("InputBar", () => {
 });
 
 test.describe("Living Wiki context panel", () => {
+  test("Forge Wiki context panel initializes wiki and shows selected pages", async ({ page }) => {
+    const sessionId = "forge-wiki-session";
+    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const now = "2026-05-13T00:00:00.000Z";
+    const selectedPage = {
+      page_id: "tasks",
+      title: "当前任务",
+      path: "tasks.md",
+      kind: "tasks" as const,
+      summary: "覆盖当前 e2e 任务和验收步骤。",
+      score: 0.97,
+      reason: "和当前任务最相关",
+      injected: true,
+    };
+    const proposal = {
+      id: "proposal-1",
+      project_path: projectPath,
+      session_id: sessionId,
+      target_pages: ["tasks.md"],
+      title: "记录 Forge Wiki e2e 覆盖",
+      summary: "补充上下文面板初始化、带入页面和更新建议的测试记录。",
+      patch_preview: "追加 e2e 覆盖说明。",
+      status: "pending" as const,
+      created_at: now,
+    };
+
+    await setup(page);
+    await page.addInitScript(({ sessionId, projectPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, { sessionId, projectPath });
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await page.getByTitle("打开上下文").click();
+    const projectRecords = page.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
+    const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮带入" }) });
+    const updateProposals = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新项目记录" }) });
+
+    await expect(projectRecords.getByText("还没有项目 Wiki", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "建立项目 Wiki" }).click();
+    await expect(projectRecords.getByText(/当前任务|项目概览/).first()).toBeVisible();
+
+    await simulateStream(page, sessionId, [
+      { event_type: "forge_wiki_context_selected", session_id: sessionId, selected: [selectedPage] },
+    ], 5);
+
+    await expect(selectedContext.getByText(selectedPage.summary)).toBeVisible();
+    await expect(selectedContext.getByText("已带入 1 条")).toBeVisible();
+
+    await simulateStream(page, sessionId, [
+      { event_type: "forge_wiki_update_proposed", session_id: sessionId, proposal },
+    ], 5);
+
+    await expect(updateProposals.getByText(proposal.summary)).toBeVisible();
+  });
+
   test("shows selected context, project wiki, project status, and scopes project memories", async ({ page }) => {
     const sessionId = "living-wiki-session";
     const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
@@ -461,13 +619,15 @@ test.describe("Living Wiki context panel", () => {
 
     await page.getByTitle("打开上下文").click();
 
-    await expect(page.getByRole("heading", { name: "相关背景" })).toBeVisible();
-    await expect(page.getByText(selectedMemory.body)).toBeVisible();
+    const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮带入" }) });
+    const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "上下文记忆" }) });
+
+    await expect(selectedContext.getByText(selectedMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "待确认" })).toBeVisible();
     await expect(page.getByText(candidateMemory.body)).toBeVisible();
     await expect(page.getByTitle("确认记忆")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "项目 Wiki" })).toBeVisible();
-    await expect(page.getByText(projectMemory.body)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "项目记录", exact: true })).toBeVisible();
+    await expect(projectMemories.getByText(projectMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目状态" })).toBeVisible();
     await expect(page.getByText("轻量")).toBeVisible();
     await expect(page.getByText("预览运行中")).toBeVisible();

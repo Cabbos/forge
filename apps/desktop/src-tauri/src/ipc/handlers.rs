@@ -8,6 +8,7 @@ use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
     delete_session_snapshot, load_session_snapshot, save_session_snapshot,
 };
+use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
 use crate::memory::{extract_candidates_from_user_message, format_selected_memory_context};
 use crate::protocol::commands::SessionCreated;
@@ -15,7 +16,7 @@ use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
-use crate::workflow::classify_workflow;
+use crate::workflow::{classify_workflow, WorkflowRoute};
 
 #[derive(serde::Serialize)]
 pub struct FilePreviewLine {
@@ -320,6 +321,19 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn combine_hidden_contexts(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{}\n\n{}", first.trim(), second.trim())),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
+    }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
 #[tauri::command]
 pub async fn send_input(
     state: tauri::State<'_, Arc<AppState>>,
@@ -341,9 +355,42 @@ pub async fn send_input(
                 "session-output",
                 StreamEvent::WorkflowUpdated {
                     session_id: session_id.clone(),
-                    state: workflow,
+                    state: workflow.clone(),
                 },
             );
+            let wiki_context = match state
+                .forge_wiki
+                .select_context(&project_path, &text, 4)
+                .await
+            {
+                Ok(selected_wiki) => {
+                    let _ = app_handle.emit(
+                        "session-output",
+                        StreamEvent::ForgeWikiContextSelected {
+                            session_id: session_id.clone(),
+                            selected: selected_wiki.clone(),
+                        },
+                    );
+                    match state
+                        .forge_wiki
+                        .format_selected_context_with_content(&project_path, &selected_wiki)
+                    {
+                        Ok(context) => context,
+                        Err(error) => {
+                            crate::app_log!(
+                                "WARN",
+                                "[forge_wiki] context formatting failed: {}",
+                                error
+                            );
+                            ForgeWikiStore::format_selected_context(&selected_wiki)
+                        }
+                    }
+                }
+                Err(error) => {
+                    crate::app_log!("WARN", "[forge_wiki] context selection failed: {}", error);
+                    None
+                }
+            };
             let selected = state
                 .wiki_memory
                 .select(&text, Some(&project_path), 8)
@@ -356,8 +403,9 @@ pub async fn send_input(
                 },
             );
             let memory_context = format_selected_memory_context(&selected);
+            let combined_context = combine_hidden_contexts(memory_context, wiki_context);
             let result = s
-                .send_message_with_context(&text, &app_handle, memory_context)
+                .send_message_with_context(&text, &app_handle, combined_context)
                 .await;
             if let Err(error) = save_session_snapshot(&s.snapshot()) {
                 crate::app_log!("WARN", "[session_snapshot] {}", error);
@@ -383,6 +431,51 @@ pub async fn send_input(
                                 "[wiki_memory] candidate upsert failed: {}",
                                 error
                             );
+                        }
+                    }
+                }
+                if workflow.route != WorkflowRoute::Direct {
+                    match state.forge_wiki.get_state(&project_path).await {
+                        Ok(wiki_state) if wiki_state.exists => {
+                            let summary = truncate_chars(
+                                &format!(
+                                    "{} / {}：{}",
+                                    workflow.developer_label, workflow.beginner_label, text
+                                ),
+                                600,
+                            );
+                            match state
+                                .forge_wiki
+                                .create_update_proposal(
+                                    &project_path,
+                                    Some(&session_id),
+                                    vec!["log.md".to_string()],
+                                    "记录本轮工作".to_string(),
+                                    summary,
+                                )
+                                .await
+                            {
+                                Ok(proposal) => {
+                                    let _ = app_handle.emit(
+                                        "session-output",
+                                        StreamEvent::ForgeWikiUpdateProposed {
+                                            session_id: session_id.clone(),
+                                            proposal,
+                                        },
+                                    );
+                                }
+                                Err(error) => {
+                                    crate::app_log!(
+                                        "WARN",
+                                        "[forge_wiki] proposal creation failed: {}",
+                                        error
+                                    );
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            crate::app_log!("WARN", "[forge_wiki] state check failed: {}", error);
                         }
                     }
                 }

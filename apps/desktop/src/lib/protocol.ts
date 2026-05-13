@@ -40,6 +40,59 @@ export interface MemoryPatch {
   tags?: string[] | null;
 }
 
+export type ForgeWikiPageKind =
+  | "index"
+  | "schema"
+  | "sources"
+  | "decisions"
+  | "tasks"
+  | "log"
+  | "custom";
+
+export interface ForgeWikiPage {
+  id: string;
+  project_path: string;
+  path: string;
+  title: string;
+  kind: ForgeWikiPageKind;
+  summary: string | null;
+  updated_at: string | null;
+  token_estimate: number | null;
+}
+
+export interface ForgeWikiState {
+  project_path: string;
+  exists: boolean;
+  wiki_dir: string;
+  pages: ForgeWikiPage[];
+  message: string;
+}
+
+export interface SelectedForgeWikiPage {
+  page_id: string;
+  title: string;
+  path: string;
+  kind: ForgeWikiPageKind;
+  summary: string;
+  score: number;
+  reason: string;
+  injected: boolean;
+}
+
+export type ForgeWikiProposalStatus = "pending" | "accepted" | "discarded";
+
+export interface ForgeWikiUpdateProposal {
+  id: string;
+  project_path: string;
+  session_id: string | null;
+  target_pages: string[];
+  title: string;
+  summary: string;
+  patch_preview: string | null;
+  status: ForgeWikiProposalStatus;
+  created_at: string;
+}
+
 export type WorkflowRoute =
   | "direct"
   | "light"
@@ -117,6 +170,10 @@ export type StreamEvent =
   | { event_type: "memory_selection"; session_id: string; selected: SelectedContextMemory[] }
   | { event_type: "memory_candidate"; session_id: string; memory: WikiMemory }
   | { event_type: "memory_updated"; session_id: string; memory: WikiMemory }
+  // ── Forge Wiki ──
+  | { event_type: "forge_wiki_context_selected"; session_id: string; selected: SelectedForgeWikiPage[] }
+  | { event_type: "forge_wiki_update_proposed"; session_id: string; proposal: ForgeWikiUpdateProposal }
+  | { event_type: "forge_wiki_updated"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }

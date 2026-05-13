@@ -3,7 +3,14 @@
  * Injects before the app mounts — `window.__TAURI_INTERNALS__.invoke` is hijacked.
  */
 
-import type { StreamEvent, WikiMemory } from "../src/lib/protocol";
+import type {
+  ForgeWikiPage,
+  ForgeWikiState,
+  ForgeWikiUpdateProposal,
+  SelectedForgeWikiPage,
+  StreamEvent,
+  WikiMemory,
+} from "../src/lib/protocol";
 
 export interface MockIPCHandlers {
   create_session?: (args: Record<string, unknown>) => unknown;
@@ -24,11 +31,23 @@ export interface MockIPCHandlers {
   pin_memory?: (args: Record<string, unknown>) => unknown;
   get_workflow_state?: (args: Record<string, unknown>) => unknown;
   override_workflow_route?: (args: Record<string, unknown>) => unknown;
+  get_forge_wiki_state?: (args: Record<string, unknown>) => unknown;
+  init_forge_wiki?: (args: Record<string, unknown>) => unknown;
+  list_forge_wiki_pages?: (args: Record<string, unknown>) => unknown;
+  read_forge_wiki_page?: (args: Record<string, unknown>) => unknown;
+  select_forge_wiki_context?: (args: Record<string, unknown>) => unknown;
+  create_forge_wiki_update_proposal?: (args: Record<string, unknown>) => unknown;
+  accept_forge_wiki_update_proposal?: (args: Record<string, unknown>) => unknown;
+  discard_forge_wiki_update_proposal?: (args: Record<string, unknown>) => unknown;
 }
 
 export function createMockIPC(handlers: MockIPCHandlers = {}) {
+  let forgeWikiExists = false;
+  const forgeWikiProposals = new Map<string, ForgeWikiUpdateProposal>();
+
   return async (cmd: string, args: Record<string, unknown>) => {
     const workingDir = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const projectPath = String(args.projectPath ?? workingDir);
     switch (cmd) {
       case "create_session":
         return handlers.create_session?.(args) ?? { session_id: crypto.randomUUID() };
@@ -105,9 +124,124 @@ export function createMockIPC(handlers: MockIPCHandlers = {}) {
           checkpoint_id: null,
           updated_at: Date.now(),
         };
+      case "get_forge_wiki_state":
+        return handlers.get_forge_wiki_state?.(args) ?? forgeWikiState(projectPath, forgeWikiExists);
+      case "init_forge_wiki":
+        if (handlers.init_forge_wiki) return handlers.init_forge_wiki(args);
+        forgeWikiExists = true;
+        return forgeWikiState(projectPath, true);
+      case "list_forge_wiki_pages":
+        return handlers.list_forge_wiki_pages?.(args) ?? (forgeWikiExists ? forgeWikiPages(projectPath) : []);
+      case "read_forge_wiki_page":
+        return handlers.read_forge_wiki_page?.(args) ?? forgeWikiPageContent(String(args.pagePath ?? "index.md"));
+      case "select_forge_wiki_context":
+        return handlers.select_forge_wiki_context?.(args) ?? forgeWikiSelectedContext(projectPath);
+      case "create_forge_wiki_update_proposal": {
+        if (handlers.create_forge_wiki_update_proposal) return handlers.create_forge_wiki_update_proposal(args);
+        const proposal = forgeWikiProposal(projectPath, args);
+        forgeWikiProposals.set(proposal.id, proposal);
+        return proposal;
+      }
+      case "accept_forge_wiki_update_proposal": {
+        if (handlers.accept_forge_wiki_update_proposal) return handlers.accept_forge_wiki_update_proposal(args);
+        const proposal = forgeWikiProposals.get(String(args.proposalId)) ?? forgeWikiProposal(projectPath, args);
+        const accepted = { ...proposal, status: "accepted" as const };
+        forgeWikiProposals.set(accepted.id, accepted);
+        return accepted;
+      }
+      case "discard_forge_wiki_update_proposal": {
+        if (handlers.discard_forge_wiki_update_proposal) return handlers.discard_forge_wiki_update_proposal(args);
+        const proposal = forgeWikiProposals.get(String(args.proposalId)) ?? forgeWikiProposal(projectPath, args);
+        const discarded = { ...proposal, status: "discarded" as const };
+        forgeWikiProposals.set(discarded.id, discarded);
+        return discarded;
+      }
       default:
         return undefined;
     }
+  };
+}
+
+function forgeWikiState(projectPath: string, exists: boolean): ForgeWikiState {
+  return {
+    project_path: projectPath,
+    exists,
+    wiki_dir: `${projectPath}/.forge/wiki`,
+    pages: exists ? forgeWikiPages(projectPath) : [],
+    message: exists ? "Forge Wiki is ready." : "还没有项目 Wiki",
+  };
+}
+
+function forgeWikiPages(projectPath: string): ForgeWikiPage[] {
+  return [
+    forgeWikiPage(projectPath, "index", "index.md", "项目概览", "index", "项目目标、边界和当前结构。"),
+    forgeWikiPage(projectPath, "tasks", "tasks.md", "当前任务", "tasks", "当前任务、验收步骤和后续事项。"),
+    forgeWikiPage(projectPath, "decisions", "decisions.md", "决策记录", "decisions", "重要方案和取舍。"),
+  ];
+}
+
+function forgeWikiPage(
+  projectPath: string,
+  id: string,
+  path: string,
+  title: string,
+  kind: ForgeWikiPage["kind"],
+  summary: string,
+): ForgeWikiPage {
+  return {
+    id,
+    project_path: projectPath,
+    path,
+    title,
+    kind,
+    summary,
+    updated_at: "2026-05-13T00:00:00.000Z",
+    token_estimate: 120,
+  };
+}
+
+function forgeWikiPageContent(pagePath: string): string {
+  if (pagePath === "tasks.md") return "# 当前任务\n\n覆盖 Forge Wiki 上下文面板。";
+  if (pagePath === "decisions.md") return "# 决策记录\n\n保留关键方案。";
+  return "# 项目概览\n\nForge Wiki mock project overview.";
+}
+
+function forgeWikiSelectedContext(projectPath: string): SelectedForgeWikiPage[] {
+  return [
+    {
+      page_id: "tasks",
+      title: "当前任务",
+      path: "tasks.md",
+      kind: "tasks",
+      summary: "当前任务、验收步骤和后续事项。",
+      score: 0.96,
+      reason: "和当前请求最相关",
+      injected: true,
+    },
+    {
+      page_id: "index",
+      title: "项目概览",
+      path: "index.md",
+      kind: "index",
+      summary: `项目路径：${projectPath}`,
+      score: 0.82,
+      reason: "提供项目背景",
+      injected: true,
+    },
+  ];
+}
+
+function forgeWikiProposal(projectPath: string, args: Record<string, unknown>): ForgeWikiUpdateProposal {
+  return {
+    id: String(args.proposalId ?? args.id ?? "forge-wiki-proposal"),
+    project_path: projectPath,
+    session_id: typeof args.sessionId === "string" ? args.sessionId : null,
+    target_pages: Array.isArray(args.targetPages) ? args.targetPages.map(String) : ["tasks.md"],
+    title: String(args.title ?? "记录 Forge Wiki 更新"),
+    summary: String(args.summary ?? "补充本轮任务产生的项目记录。"),
+    patch_preview: typeof args.patchPreview === "string" ? args.patchPreview : null,
+    status: "pending",
+    created_at: "2026-05-13T00:00:00.000Z",
   };
 }
 

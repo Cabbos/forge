@@ -1,7 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Edit3, Pin, RefreshCw, Trash2, X } from "lucide-react";
-import { forgetMemory, listMemories, pinMemory, updateMemory } from "@/lib/tauri";
-import type { MemoryCategory, MemoryStatus, SelectedContextMemory, WikiMemory } from "@/lib/protocol";
+import {
+  acceptForgeWikiUpdateProposal,
+  discardForgeWikiUpdateProposal,
+  forgetMemory,
+  getForgeWikiState,
+  initForgeWiki,
+  listMemories,
+  pinMemory,
+  updateMemory,
+} from "@/lib/tauri";
+import type {
+  ForgeWikiState,
+  ForgeWikiUpdateProposal,
+  MemoryCategory,
+  MemoryStatus,
+  SelectedContextMemory,
+  SelectedForgeWikiPage,
+  WikiMemory,
+} from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/store";
 
@@ -17,20 +34,52 @@ interface DraftState {
 }
 
 const EMPTY_SELECTED_CONTEXT: SelectedContextMemory[] = [];
+const EMPTY_FORGE_WIKI_CONTEXT: SelectedForgeWikiPage[] = [];
+const EMPTY_FORGE_WIKI_PROPOSALS: ForgeWikiUpdateProposal[] = [];
 
 export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
   const memories = useStore((s) => s.memories);
   const selectedContext = useStore((s) =>
     sessionId ? s.selectedContextBySession.get(sessionId) ?? EMPTY_SELECTED_CONTEXT : EMPTY_SELECTED_CONTEXT,
   );
+  const selectedForgeWikiContext = useStore((s) =>
+    sessionId ? s.forgeWikiContextBySession.get(sessionId) ?? EMPTY_FORGE_WIKI_CONTEXT : EMPTY_FORGE_WIKI_CONTEXT,
+  );
+  const forgeWikiProposals = useStore((s) =>
+    sessionId ? s.forgeWikiProposalsBySession.get(sessionId) ?? EMPTY_FORGE_WIKI_PROPOSALS : EMPTY_FORGE_WIKI_PROPOSALS,
+  );
   const setMemories = useStore((s) => s.setMemories);
+  const upsertForgeWikiProposal = useStore((s) => s.upsertForgeWikiProposal);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [forgeWikiState, setForgeWikiState] = useState<ForgeWikiState | null>(null);
   const requestIdRef = useRef(0);
+  const busyTokenRef = useRef(0);
 
   const currentProjectPath = useMemo(() => normalizeProjectPath(projectPath), [projectPath]);
+  const currentProjectPathRef = useRef(currentProjectPath);
+  const sessionIdRef = useRef(sessionId);
+
+  currentProjectPathRef.current = currentProjectPath;
+  sessionIdRef.current = sessionId;
+
+  const isCurrentRequest = useCallback((projectAtStart: string, sessionAtStart: string | null) => {
+    return currentProjectPathRef.current === projectAtStart && sessionIdRef.current === sessionAtStart;
+  }, []);
+
+  const beginBusy = useCallback((id: string) => {
+    const token = busyTokenRef.current + 1;
+    busyTokenRef.current = token;
+    setBusyId(id);
+    return token;
+  }, []);
+
+  const clearBusy = useCallback((token: number, id: string) => {
+    if (busyTokenRef.current !== token) return;
+    setBusyId((current) => (current === id ? null : current));
+  }, []);
 
   const refresh = useCallback(async () => {
     const requestId = requestIdRef.current + 1;
@@ -39,14 +88,21 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     if (!currentProjectPath) {
       setLoading(false);
       setError("");
+      setForgeWikiState(null);
       return;
     }
 
     setLoading(true);
     setError("");
     try {
-      const next = await listMemories(undefined, currentProjectPath);
-      if (requestIdRef.current === requestId) setMemories(next);
+      const [nextMemories, nextForgeWikiState] = await Promise.all([
+        listMemories(undefined, currentProjectPath),
+        getForgeWikiState(currentProjectPath),
+      ]);
+      if (requestIdRef.current === requestId) {
+        setMemories(nextMemories);
+        setForgeWikiState(nextForgeWikiState);
+      }
     } catch (err) {
       if (requestIdRef.current === requestId) {
         setError(err instanceof Error ? err.message : String(err));
@@ -91,6 +147,89 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           (memory.status === "accepted" || memory.status === "pinned"),
       ),
     [currentProjectPath, memories],
+  );
+
+  const pendingForgeWikiProposals = useMemo(
+    () =>
+      forgeWikiProposals.filter(
+        (proposal) =>
+          proposal.status === "pending" &&
+          (!currentProjectPath || normalizeProjectPath(proposal.project_path) === currentProjectPath),
+      ),
+    [currentProjectPath, forgeWikiProposals],
+  );
+
+  const handleInitForgeWiki = useCallback(async () => {
+    const projectAtStart = currentProjectPath;
+    const sessionAtStart = sessionId;
+    if (!projectAtStart) return;
+
+    const operationId = "forge-wiki:init";
+    const busyToken = beginBusy(operationId);
+    setError("");
+    try {
+      const nextForgeWikiState = await initForgeWiki(projectAtStart);
+      if (!isCurrentRequest(projectAtStart, sessionAtStart)) return;
+      setForgeWikiState(nextForgeWikiState);
+      await refresh();
+    } catch (err) {
+      if (isCurrentRequest(projectAtStart, sessionAtStart)) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      clearBusy(busyToken, operationId);
+    }
+  }, [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, refresh, sessionId]);
+
+  const handleAcceptForgeWikiProposal = useCallback(
+    async (proposal: ForgeWikiUpdateProposal) => {
+      const projectAtStart = currentProjectPath;
+      const sessionAtStart = sessionId;
+      const busyToken = beginBusy(proposal.id);
+      setError("");
+      try {
+        const nextProposal = await acceptForgeWikiUpdateProposal(
+          proposal.project_path,
+          proposal.id,
+          sessionAtStart ?? undefined,
+        );
+        if (sessionAtStart) upsertForgeWikiProposal(sessionAtStart, nextProposal);
+        if (isCurrentRequest(projectAtStart, sessionAtStart)) {
+          await refresh();
+        }
+      } catch (err) {
+        if (isCurrentRequest(projectAtStart, sessionAtStart)) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        clearBusy(busyToken, proposal.id);
+      }
+    },
+    [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, refresh, sessionId, upsertForgeWikiProposal],
+  );
+
+  const handleDiscardForgeWikiProposal = useCallback(
+    async (proposal: ForgeWikiUpdateProposal) => {
+      const projectAtStart = currentProjectPath;
+      const sessionAtStart = sessionId;
+      const busyToken = beginBusy(proposal.id);
+      setError("");
+      try {
+        const nextProposal = await discardForgeWikiUpdateProposal(
+          proposal.project_path,
+          proposal.id,
+          sessionAtStart ?? undefined,
+        );
+        if (sessionAtStart) upsertForgeWikiProposal(sessionAtStart, nextProposal);
+      } catch (err) {
+        if (isCurrentRequest(projectAtStart, sessionAtStart)) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        clearBusy(busyToken, proposal.id);
+      }
+    },
+    [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, sessionId, upsertForgeWikiProposal],
   );
 
   const startEdit = useCallback((memory: WikiMemory) => {
@@ -176,17 +315,56 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     <>
       <section>
         <SectionHeader
-          title="相关背景"
-          meta={selectedContext.length > 0 ? `已带入 ${selectedContext.length} 条` : null}
+          title="项目记录"
+          meta={forgeWikiState?.exists ? `${forgeWikiState.pages.length} 页` : null}
           loading={loading}
           onRefresh={refresh}
           refreshDisabled={loading}
         />
         <div className="overflow-hidden rounded-md border border-border bg-card">
-          {selectedContext.length === 0 ? (
+          {!currentProjectPath ? (
+            <EmptyState label="打开项目后可以建立项目 Wiki" />
+          ) : !forgeWikiState?.exists ? (
+            <div className="space-y-3 px-3 py-5 text-center">
+              <EmptyState label="还没有项目 Wiki" compact />
+              <button
+                type="button"
+                onClick={handleInitForgeWiki}
+                disabled={busyId === "forge-wiki:init"}
+                className="rounded border border-border bg-secondary px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+              >
+                建立项目 Wiki
+              </button>
+            </div>
+          ) : forgeWikiState.pages.length === 0 ? (
+            <EmptyState label="还没有项目 Wiki" />
+          ) : (
+            <div className="divide-y divide-border">
+              {forgeWikiState.pages.map((page) => (
+                <ForgeWikiPageRow key={page.id} page={page} />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="本轮带入"
+          meta={
+            selectedForgeWikiContext.length + selectedContext.length > 0
+              ? `已带入 ${selectedForgeWikiContext.length + selectedContext.length} 条`
+              : null
+          }
+        />
+        <div className="overflow-hidden rounded-md border border-border bg-card">
+          {selectedForgeWikiContext.length === 0 && selectedContext.length === 0 ? (
             <EmptyState label="没有找到相关背景" />
           ) : (
             <div className="divide-y divide-border">
+              {selectedForgeWikiContext.map((item) => (
+                <SelectedForgeWikiRow key={item.page_id} item={item} />
+              ))}
               {selectedContext.map((item) => {
                 const memory = memoriesById.get(item.memory_id);
                 return (
@@ -205,6 +383,30 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
                   />
                 );
               })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader
+          title="建议更新项目记录"
+          meta={pendingForgeWikiProposals.length > 0 ? `${pendingForgeWikiProposals.length} 条` : null}
+        />
+        <div className="overflow-hidden rounded-md border border-border bg-card">
+          {pendingForgeWikiProposals.length === 0 ? (
+            <EmptyState label="没有待更新项目记录" />
+          ) : (
+            <div className="divide-y divide-border">
+              {pendingForgeWikiProposals.map((proposal) => (
+                <ForgeWikiProposalRow
+                  key={proposal.id}
+                  proposal={proposal}
+                  busy={busyId === proposal.id}
+                  onAccept={() => handleAcceptForgeWikiProposal(proposal)}
+                  onDiscard={() => handleDiscardForgeWikiProposal(proposal)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -238,10 +440,10 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
       </section>
 
       <section>
-        <SectionHeader title="项目 Wiki" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
+        <SectionHeader title="上下文记忆" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {projectMemories.length === 0 ? (
-            <EmptyState label="还没有项目 Wiki" />
+            <EmptyState label="还没有上下文记忆" />
           ) : (
             <div className="divide-y divide-border">
               {projectMemories.map((memory) => (
@@ -386,6 +588,75 @@ function SelectedMemoryRow({
   );
 }
 
+function ForgeWikiPageRow({ page }: { page: ForgeWikiState["pages"][number] }) {
+  return (
+    <div className="px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-medium text-foreground">{page.title}</div>
+        <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground/70">{page.path}</div>
+        {page.summary && (
+          <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
+            {page.summary}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SelectedForgeWikiRow({ item }: { item: SelectedForgeWikiPage }) {
+  return (
+    <div className="px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-medium text-foreground">{item.title}</div>
+        <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
+          {item.summary}
+        </div>
+      </div>
+      <div className="mt-2 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
+        <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5">项目记录</span>
+        <span className="min-w-0 truncate break-words">{item.reason}</span>
+      </div>
+    </div>
+  );
+}
+
+function ForgeWikiProposalRow({
+  proposal,
+  busy,
+  onAccept,
+  onDiscard,
+}: {
+  proposal: ForgeWikiUpdateProposal;
+  busy: boolean;
+  onAccept: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className="px-3 py-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-foreground">{proposal.title}</div>
+          <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground/70">
+            {proposal.target_pages.join(", ")}
+          </div>
+          <div className="mt-1 max-h-[4.6rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
+            {proposal.summary}
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-0.5">
+          <IconButton title="接受更新" onClick={onAccept} disabled={busy}>
+            <Check className="size-3" />
+          </IconButton>
+          <IconButton title="丢弃更新" onClick={onDiscard} disabled={busy}>
+            <X className="size-3" />
+          </IconButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MemoryRow({
   memory,
   draft,
@@ -505,9 +776,9 @@ function memoryBelongsToCurrentContext(memory: WikiMemory, currentProjectPath: s
   return currentProjectPath !== "" && normalizeProjectPath(memory.project_path) === currentProjectPath;
 }
 
-function EmptyState({ label }: { label: string }) {
+function EmptyState({ label, compact = false }: { label: string; compact?: boolean }) {
   return (
-    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+    <div className={cn("px-3 text-center text-xs text-muted-foreground", compact ? "py-0" : "py-6")}>
       {label}
     </div>
   );

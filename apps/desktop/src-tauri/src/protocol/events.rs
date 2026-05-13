@@ -1,3 +1,4 @@
+use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
 use crate::memory::{SelectedContextMemory, WikiMemory};
 use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
@@ -133,6 +134,23 @@ pub enum StreamEvent {
         memory: WikiMemory,
     },
 
+    // ── Forge Wiki ──
+    #[serde(rename = "forge_wiki_context_selected")]
+    ForgeWikiContextSelected {
+        session_id: String,
+        selected: Vec<SelectedForgeWikiPage>,
+    },
+    #[serde(rename = "forge_wiki_update_proposed")]
+    ForgeWikiUpdateProposed {
+        session_id: String,
+        proposal: ForgeWikiUpdateProposal,
+    },
+    #[serde(rename = "forge_wiki_updated")]
+    ForgeWikiUpdated {
+        session_id: String,
+        proposal: ForgeWikiUpdateProposal,
+    },
+
     // ── Workflow Routing ──
     #[serde(rename = "workflow_updated")]
     WorkflowUpdated {
@@ -194,6 +212,9 @@ impl StreamEvent {
             | MemorySelection { session_id, .. }
             | MemoryCandidate { session_id, .. }
             | MemoryUpdated { session_id, .. }
+            | ForgeWikiContextSelected { session_id, .. }
+            | ForgeWikiUpdateProposed { session_id, .. }
+            | ForgeWikiUpdated { session_id, .. }
             | WorkflowUpdated { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }

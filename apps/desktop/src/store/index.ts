@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
 import type {
   BlockState,
+  ForgeWikiUpdateProposal,
   SelectedContextMemory,
+  SelectedForgeWikiPage,
   StreamEvent,
   SessionState,
   WikiMemory,
@@ -24,6 +26,8 @@ interface AppStore {
   hydrated: boolean;
   memories: WikiMemory[];
   selectedContextBySession: Map<string, SelectedContextMemory[]>;
+  forgeWikiContextBySession: Map<string, SelectedForgeWikiPage[]>;
+  forgeWikiProposalsBySession: Map<string, ForgeWikiUpdateProposal[]>;
   workflowBySession: Map<string, WorkflowState>;
 
   // Provider
@@ -39,6 +43,8 @@ interface AppStore {
   removeSession: (id: string) => void;
   setMemories: (memories: WikiMemory[]) => void;
   upsertMemory: (memory: WikiMemory) => void;
+  setForgeWikiContext: (sessionId: string, selected: SelectedForgeWikiPage[]) => void;
+  upsertForgeWikiProposal: (sessionId: string, proposal: ForgeWikiUpdateProposal) => void;
   setWorkflowState: (sessionId: string, workflow: WorkflowState) => void;
   updateSessionStatus: (id: string, status: SessionState["status"]) => void;
   updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => void;
@@ -138,6 +144,8 @@ export const useStore = create<AppStore>((set, get) => ({
   hydrated: false,
   memories: [],
   selectedContextBySession: new Map(),
+  forgeWikiContextBySession: new Map(),
+  forgeWikiProposalsBySession: new Map(),
   workflowBySession: new Map(),
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
@@ -227,6 +235,23 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ memories: [memory, ...memories] });
   },
 
+  setForgeWikiContext: (sessionId, selected) => {
+    const forgeWikiContextBySession = new Map(get().forgeWikiContextBySession);
+    forgeWikiContextBySession.set(sessionId, selected);
+    set({ forgeWikiContextBySession });
+  },
+
+  upsertForgeWikiProposal: (sessionId, proposal) => {
+    const forgeWikiProposalsBySession = new Map(get().forgeWikiProposalsBySession);
+    const proposals = forgeWikiProposalsBySession.get(sessionId) ?? [];
+    const nextProposals = [
+      proposal,
+      ...proposals.filter((existing) => existing.id !== proposal.id),
+    ];
+    forgeWikiProposalsBySession.set(sessionId, nextProposals);
+    set({ forgeWikiProposalsBySession });
+  },
+
   addSession: (id, provider, model) => {
     const sessions = new Map(get().sessions);
     sessions.set(id, {
@@ -246,13 +271,24 @@ export const useStore = create<AppStore>((set, get) => ({
   removeSession: (id) => {
     const sessions = new Map(get().sessions);
     const selectedContextBySession = new Map(get().selectedContextBySession);
+    const forgeWikiContextBySession = new Map(get().forgeWikiContextBySession);
+    const forgeWikiProposalsBySession = new Map(get().forgeWikiProposalsBySession);
     const workflowBySession = new Map(get().workflowBySession);
     sessions.delete(id);
     selectedContextBySession.delete(id);
+    forgeWikiContextBySession.delete(id);
+    forgeWikiProposalsBySession.delete(id);
     workflowBySession.delete(id);
     const activeSessionId =
       get().activeSessionId === id ? null : get().activeSessionId;
-    set({ sessions, activeSessionId, selectedContextBySession, workflowBySession });
+    set({
+      sessions,
+      activeSessionId,
+      selectedContextBySession,
+      forgeWikiContextBySession,
+      forgeWikiProposalsBySession,
+      workflowBySession,
+    });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
@@ -336,6 +372,16 @@ export const useStore = create<AppStore>((set, get) => ({
 
     if (event_type === "memory_candidate" || event_type === "memory_updated") {
       get().upsertMemory(event.memory);
+      return;
+    }
+
+    if (event_type === "forge_wiki_context_selected") {
+      get().setForgeWikiContext(session_id, event.selected);
+      return;
+    }
+
+    if (event_type === "forge_wiki_update_proposed" || event_type === "forge_wiki_updated") {
+      get().upsertForgeWikiProposal(session_id, event.proposal);
       return;
     }
 

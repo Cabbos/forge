@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ForgeWikiPage,
+  ForgeWikiState,
+  ForgeWikiUpdateProposal,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
+  SelectedForgeWikiPage,
   WikiMemory,
   WorkflowOverrideAction,
   WorkflowState,
@@ -248,6 +252,66 @@ export async function overrideWorkflowRoute(
   return invoke("override_workflow_route", { sessionId, action });
 }
 
+export async function getForgeWikiState(projectPath: string): Promise<ForgeWikiState> {
+  if (!hasTauriRuntime()) return fallbackForgeWikiState(projectPath);
+  return invoke("get_forge_wiki_state", { projectPath });
+}
+
+export async function initForgeWiki(projectPath: string): Promise<ForgeWikiState> {
+  if (!hasTauriRuntime()) return fallbackForgeWikiState(projectPath);
+  return invoke("init_forge_wiki", { projectPath });
+}
+
+export async function listForgeWikiPages(projectPath: string): Promise<ForgeWikiPage[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("list_forge_wiki_pages", { projectPath });
+}
+
+export async function readForgeWikiPage(projectPath: string, pagePath: string): Promise<string> {
+  if (!hasTauriRuntime()) return "";
+  return invoke("read_forge_wiki_page", { projectPath, pagePath });
+}
+
+export async function selectForgeWikiContext(
+  projectPath: string,
+  message: string,
+): Promise<SelectedForgeWikiPage[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("select_forge_wiki_context", { projectPath, message });
+}
+
+export async function createForgeWikiUpdateProposal(
+  projectPath: string,
+  sessionId: string | null,
+  targetPages: string[],
+  title: string,
+  summary: string,
+): Promise<ForgeWikiUpdateProposal> {
+  return invoke("create_forge_wiki_update_proposal", {
+    projectPath,
+    sessionId,
+    targetPages,
+    title,
+    summary,
+  });
+}
+
+export async function acceptForgeWikiUpdateProposal(
+  projectPath: string,
+  proposalId: string,
+  _sessionId?: string | null,
+): Promise<ForgeWikiUpdateProposal> {
+  return invoke("accept_forge_wiki_update_proposal", { projectPath, proposalId });
+}
+
+export async function discardForgeWikiUpdateProposal(
+  projectPath: string,
+  proposalId: string,
+  _sessionId?: string | null,
+): Promise<ForgeWikiUpdateProposal> {
+  return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId });
+}
+
 function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
@@ -280,6 +344,17 @@ function fallbackProjectCheckpointStatus(): ProjectCheckpointStatus {
     dirty: false,
     last_checkpoint: null,
     message: "在桌面应用中读取检查点",
+  };
+}
+
+function fallbackForgeWikiState(projectPath: string): ForgeWikiState {
+  const normalizedProjectPath = projectPath || getRememberedWorkingDir() || "";
+  return {
+    project_path: normalizedProjectPath,
+    exists: false,
+    wiki_dir: normalizedProjectPath ? joinPath(normalizedProjectPath, ".forge", "wiki") : "",
+    pages: [],
+    message: "Forge Wiki is unavailable in the browser runtime.",
   };
 }
 

@@ -3,6 +3,7 @@
 pub mod adapters;
 mod agent;
 mod executor;
+mod forge_wiki;
 pub mod harness;
 mod ipc;
 mod logger;
@@ -82,6 +83,14 @@ pub fn run() {
             ipc::memory_handlers::select_context_memories,
             ipc::workflow_handlers::get_workflow_state,
             ipc::workflow_handlers::override_workflow_route,
+            ipc::forge_wiki_handlers::get_forge_wiki_state,
+            ipc::forge_wiki_handlers::init_forge_wiki,
+            ipc::forge_wiki_handlers::list_forge_wiki_pages,
+            ipc::forge_wiki_handlers::read_forge_wiki_page,
+            ipc::forge_wiki_handlers::select_forge_wiki_context,
+            ipc::forge_wiki_handlers::create_forge_wiki_update_proposal,
+            ipc::forge_wiki_handlers::accept_forge_wiki_update_proposal,
+            ipc::forge_wiki_handlers::discard_forge_wiki_update_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
