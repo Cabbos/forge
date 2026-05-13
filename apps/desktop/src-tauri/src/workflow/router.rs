@@ -5,17 +5,17 @@ use super::model::{
 pub fn classify_workflow(session_id: &str, text: &str, updated_at: u64) -> WorkflowState {
     let signal_groups = [
         (WorkflowRoute::Direct, DIRECT_SIGNALS),
+        (WorkflowRoute::StrictWorkflow, STRICT_WORKFLOW_SIGNALS),
         (WorkflowRoute::Recovery, RECOVERY_SIGNALS),
         (WorkflowRoute::Verification, VERIFICATION_SIGNALS),
-        (WorkflowRoute::StrictWorkflow, STRICT_WORKFLOW_SIGNALS),
         (WorkflowRoute::Workflow, WORKFLOW_SIGNALS),
         (WorkflowRoute::Light, LIGHT_SIGNALS),
     ];
 
     for (route, signals) in signal_groups {
-        let matched_signals = matched_signals(text, signals);
-        if !matched_signals.is_empty() {
-            return workflow_state(session_id, route, matched_signals, None, updated_at);
+        let matches = matched_signals(text, signals);
+        if !matches.is_empty() {
+            return workflow_state(session_id, route, matches, None, updated_at);
         }
     }
 
@@ -288,6 +288,14 @@ mod tests {
         let state = route("构建失败了，dev 状态下会挂掉");
         assert_eq!(state.route, WorkflowRoute::Recovery);
         assert_eq!(state.phase, WorkflowPhase::Debugging);
+    }
+
+    #[test]
+    fn strict_workflow_wins_over_recovery_when_signals_overlap() {
+        let state = route("构建失败了，删除旧的 session 存储并迁移到新格式");
+        assert_eq!(state.route, WorkflowRoute::StrictWorkflow);
+        assert_eq!(state.phase, WorkflowPhase::Planning);
+        assert_eq!(state.gate, WorkflowGate::ApprovalRequired);
     }
 
     #[test]
