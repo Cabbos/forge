@@ -73,9 +73,9 @@ impl ForgeWikiStore {
             wiki_dir: dir.display().to_string(),
             pages,
             message: if exists {
-                "Forge Wiki 已就绪".to_string()
+                "项目记录已就绪".to_string()
             } else {
-                "Forge Wiki 尚未初始化".to_string()
+                "项目记录尚未初始化".to_string()
             },
         })
     }
@@ -758,6 +758,28 @@ mod tests {
             assert!(!text.contains("密码"));
             assert!(!text.contains("密钥"));
         }
+
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn state_message_uses_product_language() {
+        let project = temp_project_dir("state-message");
+        let store = ForgeWikiStore::new();
+
+        let initial = store
+            .get_state(project.to_str().unwrap())
+            .await
+            .expect("get initial state");
+        assert_eq!(initial.message, "项目记录尚未初始化");
+        assert!(!initial.message.contains("Forge Wiki"));
+
+        let initialized = store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init records");
+        assert_eq!(initialized.message, "项目记录已就绪");
+        assert!(!initialized.message.contains("Forge Wiki"));
 
         cleanup(&project);
     }
