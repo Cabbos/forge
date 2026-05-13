@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::memory::model::{
@@ -11,6 +11,7 @@ use crate::memory::scoring::select_relevant_memories;
 pub struct WikiMemoryStore {
     pub path: PathBuf,
     pub memories: RwLock<Vec<WikiMemory>>,
+    mutation_lock: Mutex<()>,
     load_error: Option<String>,
 }
 
@@ -26,6 +27,7 @@ impl WikiMemoryStore {
         Self {
             path,
             memories: RwLock::new(memories),
+            mutation_lock: Mutex::new(()),
             load_error,
         }
     }
@@ -52,6 +54,10 @@ impl WikiMemoryStore {
         &self,
         candidate: WikiMemory,
     ) -> Result<Option<WikiMemory>, String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let memories = self.memories.read().unwrap_or_else(|err| err.into_inner());
         let mut next_memories = memories.clone();
         drop(memories);
@@ -94,6 +100,10 @@ impl WikiMemoryStore {
     }
 
     pub async fn update(&self, memory_id: &str, patch: MemoryPatch) -> Result<WikiMemory, String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let memories = self.memories.read().unwrap_or_else(|err| err.into_inner());
         let mut next_memories = memories.clone();
         drop(memories);
@@ -175,6 +185,10 @@ impl WikiMemoryStore {
     }
 
     async fn record_usage(&self, selected: &[SelectedContextMemory]) -> Result<(), String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let selected_ids = selected
             .iter()
             .map(|memory| memory.memory_id.as_str())
@@ -293,6 +307,7 @@ fn normalize_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use super::{now_string, WikiMemoryStore};
     use crate::memory::model::{
@@ -530,6 +545,39 @@ mod tests {
             .expect("other project should not error");
 
         assert!(saved.is_some());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_upserts_preserve_all_memories() {
+        let path = temp_path("concurrent-upserts");
+        let store = Arc::new(WikiMemoryStore::new(path.clone()));
+        let mut handles = Vec::new();
+
+        for index in 0..24 {
+            let store = Arc::clone(&store);
+            handles.push(tokio::spawn(async move {
+                store
+                    .upsert_candidate(memory(
+                        &format!("memory-{index}"),
+                        MemoryStatus::Candidate,
+                        &format!("Forge direction {index}"),
+                        Some("/tmp/forge"),
+                    ))
+                    .await
+                    .expect("candidate should save");
+            }));
+        }
+
+        for handle in handles {
+            handle.await.expect("upsert task should complete");
+        }
+
+        let loaded = WikiMemoryStore::new(path.clone())
+            .list(MemoryListFilter::default())
+            .await;
+
+        assert_eq!(loaded.len(), 24);
         let _ = std::fs::remove_file(path);
     }
 }
