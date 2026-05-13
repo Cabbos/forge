@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { FilePlus2, FileText, X } from "lucide-react";
 import { useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { WikiSections } from "@/components/context/WikiSections";
 import { ProjectStatusCard } from "./ProjectStatusCard";
 import { cn } from "@/lib/utils";
 import { formatContextWindow, getModelContextWindow, getProviderModelLabel } from "@/lib/providers";
+import { getRememberedWorkingDir } from "@/lib/tauri";
 
 type ParseStatus = "pending" | "parsed" | "failed";
 
@@ -25,6 +27,7 @@ export function HubPanel() {
   const session = activeId ? sessions.get(activeId) : null;
   const contextWindow = session?.contextWindowTokens ?? getModelContextWindow(session?.model);
   const contextWindowLabel = formatContextWindow(contextWindow);
+  const projectPath = getRememberedWorkingDir();
 
   useEffect(() => {
     const handler = () => setOpen((value) => !value);
@@ -62,6 +65,8 @@ export function HubPanel() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-4 p-4">
+            <WikiSections sessionId={activeId} projectPath={projectPath} />
+
             <ContextFilesSection files={contextFiles} />
 
             <section>
