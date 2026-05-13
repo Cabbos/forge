@@ -11,6 +11,7 @@ use crate::memory::scoring::select_relevant_memories;
 pub struct WikiMemoryStore {
     pub path: PathBuf,
     pub memories: RwLock<Vec<WikiMemory>>,
+    load_error: Option<String>,
 }
 
 impl WikiMemoryStore {
@@ -20,14 +21,12 @@ impl WikiMemoryStore {
     }
 
     pub fn new(path: PathBuf) -> Self {
-        let memories = fs::read_to_string(&path)
-            .ok()
-            .and_then(|content| serde_json::from_str::<Vec<WikiMemory>>(&content).ok())
-            .unwrap_or_default();
+        let (memories, load_error) = load_memories(&path);
 
         Self {
             path,
             memories: RwLock::new(memories),
+            load_error,
         }
     }
 
@@ -53,17 +52,25 @@ impl WikiMemoryStore {
         &self,
         candidate: WikiMemory,
     ) -> Result<Option<WikiMemory>, String> {
-        let mut memories = self.memories.write().unwrap_or_else(|err| err.into_inner());
+        let memories = self.memories.read().unwrap_or_else(|err| err.into_inner());
+        let mut next_memories = memories.clone();
+        drop(memories);
 
-        if memories.iter().any(|memory| {
+        if next_memories.iter().any(|memory| {
             memory.status == MemoryStatus::Forgotten
+                && memory.category == candidate.category
+                && memory.scope == candidate.scope
+                && same_project_path(
+                    memory.project_path.as_deref(),
+                    candidate.project_path.as_deref(),
+                )
                 && memory.title == candidate.title
                 && memory.body == candidate.body
         }) {
             return Ok(None);
         }
 
-        if let Some(existing) = memories.iter_mut().find(|memory| {
+        let result = if let Some(existing) = next_memories.iter_mut().find(|memory| {
             memory.status != MemoryStatus::Forgotten
                 && memory.category == candidate.category
                 && memory.scope == candidate.scope
@@ -76,19 +83,22 @@ impl WikiMemoryStore {
             existing.body = candidate.body;
             existing.confidence = existing.confidence.max(candidate.confidence);
             existing.updated_at = now_string();
-            let updated = existing.clone();
-            save_memories(&self.path, &memories)?;
-            return Ok(Some(updated));
-        }
+            Some(existing.clone())
+        } else {
+            next_memories.push(candidate.clone());
+            Some(candidate)
+        };
 
-        memories.push(candidate.clone());
-        save_memories(&self.path, &memories)?;
-        Ok(Some(candidate))
+        self.save_and_replace(next_memories)?;
+        Ok(result)
     }
 
     pub async fn update(&self, memory_id: &str, patch: MemoryPatch) -> Result<WikiMemory, String> {
-        let mut memories = self.memories.write().unwrap_or_else(|err| err.into_inner());
-        let memory = memories
+        let memories = self.memories.read().unwrap_or_else(|err| err.into_inner());
+        let mut next_memories = memories.clone();
+        drop(memories);
+
+        let memory = next_memories
             .iter_mut()
             .find(|memory| memory.id == memory_id)
             .ok_or_else(|| format!("Memory not found: {memory_id}"))?;
@@ -108,7 +118,7 @@ impl WikiMemoryStore {
         memory.updated_at = now_string();
 
         let updated = memory.clone();
-        save_memories(&self.path, &memories)?;
+        self.save_and_replace(next_memories)?;
         Ok(updated)
     }
 
@@ -140,12 +150,18 @@ impl WikiMemoryStore {
         project_path: Option<&str>,
         limit: usize,
     ) -> Vec<SelectedContextMemory> {
-        let candidates = self
+        let mut candidates = self
             .list(MemoryListFilter {
                 scope: None,
                 project_path: project_path.map(str::to_string),
             })
             .await;
+        if project_path.is_none() {
+            candidates.retain(|memory| {
+                memory.project_path.is_none() && memory.scope != MemoryScope::Project
+            });
+        }
+
         let selected = select_relevant_memories(&candidates, message, project_path, limit);
         if selected.is_empty() {
             return selected;
@@ -164,9 +180,11 @@ impl WikiMemoryStore {
             .map(|memory| memory.memory_id.as_str())
             .collect::<std::collections::HashSet<_>>();
         let now = now_string();
-        let mut memories = self.memories.write().unwrap_or_else(|err| err.into_inner());
+        let memories = self.memories.read().unwrap_or_else(|err| err.into_inner());
+        let mut next_memories = memories.clone();
+        drop(memories);
 
-        for memory in memories.iter_mut() {
+        for memory in next_memories.iter_mut() {
             if selected_ids.contains(memory.id.as_str()) {
                 memory.use_count = memory.use_count.saturating_add(1);
                 memory.last_used_at = Some(now.clone());
@@ -174,7 +192,20 @@ impl WikiMemoryStore {
             }
         }
 
-        save_memories(&self.path, &memories)
+        self.save_and_replace(next_memories)
+    }
+
+    fn save_and_replace(&self, next_memories: Vec<WikiMemory>) -> Result<(), String> {
+        if let Some(load_error) = &self.load_error {
+            return Err(format!(
+                "Cannot save wiki memories because the existing memory file failed to load: {load_error}"
+            ));
+        }
+
+        save_memories(&self.path, &next_memories)?;
+        let mut memories = self.memories.write().unwrap_or_else(|err| err.into_inner());
+        *memories = next_memories;
+        Ok(())
     }
 }
 
@@ -194,6 +225,36 @@ fn save_memories(path: &PathBuf, memories: &[WikiMemory]) -> Result<(), String> 
     let content = serde_json::to_string_pretty(memories)
         .map_err(|err| format!("Failed to serialize wiki memories: {err}"))?;
     fs::write(path, content).map_err(|err| format!("Failed to save wiki memories: {err}"))
+}
+
+fn load_memories(path: &PathBuf) -> (Vec<WikiMemory>, Option<String>) {
+    if !path.exists() {
+        return (Vec::new(), None);
+    }
+
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) => {
+            let message = format!(
+                "Failed to read wiki memories from {}: {err}",
+                path.display()
+            );
+            log::warn!("{message}");
+            return (Vec::new(), Some(message));
+        }
+    };
+
+    match serde_json::from_str::<Vec<WikiMemory>>(&content) {
+        Ok(memories) => (memories, None),
+        Err(err) => {
+            let message = format!(
+                "Failed to parse wiki memories from {}: {err}",
+                path.display()
+            );
+            log::warn!("{message}");
+            (Vec::new(), Some(message))
+        }
+    }
 }
 
 fn matches_project_filter(memory: &WikiMemory, project_path: Option<&str>) -> bool {
@@ -351,6 +412,124 @@ mod tests {
             .expect("suppression should not error");
 
         assert!(suppressed.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn malformed_json_blocks_save_without_overwriting_original_file() {
+        let path = temp_path("malformed-json");
+        std::fs::write(&path, "{not valid json").expect("write corrupt fixture");
+
+        let store = WikiMemoryStore::new(path.clone());
+        let result = store
+            .upsert_candidate(memory(
+                "memory-1",
+                MemoryStatus::Candidate,
+                "Forge direction",
+                Some("/tmp/forge"),
+            ))
+            .await;
+
+        assert!(result
+            .expect_err("corrupt load should block save")
+            .contains("load"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("corrupt file should remain"),
+            "{not valid json"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn failed_update_save_keeps_in_memory_state_unchanged() {
+        let path = std::env::temp_dir();
+        let store = WikiMemoryStore::new(path);
+        let original = memory(
+            "memory-1",
+            MemoryStatus::Accepted,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        store.memories.write().unwrap().push(original.clone());
+
+        let result = store
+            .forget(&original.id)
+            .await
+            .expect_err("directory path should fail save");
+        let memories = store.memories.read().unwrap();
+
+        assert!(result.contains("save"));
+        assert_eq!(memories[0].status, MemoryStatus::Accepted);
+    }
+
+    #[tokio::test]
+    async fn pathless_selection_excludes_project_memories() {
+        let path = temp_path("pathless-select");
+        let store = WikiMemoryStore::new(path.clone());
+        let project_memory = memory(
+            "project-memory",
+            MemoryStatus::Accepted,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        let mut profile_memory = memory(
+            "profile-memory",
+            MemoryStatus::Accepted,
+            "Forge preference",
+            None,
+        );
+        profile_memory.scope = MemoryScope::UserProfile;
+        profile_memory.category = MemoryCategory::Preference;
+
+        store
+            .upsert_candidate(project_memory)
+            .await
+            .expect("project memory should save");
+        store
+            .upsert_candidate(profile_memory)
+            .await
+            .expect("profile memory should save");
+
+        let selected = store.select("Forge direction preference", None, 10).await;
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].memory_id, "profile-memory");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn forgotten_suppression_is_scoped_to_matching_project() {
+        let path = temp_path("forgotten-suppression-project");
+        let store = WikiMemoryStore::new(path.clone());
+        let mut original = memory(
+            "memory-1",
+            MemoryStatus::Accepted,
+            "Forge direction",
+            Some("/tmp/forge-a"),
+        );
+        original.body = "Keep context local".to_string();
+        store
+            .upsert_candidate(original.clone())
+            .await
+            .expect("candidate should save");
+        store
+            .forget(&original.id)
+            .await
+            .expect("forget should update");
+
+        let mut other_project = memory(
+            "memory-2",
+            MemoryStatus::Candidate,
+            &original.title,
+            Some("/tmp/forge-b"),
+        );
+        other_project.body = original.body.clone();
+        let saved = store
+            .upsert_candidate(other_project)
+            .await
+            .expect("other project should not error");
+
+        assert!(saved.is_some());
         let _ = std::fs::remove_file(path);
     }
 }
