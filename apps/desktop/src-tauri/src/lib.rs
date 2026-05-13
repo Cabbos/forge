@@ -11,6 +11,7 @@ mod parser;
 mod protocol;
 pub mod settings;
 mod state;
+mod workflow;
 
 use harness::Harness;
 use state::AppState;
