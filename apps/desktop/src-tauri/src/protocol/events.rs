@@ -1,4 +1,5 @@
 use crate::memory::{SelectedContextMemory, WikiMemory};
+use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
 
 /// Streaming events emitted from Rust backend to frontend.
@@ -132,6 +133,13 @@ pub enum StreamEvent {
         memory: WikiMemory,
     },
 
+    // ── Workflow Routing ──
+    #[serde(rename = "workflow_updated")]
+    WorkflowUpdated {
+        session_id: String,
+        state: WorkflowState,
+    },
+
     // ── Session Status ──
     #[serde(rename = "session_started")]
     SessionStarted {
@@ -186,6 +194,7 @@ impl StreamEvent {
             | MemorySelection { session_id, .. }
             | MemoryCandidate { session_id, .. }
             | MemoryUpdated { session_id, .. }
+            | WorkflowUpdated { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
             | SessionStopped { session_id, .. }

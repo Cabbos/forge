@@ -1,6 +1,7 @@
 use crate::agent::session::AgentSession;
 use crate::harness::Harness;
 use crate::memory::WikiMemoryStore;
+use crate::workflow::WorkflowState;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::process::Child;
@@ -21,6 +22,7 @@ pub struct AppState {
     pub harness: Arc<Harness>,
     pub dev_server: Arc<RwLock<Option<ManagedDevServer>>>,
     pub wiki_memory: Arc<WikiMemoryStore>,
+    pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
 }
 
 impl AppState {
@@ -32,6 +34,7 @@ impl AppState {
             harness,
             dev_server: Arc::new(RwLock::new(None)),
             wiki_memory: Arc::new(WikiMemoryStore::default()),
+            workflow_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
