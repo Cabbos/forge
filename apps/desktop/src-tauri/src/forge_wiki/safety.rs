@@ -1,3 +1,5 @@
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use crate::memory::risk::should_reject_persistent_memory;
@@ -27,19 +29,61 @@ pub fn resolve_wiki_page_path(project_path: &str, page_path: &str) -> Result<Pat
     let root = wiki_dir(project_path);
     let resolved = root.join(relative);
 
-    if root.exists() && resolved.exists() {
-        let canonical_root = root
+    let canonical_root = match fs::symlink_metadata(&root) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err("Wiki directory cannot be a symlink".to_string());
+            }
+            let canonical_root = root
+                .canonicalize()
+                .map_err(|err| format!("Failed to resolve wiki directory: {err}"))?;
+            Some(canonical_root)
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => None,
+        Err(err) => return Err(format!("Failed to inspect wiki directory: {err}")),
+    };
+
+    let mut current = root.clone();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => current.push(part),
+            Component::CurDir => continue,
+            _ => return Err("Wiki page path cannot leave the wiki directory".to_string()),
+        }
+
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err("Wiki page path cannot include symlinks".to_string());
+                }
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => break,
+            Err(err) => return Err(format!("Failed to inspect wiki page path: {err}")),
+        }
+    }
+
+    if let Some(canonical_root) = canonical_root {
+        let nearest_existing = nearest_existing_ancestor(&resolved);
+        let canonical_existing = nearest_existing
             .canonicalize()
-            .map_err(|err| format!("Failed to resolve wiki directory: {err}"))?;
-        let canonical_resolved = resolved
-            .canonicalize()
-            .map_err(|err| format!("Failed to resolve wiki page: {err}"))?;
-        if !canonical_resolved.starts_with(&canonical_root) {
+            .map_err(|err| format!("Failed to resolve wiki page ancestor: {err}"))?;
+        if !canonical_existing.starts_with(&canonical_root) {
             return Err("Wiki page path is outside the wiki directory".to_string());
         }
     }
 
     Ok(resolved)
+}
+
+fn nearest_existing_ancestor(path: &Path) -> &Path {
+    let mut current = path;
+    while !current.exists() {
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    current
 }
 
 pub fn should_ignore_project_entry(path: &Path) -> bool {

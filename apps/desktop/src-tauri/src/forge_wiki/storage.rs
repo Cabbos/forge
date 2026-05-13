@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -82,9 +83,19 @@ impl ForgeWikiStore {
                 ));
             }
             let page_path = dir.join(path);
-            if !page_path.exists() {
-                fs::write(&page_path, content)
-                    .map_err(|err| format!("Failed to write default page {path}: {err}"))?;
+            match fs::symlink_metadata(&page_path) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_symlink() {
+                        return Err(format!("Default wiki page {path} cannot be a symlink"));
+                    }
+                }
+                Err(err) if err.kind() == ErrorKind::NotFound => {
+                    fs::write(&page_path, content)
+                        .map_err(|err| format!("Failed to write default page {path}: {err}"))?;
+                }
+                Err(err) => {
+                    return Err(format!("Failed to inspect default page {path}: {err}"));
+                }
             }
         }
 
@@ -217,13 +228,15 @@ fn page_from_file(
     full_path: &Path,
 ) -> Result<ForgeWikiPage, String> {
     let text = fs::read_to_string(full_path).unwrap_or_default();
+    let title = safe_page_title(&text, path);
+    let summary = safe_page_summary(&text);
     Ok(ForgeWikiPage {
         id: path.to_string(),
         project_path: project_path.to_string(),
         path: path.to_string(),
-        title: extract_title(&text).unwrap_or_else(|| path.to_string()),
+        title,
         kind,
-        summary: extract_summary(&text),
+        summary,
         updated_at: updated_at(full_path)?,
         token_estimate: Some(estimate_tokens(&text)),
     })
@@ -242,7 +255,13 @@ fn collect_markdown_pages(root: &Path, dir: &Path, pages: &mut Vec<String>) -> R
         if file_name.starts_with('.') {
             continue;
         }
-        if path.is_dir() {
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("Failed to inspect wiki entry: {err}"))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
             collect_markdown_pages(root, &path, pages)?;
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
             let relative = path
@@ -254,6 +273,27 @@ fn collect_markdown_pages(root: &Path, dir: &Path, pages: &mut Vec<String>) -> R
         }
     }
     Ok(())
+}
+
+fn safe_page_title(text: &str, fallback: &str) -> String {
+    let title = extract_title(text).unwrap_or_else(|| fallback.to_string());
+    let bounded = truncate_chars(title.trim(), 120);
+    if contains_sensitive_wiki_content(&bounded) {
+        fallback.to_string()
+    } else {
+        bounded
+    }
+}
+
+fn safe_page_summary(text: &str) -> Option<String> {
+    extract_summary(text).and_then(|summary| {
+        let bounded = truncate_chars(summary.trim(), 240);
+        if bounded.is_empty() || contains_sensitive_wiki_content(&bounded) {
+            None
+        } else {
+            Some(bounded)
+        }
+    })
 }
 
 fn extract_title(text: &str) -> Option<String> {
@@ -270,6 +310,10 @@ fn extract_summary(text: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.to_string())
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 fn updated_at(path: &Path) -> Result<Option<String>, String> {
@@ -312,6 +356,8 @@ fn wiki_data_text(value: &str) -> String {
 mod tests {
     use super::ForgeWikiStore;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs as unix_fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -441,6 +487,122 @@ mod tests {
             .await
             .is_err());
 
+        cleanup(&project);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn list_pages_ignores_symlinked_directories() {
+        let project = temp_project_dir("symlinked-list");
+        let external = temp_project_dir("symlinked-list-external");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        fs::write(external.join("outside.md"), "# Outside\n\nexternal summary")
+            .expect("write external page");
+        unix_fs::symlink(external.as_path(), project.join(".forge/wiki/linked"))
+            .expect("create directory symlink");
+
+        let pages = store
+            .list_pages(project.to_str().unwrap())
+            .await
+            .expect("list pages");
+
+        assert!(!pages.iter().any(|page| page.path == "linked/outside.md"));
+        cleanup(&project);
+        cleanup(&external);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_page_rejects_symlink_escape() {
+        let project = temp_project_dir("symlinked-read");
+        let external = temp_project_dir("symlinked-read-external");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        fs::write(external.join("secret.md"), "# Secret\n\nexternal").expect("write external page");
+        unix_fs::symlink(external.as_path(), project.join(".forge/wiki/linked"))
+            .expect("create directory symlink");
+
+        let error = store
+            .read_page(project.to_str().unwrap(), "linked/secret.md")
+            .await
+            .expect_err("symlink escape should be rejected");
+
+        assert!(
+            error.contains("symlink"),
+            "expected symlink rejection, got {error}"
+        );
+        cleanup(&project);
+        cleanup(&external);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn init_rejects_dangling_symlink_default_page() {
+        let project = temp_project_dir("dangling-default");
+        let store = ForgeWikiStore::new();
+        let wiki = project.join(".forge/wiki");
+        fs::create_dir_all(&wiki).expect("create wiki dir");
+        unix_fs::symlink(project.join("outside.md"), wiki.join("index.md"))
+            .expect("create dangling default page symlink");
+
+        let error = store
+            .init(project.to_str().unwrap())
+            .await
+            .expect_err("dangling default page symlink should be rejected");
+
+        assert!(
+            error.contains("symlink"),
+            "expected symlink rejection, got {error}"
+        );
+        assert!(!project.join("outside.md").exists());
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn custom_page_title_and_summary_are_bounded_and_screened() {
+        let project = temp_project_dir("bounded-metadata");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let long_title = "T".repeat(180);
+        let long_summary = "S".repeat(300);
+        fs::write(
+            project.join(".forge/wiki/long.md"),
+            format!("# {long_title}\n\n{long_summary}"),
+        )
+        .expect("write long page");
+        fs::write(
+            project.join(".forge/wiki/sensitive.md"),
+            "# Safe\n\npassword = hunter2",
+        )
+        .expect("write sensitive page");
+
+        let pages = store
+            .list_pages(project.to_str().unwrap())
+            .await
+            .expect("list pages");
+        let long_page = pages
+            .iter()
+            .find(|page| page.path == "long.md")
+            .expect("long page");
+        let sensitive_page = pages
+            .iter()
+            .find(|page| page.path == "sensitive.md")
+            .expect("sensitive page");
+
+        assert_eq!(long_page.title.chars().count(), 120);
+        assert_eq!(long_page.summary.as_ref().unwrap().chars().count(), 240);
+        assert_eq!(sensitive_page.title, "Safe");
+        assert!(sensitive_page.summary.is_none());
         cleanup(&project);
     }
 
