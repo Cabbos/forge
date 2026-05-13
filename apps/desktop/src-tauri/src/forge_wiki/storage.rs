@@ -265,10 +265,6 @@ impl ForgeWikiStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        proposals[index].status = ForgeWikiProposalStatus::Accepted;
-        let accepted = proposals[index].clone();
-        save_proposals(project_path, &proposals)?;
-
         for (target, page_path) in page_paths {
             let mut existing = fs::read_to_string(&page_path).unwrap_or_default();
             if !existing.ends_with('\n') {
@@ -278,6 +274,10 @@ impl ForgeWikiStore {
             fs::write(&page_path, existing)
                 .map_err(|err| format!("Failed to update wiki page {target}: {err}"))?;
         }
+
+        proposals[index].status = ForgeWikiProposalStatus::Accepted;
+        let accepted = proposals[index].clone();
+        save_proposals(project_path, &proposals)?;
 
         Ok(accepted)
     }
@@ -1103,6 +1103,73 @@ mod tests {
         assert_eq!(
             after
                 .matches("first accept should be the only append")
+                .count(),
+            1
+        );
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn accept_proposal_write_failure_keeps_pending() {
+        let project = temp_project_dir("proposal-write-failure");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let log_path = project.join(".forge/wiki/log.md");
+
+        let proposal = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "retry should append after write problem is fixed".to_string(),
+            )
+            .await
+            .expect("create proposal");
+
+        fs::remove_file(&log_path).expect("remove log file");
+        fs::create_dir(&log_path).expect("replace log file with directory");
+
+        let error = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect_err("page write failure should return an error");
+        let proposals_text =
+            fs::read_to_string(project.join(".forge/wiki/.proposals.json")).expect("proposals");
+        let proposals: Vec<ForgeWikiUpdateProposal> =
+            serde_json::from_str(&proposals_text).expect("parse proposals");
+        let stored = proposals
+            .iter()
+            .find(|stored| stored.id == proposal.id)
+            .expect("stored proposal");
+
+        assert!(
+            error.contains("Failed to update wiki page log.md"),
+            "expected page update failure, got {error}"
+        );
+        assert_eq!(stored.status, ForgeWikiProposalStatus::Pending);
+
+        fs::remove_dir(&log_path).expect("remove blocking directory");
+        fs::write(&log_path, "# 工作日志\n\n").expect("restore log file");
+
+        let accepted = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("retry accept");
+        let accepted_again = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("repeat accept");
+        let after = fs::read_to_string(&log_path).expect("read log");
+
+        assert_eq!(accepted.status, ForgeWikiProposalStatus::Accepted);
+        assert_eq!(accepted_again.status, ForgeWikiProposalStatus::Accepted);
+        assert_eq!(
+            after
+                .matches("retry should append after write problem is fixed")
                 .count(),
             1
         );
