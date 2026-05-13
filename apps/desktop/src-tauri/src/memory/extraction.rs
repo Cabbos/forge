@@ -25,13 +25,20 @@ pub fn extract_candidates_from_user_message(
             "我来验证",
             "默认",
             "优先",
+            "default",
+            "prefer",
         ],
     ) {
+        let project_scoped = is_project_specific_preference(&body) && project_path.is_some();
         candidates.push(candidate(
             session_id,
-            None,
+            if project_scoped { project_path } else { None },
             MemoryCategory::Preference,
-            MemoryScope::UserProfile,
+            if project_scoped {
+                MemoryScope::Project
+            } else {
+                MemoryScope::UserProfile
+            },
             &candidate_title("用户偏好", &body),
             &body,
             0.72,
@@ -134,6 +141,26 @@ fn contains_any(text: &str, signals: &[&str]) -> bool {
     signals.iter().any(|signal| text.contains(signal))
 }
 
+fn is_project_specific_preference(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "这个项目",
+            "本项目",
+            "当前项目",
+            "项目里",
+            "项目中",
+            "这个仓库",
+            "本仓库",
+            "当前仓库",
+            "这个 repo",
+            "this project",
+            "this repo",
+        ],
+    )
+}
+
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
@@ -182,6 +209,34 @@ mod tests {
         assert!(!memory.id.is_empty());
         assert!(!memory.created_at.is_empty());
         assert_eq!(memory.created_at, memory.updated_at);
+    }
+
+    #[test]
+    fn project_specific_preference_stays_project_scoped() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "这个项目默认使用 pnpm，优先保持现在的目录结构。",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        let memory = &candidates[0];
+        assert_eq!(memory.category, MemoryCategory::Preference);
+        assert_eq!(memory.scope, MemoryScope::Project);
+        assert_eq!(memory.project_path.as_deref(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn english_project_preference_stays_project_scoped() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "This project should default to pnpm first.",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].scope, MemoryScope::Project);
+        assert_eq!(candidates[0].project_path.as_deref(), Some("/tmp/project"));
     }
 
     #[test]

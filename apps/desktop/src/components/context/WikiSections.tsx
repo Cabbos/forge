@@ -71,6 +71,16 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     return byId;
   }, [currentProjectPath, memories]);
 
+  const candidateMemories = useMemo(
+    () =>
+      memories.filter(
+        (memory) =>
+          memory.status === "candidate" &&
+          memoryBelongsToCurrentContext(memory, currentProjectPath),
+      ),
+    [currentProjectPath, memories],
+  );
+
   const projectMemories = useMemo(
     () =>
       memories.filter(
@@ -119,6 +129,22 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
       setError("");
       try {
         await pinMemory(memoryId, sessionId ?? undefined);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [refresh, sessionId],
+  );
+
+  const handleAccept = useCallback(
+    async (memoryId: string) => {
+      setBusyId(memoryId);
+      setError("");
+      try {
+        await updateMemory(memoryId, { status: "accepted" }, sessionId ?? undefined);
         await refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -185,6 +211,33 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
       </section>
 
       <section>
+        <SectionHeader title="待确认" meta={candidateMemories.length > 0 ? `${candidateMemories.length} 条` : null} />
+        <div className="overflow-hidden rounded-md border border-border bg-card">
+          {candidateMemories.length === 0 ? (
+            <EmptyState label="没有待确认记忆" />
+          ) : (
+            <div className="divide-y divide-border">
+              {candidateMemories.map((memory) => (
+                <MemoryRow
+                  key={memory.id}
+                  memory={memory}
+                  draft={draft?.memoryId === memory.id ? draft : null}
+                  busy={busyId === memory.id}
+                  onDraftChange={setDraft}
+                  onEdit={() => startEdit(memory)}
+                  onSave={saveDraft}
+                  onCancel={() => setDraft(null)}
+                  onAccept={() => handleAccept(memory.id)}
+                  onPin={() => handlePin(memory.id)}
+                  onForget={() => handleForget(memory.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
         <SectionHeader title="项目 Wiki" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {projectMemories.length === 0 ? (
@@ -192,7 +245,18 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           ) : (
             <div className="divide-y divide-border">
               {projectMemories.map((memory) => (
-                <ProjectMemoryRow key={memory.id} memory={memory} />
+                <MemoryRow
+                  key={memory.id}
+                  memory={memory}
+                  draft={draft?.memoryId === memory.id ? draft : null}
+                  busy={busyId === memory.id}
+                  onDraftChange={setDraft}
+                  onEdit={() => startEdit(memory)}
+                  onSave={saveDraft}
+                  onCancel={() => setDraft(null)}
+                  onPin={memory.status === "pinned" ? undefined : () => handlePin(memory.id)}
+                  onForget={() => handleForget(memory.id)}
+                />
               ))}
             </div>
           )}
@@ -322,12 +386,82 @@ function SelectedMemoryRow({
   );
 }
 
-function ProjectMemoryRow({ memory }: { memory: WikiMemory }) {
+function MemoryRow({
+  memory,
+  draft,
+  busy,
+  onDraftChange,
+  onEdit,
+  onSave,
+  onCancel,
+  onAccept,
+  onPin,
+  onForget,
+}: {
+  memory: WikiMemory;
+  draft: DraftState | null;
+  busy: boolean;
+  onDraftChange: (draft: DraftState | null) => void;
+  onEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onAccept?: () => void;
+  onPin?: () => void;
+  onForget: () => void;
+}) {
+  if (draft) {
+    return (
+      <div className="space-y-2 px-3 py-2.5">
+        <input
+          value={draft.title}
+          onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
+          className="w-full rounded border border-border bg-background/70 px-2 py-1 text-xs text-foreground outline-none focus:border-primary/50"
+        />
+        <textarea
+          value={draft.body}
+          onChange={(event) => onDraftChange({ ...draft, body: event.target.value })}
+          rows={3}
+          className="max-h-24 w-full resize-none rounded border border-border bg-background/70 px-2 py-1 text-[11px] leading-relaxed text-foreground outline-none focus:border-primary/50 break-words"
+        />
+        <div className="flex justify-end gap-1">
+          <IconButton title="取消" onClick={onCancel} disabled={busy}>
+            <X className="size-3" />
+          </IconButton>
+          <IconButton title="保存" onClick={onSave} disabled={busy}>
+            <Check className="size-3" />
+          </IconButton>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-3 py-2.5">
-      <div className="truncate text-xs font-medium text-foreground">{memory.title}</div>
-      <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
-        {memory.body}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-foreground">{memory.title}</div>
+          <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
+            {memory.body}
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-0.5">
+          {onAccept && (
+            <IconButton title="确认记忆" onClick={onAccept} disabled={busy}>
+              <Check className="size-3" />
+            </IconButton>
+          )}
+          <IconButton title="编辑" onClick={onEdit} disabled={busy}>
+            <Edit3 className="size-3" />
+          </IconButton>
+          {onPin && (
+            <IconButton title="置顶" onClick={onPin} disabled={busy}>
+              <Pin className="size-3" />
+            </IconButton>
+          )}
+          <IconButton title="忘记" onClick={onForget} disabled={busy}>
+            <Trash2 className="size-3" />
+          </IconButton>
+        </div>
       </div>
       <div className="mt-2 grid grid-cols-[minmax(0,1fr)_58px_48px] gap-2 text-[10px] text-muted-foreground/70">
         <span className="truncate">{categoryLabel(memory.category)}</span>

@@ -350,6 +350,16 @@ test.describe("Living Wiki context panel", () => {
       body: "This memory belongs to another project and should stay hidden.",
       project_path: otherProjectPath,
     };
+    const candidateMemory = {
+      ...projectMemory,
+      id: "memory-candidate-1",
+      category: "decision",
+      status: "candidate",
+      title: "Candidate Wiki note",
+      body: "This candidate should be visible before it is accepted.",
+      confidence: 0.72,
+      tags: ["candidate"],
+    };
 
     await setup(page);
     await page.addInitScript(({ sessionId, projectPath, memories }) => {
@@ -395,7 +405,7 @@ test.describe("Living Wiki context panel", () => {
             return undefined;
         }
       };
-    }, { sessionId, projectPath, memories: [selectedMemory, projectMemory, otherProjectMemory] });
+    }, { sessionId, projectPath, memories: [selectedMemory, projectMemory, otherProjectMemory, candidateMemory] });
 
     await page.goto("http://localhost:1420");
     await page.getByRole("button", { name: "新对话" }).click();
@@ -409,6 +419,7 @@ test.describe("Living Wiki context panel", () => {
       { event_type: "memory_updated", session_id: sessionId, memory: selectedMemory },
       { event_type: "memory_updated", session_id: sessionId, memory: projectMemory },
       { event_type: "memory_updated", session_id: sessionId, memory: otherProjectMemory },
+      { event_type: "memory_candidate", session_id: sessionId, memory: candidateMemory },
       {
         event_type: "memory_selection",
         session_id: sessionId,
@@ -433,6 +444,9 @@ test.describe("Living Wiki context panel", () => {
 
     await expect(page.getByRole("heading", { name: "相关背景" })).toBeVisible();
     await expect(page.getByText(selectedMemory.body)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "待确认" })).toBeVisible();
+    await expect(page.getByText(candidateMemory.body)).toBeVisible();
+    await expect(page.getByTitle("确认记忆")).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目 Wiki" })).toBeVisible();
     await expect(page.getByText(projectMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目状态" })).toBeVisible();
