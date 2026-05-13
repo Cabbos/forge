@@ -4,6 +4,7 @@ import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
 import { createProjectCheckpoint, searchWorkspaceFiles, listCapabilities, type CapabilityInfo } from "@/lib/tauri";
 import { formatContextWindow, getModelContextWindow, getModelLabel, getProviderDefinition, PROVIDERS } from "@/lib/providers";
+import { modeAwarePlaceholder } from "@/lib/task-mode";
 
 interface InputBarProps { sessionId: string }
 
@@ -35,7 +36,12 @@ export function InputBar({ sessionId }: InputBarProps) {
   const setSelectedModel = useStore((s) => s.setSelectedModel);
   const pendingInput = useStore((s) => s.pendingInput);
   const setPendingInput = useStore((s) => s.setPendingInput);
-  const selectedContextCount = useStore((s) => s.selectedContextBySession.get(sessionId)?.length ?? 0);
+  const selectedMemoryContextCount = useStore((s) =>
+    s.selectedContextBySession.get(sessionId)?.filter((item) => item.injected).length ?? 0,
+  );
+  const selectedWikiContextCount = useStore((s) =>
+    s.forgeWikiContextBySession.get(sessionId)?.filter((item) => item.injected).length ?? 0,
+  );
   const workflow = useStore((s) => s.workflowBySession.get(sessionId) ?? null);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
   const [atResults, setAtResults] = useState<string[]>([]);
@@ -50,6 +56,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   const [activeSkills, setActiveSkills] = useState<CapabilityInfo[]>([]);
   const selectedProviderDef = getProviderDefinition(selectedProvider);
   const selectedContextWindow = formatContextWindow(getModelContextWindow(selectedModel));
+  const selectedContextCount = selectedMemoryContextCount + selectedWikiContextCount;
 
   useEffect(() => {
     listCapabilities()
@@ -209,7 +216,7 @@ export function InputBar({ sessionId }: InputBarProps) {
       )}
       {selectedContextCount > 0 && (
         <div className="mb-2 text-[11px] text-muted-foreground/75">
-          上轮带入 {selectedContextCount} 条相关背景
+          本轮已带入 {selectedContextCount} 条背景
         </div>
       )}
       {workflow?.gate === "soft" && (
@@ -284,7 +291,7 @@ export function InputBar({ sessionId }: InputBarProps) {
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={isRunning ? "描述要完成的任务，例如：把登录页的信息层级整理清楚" : "这个会话已停止，可以继续后再发送"}
+            placeholder={modeAwarePlaceholder(workflow, isRunning)}
             rows={1}
             disabled={!isRunning}
             className="w-full bg-transparent border-none outline-none resize-none text-sm leading-relaxed placeholder:text-muted-foreground/65"

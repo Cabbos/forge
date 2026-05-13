@@ -738,6 +738,67 @@ test.describe("Task Mode", () => {
     await expect(currentTask.getByRole("button", { name: "排查问题" })).toBeVisible();
     await expect(currentTask.getByRole("button", { name: "检查结果" })).toBeVisible();
   });
+
+  test("top-level mode pill opens the Context panel and shows context count", async ({ page }) => {
+    const sessionId = "top-level-mode-session";
+    await setup(page);
+    await page.addInitScript((sessionId) => {
+      window.localStorage.clear();
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "workflow_updated",
+        session_id: sessionId,
+        state: {
+          session_id: sessionId,
+          route: "workflow",
+          phase: "clarifying",
+          beginner_label: "raw",
+          developer_label: "workflow/clarifying",
+          matched_signals: ["idea"],
+          reason: "用户正在描述一个新工具。",
+          gate: "soft",
+          override_actions: ["direct", "plan_first", "debug", "verify"],
+          spec_path: null,
+          plan_path: null,
+          checkpoint_id: null,
+          updated_at: Date.now(),
+        },
+      },
+      {
+        event_type: "forge_wiki_context_selected",
+        session_id: sessionId,
+        selected: [{
+          page_id: "tasks",
+          title: "当前任务",
+          path: "tasks.md",
+          kind: "tasks",
+          summary: "正在做上下文激活。",
+          score: 0.9,
+          reason: "这页项目记录与本轮请求相关",
+          injected: true,
+        }],
+      },
+    ], 5);
+
+    const pill = page.getByTestId("workflow-status-pill");
+    await expect(pill).toContainText("梳理想法");
+    await expect(pill).toContainText("已带入 1");
+    await pill.click();
+
+    await expect(page.locator("aside").last().getByText("上下文", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "本轮上下文" })).toBeVisible();
+  });
 });
 
 test.describe("Context Activation", () => {

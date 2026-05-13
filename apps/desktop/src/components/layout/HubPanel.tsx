@@ -37,9 +37,14 @@ export function HubPanel() {
   const activeContextItems = getActiveContextItems(selectedMemories, selectedWikiPages);
 
   useEffect(() => {
-    const handler = () => setOpen((value) => !value);
-    window.addEventListener("toggle-hub", handler);
-    return () => window.removeEventListener("toggle-hub", handler);
+    const toggleHandler = () => setOpen((value) => !value);
+    const openHandler = () => setOpen(true);
+    window.addEventListener("toggle-hub", toggleHandler);
+    window.addEventListener("open-hub", openHandler);
+    return () => {
+      window.removeEventListener("toggle-hub", toggleHandler);
+      window.removeEventListener("open-hub", openHandler);
+    };
   }, []);
 
   useEffect(() => {

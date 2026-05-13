@@ -21,6 +21,12 @@ export function AppShell() {
   const activeSessionId = useStore((s) => s.activeSessionId);
   const sessions = useStore((s) => s.sessions);
   const workflow = useStore((s) => activeSessionId ? s.workflowBySession.get(activeSessionId) ?? null : null);
+  const selectedMemoryCount = useStore((s) =>
+    activeSessionId ? s.selectedContextBySession.get(activeSessionId)?.filter((item) => item.injected).length ?? 0 : 0,
+  );
+  const selectedWikiPageCount = useStore((s) =>
+    activeSessionId ? s.forgeWikiContextBySession.get(activeSessionId)?.filter((item) => item.injected).length ?? 0 : 0,
+  );
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
@@ -28,6 +34,7 @@ export function AppShell() {
   const project = getProjectDisplay(workingDir);
   const contextWindow = activeSession?.contextWindowTokens ?? getModelContextWindow(activeSession?.model || selectedModel);
   const contextWindowLabel = formatContextWindow(contextWindow);
+  const activeContextCount = selectedMemoryCount + selectedWikiPageCount;
   useOutputStream(activeSessionId);
   const capabilityTab: CapabilityTab = activeSidebarPanel === "automation" ? "hooks" : "skills";
 
@@ -67,7 +74,11 @@ export function AppShell() {
                   <span className="size-1.5 rounded-full" style={{ background: status.color }} />
                   {status.label}
                 </span>
-                <WorkflowStatusPill workflow={workflow} />
+                <WorkflowStatusPill
+                  workflow={workflow}
+                  activeContextCount={activeContextCount}
+                  onOpenContext={() => window.dispatchEvent(new Event("open-hub"))}
+                />
               </div>
               <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground/75">
                 <FolderOpen className="size-3 shrink-0" />
