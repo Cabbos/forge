@@ -699,6 +699,9 @@ test.describe("Project records context panel", () => {
 
     const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
+    await expect(inbox.getByText("确认后会进入项目记录或已保存背景")).toBeVisible();
+    await expect(inbox.getByText("建议保存为已保存背景")).toBeVisible();
+    await expect(inbox.getByText("建议写入项目记录")).toBeVisible();
     await expect(inbox.getByText(candidateMemory.body)).toBeVisible();
     await expect(inbox.getByText(proposal.summary)).toBeVisible();
     await expect(inbox.getByRole("button", { name: "接受" }).first()).toBeVisible();
@@ -935,6 +938,9 @@ test.describe("Turn context", () => {
     await expect(activeContext.getByText("已带入 2 条背景")).toBeVisible();
     await expect(activeContext.getByText("中文优先")).toBeVisible();
     await expect(activeContext.getByText("当前任务")).toBeVisible();
+    await expect(activeContext.getByText("为什么带入").first()).toBeVisible();
+    await expect(activeContext.getByText("来源").first()).toBeVisible();
+    await expect(activeContext.getByText("本轮状态").first()).toBeVisible();
     await expect(activeContext.getByText("这是你固定的偏好")).toBeVisible();
     await expect(activeContext.getByText("这页项目记录与本轮请求相关")).toBeVisible();
   });
