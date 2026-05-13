@@ -1,5 +1,45 @@
 // TypeScript mirror of Rust StreamEvent enum (protocol/events.rs)
 
+export type MemoryCategory = "preference" | "project_fact" | "decision" | "task_state";
+export type MemoryScope = "session" | "user_profile" | "project" | "document";
+export type MemoryStatus = "candidate" | "accepted" | "pinned" | "forgotten" | "archived";
+
+export interface WikiMemory {
+  id: string;
+  category: MemoryCategory;
+  scope: MemoryScope;
+  status: MemoryStatus;
+  title: string;
+  body: string;
+  project_path: string | null;
+  source_session_id: string | null;
+  source_message_ids: string[];
+  confidence: number;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  use_count: number;
+  tags: string[];
+}
+
+export interface SelectedContextMemory {
+  memory_id: string;
+  title: string;
+  body: string;
+  category: MemoryCategory;
+  scope: MemoryScope;
+  score: number;
+  reason: string;
+  injected: boolean;
+}
+
+export interface MemoryPatch {
+  title?: string | null;
+  body?: string | null;
+  status?: MemoryStatus | null;
+  tags?: string[] | null;
+}
+
 export type StreamEvent =
   // ── AI Thinking ──
   | { event_type: "thinking_start"; session_id: string; block_id: string }
@@ -32,6 +72,10 @@ export type StreamEvent =
       estimated_tokens_before: number;
       estimated_tokens_after: number;
     }
+  // ── Living Wiki Memory ──
+  | { event_type: "memory_selection"; session_id: string; selected: SelectedContextMemory[] }
+  | { event_type: "memory_candidate"; session_id: string; memory: WikiMemory }
+  | { event_type: "memory_updated"; session_id: string; memory: WikiMemory }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }
   | { event_type: "session_status"; session_id: string; status: string }

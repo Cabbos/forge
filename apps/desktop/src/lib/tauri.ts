@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory } from "./protocol";
 
 const WORKING_DIR_KEY = "tui-to-gui-working-dir";
 const FILE_OPEN_TEMPLATE_KEY = "tui-to-gui-file-open-template";
@@ -197,6 +198,35 @@ export async function createProjectCheckpoint(sessionId?: string): Promise<Proje
 
 export async function restoreProjectCheckpoint(sessionId?: string): Promise<ProjectCheckpointStatus> {
   return invoke("restore_project_checkpoint", { sessionId: sessionId ?? null });
+}
+
+export async function listMemories(scope?: MemoryScope, projectPath?: string): Promise<WikiMemory[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("list_memories", { scope: scope ?? null, projectPath: projectPath ?? null });
+}
+
+export async function updateMemory(
+  memoryId: string,
+  patch: MemoryPatch,
+  sessionId?: string,
+): Promise<WikiMemory> {
+  return invoke("update_memory", { memoryId, patch, sessionId: sessionId ?? null });
+}
+
+export async function forgetMemory(memoryId: string, sessionId?: string): Promise<WikiMemory> {
+  return invoke("forget_memory", { memoryId, sessionId: sessionId ?? null });
+}
+
+export async function pinMemory(memoryId: string, sessionId?: string): Promise<WikiMemory> {
+  return invoke("pin_memory", { memoryId, sessionId: sessionId ?? null });
+}
+
+export async function selectContextMemories(
+  message: string,
+  projectPath?: string,
+): Promise<SelectedContextMemory[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("select_context_memories", { message, projectPath: projectPath ?? null });
 }
 
 function hasTauriRuntime(): boolean {
