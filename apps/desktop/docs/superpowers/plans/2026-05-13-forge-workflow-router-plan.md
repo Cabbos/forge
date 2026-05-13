@@ -17,6 +17,7 @@
 | Create | `src-tauri/src/workflow/model.rs` | Shared workflow route, phase, gate, action, and state structs |
 | Create | `src-tauri/src/workflow/router.rs` | Deterministic first-version classifier and unit tests |
 | Create | `src-tauri/src/workflow/mod.rs` | Public workflow exports |
+| Create | `THIRD_PARTY_NOTICES.md` | Repository-level attribution for Superpowers |
 | Modify | `src-tauri/src/lib.rs` | Register `workflow` module and workflow IPC commands |
 | Modify | `src-tauri/src/state.rs` | Store latest workflow state by session |
 | Modify | `src-tauri/src/protocol/events.rs` | Add `workflow_updated` stream event |
@@ -34,6 +35,47 @@
 | Modify | `src/components/CommandPalette.tsx` | Add expert workflow override commands |
 | Modify | `e2e/mock-ipc.ts` | Mock workflow IPC commands |
 | Modify | `e2e/frontend.spec.ts` | Cover workflow status, context panel, and command override behavior |
+
+---
+
+### Task 0: Preserve Superpowers Attribution
+
+**Files:**
+- Create: `THIRD_PARTY_NOTICES.md`
+- Modify later: app About/acknowledgements surface when one exists
+
+- [ ] **Step 1: Add repository-level third-party notice**
+
+Create `THIRD_PARTY_NOTICES.md`:
+
+```md
+# Third-Party Notices
+
+This project records third-party methodology, code, assets, and documentation that influence or ship with Forge.
+
+## Superpowers
+
+Forge's Workflow Router and built-in working-method direction are inspired by Superpowers, an agentic skills framework and software development methodology by Jesse Vincent.
+
+- Project: https://github.com/obra/superpowers
+- License: MIT
+- Copyright: Copyright (c) 2025 Jesse Vincent
+
+The current Forge implementation plan uses Superpowers as a product and workflow reference. If Forge bundles original Superpowers skill text, scripts, assets, or other substantial source material, the packaged app and repository must preserve the upstream copyright notice and include the complete MIT license text with the distributed materials.
+```
+
+- [ ] **Step 2: Add implementation boundary**
+
+Keep the Workflow Router MVP as a router and UI layer. Do not copy raw Superpowers skill text into app resources in this task set. If a later task embeds original Superpowers files, add a packaged notice resource and expose it from the app's About/acknowledgements UI before shipping.
+
+- [ ] **Step 3: Commit**
+
+Run:
+
+```bash
+git add THIRD_PARTY_NOTICES.md
+git commit -m "docs: add Superpowers third-party notice"
+```
 
 ---
 
