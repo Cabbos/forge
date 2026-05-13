@@ -192,7 +192,16 @@ export const useStore = create<AppStore>((set, get) => ({
   upsertMemory: (memory) => {
     const memories = get().memories.filter((existing) => existing.id !== memory.id);
     if (memory.status === "forgotten" || memory.status === "archived") {
-      set({ memories });
+      const selectedContextBySession = new Map(get().selectedContextBySession);
+      selectedContextBySession.forEach((selected, sessionId) => {
+        const nextSelected = selected.filter((item) => item.memory_id !== memory.id);
+        if (nextSelected.length === 0) {
+          selectedContextBySession.delete(sessionId);
+        } else if (nextSelected.length !== selected.length) {
+          selectedContextBySession.set(sessionId, nextSelected);
+        }
+      });
+      set({ memories, selectedContextBySession });
       return;
     }
     set({ memories: [memory, ...memories] });

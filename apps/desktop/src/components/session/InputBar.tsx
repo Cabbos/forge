@@ -208,7 +208,7 @@ export function InputBar({ sessionId }: InputBarProps) {
       )}
       {selectedContextCount > 0 && (
         <div className="mb-2 text-[11px] text-muted-foreground/75">
-          已带入 {selectedContextCount} 条相关背景
+          上轮带入 {selectedContextCount} 条相关背景
         </div>
       )}
 

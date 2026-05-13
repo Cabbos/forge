@@ -6,7 +6,7 @@ import { WikiSections } from "@/components/context/WikiSections";
 import { ProjectStatusCard } from "./ProjectStatusCard";
 import { cn } from "@/lib/utils";
 import { formatContextWindow, getModelContextWindow, getProviderModelLabel } from "@/lib/providers";
-import { getRememberedWorkingDir } from "@/lib/tauri";
+import { getProjectRuntimeStatus } from "@/lib/tauri";
 
 type ParseStatus = "pending" | "parsed" | "failed";
 
@@ -22,18 +22,37 @@ const contextFiles: ContextFile[] = [];
 
 export function HubPanel() {
   const [open, setOpen] = useState(false);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
   const session = activeId ? sessions.get(activeId) : null;
   const contextWindow = session?.contextWindowTokens ?? getModelContextWindow(session?.model);
   const contextWindowLabel = formatContextWindow(contextWindow);
-  const projectPath = getRememberedWorkingDir();
 
   useEffect(() => {
     const handler = () => setOpen((value) => !value);
     window.addEventListener("toggle-hub", handler);
     return () => window.removeEventListener("toggle-hub", handler);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setProjectPath(null);
+    if (!open || !activeId) return;
+
+    getProjectRuntimeStatus(activeId)
+      .then((status) => {
+        if (!cancelled) setProjectPath(status.working_dir || null);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectPath(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, open]);
 
   if (!open) return null;
 
