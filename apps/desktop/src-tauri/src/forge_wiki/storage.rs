@@ -127,8 +127,17 @@ impl ForgeWikiStore {
         let mut pages = Vec::new();
         for (path, kind, _) in DEFAULT_PAGES {
             let full_path = dir.join(path);
-            if full_path.is_file() {
-                pages.push(page_from_file(project_path, path, kind, &full_path)?);
+            match fs::symlink_metadata(&full_path) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_symlink() {
+                        return Err(format!("Forge Wiki page {path} cannot be a symlink"));
+                    }
+                    if metadata.file_type().is_file() {
+                        pages.push(page_from_file(project_path, path, kind, &full_path)?);
+                    }
+                }
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => return Err(format!("Failed to inspect wiki page {path}: {err}")),
             }
         }
 
@@ -527,6 +536,32 @@ mod tests {
             .expect("list pages");
 
         assert!(!pages.iter().any(|page| page.path == "linked/outside.md"));
+        cleanup(&project);
+        cleanup(&external);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn list_pages_rejects_symlinked_default_page() {
+        let project = temp_project_dir("symlinked-default-list");
+        let external = temp_project_dir("symlinked-default-list-external");
+        let store = ForgeWikiStore::new();
+        let wiki = project.join(".forge/wiki");
+        fs::create_dir_all(&wiki).expect("create wiki dir");
+        fs::write(external.join("index.md"), "# Outside\n\nexternal summary")
+            .expect("write external default page");
+        unix_fs::symlink(external.join("index.md"), wiki.join("index.md"))
+            .expect("create default page symlink");
+
+        let error = store
+            .list_pages(project.to_str().unwrap())
+            .await
+            .expect_err("symlinked default page should be rejected");
+
+        assert!(
+            error.contains("symlink"),
+            "expected symlink rejection, got {error}"
+        );
         cleanup(&project);
         cleanup(&external);
     }
