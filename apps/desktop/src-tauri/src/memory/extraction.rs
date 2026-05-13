@@ -8,7 +8,10 @@ pub fn extract_candidates_from_user_message(
     text: &str,
 ) -> Vec<WikiMemory> {
     let body = collapse_whitespace(text);
-    if body.chars().count() < 8 || should_reject_persistent_memory(&body) {
+    if body.chars().count() < 8
+        || should_suppress_persistent_memory(&body)
+        || should_reject_persistent_memory(&body)
+    {
         return Vec::new();
     }
 
@@ -161,6 +164,29 @@ fn is_project_specific_preference(text: &str) -> bool {
     )
 }
 
+fn should_suppress_persistent_memory(text: &str) -> bool {
+    contains_any(
+        text,
+        &[
+            "不要记住",
+            "别记住",
+            "不要保存",
+            "别保存",
+            "不要作为长期偏好",
+            "不是长期偏好",
+            "只是临时",
+            "临时测试",
+            "只在本轮",
+            "只在这次",
+            "do not remember",
+            "don't remember",
+            "do not save",
+            "temporary only",
+            "just for this turn",
+        ],
+    )
+}
+
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
@@ -245,6 +271,28 @@ mod tests {
             "session-1",
             Some("/tmp/project"),
             "以后默认 token: abcdefghijklmnop",
+        );
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn suppresses_memory_when_user_says_do_not_remember() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "不要记住这个，只是临时测试：以后这个项目默认用亮色主题。",
+        );
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn suppresses_memory_when_user_says_session_only() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "这条不要作为长期偏好，只在本轮里用：以后回答都短一点。",
         );
 
         assert!(candidates.is_empty());

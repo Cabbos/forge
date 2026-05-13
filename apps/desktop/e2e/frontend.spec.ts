@@ -738,7 +738,7 @@ test.describe("Workflow Router", () => {
     ], 5);
 
     const workflowPill = page.getByTestId("workflow-status-pill");
-    await expect(workflowPill.getByText("先梳理想法", { exact: true })).toBeVisible();
+    await expect(workflowPill.getByText("梳理想法", { exact: true })).toBeVisible();
     await expect(page.getByText("这个需求会影响多个部分，我会先帮你梳理方案。你也可以选择直接做。", { exact: true })).toBeVisible();
 
     await page.keyboard.down("Control");
@@ -746,7 +746,7 @@ test.describe("Workflow Router", () => {
     await page.keyboard.up("Control");
     await page.getByRole("option", { name: "排查问题" }).click();
 
-    await expect(workflowPill.getByText("遇到问题，正在排查", { exact: true })).toBeVisible();
+    await expect(workflowPill.getByText("排查问题", { exact: true })).toBeVisible();
   });
 });
 
@@ -916,5 +916,30 @@ test.describe("Context Activation", () => {
     await expect(activeContext.getByText("当前任务")).toBeVisible();
     await expect(activeContext.getByText("这是你固定的偏好")).toBeVisible();
     await expect(activeContext.getByText("这页项目记录与本轮请求相关")).toBeVisible();
+  });
+
+  test("does not show a memory candidate when user says not to remember", async ({ page }) => {
+    const sessionId = "no-memory-session";
+    await setup(page);
+    await page.addInitScript((sessionId) => {
+      window.localStorage.clear();
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await page.locator("textarea").fill("不要记住这个，只是临时测试：以后默认用亮色主题。");
+    await page.locator("textarea").press("Enter");
+    await page.getByTitle("打开上下文").click();
+
+    const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
+    await expect(inbox.getByText("没有待确认的记录更新")).toBeVisible();
+    await expect(inbox.getByText("以后默认用亮色主题")).not.toBeVisible();
   });
 });
