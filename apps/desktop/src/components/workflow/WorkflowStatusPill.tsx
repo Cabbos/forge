@@ -1,11 +1,13 @@
 import { Compass, ShieldAlert } from "lucide-react";
 import type { WorkflowState } from "@/lib/protocol";
+import { deriveTaskModeView } from "@/lib/task-mode";
 import { cn } from "@/lib/utils";
 
 export function WorkflowStatusPill({ workflow }: { workflow: WorkflowState | null }) {
   if (!workflow) return null;
 
   const strict = workflow.gate === "approval_required";
+  const mode = deriveTaskModeView(workflow);
 
   return (
     <span
@@ -17,7 +19,7 @@ export function WorkflowStatusPill({ workflow }: { workflow: WorkflowState | nul
       title={`${workflow.developer_label}: ${workflow.reason}`}
     >
       {strict ? <ShieldAlert className="size-3" /> : <Compass className="size-3" />}
-      <span className="truncate">{workflow.beginner_label}</span>
+      <span className="truncate">{mode.label}</span>
     </span>
   );
 }

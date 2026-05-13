@@ -1,9 +1,32 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import type { WorkflowState } from "@/lib/protocol";
+import type { WorkflowOverrideAction, WorkflowState } from "@/lib/protocol";
+import { overrideWorkflowRoute } from "@/lib/tauri";
+import {
+  deriveTaskModeView,
+  taskGateCopy,
+  taskGateLabel,
+  workflowOverrideLabel,
+} from "@/lib/task-mode";
+import { useStore } from "@/store";
 
 export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }) {
   const [expanded, setExpanded] = useState(false);
+  const [busyAction, setBusyAction] = useState<WorkflowOverrideAction | null>(null);
+  const setWorkflowState = useStore((s) => s.setWorkflowState);
+  const mode = deriveTaskModeView(workflow);
+  const gateCopy = workflow ? taskGateCopy(workflow.gate) : null;
+
+  const handleOverride = async (action: WorkflowOverrideAction) => {
+    if (!workflow || busyAction) return;
+    setBusyAction(action);
+    try {
+      const next = await overrideWorkflowRoute(workflow.session_id, action);
+      setWorkflowState(workflow.session_id, next);
+    } finally {
+      setBusyAction(null);
+    }
+  };
 
   if (!workflow) {
     return (
@@ -28,17 +51,34 @@ export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }
       <div className="rounded-md border border-border bg-card px-3 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="truncate text-xs font-medium text-foreground">{workflow.beginner_label}</div>
-            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{workflow.reason}</div>
+            <div className="truncate text-xs font-medium text-foreground">{mode.label}</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{mode.title}</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">{workflow.reason || mode.description}</div>
           </div>
           <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {gateLabel(workflow.gate)}
+            {taskGateLabel(workflow.gate)}
           </span>
         </div>
 
-        {workflow.gate !== "none" && (
+        {gateCopy && (
           <div className="mt-2 rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200/90">
-            {workflow.gate === "soft" ? "建议先梳理方案，也可以直接处理。" : "建议先确认方案，再进入实现。"}
+            {gateCopy}
+          </div>
+        )}
+
+        {workflow.override_actions.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {workflow.override_actions.map((action) => (
+              <button
+                key={action}
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => handleOverride(action)}
+                className="rounded border border-border px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-default disabled:opacity-60"
+              >
+                {busyAction === action ? "切换中" : workflowOverrideLabel(action)}
+              </button>
+            ))}
           </div>
         )}
 
@@ -74,15 +114,4 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="truncate text-muted-foreground">{value}</span>
     </div>
   );
-}
-
-function gateLabel(gate: WorkflowState["gate"]) {
-  switch (gate) {
-    case "none":
-      return "直接";
-    case "soft":
-      return "建议";
-    case "approval_required":
-      return "需确认";
-  }
 }

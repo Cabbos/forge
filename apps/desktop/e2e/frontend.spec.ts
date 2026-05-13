@@ -687,3 +687,55 @@ test.describe("Workflow Router", () => {
     await expect(workflowPill.getByText("遇到问题，正在排查", { exact: true })).toBeVisible();
   });
 });
+
+test.describe("Task Mode", () => {
+  test("shows stable mode copy and manual override actions", async ({ page }) => {
+    const sessionId = "task-mode-session";
+    await setup(page);
+    await page.addInitScript((sessionId) => {
+      window.localStorage.clear();
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "workflow_updated",
+        session_id: sessionId,
+        state: {
+          session_id: sessionId,
+          route: "workflow",
+          phase: "planning",
+          beginner_label: "router raw label should not be the final UI label",
+          developer_label: "workflow/planning",
+          matched_signals: ["new feature", "multi component"],
+          reason: "用户正在规划一个新能力。",
+          gate: "soft",
+          override_actions: ["direct", "plan_first", "debug", "verify"],
+          spec_path: null,
+          plan_path: null,
+          checkpoint_id: null,
+          updated_at: Date.now(),
+        },
+      },
+    ], 5);
+
+    await page.getByTitle("打开上下文").click();
+    const currentTask = page.locator("section").filter({ has: page.getByRole("heading", { name: "当前任务" }) });
+
+    await expect(currentTask.getByText("拆成步骤")).toBeVisible();
+    await expect(currentTask.getByText("正在拆成可执行步骤")).toBeVisible();
+    await expect(currentTask.getByText("这个需求会影响多个部分")).toBeVisible();
+    await expect(currentTask.getByRole("button", { name: "直接回答" })).toBeVisible();
+    await expect(currentTask.getByRole("button", { name: "先拆方案" })).toBeVisible();
+    await expect(currentTask.getByRole("button", { name: "排查问题" })).toBeVisible();
+    await expect(currentTask.getByRole("button", { name: "检查结果" })).toBeVisible();
+  });
+});
