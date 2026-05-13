@@ -112,6 +112,16 @@ impl AgentSession {
         text: &str,
         app_handle: &tauri::AppHandle,
     ) -> Result<(), String> {
+        self.send_message_with_context(text, app_handle, None).await
+    }
+
+    /// Send a user message with optional hidden memory context for this turn.
+    pub async fn send_message_with_context(
+        &self,
+        text: &str,
+        app_handle: &tauri::AppHandle,
+        memory_context: Option<String>,
+    ) -> Result<(), String> {
         if !self.running.load(Ordering::SeqCst) {
             return Err("Session is not running".to_string());
         }
@@ -124,6 +134,7 @@ impl AgentSession {
 
         // Add user message to history
         self.messages.lock().unwrap().push(ChatMessage::user(text));
+        let memory_context = memory_context.filter(|context| !context.trim().is_empty());
 
         // Fresh cancel token for this request
         let cancel = Arc::new(Notify::new());
@@ -162,16 +173,8 @@ impl AgentSession {
 
             let messages = compacted.messages;
             let summary_ctx = compacted.summary;
-            let mut msgs_with_context = if let Some(ref s) = summary_ctx {
-                let mut m = messages.clone();
-                m.insert(
-                    0,
-                    ChatMessage::user(&format!("## Previous conversation summary\n{}", s)),
-                );
-                m
-            } else {
-                messages
-            };
+            let mut msgs_with_context =
+                apply_turn_context(messages, summary_ctx.as_deref(), memory_context.as_deref());
             // Prepend system prompt with skill instructions
             let sp = self.system_prompt.lock().unwrap().clone();
             crate::app_log!(
@@ -412,13 +415,10 @@ impl AgentSession {
 
         // Ensure final text response: append instruction, call API one more time if needed
         {
-            let mut msgs = self.messages.lock().unwrap().clone();
-            if let Some(s) = self.summary.lock().unwrap().clone() {
-                msgs.insert(
-                    0,
-                    ChatMessage::user(&format!("## Previous conversation summary\n{}", s)),
-                );
-            }
+            let messages = self.messages.lock().unwrap().clone();
+            let summary = self.summary.lock().unwrap().clone();
+            let mut msgs =
+                apply_turn_context(messages, summary.as_deref(), memory_context.as_deref());
             let sp = self.system_prompt.lock().unwrap().clone();
             if !sp.is_empty() {
                 msgs.insert(0, ChatMessage::system(&sp));
@@ -453,6 +453,25 @@ impl AgentSession {
             },
         );
     }
+}
+
+fn apply_turn_context(
+    messages: Vec<ChatMessage>,
+    summary: Option<&str>,
+    memory_context: Option<&str>,
+) -> Vec<ChatMessage> {
+    let mut with_context = Vec::new();
+    if let Some(summary) = summary.filter(|summary| !summary.trim().is_empty()) {
+        with_context.push(ChatMessage::user(&format!(
+            "## Previous conversation summary\n{}",
+            summary
+        )));
+    }
+    if let Some(memory_context) = memory_context.filter(|context| !context.trim().is_empty()) {
+        with_context.push(ChatMessage::user(memory_context));
+    }
+    with_context.extend(messages);
+    with_context
 }
 
 #[derive(Debug, Clone)]

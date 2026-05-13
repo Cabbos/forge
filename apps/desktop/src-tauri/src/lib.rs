@@ -6,6 +6,7 @@ mod executor;
 pub mod harness;
 mod ipc;
 mod logger;
+mod memory;
 mod parser;
 mod protocol;
 pub mod settings;
@@ -73,6 +74,11 @@ pub fn run() {
             ipc::project_checkpoint::get_project_checkpoint_status,
             ipc::project_checkpoint::create_project_checkpoint,
             ipc::project_checkpoint::restore_project_checkpoint,
+            ipc::memory_handlers::list_memories,
+            ipc::memory_handlers::update_memory,
+            ipc::memory_handlers::forget_memory,
+            ipc::memory_handlers::pin_memory,
+            ipc::memory_handlers::select_context_memories,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

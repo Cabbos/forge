@@ -9,6 +9,7 @@ use crate::agent::snapshot::{
     delete_session_snapshot, load_session_snapshot, save_session_snapshot,
 };
 use crate::harness::Harness;
+use crate::memory::{extract_candidates_from_user_message, format_selected_memory_context};
 use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -244,8 +245,9 @@ pub async fn resume_session(
     }
 
     let model_str = snapshot.model.clone();
-    let context_window_tokens =
-        snapshot.context_window_tokens.or_else(|| context_window_tokens(&provider, &model_str));
+    let context_window_tokens = snapshot
+        .context_window_tokens
+        .or_else(|| context_window_tokens(&provider, &model_str));
     let adapter = build_adapter(
         &provider,
         &credentials.api_key,
@@ -320,9 +322,49 @@ pub async fn send_input(
     let session = state.sessions.read().await.get(&session_id).cloned();
     match session {
         Some(s) => {
-            let result = s.send_message(&text, &app_handle).await;
+            let project_path = s.harness.working_dir.to_string_lossy().to_string();
+            let selected = state
+                .wiki_memory
+                .select(&text, Some(&project_path), 8)
+                .await;
+            let _ = app_handle.emit(
+                "session-output",
+                StreamEvent::MemorySelection {
+                    session_id: session_id.clone(),
+                    selected: selected.clone(),
+                },
+            );
+            let memory_context = format_selected_memory_context(&selected);
+            let result = s
+                .send_message_with_context(&text, &app_handle, memory_context)
+                .await;
             if let Err(error) = save_session_snapshot(&s.snapshot()) {
                 crate::app_log!("WARN", "[session_snapshot] {}", error);
+            }
+            if result.is_ok() {
+                for candidate in
+                    extract_candidates_from_user_message(&session_id, Some(&project_path), &text)
+                {
+                    match state.wiki_memory.upsert_candidate(candidate).await {
+                        Ok(Some(memory)) => {
+                            let _ = app_handle.emit(
+                                "session-output",
+                                StreamEvent::MemoryCandidate {
+                                    session_id: session_id.clone(),
+                                    memory,
+                                },
+                            );
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            crate::app_log!(
+                                "WARN",
+                                "[wiki_memory] candidate upsert failed: {}",
+                                error
+                            );
+                        }
+                    }
+                }
             }
             result
         }
