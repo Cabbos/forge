@@ -257,6 +257,7 @@ export async function getForgeWikiState(projectPath: string): Promise<ForgeWikiS
 }
 
 export async function initForgeWiki(projectPath: string): Promise<ForgeWikiState> {
+  if (!hasTauriRuntime()) return fallbackForgeWikiState(projectPath);
   return invoke("init_forge_wiki", { projectPath });
 }
 
@@ -320,7 +321,7 @@ function fallbackForgeWikiState(projectPath: string): ForgeWikiState {
     exists: false,
     wiki_dir: normalizedProjectPath ? joinPath(normalizedProjectPath, ".forge", "wiki") : "",
     pages: [],
-    message: "在桌面应用中读取 Forge Wiki",
+    message: "Forge Wiki is unavailable in the browser runtime.",
   };
 }
 
