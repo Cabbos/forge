@@ -299,6 +299,7 @@ export async function createForgeWikiUpdateProposal(
 export async function acceptForgeWikiUpdateProposal(
   projectPath: string,
   proposalId: string,
+  _sessionId?: string | null,
 ): Promise<ForgeWikiUpdateProposal> {
   return invoke("accept_forge_wiki_update_proposal", { projectPath, proposalId });
 }
@@ -306,6 +307,7 @@ export async function acceptForgeWikiUpdateProposal(
 export async function discardForgeWikiUpdateProposal(
   projectPath: string,
   proposalId: string,
+  _sessionId?: string | null,
 ): Promise<ForgeWikiUpdateProposal> {
   return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId });
 }
