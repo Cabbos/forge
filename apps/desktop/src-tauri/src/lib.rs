@@ -3,6 +3,7 @@
 pub mod adapters;
 mod agent;
 mod executor;
+mod forge_wiki;
 pub mod harness;
 mod ipc;
 mod logger;
