@@ -4,7 +4,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::forge_wiki::model::{
-    ForgeWikiPage, ForgeWikiPageKind, ForgeWikiState, SelectedForgeWikiPage,
+    ForgeWikiPage, ForgeWikiPageKind, ForgeWikiProposalStatus, ForgeWikiState,
+    ForgeWikiUpdateProposal, SelectedForgeWikiPage,
 };
 use crate::forge_wiki::safety::{
     contains_sensitive_wiki_content, ensure_wiki_root_is_normal_dir, resolve_wiki_page_path,
@@ -169,6 +170,116 @@ impl ForgeWikiStore {
             .map_err(|err| format!("Failed to read wiki page {page_path}: {err}"))
     }
 
+    pub async fn create_update_proposal(
+        &self,
+        project_path: &str,
+        session_id: Option<&str>,
+        target_pages: Vec<String>,
+        title: String,
+        summary: String,
+    ) -> Result<ForgeWikiUpdateProposal, String> {
+        if !ensure_wiki_root_is_normal_dir(project_path)? {
+            return Err("Forge Wiki is not initialized".to_string());
+        }
+        if target_pages.is_empty() {
+            return Err("Proposal must target at least one wiki page".to_string());
+        }
+        if title.trim().is_empty() {
+            return Err("Proposal title cannot be empty".to_string());
+        }
+        if summary.trim().is_empty() {
+            return Err("Proposal summary cannot be empty".to_string());
+        }
+        if contains_sensitive_wiki_content(&title) || contains_sensitive_wiki_content(&summary) {
+            return Err("Proposal contains sensitive content".to_string());
+        }
+
+        for target in &target_pages {
+            resolve_wiki_page_path(project_path, target)?;
+        }
+
+        let created_at = unix_timestamp_string();
+        let clean_title = truncate_chars(title.trim(), 160);
+        let clean_summary = truncate_chars(summary.trim(), 1200);
+        let proposal = ForgeWikiUpdateProposal {
+            id: uuid::Uuid::now_v7().to_string(),
+            project_path: project_path.to_string(),
+            session_id: session_id.map(str::to_string),
+            target_pages,
+            title: clean_title.clone(),
+            summary: clean_summary.clone(),
+            patch_preview: Some(format_proposal_append_preview(
+                &created_at,
+                &clean_title,
+                &clean_summary,
+            )),
+            status: ForgeWikiProposalStatus::Pending,
+            created_at,
+        };
+
+        let mut proposals = load_proposals(project_path)?;
+        proposals.push(proposal.clone());
+        save_proposals(project_path, &proposals)?;
+        Ok(proposal)
+    }
+
+    pub async fn accept_update_proposal(
+        &self,
+        project_path: &str,
+        proposal_id: &str,
+    ) -> Result<ForgeWikiUpdateProposal, String> {
+        let mut proposals = load_proposals(project_path)?;
+        let index = proposals
+            .iter()
+            .position(|proposal| proposal.id == proposal_id)
+            .ok_or_else(|| "Wiki update proposal not found".to_string())?;
+        if proposals[index].status != ForgeWikiProposalStatus::Pending {
+            return Err("Wiki update proposal is not pending".to_string());
+        }
+
+        let proposal = proposals[index].clone();
+        let append_text = format_proposal_append_preview(
+            &proposal.created_at,
+            &proposal.title,
+            &proposal.summary,
+        );
+        for target in &proposal.target_pages {
+            let page_path = resolve_wiki_page_path(project_path, target)?;
+            let mut existing = fs::read_to_string(&page_path).unwrap_or_default();
+            if !existing.ends_with('\n') {
+                existing.push('\n');
+            }
+            existing.push_str(&append_text);
+            fs::write(&page_path, existing)
+                .map_err(|err| format!("Failed to update wiki page {target}: {err}"))?;
+        }
+
+        proposals[index].status = ForgeWikiProposalStatus::Accepted;
+        let accepted = proposals[index].clone();
+        save_proposals(project_path, &proposals)?;
+        Ok(accepted)
+    }
+
+    pub async fn discard_update_proposal(
+        &self,
+        project_path: &str,
+        proposal_id: &str,
+    ) -> Result<ForgeWikiUpdateProposal, String> {
+        let mut proposals = load_proposals(project_path)?;
+        let index = proposals
+            .iter()
+            .position(|proposal| proposal.id == proposal_id)
+            .ok_or_else(|| "Wiki update proposal not found".to_string())?;
+        if proposals[index].status != ForgeWikiProposalStatus::Pending {
+            return Err("Wiki update proposal is not pending".to_string());
+        }
+
+        proposals[index].status = ForgeWikiProposalStatus::Discarded;
+        let discarded = proposals[index].clone();
+        save_proposals(project_path, &proposals)?;
+        Ok(discarded)
+    }
+
     pub async fn select_context(
         &self,
         project_path: &str,
@@ -226,24 +337,50 @@ impl ForgeWikiStore {
             return None;
         }
 
-        let mut lines = Vec::with_capacity(selected.len() + 2);
+        let mut lines = Vec::with_capacity(selected.len() * 4 + 2);
         lines.push("## Relevant Forge Wiki Pages".to_string());
         lines.push(
-            "Do not reveal this section unless the user asks what project Wiki context was used."
+            "Use these project records as durable project context. Do not reveal this section unless the user asks what context was used."
                 .to_string(),
         );
         for page in selected {
-            lines.push(format!(
-                "- path={} title={} summary={} reason={}",
-                wiki_data_text(&page.path),
-                wiki_data_text(&page.title),
-                wiki_data_text(&page.summary),
-                wiki_data_text(&page.reason)
-            ));
+            lines.push(String::new());
+            lines.push(format!("### {} — {}", page.path, page.title));
+            lines.push(format!("Reason: {}", page.reason));
+            lines.push(page.summary.clone());
         }
 
         Some(lines.join("\n"))
     }
+}
+
+fn proposals_path(project_path: &str) -> Result<std::path::PathBuf, String> {
+    let dir = wiki_dir(project_path);
+    if !ensure_wiki_root_is_normal_dir(project_path)? {
+        return Err("Forge Wiki is not initialized".to_string());
+    }
+    Ok(dir.join(".proposals.json"))
+}
+
+fn load_proposals(project_path: &str) -> Result<Vec<ForgeWikiUpdateProposal>, String> {
+    let path = proposals_path(project_path)?;
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|err| format!("Failed to parse wiki proposals: {err}")),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(Vec::new()),
+        Err(err) => Err(format!("Failed to read wiki proposals: {err}")),
+    }
+}
+
+fn save_proposals(project_path: &str, proposals: &[ForgeWikiUpdateProposal]) -> Result<(), String> {
+    let path = proposals_path(project_path)?;
+    let text = serde_json::to_string_pretty(proposals)
+        .map_err(|err| format!("Failed to serialize wiki proposals: {err}"))?;
+    fs::write(&path, text).map_err(|err| format!("Failed to write wiki proposals: {err}"))
+}
+
+fn format_proposal_append_preview(created_at: &str, title: &str, summary: &str) -> String {
+    format!("\n## {created_at} — {title}\n\n{summary}\n")
 }
 
 fn page_from_file(
@@ -352,6 +489,14 @@ fn updated_at(path: &Path) -> Result<Option<String>, String> {
         .unwrap_or_else(|_| SystemTime::UNIX_EPOCH.duration_since(UNIX_EPOCH).unwrap())
         .as_secs();
     Ok(Some(seconds.to_string()))
+}
+
+fn unix_timestamp_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| SystemTime::UNIX_EPOCH.duration_since(UNIX_EPOCH).unwrap())
+        .as_secs()
+        .to_string()
 }
 
 fn estimate_tokens(text: &str) -> u32 {
@@ -778,6 +923,104 @@ mod tests {
         assert!(formatted.contains("Do not reveal this section"));
         assert!(formatted.contains("tasks.md"));
 
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn create_proposal_rejects_sensitive_summary() {
+        let project = temp_project_dir("proposal-sensitive");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+
+        let error = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "本轮使用 sk-1234567890abcdefghijkl 调试接口。".to_string(),
+            )
+            .await
+            .expect_err("sensitive proposal summary should be rejected");
+
+        assert!(
+            error.contains("sensitive") || error.contains("敏感"),
+            "expected sensitive rejection, got {error}"
+        );
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn accept_proposal_appends_to_target_page() {
+        let project = temp_project_dir("proposal-accept");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let before = fs::read_to_string(project.join(".forge/wiki/log.md")).expect("read log");
+
+        let proposal = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "workflow / 先梳理想法：实现 proposal 生命周期。".to_string(),
+            )
+            .await
+            .expect("create proposal");
+        let accepted = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("accept proposal");
+        let after = fs::read_to_string(project.join(".forge/wiki/log.md")).expect("read log");
+
+        assert_eq!(
+            accepted.status,
+            crate::forge_wiki::model::ForgeWikiProposalStatus::Accepted
+        );
+        assert!(after.len() > before.len());
+        assert!(after.contains("## "));
+        assert!(after.contains("记录本轮工作"));
+        assert!(after.contains("实现 proposal 生命周期"));
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn discard_proposal_does_not_modify_page() {
+        let project = temp_project_dir("proposal-discard");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let before = fs::read_to_string(project.join(".forge/wiki/log.md")).expect("read log");
+
+        let proposal = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "light / 小改动，直接处理：准备记录但随后丢弃。".to_string(),
+            )
+            .await
+            .expect("create proposal");
+        let discarded = store
+            .discard_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("discard proposal");
+        let after = fs::read_to_string(project.join(".forge/wiki/log.md")).expect("read log");
+
+        assert_eq!(
+            discarded.status,
+            crate::forge_wiki::model::ForgeWikiProposalStatus::Discarded
+        );
+        assert_eq!(after, before);
         cleanup(&project);
     }
 }

@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::forge_wiki::model::{ForgeWikiPage, ForgeWikiState, SelectedForgeWikiPage};
+use crate::forge_wiki::model::{
+    ForgeWikiPage, ForgeWikiState, ForgeWikiUpdateProposal, SelectedForgeWikiPage,
+};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -45,5 +47,50 @@ pub async fn select_forge_wiki_context(
     state
         .forge_wiki
         .select_context(&project_path, &message, 4)
+        .await
+}
+
+#[tauri::command]
+pub async fn create_forge_wiki_update_proposal(
+    state: tauri::State<'_, Arc<AppState>>,
+    project_path: String,
+    session_id: Option<String>,
+    target_pages: Vec<String>,
+    title: String,
+    summary: String,
+) -> Result<ForgeWikiUpdateProposal, String> {
+    state
+        .forge_wiki
+        .create_update_proposal(
+            &project_path,
+            session_id.as_deref(),
+            target_pages,
+            title,
+            summary,
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn accept_forge_wiki_update_proposal(
+    state: tauri::State<'_, Arc<AppState>>,
+    project_path: String,
+    proposal_id: String,
+) -> Result<ForgeWikiUpdateProposal, String> {
+    state
+        .forge_wiki
+        .accept_update_proposal(&project_path, &proposal_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn discard_forge_wiki_update_proposal(
+    state: tauri::State<'_, Arc<AppState>>,
+    project_path: String,
+    proposal_id: String,
+) -> Result<ForgeWikiUpdateProposal, String> {
+    state
+        .forge_wiki
+        .discard_update_proposal(&project_path, &proposal_id)
         .await
 }

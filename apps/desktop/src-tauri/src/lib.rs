@@ -88,6 +88,9 @@ pub fn run() {
             ipc::forge_wiki_handlers::list_forge_wiki_pages,
             ipc::forge_wiki_handlers::read_forge_wiki_page,
             ipc::forge_wiki_handlers::select_forge_wiki_context,
+            ipc::forge_wiki_handlers::create_forge_wiki_update_proposal,
+            ipc::forge_wiki_handlers::accept_forge_wiki_update_proposal,
+            ipc::forge_wiki_handlers::discard_forge_wiki_update_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

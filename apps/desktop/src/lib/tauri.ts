@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ForgeWikiPage,
   ForgeWikiState,
+  ForgeWikiUpdateProposal,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
@@ -277,6 +278,36 @@ export async function selectForgeWikiContext(
 ): Promise<SelectedForgeWikiPage[]> {
   if (!hasTauriRuntime()) return [];
   return invoke("select_forge_wiki_context", { projectPath, message });
+}
+
+export async function createForgeWikiUpdateProposal(
+  projectPath: string,
+  sessionId: string | null,
+  targetPages: string[],
+  title: string,
+  summary: string,
+): Promise<ForgeWikiUpdateProposal> {
+  return invoke("create_forge_wiki_update_proposal", {
+    projectPath,
+    sessionId,
+    targetPages,
+    title,
+    summary,
+  });
+}
+
+export async function acceptForgeWikiUpdateProposal(
+  projectPath: string,
+  proposalId: string,
+): Promise<ForgeWikiUpdateProposal> {
+  return invoke("accept_forge_wiki_update_proposal", { projectPath, proposalId });
+}
+
+export async function discardForgeWikiUpdateProposal(
+  projectPath: string,
+  proposalId: string,
+): Promise<ForgeWikiUpdateProposal> {
+  return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId });
 }
 
 function hasTauriRuntime(): boolean {
