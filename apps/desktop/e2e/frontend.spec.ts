@@ -515,8 +515,8 @@ test.describe("Workflow Router", () => {
       { event_type: "workflow_updated", session_id: sessionId, state: softWorkflow },
     ], 5);
 
-    const topBar = page.locator("main > div").first();
-    await expect(topBar.getByText("先梳理想法", { exact: true })).toBeVisible();
+    const workflowPill = page.getByTestId("workflow-status-pill");
+    await expect(workflowPill.getByText("先梳理想法", { exact: true })).toBeVisible();
     await expect(page.getByText("这个需求会影响多个部分，我会先帮你梳理方案。你也可以选择直接做。", { exact: true })).toBeVisible();
 
     await page.keyboard.down("Control");
@@ -524,6 +524,6 @@ test.describe("Workflow Router", () => {
     await page.keyboard.up("Control");
     await page.getByRole("option", { name: "排查问题" }).click();
 
-    await expect(topBar.getByText("遇到问题，正在排查", { exact: true })).toBeVisible();
+    await expect(workflowPill.getByText("遇到问题，正在排查", { exact: true })).toBeVisible();
   });
 });

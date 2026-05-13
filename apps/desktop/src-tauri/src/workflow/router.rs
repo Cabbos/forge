@@ -299,6 +299,14 @@ mod tests {
     }
 
     #[test]
+    fn strict_workflow_wins_over_verification_when_signals_overlap() {
+        let state = route("帮我验收：删除旧的 session 存储并迁移到新格式");
+        assert_eq!(state.route, WorkflowRoute::StrictWorkflow);
+        assert_eq!(state.phase, WorkflowPhase::Planning);
+        assert_eq!(state.gate, WorkflowGate::ApprovalRequired);
+    }
+
+    #[test]
     fn classifies_verification_request() {
         let state = route("帮我验收一下这个改动");
         assert_eq!(state.route, WorkflowRoute::Verification);

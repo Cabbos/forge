@@ -403,6 +403,7 @@ pub async fn kill_session(
         s.kill(&app_handle);
     }
     state.sessions.write().await.remove(&session_id);
+    state.workflow_states.write().await.remove(&session_id);
     if let Err(error) = delete_session_snapshot(&session_id) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }

@@ -9,8 +9,9 @@ export function WorkflowStatusPill({ workflow }: { workflow: WorkflowState | nul
 
   return (
     <span
+      data-testid="workflow-status-pill"
       className={cn(
-        "inline-flex max-w-[220px] shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-[10px]",
+        "inline-flex min-w-0 max-w-[180px] shrink items-center gap-1 rounded-md border px-2 py-0.5 text-[10px]",
         strict ? "border-amber-500/30 text-amber-300" : "border-border text-muted-foreground",
       )}
       title={`${workflow.developer_label}: ${workflow.reason}`}
