@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory } from "./protocol";
+import type {
+  MemoryPatch,
+  MemoryScope,
+  SelectedContextMemory,
+  WikiMemory,
+  WorkflowOverrideAction,
+  WorkflowState,
+} from "./protocol";
 
 const WORKING_DIR_KEY = "tui-to-gui-working-dir";
 const FILE_OPEN_TEMPLATE_KEY = "tui-to-gui-file-open-template";
@@ -227,6 +234,18 @@ export async function selectContextMemories(
 ): Promise<SelectedContextMemory[]> {
   if (!hasTauriRuntime()) return [];
   return invoke("select_context_memories", { message, projectPath: projectPath ?? null });
+}
+
+export async function getWorkflowState(sessionId: string): Promise<WorkflowState | null> {
+  if (!hasTauriRuntime()) return null;
+  return invoke("get_workflow_state", { sessionId });
+}
+
+export async function overrideWorkflowRoute(
+  sessionId: string,
+  action: WorkflowOverrideAction,
+): Promise<WorkflowState> {
+  return invoke("override_workflow_route", { sessionId, action });
 }
 
 function hasTauriRuntime(): boolean {

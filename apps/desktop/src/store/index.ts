@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
-import type { BlockState, SelectedContextMemory, StreamEvent, SessionState, WikiMemory } from "../lib/protocol";
+import type {
+  BlockState,
+  SelectedContextMemory,
+  StreamEvent,
+  SessionState,
+  WikiMemory,
+  WorkflowState,
+} from "../lib/protocol";
 import {
   DEFAULT_PROVIDER_ID,
   getDefaultModel,
@@ -17,6 +24,7 @@ interface AppStore {
   hydrated: boolean;
   memories: WikiMemory[];
   selectedContextBySession: Map<string, SelectedContextMemory[]>;
+  workflowBySession: Map<string, WorkflowState>;
 
   // Provider
   selectedProvider: ProviderId;
@@ -31,6 +39,7 @@ interface AppStore {
   removeSession: (id: string) => void;
   setMemories: (memories: WikiMemory[]) => void;
   upsertMemory: (memory: WikiMemory) => void;
+  setWorkflowState: (sessionId: string, workflow: WorkflowState) => void;
   updateSessionStatus: (id: string, status: SessionState["status"]) => void;
   updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => void;
 
@@ -61,10 +70,14 @@ interface PersistedSession {
   model: string;
   contextWindowTokens?: number | null;
   status: SessionState["status"];
+  workflowState?: WorkflowState | null;
 }
 
 // Save sessions to IndexedDB. Returns a promise so callers can await when needed.
-function persistSessions(sessions: Map<string, SessionState>) {
+function persistSessions(
+  sessions: Map<string, SessionState>,
+  workflowBySession: Map<string, WorkflowState>,
+) {
   const data: PersistedSession[] = [];
   sessions.forEach((s) => {
     data.push({
@@ -73,6 +86,7 @@ function persistSessions(sessions: Map<string, SessionState>) {
       model: s.model,
       contextWindowTokens: s.contextWindowTokens ?? null,
       status: s.status,
+      workflowState: workflowBySession.get(s.id) ?? null,
     });
   });
   return idbSet(PERSIST_KEY, data).catch(() => {});
@@ -124,6 +138,7 @@ export const useStore = create<AppStore>((set, get) => ({
   hydrated: false,
   memories: [],
   selectedContextBySession: new Map(),
+  workflowBySession: new Map(),
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
   selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),
@@ -156,13 +171,18 @@ export const useStore = create<AppStore>((set, get) => ({
         : getDefaultModel(selectedProvider);
       if (data && data.length > 0) {
         const sessions = new Map<string, SessionState>();
+        const workflowBySession = new Map<string, WorkflowState>();
         for (const s of data) {
           const blocks = await loadBlocks(s.id);
           // Backend sessions don't survive restarts — force stopped
           sessions.set(s.id, { ...s, blocks, costUsd: 0, streaming: false, status: "stopped" as const });
+          if (s.workflowState) {
+            workflowBySession.set(s.id, s.workflowState);
+          }
         }
         set({
           sessions,
+          workflowBySession,
           hydrated: true,
           theme: (savedTheme as "light" | "dark") || get().theme,
           selectedProvider,
@@ -220,23 +240,32 @@ export const useStore = create<AppStore>((set, get) => ({
       streaming: false,
     });
     set({ sessions, activeSessionId: id });
-    persistSessions(sessions);
+    persistSessions(sessions, get().workflowBySession);
   },
 
   removeSession: (id) => {
     const sessions = new Map(get().sessions);
     const selectedContextBySession = new Map(get().selectedContextBySession);
+    const workflowBySession = new Map(get().workflowBySession);
     sessions.delete(id);
     selectedContextBySession.delete(id);
+    workflowBySession.delete(id);
     const activeSessionId =
       get().activeSessionId === id ? null : get().activeSessionId;
-    set({ sessions, activeSessionId, selectedContextBySession });
+    set({ sessions, activeSessionId, selectedContextBySession, workflowBySession });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
-      persistSessions(sessions),
+      persistSessions(sessions, workflowBySession),
       idbDel(BLOCKS_PREFIX + id).catch(() => {}),
     ]).catch(() => {});
+  },
+
+  setWorkflowState: (sessionId, workflow) => {
+    const workflowBySession = new Map(get().workflowBySession);
+    workflowBySession.set(sessionId, workflow);
+    set({ workflowBySession });
+    persistSessions(get().sessions, workflowBySession);
   },
 
   updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => {
@@ -248,7 +277,7 @@ export const useStore = create<AppStore>((set, get) => ({
     );
     sessions.set(sessionId, { ...session, blocks });
     set({ sessions });
-    persistSessions(sessions);
+    persistSessions(sessions, get().workflowBySession);
     persistBlocks(sessionId, blocks);
   },
 
@@ -259,7 +288,7 @@ export const useStore = create<AppStore>((set, get) => ({
       sessions.set(id, { ...session, status });
     }
     set({ sessions });
-    persistSessions(sessions);
+    persistSessions(sessions, get().workflowBySession);
   },
 
   addUserMessage: (sessionId, text) => {
@@ -293,6 +322,11 @@ export const useStore = create<AppStore>((set, get) => ({
   dispatchOutputEvent: (event) => {
     const { session_id, event_type } = event;
 
+    if (event_type === "workflow_updated") {
+      get().setWorkflowState(session_id, event.state);
+      return;
+    }
+
     if (event_type === "memory_selection") {
       const selectedContextBySession = new Map(get().selectedContextBySession);
       selectedContextBySession.set(session_id, event.selected);
@@ -324,7 +358,7 @@ export const useStore = create<AppStore>((set, get) => ({
         };
         sessions.set(session_id, session);
         set({ sessions });
-        persistSessions(sessions);
+        persistSessions(sessions, get().workflowBySession);
         return;
       }
       return;
@@ -365,7 +399,7 @@ export const useStore = create<AppStore>((set, get) => ({
         streaming: false,
       });
       set({ sessions });
-      persistSessions(sessions);
+      persistSessions(sessions, get().workflowBySession);
       return;
     }
 
@@ -377,7 +411,7 @@ export const useStore = create<AppStore>((set, get) => ({
         streaming: false,
       });
       set({ sessions });
-      persistSessions(sessions);
+      persistSessions(sessions, get().workflowBySession);
       persistBlocksNow(session_id, blocks);
       return;
     }
@@ -390,7 +424,7 @@ export const useStore = create<AppStore>((set, get) => ({
         blocks,
       });
       set({ sessions });
-      persistSessions(sessions);
+      persistSessions(sessions, get().workflowBySession);
       return;
     }
 
