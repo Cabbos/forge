@@ -274,6 +274,14 @@ mod tests {
     }
 
     #[test]
+    fn strict_workflow_wins_over_recovery_when_signals_overlap() {
+        let state = route("构建失败了，删除旧的 session 存储并迁移到新格式");
+        assert_eq!(state.route, WorkflowRoute::StrictWorkflow);
+        assert_eq!(state.phase, WorkflowPhase::Planning);
+        assert_eq!(state.gate, WorkflowGate::ApprovalRequired);
+    }
+
+    #[test]
     fn classifies_failure_as_recovery() {
         let state = route("构建失败了，dev 状态下会挂掉");
         assert_eq!(state.route, WorkflowRoute::Recovery);
@@ -322,14 +330,14 @@ pub fn classify_workflow(session_id: &str, text: &str, updated_at: u64) -> Workf
     if let Some(signals) = collect_signals(&normalized, DIRECT_SIGNALS) {
         return route_state(session_id, WorkflowRoute::Direct, signals, updated_at);
     }
+    if let Some(signals) = collect_signals(&normalized, STRICT_WORKFLOW_SIGNALS) {
+        return route_state(session_id, WorkflowRoute::StrictWorkflow, signals, updated_at);
+    }
     if let Some(signals) = collect_signals(&normalized, RECOVERY_SIGNALS) {
         return route_state(session_id, WorkflowRoute::Recovery, signals, updated_at);
     }
     if let Some(signals) = collect_signals(&normalized, VERIFICATION_SIGNALS) {
         return route_state(session_id, WorkflowRoute::Verification, signals, updated_at);
-    }
-    if let Some(signals) = collect_signals(&normalized, STRICT_WORKFLOW_SIGNALS) {
-        return route_state(session_id, WorkflowRoute::StrictWorkflow, signals, updated_at);
     }
     if let Some(signals) = collect_signals(&normalized, WORKFLOW_SIGNALS) {
         return route_state(session_id, WorkflowRoute::Workflow, signals, updated_at);
