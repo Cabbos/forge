@@ -40,6 +40,47 @@ export interface MemoryPatch {
   tags?: string[] | null;
 }
 
+export type WorkflowRoute =
+  | "direct"
+  | "light"
+  | "workflow"
+  | "strict_workflow"
+  | "recovery"
+  | "verification";
+
+export type WorkflowPhase =
+  | "idle"
+  | "classifying"
+  | "clarifying"
+  | "designing"
+  | "spec"
+  | "planning"
+  | "executing"
+  | "debugging"
+  | "verifying"
+  | "done"
+  | "blocked";
+
+export type WorkflowGate = "none" | "soft" | "approval_required";
+
+export type WorkflowOverrideAction = "direct" | "plan_first" | "debug" | "verify";
+
+export interface WorkflowState {
+  session_id: string;
+  route: WorkflowRoute;
+  phase: WorkflowPhase;
+  beginner_label: string;
+  developer_label: string;
+  matched_signals: string[];
+  reason: string;
+  gate: WorkflowGate;
+  override_actions: WorkflowOverrideAction[];
+  spec_path: string | null;
+  plan_path: string | null;
+  checkpoint_id: string | null;
+  updated_at: number;
+}
+
 export type StreamEvent =
   // ── AI Thinking ──
   | { event_type: "thinking_start"; session_id: string; block_id: string }
@@ -76,6 +117,7 @@ export type StreamEvent =
   | { event_type: "memory_selection"; session_id: string; selected: SelectedContextMemory[] }
   | { event_type: "memory_candidate"; session_id: string; memory: WikiMemory }
   | { event_type: "memory_updated"; session_id: string; memory: WikiMemory }
+  | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }
   | { event_type: "session_status"; session_id: string; status: string }

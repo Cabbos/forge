@@ -15,6 +15,7 @@ use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
+use crate::workflow::classify_workflow;
 
 #[derive(serde::Serialize)]
 pub struct FilePreviewLine {
@@ -312,6 +313,13 @@ fn resolve_working_dir(working_dir: &str) -> Result<std::path::PathBuf, String> 
     Ok(resolved)
 }
 
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[tauri::command]
 pub async fn send_input(
     state: tauri::State<'_, Arc<AppState>>,
@@ -323,6 +331,19 @@ pub async fn send_input(
     match session {
         Some(s) => {
             let project_path = s.harness.working_dir.to_string_lossy().to_string();
+            let workflow = classify_workflow(&session_id, &text, now_ms());
+            state
+                .workflow_states
+                .write()
+                .await
+                .insert(session_id.clone(), workflow.clone());
+            let _ = app_handle.emit(
+                "session-output",
+                StreamEvent::WorkflowUpdated {
+                    session_id: session_id.clone(),
+                    state: workflow,
+                },
+            );
             let selected = state
                 .wiki_memory
                 .select(&text, Some(&project_path), 8)
@@ -382,6 +403,7 @@ pub async fn kill_session(
         s.kill(&app_handle);
     }
     state.sessions.write().await.remove(&session_id);
+    state.workflow_states.write().await.remove(&session_id);
     if let Err(error) = delete_session_snapshot(&session_id) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }

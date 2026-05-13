@@ -36,6 +36,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   const pendingInput = useStore((s) => s.pendingInput);
   const setPendingInput = useStore((s) => s.setPendingInput);
   const selectedContextCount = useStore((s) => s.selectedContextBySession.get(sessionId)?.length ?? 0);
+  const workflow = useStore((s) => s.workflowBySession.get(sessionId) ?? null);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
   const [atResults, setAtResults] = useState<string[]>([]);
   const valueRef = useRef("");
@@ -209,6 +210,16 @@ export function InputBar({ sessionId }: InputBarProps) {
       {selectedContextCount > 0 && (
         <div className="mb-2 text-[11px] text-muted-foreground/75">
           上轮带入 {selectedContextCount} 条相关背景
+        </div>
+      )}
+      {workflow?.gate === "soft" && (
+        <div className="mb-2 rounded-md border border-border bg-card px-3 py-2 text-[11px] text-muted-foreground">
+          这个需求会影响多个部分，我会先帮你梳理方案。你也可以选择直接做。
+        </div>
+      )}
+      {workflow?.gate === "approval_required" && (
+        <div className="mb-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+          这个请求风险较高，建议先确认方案和步骤。
         </div>
       )}
 

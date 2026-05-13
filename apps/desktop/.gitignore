@@ -25,3 +25,4 @@ Thumbs.db
 # Local tool state
 .ai-studio/
 .playwright-cli/
+.superpowers/

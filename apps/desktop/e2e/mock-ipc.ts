@@ -22,6 +22,8 @@ export interface MockIPCHandlers {
   update_memory?: (args: Record<string, unknown>) => unknown;
   forget_memory?: (args: Record<string, unknown>) => unknown;
   pin_memory?: (args: Record<string, unknown>) => unknown;
+  get_workflow_state?: (args: Record<string, unknown>) => unknown;
+  override_workflow_route?: (args: Record<string, unknown>) => unknown;
 }
 
 export function createMockIPC(handlers: MockIPCHandlers = {}) {
@@ -85,6 +87,24 @@ export function createMockIPC(handlers: MockIPCHandlers = {}) {
         return handlers.forget_memory?.(args) ?? applyMemoryPatch({ ...args, patch: { status: "forgotten" } });
       case "pin_memory":
         return handlers.pin_memory?.(args) ?? applyMemoryPatch({ ...args, patch: { status: "pinned" } });
+      case "get_workflow_state":
+        return handlers.get_workflow_state?.(args) ?? null;
+      case "override_workflow_route":
+        return handlers.override_workflow_route?.(args) ?? {
+          session_id: String(args.sessionId ?? "session"),
+          route: args.action === "debug" ? "recovery" : args.action === "verify" ? "verification" : args.action === "plan_first" ? "workflow" : "direct",
+          phase: args.action === "debug" ? "debugging" : args.action === "verify" ? "verifying" : args.action === "plan_first" ? "clarifying" : "idle",
+          beginner_label: args.action === "debug" ? "遇到问题，正在排查" : args.action === "verify" ? "正在检查结果" : args.action === "plan_first" ? "先梳理想法" : "直接回答",
+          developer_label: String(args.action ?? "direct"),
+          matched_signals: ["manual override"],
+          reason: "用户手动切换了当前工作方式。",
+          gate: "none",
+          override_actions: ["direct", "plan_first", "debug", "verify"],
+          spec_path: null,
+          plan_path: null,
+          checkpoint_id: null,
+          updated_at: Date.now(),
+        };
       default:
         return undefined;
     }

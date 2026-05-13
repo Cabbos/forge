@@ -9,10 +9,11 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { MessageSquarePlus, Moon, Sun } from "lucide-react";
+import { Bug, CheckCircle2, Compass, MessageSquarePlus, Moon, Sun, Zap } from "lucide-react";
 import { useStore } from "@/store";
 import { useSession } from "@/hooks/useSession";
-import { getDefaultWorkingDir, getRememberedWorkingDir } from "@/lib/tauri";
+import { getDefaultWorkingDir, getRememberedWorkingDir, overrideWorkflowRoute } from "@/lib/tauri";
+import type { WorkflowOverrideAction } from "@/lib/protocol";
 import { getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
 
 interface CommandPaletteProps {
@@ -27,6 +28,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const sessions = useStore((s) => s.sessions);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
+  const activeSessionId = useStore((s) => s.activeSessionId);
+  const setWorkflowState = useStore((s) => s.setWorkflowState);
   const { create } = useSession();
 
   // Keyboard shortcut
@@ -57,6 +60,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     }
   };
 
+  const handleWorkflowOverride = async (action: WorkflowOverrideAction) => {
+    if (!activeSessionId) return;
+    onOpenChange(false);
+    try {
+      const workflow = await overrideWorkflowRoute(activeSessionId, action);
+      setWorkflowState(activeSessionId, workflow);
+    } catch (error) {
+      console.error("Failed to override workflow:", error);
+    }
+  };
+
   const sessionList = Array.from(sessions.values());
 
   return (
@@ -72,6 +86,30 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               新建任务
             </CommandItem>
           </CommandGroup>
+
+          {activeSessionId && (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="工作方式">
+                <CommandItem onSelect={() => handleWorkflowOverride("plan_first")}>
+                  <Compass className="size-4" />
+                  先梳理方案
+                </CommandItem>
+                <CommandItem onSelect={() => handleWorkflowOverride("direct")}>
+                  <Zap className="size-4" />
+                  直接处理
+                </CommandItem>
+                <CommandItem onSelect={() => handleWorkflowOverride("debug")}>
+                  <Bug className="size-4" />
+                  排查问题
+                </CommandItem>
+                <CommandItem onSelect={() => handleWorkflowOverride("verify")}>
+                  <CheckCircle2 className="size-4" />
+                  检查结果
+                </CommandItem>
+              </CommandGroup>
+            </>
+          )}
 
           {sessionList.length > 0 && (
             <>

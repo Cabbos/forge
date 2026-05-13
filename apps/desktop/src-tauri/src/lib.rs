@@ -11,6 +11,7 @@ mod parser;
 mod protocol;
 pub mod settings;
 mod state;
+mod workflow;
 
 use harness::Harness;
 use state::AppState;
@@ -79,6 +80,8 @@ pub fn run() {
             ipc::memory_handlers::forget_memory,
             ipc::memory_handlers::pin_memory,
             ipc::memory_handlers::select_context_memories,
+            ipc::workflow_handlers::get_workflow_state,
+            ipc::workflow_handlers::override_workflow_route,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
