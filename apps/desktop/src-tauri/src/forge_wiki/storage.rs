@@ -257,21 +257,20 @@ impl ForgeWikiStore {
             &proposal.summary,
         );
         validate_proposal_for_accept(&proposal, &append_text)?;
-        let page_paths = proposal
-            .target_pages
-            .iter()
-            .map(|target| {
-                resolve_wiki_page_path(project_path, target).map(|path| (target.clone(), path))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        for (target, page_path) in page_paths {
-            let mut existing = fs::read_to_string(&page_path).unwrap_or_default();
+        let mut page_updates = Vec::with_capacity(proposal.target_pages.len());
+        for target in &proposal.target_pages {
+            let page_path = resolve_wiki_page_path(project_path, target)?;
+            let mut existing = fs::read_to_string(&page_path)
+                .map_err(|err| format!("Failed to read wiki page {target}: {err}"))?;
             if !existing.ends_with('\n') {
                 existing.push('\n');
             }
             existing.push_str(&append_text);
-            fs::write(&page_path, existing)
+            page_updates.push((target.clone(), page_path, existing));
+        }
+
+        for (target, page_path, next_content) in page_updates {
+            fs::write(&page_path, next_content)
                 .map_err(|err| format!("Failed to update wiki page {target}: {err}"))?;
         }
 
@@ -1147,8 +1146,8 @@ mod tests {
             .expect("stored proposal");
 
         assert!(
-            error.contains("Failed to update wiki page log.md"),
-            "expected page update failure, got {error}"
+            error.contains("Failed to read wiki page log.md"),
+            "expected page preflight failure, got {error}"
         );
         assert_eq!(stored.status, ForgeWikiProposalStatus::Pending);
 
@@ -1170,6 +1169,85 @@ mod tests {
         assert_eq!(
             after
                 .matches("retry should append after write problem is fixed")
+                .count(),
+            1
+        );
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn accept_multi_target_failure_does_not_partially_append() {
+        let project = temp_project_dir("proposal-multi-target-failure");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+        let log_path = project.join(".forge/wiki/log.md");
+        let tasks_path = project.join(".forge/wiki/tasks.md");
+        let log_before = fs::read_to_string(&log_path).expect("read log");
+
+        let proposal = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string(), "tasks.md".to_string()],
+                "记录多页面工作".to_string(),
+                "multi target retry should not duplicate successful preflight pages".to_string(),
+            )
+            .await
+            .expect("create proposal");
+
+        fs::remove_file(&tasks_path).expect("remove tasks file");
+        fs::create_dir(&tasks_path).expect("replace tasks file with directory");
+
+        let error = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect_err("second target failure should return an error");
+        let log_after_failure = fs::read_to_string(&log_path).expect("read log after failure");
+        let proposals_text =
+            fs::read_to_string(project.join(".forge/wiki/.proposals.json")).expect("proposals");
+        let proposals: Vec<ForgeWikiUpdateProposal> =
+            serde_json::from_str(&proposals_text).expect("parse proposals");
+        let stored = proposals
+            .iter()
+            .find(|stored| stored.id == proposal.id)
+            .expect("stored proposal");
+
+        assert!(
+            error.contains("Failed to read wiki page tasks.md"),
+            "expected target preflight read failure, got {error}"
+        );
+        assert_eq!(log_after_failure, log_before);
+        assert_eq!(stored.status, ForgeWikiProposalStatus::Pending);
+
+        fs::remove_dir(&tasks_path).expect("remove blocking directory");
+        fs::write(&tasks_path, "# 当前任务\n\n").expect("restore tasks file");
+
+        let accepted = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("retry accept");
+        let accepted_again = store
+            .accept_update_proposal(project.to_str().unwrap(), &proposal.id)
+            .await
+            .expect("repeat accept");
+        let log_after_success = fs::read_to_string(&log_path).expect("read log after success");
+        let tasks_after_success =
+            fs::read_to_string(&tasks_path).expect("read tasks after success");
+
+        assert_eq!(accepted.status, ForgeWikiProposalStatus::Accepted);
+        assert_eq!(accepted_again.status, ForgeWikiProposalStatus::Accepted);
+        assert_eq!(
+            log_after_success
+                .matches("multi target retry should not duplicate successful preflight pages")
+                .count(),
+            1
+        );
+        assert_eq!(
+            tasks_after_success
+                .matches("multi target retry should not duplicate successful preflight pages")
                 .count(),
             1
         );
