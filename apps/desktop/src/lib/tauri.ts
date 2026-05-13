@@ -354,7 +354,7 @@ function fallbackForgeWikiState(projectPath: string): ForgeWikiState {
     exists: false,
     wiki_dir: normalizedProjectPath ? joinPath(normalizedProjectPath, ".forge", "wiki") : "",
     pages: [],
-    message: "Forge Wiki is unavailable in the browser runtime.",
+    message: "项目记录在浏览器预览中不可用。",
   };
 }
 

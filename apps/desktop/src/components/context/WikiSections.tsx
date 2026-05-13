@@ -313,21 +313,21 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
         />
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {!currentProjectPath ? (
-            <EmptyState label="打开项目后可以建立项目 Wiki" />
+            <EmptyState label="打开项目后可以建立项目记录" />
           ) : !forgeWikiState?.exists ? (
             <div className="space-y-3 px-3 py-5 text-center">
-              <EmptyState label="还没有项目 Wiki" compact />
+              <EmptyState label="还没有项目记录" compact />
               <button
                 type="button"
                 onClick={handleInitForgeWiki}
                 disabled={busyId === "forge-wiki:init"}
                 className="rounded border border-border bg-secondary px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
               >
-                建立项目 Wiki
+                建立项目记录
               </button>
             </div>
           ) : forgeWikiState.pages.length === 0 ? (
-            <EmptyState label="还没有项目 Wiki" />
+            <EmptyState label="还没有项目记录" />
           ) : (
             <div className="divide-y divide-border">
               {forgeWikiState.pages.map((page) => (
@@ -382,10 +382,10 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
       </section>
 
       <section>
-        <SectionHeader title="上下文记忆" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
+        <SectionHeader title="已保存背景" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {projectMemories.length === 0 ? (
-            <EmptyState label="还没有上下文记忆" />
+            <EmptyState label="还没有已保存背景" />
           ) : (
             <div className="divide-y divide-border">
               {projectMemories.map((memory) => (

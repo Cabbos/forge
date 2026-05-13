@@ -370,7 +370,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                 </span>
                 <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1.5 px-3 min-w-[160px] shadow-xl z-20 hidden group-hover:block"
                   style={{ background: "var(--popover)", border: "1px solid var(--border)" }}>
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">已启用插件</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">已启用能力</div>
                   {activeSkills.map((s) => (
                     <div key={s.id} className="text-xs text-foreground py-0.5 font-mono" style={{ color: "#5B9BD5" }}>
                       {s.name}

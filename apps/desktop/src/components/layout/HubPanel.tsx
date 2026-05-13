@@ -84,7 +84,7 @@ export function HubPanel() {
         }}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-4 py-3">
-          <span className="text-xs font-semibold text-foreground">上下文</span>
+          <span className="text-xs font-semibold text-foreground">工作台</span>
           <button
             onClick={() => setOpen(false)}
             className="text-muted-foreground transition-colors hover:text-foreground"
@@ -98,19 +98,20 @@ export function HubPanel() {
           <div className="flex flex-col gap-4 p-4">
             <CurrentTaskCard workflow={workflow} />
 
+            <ProductLayerHeader
+              title="上下文"
+              meta={activeContextItems.length > 0 ? `${activeContextItems.length} 条` : null}
+            />
+
             <ActiveContextSection items={activeContextItems} />
 
             <WikiSections sessionId={activeId} projectPath={projectPath} />
 
             <ContextFilesSection files={contextFiles} />
 
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-[11px] font-medium text-muted-foreground">项目状态</h3>
-                <span className="text-[10px] text-muted-foreground/70">轻量</span>
-              </div>
-              <ProjectStatusCard sessionId={activeId} />
-            </section>
+            <ProductLayerHeader title="交付" meta="最近状态" />
+
+            <ProjectStatusCard sessionId={activeId} />
 
             {session && (
               <div className="flex flex-col gap-1 border-t border-border pt-4">
@@ -129,6 +130,15 @@ export function HubPanel() {
         </ScrollArea>
       </aside>
     </>
+  );
+}
+
+function ProductLayerHeader({ title, meta }: { title: string; meta?: string | null }) {
+  return (
+    <div className="flex items-center justify-between border-t border-border pt-3 first:border-t-0 first:pt-0">
+      <h3 className="text-[11px] font-semibold text-foreground">{title}</h3>
+      {meta && <span className="text-[10px] text-muted-foreground/70">{meta}</span>}
+    </div>
   );
 }
 

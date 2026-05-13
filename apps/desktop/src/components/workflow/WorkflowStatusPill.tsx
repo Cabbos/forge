@@ -28,7 +28,7 @@ export function WorkflowStatusPill({
         strict ? "border-amber-500/30 text-amber-300" : "border-border text-muted-foreground",
         onOpenContext && "hover:bg-secondary hover:text-foreground",
       )}
-      title={`${workflow.developer_label}: ${workflow.reason}`}
+      title={workflow.reason || mode.description}
     >
       {strict ? <ShieldAlert className="size-3" /> : <Compass className="size-3" />}
       <span className="truncate">{label}</span>

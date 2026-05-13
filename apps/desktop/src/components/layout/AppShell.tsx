@@ -107,10 +107,10 @@ export function AppShell() {
             <button
               onClick={() => window.dispatchEvent(new Event("toggle-hub"))}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              title="打开上下文"
+              title="打开工作台"
             >
               <PanelRightOpen className="size-4" />
-              上下文
+              工作台
             </button>
           </div>
         </div>

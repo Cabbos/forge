@@ -457,14 +457,14 @@ test.describe("Living Wiki context panel", () => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
     const projectRecords = page.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
     const updateProposals = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
-    await expect(projectRecords.getByText("还没有项目 Wiki", { exact: true })).toBeVisible();
+    await expect(projectRecords.getByText("还没有项目记录", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "建立项目 Wiki" }).click();
+    await page.getByRole("button", { name: "建立项目记录" }).click();
     await expect(projectRecords.getByText(/当前任务|项目概览/).first()).toBeVisible();
 
     await simulateStream(page, sessionId, [
@@ -617,10 +617,10 @@ test.describe("Living Wiki context panel", () => {
 
     await expect(page.getByText("本轮已带入 1 条背景")).toBeVisible();
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
 
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
-    const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "上下文记忆" }) });
+    const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "已保存背景" }) });
 
     await expect(selectedContext.getByText(selectedMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "建议更新记录" })).toBeVisible();
@@ -628,8 +628,8 @@ test.describe("Living Wiki context panel", () => {
     await expect(page.getByTitle("接受")).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目记录", exact: true })).toBeVisible();
     await expect(projectMemories.getByText(projectMemory.body)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "项目状态" })).toBeVisible();
-    await expect(page.getByText("轻量")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
+    await expect(page.getByText("最近状态")).toBeVisible();
     await expect(page.getByText("预览运行中")).toBeVisible();
     await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
   });
@@ -681,7 +681,7 @@ test.describe("Living Wiki context panel", () => {
       // @ts-expect-error Tauri listener registry installed by setup()
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
 
     await simulateStream(page, sessionId, [
       { event_type: "memory_candidate", session_id: sessionId, memory: candidateMemory },
@@ -789,7 +789,7 @@ test.describe("Task Mode", () => {
       },
     ], 5);
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
     const currentTask = page.locator("section").filter({ has: page.getByRole("heading", { name: "当前任务" }) });
 
     await expect(currentTask.getByText("拆成步骤")).toBeVisible();
@@ -858,7 +858,10 @@ test.describe("Task Mode", () => {
     await expect(pill).toContainText("已带入 1");
     await pill.click();
 
-    await expect(page.locator("aside").last().getByText("上下文", { exact: true }).first()).toBeVisible();
+    await expect(page.locator("aside").last().getByText("工作台", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前任务" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "上下文", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "本轮上下文" })).toBeVisible();
   });
 });
@@ -908,7 +911,7 @@ test.describe("Context Activation", () => {
       { event_type: "forge_wiki_context_selected", session_id: sessionId, selected: [selectedPage] },
     ], 5);
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
     const activeContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
 
     await expect(activeContext.getByText("已带入 2 条背景")).toBeVisible();
@@ -936,7 +939,7 @@ test.describe("Context Activation", () => {
 
     await page.locator("textarea").fill("不要记住这个，只是临时测试：以后默认用亮色主题。");
     await page.locator("textarea").press("Enter");
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
 
     const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
     await expect(inbox.getByText("没有待确认的记录更新")).toBeVisible();
