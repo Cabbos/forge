@@ -7,6 +7,7 @@ import { HubPanel } from "./HubPanel";
 import { CapabilityDrawer } from "./CapabilityDrawer";
 import { useOutputStream } from "@/hooks/useOutputStream";
 import { CommandPalette } from "@/components/CommandPalette";
+import { WorkflowStatusPill } from "@/components/workflow/WorkflowStatusPill";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
 import { getRememberedWorkingDir } from "@/lib/tauri";
 import { getProviderModelLabel, getProjectDisplay, getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
@@ -19,6 +20,7 @@ export function AppShell() {
   const [workingDir, setWorkingDir] = useState<string | null>(() => getRememberedWorkingDir());
   const activeSessionId = useStore((s) => s.activeSessionId);
   const sessions = useStore((s) => s.sessions);
+  const workflow = useStore((s) => activeSessionId ? s.workflowBySession.get(activeSessionId) ?? null : null);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
@@ -65,6 +67,7 @@ export function AppShell() {
                   <span className="size-1.5 rounded-full" style={{ background: status.color }} />
                   {status.label}
                 </span>
+                <WorkflowStatusPill workflow={workflow} />
               </div>
               <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground/75">
                 <FolderOpen className="size-3 shrink-0" />

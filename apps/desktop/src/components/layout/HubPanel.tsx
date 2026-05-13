@@ -4,6 +4,7 @@ import { useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WikiSections } from "@/components/context/WikiSections";
 import { ProjectStatusCard } from "./ProjectStatusCard";
+import { CurrentTaskCard } from "@/components/workflow/CurrentTaskCard";
 import { cn } from "@/lib/utils";
 import { formatContextWindow, getModelContextWindow, getProviderModelLabel } from "@/lib/providers";
 import { getProjectRuntimeStatus } from "@/lib/tauri";
@@ -25,6 +26,7 @@ export function HubPanel() {
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
+  const workflow = useStore((s) => activeId ? s.workflowBySession.get(activeId) ?? null : null);
   const session = activeId ? sessions.get(activeId) : null;
   const contextWindow = session?.contextWindowTokens ?? getModelContextWindow(session?.model);
   const contextWindowLabel = formatContextWindow(contextWindow);
@@ -84,6 +86,8 @@ export function HubPanel() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-4 p-4">
+            <CurrentTaskCard workflow={workflow} />
+
             <WikiSections sessionId={activeId} projectPath={projectPath} />
 
             <ContextFilesSection files={contextFiles} />
