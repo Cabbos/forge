@@ -459,8 +459,8 @@ test.describe("Living Wiki context panel", () => {
 
     await page.getByTitle("打开上下文").click();
     const projectRecords = page.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
-    const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮带入" }) });
-    const updateProposals = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新项目记录" }) });
+    const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
+    const updateProposals = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
     await expect(projectRecords.getByText("还没有项目 Wiki", { exact: true })).toBeVisible();
 
@@ -472,7 +472,7 @@ test.describe("Living Wiki context panel", () => {
     ], 5);
 
     await expect(selectedContext.getByText(selectedPage.summary)).toBeVisible();
-    await expect(selectedContext.getByText("已带入 1 条")).toBeVisible();
+    await expect(selectedContext.getByText("已带入 1 条背景")).toBeVisible();
 
     await simulateStream(page, sessionId, [
       { event_type: "forge_wiki_update_proposed", session_id: sessionId, proposal },
@@ -615,23 +615,85 @@ test.describe("Living Wiki context panel", () => {
       },
     ], 5);
 
-    await expect(page.getByText("上轮带入 1 条相关背景")).toBeVisible();
+    await expect(page.getByText("本轮已带入 1 条背景")).toBeVisible();
 
     await page.getByTitle("打开上下文").click();
 
-    const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮带入" }) });
+    const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
     const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "上下文记忆" }) });
 
     await expect(selectedContext.getByText(selectedMemory.body)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "待确认" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "建议更新记录" })).toBeVisible();
     await expect(page.getByText(candidateMemory.body)).toBeVisible();
-    await expect(page.getByTitle("确认记忆")).toBeVisible();
+    await expect(page.getByTitle("接受")).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目记录", exact: true })).toBeVisible();
     await expect(projectMemories.getByText(projectMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目状态" })).toBeVisible();
     await expect(page.getByText("轻量")).toBeVisible();
     await expect(page.getByText("预览运行中")).toBeVisible();
     await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
+  });
+
+  test("groups memory candidates and Wiki proposals as update suggestions", async ({ page }) => {
+    const sessionId = "memory-inbox-session";
+    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const now = "2026-05-13T00:00:00.000Z";
+    const candidateMemory = {
+      id: "candidate-1",
+      category: "decision" as const,
+      scope: "project" as const,
+      status: "candidate" as const,
+      title: "项目已定方案：上下文优先",
+      body: "右侧面板优先展示当前任务和本轮上下文。",
+      project_path: projectPath,
+      source_session_id: sessionId,
+      source_message_ids: [],
+      confidence: 0.76,
+      created_at: now,
+      updated_at: now,
+      last_used_at: null,
+      use_count: 0,
+      tags: ["decision"],
+    };
+    const proposal = {
+      id: "proposal-1",
+      project_path: projectPath,
+      session_id: sessionId,
+      target_pages: ["tasks.md"],
+      title: "记录上下文激活计划",
+      summary: "补充 Task Mode 和 Context Activation 的下一步。",
+      patch_preview: "追加任务记录。",
+      status: "pending" as const,
+      created_at: now,
+    };
+
+    await setup(page);
+    await page.addInitScript(({ sessionId, projectPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, { sessionId, projectPath });
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话" }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+    await page.getByTitle("打开上下文").click();
+
+    await simulateStream(page, sessionId, [
+      { event_type: "memory_candidate", session_id: sessionId, memory: candidateMemory },
+      { event_type: "forge_wiki_update_proposed", session_id: sessionId, proposal },
+    ], 5);
+
+    const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
+
+    await expect(inbox.getByText(candidateMemory.body)).toBeVisible();
+    await expect(inbox.getByText(proposal.summary)).toBeVisible();
+    await expect(inbox.getByRole("button", { name: "接受" }).first()).toBeVisible();
+    await expect(inbox.getByRole("button", { name: /忘记|丢弃/ }).first()).toBeVisible();
   });
 });
 

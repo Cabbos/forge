@@ -15,8 +15,6 @@ import type {
   ForgeWikiUpdateProposal,
   MemoryCategory,
   MemoryStatus,
-  SelectedContextMemory,
-  SelectedForgeWikiPage,
   WikiMemory,
 } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
@@ -33,18 +31,10 @@ interface DraftState {
   body: string;
 }
 
-const EMPTY_SELECTED_CONTEXT: SelectedContextMemory[] = [];
-const EMPTY_FORGE_WIKI_CONTEXT: SelectedForgeWikiPage[] = [];
 const EMPTY_FORGE_WIKI_PROPOSALS: ForgeWikiUpdateProposal[] = [];
 
 export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
   const memories = useStore((s) => s.memories);
-  const selectedContext = useStore((s) =>
-    sessionId ? s.selectedContextBySession.get(sessionId) ?? EMPTY_SELECTED_CONTEXT : EMPTY_SELECTED_CONTEXT,
-  );
-  const selectedForgeWikiContext = useStore((s) =>
-    sessionId ? s.forgeWikiContextBySession.get(sessionId) ?? EMPTY_FORGE_WIKI_CONTEXT : EMPTY_FORGE_WIKI_CONTEXT,
-  );
   const forgeWikiProposals = useStore((s) =>
     sessionId ? s.forgeWikiProposalsBySession.get(sessionId) ?? EMPTY_FORGE_WIKI_PROPOSALS : EMPTY_FORGE_WIKI_PROPOSALS,
   );
@@ -350,73 +340,16 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
 
       <section>
         <SectionHeader
-          title="本轮带入"
+          title="建议更新记录"
           meta={
-            selectedForgeWikiContext.length + selectedContext.length > 0
-              ? `已带入 ${selectedForgeWikiContext.length + selectedContext.length} 条`
+            pendingForgeWikiProposals.length + candidateMemories.length > 0
+              ? `${pendingForgeWikiProposals.length + candidateMemories.length} 条`
               : null
           }
         />
         <div className="overflow-hidden rounded-md border border-border bg-card">
-          {selectedForgeWikiContext.length === 0 && selectedContext.length === 0 ? (
-            <EmptyState label="没有找到相关背景" />
-          ) : (
-            <div className="divide-y divide-border">
-              {selectedForgeWikiContext.map((item) => (
-                <SelectedForgeWikiRow key={item.page_id} item={item} />
-              ))}
-              {selectedContext.map((item) => {
-                const memory = memoriesById.get(item.memory_id);
-                return (
-                  <SelectedMemoryRow
-                    key={item.memory_id}
-                    item={item}
-                    memory={memory}
-                    draft={draft?.memoryId === item.memory_id ? draft : null}
-                    busy={busyId === item.memory_id}
-                    onDraftChange={setDraft}
-                    onEdit={memory ? () => startEdit(memory) : undefined}
-                    onSave={saveDraft}
-                    onCancel={() => setDraft(null)}
-                    onPin={memory ? () => handlePin(memory.id) : undefined}
-                    onForget={memory ? () => handleForget(memory.id) : undefined}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader
-          title="建议更新项目记录"
-          meta={pendingForgeWikiProposals.length > 0 ? `${pendingForgeWikiProposals.length} 条` : null}
-        />
-        <div className="overflow-hidden rounded-md border border-border bg-card">
-          {pendingForgeWikiProposals.length === 0 ? (
-            <EmptyState label="没有待更新项目记录" />
-          ) : (
-            <div className="divide-y divide-border">
-              {pendingForgeWikiProposals.map((proposal) => (
-                <ForgeWikiProposalRow
-                  key={proposal.id}
-                  proposal={proposal}
-                  busy={busyId === proposal.id}
-                  onAccept={() => handleAcceptForgeWikiProposal(proposal)}
-                  onDiscard={() => handleDiscardForgeWikiProposal(proposal)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader title="待确认" meta={candidateMemories.length > 0 ? `${candidateMemories.length} 条` : null} />
-        <div className="overflow-hidden rounded-md border border-border bg-card">
-          {candidateMemories.length === 0 ? (
-            <EmptyState label="没有待确认记忆" />
+          {pendingForgeWikiProposals.length === 0 && candidateMemories.length === 0 ? (
+            <EmptyState label="没有待确认的记录更新" />
           ) : (
             <div className="divide-y divide-border">
               {candidateMemories.map((memory) => (
@@ -432,6 +365,15 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
                   onAccept={() => handleAccept(memory.id)}
                   onPin={() => handlePin(memory.id)}
                   onForget={() => handleForget(memory.id)}
+                />
+              ))}
+              {pendingForgeWikiProposals.map((proposal) => (
+                <ForgeWikiProposalRow
+                  key={proposal.id}
+                  proposal={proposal}
+                  busy={busyId === proposal.id}
+                  onAccept={() => handleAcceptForgeWikiProposal(proposal)}
+                  onDiscard={() => handleDiscardForgeWikiProposal(proposal)}
                 />
               ))}
             </div>
@@ -508,86 +450,6 @@ function SectionHeader({
   );
 }
 
-function SelectedMemoryRow({
-  item,
-  memory,
-  draft,
-  busy,
-  onDraftChange,
-  onEdit,
-  onSave,
-  onCancel,
-  onPin,
-  onForget,
-}: {
-  item: SelectedContextMemory;
-  memory?: WikiMemory;
-  draft: DraftState | null;
-  busy: boolean;
-  onDraftChange: (draft: DraftState | null) => void;
-  onEdit?: () => void;
-  onSave: () => void;
-  onCancel: () => void;
-  onPin?: () => void;
-  onForget?: () => void;
-}) {
-  if (draft) {
-    return (
-      <div className="space-y-2 px-3 py-2.5">
-        <input
-          value={draft.title}
-          onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
-          className="w-full rounded border border-border bg-background/70 px-2 py-1 text-xs text-foreground outline-none focus:border-primary/50"
-        />
-        <textarea
-          value={draft.body}
-          onChange={(event) => onDraftChange({ ...draft, body: event.target.value })}
-          rows={3}
-          className="max-h-24 w-full resize-none rounded border border-border bg-background/70 px-2 py-1 text-[11px] leading-relaxed text-foreground outline-none focus:border-primary/50 break-words"
-        />
-        <div className="flex justify-end gap-1">
-          <IconButton title="取消" onClick={onCancel} disabled={busy}>
-            <X className="size-3" />
-          </IconButton>
-          <IconButton title="保存" onClick={onSave} disabled={busy}>
-            <Check className="size-3" />
-          </IconButton>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-3 py-2.5">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-xs font-medium text-foreground">{item.title}</div>
-          <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
-            {item.body}
-          </div>
-        </div>
-        {memory && (
-          <div className="flex shrink-0 gap-0.5">
-            <IconButton title="编辑" onClick={onEdit} disabled={busy}>
-              <Edit3 className="size-3" />
-            </IconButton>
-            <IconButton title="置顶" onClick={onPin} disabled={busy}>
-              <Pin className="size-3" />
-            </IconButton>
-            <IconButton title="忘记" onClick={onForget} disabled={busy}>
-              <Trash2 className="size-3" />
-            </IconButton>
-          </div>
-        )}
-      </div>
-      <div className="mt-2 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
-        <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5">{categoryLabel(item.category)}</span>
-        <span className="min-w-0 truncate break-words">{item.reason}</span>
-      </div>
-    </div>
-  );
-}
-
 function ForgeWikiPageRow({ page }: { page: ForgeWikiState["pages"][number] }) {
   return (
     <div className="px-3 py-2.5">
@@ -599,23 +461,6 @@ function ForgeWikiPageRow({ page }: { page: ForgeWikiState["pages"][number] }) {
             {page.summary}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function SelectedForgeWikiRow({ item }: { item: SelectedForgeWikiPage }) {
-  return (
-    <div className="px-3 py-2.5">
-      <div className="min-w-0">
-        <div className="truncate text-xs font-medium text-foreground">{item.title}</div>
-        <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
-          {item.summary}
-        </div>
-      </div>
-      <div className="mt-2 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground/70">
-        <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5">项目记录</span>
-        <span className="min-w-0 truncate break-words">{item.reason}</span>
       </div>
     </div>
   );
@@ -645,10 +490,10 @@ function ForgeWikiProposalRow({
           </div>
         </div>
         <div className="flex shrink-0 gap-0.5">
-          <IconButton title="接受更新" onClick={onAccept} disabled={busy}>
+          <IconButton title="接受" onClick={onAccept} disabled={busy}>
             <Check className="size-3" />
           </IconButton>
-          <IconButton title="丢弃更新" onClick={onDiscard} disabled={busy}>
+          <IconButton title="丢弃" onClick={onDiscard} disabled={busy}>
             <X className="size-3" />
           </IconButton>
         </div>
@@ -717,7 +562,7 @@ function MemoryRow({
         </div>
         <div className="flex shrink-0 gap-0.5">
           {onAccept && (
-            <IconButton title="确认记忆" onClick={onAccept} disabled={busy}>
+            <IconButton title="接受" onClick={onAccept} disabled={busy}>
               <Check className="size-3" />
             </IconButton>
           )}
