@@ -191,7 +191,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   upsertMemory: (memory) => {
     const memories = get().memories.filter((existing) => existing.id !== memory.id);
-    if (memory.status === "forgotten") {
+    if (memory.status === "forgotten" || memory.status === "archived") {
       set({ memories });
       return;
     }
@@ -216,10 +216,12 @@ export const useStore = create<AppStore>((set, get) => ({
 
   removeSession: (id) => {
     const sessions = new Map(get().sessions);
+    const selectedContextBySession = new Map(get().selectedContextBySession);
     sessions.delete(id);
+    selectedContextBySession.delete(id);
     const activeSessionId =
       get().activeSessionId === id ? null : get().activeSessionId;
-    set({ sessions, activeSessionId });
+    set({ sessions, activeSessionId, selectedContextBySession });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
