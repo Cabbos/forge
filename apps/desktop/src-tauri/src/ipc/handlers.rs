@@ -371,7 +371,20 @@ pub async fn send_input(
                             selected: selected_wiki.clone(),
                         },
                     );
-                    ForgeWikiStore::format_selected_context(&selected_wiki)
+                    match state
+                        .forge_wiki
+                        .format_selected_context_with_content(&project_path, &selected_wiki)
+                    {
+                        Ok(context) => context,
+                        Err(error) => {
+                            crate::app_log!(
+                                "WARN",
+                                "[forge_wiki] context formatting failed: {}",
+                                error
+                            );
+                            ForgeWikiStore::format_selected_context(&selected_wiki)
+                        }
+                    }
                 }
                 Err(error) => {
                     crate::app_log!("WARN", "[forge_wiki] context selection failed: {}", error);
