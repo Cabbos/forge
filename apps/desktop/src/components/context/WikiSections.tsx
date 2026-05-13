@@ -56,6 +56,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [forgeWikiState, setForgeWikiState] = useState<ForgeWikiState | null>(null);
   const requestIdRef = useRef(0);
+  const busyTokenRef = useRef(0);
 
   const currentProjectPath = useMemo(() => normalizeProjectPath(projectPath), [projectPath]);
   const currentProjectPathRef = useRef(currentProjectPath);
@@ -66,6 +67,18 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
 
   const isCurrentRequest = useCallback((projectAtStart: string, sessionAtStart: string | null) => {
     return currentProjectPathRef.current === projectAtStart && sessionIdRef.current === sessionAtStart;
+  }, []);
+
+  const beginBusy = useCallback((id: string) => {
+    const token = busyTokenRef.current + 1;
+    busyTokenRef.current = token;
+    setBusyId(id);
+    return token;
+  }, []);
+
+  const clearBusy = useCallback((token: number, id: string) => {
+    if (busyTokenRef.current !== token) return;
+    setBusyId((current) => (current === id ? null : current));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -151,7 +164,8 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     const sessionAtStart = sessionId;
     if (!projectAtStart) return;
 
-    setBusyId("forge-wiki:init");
+    const operationId = "forge-wiki:init";
+    const busyToken = beginBusy(operationId);
     setError("");
     try {
       const nextForgeWikiState = await initForgeWiki(projectAtStart);
@@ -163,15 +177,15 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (isCurrentRequest(projectAtStart, sessionAtStart)) setBusyId(null);
+      clearBusy(busyToken, operationId);
     }
-  }, [currentProjectPath, isCurrentRequest, refresh, sessionId]);
+  }, [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, refresh, sessionId]);
 
   const handleAcceptForgeWikiProposal = useCallback(
     async (proposal: ForgeWikiUpdateProposal) => {
       const projectAtStart = currentProjectPath;
       const sessionAtStart = sessionId;
-      setBusyId(proposal.id);
+      const busyToken = beginBusy(proposal.id);
       setError("");
       try {
         const nextProposal = await acceptForgeWikiUpdateProposal(
@@ -188,17 +202,17 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           setError(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        if (isCurrentRequest(projectAtStart, sessionAtStart)) setBusyId(null);
+        clearBusy(busyToken, proposal.id);
       }
     },
-    [currentProjectPath, isCurrentRequest, refresh, sessionId, upsertForgeWikiProposal],
+    [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, refresh, sessionId, upsertForgeWikiProposal],
   );
 
   const handleDiscardForgeWikiProposal = useCallback(
     async (proposal: ForgeWikiUpdateProposal) => {
       const projectAtStart = currentProjectPath;
       const sessionAtStart = sessionId;
-      setBusyId(proposal.id);
+      const busyToken = beginBusy(proposal.id);
       setError("");
       try {
         const nextProposal = await discardForgeWikiUpdateProposal(
@@ -212,10 +226,10 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           setError(err instanceof Error ? err.message : String(err));
         }
       } finally {
-        if (isCurrentRequest(projectAtStart, sessionAtStart)) setBusyId(null);
+        clearBusy(busyToken, proposal.id);
       }
     },
-    [currentProjectPath, isCurrentRequest, sessionId, upsertForgeWikiProposal],
+    [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, sessionId, upsertForgeWikiProposal],
   );
 
   const startEdit = useCallback((memory: WikiMemory) => {
