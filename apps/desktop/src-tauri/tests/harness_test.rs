@@ -1,10 +1,26 @@
 #[cfg(test)]
 mod harness {
     use forge::harness::permissions::{PermissionDecision, PermissionGate};
+    use forge::harness::write_boundary::{build_write_boundary, WriteBoundaryRisk};
     use forge::harness::hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
     use forge::harness::capability::{CapabilityKind, CapabilityMetadata};
     use forge::harness::db::Database;
     use std::sync::Arc;
+
+    fn unique_temp_workspace(prefix: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "{}-{}-{}",
+            prefix,
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
 
     // ═══ PermissionGate Tests ═══
 
@@ -182,6 +198,73 @@ mod harness {
 
     // These test the convert_messages function indirectly via the adapter.
     // In a real test suite, we'd make convert_messages pub(crate) and test directly.
+
+    #[test]
+    fn test_write_boundary_for_file_write_shows_workspace_and_file() {
+        let workspace = unique_temp_workspace("forge-boundary-project");
+
+        let boundary = build_write_boundary(
+            "write_to_file",
+            &serde_json::json!({"path":"src/app.tsx","content":"hello"}),
+            &workspace,
+            "file_write",
+        );
+
+        assert_eq!(boundary.title, "准备修改项目");
+        assert_eq!(boundary.operation, "写入文件");
+        assert_eq!(boundary.workspace_path, workspace.to_string_lossy());
+        assert_eq!(boundary.affected_files, vec!["src/app.tsx".to_string()]);
+        assert_eq!(boundary.impact, "将修改 1 个文件");
+        assert_eq!(boundary.risk, WriteBoundaryRisk::Caution);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn test_write_boundary_for_shell_command_uses_workspace_wide_caution() {
+        let workspace = unique_temp_workspace("forge-boundary-shell");
+
+        let boundary = build_write_boundary(
+            "run_shell",
+            &serde_json::json!({"command":"npm install"}),
+            &workspace,
+            "shell_cmd",
+        );
+
+        assert_eq!(boundary.operation, "执行命令");
+        assert_eq!(boundary.command.as_deref(), Some("npm install"));
+        assert!(boundary.affected_files.is_empty());
+        assert_eq!(boundary.impact, "这个命令可能影响当前工作空间");
+        assert_eq!(boundary.risk, WriteBoundaryRisk::Caution);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn test_write_boundary_warns_for_forge_source_workspace() {
+        let workspace = unique_temp_workspace("forge-source-like");
+        std::fs::create_dir_all(workspace.join("src-tauri")).unwrap();
+        std::fs::write(
+            workspace.join("package.json"),
+            r#"{"name":"forge","version":"0.1.0"}"#,
+        )
+        .unwrap();
+
+        let boundary = build_write_boundary(
+            "write_to_file",
+            &serde_json::json!({"path":"src/main.tsx","content":"hello"}),
+            &workspace,
+            "file_write",
+        );
+
+        assert_eq!(boundary.risk, WriteBoundaryRisk::High);
+        assert_eq!(
+            boundary.warning.as_deref(),
+            Some("这是 Forge 自己的开发目录。继续操作可能修改 Forge 本体。")
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
 
     // ═══ Test Summary ═══
 

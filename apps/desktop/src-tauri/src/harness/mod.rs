@@ -9,6 +9,7 @@ pub mod hooks;
 pub mod permissions;
 pub mod registry;
 pub mod skills;
+pub mod write_boundary;
 
 use std::path::PathBuf;
 use std::sync::Arc;
