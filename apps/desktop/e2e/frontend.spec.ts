@@ -777,7 +777,7 @@ test.describe("First loop v0", () => {
     await expect(archive.getByText("可见、可点、可继续")).toBeVisible();
     await expect(archive.getByText("番茄钟小工具")).toBeVisible();
     await expect(archive.getByText("开始、暂停、重置")).toBeVisible();
-    await expect(archive.getByText("下一步")).toBeVisible();
+    await expect(archive.getByText("下一步", { exact: true })).toBeVisible();
     await expect(archive.getByRole("heading", { name: "本轮参考" })).toBeVisible();
     await expect(archive.getByText("工作台", { exact: true })).toHaveCount(0);
   });
