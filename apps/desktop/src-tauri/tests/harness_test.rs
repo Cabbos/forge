@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod harness {
-    use crusted_spinning_lynx_agent::harness::permissions::{PermissionDecision, PermissionGate};
-    use crusted_spinning_lynx_agent::harness::hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
-    use crusted_spinning_lynx_agent::harness::capability::{CapabilityKind, CapabilityMetadata};
-    use crusted_spinning_lynx_agent::harness::db::Database;
+    use forge::harness::permissions::{PermissionDecision, PermissionGate};
+    use forge::harness::hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
+    use forge::harness::capability::{CapabilityKind, CapabilityMetadata};
+    use forge::harness::db::Database;
     use std::sync::Arc;
 
     // ═══ PermissionGate Tests ═══
@@ -116,7 +116,7 @@ mod harness {
         let result = engine.run_pre_tool("s1", "write_to_file", &serde_json::json!({"path":"test.txt"}))
             .await;
         match result {
-            crusted_spinning_lynx_agent::harness::hooks::HookDecision::Proceed(_) => {}
+            forge::harness::hooks::HookDecision::Proceed(_) => {}
             _ => panic!("Expected Proceed from pre-tool hook"),
         }
 

@@ -65,6 +65,6 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 ## Key patterns
 
 - When adding a new stream event type: add it to BOTH `protocol/events.rs` (Rust) and `lib/protocol.ts` (TS), plus handle it in the store's `dispatchOutputEvent` and create a renderer component in `components/messages/`.
-- API keys are stored in `~/.tui-to-gui/config.json` via `settings.rs`. The frontend fetches status via `getApiKeyStatus()`.
+- API keys are stored in `~/.forge/config.json` via `settings.rs`. The frontend fetches status via `getApiKeyStatus()`.
 - The `@/` path alias maps to `src/` (configured in both `vite.config.ts` and `tsconfig.json`).
 - shadcn/ui components live in `src/components/ui/`. The config is in `components.json` (style: "base-nova").

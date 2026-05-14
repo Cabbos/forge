@@ -12,8 +12,8 @@ import type {
   WorkflowState,
 } from "./protocol";
 
-const WORKING_DIR_KEY = "tui-to-gui-working-dir";
-const FILE_OPEN_TEMPLATE_KEY = "tui-to-gui-file-open-template";
+const WORKING_DIR_KEY = "forge-working-dir";
+const FILE_OPEN_TEMPLATE_KEY = "forge-file-open-template";
 const DEFAULT_FILE_OPEN_TEMPLATE = "vscode://file/{path}{lineSuffix}";
 
 export interface SessionCreated { session_id: string }

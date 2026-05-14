@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn classifies_answer_only_request_as_direct() {
-        let state = route("不要修改文件，不要执行命令。只回答：Workflow Router 是什么？");
+        let state = route("不要修改文件，不要执行命令。只回答：working-method routing 是什么？");
         assert_eq!(state.route, WorkflowRoute::Direct);
         assert_eq!(state.gate, WorkflowGate::None);
         assert!(state

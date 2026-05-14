@@ -42,7 +42,7 @@ impl SkillLoader {
         let mut scan_dirs = Vec::new();
         // User-level skills
         if let Ok(home) = std::env::var("HOME") {
-            scan_dirs.push(PathBuf::from(home).join(".ai-studio/skills"));
+            scan_dirs.push(PathBuf::from(home).join(".forge/skills"));
         }
         Self::with_scan_dirs(scan_dirs)
     }
@@ -51,10 +51,9 @@ impl SkillLoader {
         let mut scan_dirs = Vec::new();
         // User-level skills
         if let Ok(home) = std::env::var("HOME") {
-            scan_dirs.push(PathBuf::from(home).join(".ai-studio/skills"));
+            scan_dirs.push(PathBuf::from(home).join(".forge/skills"));
         }
-        scan_dirs.push(working_dir.join(".ai-studio/skills"));
-        scan_dirs.push(working_dir.join(".agents/skills"));
+        scan_dirs.push(working_dir.join(".forge/skills"));
         scan_dirs.push(working_dir.join("skills"));
         Self::with_scan_dirs(scan_dirs)
     }
@@ -178,7 +177,7 @@ impl SkillLoader {
         self.skills.read().await.iter().find(|s| s.id == id).cloned()
     }
 
-    /// Add a scan directory (e.g., project-level .ai-studio/skills).
+    /// Add a scan directory (e.g., project-level .forge/skills).
     pub async fn add_scan_dir(&self, dir: PathBuf) {
         self.scan_dirs.write().await.push(dir);
     }

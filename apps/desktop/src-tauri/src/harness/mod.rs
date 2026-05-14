@@ -61,8 +61,8 @@ impl Harness {
             pending_confirms.clone(),
         ));
 
-        // Open SQLite database at <working_dir>/.ai-studio/registry.db
-        let db_path = working_dir.join(".ai-studio").join("registry.db");
+        // Open SQLite database at <working_dir>/.forge/registry.db
+        let db_path = working_dir.join(".forge").join("registry.db");
         if let Some(parent) = db_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }

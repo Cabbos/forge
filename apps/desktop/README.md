@@ -1,4 +1,4 @@
-# Crusted Spinning Lynx Agent
+# Forge
 
 A desktop AI coding agent built with Tauri 2.0 + React + Rust. Direct filesystem and shell access, skills system, parallel sub-agents.
 
@@ -9,7 +9,7 @@ npm install
 npm run tauri dev
 ```
 
-Set your DeepSeek API key in Settings (`Cmd+,`) or `~/.tui-to-gui/config.json`:
+Set your DeepSeek API key in Settings (`Cmd+,`) or `~/.forge/config.json`:
 
 ```json
 {
@@ -25,7 +25,7 @@ Set your DeepSeek API key in Settings (`Cmd+,`) or `~/.tui-to-gui/config.json`:
 
 - **Multi-turn agent loop** — up to 10 tool-call rounds per message
 - **Streaming UI** — thinking blocks, shell output line-by-line, tool call cards
-- **Skills** — drop `SKILL.md` / `CLAUDE.md` into `~/.ai-studio/skills/<name>/` and it's injected into the system prompt
+- **Skills** — drop `SKILL.md` / `CLAUDE.md` into `~/.forge/skills/<name>/` and it's injected into the system prompt
 - **Sub-agent dispatch** — `delegate_task` tool spawns parallel read-only sub-agents for independent research tasks
 - **Permission gate** — dangerous commands (shell, file writes) require user confirmation
 - **Session persistence** — IndexedDB, survives app restart (visual only, backend sessions are ephemeral)
@@ -65,7 +65,7 @@ Place a `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md` in your working directory — i
 ## Config
 
 ```json
-// ~/.tui-to-gui/config.json
+// ~/.forge/config.json
 {
   "providers": {
     "deepseek": {

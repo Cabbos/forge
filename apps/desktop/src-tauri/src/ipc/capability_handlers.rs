@@ -144,7 +144,7 @@ pub async fn install_skill(
     let url = validate_skill_url(&repo)?;
     let name = repo.split('/').last().unwrap_or(&repo).replace(".git", "");
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let skills_dir = std::path::PathBuf::from(home).join(".ai-studio").join("skills");
+    let skills_dir = std::path::PathBuf::from(home).join(".forge").join("skills");
     let dest = skills_dir.join(&name);
 
     if dest.exists() {

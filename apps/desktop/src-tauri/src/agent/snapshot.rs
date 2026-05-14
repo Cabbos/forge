@@ -84,7 +84,7 @@ fn safe_session_id(session_id: &str) -> String {
 }
 
 fn app_data_dir() -> PathBuf {
-    home_dir().join(".tui-to-gui")
+    home_dir().join(".forge")
 }
 
 fn home_dir() -> PathBuf {

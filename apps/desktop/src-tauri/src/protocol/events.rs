@@ -117,7 +117,7 @@ pub enum StreamEvent {
         estimated_tokens_after: u32,
     },
 
-    // ── Living Wiki Memory ──
+    // ── Project Records Memory ──
     #[serde(rename = "memory_selection")]
     MemorySelection {
         session_id: String,
@@ -134,7 +134,7 @@ pub enum StreamEvent {
         memory: WikiMemory,
     },
 
-    // ── Forge Wiki ──
+    // ── Project Records ──
     #[serde(rename = "forge_wiki_context_selected")]
     ForgeWikiContextSelected {
         session_id: String,

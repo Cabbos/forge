@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod integration {
-    use crusted_spinning_lynx_agent::settings;
+    use forge::settings;
 
     // ═══ Credential Detection ═══
 
@@ -168,8 +168,8 @@ mod integration {
 
     #[test]
     fn test_adapter_config() {
-        use crusted_spinning_lynx_agent::adapters::anthropic::AnthropicAdapter;
-        use crusted_spinning_lynx_agent::adapters::base::AiAdapter;
+        use forge::adapters::anthropic::AnthropicAdapter;
+        use forge::adapters::base::AiAdapter;
 
         let creds = settings::detect_credentials("anthropic");
         let mut adapter = AnthropicAdapter::new(creds.api_key).unwrap();

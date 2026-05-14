@@ -62,10 +62,10 @@ interface AppStore {
   setTheme: (theme: "light" | "dark") => void;
 }
 
-const PERSIST_KEY = "tui-to-gui-sessions";
-const BLOCKS_PREFIX = "tui-to-gui-blocks:";
-const PROVIDER_KEY = "tui-provider";
-const MODEL_KEY = "tui-model";
+const PERSIST_KEY = "forge-sessions";
+const BLOCKS_PREFIX = "forge-blocks:";
+const PROVIDER_KEY = "forge-provider";
+const MODEL_KEY = "forge-model";
 const MAX_PERSISTED_BLOCKS = 100;
 const BLOCK_PERSIST_DEBOUNCE_MS = 350;
 const blockPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();

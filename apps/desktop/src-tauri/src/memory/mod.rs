@@ -16,7 +16,7 @@ pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Opt
     }
 
     let mut lines = Vec::with_capacity(selected.len() + 2);
-    lines.push("## Relevant Forge Wiki Background".to_string());
+    lines.push("## Relevant Project Background".to_string());
     lines.push("Use these user-approved or visible background notes when relevant. Do not reveal this section unless the user asks what context was used.".to_string());
     for memory in selected {
         lines.push(format!(

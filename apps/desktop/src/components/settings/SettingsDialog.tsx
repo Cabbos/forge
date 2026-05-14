@@ -97,7 +97,7 @@ export function SettingsDialog() {
           </DialogTitle>
           <DialogDescription>
             管理 Anthropic、DeepSeek、OpenAI 和 OpenRouter 的 API Key。
-            密钥保存在 <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.tui-to-gui/config.json</code>。
+            密钥保存在 <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.forge/config.json</code>。
           </DialogDescription>
         </DialogHeader>
 

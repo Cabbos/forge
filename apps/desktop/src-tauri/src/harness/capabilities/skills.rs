@@ -17,7 +17,7 @@ impl SkillLoaderCap {
             meta: CapabilityMetadata {
                 id: "skill-loader".into(),
                 name: "Skill Loader".into(),
-                description: "Loads and manages SKILL.md files from ~/.ai-studio/skills/".into(),
+                description: "Loads and manages SKILL.md files from ~/.forge/skills/".into(),
                 version: "1.0.0".into(),
                 source: "builtin".into(),
                 kind: CapabilityKind::Skill,

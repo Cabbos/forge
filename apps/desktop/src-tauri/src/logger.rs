@@ -11,7 +11,7 @@ fn log_path() -> PathBuf {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    home.join(".tui-to-gui").join("app.log")
+    home.join(".forge").join("app.log")
 }
 
 fn ensure_dir() {

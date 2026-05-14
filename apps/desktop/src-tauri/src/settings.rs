@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 const KNOWN_PROVIDERS: &[&str] = &["deepseek", "anthropic", "openai", "openrouter"];
 
-/// Persisted user settings stored in ~/.tui-to-gui/config.json
+/// Persisted user settings stored in ~/.forge/config.json
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -64,7 +64,7 @@ impl ClaudeSettings {
 /// Detect credentials for a given provider by reading local config files + env vars.
 ///
 /// Priority (highest first):
-/// 1. Our stored API key in ~/.tui-to-gui/config.json
+/// 1. Our stored API key in ~/.forge/config.json
 /// 2. Claude Code's ~/.claude/settings.json (apiKey / apiBase / model)
 /// 3. ANTHROPIC_AUTH_TOKEN env var (set by Claude Code)
 /// 4. ANTHROPIC_API_KEY / OPENAI_API_KEY env vars
@@ -149,7 +149,7 @@ impl Default for ClaudeSettings {
 
 impl Settings {
     fn path() -> PathBuf {
-        home_dir().join(".tui-to-gui").join("config.json")
+        home_dir().join(".forge").join("config.json")
     }
 
     pub fn load() -> Self {

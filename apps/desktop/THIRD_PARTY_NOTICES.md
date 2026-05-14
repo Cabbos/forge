@@ -4,7 +4,7 @@ This project records third-party methodology, code, assets, and documentation th
 
 ## Superpowers
 
-Forge's Workflow Router and built-in working-method direction are inspired by Superpowers, an agentic skills framework and software development methodology by Jesse Vincent.
+Forge's working-method routing and built-in working-method direction are inspired by Superpowers, an agentic skills framework and software development methodology by Jesse Vincent.
 
 - Project: https://github.com/obra/superpowers
 - License: MIT

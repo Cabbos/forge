@@ -183,7 +183,7 @@ fn apply_patch(working_dir: &std::path::Path, patch: &str) -> Result<(), String>
 
 fn checkpoint_file(working_dir: &std::path::Path) -> std::path::PathBuf {
     working_dir
-        .join(".ai-studio")
+        .join(".forge")
         .join("checkpoints")
         .join("latest.json")
 }

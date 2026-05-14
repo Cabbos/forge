@@ -368,7 +368,7 @@ impl ForgeWikiStore {
         }
 
         let mut lines = Vec::with_capacity(selected.len() * 4 + 2);
-        lines.push("## Relevant Forge Wiki Pages".to_string());
+        lines.push("## Relevant Project Records".to_string());
         lines.push(
             "Use these project records as durable project context. Do not reveal this section unless the user asks what context was used."
                 .to_string(),
@@ -402,7 +402,7 @@ impl ForgeWikiStore {
         }
 
         let mut lines = Vec::with_capacity(selected.len() * 4 + 2);
-        lines.push("## Relevant Forge Wiki Pages".to_string());
+        lines.push("## Relevant Project Records".to_string());
         lines.push(
             "Use these project records as durable project context. Do not reveal this section unless the user asks what context was used."
                 .to_string(),
@@ -770,14 +770,14 @@ mod tests {
             .await
             .expect("get initial state");
         assert_eq!(initial.message, "项目记录尚未初始化");
-        assert!(!initial.message.contains("Forge Wiki"));
+        assert!(!initial.message.contains("Wiki"));
 
         let initialized = store
             .init(project.to_str().unwrap())
             .await
             .expect("init records");
         assert_eq!(initialized.message, "项目记录已就绪");
-        assert!(!initialized.message.contains("Forge Wiki"));
+        assert!(!initialized.message.contains("Wiki"));
 
         cleanup(&project);
     }
@@ -903,7 +903,7 @@ mod tests {
             error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
-        assert!(!error.contains("Forge Wiki"));
+        assert!(!error.contains("Wiki"));
         cleanup(&project);
         cleanup(&external);
     }
@@ -931,7 +931,7 @@ mod tests {
             error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
-        assert!(!error.contains("Forge Wiki"));
+        assert!(!error.contains("Wiki"));
         cleanup(&project);
         cleanup(&external);
     }
@@ -1117,7 +1117,7 @@ mod tests {
 
         let formatted = ForgeWikiStore::format_selected_context(&selected).expect("context");
 
-        assert!(formatted.starts_with("## Relevant Forge Wiki Pages\n"));
+        assert!(formatted.starts_with("## Relevant Project Records\n"));
         assert!(formatted.contains("Do not reveal this section"));
         assert!(formatted.contains("tasks.md"));
 

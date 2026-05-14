@@ -7,7 +7,7 @@ async function setup(page: Page) {
   await page.addInitScript(() => {
     let callbackId = 0;
     const callbacks = new Map<number, (data: unknown) => void>();
-    const workingDir = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const workingDir = "/Users/cabbos/project/forge";
     const projectRuntimeStatus = {
       working_dir: workingDir,
       has_package_json: true,
@@ -426,7 +426,7 @@ test.describe("InputBar", () => {
 test.describe("Project records context panel", () => {
   test("project records panel initializes records and shows selected pages", async ({ page }) => {
     const sessionId = "forge-wiki-session";
-    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const projectPath = "/Users/cabbos/project/forge";
     const now = "2026-05-13T00:00:00.000Z";
     const selectedPage = {
       page_id: "tasks",
@@ -453,7 +453,7 @@ test.describe("Project records context panel", () => {
     await setup(page);
     await page.addInitScript(({ sessionId, projectPath }) => {
       window.localStorage.clear();
-      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      window.localStorage.setItem("forge-working-dir", projectPath);
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
     }, { sessionId, projectPath });
@@ -492,7 +492,7 @@ test.describe("Project records context panel", () => {
 
   test("shows selected context, project records, delivery status, and scoped saved background", async ({ page }) => {
     const sessionId = "living-wiki-session";
-    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const projectPath = "/Users/cabbos/project/forge";
     const otherProjectPath = "/Users/cabbos/project/elsewhere";
     const now = "2026-05-13T00:00:00.000Z";
     const selectedMemory = {
@@ -550,7 +550,7 @@ test.describe("Project records context panel", () => {
     await setup(page);
     await page.addInitScript(({ sessionId, projectPath, memories }) => {
       window.localStorage.clear();
-      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      window.localStorage.setItem("forge-working-dir", projectPath);
 
       // @ts-expect-error mock
       window.__tauriMockIPC = async (cmd: string) => {
@@ -645,7 +645,7 @@ test.describe("Project records context panel", () => {
 
   test("groups suggested background and project record updates", async ({ page }) => {
     const sessionId = "memory-inbox-session";
-    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const projectPath = "/Users/cabbos/project/forge";
     const now = "2026-05-13T00:00:00.000Z";
     const candidateMemory = {
       id: "candidate-1",
@@ -679,7 +679,7 @@ test.describe("Project records context panel", () => {
     await setup(page);
     await page.addInitScript(({ sessionId, projectPath }) => {
       window.localStorage.clear();
-      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      window.localStorage.setItem("forge-working-dir", projectPath);
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
     }, { sessionId, projectPath });
@@ -890,7 +890,7 @@ test.describe("Current task work style", () => {
 test.describe("Turn context", () => {
   test("shows saved background and project records for the current turn", async ({ page }) => {
     const sessionId = "context-activation-session";
-    const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const projectPath = "/Users/cabbos/project/forge";
     const selectedMemory = {
       memory_id: "memory-1",
       title: "中文优先",
@@ -915,7 +915,7 @@ test.describe("Turn context", () => {
     await setup(page);
     await page.addInitScript(({ sessionId, projectPath }) => {
       window.localStorage.clear();
-      window.localStorage.setItem("tui-to-gui-working-dir", projectPath);
+      window.localStorage.setItem("forge-working-dir", projectPath);
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
     }, { sessionId, projectPath });

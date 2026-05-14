@@ -18,7 +18,7 @@ pub struct WikiMemoryStore {
 impl WikiMemoryStore {
     pub fn default() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        Self::new(PathBuf::from(home).join(".tui-to-gui/wiki_memories.json"))
+        Self::new(PathBuf::from(home).join(".forge/wiki_memories.json"))
     }
 
     pub fn new(path: PathBuf) -> Self {
@@ -334,7 +334,7 @@ mod tests {
             scope: MemoryScope::Project,
             status,
             title: title.to_string(),
-            body: "Use the Living Wiki path".to_string(),
+            body: "Use the Project Records path".to_string(),
             project_path: project_path.map(str::to_string),
             source_session_id: Some("session-1".to_string()),
             source_message_ids: vec!["message-1".to_string()],

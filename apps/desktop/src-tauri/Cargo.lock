@@ -501,31 +501,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
-name = "crusted-spinning-lynx-agent"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "env_logger",
- "futures",
- "libc",
- "log",
- "portable-pty",
- "regex",
- "reqwest 0.12.28",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-shell",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "uuid",
- "vt100",
-]
-
-[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1001,6 +976,31 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
+
+[[package]]
+name = "forge"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "env_logger",
+ "futures",
+ "libc",
+ "log",
+ "portable-pty",
+ "regex",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-shell",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "uuid",
+ "vt100",
+]
 
 [[package]]
 name = "form_urlencoded"

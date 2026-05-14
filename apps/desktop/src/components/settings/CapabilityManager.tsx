@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { installSkill, listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
+import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
 
 export type CapabilityTab = "skills" | "mcp" | "hooks";
 
@@ -117,7 +117,6 @@ function tabLabel(tab: CapabilityTab) {
 
 function SkillsContent({ search }: { search: string }) {
   const [caps, setCaps] = useState<CapabilityInfo[]>([]);
-  const [installing, setInstalling] = useState<string | null>(null);
 
   useEffect(() => {
     listCapabilities().then(setCaps).catch(console.error);
@@ -132,23 +131,7 @@ function SkillsContent({ search }: { search: string }) {
     }
   };
 
-  const handleInstall = async (repo: string) => {
-    setInstalling(repo);
-    try {
-      await installSkill(repo);
-      const all = await listCapabilities();
-      setCaps(all);
-    } catch (e) {
-      console.error("Install failed:", e);
-    }
-    setInstalling(null);
-  };
-
   const skills = caps.filter((c) => c.kind === "skill" || c.kind === "tool");
-  const discoverable = [
-    { id: "huashu-design", name: "huashu-design", description: "高保真界面原型与动效", source: "alchaincyf/huashu-design", kind: "skill" },
-    { id: "karpathy", name: "karpathy", description: "面向代码智能体的工程原则", source: "forrestchang/andrej-karpathy-skills", kind: "skill" },
-  ];
 
   const filterFn = (list: CapabilityInfo[]) =>
     search
@@ -197,23 +180,8 @@ function SkillsContent({ search }: { search: string }) {
 
       <section>
         <h5 className="mb-2.5 text-[10px] uppercase tracking-widest text-muted-foreground/60">可安装</h5>
-        <div className="flex flex-col gap-1.5">
-          {discoverable.filter(s => !caps.some(c => c.name === s.name)).map((s) => (
-            <div key={s.id} className="flex items-center gap-2.5 rounded-md border border-transparent px-2.5 py-2 transition-colors hover:border-border hover:bg-secondary">
-              <span className="flex h-6 w-6 items-center justify-center rounded text-xs" style={{ background: `${getColor(s.kind)}18`, color: getColor(s.kind) }}>{getIcon(s.kind)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium text-foreground">{s.name}</div>
-                <div className="truncate text-[10px] text-muted-foreground">{s.source}</div>
-              </div>
-              <button
-                onClick={() => handleInstall(s.source)}
-                disabled={installing === s.source}
-                className="rounded border border-primary px-2 py-1 text-[10px] font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-50"
-              >
-                {installing === s.source ? "安装中" : "安装"}
-              </button>
-            </div>
-          ))}
+        <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
+          暂无内置推荐插件
         </div>
       </section>
     </div>

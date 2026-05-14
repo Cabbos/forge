@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn selects_pinned_same_project_memory() {
-        let memories = vec![memory("m1", MemoryStatus::Pinned, "渐进式 Living Wiki")];
+        let memories = vec![memory("m1", MemoryStatus::Pinned, "渐进式 Project Records")];
 
         let selected = select_relevant_memories(&memories, "继续做资料系统", Some("/tmp/forge"), 5);
 

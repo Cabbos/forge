@@ -23,6 +23,11 @@ Thumbs.db
 *.log
 
 # Local tool state
+.forge/
 .ai-studio/
+.agents/
+.claude/
 .playwright-cli/
 .superpowers/
+skills-lock.json
+docs/superpowers/

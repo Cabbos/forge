@@ -46,7 +46,7 @@ export function createMockIPC(handlers: MockIPCHandlers = {}) {
   const forgeWikiProposals = new Map<string, ForgeWikiUpdateProposal>();
 
   return async (cmd: string, args: Record<string, unknown>) => {
-    const workingDir = "/Users/cabbos/project/crusted-spinning-lynx-agent";
+    const workingDir = "/Users/cabbos/project/forge";
     const projectPath = String(args.projectPath ?? workingDir);
     switch (cmd) {
       case "create_session":
