@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Circle, Folder, GitBranch, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, ExternalLink, Folder, GitBranch, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import {
+  createProjectCheckpoint,
   getProjectCheckpointStatus,
   getProjectRuntimeStatus,
+  openProjectPreview,
   type ProjectCheckpointStatus,
   type ProjectRuntimeStatus,
+  startProjectDevServer,
 } from "@/lib/tauri";
+import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confidence";
 import { cn } from "@/lib/utils";
 
 interface ProjectStatusCardProps {
@@ -17,6 +21,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   const [checkpoint, setCheckpoint] = useState<ProjectCheckpointStatus | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [actionBusy, setActionBusy] = useState<DeliveryAction | null>(null);
   const [expanded, setExpanded] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -36,6 +41,28 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     }
   }, [sessionId]);
 
+  const runDeliveryAction = useCallback(async (action: DeliveryAction) => {
+    setActionBusy(action);
+    setError("");
+    try {
+      if (action === "start_preview") {
+        const runtimeStatus = await startProjectDevServer(sessionId ?? undefined);
+        setRuntime(runtimeStatus);
+      } else if (action === "open_preview") {
+        const runtimeStatus = await openProjectPreview(sessionId ?? undefined);
+        setRuntime(runtimeStatus);
+      } else if (action === "create_checkpoint") {
+        const checkpointStatus = await createProjectCheckpoint(sessionId ?? undefined);
+        setCheckpoint(checkpointStatus);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [refresh, sessionId]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -47,21 +74,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   }, [runtime?.working_dir, checkpoint?.working_dir]);
 
   const projectPath = normalizeProjectPath(runtime?.working_dir || checkpoint?.working_dir || "") || "暂无项目路径";
-  const previewRunning = runtime?.running ?? false;
-  const previewLabel = runtime
-    ? previewRunning
-      ? "预览运行中"
-      : "预览未运行"
-    : "预览状态未知";
-  const checkpointLabel = checkpoint
-    ? checkpoint.last_checkpoint
-      ? checkpoint.dirty
-        ? "有检查点，当前有改动"
-        : "检查点已就绪"
-      : checkpoint.is_git_repo
-        ? "尚未创建检查点"
-        : "不是 Git 项目"
-    : "检查点状态未知";
+  const delivery = getDeliveryConfidence(runtime, checkpoint);
 
   return (
     <section className="rounded-md border border-border bg-card">
@@ -87,15 +100,36 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
 
       <div className="space-y-2 px-3 py-2.5">
         <StatusLine
-          color={previewRunning ? "#4A9E6B" : "#8C93A0"}
+          color={delivery.preview.color}
           label="预览"
-          value={previewLabel}
+          value={delivery.preview.label}
         />
         <StatusLine
-          color={checkpoint?.last_checkpoint ? "#D4A853" : "#8C93A0"}
+          color={delivery.checkpoint.color}
           label="检查点"
-          value={checkpointLabel}
+          value={delivery.checkpoint.label}
         />
+        <div className="rounded border border-border/70 bg-background/40 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          {delivery.nextAction}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {delivery.preview.action && delivery.preview.actionLabel && (
+            <DeliveryButton
+              action={delivery.preview.action}
+              busy={actionBusy === delivery.preview.action}
+              label={delivery.preview.actionLabel}
+              onClick={runDeliveryAction}
+            />
+          )}
+          {delivery.checkpoint.action && delivery.checkpoint.actionLabel && (
+            <DeliveryButton
+              action={delivery.checkpoint.action}
+              busy={actionBusy === delivery.checkpoint.action}
+              label={delivery.checkpoint.actionLabel}
+              onClick={runDeliveryAction}
+            />
+          )}
+        </div>
         {error && (
           <div className="rounded border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
             {error}
@@ -138,6 +172,32 @@ function StatusLine({ color, label, value }: { color: string; label: string; val
       </span>
       <span className="min-w-0 truncate text-right text-foreground/80">{value}</span>
     </div>
+  );
+}
+
+function DeliveryButton({
+  action,
+  busy,
+  label,
+  onClick,
+}: {
+  action: DeliveryAction;
+  busy: boolean;
+  label: string;
+  onClick: (action: DeliveryAction) => void;
+}) {
+  const Icon = action === "start_preview" ? Play : action === "open_preview" ? ExternalLink : ShieldCheck;
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => onClick(action)}
+      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 text-[11px] text-foreground transition-colors hover:bg-secondary disabled:cursor-default disabled:opacity-70"
+    >
+      <Icon className={cn("size-3.5", busy && "animate-pulse")} />
+      {label}
+    </button>
   );
 }
 

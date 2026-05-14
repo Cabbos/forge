@@ -1003,6 +1003,72 @@ test.describe("Project records context panel", () => {
     await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
   });
 
+  test("delivery shows preview action and checkpoint next step", async ({ page }) => {
+    const sessionId = "delivery-action-session";
+    const projectPath = "/Users/cabbos/project/forge";
+
+    await setup(page);
+    await page.addInitScript(({ sessionId, projectPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", projectPath);
+
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string) => {
+        switch (cmd) {
+          case "create_session":
+            return { session_id: sessionId };
+          case "get_default_working_dir":
+            return projectPath;
+          case "get_project_runtime_status":
+            return {
+              working_dir: projectPath,
+              has_package_json: true,
+              package_manager: "npm",
+              dev_script: "dev",
+              command: "npm run dev",
+              port: 1420,
+              url: "http://localhost:1420",
+              running: false,
+              managed: false,
+              pid: null,
+              can_start: true,
+              can_stop: false,
+              can_open: true,
+              message: "Preview not running",
+              logs: [],
+            };
+          case "get_project_checkpoint_status":
+            return {
+              working_dir: projectPath,
+              is_git_repo: true,
+              dirty: false,
+              last_checkpoint: null,
+              message: "No checkpoint yet",
+            };
+          case "start_project_dev_server":
+          case "create_project_checkpoint":
+            return undefined;
+          case "list_memories":
+            return [];
+          default:
+            return undefined;
+        }
+      };
+    }, { sessionId, projectPath });
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await page.getByTitle("打开项目档案").click();
+    const delivery = page.locator("aside").last();
+
+    await expect(delivery.getByText("预览未运行")).toBeVisible();
+    await expect(delivery.getByRole("button", { name: "启动预览" })).toBeVisible();
+    await expect(delivery.getByText("还没有检查点")).toBeVisible();
+    await expect(delivery.getByRole("button", { name: "创建检查点" })).toBeVisible();
+  });
+
   test("groups suggested background and project record updates", async ({ page }) => {
     const sessionId = "memory-inbox-session";
     const projectPath = "/Users/cabbos/project/forge";
