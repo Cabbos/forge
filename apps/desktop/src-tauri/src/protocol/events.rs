@@ -1,4 +1,5 @@
 use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
+use crate::harness::write_boundary::WriteBoundary;
 use crate::memory::{SelectedContextMemory, WikiMemory};
 use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,8 @@ pub enum StreamEvent {
         block_id: String,
         question: String,
         kind: String, // "dangerous_cmd" | "file_delete" | "api_call"
+        #[serde(skip_serializing_if = "Option::is_none")]
+        boundary: Option<WriteBoundary>,
     },
 
     // ── Context Management ──

@@ -140,6 +140,7 @@ impl EventBus {
             block_id: block_id.into(),
             question: question.into(),
             kind: kind.into(),
+            boundary: None,
         });
     }
 

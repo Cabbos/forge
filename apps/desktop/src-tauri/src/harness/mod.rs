@@ -21,6 +21,7 @@ use crate::harness::capabilities::skills::SkillLoaderCap;
 use crate::harness::capabilities::tools;
 use crate::harness::db::Database;
 use crate::harness::registry::CapabilityRegistry;
+use crate::harness::write_boundary::build_write_boundary;
 use event_bus::EventBus;
 use hooks::{FileSystemAuditHook, HookEngine, LoggingHook};
 use permissions::{PermissionDecision, PermissionGate};
@@ -257,6 +258,8 @@ impl Harness {
                         kind,
                         remember_key,
                     } => {
+                        let boundary =
+                            build_write_boundary(tool_name, &input, &self.working_dir, &kind);
                         let block_id = uuid::Uuid::now_v7().to_string();
                         let (tx, rx) = tokio::sync::oneshot::channel();
                         {
@@ -272,6 +275,7 @@ impl Harness {
                                 block_id: block_id.clone(),
                                 question,
                                 kind,
+                                boundary: Some(boundary),
                             },
                         );
                         // Wait 120s for user response

@@ -863,7 +863,10 @@ function eventToBlock(event: StreamEvent): BlockState | null {
         ...base,
         event_type: "confirm_ask",
         content: event.question,
-        metadata: { kind: event.kind },
+        metadata: {
+          kind: event.kind,
+          boundary: event.boundary ?? null,
+        },
       };
     case "context_compacted":
       return {

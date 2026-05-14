@@ -312,6 +312,7 @@ impl ToolExecutor {
                     block_id: block_id.clone(),
                     question: question.to_string(),
                     kind: "ask_user".to_string(),
+                    boundary: None,
                 });
                 match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
                     Ok(Ok(true)) => {

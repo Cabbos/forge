@@ -134,6 +134,21 @@ export interface WorkflowState {
   updated_at: number;
 }
 
+export type WriteBoundaryRisk = "normal" | "caution" | "high";
+
+export interface WriteBoundary {
+  title: string;
+  workspace_name: string;
+  workspace_path: string;
+  operation: string;
+  affected_files: string[];
+  command?: string | null;
+  impact: string;
+  risk: WriteBoundaryRisk;
+  recovery: string;
+  warning?: string | null;
+}
+
 export type StreamEvent =
   // ── AI Thinking ──
   | { event_type: "thinking_start"; session_id: string; block_id: string }
@@ -154,7 +169,14 @@ export type StreamEvent =
   | { event_type: "shell_output"; session_id: string; block_id: string; content: string }
   | { event_type: "shell_end"; session_id: string; block_id: string; exit_code: number }
   // ── Permission Confirmations ──
-  | { event_type: "confirm_ask"; session_id: string; block_id: string; question: string; kind: string }
+  | {
+      event_type: "confirm_ask";
+      session_id: string;
+      block_id: string;
+      question: string;
+      kind: string;
+      boundary?: WriteBoundary | null;
+    }
   // ── Context Management ──
   | {
       event_type: "context_compacted";
