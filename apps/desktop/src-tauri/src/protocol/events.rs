@@ -4,6 +4,14 @@ use crate::memory::{SelectedContextMemory, WikiMemory};
 use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliverySummary {
+    pub project_path: Option<String>,
+    pub preview_label: String,
+    pub checkpoint_label: String,
+    pub next_action: String,
+}
+
 /// Streaming events emitted from Rust backend to frontend.
 /// Mirrors the TypeScript protocol in src/lib/protocol.ts
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +169,14 @@ pub enum StreamEvent {
         state: WorkflowState,
     },
 
+    // ── Delivery Summary ──
+    #[serde(rename = "delivery_summary")]
+    DeliverySummary {
+        session_id: String,
+        block_id: String,
+        summary: DeliverySummary,
+    },
+
     // ── Session Status ──
     #[serde(rename = "session_started")]
     SessionStarted {
@@ -219,6 +235,7 @@ impl StreamEvent {
             | ForgeWikiUpdateProposed { session_id, .. }
             | ForgeWikiUpdated { session_id, .. }
             | WorkflowUpdated { session_id, .. }
+            | DeliverySummary { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
             | SessionStopped { session_id, .. }

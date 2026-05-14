@@ -881,6 +881,16 @@ function eventToBlock(event: StreamEvent): BlockState | null {
         },
         isComplete: true,
       };
+    case "delivery_summary":
+      return {
+        ...base,
+        event_type: "delivery_summary",
+        content: "本轮交付",
+        metadata: {
+          summary: event.summary,
+        },
+        isComplete: true,
+      };
     default:
       return null;
   }

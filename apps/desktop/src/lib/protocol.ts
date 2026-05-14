@@ -149,6 +149,13 @@ export interface WriteBoundary {
   warning?: string | null;
 }
 
+export interface DeliverySummary {
+  project_path: string | null;
+  preview_label: string;
+  checkpoint_label: string;
+  next_action: string;
+}
+
 export type StreamEvent =
   // ── AI Thinking ──
   | { event_type: "thinking_start"; session_id: string; block_id: string }
@@ -197,6 +204,7 @@ export type StreamEvent =
   | { event_type: "forge_wiki_update_proposed"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "forge_wiki_updated"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
+  | { event_type: "delivery_summary"; session_id: string; block_id: string; summary: DeliverySummary }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }
   | { event_type: "session_status"; session_id: string; status: string }

@@ -12,6 +12,7 @@ import { ConfirmCard } from "@/components/messages/ConfirmCard";
 import { PendingBlock } from "@/components/messages/PendingBlock";
 import { AcceptanceCard } from "@/components/messages/AcceptanceCard";
 import { ContextCompactCard } from "@/components/messages/ContextCompactCard";
+import { DeliverySummaryCard } from "@/components/messages/DeliverySummaryCard";
 import { MissingApiKeyCard } from "@/components/messages/MissingApiKeyCard";
 
 interface MessageListProps { blocks: BlockState[]; sessionId?: string }
@@ -150,6 +151,7 @@ function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: st
     case "diff_view": return <DiffCard block={block} />;
     case "confirm_ask": return <ConfirmCard block={block} sessionId={sessionId} />;
     case "context_compacted": return <ContextCompactCard block={block} />;
+    case "delivery_summary": return <DeliverySummaryCard block={block} />;
     case "pending": return <PendingBlock />;
     default: return block.content ? <TextBlock block={block} sessionId={sessionId} /> : null;
   }
