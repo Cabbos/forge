@@ -3,6 +3,7 @@ use tauri::Emitter;
 
 use crate::adapters::anthropic::AnthropicAdapter;
 use crate::adapters::base::AiAdapter;
+use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::adapters::openai_compatible::OpenAiCompatibleAdapter;
 use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
@@ -84,6 +85,81 @@ fn provider_label(provider: &str) -> &'static str {
     }
 }
 
+fn missing_api_key_message(provider: &str) -> String {
+    format!(
+        "还没有配置 {} API Key。请打开设置，粘贴密钥后就可以开始发送。",
+        provider_label(provider)
+    )
+}
+
+fn emit_missing_api_key_notice(app_handle: &tauri::AppHandle, session_id: &str, provider: &str) {
+    let _ = app_handle.emit(
+        "session-output",
+        StreamEvent::Error {
+            session_id: session_id.to_string(),
+            block_id: BlockId::new().to_string(),
+            message: missing_api_key_message(provider),
+            code: "missing_api_key".to_string(),
+        },
+    );
+}
+
+async fn upgrade_missing_key_session_if_possible(
+    app_handle: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    session: Arc<AgentSession>,
+) -> Result<Arc<AgentSession>, String> {
+    if !session.is_waiting_for_api_key() {
+        return Ok(session);
+    }
+
+    let snapshot = session.snapshot();
+    let provider = normalize_provider(Some(&snapshot.provider));
+    let credentials = settings::detect_credentials(&provider);
+    if credentials.api_key.trim().is_empty() {
+        return Ok(session);
+    }
+
+    let model_str = snapshot.model.clone();
+    let adapter = build_adapter(
+        &provider,
+        &credentials.api_key,
+        &model_str,
+        credentials.api_base.as_deref(),
+    )?;
+    let working_dir = resolve_working_dir(&snapshot.working_dir)?;
+    let harness = Arc::new(Harness::new_with_pending(
+        working_dir.clone(),
+        state.pending_confirms.clone(),
+    ));
+    let system_prompt = harness.build_system_prompt(&provider, &working_dir).await;
+    let upgraded = AgentSession::new(
+        snapshot.session_id.clone(),
+        provider.clone(),
+        adapter,
+        harness,
+        system_prompt,
+        snapshot.context_window_tokens,
+    );
+    upgraded.restore_state(snapshot.messages, snapshot.summary);
+    let upgraded = Arc::new(upgraded);
+    state
+        .sessions
+        .write()
+        .await
+        .insert(snapshot.session_id.clone(), upgraded.clone());
+    let _ = app_handle.emit(
+        "session-output",
+        StreamEvent::SessionStarted {
+            session_id: snapshot.session_id,
+            agent_type: provider,
+            model: model_str,
+            context_window_tokens: upgraded.context_window_tokens,
+        },
+    );
+    Ok(upgraded)
+}
+
 fn build_adapter(
     provider: &str,
     api_key: &str,
@@ -143,18 +219,20 @@ pub async fn create_session(
     } else {
         api_key
     };
-    if key.is_empty() {
-        return Err(format!(
-            "No {} API key configured. Open Settings (Cmd+,) to set one.",
-            provider_label(&provider)
-        ));
-    }
 
     let model_str = model
         .or(credentials.model)
         .unwrap_or_else(|| default_model(&provider).to_string());
     let context_window_tokens = context_window_tokens(&provider, &model_str);
-    let adapter = build_adapter(&provider, &key, &model_str, credentials.api_base.as_deref())?;
+    let missing_api_key = key.trim().is_empty();
+    let adapter = if missing_api_key {
+        Arc::new(Box::new(MissingKeyAdapter::new(
+            provider_label(&provider),
+            &model_str,
+        )) as Box<dyn AiAdapter>)
+    } else {
+        build_adapter(&provider, &key, &model_str, credentials.api_base.as_deref())?
+    };
 
     let working_dir = resolve_working_dir(&working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
@@ -178,40 +256,13 @@ pub async fn create_session(
         "session-output",
         StreamEvent::SessionStarted {
             session_id: session_id.clone(),
-            agent_type: provider,
-            model: model_str,
+            agent_type: provider.clone(),
+            model: model_str.clone(),
             context_window_tokens,
         },
     );
-
-    // Emit active skills as a visible info block in the conversation
-    let skills = harness.skill_loader.enabled_skills().await;
-    if !skills.is_empty() {
-        let names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
-        let info = format!("Active Skills: {}", names.join(", "));
-        let bid = BlockId::new().to_string();
-        let _ = app_handle.emit(
-            "session-output",
-            StreamEvent::TextStart {
-                session_id: session_id.clone(),
-                block_id: bid.clone(),
-            },
-        );
-        let _ = app_handle.emit(
-            "session-output",
-            StreamEvent::TextChunk {
-                session_id: session_id.clone(),
-                block_id: bid.clone(),
-                content: info,
-            },
-        );
-        let _ = app_handle.emit(
-            "session-output",
-            StreamEvent::TextEnd {
-                session_id: session_id.clone(),
-                block_id: bid,
-            },
-        );
+    if missing_api_key {
+        emit_missing_api_key_notice(&app_handle, &session_id, &provider);
     }
 
     let session = Arc::new(session);
@@ -223,7 +274,12 @@ pub async fn create_session(
         .write()
         .await
         .insert(session_id.clone(), session);
-    Ok(SessionCreated { session_id })
+    Ok(SessionCreated {
+        session_id,
+        provider,
+        model: model_str,
+        missing_api_key,
+    })
 }
 
 #[tauri::command]
@@ -232,30 +288,39 @@ pub async fn resume_session(
     state: tauri::State<'_, Arc<AppState>>,
     session_id: String,
 ) -> Result<SessionCreated, String> {
-    if state.sessions.read().await.contains_key(&session_id) {
-        return Ok(SessionCreated { session_id });
+    let existing_session = state.sessions.read().await.get(&session_id).cloned();
+    if let Some(session) = existing_session {
+        let session = upgrade_missing_key_session_if_possible(&app_handle, &state, session).await?;
+        return Ok(SessionCreated {
+            session_id,
+            provider: normalize_provider(Some(&session.agent_type)),
+            model: session.model_id.clone(),
+            missing_api_key: session.is_waiting_for_api_key(),
+        });
     }
 
     let snapshot = load_session_snapshot(&session_id)?;
     let provider = normalize_provider(Some(&snapshot.provider));
     let credentials = settings::detect_credentials(&provider);
-    if credentials.api_key.is_empty() {
-        return Err(format!(
-            "No {} API key configured. Open Settings (Cmd+,) to set one.",
-            provider_label(&provider)
-        ));
-    }
 
     let model_str = snapshot.model.clone();
     let context_window_tokens = snapshot
         .context_window_tokens
         .or_else(|| context_window_tokens(&provider, &model_str));
-    let adapter = build_adapter(
-        &provider,
-        &credentials.api_key,
-        &model_str,
-        credentials.api_base.as_deref(),
-    )?;
+    let missing_api_key = credentials.api_key.trim().is_empty();
+    let adapter = if missing_api_key {
+        Arc::new(Box::new(MissingKeyAdapter::new(
+            provider_label(&provider),
+            &model_str,
+        )) as Box<dyn AiAdapter>)
+    } else {
+        build_adapter(
+            &provider,
+            &credentials.api_key,
+            &model_str,
+            credentials.api_base.as_deref(),
+        )?
+    };
     let working_dir = resolve_working_dir(&snapshot.working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
         working_dir.clone(),
@@ -283,14 +348,20 @@ pub async fn resume_session(
         "session-output",
         StreamEvent::SessionStarted {
             session_id: snapshot.session_id.clone(),
-            agent_type: provider,
-            model: model_str,
+            agent_type: provider.clone(),
+            model: model_str.clone(),
             context_window_tokens,
         },
     );
+    if missing_api_key {
+        emit_missing_api_key_notice(&app_handle, &snapshot.session_id, &provider);
+    }
 
     Ok(SessionCreated {
         session_id: snapshot.session_id,
+        provider,
+        model: model_str,
+        missing_api_key,
     })
 }
 
@@ -344,6 +415,7 @@ pub async fn send_input(
     let session = state.sessions.read().await.get(&session_id).cloned();
     match session {
         Some(s) => {
+            let s = upgrade_missing_key_session_if_possible(&app_handle, &state, s).await?;
             let project_path = s.harness.working_dir.to_string_lossy().to_string();
             let workflow = classify_workflow(&session_id, &text, now_ms());
             state

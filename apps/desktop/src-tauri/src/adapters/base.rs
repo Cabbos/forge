@@ -113,4 +113,9 @@ pub trait AiAdapter: Send + Sync {
 
     /// Human-readable model name.
     fn model_name(&self) -> &str;
+
+    /// True when this adapter is a placeholder waiting for user credentials.
+    fn is_missing_api_key_adapter(&self) -> bool {
+        false
+    }
 }

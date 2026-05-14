@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreated {
     pub session_id: String,
+    pub provider: String,
+    pub model: String,
+    pub missing_api_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,6 +10,13 @@ import type {
   WikiMemory,
   WorkflowState,
 } from "../lib/protocol";
+import type { FirstLoopDraft } from "../lib/first-loop";
+import type { Workspace } from "../lib/workspaces";
+import {
+  normalizeWorkspacePath,
+  sortWorkspaces,
+  workspaceFromPath,
+} from "../lib/workspaces";
 import {
   DEFAULT_PROVIDER_ID,
   getDefaultModel,
@@ -24,11 +31,14 @@ interface AppStore {
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
   hydrated: boolean;
+  workspaces: Map<string, Workspace>;
+  activeWorkspaceId: string | null;
   memories: WikiMemory[];
   selectedContextBySession: Map<string, SelectedContextMemory[]>;
   forgeWikiContextBySession: Map<string, SelectedForgeWikiPage[]>;
   forgeWikiProposalsBySession: Map<string, ForgeWikiUpdateProposal[]>;
   workflowBySession: Map<string, WorkflowState>;
+  firstLoopDraftBySession: Map<string, FirstLoopDraft>;
 
   // Provider
   selectedProvider: ProviderId;
@@ -39,13 +49,16 @@ interface AppStore {
   // Actions
   hydrate: () => Promise<void>;
   setActiveSession: (id: string | null) => void;
-  addSession: (id: string, provider: string, model: string) => void;
+  setActiveWorkspace: (id: string | null) => void;
+  upsertWorkspace: (workspace: Workspace) => void;
+  addSession: (id: string, provider: string, model: string, workingDir?: string | null) => void;
   removeSession: (id: string) => void;
   setMemories: (memories: WikiMemory[]) => void;
   upsertMemory: (memory: WikiMemory) => void;
   setForgeWikiContext: (sessionId: string, selected: SelectedForgeWikiPage[]) => void;
   upsertForgeWikiProposal: (sessionId: string, proposal: ForgeWikiUpdateProposal) => void;
   setWorkflowState: (sessionId: string, workflow: WorkflowState) => void;
+  setFirstLoopDraft: (sessionId: string, draft: FirstLoopDraft | null) => void;
   updateSessionStatus: (id: string, status: SessionState["status"]) => void;
   updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => void;
 
@@ -66,6 +79,10 @@ const PERSIST_KEY = "forge-sessions";
 const BLOCKS_PREFIX = "forge-blocks:";
 const PROVIDER_KEY = "forge-provider";
 const MODEL_KEY = "forge-model";
+const ACTIVE_SESSION_KEY = "forge-active-session";
+const WORKSPACES_KEY = "forge-workspaces";
+const ACTIVE_WORKSPACE_KEY = "forge-active-workspace";
+const LEGACY_WORKING_DIR_KEY = "forge-working-dir";
 const MAX_PERSISTED_BLOCKS = 100;
 const BLOCK_PERSIST_DEBOUNCE_MS = 350;
 const blockPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -74,9 +91,20 @@ interface PersistedSession {
   id: string;
   agentType: string;
   model: string;
+  workingDir?: string | null;
+  workspaceId?: string | null;
   contextWindowTokens?: number | null;
   status: SessionState["status"];
   workflowState?: WorkflowState | null;
+}
+
+function persistWorkspaces(workspaces: Map<string, Workspace>, activeWorkspaceId: string | null) {
+  return Promise.all([
+    idbSet(WORKSPACES_KEY, sortWorkspaces(workspaces.values())).catch(() => {}),
+    activeWorkspaceId
+      ? idbSet(ACTIVE_WORKSPACE_KEY, activeWorkspaceId).catch(() => {})
+      : idbDel(ACTIVE_WORKSPACE_KEY).catch(() => {}),
+  ]);
 }
 
 // Save sessions to IndexedDB. Returns a promise so callers can await when needed.
@@ -90,6 +118,8 @@ function persistSessions(
       id: s.id,
       agentType: s.agentType,
       model: s.model,
+      workingDir: s.workingDir ?? null,
+      workspaceId: s.workspaceId ?? null,
       contextWindowTokens: s.contextWindowTokens ?? null,
       status: s.status,
       workflowState: workflowBySession.get(s.id) ?? null,
@@ -138,15 +168,34 @@ async function loadBlocks(sessionId: string): Promise<BlockState[]> {
   }
 }
 
+function getLegacyWorkspace(): Workspace | null {
+  if (typeof window === "undefined") return null;
+  return workspaceFromPath(window.localStorage.getItem(LEGACY_WORKING_DIR_KEY) ?? "");
+}
+
+function workspaceSessionIds(sessions: Map<string, SessionState>, workspaceId: string | null) {
+  if (!workspaceId) {
+    return Array.from(sessions.values())
+      .filter((session) => !session.workspaceId && !session.workingDir)
+      .map((session) => session.id);
+  }
+  return Array.from(sessions.values())
+    .filter((session) => session.workspaceId === workspaceId || session.workingDir === workspaceId)
+    .map((session) => session.id);
+}
+
 export const useStore = create<AppStore>((set, get) => ({
   sessions: new Map(),
   activeSessionId: null,
   hydrated: false,
+  workspaces: new Map(),
+  activeWorkspaceId: null,
   memories: [],
   selectedContextBySession: new Map(),
   forgeWikiContextBySession: new Map(),
   forgeWikiProposalsBySession: new Map(),
   workflowBySession: new Map(),
+  firstLoopDraftBySession: new Map(),
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
   selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),
@@ -170,39 +219,84 @@ export const useStore = create<AppStore>((set, get) => ({
   hydrate: async () => {
     try {
       const data = await idbGet<PersistedSession[]>(PERSIST_KEY);
+      const savedWorkspaces = await idbGet<Workspace[]>(WORKSPACES_KEY).catch(() => null);
+      const savedActiveWorkspaceId = await idbGet<string>(ACTIVE_WORKSPACE_KEY).catch(() => null);
       const savedTheme = await idbGet<string>("tui-theme").catch(() => null);
       const savedProvider = await idbGet<string>(PROVIDER_KEY).catch(() => null);
       const savedModel = await idbGet<string>(MODEL_KEY).catch(() => null);
+      const savedActiveSessionId = await idbGet<string>(ACTIVE_SESSION_KEY).catch(() => null);
       const selectedProvider = normalizeProviderId(savedProvider);
       const selectedModel = savedModel && modelBelongsToProvider(selectedProvider, savedModel)
         ? savedModel
         : getDefaultModel(selectedProvider);
+      const workspaces = new Map<string, Workspace>();
+      (savedWorkspaces ?? []).forEach((workspace) => {
+        const normalized = workspaceFromPath(workspace.path, workspace.lastOpenedAt);
+        if (normalized) workspaces.set(normalized.id, { ...normalized, name: workspace.name || normalized.name });
+      });
+      if (workspaces.size === 0) {
+        const legacyWorkspace = getLegacyWorkspace();
+        if (legacyWorkspace) workspaces.set(legacyWorkspace.id, legacyWorkspace);
+      }
+      const sortedWorkspaceIds = sortWorkspaces(workspaces.values()).map((workspace) => workspace.id);
+      const activeWorkspaceId = savedActiveWorkspaceId && workspaces.has(savedActiveWorkspaceId)
+        ? savedActiveWorkspaceId
+        : sortedWorkspaceIds[0] ?? null;
       if (data && data.length > 0) {
         const sessions = new Map<string, SessionState>();
         const workflowBySession = new Map<string, WorkflowState>();
         for (const s of data) {
           const blocks = await loadBlocks(s.id);
+          const workingDir = normalizeWorkspacePath(s.workingDir ?? "");
+          const workspaceId = s.workspaceId && workspaces.has(s.workspaceId)
+            ? s.workspaceId
+            : workingDir || activeWorkspaceId;
           // Backend sessions don't survive restarts — force stopped
-          sessions.set(s.id, { ...s, blocks, costUsd: 0, streaming: false, status: "stopped" as const });
+          sessions.set(s.id, {
+            ...s,
+            workingDir: workspaceId,
+            workspaceId,
+            blocks,
+            costUsd: 0,
+            streaming: false,
+            status: "stopped" as const,
+          });
           if (s.workflowState) {
             workflowBySession.set(s.id, s.workflowState);
           }
         }
+        const workspaceScopedSessionIds = workspaceSessionIds(sessions, activeWorkspaceId);
+        const fallbackActiveSessionId = workspaceScopedSessionIds[workspaceScopedSessionIds.length - 1] ?? null;
+        const activeSessionId = savedActiveSessionId && workspaceScopedSessionIds.includes(savedActiveSessionId)
+          ? savedActiveSessionId
+          : fallbackActiveSessionId;
         set({
           sessions,
+          activeSessionId,
+          workspaces,
+          activeWorkspaceId,
           workflowBySession,
           hydrated: true,
           theme: (savedTheme as "light" | "dark") || get().theme,
           selectedProvider,
           selectedModel,
         });
+        if (activeSessionId) {
+          idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+        }
+        persistSessions(sessions, workflowBySession);
+        persistWorkspaces(workspaces, activeWorkspaceId);
       } else {
         set({
+          workspaces,
+          activeWorkspaceId,
           hydrated: true,
           theme: (savedTheme as "light" | "dark") || get().theme,
           selectedProvider,
           selectedModel,
         });
+        idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+        persistWorkspaces(workspaces, activeWorkspaceId);
       }
     } catch {
       set({ hydrated: true });
@@ -213,7 +307,52 @@ export const useStore = create<AppStore>((set, get) => ({
     ? "dark"
     : "light",
 
-  setActiveSession: (id) => set({ activeSessionId: id }),
+  setActiveSession: (id) => {
+    set({ activeSessionId: id });
+    if (id) {
+      idbSet(ACTIVE_SESSION_KEY, id).catch(() => {});
+    } else {
+      idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+    }
+  },
+
+  setActiveWorkspace: (id) => {
+    const workspaces = new Map(get().workspaces);
+    const activeWorkspaceId = id && workspaces.has(id) ? id : null;
+    const scopedSessionIds = workspaceSessionIds(get().sessions, activeWorkspaceId);
+    const currentSessionId = get().activeSessionId;
+    const activeSessionId = currentSessionId && scopedSessionIds.includes(currentSessionId)
+      ? currentSessionId
+      : scopedSessionIds[scopedSessionIds.length - 1] ?? null;
+    set({ activeWorkspaceId, activeSessionId });
+    persistWorkspaces(workspaces, activeWorkspaceId);
+    if (activeSessionId) {
+      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    } else {
+      idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+    }
+  },
+
+  upsertWorkspace: (workspace) => {
+    const normalized = workspaceFromPath(workspace.path, Date.now());
+    if (!normalized) return;
+    const workspaces = new Map(get().workspaces);
+    const nextWorkspace = {
+      ...normalized,
+      name: workspace.name || normalized.name,
+      lastOpenedAt: workspace.lastOpenedAt || normalized.lastOpenedAt,
+    };
+    workspaces.set(nextWorkspace.id, nextWorkspace);
+    const scopedSessionIds = workspaceSessionIds(get().sessions, nextWorkspace.id);
+    const activeSessionId = scopedSessionIds[scopedSessionIds.length - 1] ?? null;
+    set({ workspaces, activeWorkspaceId: nextWorkspace.id, activeSessionId });
+    persistWorkspaces(workspaces, nextWorkspace.id);
+    if (activeSessionId) {
+      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    } else {
+      idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+    }
+  },
 
   setMemories: (memories) => set({ memories }),
 
@@ -252,20 +391,31 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ forgeWikiProposalsBySession });
   },
 
-  addSession: (id, provider, model) => {
+  addSession: (id, provider, model, workingDir) => {
     const sessions = new Map(get().sessions);
+    const existing = sessions.get(id);
+    const normalizedWorkspace = workspaceFromPath(workingDir || get().activeWorkspaceId || "");
+    const workspaces = new Map(get().workspaces);
+    if (normalizedWorkspace) {
+      workspaces.set(normalizedWorkspace.id, normalizedWorkspace);
+    }
+    const workspaceId = normalizedWorkspace?.id ?? get().activeWorkspaceId;
     sessions.set(id, {
       id,
       agentType: provider,
       model,
-      contextWindowTokens: getModelContextWindow(model),
+      workingDir: workspaceId,
+      workspaceId,
+      contextWindowTokens: existing?.contextWindowTokens ?? getModelContextWindow(model),
       status: "running",
-      blocks: [],
-      costUsd: 0,
-      streaming: false,
+      blocks: existing?.blocks ?? [],
+      costUsd: existing?.costUsd ?? 0,
+      streaming: existing?.streaming ?? false,
     });
-    set({ sessions, activeSessionId: id });
+    set({ sessions, workspaces, activeWorkspaceId: workspaceId, activeSessionId: id });
     persistSessions(sessions, get().workflowBySession);
+    persistWorkspaces(workspaces, workspaceId);
+    idbSet(ACTIVE_SESSION_KEY, id).catch(() => {});
   },
 
   removeSession: (id) => {
@@ -274,13 +424,18 @@ export const useStore = create<AppStore>((set, get) => ({
     const forgeWikiContextBySession = new Map(get().forgeWikiContextBySession);
     const forgeWikiProposalsBySession = new Map(get().forgeWikiProposalsBySession);
     const workflowBySession = new Map(get().workflowBySession);
+    const firstLoopDraftBySession = new Map(get().firstLoopDraftBySession);
     sessions.delete(id);
     selectedContextBySession.delete(id);
     forgeWikiContextBySession.delete(id);
     forgeWikiProposalsBySession.delete(id);
     workflowBySession.delete(id);
+    firstLoopDraftBySession.delete(id);
+    const remainingSessionIds = workspaceSessionIds(sessions, get().activeWorkspaceId);
     const activeSessionId =
-      get().activeSessionId === id ? null : get().activeSessionId;
+      get().activeSessionId === id
+        ? remainingSessionIds[remainingSessionIds.length - 1] ?? null
+        : get().activeSessionId;
     set({
       sessions,
       activeSessionId,
@@ -288,12 +443,16 @@ export const useStore = create<AppStore>((set, get) => ({
       forgeWikiContextBySession,
       forgeWikiProposalsBySession,
       workflowBySession,
+      firstLoopDraftBySession,
     });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
       persistSessions(sessions, workflowBySession),
       idbDel(BLOCKS_PREFIX + id).catch(() => {}),
+      activeSessionId
+        ? idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {})
+        : idbDel(ACTIVE_SESSION_KEY).catch(() => {}),
     ]).catch(() => {});
   },
 
@@ -302,6 +461,16 @@ export const useStore = create<AppStore>((set, get) => ({
     workflowBySession.set(sessionId, workflow);
     set({ workflowBySession });
     persistSessions(get().sessions, workflowBySession);
+  },
+
+  setFirstLoopDraft: (sessionId, draft) => {
+    const firstLoopDraftBySession = new Map(get().firstLoopDraftBySession);
+    if (draft) {
+      firstLoopDraftBySession.set(sessionId, draft);
+    } else {
+      firstLoopDraftBySession.delete(sessionId);
+    }
+    set({ firstLoopDraftBySession });
   },
 
   updateBlock: (sessionId: string, blockId: string, patch: Partial<BlockState>) => {
@@ -396,6 +565,8 @@ export const useStore = create<AppStore>((set, get) => ({
           id: session_id,
           agentType: se.agent_type,
           model: se.model,
+          workingDir: get().activeWorkspaceId,
+          workspaceId: get().activeWorkspaceId,
           contextWindowTokens: se.context_window_tokens ?? getModelContextWindow(se.model),
           status: "running",
           blocks: [],
@@ -440,6 +611,8 @@ export const useStore = create<AppStore>((set, get) => ({
         ...session,
         agentType: startedEvent.agent_type,
         model: startedEvent.model,
+        workingDir: session.workingDir ?? get().activeWorkspaceId,
+        workspaceId: session.workspaceId ?? get().activeWorkspaceId,
         contextWindowTokens: startedEvent.context_window_tokens ?? getModelContextWindow(startedEvent.model),
         status: "running",
         streaming: false,
@@ -490,6 +663,12 @@ export const useStore = create<AppStore>((set, get) => ({
 
     if (event_type === "error") {
       const errorEvent = event as Extract<StreamEvent, { event_type: "error" }>;
+      if (
+        errorEvent.code === "missing_api_key" &&
+        blocks.some((block) => block.event_type === "error" && block.metadata?.code === "missing_api_key")
+      ) {
+        return;
+      }
       const newBlocks = [
         ...blocks,
         {
@@ -712,7 +891,20 @@ export const useActiveSession = () =>
   });
 
 export const useSessionList = () =>
-  useStore((s) => Array.from(s.sessions.values()));
+  useStore((s) => {
+    if (!s.activeWorkspaceId) {
+      return Array.from(s.sessions.values()).filter((session) => !session.workspaceId && !session.workingDir);
+    }
+    return Array.from(s.sessions.values()).filter((session) =>
+      session.workspaceId === s.activeWorkspaceId || session.workingDir === s.activeWorkspaceId
+    );
+  });
+
+export const useWorkspaceList = () =>
+  useStore((s) => sortWorkspaces(s.workspaces.values()));
+
+export const useActiveWorkspace = () =>
+  useStore((s) => s.activeWorkspaceId ? s.workspaces.get(s.activeWorkspaceId) ?? null : null);
 
 export const useActiveBlocks = () =>
   useStore((s) => {

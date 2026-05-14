@@ -277,7 +277,7 @@ function buildProgressSummary(session?: SessionState): ProgressSummary {
       status: hasUserGoal ? "done" : "active",
     },
     {
-      label: hasToolActivity ? "查找文件、工具和风险点" : "准备分析上下文",
+      label: hasToolActivity ? "查找文件、工具和风险点" : "准备分析项目档案",
       status: hasToolActivity ? "done" : isStreaming ? "active" : "idle",
     },
     {

@@ -29,14 +29,14 @@ const MODE_COPY: Record<TaskModeId, TaskModeView> = {
     id: "ready",
     label: "准备判断",
     title: "正在判断工作方式",
-    description: "Forge 会根据你的请求选择直接回答、规划、执行或排查。",
+    description: "描述一个小工具、修改或问题，Forge 会判断下一步。",
     tone: "neutral",
   },
   clarify: {
     id: "clarify",
     label: "梳理想法",
     title: "正在把想法整理清楚",
-    description: "适合新功能、产品方向、需求还不完整的任务。",
+    description: "适合把一句话的小工具想法收拢成第一版。",
     tone: "accent",
   },
   spec: {
@@ -57,7 +57,7 @@ const MODE_COPY: Record<TaskModeId, TaskModeView> = {
     id: "build",
     label: "开始制作",
     title: "正在处理项目",
-    description: "Forge 可能会读写文件、运行命令或更新界面。",
+    description: "Forge 会把目标推进到可见、可点、可继续的第一版。",
     tone: "accent",
   },
   debug: {
@@ -130,13 +130,13 @@ export function modeAwarePlaceholder(workflow: WorkflowState | null, isRunning: 
   const mode = deriveTaskModeView(workflow).id;
   switch (mode) {
     case "clarify":
-      return "描述目标、使用者、输入和输出。";
+      return "描述小工具目标、核心动作、输入和输出。";
     case "spec":
       return "看完方案后，可以说“开始做”或指出要改哪里。";
     case "plan":
       return "可以补充约束，或说“按这个计划执行”。";
     case "build":
-      return "继续描述修改，Forge 会处理项目。";
+      return "继续描述修改，Forge 会推进第一版。";
     case "debug":
       return "粘贴报错、失败现象或复现步骤。";
     case "verify":
@@ -144,6 +144,6 @@ export function modeAwarePlaceholder(workflow: WorkflowState | null, isRunning: 
     case "wrap":
       return "可以继续追问结果，或指定下一步。";
     case "ready":
-      return "说说你想做什么，Forge 会判断下一步。";
+      return "描述你想做的小工具、要修改的地方，或遇到的问题。";
   }
 }

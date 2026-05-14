@@ -52,9 +52,9 @@ export function countInjectedContext(items: ActiveContextItem[]): number {
 
 export function activeContextSummary(items: ActiveContextItem[]): string {
   const injected = countInjectedContext(items);
-  if (items.length === 0) return "本轮没有带入额外背景";
-  if (injected === 0) return `找到 ${items.length} 条相关背景`;
-  return `已带入 ${injected} 条背景`;
+  if (items.length === 0) return "本轮没有带入额外档案";
+  if (injected === 0) return `找到 ${items.length} 条相关档案`;
+  return `已参考 ${injected} 条档案`;
 }
 
 function memoryCategoryLabel(category: SelectedContextMemory["category"]): string {

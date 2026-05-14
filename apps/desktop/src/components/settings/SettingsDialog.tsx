@@ -48,6 +48,23 @@ export function SettingsDialog() {
     if (open) refresh();
   }, [open]);
 
+  useEffect(() => {
+    const openSettings = () => setOpen(true);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ",") {
+        event.preventDefault();
+        setOpen(true);
+      }
+    };
+
+    window.addEventListener("forge:open-settings", openSettings);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("forge:open-settings", openSettings);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   const handleSave = async () => {
     if (!editing) return;
     setSaving(true);

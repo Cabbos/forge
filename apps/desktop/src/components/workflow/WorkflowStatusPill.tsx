@@ -16,7 +16,7 @@ export function WorkflowStatusPill({
 
   const strict = workflow.gate === "approval_required";
   const mode = deriveTaskModeView(workflow);
-  const label = activeContextCount > 0 ? `${mode.label} · 已带入 ${activeContextCount}` : mode.label;
+  const label = activeContextCount > 0 ? `${mode.label} · 已参考 ${activeContextCount}` : mode.label;
 
   return (
     <button

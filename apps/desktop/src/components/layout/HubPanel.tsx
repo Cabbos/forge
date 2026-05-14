@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { FilePlus2, FileText, X } from "lucide-react";
-import { useStore } from "@/store";
+import { useActiveWorkspace, useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ActiveContextSection } from "@/components/context/ActiveContextSection";
+import { FirstLoopCard } from "@/components/context/FirstLoopCard";
 import { WikiSections } from "@/components/context/WikiSections";
 import { ProjectStatusCard } from "./ProjectStatusCard";
 import { CurrentTaskCard } from "@/components/workflow/CurrentTaskCard";
@@ -26,9 +27,11 @@ const contextFiles: ContextFile[] = [];
 export function HubPanel() {
   const [open, setOpen] = useState(false);
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const activeWorkspace = useActiveWorkspace();
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
   const workflow = useStore((s) => activeId ? s.workflowBySession.get(activeId) ?? null : null);
+  const firstLoopDraft = useStore((s) => activeId ? s.firstLoopDraftBySession.get(activeId) ?? null : null);
   const selectedMemories = useStore((s) => activeId ? s.selectedContextBySession.get(activeId) ?? [] : []);
   const selectedWikiPages = useStore((s) => activeId ? s.forgeWikiContextBySession.get(activeId) ?? [] : []);
   const session = activeId ? sessions.get(activeId) : null;
@@ -50,7 +53,7 @@ export function HubPanel() {
   useEffect(() => {
     let cancelled = false;
 
-    setProjectPath(null);
+    setProjectPath(activeWorkspace?.path ?? null);
     if (!open || !activeId) return;
 
     getProjectRuntimeStatus(activeId)
@@ -64,7 +67,7 @@ export function HubPanel() {
     return () => {
       cancelled = true;
     };
-  }, [activeId, open]);
+  }, [activeId, activeWorkspace?.path, open]);
 
   if (!open) return null;
 
@@ -84,11 +87,11 @@ export function HubPanel() {
         }}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-4 py-3">
-          <span className="text-xs font-semibold text-foreground">工作台</span>
+          <span className="text-xs font-semibold text-foreground">项目档案</span>
           <button
             onClick={() => setOpen(false)}
             className="text-muted-foreground transition-colors hover:text-foreground"
-            title="关闭"
+            title="关闭项目档案"
           >
             <X className="size-4" />
           </button>
@@ -98,10 +101,7 @@ export function HubPanel() {
           <div className="flex flex-col gap-4 p-4">
             <CurrentTaskCard workflow={workflow} />
 
-            <ProductLayerHeader
-              title="上下文"
-              meta={activeContextItems.length > 0 ? `${activeContextItems.length} 条` : null}
-            />
+            <FirstLoopCard draft={firstLoopDraft} />
 
             <ActiveContextSection items={activeContextItems} />
 
@@ -111,7 +111,13 @@ export function HubPanel() {
 
             <ProductLayerHeader title="交付" meta="最近状态" />
 
-            <ProjectStatusCard sessionId={activeId} />
+            {activeId ? (
+              <ProjectStatusCard sessionId={activeId} />
+            ) : (
+              <div className="rounded-md border border-border bg-card px-3 py-3 text-xs text-muted-foreground">
+                选择一个任务后查看预览和检查点。
+              </div>
+            )}
 
             {session && (
               <div className="flex flex-col gap-1 border-t border-border pt-4">
@@ -163,7 +169,7 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
           <span>文件名</span>
           <span>类型</span>
           <span>解析状态</span>
-          <span className="text-right">上下文</span>
+          <span className="text-right">参考</span>
         </div>
 
         {files.length === 0 ? (

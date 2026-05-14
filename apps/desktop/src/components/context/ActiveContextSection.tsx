@@ -7,13 +7,13 @@ export function ActiveContextSection({ items }: { items: ActiveContextItem[] }) 
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-medium text-muted-foreground">本轮上下文</h3>
+        <h3 className="text-[11px] font-medium text-muted-foreground">本轮参考</h3>
         <span className="text-[10px] text-muted-foreground/70">{activeContextSummary(items)}</span>
       </div>
 
       {items.length === 0 ? (
         <div className="rounded-md border border-border bg-card px-3 py-4 text-center text-xs text-muted-foreground">
-          本轮没有带入额外背景
+          本轮没有带入额外档案
         </div>
       ) : (
         <div className="space-y-2">
@@ -45,12 +45,12 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
             item.injected ? "border-primary/30 text-primary" : "border-border text-muted-foreground",
           )}
         >
-          {item.injected ? "已带入" : "未使用"}
+          {item.injected ? "已参考" : "未使用"}
         </span>
       </div>
       <dl className="mt-2 space-y-1 text-[10px] leading-relaxed text-muted-foreground/75">
         <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-2">
-          <dt className="text-muted-foreground/55">为什么带入</dt>
+          <dt className="text-muted-foreground/55">为什么参考</dt>
           <dd className="min-w-0 break-words">{item.reason}</dd>
         </div>
         <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-2">
@@ -61,7 +61,7 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
         </div>
         <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-2">
           <dt className="text-muted-foreground/55">本轮状态</dt>
-          <dd>{item.injected ? "已带入" : "未使用"}</dd>
+          <dd>{item.injected ? "已参考" : "未使用"}</dd>
         </div>
       </dl>
       <div className="mt-2 flex justify-end">

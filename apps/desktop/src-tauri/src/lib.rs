@@ -48,6 +48,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|_app| {
             crate::app_log!("INFO", "DeepSeek Agent started");

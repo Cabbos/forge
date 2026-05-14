@@ -89,6 +89,10 @@ impl AgentSession {
         *self.system_prompt.lock().unwrap() = prompt;
     }
 
+    pub fn is_waiting_for_api_key(&self) -> bool {
+        self.adapter.is_missing_api_key_adapter()
+    }
+
     pub fn restore_state(&self, messages: Vec<ChatMessage>, summary: Option<String>) {
         *self.messages.lock().unwrap() = messages;
         *self.summary.lock().unwrap() = summary;

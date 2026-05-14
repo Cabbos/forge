@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import type {
   ForgeWikiPage,
   ForgeWikiState,
@@ -16,7 +17,12 @@ const WORKING_DIR_KEY = "forge-working-dir";
 const FILE_OPEN_TEMPLATE_KEY = "forge-file-open-template";
 const DEFAULT_FILE_OPEN_TEMPLATE = "vscode://file/{path}{lineSuffix}";
 
-export interface SessionCreated { session_id: string }
+export interface SessionCreated {
+  session_id: string;
+  provider?: string;
+  model?: string;
+  missing_api_key?: boolean;
+}
 
 export interface SessionInfo {
   id: string; provider: string; model: string;
@@ -79,12 +85,21 @@ export async function createSession(
   apiKey = "",
 ): Promise<SessionCreated> {
   rememberWorkingDir(workingDir);
-  return invoke<SessionCreated>("create_session", {
-    workingDir,
-    provider,
-    apiKey: apiKey || "",
-    model,
-  });
+
+  try {
+    return await invoke<SessionCreated>("create_session", {
+      workingDir,
+      provider,
+      apiKey: apiKey || "",
+      model,
+    });
+  } catch (error) {
+    if (!isMissingTauriRuntimeError(error)) throw error;
+    rememberWorkingDir(workingDir);
+    return {
+      session_id: `browser-${crypto.randomUUID()}`,
+    };
+  }
 }
 
 export async function resumeSession(sessionId: string): Promise<SessionCreated> {
@@ -104,7 +119,28 @@ export async function listSessions(): Promise<SessionInfo[]> {
 }
 
 export async function getDefaultWorkingDir(): Promise<string> {
-  return invoke("get_default_working_dir");
+  try {
+    return await invoke("get_default_working_dir");
+  } catch (error) {
+    if (!isMissingTauriRuntimeError(error)) throw error;
+    return getRememberedWorkingDir() ?? "";
+  }
+}
+
+export async function pickWorkspaceFolder(): Promise<string | null> {
+  const mockPicker = (window as unknown as {
+    __mockDirectoryPicker?: () => string | null | Promise<string | null>;
+  }).__mockDirectoryPicker;
+  if (mockPicker) return await mockPicker();
+  if (!hasTauriRuntime()) return null;
+
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择项目文件夹",
+  });
+  if (Array.isArray(selected)) return selected[0] ?? null;
+  return selected ?? null;
 }
 
 export async function confirmResponse(blockId: string, approved: boolean): Promise<void> {
@@ -312,9 +348,22 @@ export async function discardForgeWikiUpdateProposal(
   return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId });
 }
 
-function hasTauriRuntime(): boolean {
+export function hasTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
+}
+
+function isMissingTauriRuntimeError(error: unknown): boolean {
+  if (hasTauriRuntime()) return false;
+
+  const message = String(error instanceof Error ? error.message : error);
+  return [
+    "__TAURI",
+    "Tauri",
+    "IPC",
+    "invoke",
+    "undefined",
+  ].some((needle) => message.includes(needle));
 }
 
 function fallbackProjectRuntimeStatus(): ProjectRuntimeStatus {

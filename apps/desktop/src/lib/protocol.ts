@@ -196,6 +196,8 @@ export interface SessionState {
   id: string;
   agentType: string;
   model: string;
+  workingDir?: string | null;
+  workspaceId?: string | null;
   contextWindowTokens?: number | null;
   status: "running" | "stopped" | "error";
   streaming: boolean;

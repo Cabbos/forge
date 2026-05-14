@@ -10,9 +10,9 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Bug, CheckCircle2, Compass, MessageSquarePlus, Moon, Sun, Zap } from "lucide-react";
-import { useStore } from "@/store";
+import { useActiveWorkspace, useSessionList, useStore } from "@/store";
 import { useSession } from "@/hooks/useSession";
-import { getDefaultWorkingDir, getRememberedWorkingDir, overrideWorkflowRoute } from "@/lib/tauri";
+import { overrideWorkflowRoute } from "@/lib/tauri";
 import type { WorkflowOverrideAction } from "@/lib/protocol";
 import { getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
 
@@ -25,7 +25,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const setActiveSession = useStore((s) => s.setActiveSession);
-  const sessions = useStore((s) => s.sessions);
+  const sessions = useSessionList();
+  const activeWorkspace = useActiveWorkspace();
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
   const activeSessionId = useStore((s) => s.activeSessionId);
@@ -46,15 +47,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   const handleCreate = async () => {
     onOpenChange(false);
+    if (!activeWorkspace) {
+      alert("请先选择一个项目工作空间。");
+      return;
+    }
     try {
-      const remembered = getRememberedWorkingDir();
-      const fallback = await getDefaultWorkingDir();
-      const workingDir = remembered && !isBroadLocalPath(remembered) ? remembered : fallback;
-      if (isBroadLocalPath(workingDir)) {
-        alert("请选择一个具体的项目文件夹，不要直接使用用户主目录。");
-        return;
-      }
-      await create(workingDir, selectedProvider, selectedModel);
+      await create(activeWorkspace.path, selectedProvider, selectedModel);
     } catch (e) {
       console.error("Failed to create session:", e);
     }
@@ -71,7 +69,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     }
   };
 
-  const sessionList = Array.from(sessions.values());
+  const sessionList = sessions;
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
@@ -152,10 +150,4 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       </Command>
     </CommandDialog>
   );
-}
-
-function isBroadLocalPath(path: string): boolean {
-  const normalized = path.trim().replace(/\/+$/, "");
-  if (!normalized || normalized === "/") return true;
-  return /^\/Users\/[^/]+$/.test(normalized) || /^\/home\/[^/]+$/.test(normalized);
 }

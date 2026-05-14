@@ -12,6 +12,7 @@ import { ConfirmCard } from "@/components/messages/ConfirmCard";
 import { PendingBlock } from "@/components/messages/PendingBlock";
 import { AcceptanceCard } from "@/components/messages/AcceptanceCard";
 import { ContextCompactCard } from "@/components/messages/ContextCompactCard";
+import { MissingApiKeyCard } from "@/components/messages/MissingApiKeyCard";
 
 interface MessageListProps { blocks: BlockState[]; sessionId?: string }
 
@@ -129,14 +130,20 @@ function shouldShowAcceptanceCard(block?: BlockState) {
   if (block.event_type !== "text" || !block.isComplete) return false;
   const content = block.content.trim();
   if (content.length < 120) return false;
-  if (content.startsWith("Active Skills:") || content.startsWith("已启用插件:")) return false;
+  if (isInternalContextBlock(content)) return false;
   return true;
 }
 
 function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: string }) {
+  if (block.event_type === "text" && isInternalContextBlock(block.content.trim())) return null;
+
   switch (block.event_type) {
     case "thinking": return <ThinkingBlock block={block} />;
-    case "text": case "error": return <TextBlock block={block} sessionId={sessionId} />;
+    case "text": return <TextBlock block={block} sessionId={sessionId} />;
+    case "error":
+      return block.metadata?.code === "missing_api_key"
+        ? <MissingApiKeyCard block={block} />
+        : <TextBlock block={block} sessionId={sessionId} />;
     case "tool_call": case "tool_call_result": return <ToolCallCard block={block} />;
     case "user_message": return <UserMessage block={block} />;
     case "shell": return <ShellCard block={block} />;
@@ -150,3 +157,11 @@ function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: st
 
 const MemoizedBlockRenderer = memo(BlockRenderer);
 MemoizedBlockRenderer.displayName = "MemoizedBlockRenderer";
+
+function isInternalContextBlock(content: string) {
+  return (
+    content.startsWith("Active Skills:") ||
+    content.startsWith("已启用插件:") ||
+    content.startsWith("## Active Skills")
+  );
+}

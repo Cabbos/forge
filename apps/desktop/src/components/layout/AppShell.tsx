@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FolderOpen, PanelRightOpen, Search, Sparkles } from "lucide-react";
-import { useStore } from "@/store";
+import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
 import { SessionView } from "@/components/session/SessionView";
 import { HubPanel } from "./HubPanel";
@@ -9,7 +9,6 @@ import { useOutputStream } from "@/hooks/useOutputStream";
 import { CommandPalette } from "@/components/CommandPalette";
 import { WorkflowStatusPill } from "@/components/workflow/WorkflowStatusPill";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
-import { getRememberedWorkingDir } from "@/lib/tauri";
 import { getProviderModelLabel, getProjectDisplay, getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
 import { formatContextWindow, getModelContextWindow } from "@/lib/providers";
 import forgeMark from "@/assets/forge-mark.svg";
@@ -17,9 +16,9 @@ import forgeMark from "@/assets/forge-mark.svg";
 export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [activeSidebarPanel, setActiveSidebarPanel] = useState<SidebarPanel | null>(null);
-  const [workingDir, setWorkingDir] = useState<string | null>(() => getRememberedWorkingDir());
   const activeSessionId = useStore((s) => s.activeSessionId);
   const sessions = useStore((s) => s.sessions);
+  const activeWorkspace = useActiveWorkspace();
   const workflow = useStore((s) => activeSessionId ? s.workflowBySession.get(activeSessionId) ?? null : null);
   const selectedMemoryCount = useStore((s) =>
     activeSessionId ? s.selectedContextBySession.get(activeSessionId)?.filter((item) => item.injected).length ?? 0 : 0,
@@ -31,19 +30,12 @@ export function AppShell() {
   const selectedModel = useStore((s) => s.selectedModel);
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
   const status = getSessionStatus(activeSession);
-  const project = getProjectDisplay(workingDir);
+  const project = getProjectDisplay(activeSession?.workingDir || activeWorkspace?.path);
   const contextWindow = activeSession?.contextWindowTokens ?? getModelContextWindow(activeSession?.model || selectedModel);
   const contextWindowLabel = formatContextWindow(contextWindow);
   const activeContextCount = selectedMemoryCount + selectedWikiPageCount;
   useOutputStream(activeSessionId);
   const capabilityTab: CapabilityTab = activeSidebarPanel === "automation" ? "hooks" : "skills";
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setWorkingDir(getRememberedWorkingDir());
-    }, 1200);
-    return () => window.clearInterval(timer);
-  }, []);
 
   const toggleSidebarPanel = (panel: SidebarPanel) => {
     setActiveSidebarPanel((current) => (current === panel ? null : panel));
@@ -107,10 +99,10 @@ export function AppShell() {
             <button
               onClick={() => window.dispatchEvent(new Event("toggle-hub"))}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              title="打开工作台"
+              title="打开项目档案"
             >
               <PanelRightOpen className="size-4" />
-              工作台
+              项目档案
             </button>
           </div>
         </div>
@@ -121,19 +113,23 @@ export function AppShell() {
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
             <img src={forgeMark} alt="" className="size-12 rounded-lg" />
             <div>
-              <p className="text-sm font-medium text-foreground">从当前任务开始</p>
+              <p className="text-sm font-medium text-foreground">
+                {activeWorkspace ? "从当前任务开始" : "选择一个项目开始"}
+              </p>
               <p className="mt-2 max-w-[420px] text-xs leading-relaxed text-muted-foreground/75">
-                Forge 会带着项目上下文，把结果推进到可预览、可检查、可继续。
+                {activeWorkspace
+                  ? "Forge 会带着项目档案，把结果推进到可预览、可检查、可继续。"
+                  : "先选择一个具体项目，Forge 会把对话、档案和交付状态绑定到这个工作空间。"}
               </p>
               <div className="mt-4 flex flex-wrap justify-center gap-2 text-[11px] text-muted-foreground">
-                {["当前任务", "上下文", "交付"].map((label) => (
+                {["当前任务", "项目档案", "交付"].map((label) => (
                   <span key={label} className="rounded-md border border-border bg-card px-2.5 py-1">
                     {label}
                   </span>
                 ))}
               </div>
               <p className="mt-4 text-xs text-muted-foreground/70">
-                当前项目：{project.path}
+                当前工作空间：{project.path}
               </p>
             </div>
           </div>

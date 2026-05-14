@@ -5,6 +5,7 @@ import { useStore } from "@/store";
 import { createProjectCheckpoint, searchWorkspaceFiles, listCapabilities, type CapabilityInfo } from "@/lib/tauri";
 import { formatContextWindow, getModelContextWindow, getModelLabel, getProviderDefinition, PROVIDERS } from "@/lib/providers";
 import { modeAwarePlaceholder } from "@/lib/task-mode";
+import { buildFirstLoopAgentPrompt, deriveFirstLoopDraft, FIRST_LOOP_QUICK_PROMPTS } from "@/lib/first-loop";
 
 interface InputBarProps { sessionId: string }
 
@@ -19,12 +20,6 @@ const COMMANDS = [
   { prefix: "/docs", text: "/docs", desc: "补充说明文档" },
 ];
 
-const QUICK_PROMPTS = [
-  "梳理当前任务，告诉我下一步怎么做。",
-  "带着项目记录继续推进这个工具。",
-  "检查当前结果，并推进到可交付状态。",
-];
-
 export function InputBar({ sessionId }: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState("");
@@ -36,6 +31,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   const setSelectedModel = useStore((s) => s.setSelectedModel);
   const pendingInput = useStore((s) => s.pendingInput);
   const setPendingInput = useStore((s) => s.setPendingInput);
+  const setFirstLoopDraft = useStore((s) => s.setFirstLoopDraft);
   const selectedMemoryContextCount = useStore((s) =>
     s.selectedContextBySession.get(sessionId)?.filter((item) => item.injected).length ?? 0,
   );
@@ -141,13 +137,18 @@ export function InputBar({ sessionId }: InputBarProps) {
     if (cmdChips.length > 0) message = cmdChips.map(c => c.value).join(" ") + (message ? "\n" + message : "");
     if (!message.trim()) return;
 
+    const firstLoopDraft = deriveFirstLoopDraft(sessionId, message);
+    if (firstLoopDraft) {
+      setFirstLoopDraft(sessionId, firstLoopDraft);
+    }
+
     await createProjectCheckpoint(sessionId).catch(() => {});
     useStore.getState().addUserMessage(sessionId, message);
-    send(sessionId, message);
+    send(sessionId, buildFirstLoopAgentPrompt(message));
     setValue("");
     setChips([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [value, chips, sessionId, send, isRunning]);
+  }, [value, chips, sessionId, send, isRunning, setFirstLoopDraft]);
 
   const handleResume = useCallback(async () => {
     if (isRunning || isResuming) return;
@@ -195,7 +196,7 @@ export function InputBar({ sessionId }: InputBarProps) {
     <div className="relative flex-shrink-0 px-10 pb-5 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
       {isRunning && !value.trim() && chips.length === 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
-          {QUICK_PROMPTS.map((prompt) => (
+          {FIRST_LOOP_QUICK_PROMPTS.map((prompt) => (
             <button
               key={prompt}
               onClick={() => useQuickPrompt(prompt)}
@@ -216,7 +217,7 @@ export function InputBar({ sessionId }: InputBarProps) {
       )}
       {selectedContextCount > 0 && (
         <div className="mb-2 text-[11px] text-muted-foreground/75">
-          本轮已带入 {selectedContextCount} 条背景
+          本轮已参考 {selectedContextCount} 条档案
         </div>
       )}
       {workflow?.gate === "soft" && (
