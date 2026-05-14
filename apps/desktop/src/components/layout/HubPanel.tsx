@@ -84,7 +84,7 @@ export function HubPanel() {
         }}
       >
         <div className="flex flex-shrink-0 items-center justify-between px-4 py-3">
-          <span className="text-xs font-semibold text-foreground">上下文</span>
+          <span className="text-xs font-semibold text-foreground">工作台</span>
           <button
             onClick={() => setOpen(false)}
             className="text-muted-foreground transition-colors hover:text-foreground"
@@ -98,19 +98,20 @@ export function HubPanel() {
           <div className="flex flex-col gap-4 p-4">
             <CurrentTaskCard workflow={workflow} />
 
+            <ProductLayerHeader
+              title="上下文"
+              meta={activeContextItems.length > 0 ? `${activeContextItems.length} 条` : null}
+            />
+
             <ActiveContextSection items={activeContextItems} />
 
             <WikiSections sessionId={activeId} projectPath={projectPath} />
 
             <ContextFilesSection files={contextFiles} />
 
-            <section>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-[11px] font-medium text-muted-foreground">项目状态</h3>
-                <span className="text-[10px] text-muted-foreground/70">轻量</span>
-              </div>
-              <ProjectStatusCard sessionId={activeId} />
-            </section>
+            <ProductLayerHeader title="交付" meta="最近状态" />
+
+            <ProjectStatusCard sessionId={activeId} />
 
             {session && (
               <div className="flex flex-col gap-1 border-t border-border pt-4">
@@ -132,6 +133,15 @@ export function HubPanel() {
   );
 }
 
+function ProductLayerHeader({ title, meta }: { title: string; meta?: string | null }) {
+  return (
+    <div className="flex items-center justify-between border-t border-border pt-3 first:border-t-0 first:pt-0">
+      <h3 className="text-[11px] font-semibold text-foreground">{title}</h3>
+      {meta && <span className="text-[10px] text-muted-foreground/70">{meta}</span>}
+    </div>
+  );
+}
+
 function ContextFilesSection({ files }: { files: ContextFile[] }) {
   return (
     <section>
@@ -149,9 +159,10 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
       </div>
 
       <div className="overflow-hidden rounded-md border border-border bg-card">
-        <div className="grid grid-cols-[minmax(0,1fr)_48px_64px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-          <span>文件</span>
+        <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+          <span>文件名</span>
           <span>类型</span>
+          <span>解析状态</span>
           <span className="text-right">上下文</span>
         </div>
 
@@ -177,14 +188,14 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
 
 function ContextFileRow({ file }: { file: ContextFile }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_48px_64px] items-center gap-2 px-3 py-2 text-xs">
+    <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] items-center gap-2 px-3 py-2 text-xs">
       <div className="min-w-0">
         <div className="truncate text-foreground">{file.name}</div>
-        <div className={cn("mt-0.5 text-[10px]", statusClass(file.status))}>
-          {statusLabel(file.status)}
-        </div>
       </div>
       <span className="truncate font-mono text-[10px] text-muted-foreground">{file.type}</span>
+      <span className={cn("truncate text-[10px]", statusClass(file.status))}>
+        {statusLabel(file.status)}
+      </span>
       <span className="text-right text-[10px] text-muted-foreground">
         {file.inContext ? "已加入" : "未加入"}
       </span>

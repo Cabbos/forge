@@ -166,11 +166,11 @@ export type StreamEvent =
       estimated_tokens_before: number;
       estimated_tokens_after: number;
     }
-  // ── Living Wiki Memory ──
+  // ── Saved Context ──
   | { event_type: "memory_selection"; session_id: string; selected: SelectedContextMemory[] }
   | { event_type: "memory_candidate"; session_id: string; memory: WikiMemory }
   | { event_type: "memory_updated"; session_id: string; memory: WikiMemory }
-  // ── Forge Wiki ──
+  // ── Project Records ──
   | { event_type: "forge_wiki_context_selected"; session_id: string; selected: SelectedForgeWikiPage[] }
   | { event_type: "forge_wiki_update_proposed"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "forge_wiki_updated"; session_id: string; proposal: ForgeWikiUpdateProposal }

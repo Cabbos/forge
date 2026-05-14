@@ -107,10 +107,10 @@ export function AppShell() {
             <button
               onClick={() => window.dispatchEvent(new Event("toggle-hub"))}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border px-2 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              title="打开上下文"
+              title="打开工作台"
             >
               <PanelRightOpen className="size-4" />
-              上下文
+              工作台
             </button>
           </div>
         </div>
@@ -121,8 +121,18 @@ export function AppShell() {
           <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
             <img src={forgeMark} alt="" className="size-12 rounded-lg" />
             <div>
-              <p className="text-sm text-muted-foreground">创建一个任务开始</p>
-              <p className="mt-1 text-xs text-muted-foreground/70">
+              <p className="text-sm font-medium text-foreground">从当前任务开始</p>
+              <p className="mt-2 max-w-[420px] text-xs leading-relaxed text-muted-foreground/75">
+                Forge 会带着项目上下文，把结果推进到可预览、可检查、可继续。
+              </p>
+              <div className="mt-4 flex flex-wrap justify-center gap-2 text-[11px] text-muted-foreground">
+                {["当前任务", "上下文", "交付"].map((label) => (
+                  <span key={label} className="rounded-md border border-border bg-card px-2.5 py-1">
+                    {label}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-4 text-xs text-muted-foreground/70">
                 当前项目：{project.path}
               </p>
             </div>

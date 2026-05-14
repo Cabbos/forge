@@ -332,7 +332,7 @@ function fallbackProjectRuntimeStatus(): ProjectRuntimeStatus {
     can_start: false,
     can_stop: false,
     can_open: false,
-    message: "在桌面应用中读取项目状态",
+    message: "在桌面应用中读取交付状态",
     logs: [],
   };
 }
@@ -354,7 +354,7 @@ function fallbackForgeWikiState(projectPath: string): ForgeWikiState {
     exists: false,
     wiki_dir: normalizedProjectPath ? joinPath(normalizedProjectPath, ".forge", "wiki") : "",
     pages: [],
-    message: "Forge Wiki is unavailable in the browser runtime.",
+    message: "项目记录在浏览器预览中不可用。",
   };
 }
 

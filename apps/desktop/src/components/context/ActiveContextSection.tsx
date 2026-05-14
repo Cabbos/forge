@@ -38,7 +38,6 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
             <span className="truncate text-xs font-medium text-foreground">{item.title}</span>
           </div>
           <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{item.summary}</p>
-          <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/75">{item.reason}</p>
         </div>
         <span
           className={cn(
@@ -49,10 +48,23 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
           {item.injected ? "已带入" : "未使用"}
         </span>
       </div>
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="truncate text-[10px] text-muted-foreground/70">
-          {item.sourceLabel}{item.sourcePath ? ` · ${item.sourcePath}` : ""}
-        </span>
+      <dl className="mt-2 space-y-1 text-[10px] leading-relaxed text-muted-foreground/75">
+        <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground/55">为什么带入</dt>
+          <dd className="min-w-0 break-words">{item.reason}</dd>
+        </div>
+        <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground/55">来源</dt>
+          <dd className="min-w-0 truncate">
+            {item.sourceLabel}{item.sourcePath ? ` · ${item.sourcePath}` : ""}
+          </dd>
+        </div>
+        <div className="grid grid-cols-[52px_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground/55">本轮状态</dt>
+          <dd>{item.injected ? "已带入" : "未使用"}</dd>
+        </div>
+      </dl>
+      <div className="mt-2 flex justify-end">
         <button
           type="button"
           disabled

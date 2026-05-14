@@ -313,21 +313,21 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
         />
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {!currentProjectPath ? (
-            <EmptyState label="打开项目后可以建立项目 Wiki" />
+            <EmptyState label="打开项目后可以建立项目记录" />
           ) : !forgeWikiState?.exists ? (
             <div className="space-y-3 px-3 py-5 text-center">
-              <EmptyState label="还没有项目 Wiki" compact />
+              <EmptyState label="还没有项目记录" compact />
               <button
                 type="button"
                 onClick={handleInitForgeWiki}
                 disabled={busyId === "forge-wiki:init"}
                 className="rounded border border-border bg-secondary px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
               >
-                建立项目 Wiki
+                建立项目记录
               </button>
             </div>
           ) : forgeWikiState.pages.length === 0 ? (
-            <EmptyState label="还没有项目 Wiki" />
+            <EmptyState label="还没有项目记录" />
           ) : (
             <div className="divide-y divide-border">
               {forgeWikiState.pages.map((page) => (
@@ -347,6 +347,9 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
               : null
           }
         />
+        <p className="-mt-1 mb-2 text-[10px] leading-relaxed text-muted-foreground/70">
+          确认后会进入项目记录或已保存背景
+        </p>
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {pendingForgeWikiProposals.length === 0 && candidateMemories.length === 0 ? (
             <EmptyState label="没有待确认的记录更新" />
@@ -358,6 +361,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
                   memory={memory}
                   draft={draft?.memoryId === memory.id ? draft : null}
                   busy={busyId === memory.id}
+                  intentLabel="建议保存为已保存背景"
                   onDraftChange={setDraft}
                   onEdit={() => startEdit(memory)}
                   onSave={saveDraft}
@@ -382,10 +386,10 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
       </section>
 
       <section>
-        <SectionHeader title="上下文记忆" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
+        <SectionHeader title="已保存背景" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
         <div className="overflow-hidden rounded-md border border-border bg-card">
           {projectMemories.length === 0 ? (
-            <EmptyState label="还没有上下文记忆" />
+            <EmptyState label="还没有已保存背景" />
           ) : (
             <div className="divide-y divide-border">
               {projectMemories.map((memory) => (
@@ -481,6 +485,7 @@ function ForgeWikiProposalRow({
     <div className="px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
+          <RowIntentLabel>建议写入项目记录</RowIntentLabel>
           <div className="truncate text-xs font-medium text-foreground">{proposal.title}</div>
           <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground/70">
             {proposal.target_pages.join(", ")}
@@ -506,6 +511,7 @@ function MemoryRow({
   memory,
   draft,
   busy,
+  intentLabel,
   onDraftChange,
   onEdit,
   onSave,
@@ -517,6 +523,7 @@ function MemoryRow({
   memory: WikiMemory;
   draft: DraftState | null;
   busy: boolean;
+  intentLabel?: string;
   onDraftChange: (draft: DraftState | null) => void;
   onEdit: () => void;
   onSave: () => void;
@@ -555,6 +562,7 @@ function MemoryRow({
     <div className="px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
+          {intentLabel && <RowIntentLabel>{intentLabel}</RowIntentLabel>}
           <div className="truncate text-xs font-medium text-foreground">{memory.title}</div>
           <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
             {memory.body}
@@ -584,6 +592,14 @@ function MemoryRow({
         <span className="truncate text-right">{statusLabel(memory.status)}</span>
         <span className="text-right font-mono">{Math.round(memory.confidence * 100)}%</span>
       </div>
+    </div>
+  );
+}
+
+function RowIntentLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-1 text-[10px] font-medium leading-none text-primary/80">
+      {children}
     </div>
   );
 }

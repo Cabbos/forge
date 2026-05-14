@@ -13,31 +13,31 @@ pub fn ensure_wiki_root_is_normal_dir(project_path: &str) -> Result<bool, String
     match fs::symlink_metadata(&root) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
-                return Err("Wiki directory cannot be a symlink".to_string());
+                return Err("项目记录目录不能是符号链接".to_string());
             }
             Ok(metadata.file_type().is_dir())
         }
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(format!("Failed to inspect wiki directory: {err}")),
+        Err(err) => Err(format!("无法检查项目记录目录: {err}")),
     }
 }
 
 pub fn resolve_wiki_page_path(project_path: &str, page_path: &str) -> Result<PathBuf, String> {
     let relative = Path::new(page_path);
     if page_path.trim().is_empty() {
-        return Err("Wiki page path cannot be empty".to_string());
+        return Err("项目记录页面路径不能为空".to_string());
     }
     if relative.is_absolute() {
-        return Err("Wiki page path must be relative".to_string());
+        return Err("项目记录页面路径必须是相对路径".to_string());
     }
     if relative.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return Err("Wiki page path must be a Markdown file".to_string());
+        return Err("项目记录页面路径必须是 Markdown 文件".to_string());
     }
     if relative
         .components()
         .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
     {
-        return Err("Wiki page path cannot leave the wiki directory".to_string());
+        return Err("项目记录页面路径不能离开项目记录目录".to_string());
     }
 
     let root = wiki_dir(project_path);
@@ -46,15 +46,15 @@ pub fn resolve_wiki_page_path(project_path: &str, page_path: &str) -> Result<Pat
     let canonical_root = match fs::symlink_metadata(&root) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
-                return Err("Wiki directory cannot be a symlink".to_string());
+                return Err("项目记录目录不能是符号链接".to_string());
             }
             let canonical_root = root
                 .canonicalize()
-                .map_err(|err| format!("Failed to resolve wiki directory: {err}"))?;
+                .map_err(|err| format!("无法解析项目记录目录: {err}"))?;
             Some(canonical_root)
         }
         Err(err) if err.kind() == ErrorKind::NotFound => None,
-        Err(err) => return Err(format!("Failed to inspect wiki directory: {err}")),
+        Err(err) => return Err(format!("无法检查项目记录目录: {err}")),
     };
 
     let mut current = root.clone();
@@ -62,17 +62,17 @@ pub fn resolve_wiki_page_path(project_path: &str, page_path: &str) -> Result<Pat
         match component {
             Component::Normal(part) => current.push(part),
             Component::CurDir => continue,
-            _ => return Err("Wiki page path cannot leave the wiki directory".to_string()),
+            _ => return Err("项目记录页面路径不能离开项目记录目录".to_string()),
         }
 
         match fs::symlink_metadata(&current) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() {
-                    return Err("Wiki page path cannot include symlinks".to_string());
+                    return Err("项目记录页面路径不能包含符号链接".to_string());
                 }
             }
             Err(err) if err.kind() == ErrorKind::NotFound => break,
-            Err(err) => return Err(format!("Failed to inspect wiki page path: {err}")),
+            Err(err) => return Err(format!("无法检查项目记录页面路径: {err}")),
         }
     }
 
@@ -80,9 +80,9 @@ pub fn resolve_wiki_page_path(project_path: &str, page_path: &str) -> Result<Pat
         let nearest_existing = nearest_existing_ancestor(&resolved);
         let canonical_existing = nearest_existing
             .canonicalize()
-            .map_err(|err| format!("Failed to resolve wiki page ancestor: {err}"))?;
+            .map_err(|err| format!("无法解析项目记录页面上级目录: {err}"))?;
         if !canonical_existing.starts_with(&canonical_root) {
-            return Err("Wiki page path is outside the wiki directory".to_string());
+            return Err("项目记录页面路径不在项目记录目录内".to_string());
         }
     }
 

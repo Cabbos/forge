@@ -73,9 +73,9 @@ impl ForgeWikiStore {
             wiki_dir: dir.display().to_string(),
             pages,
             message: if exists {
-                "Forge Wiki 已就绪".to_string()
+                "项目记录已就绪".to_string()
             } else {
-                "Forge Wiki 尚未初始化".to_string()
+                "项目记录尚未初始化".to_string()
             },
         })
     }
@@ -84,41 +84,39 @@ impl ForgeWikiStore {
         let dir = wiki_dir(project_path);
         let parent = dir
             .parent()
-            .ok_or_else(|| "Failed to resolve wiki directory parent".to_string())?;
+            .ok_or_else(|| "无法解析项目记录目录的上级目录".to_string())?;
         fs::create_dir_all(parent)
-            .map_err(|err| format!("Failed to create wiki directory: {err}"))?;
+            .map_err(|err| format!("无法创建项目记录目录: {err}"))?;
         match fs::symlink_metadata(&dir) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() {
-                    return Err("Forge Wiki directory cannot be a symlink".to_string());
+                    return Err("项目记录目录不能是符号链接".to_string());
                 }
             }
             Err(err) if err.kind() == ErrorKind::NotFound => {
                 fs::create_dir(&dir)
-                    .map_err(|err| format!("Failed to create wiki directory: {err}"))?;
+                    .map_err(|err| format!("无法创建项目记录目录: {err}"))?;
             }
-            Err(err) => return Err(format!("Failed to inspect wiki directory: {err}")),
+            Err(err) => return Err(format!("无法检查项目记录目录: {err}")),
         }
 
         for (path, _, content) in DEFAULT_PAGES {
             if contains_sensitive_wiki_content(content) {
-                return Err(format!(
-                    "Default wiki page {path} contains sensitive content"
-                ));
+                return Err(format!("默认项目记录页面 {path} 包含敏感内容"));
             }
             let page_path = dir.join(path);
             match fs::symlink_metadata(&page_path) {
                 Ok(metadata) => {
                     if metadata.file_type().is_symlink() {
-                        return Err(format!("Default wiki page {path} cannot be a symlink"));
+                        return Err(format!("默认项目记录页面 {path} 不能是符号链接"));
                     }
                 }
                 Err(err) if err.kind() == ErrorKind::NotFound => {
                     fs::write(&page_path, content)
-                        .map_err(|err| format!("Failed to write default page {path}: {err}"))?;
+                        .map_err(|err| format!("无法写入默认项目记录页面 {path}: {err}"))?;
                 }
                 Err(err) => {
-                    return Err(format!("Failed to inspect default page {path}: {err}"));
+                    return Err(format!("无法检查默认项目记录页面 {path}: {err}"));
                 }
             }
         }
@@ -138,14 +136,14 @@ impl ForgeWikiStore {
             match fs::symlink_metadata(&full_path) {
                 Ok(metadata) => {
                     if metadata.file_type().is_symlink() {
-                        return Err(format!("Forge Wiki page {path} cannot be a symlink"));
+                        return Err(format!("项目记录页面 {path} 不能是符号链接"));
                     }
                     if metadata.file_type().is_file() {
                         pages.push(page_from_file(project_path, path, kind, &full_path)?);
                     }
                 }
                 Err(err) if err.kind() == ErrorKind::NotFound => {}
-                Err(err) => return Err(format!("Failed to inspect wiki page {path}: {err}")),
+                Err(err) => return Err(format!("无法检查项目记录页面 {path}: {err}")),
             }
         }
 
@@ -174,7 +172,7 @@ impl ForgeWikiStore {
     pub async fn read_page(&self, project_path: &str, page_path: &str) -> Result<String, String> {
         let path = resolve_wiki_page_path(project_path, page_path)?;
         fs::read_to_string(&path)
-            .map_err(|err| format!("Failed to read wiki page {page_path}: {err}"))
+            .map_err(|err| format!("无法读取项目记录页面 {page_path}: {err}"))
     }
 
     pub async fn create_update_proposal(
@@ -186,19 +184,19 @@ impl ForgeWikiStore {
         summary: String,
     ) -> Result<ForgeWikiUpdateProposal, String> {
         if !ensure_wiki_root_is_normal_dir(project_path)? {
-            return Err("Forge Wiki is not initialized".to_string());
+            return Err("项目记录尚未初始化".to_string());
         }
         if target_pages.is_empty() {
-            return Err("Proposal must target at least one wiki page".to_string());
+            return Err("记录更新至少需要选择一个项目记录页面".to_string());
         }
         if title.trim().is_empty() {
-            return Err("Proposal title cannot be empty".to_string());
+            return Err("记录更新标题不能为空".to_string());
         }
         if summary.trim().is_empty() {
-            return Err("Proposal summary cannot be empty".to_string());
+            return Err("记录更新内容不能为空".to_string());
         }
         if contains_sensitive_wiki_content(&title) || contains_sensitive_wiki_content(&summary) {
-            return Err("Proposal contains sensitive content".to_string());
+            return Err("记录更新包含敏感内容".to_string());
         }
 
         for target in &target_pages {
@@ -227,7 +225,7 @@ impl ForgeWikiStore {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| "Forge Wiki mutation lock poisoned".to_string())?;
+            .map_err(|_| "项目记录更新暂时不可用".to_string())?;
         let mut proposals = load_proposals(project_path)?;
         proposals.push(proposal.clone());
         save_proposals(project_path, &proposals)?;
@@ -242,12 +240,12 @@ impl ForgeWikiStore {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| "Forge Wiki mutation lock poisoned".to_string())?;
+            .map_err(|_| "项目记录更新暂时不可用".to_string())?;
         let mut proposals = load_proposals(project_path)?;
         let index = proposals
             .iter()
             .position(|proposal| proposal.id == proposal_id)
-            .ok_or_else(|| "Wiki update proposal not found".to_string())?;
+            .ok_or_else(|| "没有找到这条记录更新建议".to_string())?;
         if proposals[index].status != ForgeWikiProposalStatus::Pending {
             return Ok(proposals[index].clone());
         }
@@ -265,7 +263,7 @@ impl ForgeWikiStore {
         for target in &proposal.target_pages {
             let page_path = resolve_wiki_page_path(project_path, target)?;
             let mut existing = fs::read_to_string(&page_path)
-                .map_err(|err| format!("Failed to read wiki page {target}: {err}"))?;
+                .map_err(|err| format!("无法读取项目记录页面 {target}: {err}"))?;
             if existing.contains(&marker) {
                 continue;
             }
@@ -278,7 +276,7 @@ impl ForgeWikiStore {
 
         for (target, page_path, next_content) in page_updates {
             fs::write(&page_path, next_content)
-                .map_err(|err| format!("Failed to update wiki page {target}: {err}"))?;
+                .map_err(|err| format!("无法更新项目记录页面 {target}: {err}"))?;
         }
 
         proposals[index].status = ForgeWikiProposalStatus::Accepted;
@@ -296,14 +294,14 @@ impl ForgeWikiStore {
         let _guard = self
             .mutation_lock
             .lock()
-            .map_err(|_| "Forge Wiki mutation lock poisoned".to_string())?;
+            .map_err(|_| "项目记录更新暂时不可用".to_string())?;
         let mut proposals = load_proposals(project_path)?;
         let index = proposals
             .iter()
             .position(|proposal| proposal.id == proposal_id)
-            .ok_or_else(|| "Wiki update proposal not found".to_string())?;
+            .ok_or_else(|| "没有找到这条记录更新建议".to_string())?;
         if proposals[index].status != ForgeWikiProposalStatus::Pending {
-            return Err("Wiki update proposal is not pending".to_string());
+            return Err("这条记录更新建议已处理".to_string());
         }
 
         proposals[index].status = ForgeWikiProposalStatus::Discarded;
@@ -353,7 +351,7 @@ impl ForgeWikiStore {
                     summary: page
                         .summary
                         .clone()
-                        .unwrap_or_else(|| "项目 Wiki 页面".to_string()),
+                        .unwrap_or_else(|| "相关项目记录".to_string()),
                     score: (100 - index) as f32,
                     reason: selection_reason(path).to_string(),
                     injected: true,
@@ -421,7 +419,7 @@ impl ForgeWikiStore {
             } else {
                 let path = resolve_wiki_page_path(project_path, &page.path)?;
                 let text = fs::read_to_string(&path)
-                    .map_err(|err| format!("Failed to read wiki page {}: {err}", page.path))?;
+                    .map_err(|err| format!("无法读取项目记录页面 {}: {err}", page.path))?;
                 let cap = SELECTED_CONTEXT_PAGE_CONTENT_CHARS.min(remaining_total);
                 let truncated = truncate_chars(&text, cap);
                 remaining_total = remaining_total.saturating_sub(truncated.chars().count());
@@ -447,50 +445,50 @@ impl ForgeWikiStore {
 fn proposals_path(project_path: &str) -> Result<std::path::PathBuf, String> {
     let dir = wiki_dir(project_path);
     if !ensure_wiki_root_is_normal_dir(project_path)? {
-        return Err("Forge Wiki is not initialized".to_string());
+        return Err("项目记录尚未初始化".to_string());
     }
     Ok(dir.join(".proposals.json"))
 }
 
 fn load_proposals(project_path: &str) -> Result<Vec<ForgeWikiUpdateProposal>, String> {
     let path = proposals_path(project_path)?;
-    reject_symlink_path(&path, "Wiki proposals metadata")?;
+    reject_symlink_path(&path, "项目记录建议元数据")?;
     match fs::read_to_string(&path) {
         Ok(text) => serde_json::from_str(&text)
-            .map_err(|err| format!("Failed to parse wiki proposals: {err}")),
+            .map_err(|err| format!("无法解析项目记录建议: {err}")),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-        Err(err) => Err(format!("Failed to read wiki proposals: {err}")),
+        Err(err) => Err(format!("无法读取项目记录建议: {err}")),
     }
 }
 
 fn save_proposals(project_path: &str, proposals: &[ForgeWikiUpdateProposal]) -> Result<(), String> {
     let path = proposals_path(project_path)?;
-    reject_symlink_path(&path, "Wiki proposals metadata")?;
+    reject_symlink_path(&path, "项目记录建议元数据")?;
     let text = serde_json::to_string_pretty(proposals)
-        .map_err(|err| format!("Failed to serialize wiki proposals: {err}"))?;
+        .map_err(|err| format!("无法序列化项目记录建议: {err}"))?;
     let dir = path
         .parent()
-        .ok_or_else(|| "Failed to resolve wiki proposals directory".to_string())?;
+        .ok_or_else(|| "无法解析项目记录建议目录".to_string())?;
     let temp_path = dir.join(format!(
         ".proposals.json.tmp-{}-{}",
         std::process::id(),
         unix_timestamp_string()
     ));
-    reject_existing_symlink_path(&temp_path, "Temporary wiki proposals metadata")?;
+    reject_existing_symlink_path(&temp_path, "临时项目记录建议元数据")?;
 
     let write_result = (|| -> Result<(), String> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp_path)
-            .map_err(|err| format!("Failed to create temporary wiki proposals file: {err}"))?;
+            .map_err(|err| format!("无法创建临时项目记录建议文件: {err}"))?;
         file.write_all(text.as_bytes())
-            .map_err(|err| format!("Failed to write temporary wiki proposals file: {err}"))?;
+            .map_err(|err| format!("无法写入临时项目记录建议文件: {err}"))?;
         file.sync_all()
-            .map_err(|err| format!("Failed to sync temporary wiki proposals file: {err}"))?;
-        reject_symlink_path(&path, "Wiki proposals metadata")?;
+            .map_err(|err| format!("无法同步临时项目记录建议文件: {err}"))?;
+        reject_symlink_path(&path, "项目记录建议元数据")?;
         fs::rename(&temp_path, &path)
-            .map_err(|err| format!("Failed to replace wiki proposals metadata: {err}"))?;
+            .map_err(|err| format!("无法替换项目记录建议元数据: {err}"))?;
         Ok(())
     })();
 
@@ -503,22 +501,22 @@ fn save_proposals(project_path: &str, proposals: &[ForgeWikiUpdateProposal]) -> 
 fn reject_symlink_path(path: &Path, label: &str) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(format!("{label} cannot be a symlink"))
+            Err(format!("{label}不能是符号链接"))
         }
         Ok(_) => Ok(()),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("Failed to inspect {label}: {err}")),
+        Err(err) => Err(format!("无法检查{label}: {err}")),
     }
 }
 
 fn reject_existing_symlink_path(path: &Path, label: &str) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(format!("{label} cannot be a symlink"))
+            Err(format!("{label}不能是符号链接"))
         }
-        Ok(_) => Err(format!("{label} already exists")),
+        Ok(_) => Err(format!("{label}已存在")),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!("Failed to inspect {label}: {err}")),
+        Err(err) => Err(format!("无法检查{label}: {err}")),
     }
 }
 
@@ -551,7 +549,7 @@ fn validate_proposal_for_accept(
             .unwrap_or(false)
         || contains_sensitive_wiki_content(append_text)
     {
-        return Err("Proposal contains sensitive content".to_string());
+        return Err("记录更新包含敏感内容".to_string());
     }
     Ok(())
 }
@@ -579,9 +577,9 @@ fn page_from_file(
 
 fn collect_markdown_pages(root: &Path, dir: &Path, pages: &mut Vec<String>) -> Result<(), String> {
     let entries =
-        fs::read_dir(dir).map_err(|err| format!("Failed to list wiki directory: {err}"))?;
+        fs::read_dir(dir).map_err(|err| format!("无法列出项目记录目录: {err}"))?;
     for entry in entries {
-        let entry = entry.map_err(|err| format!("Failed to read wiki entry: {err}"))?;
+        let entry = entry.map_err(|err| format!("无法读取项目记录条目: {err}"))?;
         let path = entry.path();
         let file_name = path
             .file_name()
@@ -592,7 +590,7 @@ fn collect_markdown_pages(root: &Path, dir: &Path, pages: &mut Vec<String>) -> R
         }
         let file_type = entry
             .file_type()
-            .map_err(|err| format!("Failed to inspect wiki entry: {err}"))?;
+            .map_err(|err| format!("无法检查项目记录条目: {err}"))?;
         if file_type.is_symlink() {
             continue;
         }
@@ -601,7 +599,7 @@ fn collect_markdown_pages(root: &Path, dir: &Path, pages: &mut Vec<String>) -> R
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
             let relative = path
                 .strip_prefix(root)
-                .map_err(|err| format!("Failed to normalize wiki page path: {err}"))?
+                .map_err(|err| format!("无法规范化项目记录页面路径: {err}"))?
                 .to_string_lossy()
                 .replace('\\', "/");
             pages.push(relative);
@@ -654,9 +652,9 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 fn updated_at(path: &Path) -> Result<Option<String>, String> {
     let modified = path
         .metadata()
-        .map_err(|err| format!("Failed to read wiki page metadata: {err}"))?
+        .map_err(|err| format!("无法读取项目记录页面元数据: {err}"))?
         .modified()
-        .map_err(|err| format!("Failed to read wiki page modified time: {err}"))?;
+        .map_err(|err| format!("无法读取项目记录页面修改时间: {err}"))?;
     let seconds = modified
         .duration_since(UNIX_EPOCH)
         .unwrap_or_else(|_| SystemTime::UNIX_EPOCH.duration_since(UNIX_EPOCH).unwrap())
@@ -686,7 +684,7 @@ fn selection_reason(path: &str) -> &'static str {
         "index.md" => "项目概览优先",
         "decisions.md" => "方向或产品信号匹配",
         "log.md" => "构建或验证信号匹配",
-        _ => "相关 Wiki 页面",
+        _ => "相关项目记录",
     }
 }
 
@@ -758,6 +756,28 @@ mod tests {
             assert!(!text.contains("密码"));
             assert!(!text.contains("密钥"));
         }
+
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn state_message_uses_product_language() {
+        let project = temp_project_dir("state-message");
+        let store = ForgeWikiStore::new();
+
+        let initial = store
+            .get_state(project.to_str().unwrap())
+            .await
+            .expect("get initial state");
+        assert_eq!(initial.message, "项目记录尚未初始化");
+        assert!(!initial.message.contains("Forge Wiki"));
+
+        let initialized = store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init records");
+        assert_eq!(initialized.message, "项目记录已就绪");
+        assert!(!initialized.message.contains("Forge Wiki"));
 
         cleanup(&project);
     }
@@ -880,9 +900,10 @@ mod tests {
             .expect_err("symlinked default page should be rejected");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
+        assert!(!error.contains("Forge Wiki"));
         cleanup(&project);
         cleanup(&external);
     }
@@ -907,9 +928,10 @@ mod tests {
             .expect_err("symlink escape should be rejected");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
+        assert!(!error.contains("Forge Wiki"));
         cleanup(&project);
         cleanup(&external);
     }
@@ -930,7 +952,7 @@ mod tests {
             .expect_err("dangling default page symlink should be rejected");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
         assert!(!project.join("outside.md").exists());
@@ -953,7 +975,7 @@ mod tests {
             .expect_err("symlinked wiki root should be rejected");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
         assert!(!external.join("index.md").exists());
@@ -980,7 +1002,7 @@ mod tests {
             .expect_err("symlinked wiki root should be rejected");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
         cleanup(&project);
@@ -1005,7 +1027,7 @@ mod tests {
             .expect_err("symlinked wiki root should be rejected");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
         cleanup(&project);
@@ -1214,7 +1236,7 @@ mod tests {
         let target_after = fs::read_to_string(&target).expect("read target");
 
         assert!(
-            error.contains("symlink"),
+            error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
         assert_eq!(target_after, "sentinel");
@@ -1424,7 +1446,7 @@ mod tests {
             .expect("stored proposal");
 
         assert!(
-            error.contains("Failed to read wiki page log.md"),
+            error.contains("无法读取项目记录页面 log.md"),
             "expected page preflight failure, got {error}"
         );
         assert_eq!(stored.status, ForgeWikiProposalStatus::Pending);
@@ -1494,7 +1516,7 @@ mod tests {
             .expect("stored proposal");
 
         assert!(
-            error.contains("Failed to read wiki page tasks.md"),
+            error.contains("无法读取项目记录页面 tasks.md"),
             "expected target preflight read failure, got {error}"
         );
         assert_eq!(log_after_failure, log_before);

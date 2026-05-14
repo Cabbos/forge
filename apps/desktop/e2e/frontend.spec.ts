@@ -71,14 +71,14 @@ async function setup(page: Page) {
       exists,
       wiki_dir: `${projectPath}/.forge/wiki`,
       pages: exists ? forgeWikiPages.map((page) => ({ ...page, project_path: projectPath })) : [],
-      message: exists ? "Forge Wiki is ready." : "还没有项目 Wiki",
+      message: exists ? "项目记录已就绪。" : "还没有项目记录",
     });
     const forgeWikiProposal = (projectPath: string, args: Record<string, unknown>) => ({
       id: String(args.proposalId ?? args.id ?? "forge-wiki-proposal"),
       project_path: projectPath,
       session_id: typeof args.sessionId === "string" ? args.sessionId : null,
       target_pages: Array.isArray(args.targetPages) ? args.targetPages.map(String) : ["tasks.md"],
-      title: String(args.title ?? "记录 Forge Wiki 更新"),
+      title: String(args.title ?? "记录项目进展"),
       summary: String(args.summary ?? "补充本轮任务产生的项目记录。"),
       patch_preview: typeof args.patchPreview === "string" ? args.patchPreview : null,
       status: "pending",
@@ -144,7 +144,7 @@ async function setup(page: Page) {
         case "list_forge_wiki_pages":
           return forgeWikiExists ? forgeWikiPages.map((page) => ({ ...page, project_path: projectPath })) : [];
         case "read_forge_wiki_page":
-          return args.pagePath === "tasks.md" ? "# 当前任务\n\n覆盖 Forge Wiki 上下文面板。" : "# 项目概览\n\nForge Wiki mock project overview.";
+          return args.pagePath === "tasks.md" ? "# 当前任务\n\n覆盖工作台上下文面板。" : "# 项目概览\n\n项目记录预览。";
         case "select_forge_wiki_context":
           return [
             {
@@ -244,7 +244,13 @@ test.describe("Timeline Message Flow", () => {
   });
 
   test("app loads and shows empty state", async ({ page }) => {
-    await expect(page.getByRole("main").getByText("创建一个任务开始").last()).toBeVisible();
+    const main = page.getByRole("main");
+    await expect(main.locator("p", { hasText: "从当前任务开始" })).toBeVisible();
+    await expect(main.getByText("Forge 会带着项目上下文，把结果推进到可预览、可检查、可继续。")).toBeVisible();
+    await expect(main.getByText("当前任务", { exact: true })).toBeVisible();
+    await expect(main.getByText("上下文", { exact: true })).toBeVisible();
+    await expect(main.getByText("交付", { exact: true })).toBeVisible();
+    await expect(main.getByText("创建一个任务开始")).toHaveCount(0);
   });
 
   test("creating a session shows chat input", async ({ page }) => {
@@ -253,6 +259,9 @@ test.describe("Timeline Message Flow", () => {
     await page.getByRole("button", { name: "新对话" }).click();
     // Input should appear
     await expect(page.locator("textarea")).toBeVisible();
+    await expect(page.getByRole("button", { name: "梳理当前任务，告诉我下一步怎么做。" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "带着项目记录继续推进这个工具。" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "检查当前结果，并推进到可交付状态。" })).toBeVisible();
   });
 
   test("timeline messages render correctly", async ({ page }) => {
@@ -414,8 +423,8 @@ test.describe("InputBar", () => {
   });
 });
 
-test.describe("Living Wiki context panel", () => {
-  test("Forge Wiki context panel initializes wiki and shows selected pages", async ({ page }) => {
+test.describe("Project records context panel", () => {
+  test("project records panel initializes records and shows selected pages", async ({ page }) => {
     const sessionId = "forge-wiki-session";
     const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
     const now = "2026-05-13T00:00:00.000Z";
@@ -434,7 +443,7 @@ test.describe("Living Wiki context panel", () => {
       project_path: projectPath,
       session_id: sessionId,
       target_pages: ["tasks.md"],
-      title: "记录 Forge Wiki e2e 覆盖",
+      title: "记录项目进展覆盖",
       summary: "补充上下文面板初始化、带入页面和更新建议的测试记录。",
       patch_preview: "追加 e2e 覆盖说明。",
       status: "pending" as const,
@@ -457,14 +466,14 @@ test.describe("Living Wiki context panel", () => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
     const projectRecords = page.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
     const updateProposals = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
-    await expect(projectRecords.getByText("还没有项目 Wiki", { exact: true })).toBeVisible();
+    await expect(projectRecords.getByText("还没有项目记录", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "建立项目 Wiki" }).click();
+    await page.getByRole("button", { name: "建立项目记录" }).click();
     await expect(projectRecords.getByText(/当前任务|项目概览/).first()).toBeVisible();
 
     await simulateStream(page, sessionId, [
@@ -481,7 +490,7 @@ test.describe("Living Wiki context panel", () => {
     await expect(updateProposals.getByText(proposal.summary)).toBeVisible();
   });
 
-  test("shows selected context, project wiki, project status, and scopes project memories", async ({ page }) => {
+  test("shows selected context, project records, delivery status, and scoped saved background", async ({ page }) => {
     const sessionId = "living-wiki-session";
     const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
     const otherProjectPath = "/Users/cabbos/project/elsewhere";
@@ -491,7 +500,7 @@ test.describe("Living Wiki context panel", () => {
       category: "preference",
       scope: "user_profile",
       status: "accepted",
-      title: "Use Living Wiki context",
+      title: "使用项目记录",
       body: "Selected background should travel with the next prompt.",
       project_path: null,
       source_session_id: sessionId,
@@ -508,8 +517,8 @@ test.describe("Living Wiki context panel", () => {
       category: "project_fact",
       scope: "project",
       status: "pinned",
-      title: "Project Wiki fact",
-      body: "The active project uses the HubPanel for Living Wiki review.",
+      title: "工作台上下文",
+      body: "当前项目使用工作台查看本轮上下文。",
       project_path: projectPath,
       source_session_id: sessionId,
       source_message_ids: [],
@@ -524,7 +533,7 @@ test.describe("Living Wiki context panel", () => {
       ...projectMemory,
       id: "memory-other-project",
       title: "Other project fact",
-      body: "This memory belongs to another project and should stay hidden.",
+      body: "这条背景属于另一个项目，不应该显示。",
       project_path: otherProjectPath,
     };
     const candidateMemory = {
@@ -532,7 +541,7 @@ test.describe("Living Wiki context panel", () => {
       id: "memory-candidate-1",
       category: "decision",
       status: "candidate",
-      title: "Candidate Wiki note",
+      title: "建议记录工作台变化",
       body: "This candidate should be visible before it is accepted.",
       confidence: 0.72,
       tags: ["candidate"],
@@ -617,10 +626,10 @@ test.describe("Living Wiki context panel", () => {
 
     await expect(page.getByText("本轮已带入 1 条背景")).toBeVisible();
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
 
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
-    const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "上下文记忆" }) });
+    const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "已保存背景" }) });
 
     await expect(selectedContext.getByText(selectedMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "建议更新记录" })).toBeVisible();
@@ -628,13 +637,13 @@ test.describe("Living Wiki context panel", () => {
     await expect(page.getByTitle("接受")).toBeVisible();
     await expect(page.getByRole("heading", { name: "项目记录", exact: true })).toBeVisible();
     await expect(projectMemories.getByText(projectMemory.body)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "项目状态" })).toBeVisible();
-    await expect(page.getByText("轻量")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
+    await expect(page.getByText("最近状态")).toBeVisible();
     await expect(page.getByText("预览运行中")).toBeVisible();
     await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
   });
 
-  test("groups memory candidates and Wiki proposals as update suggestions", async ({ page }) => {
+  test("groups suggested background and project record updates", async ({ page }) => {
     const sessionId = "memory-inbox-session";
     const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
     const now = "2026-05-13T00:00:00.000Z";
@@ -661,7 +670,7 @@ test.describe("Living Wiki context panel", () => {
       session_id: sessionId,
       target_pages: ["tasks.md"],
       title: "记录上下文激活计划",
-      summary: "补充 Task Mode 和 Context Activation 的下一步。",
+      summary: "补充工作方式和本轮上下文的下一步。",
       patch_preview: "追加任务记录。",
       status: "pending" as const,
       created_at: now,
@@ -681,7 +690,7 @@ test.describe("Living Wiki context panel", () => {
       // @ts-expect-error Tauri listener registry installed by setup()
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
 
     await simulateStream(page, sessionId, [
       { event_type: "memory_candidate", session_id: sessionId, memory: candidateMemory },
@@ -690,6 +699,9 @@ test.describe("Living Wiki context panel", () => {
 
     const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
+    await expect(inbox.getByText("确认后会进入项目记录或已保存背景")).toBeVisible();
+    await expect(inbox.getByText("建议保存为已保存背景")).toBeVisible();
+    await expect(inbox.getByText("建议写入项目记录")).toBeVisible();
     await expect(inbox.getByText(candidateMemory.body)).toBeVisible();
     await expect(inbox.getByText(proposal.summary)).toBeVisible();
     await expect(inbox.getByRole("button", { name: "接受" }).first()).toBeVisible();
@@ -697,7 +709,7 @@ test.describe("Living Wiki context panel", () => {
   });
 });
 
-test.describe("Workflow Router", () => {
+test.describe("Work style controls", () => {
   test.beforeEach(async ({ page }) => {
     await setup(page);
   });
@@ -750,7 +762,7 @@ test.describe("Workflow Router", () => {
   });
 });
 
-test.describe("Task Mode", () => {
+test.describe("Current task work style", () => {
   test("shows stable mode copy and manual override actions", async ({ page }) => {
     const sessionId = "task-mode-session";
     await setup(page);
@@ -789,7 +801,7 @@ test.describe("Task Mode", () => {
       },
     ], 5);
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
     const currentTask = page.locator("section").filter({ has: page.getByRole("heading", { name: "当前任务" }) });
 
     await expect(currentTask.getByText("拆成步骤")).toBeVisible();
@@ -858,13 +870,25 @@ test.describe("Task Mode", () => {
     await expect(pill).toContainText("已带入 1");
     await pill.click();
 
-    await expect(page.locator("aside").last().getByText("上下文", { exact: true }).first()).toBeVisible();
+    const workbench = page.locator("aside").last();
+    await expect(workbench.getByText("工作台", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "当前任务" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "上下文", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "本轮上下文" })).toBeVisible();
+    const resources = workbench.locator("section").filter({ has: page.getByRole("heading", { name: "资料" }) });
+    await expect(resources.getByText("文件名", { exact: true })).toBeVisible();
+    await expect(resources.getByText("类型", { exact: true })).toBeVisible();
+    await expect(resources.getByText("解析状态", { exact: true })).toBeVisible();
+    await expect(resources.getByText("上下文", { exact: true })).toBeVisible();
+    await expect(workbench.getByTitle("刷新交付状态")).toBeVisible();
+    const legacyProjectStatusLabel = ["项目", "状态"].join("");
+    await expect(workbench.getByText(legacyProjectStatusLabel)).toHaveCount(0);
   });
 });
 
-test.describe("Context Activation", () => {
-  test("shows active memories and Forge Wiki pages for the current turn", async ({ page }) => {
+test.describe("Turn context", () => {
+  test("shows saved background and project records for the current turn", async ({ page }) => {
     const sessionId = "context-activation-session";
     const projectPath = "/Users/cabbos/project/crusted-spinning-lynx-agent";
     const selectedMemory = {
@@ -882,7 +906,7 @@ test.describe("Context Activation", () => {
       title: "当前任务",
       path: "tasks.md",
       kind: "tasks" as const,
-      summary: "当前正在做 Task Mode 和 Context Activation。",
+      summary: "当前正在收拢工作方式和本轮上下文。",
       score: 0.91,
       reason: "这页项目记录与本轮请求相关",
       injected: true,
@@ -908,17 +932,20 @@ test.describe("Context Activation", () => {
       { event_type: "forge_wiki_context_selected", session_id: sessionId, selected: [selectedPage] },
     ], 5);
 
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
     const activeContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮上下文" }) });
 
     await expect(activeContext.getByText("已带入 2 条背景")).toBeVisible();
     await expect(activeContext.getByText("中文优先")).toBeVisible();
     await expect(activeContext.getByText("当前任务")).toBeVisible();
+    await expect(activeContext.getByText("为什么带入").first()).toBeVisible();
+    await expect(activeContext.getByText("来源").first()).toBeVisible();
+    await expect(activeContext.getByText("本轮状态").first()).toBeVisible();
     await expect(activeContext.getByText("这是你固定的偏好")).toBeVisible();
     await expect(activeContext.getByText("这页项目记录与本轮请求相关")).toBeVisible();
   });
 
-  test("does not show a memory candidate when user says not to remember", async ({ page }) => {
+  test("does not suggest saved background when user says not to remember", async ({ page }) => {
     const sessionId = "no-memory-session";
     await setup(page);
     await page.addInitScript((sessionId) => {
@@ -936,7 +963,7 @@ test.describe("Context Activation", () => {
 
     await page.locator("textarea").fill("不要记住这个，只是临时测试：以后默认用亮色主题。");
     await page.locator("textarea").press("Enter");
-    await page.getByTitle("打开上下文").click();
+    await page.getByTitle("打开工作台").click();
 
     const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
     await expect(inbox.getByText("没有待确认的记录更新")).toBeVisible();

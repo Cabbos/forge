@@ -20,9 +20,9 @@ const COMMANDS = [
 ];
 
 const QUICK_PROMPTS = [
-  "先梳理当前项目结构，并指出最重要的入口。",
-  "检查当前改动的风险，按严重程度排序。",
-  "继续优化最影响使用体验的一处问题。",
+  "梳理当前任务，告诉我下一步怎么做。",
+  "带着项目记录继续推进这个工具。",
+  "检查当前结果，并推进到可交付状态。",
 ];
 
 export function InputBar({ sessionId }: InputBarProps) {
@@ -370,7 +370,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                 </span>
                 <div className="absolute bottom-full right-0 mb-1 rounded-lg py-1.5 px-3 min-w-[160px] shadow-xl z-20 hidden group-hover:block"
                   style={{ background: "var(--popover)", border: "1px solid var(--border)" }}>
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">已启用插件</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">已启用能力</div>
                   {activeSkills.map((s) => (
                     <div key={s.id} className="text-xs text-foreground py-0.5 font-mono" style={{ color: "#5B9BD5" }}>
                       {s.name}
