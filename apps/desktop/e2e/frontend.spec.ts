@@ -395,6 +395,51 @@ test.describe("Timeline Message Flow", () => {
     await expect(page.locator("text=The fibonacci function works correctly")).toBeVisible();
   });
 
+  test("write confirmation shows project boundary before approving", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "confirm-write-boundary",
+        question: "Allow write_file?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "write_file",
+          affected_files: ["src/App.tsx"],
+          risk_level: "low",
+          checkpoint_status: "ready",
+          command: null,
+        },
+      },
+    ], 5);
+
+    const card = page.getByText("准备修改项目").locator("xpath=ancestor::div[contains(@class,'mb-3')][1]");
+    await expect(card.getByText("准备修改项目")).toBeVisible();
+    await expect(card.getByText("工作空间", { exact: true })).toBeVisible();
+    await expect(card.getByText("forge")).toBeVisible();
+    await expect(card.getByText("/Users/cabbos/project/forge")).toBeVisible();
+    await expect(card.getByText("写入文件")).toBeVisible();
+    await expect(card.getByText("src/App.tsx", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "继续" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "取消" })).toBeVisible();
+  });
+
   test("thinking block expands and shows content", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
