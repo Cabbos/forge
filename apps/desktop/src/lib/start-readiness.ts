@@ -32,7 +32,7 @@ export function deriveStartReadiness(input: {
   const rows: StartReadinessRow[] = [
     {
       label: "工作空间",
-      value: input.workspace ? `已选择 ${input.workspace.name}` : "还没有选择项目",
+      value: input.workspace ? `本轮会作用于 ${input.workspace.name} · ${input.workspace.path}` : "还没有选择项目",
       tone: input.workspace ? "ready" : "blocked",
       action: null,
       actionLabel: null,

@@ -91,6 +91,8 @@ async function setup(page: Page) {
       switch (cmd) {
         case "create_session":
           // @ts-expect-error mock
+          window.__lastCreateSessionArgs = args;
+          // @ts-expect-error mock
           return {
             session_id: window.__mockSessionId ?? crypto.randomUUID(),
             provider: "deepseek",
@@ -431,7 +433,7 @@ test.describe("Timeline Message Flow", () => {
 
     const card = page.getByText("准备修改项目").locator("xpath=ancestor::div[contains(@class,'mb-3')][1]");
     await expect(card.getByText("准备修改项目")).toBeVisible();
-    await expect(card.getByText("工作空间", { exact: true })).toBeVisible();
+    await expect(card.getByText("目标项目", { exact: true })).toBeVisible();
     await expect(card.getByText("forge")).toBeVisible();
     await expect(card.getByText("/Users/cabbos/project/forge")).toBeVisible();
     await expect(card.getByText("写入文件")).toBeVisible();
@@ -700,6 +702,36 @@ test.describe("Workspace Safety v0", () => {
 
     await expect(sidebar.getByRole("button", { name: /demo-tool/ })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "新对话", exact: true })).toBeEnabled();
+  });
+
+  test("workspace identity stays visible when starting a sandbox conversation", async ({ page }) => {
+    const sandboxPath = "/Users/cabbos/project/forge-test-app";
+    await setup(page);
+    await page.addInitScript((path) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", path);
+    }, sandboxPath);
+
+    await page.goto("http://localhost:1420");
+
+    const sidebar = page.locator("aside").first();
+    await expect(sidebar.getByRole("button", { name: /forge-test-app/ })).toBeVisible();
+    await expect(sidebar.getByText("新对话会创建在 forge-test-app")).toBeVisible();
+
+    const workspaceBoundary = page.getByLabel("当前项目边界");
+    await expect(workspaceBoundary.getByText("当前项目")).toBeVisible();
+    await expect(workspaceBoundary.getByText("forge-test-app", { exact: true })).toBeVisible();
+    await expect(workspaceBoundary.getByText(sandboxPath)).toBeVisible();
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const createArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCreateSessionArgs;
+    });
+    expect(createArgs.workingDir).toBe(sandboxPath);
+    const main = page.getByRole("main");
+    await expect(main.getByText(`本轮会作用于 forge-test-app · ${sandboxPath}`)).toBeVisible();
   });
 });
 

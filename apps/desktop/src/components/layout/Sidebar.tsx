@@ -225,6 +225,9 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
       <nav className="mb-4 flex flex-col gap-1">
         <SidebarAction icon={<SquarePen className="size-4" />} label="新对话" disabled={!activeWorkspace} onClick={newSession} />
+        <p className="px-2.5 pb-1 text-[9px] leading-snug text-muted-foreground/60">
+          {activeWorkspace ? `新对话会创建在 ${activeWorkspace.name}` : "选择项目后才能创建新对话"}
+        </p>
         <SidebarAction icon={<Search className="size-4" />} label="搜索" onClick={onOpenSearch} />
         <SidebarAction
           icon={<Blocks className="size-4" />}

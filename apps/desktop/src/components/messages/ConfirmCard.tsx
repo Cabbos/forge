@@ -100,7 +100,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
           </div>
 
           <dl className="px-4 py-2.5">
-            <BoundaryLine label="工作空间">{boundary.workspaceLabel}</BoundaryLine>
+            <BoundaryLine label="目标项目">{boundary.workspaceLabel}</BoundaryLine>
             <BoundaryLine label="操作">{boundary.operationLabel}</BoundaryLine>
             <BoundaryLine label="影响范围">
               <span>{boundary.affectedSummary}</span>

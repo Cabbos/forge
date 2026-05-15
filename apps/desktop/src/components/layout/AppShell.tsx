@@ -72,9 +72,15 @@ export function AppShell() {
                   onOpenContext={() => window.dispatchEvent(new Event("open-hub"))}
                 />
               </div>
-              <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground/75">
+              <div
+                aria-label="当前项目边界"
+                className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground/75"
+              >
                 <FolderOpen className="size-3 shrink-0" />
-                <span className="truncate">{project.name}</span>
+                <span className="shrink-0 text-muted-foreground/60">当前项目</span>
+                <span className="truncate text-foreground/80">{project.name}</span>
+                <span className="shrink-0">·</span>
+                <span className="truncate">{project.path}</span>
                 <span className="shrink-0">·</span>
                 <span className="truncate">{getSessionMeta(activeSession)}</span>
               </div>
