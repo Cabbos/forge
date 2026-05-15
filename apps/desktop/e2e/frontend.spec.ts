@@ -827,6 +827,28 @@ test.describe("First loop v1", () => {
     await expect(main.getByText("预览", { exact: true })).toBeVisible();
     await expect(main.getByText("检查点", { exact: true })).toBeVisible();
   });
+
+  test("first loop progress advances after a request", async ({ page }) => {
+    const sessionId = "first-loop-progress";
+    await setup(page);
+    await page.addInitScript((sessionId) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", "/Users/cabbos/project/forge");
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    await expect(page.getByText("理解目标")).toBeVisible();
+
+    await page.locator("textarea").fill("我想做一个番茄钟小工具，可以开始、暂停、重置。");
+    await page.locator("textarea").press("Enter");
+
+    await expect(page.getByText("正在制作")).toBeVisible();
+    await expect(page.getByText("等你验收")).toBeVisible();
+  });
 });
 
 test.describe("Project records context panel", () => {
