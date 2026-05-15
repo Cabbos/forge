@@ -984,6 +984,7 @@ test.describe("Project Archive v1", () => {
 
     await archive.getByRole("button", { name: "继续上次任务" }).click();
     await expect(page.locator("textarea")).toHaveValue(/继续上次任务/);
+    await expect(page.locator("textarea")).toHaveValue(/目标项目：\/Users\/cabbos\/project\/forge/);
   });
 });
 
