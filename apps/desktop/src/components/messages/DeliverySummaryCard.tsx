@@ -1,9 +1,32 @@
-import { ClipboardCheck, ExternalLink, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, ClipboardCheck, ExternalLink, ShieldCheck, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import type { BlockState, DeliverySummary } from "@/lib/protocol";
+import { useStore } from "@/store";
+
+const FOLLOW_UP_ACTIONS = [
+  {
+    label: "检查风险",
+    icon: ShieldCheck,
+    prompt: "请检查刚才的改动有没有风险、遗漏或需要我确认的地方，并按严重程度排序。",
+  },
+  {
+    label: "继续优化",
+    icon: Sparkles,
+    prompt: "请基于当前结果，继续找一个最影响使用体验的问题并直接优化，最后给我验收提示词。",
+  },
+];
 
 export function DeliverySummaryCard({ block }: { block: BlockState }) {
+  const [loadedPrompt, setLoadedPrompt] = useState<string | null>(null);
+  const setPendingInput = useStore((s) => s.setPendingInput);
   const summary = parseSummary(block.metadata.summary);
+
+  const loadPrompt = (prompt: string) => {
+    setPendingInput(prompt);
+    setLoadedPrompt(prompt);
+    window.setTimeout(() => setLoadedPrompt(null), 1200);
+  };
 
   return (
     <div className="mb-4 max-w-[760px] rounded-lg border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
@@ -23,6 +46,30 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
         <SummaryItem icon={<ExternalLink className="size-3.5" style={{ color: "#5B9BD5" }} />} label="预览" value={summary.preview_label} />
         <SummaryItem icon={<ShieldCheck className="size-3.5" style={{ color: "#D4A853" }} />} label="检查点" value={summary.checkpoint_label} />
         <SummaryItem icon={<ClipboardCheck className="size-3.5" style={{ color: "#4A9E6B" }} />} label="下一步" value={summary.next_action} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2" style={{ borderColor: "var(--border)" }}>
+        {FOLLOW_UP_ACTIONS.map((action) => {
+          const Icon = action.icon;
+          const loaded = loadedPrompt === action.prompt;
+
+          return (
+            <button
+              key={action.label}
+              type="button"
+              onClick={() => loadPrompt(action.prompt)}
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] transition-colors hover:text-foreground"
+              style={{
+                background: loaded ? "rgba(212,168,83,0.12)" : "var(--background)",
+                borderColor: loaded ? "rgba(212,168,83,0.45)" : "var(--border)",
+                color: loaded ? "#D4A853" : "var(--muted-foreground)",
+              }}
+            >
+              {loaded ? <ArrowUpRight className="size-3" /> : <Icon className="size-3" />}
+              {loaded ? "已放入" : action.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
