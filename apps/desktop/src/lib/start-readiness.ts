@@ -27,7 +27,8 @@ export function deriveStartReadiness(input: {
   runtime: ProjectRuntimeStatus | null;
   checkpoint: ProjectCheckpointStatus | null;
 }): StartReadinessView {
-  const keySet = input.keyStatuses.some((item) => item.provider === input.providerId && item.set);
+  const keyStatuses = Array.isArray(input.keyStatuses) ? input.keyStatuses : [];
+  const keySet = keyStatuses.some((item) => item.provider === input.providerId && item.set);
   const rows: StartReadinessRow[] = [
     {
       label: "工作空间",
@@ -46,7 +47,7 @@ export function deriveStartReadiness(input: {
     {
       label: "预览",
       value: input.runtime?.running
-        ? "预览运行中"
+        ? "已启动"
         : input.runtime?.can_start
           ? "可启动"
           : "没有检测到 dev 脚本",
