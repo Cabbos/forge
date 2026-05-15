@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FilePlus2, FileText, X } from "lucide-react";
-import { useActiveWorkspace, useStore } from "@/store";
+import { useActiveBlocks, useActiveWorkspace, useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ActiveContextSection } from "@/components/context/ActiveContextSection";
 import { FirstLoopCard } from "@/components/context/FirstLoopCard";
+import { ProjectOverviewCard } from "@/components/context/ProjectOverviewCard";
 import { WikiSections } from "@/components/context/WikiSections";
 import { ProjectStatusCard } from "./ProjectStatusCard";
 import { CurrentTaskCard } from "@/components/workflow/CurrentTaskCard";
 import { cn } from "@/lib/utils";
 import { getActiveContextItems } from "@/lib/context-activation";
+import { deriveProjectArchiveOverview } from "@/lib/project-archive-overview";
 import { formatContextWindow, getModelContextWindow, getProviderModelLabel } from "@/lib/providers";
 import { getProjectRuntimeStatus } from "@/lib/tauri";
 
@@ -35,9 +37,16 @@ export function HubPanel() {
   const selectedMemories = useStore((s) => activeId ? s.selectedContextBySession.get(activeId) ?? [] : []);
   const selectedWikiPages = useStore((s) => activeId ? s.forgeWikiContextBySession.get(activeId) ?? [] : []);
   const session = activeId ? sessions.get(activeId) : null;
+  const blocks = useActiveBlocks();
   const contextWindow = session?.contextWindowTokens ?? getModelContextWindow(session?.model);
   const contextWindowLabel = formatContextWindow(contextWindow);
   const activeContextItems = getActiveContextItems(selectedMemories, selectedWikiPages);
+  const projectOverview = useMemo(() => deriveProjectArchiveOverview({
+    workspace: activeWorkspace,
+    session: session ?? null,
+    blocks,
+    firstLoopDraft,
+  }), [activeWorkspace, blocks, firstLoopDraft, session]);
 
   useEffect(() => {
     const toggleHandler = () => setOpen((value) => !value);
@@ -99,6 +108,8 @@ export function HubPanel() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-4 p-4">
+            <ProjectOverviewCard overview={projectOverview} />
+
             <CurrentTaskCard workflow={workflow} />
 
             <FirstLoopCard draft={firstLoopDraft} />

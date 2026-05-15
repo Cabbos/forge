@@ -874,6 +874,85 @@ test.describe("First loop v1", () => {
   });
 });
 
+test.describe("Project Archive v1", () => {
+  test("restored project archive shows overview and continuation actions", async ({ page }) => {
+    const sessionId = "project-archive-return-session";
+    const projectPath = "/Users/cabbos/project/forge";
+
+    await setup(page);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(async ({ sessionId, projectPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", projectPath);
+
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("keyval-store");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const tx = db.transaction("keyval", "readwrite");
+      tx.objectStore("keyval").put([
+        { id: projectPath, name: "forge", path: projectPath, lastOpenedAt: 1 },
+      ], "forge-workspaces");
+      tx.objectStore("keyval").put(projectPath, "forge-active-workspace");
+      tx.objectStore("keyval").put([
+        {
+          id: sessionId,
+          agentType: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          workingDir: projectPath,
+          workspaceId: projectPath,
+          contextWindowTokens: 1_000_000,
+          status: "stopped",
+          workflowState: null,
+        },
+      ], "forge-sessions");
+      tx.objectStore("keyval").put(sessionId, "forge-active-session");
+      tx.objectStore("keyval").put([
+        {
+          block_id: "return-user-message",
+          event_type: "user_message",
+          content: "我想做一个番茄钟小工具，可以开始、暂停、重置。",
+          isComplete: true,
+          metadata: {},
+        },
+        {
+          block_id: "return-delivery-summary",
+          event_type: "delivery_summary",
+          content: "本轮交付",
+          isComplete: true,
+          metadata: {
+            summary: {
+              project_path: projectPath,
+              preview_label: "预览可打开",
+              checkpoint_label: "检查点已就绪",
+              next_action: "下一步：继续调整计时器的视觉反馈。",
+            },
+          },
+        },
+      ], `forge-blocks:${sessionId}`);
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, { sessionId, projectPath });
+
+    await page.reload();
+    await page.getByTitle("打开项目档案").click();
+
+    const archive = page.locator("aside").last();
+    await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
+    await expect(archive.getByText("番茄钟小工具")).toBeVisible();
+    await expect(archive.getByText("预览可打开 · 检查点已就绪")).toBeVisible();
+    await expect(archive.getByText("下一步：继续调整计时器的视觉反馈。")).toBeVisible();
+    await expect(archive.getByRole("button", { name: "继续上次任务" })).toBeVisible();
+
+    await archive.getByRole("button", { name: "继续上次任务" }).click();
+    await expect(page.locator("textarea")).toHaveValue(/继续上次任务/);
+  });
+});
+
 test.describe("Project records context panel", () => {
   test("project records panel initializes records and shows selected pages", async ({ page }) => {
     const sessionId = "forge-wiki-session";
