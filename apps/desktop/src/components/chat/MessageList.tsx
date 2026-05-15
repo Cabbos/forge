@@ -14,6 +14,7 @@ import { AcceptanceCard } from "@/components/messages/AcceptanceCard";
 import { ContextCompactCard } from "@/components/messages/ContextCompactCard";
 import { DeliverySummaryCard } from "@/components/messages/DeliverySummaryCard";
 import { MissingApiKeyCard } from "@/components/messages/MissingApiKeyCard";
+import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 
 interface MessageListProps { blocks: BlockState[]; sessionId?: string }
 
@@ -82,13 +83,8 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
 
   if (blocks.length === 0) {
     return (
-      <div className="flex-1 min-h-0 flex items-center justify-center px-8 text-center text-muted-foreground">
-        <div>
-          <p className="text-sm text-foreground/85">从一句话开始</p>
-          <p className="mt-1 max-w-[360px] text-xs leading-relaxed text-muted-foreground/75">
-            直接描述你想做成什么样，应用会把过程整理成进度、改动和验收步骤。
-          </p>
-        </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-8 py-10">
+        <StartReadinessCard sessionId={sessionId} />
       </div>
     );
   }

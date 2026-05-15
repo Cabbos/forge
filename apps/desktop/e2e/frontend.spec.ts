@@ -806,6 +806,29 @@ test.describe("First loop v0", () => {
   });
 });
 
+test.describe("First loop v1", () => {
+  test("empty session shows start readiness", async ({ page }) => {
+    const sessionId = "first-loop-readiness";
+    await setup(page);
+    await page.addInitScript((sessionId) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", "/Users/cabbos/project/forge");
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const main = page.getByRole("main");
+    await expect(main.getByText("准备开始")).toBeVisible();
+    await expect(main.getByText("工作空间")).toBeVisible();
+    await expect(main.getByText("模型密钥")).toBeVisible();
+    await expect(main.getByText("预览", { exact: true })).toBeVisible();
+    await expect(main.getByText("检查点", { exact: true })).toBeVisible();
+  });
+});
+
 test.describe("Project records context panel", () => {
   test("project records panel initializes records and shows selected pages", async ({ page }) => {
     const sessionId = "forge-wiki-session";
