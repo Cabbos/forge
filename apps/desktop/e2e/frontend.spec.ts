@@ -773,11 +773,12 @@ test.describe("First loop v0", () => {
     const archive = page.locator("aside").last();
 
     await expect(archive.getByText("项目档案", { exact: true }).first()).toBeVisible();
-    await expect(archive.getByRole("heading", { name: "第一版" })).toBeVisible();
-    await expect(archive.getByText("可见、可点、可继续")).toBeVisible();
-    await expect(archive.getByText("番茄钟小工具")).toBeVisible();
-    await expect(archive.getByText("开始、暂停、重置")).toBeVisible();
-    await expect(archive.getByText("下一步", { exact: true })).toBeVisible();
+    const firstVersion = archive.locator("section").filter({ hasText: "第一版" });
+    await expect(firstVersion.getByRole("heading", { name: "第一版" })).toBeVisible();
+    await expect(firstVersion.getByText("可见、可点、可继续")).toBeVisible();
+    await expect(firstVersion.getByText("番茄钟小工具")).toBeVisible();
+    await expect(firstVersion.getByText("开始、暂停、重置")).toBeVisible();
+    await expect(firstVersion.getByText("下一步", { exact: true })).toBeVisible();
     await expect(archive.getByRole("heading", { name: "本轮参考" })).toBeVisible();
     await expect(archive.getByText("工作台", { exact: true })).toHaveCount(0);
   });
