@@ -139,14 +139,21 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     [currentProjectPath, memories],
   );
 
-  const pendingForgeWikiProposals = useMemo(
+  const visibleForgeWikiProposals = useMemo(
     () =>
       forgeWikiProposals.filter(
         (proposal) =>
-          proposal.status === "pending" &&
+          (proposal.status === "pending" ||
+            proposal.status === "accepted" ||
+            proposal.status === "discarded") &&
           (!currentProjectPath || normalizeProjectPath(proposal.project_path) === currentProjectPath),
       ),
     [currentProjectPath, forgeWikiProposals],
+  );
+
+  const pendingForgeWikiProposals = useMemo(
+    () => visibleForgeWikiProposals.filter((proposal) => proposal.status === "pending"),
+    [visibleForgeWikiProposals],
   );
 
   const handleInitForgeWiki = useCallback(async () => {
@@ -351,7 +358,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           确认后会进入项目记录或已保存背景
         </p>
         <div className="overflow-hidden rounded-md border border-border bg-card">
-          {pendingForgeWikiProposals.length === 0 && candidateMemories.length === 0 ? (
+          {visibleForgeWikiProposals.length === 0 && candidateMemories.length === 0 ? (
             <EmptyState label="没有待确认的记录更新" />
           ) : (
             <div className="divide-y divide-border">
@@ -371,7 +378,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
                   onForget={() => handleForget(memory.id)}
                 />
               ))}
-              {pendingForgeWikiProposals.map((proposal) => (
+              {visibleForgeWikiProposals.map((proposal) => (
                 <ForgeWikiProposalRow
                   key={proposal.id}
                   proposal={proposal}
@@ -485,23 +492,29 @@ function ForgeWikiProposalRow({
     <div className="px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <RowIntentLabel>建议写入项目记录</RowIntentLabel>
+          <RowIntentLabel>{proposalStatusLabel(proposal.status)}</RowIntentLabel>
           <div className="truncate text-xs font-medium text-foreground">{proposal.title}</div>
-          <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground/70">
-            {proposal.target_pages.join(", ")}
-          </div>
           <div className="mt-1 max-h-[4.6rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
             {proposal.summary}
           </div>
+          <RecordMetaGrid
+            rows={[
+              ["保存位置", "项目记录"],
+              ["项目记录页面", proposal.target_pages.join(", ")],
+              ["确认后状态", proposalStatusMeta(proposal.status)],
+            ]}
+          />
         </div>
-        <div className="flex shrink-0 gap-0.5">
-          <IconButton title="接受" onClick={onAccept} disabled={busy}>
-            <Check className="size-3" />
-          </IconButton>
-          <IconButton title="丢弃" onClick={onDiscard} disabled={busy}>
-            <X className="size-3" />
-          </IconButton>
-        </div>
+        {proposal.status === "pending" && (
+          <div className="flex shrink-0 gap-0.5">
+            <IconButton title="接受" onClick={onAccept} disabled={busy}>
+              <Check className="size-3" />
+            </IconButton>
+            <IconButton title="丢弃" onClick={onDiscard} disabled={busy}>
+              <X className="size-3" />
+            </IconButton>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -567,6 +580,15 @@ function MemoryRow({
           <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
             {memory.body}
           </div>
+          {intentLabel && (
+            <RecordMetaGrid
+              rows={[
+                ["保存位置", "已保存背景"],
+                ["建议原因", categoryLabel(memory.category)],
+                ["确认后状态", "已确认"],
+              ]}
+            />
+          )}
         </div>
         <div className="flex shrink-0 gap-0.5">
           {onAccept && (
@@ -594,6 +616,31 @@ function MemoryRow({
       </div>
     </div>
   );
+}
+
+function RecordMetaGrid({ rows }: { rows: Array<[string, string]> }) {
+  return (
+    <dl className="mt-2 space-y-1 text-[10px] leading-relaxed text-muted-foreground/75">
+      {rows.map(([label, value]) => (
+        <div key={label} className="grid grid-cols-[64px_minmax(0,1fr)] gap-2">
+          <dt className="text-muted-foreground/55">{label}</dt>
+          <dd className="min-w-0 break-words">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function proposalStatusLabel(status: ForgeWikiUpdateProposal["status"]) {
+  if (status === "accepted") return "已写入项目记录";
+  if (status === "discarded") return "已丢弃";
+  return "建议写入项目记录";
+}
+
+function proposalStatusMeta(status: ForgeWikiUpdateProposal["status"]) {
+  if (status === "accepted") return "已写入";
+  if (status === "discarded") return "不再处理";
+  return "待确认";
 }
 
 function RowIntentLabel({ children }: { children: ReactNode }) {

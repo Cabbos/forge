@@ -1299,10 +1299,16 @@ test.describe("Project records context panel", () => {
     await expect(inbox.getByText("确认后会进入项目记录或已保存背景")).toBeVisible();
     await expect(inbox.getByText("建议保存为已保存背景")).toBeVisible();
     await expect(inbox.getByText("建议写入项目记录")).toBeVisible();
+    await expect(inbox.getByText("保存位置").first()).toBeVisible();
+    await expect(inbox.getByText("项目记录页面")).toBeVisible();
+    await expect(inbox.getByText("tasks.md")).toBeVisible();
     await expect(inbox.getByText(candidateMemory.body)).toBeVisible();
     await expect(inbox.getByText(proposal.summary)).toBeVisible();
     await expect(inbox.getByRole("button", { name: "接受" }).first()).toBeVisible();
     await expect(inbox.getByRole("button", { name: /忘记|丢弃/ }).first()).toBeVisible();
+
+    await inbox.getByRole("button", { name: "接受" }).last().click();
+    await expect(inbox.getByText("已写入项目记录")).toBeVisible();
   });
 });
 
