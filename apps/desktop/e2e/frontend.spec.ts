@@ -904,6 +904,7 @@ test.describe("First loop v1", () => {
 
     await page.getByRole("button", { name: "检查风险" }).click();
     await expect(page.locator("textarea")).toHaveValue(/检查刚才的改动有没有风险/);
+    await expect(page.locator("textarea")).toHaveValue(/目标项目：\/Users\/cabbos\/project\/forge/);
   });
 });
 

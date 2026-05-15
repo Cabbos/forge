@@ -23,8 +23,9 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
   const summary = parseSummary(block.metadata.summary);
 
   const loadPrompt = (prompt: string) => {
-    setPendingInput(prompt);
-    setLoadedPrompt(prompt);
+    const scopedPrompt = withTargetProject(prompt, summary.project_path);
+    setPendingInput(scopedPrompt);
+    setLoadedPrompt(scopedPrompt);
     window.setTimeout(() => setLoadedPrompt(null), 1200);
   };
 
@@ -51,7 +52,8 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
       <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2" style={{ borderColor: "var(--border)" }}>
         {FOLLOW_UP_ACTIONS.map((action) => {
           const Icon = action.icon;
-          const loaded = loadedPrompt === action.prompt;
+          const prompt = withTargetProject(action.prompt, summary.project_path);
+          const loaded = loadedPrompt === prompt;
 
           return (
             <button
@@ -103,6 +105,11 @@ function parseSummary(value: unknown): DeliverySummary {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function withTargetProject(prompt: string, projectPath: string | null): string {
+  if (!projectPath) return prompt;
+  return `${prompt}\n\n目标项目：${projectPath}`;
 }
 
 function fallbackSummary(): DeliverySummary {
