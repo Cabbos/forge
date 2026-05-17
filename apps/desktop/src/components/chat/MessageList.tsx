@@ -81,8 +81,8 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
 
   if (blocks.length === 0) {
     return (
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-6 sm:px-6">
-        <div data-testid="message-lane" className="mx-auto w-full max-w-[820px]">
+      <div data-testid="conversation-scroll" className="forge-conversation-scroll flex-1 min-h-0 overflow-y-auto">
+        <div data-testid="message-lane" className="forge-conversation-lane">
           <StartReadinessCard sessionId={sessionId} />
         </div>
       </div>
@@ -92,18 +92,19 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
   return (
     <div className="relative flex-1 min-h-0">
       <div
+        data-testid="conversation-scroll"
         ref={scrollRef}
         onScroll={handleScroll}
         onWheel={handleWheel}
-        className="h-full overflow-y-auto px-4 py-6 sm:px-6"
+        className="forge-conversation-scroll h-full overflow-y-auto"
         style={{
           scrollbarGutter: "stable",
           overflowAnchor: userScrolledUp ? "auto" : "none",
         }}
       >
-        <div data-testid="message-lane" className="mx-auto flex w-full max-w-[820px] flex-col gap-3">
+        <div data-testid="message-lane" className="forge-conversation-lane forge-message-lane flex flex-col">
           {blocks.map((block, i) => (
-            <div key={block.block_id || `${block.event_type}-${i}`}>
+            <div data-testid="message-block" className="forge-message-block" key={block.block_id || `${block.event_type}-${i}`}>
               <MemoizedBlockRenderer block={block} sessionId={sessionId} />
             </div>
           ))}
@@ -116,7 +117,7 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
           aria-label="回到底部"
           title="回到底部"
           onClick={scrollToBottom}
-          className="absolute bottom-4 left-1/2 z-10 flex size-7 -translate-x-1/2 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="forge-scroll-to-bottom forge-control-surface absolute left-1/2 z-10 flex size-7 -translate-x-1/2 items-center justify-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <ArrowDown className="size-3.5" />
         </button>

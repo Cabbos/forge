@@ -5,8 +5,7 @@ export function UserMessage({ block }: { block: BlockState }) {
     <div className="flex justify-end">
       <div
         data-testid="user-message"
-        className="max-w-[82%] rounded-lg px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap break-words shadow-sm sm:max-w-[72%]"
-        style={{ background: "var(--secondary)", color: "#E8EAEE", overflowWrap: "anywhere" }}
+        className="forge-user-message"
       >
         {block.content}
       </div>

@@ -10,8 +10,8 @@ import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessageP
 function BoundaryLine({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid gap-1 py-2 sm:grid-cols-[88px_1fr] sm:gap-3">
-      <dt className="text-xs leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{label}</dt>
-      <dd className="min-w-0 text-sm leading-relaxed" style={{ color: "#E4E7EC" }}>{children}</dd>
+      <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 text-sm leading-relaxed text-foreground">{children}</dd>
     </div>
   );
 }
@@ -108,8 +108,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
                 {boundary.affectedFiles.slice(0, 4).map((file) => (
                   <code
                     key={file}
-                    className="max-w-full truncate rounded border px-1.5 py-0.5 text-xs"
-                    style={{ borderColor: "rgba(148,163,184,0.22)", background: "rgba(148,163,184,0.08)", color: "#DDE3EA" }}
+                    className="max-w-full truncate rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground"
                   >
                     {file}
                   </code>
@@ -123,7 +122,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
           <BoundaryLine label="恢复点">{boundary.recoveryLabel}</BoundaryLine>
           {boundary.command ? (
             <BoundaryLine label="命令">
-              <code className="block max-w-full overflow-x-auto rounded border px-2 py-1 text-xs" style={{ borderColor: "rgba(148,163,184,0.22)", background: "rgba(0,0,0,0.22)", color: "#DDE3EA" }}>
+              <code className="block max-w-full overflow-x-auto rounded border border-border bg-muted px-2 py-1 text-xs text-foreground">
                 {boundary.command}
               </code>
             </BoundaryLine>
@@ -148,8 +147,8 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
         meta="继续前需要你确认"
       />
       <div className="px-3 py-2.5">
-        <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: "#E4E7EC" }}>{question}</p>
-        <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{helperText}</p>
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{question}</p>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{helperText}</p>
       </div>
 
       {actions}

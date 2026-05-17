@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FolderOpen, PanelRightOpen, Search } from "lucide-react";
 import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
@@ -10,7 +10,6 @@ import { useSession } from "@/hooks/useSession";
 import { CommandPalette } from "@/components/CommandPalette";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
 import { getProjectDisplay, getSessionStatus, getSessionTitle } from "@/lib/session-display";
-import forgeMark from "@/assets/forge-mark.svg";
 
 export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -32,21 +31,25 @@ export function AppShell() {
     setActiveSidebarPanel((current) => (current === panel ? null : panel));
   };
 
+  const startConversation = useCallback(() => {
+    if (!activeWorkspace) return;
+    create(activeWorkspace.path, selectedProvider, selectedModel).catch((error) => {
+      console.error("Failed to create session:", error);
+    });
+  }, [activeWorkspace, create, selectedModel, selectedProvider]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "n") return;
       if (isEditableTarget(event.target)) return;
 
       event.preventDefault();
-      if (!activeWorkspace) return;
-      create(activeWorkspace.path, selectedProvider, selectedModel).catch((error) => {
-        console.error("Failed to create session:", error);
-      });
+      startConversation();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeWorkspace, create, selectedModel, selectedProvider]);
+  }, [startConversation]);
 
   return (
     <div className="h-screen grid bg-background" style={{ gridTemplateColumns: "220px minmax(0, 1fr)" }}>
@@ -62,7 +65,7 @@ export function AppShell() {
         <div
           data-testid="app-titlebar"
           data-tauri-drag-region="true"
-          className="flex h-12 flex-shrink-0 items-center justify-between gap-4 border-b border-border px-4"
+          className="forge-titlebar flex flex-shrink-0 items-center justify-between gap-4 border-b border-border px-4"
         >
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex min-w-0 flex-col">
@@ -115,17 +118,25 @@ export function AppShell() {
         {activeSessionId && sessions.has(activeSessionId) ? (
           <SessionView sessionId={activeSessionId} />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-            <img src={forgeMark} alt="" className="size-12 rounded-lg" />
-            <div>
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <div data-testid="empty-workbench" className="forge-empty-workbench">
               <p className="text-sm font-medium text-foreground">
-                {activeWorkspace ? "从当前对话开始" : "选择一个项目开始"}
+                {activeWorkspace ? "准备开始" : "选择一个项目开始"}
               </p>
-              <p className="mt-2 max-w-[420px] text-xs leading-relaxed text-muted-foreground/75">
+              <p className="mt-1.5 max-w-[360px] text-xs leading-relaxed text-muted-foreground/75">
                 {activeWorkspace
                   ? "描述你想做什么，Forge 会在当前项目里继续。"
-                  : "先选择一个具体项目，Forge 会把对话、档案和交付状态绑定到这个工作空间。"}
+                  : "先选择一个具体项目，Forge 会把对话和交付状态绑定到这个工作空间。"}
               </p>
+              {activeWorkspace && (
+                <button
+                  type="button"
+                  onClick={startConversation}
+                  className="forge-action mt-4 justify-center"
+                >
+                  开始新对话
+                </button>
+              )}
             </div>
           </div>
         )}

@@ -12,11 +12,11 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
   const after = numberMeta(block, "estimated_tokens_after");
 
   return (
-    <div className="mb-3">
+    <div>
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger
-          className="inline-flex max-w-full items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
-          style={{ background: "var(--card)", borderColor: "var(--border)", color: "#E4E7EC" }}
+          data-testid="context-compact-trigger"
+          className="forge-log-line"
         >
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
           <Archive className="size-3.5 shrink-0" style={{ color: "#7BA7D8" }} />
@@ -27,10 +27,12 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div
-            className="mt-1.5 max-h-[220px] max-w-full overflow-auto rounded-md border p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words"
-            style={{ background: "var(--background)", borderColor: "var(--border)", color: "#D0D5DD" }}
+            data-testid="log-detail-surface"
+            className="forge-log-detail"
           >
-            {block.content}
+            <div data-testid="log-detail-output" className="forge-log-output">
+              {block.content}
+            </div>
           </div>
         </CollapsibleContent>
       </Collapsible>

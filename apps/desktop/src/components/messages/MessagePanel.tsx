@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 type MessagePanelTone = "default" | "warning" | "danger";
 
 const toneStyles: Record<MessagePanelTone, { border: string; background: string }> = {
-  default: { border: "rgba(148,163,184,0.18)", background: "rgba(255,255,255,0.012)" },
-  warning: { border: "rgba(212,168,83,0.22)", background: "rgba(212,168,83,0.035)" },
-  danger: { border: "rgba(212,119,119,0.3)", background: "rgba(212,119,119,0.055)" },
+  default: { border: "var(--forge-border-subtle)", background: "rgba(255, 255, 255, 0.008)" },
+  warning: { border: "rgba(212, 168, 83, 0.22)", background: "rgba(212, 168, 83, 0.035)" },
+  danger: { border: "rgba(212, 119, 119, 0.3)", background: "rgba(212, 119, 119, 0.055)" },
 };
 
 export function MessagePanel({
@@ -23,7 +23,7 @@ export function MessagePanel({
   return (
     <div
       data-testid="message-panel"
-      className={cn("mb-2.5 max-w-[720px] overflow-hidden rounded-md border", className)}
+      className={cn("forge-message-panel", className)}
       style={{ borderColor: style.border, background: style.background }}
     >
       {children}
@@ -43,7 +43,7 @@ export function MessagePanelHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-2 border-b px-2.5 py-1.5" style={{ borderColor: "rgba(148,163,184,0.14)" }}>
+    <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border px-2.5 py-1.5">
       <div className="flex min-w-0 items-center gap-2">
         {icon ? <div className="shrink-0 opacity-85">{icon}</div> : null}
         <div className="min-w-0">

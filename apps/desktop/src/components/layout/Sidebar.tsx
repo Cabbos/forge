@@ -37,7 +37,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const workspaces = useWorkspaceList();
   const activeWorkspace = useActiveWorkspace();
   const sessionRowRefs = useRef(new Map<string, HTMLDivElement>());
-  const { create, kill } = useSession();
+  const { create, deleteConversation } = useSession();
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
 
@@ -120,23 +120,21 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   return (
     <aside
       className="h-full w-full flex flex-col select-none overflow-hidden bg-sidebar px-3"
-      style={{ borderRight: "1px solid var(--sidebar-border)" }}
+      style={{ borderRight: "1px solid var(--forge-border-subtle)" }}
     >
       {/* Brand */}
       <div className="flex items-center justify-between px-1 py-4">
         <img src={forgeMark} alt="" className="size-7 flex-shrink-0 rounded-md" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-semibold text-sidebar-foreground tracking-tight">Forge</span>
-          <SettingsDialog />
-        </div>
+        <span className="text-xs font-semibold text-sidebar-foreground tracking-tight">Forge</span>
       </div>
 
       <div className="relative mb-2 px-1">
         <button
           type="button"
+          data-testid="workspace-trigger"
           onClick={toggleWorkspaceMenu}
           title={activeWorkspace?.path}
-          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground"
+          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
           aria-controls={workspaceMenuOpen ? "workspace-menu" : undefined}
           aria-expanded={workspaceMenuOpen}
           aria-haspopup="menu"
@@ -157,8 +155,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                 setWorkspaceMenuOpen(false);
               }
             }}
-            className="absolute left-1 right-1 top-full z-30 mt-1 overflow-hidden rounded-md border border-border shadow-xl"
-            style={{ background: "var(--popover)" }}
+            className="forge-floating-menu forge-sidebar-menu"
           >
             {workspaces.length > 0 && (
               <div className="max-h-52 overflow-y-auto py-1">
@@ -173,7 +170,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                       setActiveWorkspace(workspace.id);
                       setWorkspaceMenuOpen(false);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-secondary"
+                    className="forge-menu-option"
                   >
                     <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate text-foreground">{workspace.name}</span>
@@ -186,7 +183,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
               role="menuitem"
               onClick={chooseWorkspaceFolder}
               disabled={choosingWorkspace}
-              className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-foreground hover:bg-secondary disabled:cursor-default disabled:opacity-60"
+              className="forge-menu-option border-t border-border text-foreground disabled:cursor-default disabled:opacity-60"
             >
               <FolderOpen className="size-3.5" />
               {choosingWorkspace ? "正在打开..." : "选择文件夹"}
@@ -198,7 +195,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                 setManualWorkspaceEntry(true);
                 setWorkspacePathError(null);
               }}
-              className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className="forge-menu-option border-t border-border text-muted-foreground hover:text-foreground"
             >
               <FolderOpen className="size-3.5" />
               手动输入路径
@@ -211,7 +208,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                   removeWorkspace(activeWorkspace.id);
                   setWorkspaceMenuOpen(false);
                 }}
-                className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                className="forge-menu-option border-t border-border text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="size-3.5" />
                 从列表移除当前项目
@@ -314,6 +311,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                     }}
                     role="button"
                     aria-label={title}
+                    data-active={isActive ? "true" : "false"}
                     tabIndex={0}
                     onClick={() => setActiveSession(s.id)}
                     onKeyDown={(event) => {
@@ -343,10 +341,10 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                       }
                     }}
                     className={cn(
-                      "group flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/55",
+                      "forge-sidebar-history-row group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/55",
                       isActive
-                        ? "bg-sidebar-accent/70 text-sidebar-accent-foreground"
-                        : "text-muted-foreground hover:bg-sidebar-accent/45 hover:text-sidebar-foreground",
+                        ? "text-sidebar-accent-foreground"
+                        : "text-muted-foreground",
                     )}
                   >
                     <span className={cn("min-w-0 flex-1 truncate", isActive && "font-medium")}>{title}</span>
@@ -356,7 +354,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                       className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/45 opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive/45 group-hover:opacity-100"
                       onClick={(event) => {
                         event.stopPropagation();
-                        kill(s.id);
+                        deleteConversation(s.id);
                       }}
                     >
                       <Trash2 className="size-3" />
@@ -374,7 +372,10 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         </div>
       </div>
 
-      <nav className="mt-3 flex items-center gap-1 border-t border-sidebar-border/45 pt-3">
+      <nav
+        data-testid="sidebar-utility-nav"
+        className="mt-3 flex h-10 items-center gap-1 border-t border-border pt-2"
+      >
         <SidebarIconAction
           icon={<Blocks className="size-4" />}
           label="插件"
@@ -387,6 +388,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
           active={activePanel === "automation"}
           onClick={() => onOpenPanel("automation")}
         />
+        <SettingsDialog triggerClassName="forge-sidebar-utility-button" />
       </nav>
     </aside>
   );
@@ -446,8 +448,8 @@ function SidebarAction({
         "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors",
         disabled && "cursor-default opacity-45",
         active
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+          ? "bg-secondary text-foreground"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
       )}
     >
       <span className={cn("flex size-4 items-center justify-center", active && "text-primary")}>
@@ -476,10 +478,10 @@ function SidebarIconAction({
       title={label}
       onClick={onClick}
       className={cn(
-        "flex size-8 items-center justify-center rounded-md transition-colors",
+        "forge-sidebar-utility-button",
         active
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-muted-foreground hover:bg-sidebar-accent/55 hover:text-sidebar-foreground",
+          ? "bg-secondary text-foreground"
+          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
       )}
     >
       {icon}

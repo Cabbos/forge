@@ -23,12 +23,12 @@ export function ShellCard({ block }: { block: BlockState }) {
   };
 
   return (
-    <div className="mb-2">
+    <div>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <CollapsibleTrigger
           data-testid="shell-card-trigger"
-          className="inline-flex max-w-full items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors hover:border-border hover:bg-secondary/20"
-          style={{ background: "transparent", borderColor: isError ? "rgba(212,119,119,0.34)" : "rgba(148,163,184,0.18)", color: "var(--muted-foreground)" }}
+          className="forge-log-line"
+          style={{ borderColor: isError ? "rgba(212,119,119,0.34)" : undefined, color: "var(--muted-foreground)" }}
         >
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />
           <Terminal className="size-3 shrink-0" />
@@ -40,8 +40,8 @@ export function ShellCard({ block }: { block: BlockState }) {
           )}
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-1.5 overflow-hidden rounded-md border" style={{ borderColor: "var(--border)" }}>
-            <div className="flex items-center justify-between border-b px-3 py-2" style={{ borderColor: "var(--border)" }}>
+          <div data-testid="log-detail-surface" className="forge-log-detail">
+            <div data-testid="log-detail-header" className="forge-log-detail-header">
               <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/75">{command}</span>
               <button
                 type="button"
@@ -54,7 +54,7 @@ export function ShellCard({ block }: { block: BlockState }) {
                 {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
               </button>
             </div>
-            <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all overflow-auto" style={{ color: "#D0D5DD", maxHeight: "300px", background: "var(--background)" }}>
+            <pre data-testid="log-detail-output" className="forge-log-output">
               {output}
             </pre>
           </div>

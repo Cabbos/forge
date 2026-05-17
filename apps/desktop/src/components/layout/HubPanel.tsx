@@ -48,11 +48,18 @@ export function HubPanel() {
   useEffect(() => {
     const toggleHandler = () => setOpen((value) => !value);
     const openHandler = () => setOpen(true);
+    const shortcutHandler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "i") return;
+      event.preventDefault();
+      setOpen((value) => !value);
+    };
     window.addEventListener("toggle-hub", toggleHandler);
     window.addEventListener("open-hub", openHandler);
+    window.addEventListener("keydown", shortcutHandler);
     return () => {
       window.removeEventListener("toggle-hub", toggleHandler);
       window.removeEventListener("open-hub", openHandler);
+      window.removeEventListener("keydown", shortcutHandler);
     };
   }, []);
 
@@ -91,22 +98,17 @@ export function HubPanel() {
   return (
     <>
       <aside
+        data-testid="project-archive-panel"
         aria-label="项目档案"
-        className="fixed right-0 top-0 z-50 flex h-full w-[300px] flex-col overflow-hidden animate-[slide-in-right_0.25s_ease-out]"
-        style={{
-          background: "rgba(18,19,24,0.94)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          borderLeft: "1px solid rgba(255,255,255,0.12)",
-        }}
+        className="forge-inspector fixed right-0 top-0 z-50 flex h-full flex-col overflow-hidden animate-[slide-in-right_0.25s_ease-out]"
       >
-        <div className="flex flex-shrink-0 items-center justify-between px-3 py-3">
+        <div className="forge-inspector-header">
           <span className="text-xs font-semibold text-foreground">项目档案</span>
           <button
             type="button"
             aria-label="关闭项目档案"
             onClick={() => setOpen(false)}
-            className="text-muted-foreground transition-colors hover:text-foreground"
+            className="forge-icon-button"
             title="关闭项目档案"
           >
             <X className="size-4" />
@@ -114,7 +116,7 @@ export function HubPanel() {
         </div>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3">
+          <div data-testid="project-archive-body" className="forge-inspector-body">
             <ProjectOverviewCard overview={projectOverview} />
 
             <CurrentTaskCard workflow={workflow} />
@@ -177,7 +179,7 @@ function ArchiveDisclosure({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center justify-between gap-3 border-t border-border pt-3 text-left first:border-t-0 first:pt-0"
+        className="forge-disclosure-row"
       >
         <span className="flex min-w-0 items-center gap-2">
           <Icon className="size-3.5 shrink-0 text-muted-foreground/75" />

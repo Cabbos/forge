@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { BlockState, DeliverySummary } from "@/lib/protocol";
 import { useStore } from "@/store";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
+import { workspaceNameFromPath } from "@/lib/workspaces";
 
 const FOLLOW_UP_ACTIONS = [
   {
@@ -17,6 +18,7 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
   const [loadedPrompt, setLoadedPrompt] = useState<string | null>(null);
   const setPendingInput = useStore((s) => s.setPendingInput);
   const summary = parseSummary(block.metadata.summary);
+  const projectName = summary.project_path ? workspaceNameFromPath(summary.project_path) : null;
 
   const loadPrompt = (prompt: string) => {
     setPendingInput(prompt);
@@ -29,7 +31,7 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
       <MessagePanelHeader
         icon={<ClipboardCheck className="size-4" style={{ color: "#D4A853" }} />}
         title="本轮交付"
-        meta={summary.project_path ? <span className="font-mono">{summary.project_path}</span> : null}
+        meta={projectName ? <span title={summary.project_path ?? undefined}>{projectName}</span> : null}
       />
 
       <div className="grid gap-2 px-3 py-3 text-xs sm:grid-cols-3" style={{ color: "#D0D5DD" }}>

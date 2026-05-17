@@ -14,7 +14,11 @@ import { getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
 import { useStore } from "@/store";
 import { formatContextWindow, PROVIDERS } from "@/lib/providers";
 
-export function SettingsDialog() {
+interface SettingsDialogProps {
+  triggerClassName?: string;
+}
+
+export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
   const [open, setOpen] = useState(false);
   const [keys, setKeys] = useState<KeyStatus[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
@@ -101,10 +105,9 @@ export function SettingsDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger
-        render={<Button variant="ghost" size="icon-sm" />}
+        render={<Button variant="ghost" size="icon-sm" aria-label="设置" title="设置" className={triggerClassName} />}
       >
         <Settings className="size-4" />
-        <span className="sr-only">设置</span>
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>

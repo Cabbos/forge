@@ -31,15 +31,15 @@ export function CapabilityDrawer({ open, initialTab, title, onClose }: Capabilit
       />
       <aside
         aria-label={title}
-        className="fixed left-[220px] top-0 z-50 flex h-full w-[340px] flex-col overflow-hidden animate-[slide-in-left_0.22s_ease-out]"
+        className="fixed left-[220px] top-0 z-50 flex h-full w-[320px] flex-col overflow-hidden animate-[slide-in-left_0.22s_ease-out]"
         style={{
-          background: "rgba(18,19,24,0.94)",
+          background: "rgba(17, 18, 22, 0.94)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
-          borderRight: "1px solid rgba(255,255,255,0.12)",
+          borderRight: "1px solid var(--forge-border-subtle)",
         }}
       >
-        <div className="flex h-12 flex-shrink-0 items-center justify-between px-3">
+        <div data-testid="capability-drawer-header" className="forge-titlebar flex flex-shrink-0 items-center justify-between px-3">
           <span className="text-xs font-semibold text-foreground">{title}</span>
           <button
             type="button"

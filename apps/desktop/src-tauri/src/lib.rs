@@ -59,6 +59,7 @@ pub fn run() {
             ipc::handlers::resume_session,
             ipc::handlers::send_input,
             ipc::handlers::kill_session,
+            ipc::handlers::delete_session,
             ipc::handlers::list_sessions,
             ipc::handlers::confirm_response,
             ipc::handlers::search_workspace_files,

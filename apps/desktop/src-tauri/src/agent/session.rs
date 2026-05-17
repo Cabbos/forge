@@ -457,6 +457,11 @@ impl AgentSession {
             },
         );
     }
+
+    pub fn resume(&self) {
+        self.running.store(true, Ordering::SeqCst);
+        *self.status.lock().unwrap() = SessionStatus::Running;
+    }
 }
 
 fn apply_turn_context(

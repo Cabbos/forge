@@ -114,6 +114,10 @@ export async function killSession(sessionId: string): Promise<void> {
   return invoke("kill_session", { sessionId });
 }
 
+export async function deleteSession(sessionId: string): Promise<void> {
+  return invoke("delete_session", { sessionId });
+}
+
 export async function listSessions(): Promise<SessionInfo[]> {
   return invoke("list_sessions");
 }

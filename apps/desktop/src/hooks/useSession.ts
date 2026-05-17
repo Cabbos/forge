@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useStore } from "../store";
-import { createSession, getProjectCheckpointStatus, getProjectRuntimeStatus, resumeSession, sendInput, killSession } from "../lib/tauri";
+import { createSession, deleteSession, getProjectCheckpointStatus, getProjectRuntimeStatus, resumeSession, sendInput, killSession } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
 import { getDeliveryConfidence } from "../lib/delivery-confidence";
 
@@ -85,20 +85,62 @@ export function useSession() {
       }
     } catch (e) {
       console.error("Failed to send input:", e);
+      dispatchOutputEvent({
+        event_type: "error",
+        session_id: sessionId,
+        block_id: crypto.randomUUID(),
+        message: userFacingSendError(e),
+        code: "send_failed",
+      });
     }
   }, [dispatchOutputEvent]);
 
-  const kill = useCallback(
+  const stop = useCallback(
     async (sessionId: string) => {
       try {
         await killSession(sessionId);
-        removeSession(sessionId);
+        dispatchOutputEvent({
+          event_type: "session_stopped",
+          session_id: sessionId,
+          reason: "stopped",
+        });
       } catch (e) {
-        console.error("Failed to kill session:", e);
+        console.error("Failed to stop session:", e);
+        dispatchOutputEvent({
+          event_type: "error",
+          session_id: sessionId,
+          block_id: crypto.randomUUID(),
+          message: userFacingSendError(e, "停止失败"),
+          code: "stop_failed",
+        });
+      }
+    },
+    [dispatchOutputEvent]
+  );
+
+  const deleteConversation = useCallback(
+    async (sessionId: string) => {
+      try {
+        await deleteSession(sessionId);
+      } catch (e) {
+        console.error("Failed to delete session:", e);
+      } finally {
+        removeSession(sessionId);
       }
     },
     [removeSession]
   );
 
-  return { create, resume, send, kill };
+  return { create, resume, send, stop, deleteConversation };
+}
+
+function userFacingSendError(error: unknown, prefix = "发送失败") {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/api key|密钥|key configured/i.test(raw)) {
+    return `${prefix}：模型服务还没有可用密钥，请打开设置后再试。`;
+  }
+  if (/session not found|not running|会话/i.test(raw)) {
+    return `${prefix}：当前会话暂时不可用，可以继续会话或新建对话后再试。`;
+  }
+  return `${prefix}：这次请求没有发出去，请稍后重试。`;
 }

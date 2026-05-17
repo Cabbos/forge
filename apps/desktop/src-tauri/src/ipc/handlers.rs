@@ -291,6 +291,7 @@ pub async fn resume_session(
     let existing_session = state.sessions.read().await.get(&session_id).cloned();
     if let Some(session) = existing_session {
         let session = upgrade_missing_key_session_if_possible(&app_handle, &state, session).await?;
+        session.resume();
         return Ok(SessionCreated {
             session_id,
             provider: normalize_provider(Some(&session.agent_type)),
@@ -560,6 +561,21 @@ pub async fn send_input(
 
 #[tauri::command]
 pub async fn kill_session(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<(), String> {
+    if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
+        s.kill(&app_handle);
+        if let Err(error) = save_session_snapshot(&s.snapshot()) {
+            crate::app_log!("WARN", "[session_snapshot] {}", error);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_session(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     session_id: String,

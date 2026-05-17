@@ -51,12 +51,12 @@ export function ToolCallCard({ block }: { block: BlockState }) {
   };
 
   return (
-    <div className="mb-2">
+    <div>
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger
           data-testid="tool-card-trigger"
-          className="inline-flex max-w-full items-center gap-2 rounded-md border px-2 py-1.5 text-xs transition-colors hover:border-border hover:bg-secondary/20"
-          style={{ background: "transparent", borderColor: isError ? "rgba(212,119,119,0.34)" : "rgba(148,163,184,0.18)", color: "#D8DBE2" }}>
+          className="forge-log-line"
+          style={{ borderColor: isError ? "rgba(212,119,119,0.34)" : undefined }}>
           <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
           <Wrench className="size-3.5 shrink-0" style={{ color: statusColor }} />
           <span className="shrink-0 font-medium">{actionText}</span>
@@ -78,9 +78,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
           {toolName === "delegate_task" ? (
             <SubAgentTrace content={block.content} />
           ) : (
-            <div className="mt-1.5 max-w-full overflow-hidden rounded-md border"
-              style={{ background: "var(--background)", borderColor: "var(--border)" }}>
-              <div className="flex items-center justify-between border-b px-3 py-2" style={{ borderColor: "var(--border)" }}>
+            <div data-testid="log-detail-surface" className="forge-log-detail">
+              <div data-testid="log-detail-header" className="forge-log-detail-header">
                 <span className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>技术细节</span>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>{toolName}</span>
@@ -96,8 +95,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                   </button>
                 </div>
               </div>
-              <div className="max-h-[220px] overflow-auto p-3 font-mono text-xs whitespace-pre-wrap break-all"
-                style={{ color: "#D0D5DD" }}>
+              <div data-testid="log-detail-output" className="forge-log-output">
                 {detailText}
               </div>
             </div>

@@ -87,7 +87,7 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
       </div>
 
       <div className="border-b border-border p-3">
-        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+        <div className="forge-control-surface flex items-center gap-2 px-3 py-2 text-xs">
           <Search className="size-3.5 shrink-0 text-muted-foreground" />
           <input
             type="text"
@@ -156,7 +156,7 @@ function SkillsContent({ search }: { search: string }) {
         </div>
         <div className="flex flex-col gap-1.5">
           {filterFn(skills).map((s) => (
-            <div key={s.id} className="flex items-center gap-2.5 rounded-md border border-border px-2.5 py-2 transition-colors hover:bg-secondary">
+            <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
               <span className="flex h-6 w-6 items-center justify-center rounded text-xs" style={{ background: `${getColor(s.kind)}18`, color: getColor(s.kind) }}>{getIcon(s.kind)}</span>
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-medium text-foreground">{s.name}</div>
@@ -177,7 +177,7 @@ function SkillsContent({ search }: { search: string }) {
             </div>
           ))}
           {filterFn(skills).length === 0 && (
-            <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
+            <div className="forge-empty px-2.5 py-3 text-[11px]">
               没有匹配的已安装插件
             </div>
           )}
@@ -186,7 +186,7 @@ function SkillsContent({ search }: { search: string }) {
 
       <section>
         <h5 className="mb-2.5 text-[10px] uppercase tracking-widest text-muted-foreground/60">可安装</h5>
-        <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
+        <div className="forge-empty px-2.5 py-3 text-[11px]">
           暂无内置推荐插件
         </div>
       </section>
@@ -223,7 +223,7 @@ function MCPContent({ search }: { search: string }) {
   return (
     <section className="flex flex-col gap-0.5">
       {filtered.map((s) => (
-        <div key={s.id} className="flex items-center gap-2.5 rounded-md px-2.5 py-2 transition-colors hover:bg-secondary">
+        <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
           <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: s.enabled !== false ? "#4A9E6B" : "#8C93A0" }} />
           <span className="flex-1 font-mono text-xs text-foreground">{s.name}</span>
           <button
@@ -240,7 +240,7 @@ function MCPContent({ search }: { search: string }) {
         </div>
       ))}
       {filtered.length === 0 && (
-        <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
+        <div className="forge-empty px-2.5 py-3 text-[11px]">
           没有匹配的连接
         </div>
       )}
@@ -277,7 +277,7 @@ function HooksContent({ search }: { search: string }) {
   return (
     <section className="flex flex-col gap-1.5">
       {filtered.map((h) => (
-        <div key={h.id} className="flex items-center gap-2.5 rounded-md border border-border px-2.5 py-2 transition-colors hover:bg-secondary">
+        <div key={h.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
           <div className="flex-1">
             <div className="text-xs font-medium text-foreground">{h.name}</div>
             <div className="font-mono text-[10px] text-muted-foreground">{h.version || h.source}</div>
@@ -297,7 +297,7 @@ function HooksContent({ search }: { search: string }) {
         </div>
       ))}
       {filtered.length === 0 && (
-        <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
+        <div className="forge-empty px-2.5 py-3 text-[11px]">
           没有匹配的自动化
         </div>
       )}

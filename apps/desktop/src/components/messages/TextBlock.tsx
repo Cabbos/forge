@@ -7,7 +7,7 @@ import { CodeBlock } from "@/components/messages/CodeBlock";
 import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
 import { Loader2 } from "lucide-react";
 
-const STREAM_THROTTLE_MS = 220;
+const STREAM_THROTTLE_MS = 96;
 const FILE_REF_PREFIX = "#file-ref=";
 
 // Match file:line patterns like src/foo.rs:42 or path/to/file.ts:123
@@ -237,8 +237,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       {hasContent ? (
         <div
           data-testid="assistant-message"
-          className="min-w-0 py-1 text-left text-sm leading-7 break-words"
-          style={{ color: "var(--foreground)", overflowWrap: "anywhere" }}
+          className="forge-assistant-message break-words"
         >
           <div className="markdown-content">
             {block.isComplete ? (

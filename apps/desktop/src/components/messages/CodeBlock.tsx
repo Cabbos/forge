@@ -40,11 +40,11 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
   };
 
   return (
-    <figure className="code-surface group my-3 overflow-hidden rounded-lg border border-border bg-background shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]">
-      <figcaption className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-card px-3">
+    <figure className="code-surface group my-3 overflow-hidden rounded-md border border-border bg-background shadow-none">
+      <figcaption className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-muted px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-[#4A9E6B]" />
-          <span className="truncate font-mono text-[11px] font-medium uppercase tracking-normal text-[#9aa4b2]">
+          <span className="truncate font-mono text-[11px] font-medium uppercase tracking-normal text-muted-foreground">
             {label}
           </span>
           {lineCount > 1 && (
@@ -57,8 +57,8 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
           type="button"
           onClick={copy}
           className={cn(
-            "inline-flex h-6 w-6 items-center justify-center rounded-md text-[#7f8997] transition-colors",
-            "hover:bg-[#1a1f29] hover:text-[#e5e7eb] focus:outline-none focus:ring-1 focus:ring-[#D4A853]/60"
+            "inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors",
+            "hover:bg-secondary hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/60"
           )}
           aria-label={copied ? "已复制" : "复制代码"}
           title={copied ? "已复制" : "复制代码"}

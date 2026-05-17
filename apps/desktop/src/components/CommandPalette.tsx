@@ -115,7 +115,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             </CommandItem>
             <CommandItem onSelect={handleOpenProjectArchive}>
               <PanelRightOpen className="size-4" />
-              打开项目档案
+              <span className="min-w-0 flex-1 truncate">打开项目档案</span>
+              <ShortcutHint keys="⌘I" />
             </CommandItem>
             <CommandItem onSelect={handleOpenSettings}>
               <Settings className="size-4" />

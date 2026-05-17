@@ -8,6 +8,7 @@ async function setup(page: Page) {
     let callbackId = 0;
     const callbacks = new Map<number, (data: unknown) => void>();
     const workingDir = "/Users/cabbos/project/forge";
+    const sessionWorkingDirs = new Map<string, string>();
     window.localStorage.setItem("forge-working-dir", workingDir);
     const projectRuntimeStatus = {
       working_dir: workingDir,
@@ -90,21 +91,33 @@ async function setup(page: Page) {
       const projectPath = String(args.projectPath ?? workingDir);
       switch (cmd) {
         case "create_session":
-          // @ts-expect-error mock
-          window.__lastCreateSessionArgs = args;
-          // @ts-expect-error mock
-          return {
-            session_id: window.__mockSessionId ?? crypto.randomUUID(),
-            provider: "deepseek",
-            model: "deepseek-v4-flash[1m]",
+          {
             // @ts-expect-error mock
-            missing_api_key: Boolean(window.__mockMissingApiKey),
-          };
+            const sessionId = window.__mockSessionId ?? crypto.randomUUID();
+            sessionWorkingDirs.set(sessionId, String(args.workingDir ?? workingDir));
+            // @ts-expect-error mock
+            window.__lastCreateSessionArgs = args;
+            // @ts-expect-error mock
+            return {
+              session_id: sessionId,
+              provider: "deepseek",
+              model: "deepseek-v4-flash[1m]",
+              // @ts-expect-error mock
+              missing_api_key: Boolean(window.__mockMissingApiKey),
+            };
+          }
         case "send_input":
           // @ts-expect-error mock
           window.__lastSentText = args.text;
           return undefined;
         case "kill_session":
+          // @ts-expect-error mock
+          window.__lastKilledSessionId = args.sessionId;
+          return undefined;
+        case "delete_session":
+          // @ts-expect-error mock
+          window.__lastDeletedSessionId = args.sessionId;
+          return undefined;
         case "confirm_response":
         case "set_api_key":
           return undefined;
@@ -117,14 +130,23 @@ async function setup(page: Page) {
             { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: true },
             { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: true },
           ];
+        case "search_workspace_files":
+          return ["src/App.tsx", "src/components/session/InputBar.tsx", "README.md"]
+            .filter((path) => path.toLowerCase().includes(String(args.query ?? "").toLowerCase()));
         case "toggle_capability":
           return undefined;
         case "get_api_key_status":
           return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
         case "get_project_runtime_status":
-          return projectRuntimeStatus;
+          return {
+            ...projectRuntimeStatus,
+            working_dir: sessionWorkingDirs.get(String(args.sessionId ?? "")) ?? workingDir,
+          };
         case "get_project_checkpoint_status":
-          return projectCheckpointStatus;
+          return {
+            ...projectCheckpointStatus,
+            working_dir: sessionWorkingDirs.get(String(args.sessionId ?? "")) ?? workingDir,
+          };
         case "list_memories":
           return [];
         case "get_workflow_state":
@@ -273,11 +295,26 @@ test.describe("Timeline Message Flow", () => {
   test("app loads and shows empty state", async ({ page }) => {
     const main = page.getByRole("main");
     await expect(page.getByTestId("app-titlebar")).toHaveAttribute("data-tauri-drag-region", "true");
-    await expect(main.locator("p", { hasText: "从当前对话开始" })).toBeVisible();
+    await expect(page.getByTestId("app-titlebar")).toHaveCSS("height", "44px");
+    await expect(main.getByTestId("empty-workbench")).toBeVisible();
+    await expect(main.getByTestId("empty-workbench").getByRole("button", { name: "开始新对话" })).toBeVisible();
+    await expect(main.locator("img")).toHaveCount(0);
+    await expect(main.locator("p", { hasText: "从当前对话开始" })).toHaveCount(0);
     await expect(main.getByText("Forge 会带着项目档案，把结果推进到可预览、可检查、可继续。")).toHaveCount(0);
     await expect(main.getByText("当前任务", { exact: true })).toHaveCount(0);
     await expect(main.getByText("交付", { exact: true })).toHaveCount(0);
     await expect(main.getByText("创建一个任务开始")).toHaveCount(0);
+  });
+
+  test("empty workbench primary action starts a conversation", async ({ page }) => {
+    await page.getByRole("main").getByRole("button", { name: "开始新对话" }).click();
+
+    await expect(page.locator("textarea")).toBeVisible();
+    const createArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCreateSessionArgs;
+    });
+    expect(createArgs.workingDir).toBe("/Users/cabbos/project/forge");
   });
 
   test("creating a session shows chat input", async ({ page }) => {
@@ -697,6 +734,619 @@ test.describe("Timeline Message Flow", () => {
     await expect(pending).toHaveCSS("border-top-width", "0px");
   });
 
+  test("conversation and composer share the same vertical gutters", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const gutters = await page.evaluate(() => {
+      const scroll = document.querySelector("[data-testid='conversation-scroll']")?.getBoundingClientRect();
+      const messageLane = document.querySelector("[data-testid='message-lane']")?.getBoundingClientRect();
+      const composerFrameNode = document.querySelector("[data-testid='composer-frame']");
+      const composerFrame = composerFrameNode?.getBoundingClientRect();
+      const composerLane = document.querySelector("[data-testid='composer-lane']")?.getBoundingClientRect();
+      if (!scroll || !messageLane || !composerFrameNode || !composerFrame || !composerLane) return null;
+      const composerBorderTop = Number.parseFloat(getComputedStyle(composerFrameNode).borderTopWidth);
+
+      return {
+        transcriptTop: Math.round(messageLane.top - scroll.top),
+        composerTop: Math.round(composerLane.top - composerFrame.top - composerBorderTop),
+      };
+    });
+
+    expect(gutters).not.toBeNull();
+    expect(gutters!.transcriptTop).toBe(16);
+    expect(gutters!.composerTop).toBe(16);
+    expect(Math.abs(gutters!.transcriptTop - gutters!.composerTop)).toBeLessThanOrEqual(1);
+  });
+
+  test("conversation shell uses one vertical rhythm token", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    const events = Array.from({ length: 24 }, (_, index) => ([
+      { event_type: "text_start" as const, session_id: sessionId, block_id: `rhythm-${index}` },
+      {
+        event_type: "text_chunk" as const,
+        session_id: sessionId,
+        block_id: `rhythm-${index}`,
+        content: `第 ${index + 1} 条输出，用来撑开滚动区域。这里保持足够长度，让对话区出现滚动。`,
+      },
+      { event_type: "text_end" as const, session_id: sessionId, block_id: `rhythm-${index}` },
+    ])).flat();
+    await simulateStream(page, sessionId, events, 1);
+
+    await page.evaluate(() => {
+      const scroller = document.querySelector("[data-testid='conversation-scroll']");
+      if (!scroller) return;
+      scroller.scrollTop = 0;
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expect(page.getByTestId("scroll-to-bottom")).toBeVisible();
+
+    const rhythm = await page.evaluate(() => {
+      const root = document.documentElement;
+      const scroll = document.querySelector("[data-testid='conversation-scroll']");
+      const composerFrame = document.querySelector("[data-testid='composer-frame']");
+      const scrollButton = document.querySelector("[data-testid='scroll-to-bottom']");
+      if (!scroll || !composerFrame || !scrollButton) return null;
+      const scrollRect = scroll.getBoundingClientRect();
+      const buttonRect = scrollButton.getBoundingClientRect();
+      const token = getComputedStyle(root).getPropertyValue("--forge-conversation-gutter-y").trim();
+      const scrollStyle = getComputedStyle(scroll);
+      const composerStyle = getComputedStyle(composerFrame);
+
+      return {
+        token,
+        scrollTop: Math.round(Number.parseFloat(scrollStyle.paddingTop)),
+        scrollBottom: Math.round(Number.parseFloat(scrollStyle.paddingBottom)),
+        composerTop: Math.round(Number.parseFloat(composerStyle.paddingTop)),
+        composerBottom: Math.round(Number.parseFloat(composerStyle.paddingBottom)),
+        scrollButtonBottom: Math.round(scrollRect.bottom - buttonRect.bottom),
+      };
+    });
+
+    expect(rhythm).not.toBeNull();
+    expect(rhythm!.token).toBe("16px");
+    expect(rhythm!.scrollTop).toBe(16);
+    expect(rhythm!.scrollBottom).toBe(16);
+    expect(rhythm!.composerTop).toBe(16);
+    expect(rhythm!.composerBottom).toBe(16);
+    expect(rhythm!.scrollButtonBottom).toBe(16);
+  });
+
+  test("streaming output keeps bottom lock without stealing manual scroll", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    const filler = Array.from({ length: 32 }, (_, index) => ([
+      { event_type: "text_start" as const, session_id: sessionId, block_id: `stream-fill-${index}` },
+      {
+        event_type: "text_chunk" as const,
+        session_id: sessionId,
+        block_id: `stream-fill-${index}`,
+        content: `第 ${index + 1} 条历史输出，用来撑开真实滚动区域。`,
+      },
+      { event_type: "text_end" as const, session_id: sessionId, block_id: `stream-fill-${index}` },
+    ])).flat();
+    await simulateStream(page, sessionId, filler, 1);
+
+    await page.evaluate(() => {
+      const scroller = document.querySelector("[data-testid='conversation-scroll']");
+      if (!scroller) return;
+      scroller.scrollTop = scroller.scrollHeight;
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "live-stream" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "live-stream", content: "正在整理第一段。" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "live-stream", content: "\n继续补充第二段，让输出变高。" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "live-stream", content: "\n最后收尾。" },
+    ], 20);
+
+    const bottomDistance = await page.evaluate(() => {
+      const scroller = document.querySelector("[data-testid='conversation-scroll']");
+      if (!scroller) return null;
+      return Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight);
+    });
+    expect(bottomDistance).not.toBeNull();
+    expect(bottomDistance!).toBeLessThanOrEqual(2);
+
+    await page.evaluate(() => {
+      const scroller = document.querySelector("[data-testid='conversation-scroll']");
+      if (!scroller) return;
+      scroller.scrollTop = 0;
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await expect(page.getByTestId("scroll-to-bottom")).toBeVisible();
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_chunk", session_id: sessionId, block_id: "live-stream", content: "\n用户在上方阅读时继续输出。" },
+      { event_type: "text_end", session_id: sessionId, block_id: "live-stream" },
+    ], 20);
+
+    const manualScrollTop = await page.evaluate(() => {
+      const scroller = document.querySelector("[data-testid='conversation-scroll']");
+      return scroller ? Math.round(scroller.scrollTop) : null;
+    });
+    expect(manualScrollTop).toBe(0);
+    await expect(page.getByTestId("scroll-to-bottom")).toBeVisible();
+  });
+
+  test("streaming chunks update quickly enough to feel live", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "live-cadence" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "live-cadence", content: "第一段" },
+    ], 1);
+    await expect(page.getByTestId("assistant-message").last()).toContainText("第一段");
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_chunk", session_id: sessionId, block_id: "live-cadence", content: "\n第二段" },
+    ], 1);
+
+    await expect(page.getByTestId("assistant-message").last()).toContainText("第二段", { timeout: 150 });
+  });
+
+  test("stopping generation keeps the conversation instead of deleting it", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "session_status", session_id: sessionId, status: "working" },
+    ], 1);
+
+    await page.getByTestId("composer-stop").click();
+
+    const stoppedSessionId = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastKilledSessionId;
+    });
+    expect(stoppedSessionId).toBe(sessionId);
+    await expect(page.getByRole("button", { name: "继续会话" })).toBeVisible();
+    await expect(page.locator("aside").first().getByRole("button", { name: /删除对话/ })).toHaveCount(1);
+  });
+
+  test("deleting a conversation still removes it from history", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const sidebar = page.locator("aside").first();
+    await sidebar.getByRole("button", { name: /删除对话/ }).click();
+
+    const deletedSessionId = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastDeletedSessionId;
+    });
+    expect(deletedSessionId).toBe(sessionId);
+    await expect(sidebar.getByRole("button", { name: /删除对话/ })).toHaveCount(0);
+    await expect(sidebar.getByText("还没有对话")).toBeVisible();
+  });
+
+  test("composer internals use editor rhythm tokens", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const rhythm = await page.evaluate(() => {
+      const root = document.documentElement;
+      const textareaWrap = document.querySelector("[data-testid='composer-textarea-wrap']");
+      const toolbar = document.querySelector("[data-testid='composer-toolbar']");
+      const textarea = document.querySelector("textarea");
+      if (!textareaWrap || !toolbar || !textarea) return null;
+      const textareaWrapStyle = getComputedStyle(textareaWrap);
+      const toolbarStyle = getComputedStyle(toolbar);
+      const textareaStyle = getComputedStyle(textarea);
+
+      return {
+        innerX: getComputedStyle(root).getPropertyValue("--forge-composer-inner-x").trim(),
+        innerY: getComputedStyle(root).getPropertyValue("--forge-composer-inner-y").trim(),
+        textPadLeft: Math.round(Number.parseFloat(textareaWrapStyle.paddingLeft)),
+        textPadTop: Math.round(Number.parseFloat(textareaWrapStyle.paddingTop)),
+        toolbarPadLeft: Math.round(Number.parseFloat(toolbarStyle.paddingLeft)),
+        toolbarPadBottom: Math.round(Number.parseFloat(toolbarStyle.paddingBottom)),
+        textareaLineHeight: Math.round(Number.parseFloat(textareaStyle.lineHeight)),
+      };
+    });
+
+    expect(rhythm).not.toBeNull();
+    expect(rhythm!.innerX).toBe("16px");
+    expect(rhythm!.innerY).toBe("12px");
+    expect(rhythm!.textPadLeft).toBe(16);
+    expect(rhythm!.textPadTop).toBe(12);
+    expect(rhythm!.toolbarPadLeft).toBe(16);
+    expect(rhythm!.toolbarPadBottom).toBe(10);
+    expect(rhythm!.textareaLineHeight).toBe(22);
+  });
+
+  test("composer floating menus sit above the editor without overlap", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const composer = page.getByTestId("composer-lane");
+    await composer.getByRole("button", { name: "常用请求" }).click();
+    const menu = page.getByTestId("composer-command-menu");
+    await expect(menu).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const menu = document.querySelector("[data-testid='composer-command-menu']");
+      const surface = document.querySelector("[data-testid='composer-surface']");
+      const option = document.querySelector("[data-testid='composer-command-menu'] [role='option']");
+      if (!menu || !surface || !option) return null;
+      const menuRect = menu.getBoundingClientRect();
+      const surfaceRect = surface.getBoundingClientRect();
+      const menuStyle = getComputedStyle(menu);
+      return {
+        gapToken: getComputedStyle(root).getPropertyValue("--forge-floating-gap").trim(),
+        menuBottomGap: Math.round(surfaceRect.top - menuRect.bottom),
+        menuShadow: menuStyle.boxShadow,
+        optionHeight: Math.round(option.getBoundingClientRect().height),
+        radius: Number.parseFloat(menuStyle.borderTopLeftRadius),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.gapToken).toBe("8px");
+    expect(metrics!.menuBottomGap).toBe(8);
+    expect(metrics!.menuShadow).not.toContain("0px 25px");
+    expect(metrics!.optionHeight).toBe(28);
+    expect(metrics!.radius).toBeLessThanOrEqual(8);
+  });
+
+  test("assistant prose and user bubbles share readable message primitives", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await page.locator("textarea").fill("整理这个页面");
+    await page.locator("textarea").press("Enter");
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "primitive-text" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "primitive-text",
+        content: "可以。先把可读性收稳，再继续压低 UI 噪音。",
+      },
+      { event_type: "text_end", session_id: sessionId, block_id: "primitive-text" },
+    ], 1);
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const assistant = document.querySelector("[data-testid='assistant-message']");
+      const user = document.querySelector("[data-testid='user-message']");
+      if (!assistant || !user) return null;
+      const assistantStyle = getComputedStyle(assistant);
+      const userStyle = getComputedStyle(user);
+      return {
+        assistantLineToken: getComputedStyle(root).getPropertyValue("--forge-assistant-line-height").trim(),
+        userLineToken: getComputedStyle(root).getPropertyValue("--forge-user-line-height").trim(),
+        assistantLineHeight: Math.round(Number.parseFloat(assistantStyle.lineHeight)),
+        userLineHeight: Math.round(Number.parseFloat(userStyle.lineHeight)),
+        userShadow: userStyle.boxShadow,
+        userRadius: Number.parseFloat(userStyle.borderTopLeftRadius),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.assistantLineToken).toBe("26px");
+    expect(metrics!.userLineToken).toBe("22px");
+    expect(metrics!.assistantLineHeight).toBe(26);
+    expect(metrics!.userLineHeight).toBe(22);
+    expect(metrics!.userShadow).toBe("none");
+    expect(metrics!.userRadius).toBeLessThanOrEqual(8);
+  });
+
+  test("message stream uses one gap token without component margins", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "gap-a" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "gap-a", content: "第一条回复。" },
+      { event_type: "text_end", session_id: sessionId, block_id: "gap-a" },
+      {
+        event_type: "tool_call",
+        session_id: sessionId,
+        block_id: "gap-tool",
+        tool_name: "read_file",
+        tool_input: { path: "src/App.tsx" },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "gap-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 50,
+      },
+    ], 1);
+
+    const layout = await page.evaluate(() => {
+      const root = document.documentElement;
+      const lane = document.querySelector("[data-testid='message-lane']");
+      const blocks = [...document.querySelectorAll("[data-testid='message-block']")];
+      if (!lane || blocks.length < 2) return null;
+      const laneStyle = getComputedStyle(lane);
+      return {
+        token: getComputedStyle(root).getPropertyValue("--forge-message-gap").trim(),
+        gap: Math.round(Number.parseFloat(laneStyle.rowGap)),
+        margins: blocks.map((block) => {
+          const style = getComputedStyle(block);
+          return {
+            top: Math.round(Number.parseFloat(style.marginTop)),
+            bottom: Math.round(Number.parseFloat(style.marginBottom)),
+          };
+        }),
+      };
+    });
+
+    expect(layout).not.toBeNull();
+    expect(layout!.token).toBe("12px");
+    expect(layout!.gap).toBe(12);
+    expect(layout!.margins.every((margin) => margin.top === 0 && margin.bottom === 0)).toBeTruthy();
+  });
+
+  test("tool and shell logs share compact row rhythm", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call",
+        session_id: sessionId,
+        block_id: "compact-tool",
+        tool_name: "read_file",
+        tool_input: { path: "src/App.tsx" },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "compact-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 42,
+      },
+      { event_type: "shell_start", session_id: sessionId, block_id: "compact-shell", command: "npm run build" },
+      { event_type: "shell_output", session_id: sessionId, block_id: "compact-shell", content: "done" },
+      { event_type: "shell_end", session_id: sessionId, block_id: "compact-shell", exit_code: 0 },
+    ], 1);
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const tool = document.querySelector("[data-testid='tool-card-trigger']");
+      const shell = document.querySelector("[data-testid='shell-card-trigger']");
+      if (!tool || !shell) return null;
+      return {
+        token: getComputedStyle(root).getPropertyValue("--forge-log-row-height").trim(),
+        toolHeight: Math.round(tool.getBoundingClientRect().height),
+        shellHeight: Math.round(shell.getBoundingClientRect().height),
+        toolMargin: getComputedStyle(tool.parentElement as Element).marginBottom,
+        shellMargin: getComputedStyle(shell.parentElement as Element).marginBottom,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.token).toBe("30px");
+    expect(metrics!.toolHeight).toBe(30);
+    expect(metrics!.shellHeight).toBe(30);
+    expect(metrics!.toolMargin).toBe("0px");
+    expect(metrics!.shellMargin).toBe("0px");
+  });
+
+  test("expanded logs share one detail surface", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call",
+        session_id: sessionId,
+        block_id: "detail-tool",
+        tool_name: "read_file",
+        tool_input: { path: "src/App.tsx" },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "detail-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 42,
+      },
+      { event_type: "shell_start", session_id: sessionId, block_id: "detail-shell", command: "npm run build" },
+      { event_type: "shell_output", session_id: sessionId, block_id: "detail-shell", content: "done" },
+      { event_type: "shell_end", session_id: sessionId, block_id: "detail-shell", exit_code: 0 },
+    ], 1);
+
+    await page.getByTestId("tool-card-trigger").click();
+    await page.getByTestId("shell-card-trigger").click();
+
+    const surfaces = await page.evaluate(() => {
+      const root = document.documentElement;
+      return [...document.querySelectorAll("[data-testid='log-detail-surface']")].map((surface) => {
+        const style = getComputedStyle(surface);
+        const header = surface.querySelector("[data-testid='log-detail-header']");
+        const output = surface.querySelector("[data-testid='log-detail-output']");
+        return {
+          maxHeightToken: getComputedStyle(root).getPropertyValue("--forge-log-output-max-height").trim(),
+          radius: Number.parseFloat(style.borderTopLeftRadius),
+          headerHeight: header ? Math.round(header.getBoundingClientRect().height) : 0,
+          outputMaxHeight: output ? getComputedStyle(output).maxHeight : "",
+        };
+      });
+    });
+
+    expect(surfaces).toHaveLength(2);
+    expect(surfaces.every((surface) => surface.maxHeightToken === "260px")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.radius <= 8)).toBeTruthy();
+    expect(surfaces.every((surface) => surface.headerHeight === 36)).toBeTruthy();
+    expect(surfaces.every((surface) => surface.outputMaxHeight === "260px")).toBeTruthy();
+  });
+
+  test("context compaction notice follows message rhythm", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "context_compacted",
+        session_id: sessionId,
+        block_id: "compact-notice",
+        summary: "整理后的上下文摘要",
+        compacted_messages: 12,
+        retained_messages: 4,
+        estimated_tokens_before: 124000,
+        estimated_tokens_after: 42000,
+      },
+    ], 1);
+
+    const metrics = await page.evaluate(() => {
+      const trigger = document.querySelector("[data-testid='context-compact-trigger']");
+      if (!trigger) return null;
+      const wrapper = trigger.parentElement;
+      const wrapperStyle = wrapper ? getComputedStyle(wrapper) : null;
+      return {
+        height: Math.round(trigger.getBoundingClientRect().height),
+        marginTop: wrapperStyle ? Math.round(Number.parseFloat(wrapperStyle.marginTop)) : -1,
+        marginBottom: wrapperStyle ? Math.round(Number.parseFloat(wrapperStyle.marginBottom)) : -1,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.height).toBe(30);
+    expect(metrics!.marginTop).toBe(0);
+    expect(metrics!.marginBottom).toBe(0);
+  });
+
   test("composer uses a grounded editor surface instead of a plastic card", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -736,6 +1386,50 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.sendBackground).not.toBe("rgb(212, 168, 83)");
     expect(metrics!.sendWidth).toBe(28);
     expect(metrics!.sendHeight).toBe(28);
+  });
+
+  test("design system materials stay subtle and token-driven", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const titlebar = document.querySelector("[data-testid='app-titlebar']");
+      const sidebar = document.querySelector("aside");
+      const composer = document.querySelector("[data-testid='composer-surface']");
+      if (!titlebar || !sidebar || !composer) return null;
+      const rootStyle = getComputedStyle(root);
+      const titlebarStyle = getComputedStyle(titlebar);
+      const sidebarStyle = getComputedStyle(sidebar);
+      const composerStyle = getComputedStyle(composer);
+      return {
+        borderSubtle: rootStyle.getPropertyValue("--forge-border-subtle").trim(),
+        bgRaised: rootStyle.getPropertyValue("--forge-bg-raised").trim(),
+        hover: rootStyle.getPropertyValue("--forge-hover").trim(),
+        focusRing: rootStyle.getPropertyValue("--forge-focus-ring").trim(),
+        titlebarBorder: titlebarStyle.borderBottomColor,
+        sidebarBorder: sidebarStyle.borderRightColor,
+        composerBorder: composerStyle.borderTopColor,
+        composerBg: composerStyle.backgroundColor,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.borderSubtle).toBe("rgba(148, 163, 184, 0.14)");
+    expect(metrics!.bgRaised).toBe("rgba(255, 255, 255, 0.018)");
+    expect(metrics!.hover).toBe("rgba(255, 255, 255, 0.036)");
+    expect(metrics!.focusRing).toBe("rgba(212, 168, 83, 0.42)");
+    expect(metrics!.titlebarBorder).toBe("rgba(148, 163, 184, 0.14)");
+    expect(metrics!.sidebarBorder).toBe("rgba(148, 163, 184, 0.14)");
+    expect(metrics!.composerBorder).toBe("rgba(148, 163, 184, 0.14)");
+    expect(metrics!.composerBg).toBe("rgba(255, 255, 255, 0.02)");
   });
 
   test("core shell surfaces keep a restrained product radius", async ({ page }) => {
@@ -875,6 +1569,17 @@ test.describe("Timeline Message Flow", () => {
       nodes.map((node) => Math.round(node.getBoundingClientRect().width)),
     );
     expect(widths.every((width) => width <= 780)).toBeTruthy();
+
+    const margins = await panels.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const style = getComputedStyle(node);
+        return {
+          top: Math.round(Number.parseFloat(style.marginTop)),
+          bottom: Math.round(Number.parseFloat(style.marginBottom)),
+        };
+      }),
+    );
+    expect(margins.every((margin) => margin.top === 0 && margin.bottom === 0)).toBeTruthy();
   });
 
   test("thinking block expands and shows content", async ({ page }) => {
@@ -960,21 +1665,179 @@ test.describe("Timeline Message Flow", () => {
     await expect(sidebar.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "插件" })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "自动化" })).toBeVisible();
+    await expect(sidebar.getByRole("button", { name: "设置" })).toBeVisible();
     await expect(sidebar.getByText("当前工作空间", { exact: true })).toHaveCount(0);
     await expect(sidebar.getByText("插件", { exact: true })).toHaveCount(0);
     await expect(sidebar.getByText("自动化", { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByText("设置", { exact: true })).toHaveCount(0);
+    const utilityMetrics = await sidebar.locator("[data-testid='sidebar-utility-nav']").evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      const buttons = Array.from(node.querySelectorAll("button")).map((button) => {
+        const item = button.getBoundingClientRect();
+        return Math.round(item.width);
+      });
+      return { height: Math.round(rect.height), buttons };
+    });
+    expect(utilityMetrics.height).toBeLessThanOrEqual(40);
+    expect(utilityMetrics.buttons).toEqual([28, 28, 28]);
 
     await sidebar.getByRole("button", { name: "插件" }).click();
     const drawer = page.getByRole("complementary", { name: "插件" });
     await expect(drawer.getByText("插件", { exact: true }).first()).toBeVisible();
     await expect(drawer.getByRole("tab", { name: /插件/ })).toHaveAttribute("aria-selected", "true");
     await expect(drawer.getByRole("textbox", { name: "搜索插件" })).toBeVisible();
+    await expect(drawer.getByTestId("capability-drawer-header")).toHaveCSS("height", "44px");
     await page.waitForTimeout(300);
     const drawerX = Math.round((await drawer.boundingBox())?.x ?? 0);
+    const drawerWidth = Math.round((await drawer.boundingBox())?.width ?? 0);
     expect(drawerX).toBe(Math.round(width));
+    expect(drawerWidth).toBe(320);
     await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("complementary", { name: "插件" })).toHaveCount(0);
+  });
+
+  test("sidebar history rows stay compact and scannable", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.locator("textarea").fill("Build a compact scanner");
+    await page.locator("textarea").press("Enter");
+
+    const sidebar = page.locator("aside").first();
+    const row = sidebar.getByRole("button", { name: "Build a compact scanner", exact: true });
+    await expect(row).toBeVisible();
+
+    const metrics = await row.evaluate((node) => {
+      const root = document.documentElement;
+      const style = getComputedStyle(node);
+      const deleteButton = node.querySelector("button");
+      return {
+        token: getComputedStyle(root).getPropertyValue("--forge-sidebar-row-height").trim(),
+        height: Math.round(node.getBoundingClientRect().height),
+        radius: Number.parseFloat(style.borderTopLeftRadius),
+        deleteOpacity: deleteButton ? getComputedStyle(deleteButton).opacity : null,
+      };
+    });
+
+    expect(metrics.token).toBe("28px");
+    expect(metrics.height).toBe(28);
+    expect(metrics.radius).toBeLessThanOrEqual(8);
+    expect(metrics.deleteOpacity).toBe("0");
+  });
+
+  test("workspace menu uses the shared compact floating surface", async ({ page }) => {
+    const sidebar = page.locator("aside").first();
+    const trigger = sidebar.getByRole("button", { name: /forge/ });
+    await trigger.click();
+    const menu = page.getByRole("menu", { name: "项目工作空间" });
+    await expect(menu).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const trigger = document.querySelector("[data-testid='workspace-trigger']");
+      const menu = document.querySelector("#workspace-menu");
+      const option = menu?.querySelector("[role='menuitemradio'], [role='menuitem']");
+      if (!trigger || !menu || !option) return null;
+      const triggerRect = trigger.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const menuStyle = getComputedStyle(menu);
+      return {
+        gapToken: getComputedStyle(root).getPropertyValue("--forge-floating-gap").trim(),
+        menuTopGap: Math.round(menuRect.top - triggerRect.bottom),
+        optionHeight: Math.round(option.getBoundingClientRect().height),
+        shadow: menuStyle.boxShadow,
+        radius: Number.parseFloat(menuStyle.borderTopLeftRadius),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.gapToken).toBe("8px");
+    expect(metrics!.menuTopGap).toBe(8);
+    expect(metrics!.optionHeight).toBe(28);
+    expect(metrics!.shadow).not.toContain("0px 25px");
+    expect(metrics!.radius).toBeLessThanOrEqual(8);
+  });
+
+  test("project archive opens from the keyboard as a quiet inspector", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await page.keyboard.down("Control");
+    await page.keyboard.press("i");
+    await page.keyboard.up("Control");
+    const archive = page.getByRole("complementary", { name: "项目档案" });
+    await expect(archive).toBeVisible();
+    await expect(archive.getByText("Project Status")).toHaveCount(0);
+    await expect(archive.getByText("Context Activation")).toHaveCount(0);
+
+    const metrics = await archive.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        width: Math.round(node.getBoundingClientRect().width),
+        bg: style.backgroundColor,
+      };
+    });
+    expect(metrics.width).toBeLessThanOrEqual(320);
+    expect(metrics.bg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await page.keyboard.press("Escape");
+    await expect(archive).toHaveCount(0);
+  });
+
+  test("project archive disclosure rows use inspector rhythm tokens", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.keyboard.down("Control");
+    await page.keyboard.press("i");
+    await page.keyboard.up("Control");
+
+    const archive = page.getByRole("complementary", { name: "项目档案" });
+    await expect(archive).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const archive = document.querySelector("[data-testid='project-archive-panel']");
+      const body = document.querySelector("[data-testid='project-archive-body']");
+      const disclosure = document.querySelector("[data-testid='archive-disclosure-records'] button");
+      if (!archive || !body || !disclosure) return null;
+      return {
+        widthToken: getComputedStyle(root).getPropertyValue("--forge-inspector-width").trim(),
+        gapToken: getComputedStyle(root).getPropertyValue("--forge-inspector-gap").trim(),
+        rowToken: getComputedStyle(root).getPropertyValue("--forge-disclosure-row-height").trim(),
+        width: Math.round(archive.getBoundingClientRect().width),
+        bodyGap: Math.round(Number.parseFloat(getComputedStyle(body).rowGap)),
+        rowHeight: Math.round(disclosure.getBoundingClientRect().height),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.widthToken).toBe("300px");
+    expect(metrics!.gapToken).toBe("10px");
+    expect(metrics!.rowToken).toBe("28px");
+    expect(metrics!.width).toBe(300);
+    expect(metrics!.bodyGap).toBe(10);
+    expect(metrics!.rowHeight).toBe(28);
   });
 
   test("global new conversation shortcut starts from the active workspace", async ({ page }) => {
@@ -1429,6 +2292,38 @@ test.describe("InputBar", () => {
     await expect(page.getByRole("main").getByText("Hello DeepSeek", { exact: true }).last()).toBeVisible({ timeout: 3000 });
   });
 
+  test("send failures show an inline recovery message and clear pending state", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      const original = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "send_input") {
+          throw new Error("Session not found: send-failure-test");
+        }
+        return original?.(cmd, args);
+      };
+    });
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const textarea = page.locator("textarea");
+    await textarea.fill("帮我继续做这个页面");
+    await textarea.press("Enter");
+
+    await expect(page.getByTestId("user-message").last()).toContainText("帮我继续做这个页面");
+    await expect(page.getByText("发送失败")).toBeVisible();
+    await expect(page.getByTestId("pending-block")).toHaveCount(0);
+    await expect(textarea).toBeEnabled();
+  });
+
   test("shift+enter creates newline without sending", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -1446,6 +2341,71 @@ test.describe("InputBar", () => {
 
     // Should still be in the textarea, not sent
     await expect(textarea).toContainText("line1\nline2");
+  });
+
+  test("long prompts stay inside a bounded editor scroll area", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const textarea = page.locator("textarea");
+    const longPrompt = Array.from({ length: 24 }, (_, index) => `第 ${index + 1} 行：继续描述这个小工具的细节。`).join("\n");
+    await textarea.fill(longPrompt);
+
+    const metrics = await page.evaluate(() => {
+      const root = document.documentElement;
+      const textarea = document.querySelector("textarea");
+      if (!textarea) return null;
+      const rect = textarea.getBoundingClientRect();
+      const style = getComputedStyle(textarea);
+
+      return {
+        token: getComputedStyle(root).getPropertyValue("--forge-composer-max-input-height").trim(),
+        height: Math.round(rect.height),
+        maxHeight: Math.round(Number.parseFloat(style.maxHeight)),
+        overflowY: style.overflowY,
+        canScrollInside: textarea.scrollHeight > textarea.clientHeight,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.token).toBe("140px");
+    expect(metrics!.height).toBeLessThanOrEqual(140);
+    expect(metrics!.maxHeight).toBe(140);
+    expect(metrics!.overflowY).toBe("auto");
+    expect(metrics!.canScrollInside).toBe(true);
+  });
+
+  test("enter during IME composition does not send the draft", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const textarea = page.locator("textarea");
+    await textarea.fill("正在组词");
+    await textarea.focus();
+    await textarea.evaluate((node) => {
+      node.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "zheng" }));
+      node.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    await expect(textarea).toHaveValue("正在组词");
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
   });
 
   test("composer command surface stays compact but exposes structured controls", async ({ page }) => {
@@ -1472,6 +2432,133 @@ test.describe("InputBar", () => {
     await model.click();
     await expect(model).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByRole("menuitemradio", { name: /DeepSeek V4 Flash 1M/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("composer command menu supports keyboard selection", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const textarea = page.locator("textarea");
+    await expect(textarea).toBeVisible();
+
+    await textarea.fill("/");
+    await expect(page.getByTestId("composer-command-menu")).toBeVisible();
+    await expect(page.getByRole("option", { name: /\/code-review/ })).toHaveAttribute("aria-selected", "true");
+
+    await textarea.press("ArrowDown");
+    await expect(page.getByRole("option", { name: /\/fix/ })).toHaveAttribute("aria-selected", "true");
+    await textarea.press("Enter");
+
+    const composer = page.getByTestId("composer-lane");
+    await expect(composer.getByText("/fix", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
+    const sentText = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastSentText;
+    });
+    expect(sentText).toBeUndefined();
+  });
+
+  test("composer file suggestions can be accepted without leaving the keyboard", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const textarea = page.locator("textarea");
+    await expect(textarea).toBeVisible();
+
+    await textarea.fill("@src");
+    await expect(page.getByRole("option", { name: /src\/App\.tsx/ })).toBeVisible();
+    await expect(page.getByRole("option", { name: /src\/App\.tsx/ })).toHaveAttribute("aria-selected", "true");
+
+    await textarea.press("Tab");
+
+    const composer = page.getByTestId("composer-lane");
+    await expect(composer.getByText("src/App.tsx", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
+    await expect(textarea).toHaveValue("");
+  });
+
+  test("composer keeps active tool state quiet and explicit", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const composer = page.getByTestId("composer-lane");
+    const surface = page.getByTestId("composer-surface");
+    const fileButton = composer.getByRole("button", { name: "引用文件" });
+    const modelButton = composer.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ });
+
+    await expect(surface).toHaveAttribute("data-menu-open", "false");
+    await expect(fileButton).toHaveAttribute("data-active", "false");
+
+    await fileButton.click();
+    await expect(surface).toHaveAttribute("data-menu-open", "true");
+    await expect(fileButton).toHaveAttribute("data-active", "true");
+    await expect(fileButton).toHaveText("");
+
+    await page.keyboard.press("Escape");
+    await modelButton.click();
+    await expect(surface).toHaveAttribute("data-menu-open", "true");
+    await expect(modelButton).toHaveAttribute("data-active", "true");
+  });
+
+  test("composer menus close when focus moves back to the transcript", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const composer = page.getByTestId("composer-lane");
+    const surface = page.getByTestId("composer-surface");
+    const slash = composer.getByRole("button", { name: "常用请求" });
+
+    await slash.click();
+    await expect(page.getByTestId("composer-command-menu")).toBeVisible();
+    await page.getByTestId("message-lane").click();
+
+    await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
+    await expect(surface).toHaveAttribute("data-menu-open", "false");
+    await expect(slash).toHaveAttribute("data-active", "false");
+  });
+
+  test("composer only keeps one floating menu open at a time", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const composer = page.getByTestId("composer-lane");
+    const slash = composer.getByRole("button", { name: "常用请求" });
+    const model = composer.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ });
+
+    await slash.click();
+    await expect(page.getByTestId("composer-command-menu")).toBeVisible();
+    await model.click();
+
+    await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
+    await expect(model).toHaveAttribute("aria-expanded", "true");
+    await expect(slash).toHaveAttribute("data-active", "false");
   });
 });
 
@@ -1609,6 +2696,45 @@ test.describe("First loop v1", () => {
     await page.getByRole("button", { name: "检查这版" }).click();
     await expect(page.locator("textarea")).toHaveValue(/检查当前版本有没有明显问题/);
     await expect(page.locator("textarea")).not.toHaveValue(/目标项目：/);
+  });
+
+  test("first loop binds to the active test app without exposing the full path", async ({ page }) => {
+    const sessionId = "first-loop-test-app";
+    const sandboxPath = "/Users/cabbos/project/forge-test-app";
+    await setup(page);
+    await page.addInitScript(({ sessionId, sandboxPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", sandboxPath);
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, { sessionId, sandboxPath });
+
+    await page.goto("http://localhost:1420");
+    await expect(page.getByLabel("当前项目边界").getByText("forge-test-app", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await page.locator("textarea").fill("我想做一个番茄钟小工具，可以开始、暂停、重置。");
+    await page.locator("textarea").press("Enter");
+
+    const createArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCreateSessionArgs;
+    });
+    const sentText = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastSentText;
+    });
+    expect(createArgs.workingDir).toBe(sandboxPath);
+    expect(sentText).toContain("Forge 第一闭环提示");
+    expect(sentText).toContain("可见、可点、可继续");
+    expect(sentText).not.toContain("目标项目：");
+
+    const main = page.getByRole("main");
+    const delivery = main.locator("div").filter({ hasText: "本轮交付" }).filter({ hasText: "预览未运行" }).last();
+    await expect(delivery).toBeVisible();
+    await expect(delivery.getByText("forge-test-app", { exact: true })).toBeVisible();
+    await expect(delivery.getByText(sandboxPath, { exact: true })).toHaveCount(0);
   });
 });
 

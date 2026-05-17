@@ -21,8 +21,12 @@ const COMMANDS = [
   { prefix: "/docs", text: "/docs", desc: "补充说明文档" },
 ];
 
+const COMPOSER_MAX_INPUT_HEIGHT = 140;
+
 export function InputBar({ sessionId }: InputBarProps) {
+  const composerRootRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
   const [value, setValue] = useState("");
   const [chips, setChips] = useState<Chip[]>([]);
   const [showModelMenu, setShowModelMenu] = useState(false);
@@ -35,12 +39,13 @@ export function InputBar({ sessionId }: InputBarProps) {
   const setFirstLoopDraft = useStore((s) => s.setFirstLoopDraft);
   const workflow = useStore((s) => s.workflowBySession.get(sessionId) ?? null);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
   const [atResults, setAtResults] = useState<string[]>([]);
   const valueRef = useRef("");
   const suggestionListId = `${sessionId}-composer-suggestions`;
   const modelMenuId = `${sessionId}-model-menu`;
 
-  const { send, kill, resume } = useSession();
+  const { send, stop, resume } = useSession();
   const session = useStore((s) => s.sessions.get(sessionId));
   const isRunning = session?.status === "running";
   const isStreaming = session?.streaming ?? false;
@@ -52,12 +57,30 @@ export function InputBar({ sessionId }: InputBarProps) {
   const canSend = isRunning && (value.trim().length > 0 || chips.length > 0);
 
   useEffect(() => { if (isRunning) textareaRef.current?.focus(); }, [sessionId, isRunning]);
+  useEffect(() => {
+    setActiveSuggestionIndex(0);
+  }, [showSuggestions, atResults.length]);
+  useEffect(() => {
+    if (!showSuggestions && !showModelMenu) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && composerRootRef.current?.contains(target)) return;
+      setShowSuggestions(null);
+      setShowModelMenu(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [showModelMenu, showSuggestions]);
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 140) + "px";
+    const nextHeight = Math.min(el.scrollHeight, COMPOSER_MAX_INPUT_HEIGHT);
+    el.style.height = `${nextHeight}px`;
+    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_INPUT_HEIGHT ? "auto" : "hidden";
   }, []);
 
   useEffect(() => {
@@ -78,8 +101,9 @@ export function InputBar({ sessionId }: InputBarProps) {
   }, [pendingInput, setPendingInput, adjustHeight]);
 
   const addChip = useCallback((type: "file" | "command", val: string) => {
-    if (chips.some(c => c.value === val)) return;
-    setChips(prev => [...prev, { id: crypto.randomUUID(), type, value: val }]);
+    setChips(prev => prev.some((chip) => chip.value === val)
+      ? prev
+      : [...prev, { id: crypto.randomUUID(), type, value: val }]);
     setShowSuggestions(null);
     // Remove the @ or / trigger text from the textarea
     setValue(prev => {
@@ -87,11 +111,12 @@ export function InputBar({ sessionId }: InputBarProps) {
       const before = prev.slice(0, pos);
       const after = prev.slice(pos);
       const lastAt = before.lastIndexOf(type === "file" ? "@" : "/");
-      if (lastAt >= 0) return before.slice(0, lastAt) + after;
-      return prev;
+      const next = lastAt >= 0 ? before.slice(0, lastAt) + after : prev;
+      valueRef.current = next;
+      return next;
     });
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [chips]);
+  }, []);
 
   const removeChip = useCallback((id: string) => {
     setChips(prev => prev.filter(c => c.id !== id));
@@ -106,10 +131,12 @@ export function InputBar({ sessionId }: InputBarProps) {
     const before = v.slice(0, pos);
     const lastWord = before.split(/\s/).pop() || "";
     if (lastWord.startsWith("@") && lastWord.length >= 1) {
+      setShowModelMenu(false);
       setShowSuggestions("@");
       const q = lastWord.slice(1);
       searchWorkspaceFiles(q).then(setAtResults).catch(() => setAtResults([]));
     } else if (lastWord === "/") {
+      setShowModelMenu(false);
       setShowSuggestions("/");
     } else if (showSuggestions) {
       setShowSuggestions(null);
@@ -138,7 +165,10 @@ export function InputBar({ sessionId }: InputBarProps) {
     send(sessionId, buildFirstLoopAgentPrompt(message));
     setValue("");
     setChips([]);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.overflowY = "hidden";
+    }
   }, [value, chips, sessionId, send, isRunning, setFirstLoopDraft]);
 
   const handleResume = useCallback(async () => {
@@ -161,8 +191,41 @@ export function InputBar({ sessionId }: InputBarProps) {
     setShowModelMenu(false);
   }, [setSelectedModel, setSelectedProvider]);
 
+  const commitActiveSuggestion = useCallback(() => {
+    if (showSuggestions === "/") {
+      const command = COMMANDS[activeSuggestionIndex];
+      if (!command) return false;
+      addChip("command", command.text);
+      return true;
+    }
+    if (showSuggestions === "@") {
+      const file = atResults[activeSuggestionIndex];
+      if (!file) return false;
+      addChip("file", file);
+      return true;
+    }
+    return false;
+  }, [activeSuggestionIndex, addChip, atResults, showSuggestions]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return;
+    if (composingRef.current || e.nativeEvent.isComposing) return;
+    const suggestionCount = showSuggestions === "/" ? COMMANDS.length : showSuggestions === "@" ? atResults.length : 0;
+    if (showSuggestions && suggestionCount > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveSuggestionIndex((index) => (index + 1) % suggestionCount);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveSuggestionIndex((index) => (index - 1 + suggestionCount) % suggestionCount);
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        if (commitActiveSuggestion()) return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
     if (e.key === "Escape") { setShowSuggestions(null); setShowModelMenu(false); }
     // Backspace/Delete removes last chip ONLY if field was already empty
@@ -172,11 +235,11 @@ export function InputBar({ sessionId }: InputBarProps) {
       e.preventDefault();
       setChips(prev => prev.slice(0, -1));
     }
-  }, [handleSend, chips.length]);
+  }, [atResults.length, chips.length, commitActiveSuggestion, handleSend, showSuggestions]);
 
   return (
-    <div className="relative flex-shrink-0 border-t px-4 pb-4 pt-3 sm:px-6" style={{ borderColor: "var(--border)" }}>
-      <div data-testid="composer-lane" className="relative mx-auto w-full max-w-[820px]">
+    <div data-testid="composer-frame" className="forge-composer-frame relative flex-shrink-0">
+      <div ref={composerRootRef} data-testid="composer-lane" className="forge-conversation-lane relative">
       {!isRunning && resumeError && (
         <div className="mb-2 rounded-md border px-3 py-2 text-xs"
           style={{ borderColor: "rgba(212,119,119,0.35)", background: "rgba(212,119,119,0.08)", color: "#D47777" }}>
@@ -190,15 +253,14 @@ export function InputBar({ sessionId }: InputBarProps) {
           data-testid="composer-command-menu"
           role="listbox"
           aria-label={showSuggestions === "@" ? "引用文件" : "常用请求"}
-          className="absolute left-0 right-0 rounded-md py-1 shadow-xl z-20 max-h-[200px] overflow-y-auto"
-          style={{ bottom: "calc(100% - 8px)", background: "var(--popover)", border: "1px solid var(--border)" }}>
+          className="forge-floating-menu forge-composer-suggestion-menu">
           {showSuggestions === "@" && (
             <>
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">引用文件</div>
+              <div className="forge-menu-heading">引用文件</div>
               {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/65">输入文件名搜索</div>}
-              {atResults.map(f => (
-                <button key={f} role="option" aria-selected="false" onClick={() => addChip("file", f)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary font-mono flex items-center gap-2">
+              {atResults.map((f, index) => (
+                <button key={f} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("file", f)}
+                  className="forge-menu-option font-mono">
                   {f.endsWith("/") ? <FileText className="size-3" style={{ color: "#5B9BD5" }} /> : <FileText className="size-3" style={{ color: "var(--muted-foreground)" }} />}
                   {f}
                 </button>
@@ -207,10 +269,10 @@ export function InputBar({ sessionId }: InputBarProps) {
           )}
           {showSuggestions === "/" && (
             <>
-              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70">常用请求</div>
-              {COMMANDS.map(cmd => (
-                <button key={cmd.prefix} role="option" aria-selected="false" onClick={() => addChip("command", cmd.text)}
-                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary flex justify-between items-center">
+              <div className="forge-menu-heading">常用请求</div>
+              {COMMANDS.map((cmd, index) => (
+                <button key={cmd.prefix} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("command", cmd.text)}
+                  className="forge-menu-option justify-between">
                   <span className="font-mono">{cmd.text}</span>
                   <span className="text-[10px] text-muted-foreground">{cmd.desc}</span>
                 </button>
@@ -220,10 +282,14 @@ export function InputBar({ sessionId }: InputBarProps) {
         </div>
       )}
 
-      <div data-testid="composer-surface" className="forge-composer">
+      <div
+        data-testid="composer-surface"
+        data-menu-open={showSuggestions || showModelMenu ? "true" : "false"}
+        className="forge-composer"
+      >
         {/* Chips row */}
         {chips.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-4 pt-3 pb-0">
+          <div className="forge-composer-chips">
             {chips.map(chip => (
               <span key={chip.id}
                 className="forge-composer-chip">
@@ -247,22 +313,29 @@ export function InputBar({ sessionId }: InputBarProps) {
         )}
 
         {/* Textarea */}
-        <div className="px-4 pt-3 pb-1">
+        <div data-testid="composer-textarea-wrap" className="forge-composer-textarea-wrap">
           <textarea
             ref={textareaRef}
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+              adjustHeight();
+            }}
             placeholder={modeAwarePlaceholder(workflow, isRunning)}
             rows={1}
             disabled={!isRunning}
-            className="w-full bg-transparent border-none outline-none resize-none text-sm leading-relaxed placeholder:text-muted-foreground/65"
-            style={{ color: "var(--foreground)", fontFamily: "'Geist Variable', system-ui, sans-serif", minHeight: "28px", maxHeight: "140px", paddingTop: chips.length > 0 ? "4px" : undefined }}
+            className="forge-composer-textarea"
+            style={{ paddingTop: chips.length > 0 ? "4px" : undefined }}
           />
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 pb-2.5">
+        <div data-testid="composer-toolbar" className="forge-composer-toolbar">
           <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "var(--muted-foreground)" }}>
             <button
               type="button"
@@ -271,7 +344,12 @@ export function InputBar({ sessionId }: InputBarProps) {
               aria-expanded={showSuggestions === "@"}
               aria-haspopup="listbox"
               title="引用文件"
-              onClick={() => { textareaRef.current?.focus(); setShowSuggestions((s) => s === "@" ? null : "@"); }}
+              onClick={() => {
+                textareaRef.current?.focus();
+                setShowModelMenu(false);
+                setShowSuggestions((s) => s === "@" ? null : "@");
+              }}
+              data-active={showSuggestions === "@" ? "true" : "false"}
               className="forge-composer-tool"
             >
               <AtSign className="size-3.5" />
@@ -283,7 +361,12 @@ export function InputBar({ sessionId }: InputBarProps) {
               aria-expanded={showSuggestions === "/"}
               aria-haspopup="listbox"
               title="常用请求"
-              onClick={() => { textareaRef.current?.focus(); setShowSuggestions((s) => s === "/" ? null : "/"); }}
+              onClick={() => {
+                textareaRef.current?.focus();
+                setShowModelMenu(false);
+                setShowSuggestions((s) => s === "/" ? null : "/");
+              }}
+              data-active={showSuggestions === "/" ? "true" : "false"}
               className="forge-composer-tool"
             >
               <Slash className="size-3.5" />
@@ -295,13 +378,16 @@ export function InputBar({ sessionId }: InputBarProps) {
               <button
                 type="button"
                 id={`${modelMenuId}-button`}
-                onClick={() => setShowModelMenu(!showModelMenu)}
+                onClick={() => {
+                  setShowSuggestions(null);
+                  setShowModelMenu(!showModelMenu);
+                }}
                 aria-label={`模型：${selectedModelLabel}`}
                 aria-controls={showModelMenu ? modelMenuId : undefined}
                 aria-expanded={showModelMenu}
                 aria-haspopup="menu"
-                className="flex h-7 max-w-[190px] items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors hover:bg-secondary hover:text-foreground"
-                style={{ color: "var(--muted-foreground)", background: "transparent" }}
+                data-active={showModelMenu ? "true" : "false"}
+                className="forge-composer-model"
                 title={selectedContextWindow ? `${selectedProviderLabel} · ${selectedModelLabel} · 上下文 ${selectedContextWindow}` : `${selectedProviderLabel} · ${selectedModelLabel}`}>
                 <span className="truncate">{selectedModelLabel}</span>
                 <ChevronDown className="size-3" style={{ color: "var(--muted-foreground)" }} />
@@ -311,11 +397,10 @@ export function InputBar({ sessionId }: InputBarProps) {
                   id={modelMenuId}
                   role="menu"
                   aria-labelledby={`${modelMenuId}-button`}
-                  className="absolute bottom-full right-0 mb-1 max-h-[320px] min-w-[260px] overflow-y-auto rounded-md py-1.5 shadow-xl z-20"
-                  style={{ background: "var(--popover)", border: "1px solid var(--border)" }}>
+                  className="forge-floating-menu forge-composer-model-menu">
                   {PROVIDERS.map((provider) => (
                     <div key={provider.id} className="py-1">
-                      <div className="flex items-center justify-between px-3 pb-1 pt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                      <div className="forge-menu-heading flex items-center justify-between">
                         <span>{provider.label}</span>
                         <span>{provider.shortLabel}</span>
                       </div>
@@ -327,8 +412,8 @@ export function InputBar({ sessionId }: InputBarProps) {
                             role="menuitemradio"
                             aria-checked={active}
                             onClick={() => selectModel(provider.id, model.id)}
-                            className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-secondary"
-                            style={{ color: active ? "#D4A853" : "#E4E7EC" }}
+                            className="forge-menu-option h-auto min-h-10 flex-col items-stretch gap-0.5 py-1.5"
+                            style={{ color: active ? "var(--primary)" : "var(--forge-text-secondary)" }}
                           >
                             <div className="flex items-center justify-between gap-3">
                               <span className="font-mono">{model.name}</span>
@@ -364,7 +449,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                 type="button"
                 data-testid="composer-stop"
                 aria-label="停止生成"
-                onClick={() => kill(sessionId)}
+                onClick={() => stop(sessionId)}
                 className="forge-composer-send text-destructive hover:border-destructive/35 hover:bg-destructive/10"
               >
                 <X className="size-4" />
