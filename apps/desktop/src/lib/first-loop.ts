@@ -9,12 +9,6 @@ export interface FirstLoopDraft {
 
 export const FIRST_LOOP_STANDARD = "可见、可点、可继续";
 
-export const FIRST_LOOP_QUICK_PROMPTS = [
-  "我想做一个番茄钟小工具，可以开始、暂停、重置。",
-  "我想做一个记账小工具，先能记录一笔收入或支出。",
-  "我想做一个文案小工具，输入主题后生成一版短文案。",
-];
-
 const FIRST_LOOP_SIGNALS = ["小工具", "番茄钟", "记账", "文案"];
 
 export function deriveFirstLoopDraft(sessionId: string, text: string): FirstLoopDraft | null {
@@ -84,4 +78,3 @@ function stripLeadingPunctuation(text: string): string {
 function collapseWhitespace(text: string): string {
   return text.split(/\s+/).filter(Boolean).join(" ").trim();
 }
-

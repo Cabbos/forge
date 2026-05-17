@@ -1,16 +1,18 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Blocks, Clock3, FolderOpen, Search, SquarePen, Trash2 } from "lucide-react";
+import { AlertCircle, Blocks, Clock3, FolderOpen, Search, SquarePen, Trash2 } from "lucide-react";
 import { useActiveWorkspace, useStore, useSessionList, useWorkspaceList } from "@/store";
 import { useSession } from "@/hooks/useSession";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { cn } from "@/lib/utils";
-import { getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
+import { getSessionTitle } from "@/lib/session-display";
 import { hasTauriRuntime, pickWorkspaceFolder } from "@/lib/tauri";
 import { isBroadWorkspacePath, workspaceFromPath } from "@/lib/workspaces";
+import type { SessionState } from "@/lib/protocol";
 import forgeMark from "@/assets/forge-mark.svg";
 
 export type SidebarPanel = "plugins" | "automation";
+type SidebarNotice = { message: string; action?: "settings" };
 
 interface SidebarProps {
   activePanel: SidebarPanel | null;
@@ -24,24 +26,39 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const [workspacePathDraft, setWorkspacePathDraft] = useState("");
   const [workspacePathError, setWorkspacePathError] = useState<string | null>(null);
   const [choosingWorkspace, setChoosingWorkspace] = useState(false);
+  const [sidebarNotice, setSidebarNotice] = useState<SidebarNotice | null>(null);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSession = useStore((s) => s.setActiveSession);
   const setActiveWorkspace = useStore((s) => s.setActiveWorkspace);
   const upsertWorkspace = useStore((s) => s.upsertWorkspace);
+  const removeWorkspace = useStore((s) => s.removeWorkspace);
   const sessions = useSessionList();
+  const groupedSessions = groupSessionsByRecency(sessions);
   const workspaces = useWorkspaceList();
   const activeWorkspace = useActiveWorkspace();
+  const sessionRowRefs = useRef(new Map<string, HTMLDivElement>());
   const { create, kill } = useSession();
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
 
+  const focusSessionAt = (index: number) => {
+    const nextSession = sessions[index];
+    if (!nextSession) return;
+    sessionRowRefs.current.get(nextSession.id)?.focus();
+  };
+
   const newSession = async () => {
     if (!activeWorkspace) {
-      alert("请先选择一个项目工作空间。");
+      setSidebarNotice({ message: "先选择一个具体项目，再开始新对话。" });
       return;
     }
-    try { await create(activeWorkspace.path, selectedProvider, selectedModel); }
-    catch (e) { alert("Failed: " + String(e)); }
+    setSidebarNotice(null);
+    try {
+      await create(activeWorkspace.path, selectedProvider, selectedModel);
+    } catch (error) {
+      console.error("Failed to create session:", error);
+      setSidebarNotice(createSessionNotice(error));
+    }
   };
 
   const toggleWorkspaceMenu = () => {
@@ -69,6 +86,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
       return false;
     }
     upsertWorkspace(workspace);
+    setSidebarNotice(null);
     setWorkspacePathDraft("");
     setWorkspacePathError(null);
     setManualWorkspaceEntry(false);
@@ -113,27 +131,33 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         </div>
       </div>
 
-      <div className="relative mb-3 px-1">
-        <div className="mb-1 text-[9px] font-medium uppercase tracking-widest text-muted-foreground/65">当前工作空间</div>
+      <div className="relative mb-2 px-1">
         <button
           type="button"
           onClick={toggleWorkspaceMenu}
-          className="flex w-full items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/30 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent/55"
+          title={activeWorkspace?.path}
+          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent/55 hover:text-sidebar-foreground"
+          aria-controls={workspaceMenuOpen ? "workspace-menu" : undefined}
           aria-expanded={workspaceMenuOpen}
+          aria-haspopup="menu"
         >
           <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[12px] font-medium text-sidebar-foreground">
-              {activeWorkspace?.name ?? "选择一个项目开始"}
-            </span>
-            <span className="mt-0.5 block truncate text-[9px] text-muted-foreground/70">
-              {activeWorkspace?.path ?? "新对话会在所选项目中创建"}
-            </span>
+          <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
+            {activeWorkspace?.name ?? "选择项目"}
           </span>
         </button>
         {workspaceMenuOpen && (
           <div
-            className="absolute left-1 right-1 top-full z-30 mt-1 overflow-hidden rounded-lg border border-border shadow-xl"
+            id="workspace-menu"
+            role="menu"
+            aria-label="项目工作空间"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setWorkspaceMenuOpen(false);
+              }
+            }}
+            className="absolute left-1 right-1 top-full z-30 mt-1 overflow-hidden rounded-md border border-border shadow-xl"
             style={{ background: "var(--popover)" }}
           >
             {workspaces.length > 0 && (
@@ -142,20 +166,24 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                   <button
                     key={workspace.id}
                     type="button"
+                    role="menuitemradio"
+                    aria-checked={workspace.id === activeWorkspace?.id}
+                    title={workspace.path}
                     onClick={() => {
                       setActiveWorkspace(workspace.id);
                       setWorkspaceMenuOpen(false);
                     }}
-                    className="flex w-full flex-col px-3 py-2 text-left text-xs hover:bg-secondary"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-secondary"
                   >
-                    <span className="truncate text-foreground">{workspace.name}</span>
-                    <span className="mt-0.5 truncate text-[10px] text-muted-foreground">{workspace.path}</span>
+                    <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate text-foreground">{workspace.name}</span>
                   </button>
                 ))}
               </div>
             )}
             <button
               type="button"
+              role="menuitem"
               onClick={chooseWorkspaceFolder}
               disabled={choosingWorkspace}
               className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-foreground hover:bg-secondary disabled:cursor-default disabled:opacity-60"
@@ -165,6 +193,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
             </button>
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 setManualWorkspaceEntry(true);
                 setWorkspacePathError(null);
@@ -174,6 +203,20 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
               <FolderOpen className="size-3.5" />
               手动输入路径
             </button>
+            {activeWorkspace && workspaces.length > 1 && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  removeWorkspace(activeWorkspace.id);
+                  setWorkspaceMenuOpen(false);
+                }}
+                className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="size-3.5" />
+                从列表移除当前项目
+              </button>
+            )}
             {manualWorkspaceEntry && (
               <form
                 className="border-t border-border px-3 py-3"
@@ -223,64 +266,163 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         )}
       </div>
 
-      <nav className="mb-4 flex flex-col gap-1">
+      <nav className="mb-3 flex flex-col gap-1">
         <SidebarAction icon={<SquarePen className="size-4" />} label="新对话" disabled={!activeWorkspace} onClick={newSession} />
-        <p className="px-2.5 pb-1 text-[9px] leading-snug text-muted-foreground/60">
-          {activeWorkspace ? `新对话会创建在 ${activeWorkspace.name}` : "选择项目后才能创建新对话"}
-        </p>
         <SidebarAction icon={<Search className="size-4" />} label="搜索" onClick={onOpenSearch} />
-        <SidebarAction
+      </nav>
+
+      {sidebarNotice && (
+        <div
+          role="status"
+          className="mb-3 flex items-start gap-2 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground"
+        >
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1">{sidebarNotice.message}</span>
+          {sidebarNotice.action === "settings" && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("forge:open-settings"))}
+              className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/10"
+            >
+              打开设置
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Sessions */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="mb-1.5 flex items-center justify-between px-1">
+          <span className="text-[10px] font-medium text-muted-foreground/70">对话</span>
+        </div>
+        <div className="flex-1 space-y-px overflow-y-auto">
+          {groupedSessions.map((group) => (
+            <div key={group.label} className="space-y-px">
+              <div className="px-2 pb-1 pt-2 text-[10px] font-medium text-muted-foreground/55 first:pt-0">
+                {group.label}
+              </div>
+              {group.sessions.map((s) => {
+                const index = sessions.findIndex((session) => session.id === s.id);
+                const isActive = s.id === activeSessionId;
+                const title = getSessionTitle(s);
+                return (
+                  <div
+                    key={s.id}
+                    ref={(node) => {
+                      if (node) sessionRowRefs.current.set(s.id, node);
+                      else sessionRowRefs.current.delete(s.id);
+                    }}
+                    role="button"
+                    aria-label={title}
+                    tabIndex={0}
+                    onClick={() => setActiveSession(s.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        focusSessionAt(Math.min(index + 1, sessions.length - 1));
+                        return;
+                      }
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        focusSessionAt(Math.max(index - 1, 0));
+                        return;
+                      }
+                      if (event.key === "Home") {
+                        event.preventDefault();
+                        focusSessionAt(0);
+                        return;
+                      }
+                      if (event.key === "End") {
+                        event.preventDefault();
+                        focusSessionAt(sessions.length - 1);
+                        return;
+                      }
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setActiveSession(s.id);
+                      }
+                    }}
+                    className={cn(
+                      "group flex h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/55",
+                      isActive
+                        ? "bg-sidebar-accent/70 text-sidebar-accent-foreground"
+                        : "text-muted-foreground hover:bg-sidebar-accent/45 hover:text-sidebar-foreground",
+                    )}
+                  >
+                    <span className={cn("min-w-0 flex-1 truncate", isActive && "font-medium")}>{title}</span>
+                    <button
+                      type="button"
+                      aria-label={`删除对话 ${title}`}
+                      className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/45 opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive/45 group-hover:opacity-100"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        kill(s.id);
+                      }}
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+          {sessions.length === 0 && (
+            <p className="py-8 text-center text-[11px] text-muted-foreground/55">
+              还没有对话
+            </p>
+          )}
+        </div>
+      </div>
+
+      <nav className="mt-3 flex items-center gap-1 border-t border-sidebar-border/45 pt-3">
+        <SidebarIconAction
           icon={<Blocks className="size-4" />}
           label="插件"
           active={activePanel === "plugins"}
           onClick={() => onOpenPanel("plugins")}
         />
-        <SidebarAction
+        <SidebarIconAction
           icon={<Clock3 className="size-4" />}
           label="自动化"
           active={activePanel === "automation"}
           onClick={() => onOpenPanel("automation")}
         />
       </nav>
-
-      {/* Sessions */}
-      <div className="flex-1 min-h-0 flex flex-col">
-        <div className="flex items-center justify-between mb-2 px-1">
-          <span className="text-[9px] font-medium uppercase tracking-widest text-muted-foreground/70">任务</span>
-          <span className="text-[9px] tabular-nums text-muted-foreground/65">{sessions.length}</span>
-        </div>
-        <div className="flex-1 overflow-y-auto space-y-0.5">
-          {sessions.map((s) => {
-            const isActive = s.id === activeSessionId;
-            const status = getSessionStatus(s);
-            return (
-              <div key={s.id} onClick={() => setActiveSession(s.id)}
-                className={cn("flex items-start gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-all group",
-                  isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent/40")}>
-                <span className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: status.color }} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[11px] font-medium">{getSessionTitle(s)}</div>
-                  <div className="mt-0.5 truncate text-[9px] text-muted-foreground/70">{getSessionMeta(s)}</div>
-                </div>
-                <Trash2 className="size-3 opacity-0 group-hover:opacity-50 hover:opacity-100 text-destructive cursor-pointer flex-shrink-0"
-                  onClick={(e) => { e.stopPropagation(); kill(s.id); }} />
-              </div>
-            );
-          })}
-          {sessions.length === 0 && (
-            <p className="text-[11px] text-center py-8 text-muted-foreground/60">
-              还没有任务
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Version */}
-      <div className="py-2 px-1 border-t border-sidebar-border/50">
-        <p className="text-[8px] font-mono text-muted-foreground/50">v0.4 · Forge</p>
-      </div>
     </aside>
   );
+}
+
+function groupSessionsByRecency(sessions: SessionState[]) {
+  const groups: Array<{ label: string; sessions: SessionState[] }> = [];
+  for (const session of sessions) {
+    const label = sessionRecencyLabel(session);
+    const existing = groups.find((group) => group.label === label);
+    if (existing) existing.sessions.push(session);
+    else groups.push({ label, sessions: [session] });
+  }
+  return groups;
+}
+
+function sessionRecencyLabel(session: SessionState) {
+  const time = session.updatedAt ?? session.createdAt ?? Date.now();
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterday = today - 24 * 60 * 60 * 1000;
+
+  if (time >= today) return "今天";
+  if (time >= yesterday) return "昨天";
+  return "更早";
+}
+
+function createSessionNotice(error: unknown): SidebarNotice {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/api key|密钥/i.test(message)) {
+    return {
+      message: "模型服务还没有可用密钥。添加密钥后就可以开始新对话。",
+      action: "settings",
+    };
+  }
+  return { message: "新对话没有创建成功。请检查设置后重试。" };
 }
 
 function SidebarAction({
@@ -301,7 +443,7 @@ function SidebarAction({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm transition-colors",
+        "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors",
         disabled && "cursor-default opacity-45",
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground"
@@ -312,6 +454,35 @@ function SidebarAction({
         {icon}
       </span>
       <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function SidebarIconAction({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "flex size-8 items-center justify-center rounded-md transition-colors",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-muted-foreground hover:bg-sidebar-accent/55 hover:text-sidebar-foreground",
+      )}
+    >
+      {icon}
     </button>
   );
 }

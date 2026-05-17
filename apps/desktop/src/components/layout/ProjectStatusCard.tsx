@@ -77,21 +77,18 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   const delivery = getDeliveryConfidence(runtime, checkpoint);
 
   return (
-    <section className="rounded-md border border-border bg-card">
+    <section className="forge-surface">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
+          <div className="min-w-0" title={projectPath}>
             <div className="truncate text-xs font-medium text-foreground">{projectName}</div>
-            <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/75">
-              {projectPath}
-            </div>
           </div>
         </div>
         <button
           type="button"
           onClick={refresh}
-          className="rounded p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="forge-icon-button size-7"
           title="刷新交付状态"
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
@@ -109,7 +106,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
           label="检查点"
           value={delivery.checkpoint.label}
         />
-        <div className="rounded border border-border/70 bg-background/40 px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+        <div className="forge-surface-quiet px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
           {delivery.nextAction}
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -193,7 +190,7 @@ function DeliveryButton({
       type="button"
       disabled={busy}
       onClick={() => onClick(action)}
-      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 text-[11px] text-foreground transition-colors hover:bg-secondary disabled:cursor-default disabled:opacity-70"
+      className="forge-action disabled:cursor-default disabled:opacity-70"
     >
       <Icon className={cn("size-3.5", busy && "animate-pulse")} />
       {label}

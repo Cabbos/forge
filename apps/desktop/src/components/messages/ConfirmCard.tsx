@@ -5,6 +5,7 @@ import type { BlockState } from "@/lib/protocol";
 import { confirmResponse } from "@/lib/tauri";
 import { parseWriteBoundary } from "@/lib/write-boundary";
 import { useStore } from "@/store";
+import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
 
 function BoundaryLine({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -56,16 +57,16 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
   };
 
   const actions = responded ? (
-    <div className="px-4 py-2.5 border-t border-border flex items-center gap-2">
+    <div className="flex items-center gap-2 border-t border-border px-3 py-2">
       <span className={`text-xs font-medium ${answer ? "text-green-500" : "text-destructive"}`}>
         {answer ? "已继续" : "已取消"}
       </span>
     </div>
   ) : (
-    <div className="px-4 py-2.5 border-t flex items-center gap-2" style={{ borderColor: "rgba(212,168,83,0.1)" }}>
+    <div className="flex items-center gap-2 border-t px-3 py-2" style={{ borderColor: "rgba(212,168,83,0.1)" }}>
       <button
         onClick={(e) => { e.stopPropagation(); handleResponse(true); }}
-        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium transition-all cursor-pointer"
+        className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors"
         style={{ background: "#D4A853", color: "#111216" }}
       >
         <Check className="size-3.5" />
@@ -73,8 +74,8 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
       </button>
       <button
         onClick={(e) => { e.stopPropagation(); handleResponse(false); }}
-        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium transition-all cursor-pointer"
-        style={{ background: "#D47777", color: "#111216" }}
+        className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors hover:text-foreground"
+        style={{ borderColor: "rgba(212,119,119,0.32)", color: "#D47777" }}
       >
         <X className="size-3.5" />
         取消
@@ -90,78 +91,68 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
         : "#6EE7B7";
 
     return (
-      <div className="mb-3">
-        <div className="max-w-full overflow-hidden rounded-lg border" style={{ borderColor: "rgba(212,168,83,0.2)", background: "rgba(17,18,22,0.72)" }}>
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "rgba(212,168,83,0.15)", background: "rgba(212,168,83,0.06)" }}>
-            <ShieldAlert className="size-4" style={{ color: "#D4A853" }} />
-            <span className="text-sm font-semibold" style={{ color: "#F3F4F6" }}>
-              {boundary.title}
-            </span>
-          </div>
+      <MessagePanel tone={boundary.riskTone === "high" ? "danger" : "warning"}>
+        <MessagePanelHeader
+          icon={<ShieldAlert className="size-4" style={{ color: "#D4A853" }} />}
+          title={boundary.title}
+          meta="继续前确认改动范围"
+        />
 
-          <dl className="px-4 py-2.5">
-            <BoundaryLine label="目标项目">{boundary.workspaceLabel}</BoundaryLine>
-            <BoundaryLine label="操作">{boundary.operationLabel}</BoundaryLine>
-            <BoundaryLine label="影响范围">
-              <span>{boundary.affectedSummary}</span>
-              {boundary.affectedFiles.length > 0 ? (
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {boundary.affectedFiles.slice(0, 4).map((file) => (
-                    <code
-                      key={file}
-                      className="max-w-full truncate rounded border px-1.5 py-0.5 text-xs"
-                      style={{ borderColor: "rgba(148,163,184,0.22)", background: "rgba(148,163,184,0.08)", color: "#DDE3EA" }}
-                    >
-                      {file}
-                    </code>
-                  ))}
-                </div>
-              ) : null}
-            </BoundaryLine>
-            <BoundaryLine label="风险">
-              <span className="font-medium" style={{ color: riskColor }}>{boundary.riskLabel}</span>
-            </BoundaryLine>
-            <BoundaryLine label="恢复点">{boundary.recoveryLabel}</BoundaryLine>
-            {boundary.command ? (
-              <BoundaryLine label="命令">
-                <code className="block max-w-full overflow-x-auto rounded border px-2 py-1 text-xs" style={{ borderColor: "rgba(148,163,184,0.22)", background: "rgba(0,0,0,0.22)", color: "#DDE3EA" }}>
-                  {boundary.command}
-                </code>
-              </BoundaryLine>
-            ) : null}
-            {boundary.warning ? (
-              <div className="mt-2 rounded-md border px-3 py-2 text-xs leading-relaxed" style={{ borderColor: "rgba(248,113,113,0.22)", background: "rgba(248,113,113,0.08)", color: "#FCA5A5" }}>
-                {boundary.warning}
+        <dl className="px-3 py-2">
+          <BoundaryLine label="目标项目">{boundary.workspaceLabel}</BoundaryLine>
+          <BoundaryLine label="操作">{boundary.operationLabel}</BoundaryLine>
+          <BoundaryLine label="影响范围">
+            <span>{boundary.affectedSummary}</span>
+            {boundary.affectedFiles.length > 0 ? (
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {boundary.affectedFiles.slice(0, 4).map((file) => (
+                  <code
+                    key={file}
+                    className="max-w-full truncate rounded border px-1.5 py-0.5 text-xs"
+                    style={{ borderColor: "rgba(148,163,184,0.22)", background: "rgba(148,163,184,0.08)", color: "#DDE3EA" }}
+                  >
+                    {file}
+                  </code>
+                ))}
               </div>
             ) : null}
-          </dl>
+          </BoundaryLine>
+          <BoundaryLine label="风险">
+            <span className="font-medium" style={{ color: riskColor }}>{boundary.riskLabel}</span>
+          </BoundaryLine>
+          <BoundaryLine label="恢复点">{boundary.recoveryLabel}</BoundaryLine>
+          {boundary.command ? (
+            <BoundaryLine label="命令">
+              <code className="block max-w-full overflow-x-auto rounded border px-2 py-1 text-xs" style={{ borderColor: "rgba(148,163,184,0.22)", background: "rgba(0,0,0,0.22)", color: "#DDE3EA" }}>
+                {boundary.command}
+              </code>
+            </BoundaryLine>
+          ) : null}
+          {boundary.warning ? (
+            <div className="mt-2 rounded-md border px-3 py-2 text-xs leading-relaxed" style={{ borderColor: "rgba(248,113,113,0.22)", background: "rgba(248,113,113,0.08)", color: "#FCA5A5" }}>
+              {boundary.warning}
+            </div>
+          ) : null}
+        </dl>
 
-          {actions}
-        </div>
-      </div>
+        {actions}
+      </MessagePanel>
     );
   }
 
   return (
-    <div className="mb-3">
-      <div className="max-w-full overflow-hidden rounded-lg border" style={{ borderColor: "rgba(212,168,83,0.2)", background: "rgba(212,168,83,0.04)" }}>
-        {/* Header */}
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "rgba(212,168,83,0.15)", background: "rgba(212,168,83,0.06)" }}>
-          <ShieldAlert className="size-4" style={{ color: "#D4A853" }} />
-          <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#D4A853" }}>
-            {kindLabel}
-          </span>
-        </div>
-
-        {/* Question */}
-        <div className="px-4 py-3">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: "#E4E7EC" }}>{question}</p>
-          <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{helperText}</p>
-        </div>
-
-        {/* Actions */}
-        {actions}
+    <MessagePanel tone="warning">
+      <MessagePanelHeader
+        icon={<ShieldAlert className="size-4" style={{ color: "#D4A853" }} />}
+        title={kindLabel}
+        meta="继续前需要你确认"
+      />
+      <div className="px-3 py-2.5">
+        <p className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: "#E4E7EC" }}>{question}</p>
+        <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--muted-foreground)" }}>{helperText}</p>
       </div>
-    </div>
+
+      {actions}
+    </MessagePanel>
   );
 }

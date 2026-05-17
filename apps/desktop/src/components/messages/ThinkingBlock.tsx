@@ -10,14 +10,15 @@ export function ThinkingBlock({ block }: { block: BlockState }) {
   const isRunning = !block.isComplete;
 
   return (
-    <div className="mb-1">
+    <div>
       {/* Inline header */}
       <button
+        data-testid="thinking-trigger"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-xs cursor-pointer select-none text-left"
+        className="inline-flex items-center gap-1.5 py-1 text-xs cursor-pointer select-none text-left"
         style={{ color: "var(--muted-foreground)" }}>
         <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
-        <span className="uppercase tracking-wider text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+        <span className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>
           {isRunning ? "思考中" : "思考记录"}
         </span>
         {isRunning ? (
@@ -26,9 +27,7 @@ export function ThinkingBlock({ block }: { block: BlockState }) {
             <span className="inline-block w-1 h-1 rounded-full animate-[pulse-dot_1s_infinite]" style={{ background: "#4B9CD3", animationDelay: "0.2s" }} />
             <span className="inline-block w-1 h-1 rounded-full animate-[pulse-dot_1s_infinite]" style={{ background: "#4B9CD3", animationDelay: "0.4s" }} />
           </span>
-        ) : (
-          <span style={{ color: "#4A9E6B", fontSize: "10px" }}>✓</span>
-        )}
+        ) : null}
       </button>
 
       {/* Content */}

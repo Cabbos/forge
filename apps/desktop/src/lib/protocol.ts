@@ -228,6 +228,8 @@ export interface SessionState {
   model: string;
   workingDir?: string | null;
   workspaceId?: string | null;
+  createdAt?: number | null;
+  updatedAt?: number | null;
   contextWindowTokens?: number | null;
   status: "running" | "stopped" | "error";
   streaming: boolean;

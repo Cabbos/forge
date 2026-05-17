@@ -39,7 +39,6 @@ export function deriveProjectArchiveOverview(input: {
     ? `${latestDelivery.preview_label} · ${latestDelivery.checkpoint_label}`
     : derivedDraft?.scope || "还没有形成可验收版本";
   const nextStep = latestDelivery?.next_action || derivedDraft?.nextStep || "描述一个小工具，Forge 会先推进到可预览第一版。";
-  const targetProjectPath = projectPath || null;
 
   return {
     projectName,
@@ -51,26 +50,17 @@ export function deriveProjectArchiveOverview(input: {
       {
         id: "continue_last_task",
         label: "继续上次任务",
-        prompt: withTargetProject(
-          `继续上次任务：${goal}\n\n请先说明当前项目进展，再直接推进下一步。`,
-          targetProjectPath,
-        ),
+        prompt: `继续上次任务：${goal}\n\n请先说明当前项目进展，再直接推进下一步。`,
       },
       {
         id: "check_current_version",
         label: "检查当前版本",
-        prompt: withTargetProject(
-          "请检查当前版本是否可预览、核心动作是否能完成，并列出需要我验收的地方。",
-          targetProjectPath,
-        ),
+        prompt: "请检查当前版本是否可预览、核心动作是否能完成，并列出需要我验收的地方。",
       },
       {
         id: "continue_polish",
         label: "继续优化",
-        prompt: withTargetProject(
-          `请基于当前版本继续优化：${nextStep}\n\n优先处理最影响使用体验的一点。`,
-          targetProjectPath,
-        ),
+        prompt: `请基于当前版本继续优化：${nextStep}\n\n优先处理最影响使用体验的一点。`,
       },
     ],
   };
@@ -107,9 +97,4 @@ function normalizeProjectPath(path: string): string {
 
 function nameFromPath(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? "";
-}
-
-function withTargetProject(prompt: string, projectPath: string | null): string {
-  if (!projectPath) return prompt;
-  return `${prompt}\n\n目标项目：${projectPath}`;
 }

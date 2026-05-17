@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import type { BlockState } from "@/lib/protocol";
 import { CodeBlock } from "@/components/messages/CodeBlock";
 import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 const STREAM_THROTTLE_MS = 220;
 const FILE_REF_PREFIX = "#file-ref=";
@@ -233,10 +233,13 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
   const renderedContent = block.isComplete ? block.content : displayContent;
 
   return (
-    <div className="mb-4">
+    <div>
       {hasContent ? (
-        <div className="min-w-0 rounded-lg border px-4 py-3 text-left text-sm leading-relaxed break-words"
-          style={{ background: "var(--card)", borderColor: "var(--border)", color: "#E4E7EC", overflowWrap: "anywhere" }}>
+        <div
+          data-testid="assistant-message"
+          className="min-w-0 py-1 text-left text-sm leading-7 break-words"
+          style={{ color: "var(--foreground)", overflowWrap: "anywhere" }}
+        >
           <div className="markdown-content">
             {block.isComplete ? (
               <MarkdownRenderer content={renderedContent} onOpenFileRef={setPreviewFileRef} />
@@ -250,13 +253,6 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       ) : (
         <div className="py-1 text-muted-foreground/70">
           <Loader2 className="size-4 animate-spin" />
-        </div>
-      )}
-
-      {hasContent && block.isComplete && (
-        <div className="flex items-center gap-1 mt-1.5 select-none">
-          <CheckCircle2 className="size-3" style={{ color: "#4A9E6B", opacity: 0.65 }} />
-          <span className="text-[9px] font-mono" style={{ color: "#4A9E6B", opacity: 0.7 }}>完成</span>
         </div>
       )}
       <FilePreviewSheet fileRef={previewFileRef} sessionId={sessionId} onClose={() => setPreviewFileRef(null)} />

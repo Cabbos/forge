@@ -1,16 +1,14 @@
 import type { SessionState } from "@/lib/protocol";
 import {
   getModelLabel,
-  getModelContextWindow,
   getProviderLabel,
   getProviderModelLabel,
-  formatContextWindow,
 } from "@/lib/providers";
 
-const UNTITLED_SESSION = "未命名任务";
+const UNTITLED_SESSION = "未命名对话";
 
 export function getSessionTitle(session?: SessionState | null): string {
-  if (!session) return "未选择任务";
+  if (!session) return "未选择对话";
 
   const firstUserMessage = session.blocks.find((block) => block.event_type === "user_message");
   const source = firstUserMessage?.content || session.agentType || UNTITLED_SESSION;
@@ -22,15 +20,6 @@ export function getSessionTitle(session?: SessionState | null): string {
 
   if (!title) return UNTITLED_SESSION;
   return truncateMiddle(title, 34);
-}
-
-export function getSessionMeta(session?: SessionState | null): string {
-  if (!session) return "从当前任务开始";
-  const blockCount = session.blocks.filter((block) => block.event_type !== "pending").length;
-  const model = getProviderModelLabel(session.agentType, session.model);
-  const contextWindow = formatContextWindow(session.contextWindowTokens ?? getModelContextWindow(session.model));
-  const parts = [model, contextWindow && `${contextWindow} 上下文`, blockCount > 0 ? `${blockCount} 条记录` : "新任务"].filter(Boolean);
-  return parts.join(" · ");
 }
 
 export function getSessionStatus(session?: SessionState | null) {

@@ -24,7 +24,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     keyPlaceholder: "sk-...",
     defaultModel: "deepseek-v4-flash[1m]",
     models: [
-      { id: "deepseek-v4-flash[1m]", name: "DeepSeek V4 Flash", description: "日常任务", contextWindowTokens: 1_000_000 },
+      { id: "deepseek-v4-flash[1m]", name: "DeepSeek V4 Flash 1M", description: "日常任务", contextWindowTokens: 1_000_000 },
       { id: "deepseek-v4-pro[1m]", name: "DeepSeek V4 Pro 1M", description: "复杂任务，支持 1M 上下文", contextWindowTokens: 1_000_000 },
     ],
   },

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { FilePlus2, FileText, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, FilePlus2, FileText, X } from "lucide-react";
 import { useActiveBlocks, useActiveWorkspace, useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ActiveContextSection } from "@/components/context/ActiveContextSection";
@@ -11,7 +11,6 @@ import { CurrentTaskCard } from "@/components/workflow/CurrentTaskCard";
 import { cn } from "@/lib/utils";
 import { getActiveContextItems } from "@/lib/context-activation";
 import { deriveProjectArchiveOverview } from "@/lib/project-archive-overview";
-import { formatContextWindow, getModelContextWindow, getProviderModelLabel } from "@/lib/providers";
 import { getProjectRuntimeStatus } from "@/lib/tauri";
 
 type ParseStatus = "pending" | "parsed" | "failed";
@@ -38,8 +37,6 @@ export function HubPanel() {
   const selectedWikiPages = useStore((s) => activeId ? s.forgeWikiContextBySession.get(activeId) ?? [] : []);
   const session = activeId ? sessions.get(activeId) : null;
   const blocks = useActiveBlocks();
-  const contextWindow = session?.contextWindowTokens ?? getModelContextWindow(session?.model);
-  const contextWindowLabel = formatContextWindow(contextWindow);
   const activeContextItems = getActiveContextItems(selectedMemories, selectedWikiPages);
   const projectOverview = useMemo(() => deriveProjectArchiveOverview({
     workspace: activeWorkspace,
@@ -58,6 +55,17 @@ export function HubPanel() {
       window.removeEventListener("open-hub", openHandler);
     };
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,12 +90,9 @@ export function HubPanel() {
 
   return (
     <>
-      <div
-        className="fixed inset-0 z-40 bg-black/20"
-        onClick={() => setOpen(false)}
-      />
       <aside
-        className="fixed right-0 top-0 z-50 flex h-full w-[320px] flex-col overflow-hidden animate-[slide-in-right_0.25s_ease-out]"
+        aria-label="项目档案"
+        className="fixed right-0 top-0 z-50 flex h-full w-[300px] flex-col overflow-hidden animate-[slide-in-right_0.25s_ease-out]"
         style={{
           background: "rgba(18,19,24,0.94)",
           backdropFilter: "blur(20px)",
@@ -95,9 +100,11 @@ export function HubPanel() {
           borderLeft: "1px solid rgba(255,255,255,0.12)",
         }}
       >
-        <div className="flex flex-shrink-0 items-center justify-between px-4 py-3">
+        <div className="flex flex-shrink-0 items-center justify-between px-3 py-3">
           <span className="text-xs font-semibold text-foreground">项目档案</span>
           <button
+            type="button"
+            aria-label="关闭项目档案"
             onClick={() => setOpen(false)}
             className="text-muted-foreground transition-colors hover:text-foreground"
             title="关闭项目档案"
@@ -107,46 +114,79 @@ export function HubPanel() {
         </div>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-4 p-4">
+          <div className="flex flex-col gap-3 p-3">
             <ProjectOverviewCard overview={projectOverview} />
 
             <CurrentTaskCard workflow={workflow} />
 
-            <FirstLoopCard draft={firstLoopDraft} />
+            {firstLoopDraft && <FirstLoopCard draft={firstLoopDraft} />}
 
-            <ActiveContextSection items={activeContextItems} />
+            {activeContextItems.length > 0 && <ActiveContextSection items={activeContextItems} />}
 
-            <WikiSections sessionId={activeId} projectPath={projectPath} />
+            <ArchiveDisclosure
+              testId="archive-disclosure-records"
+              title="项目记录"
+              meta="记录与建议"
+            >
+              <WikiSections sessionId={activeId} projectPath={projectPath} />
+            </ArchiveDisclosure>
 
-            <ContextFilesSection files={contextFiles} />
+            <ArchiveDisclosure
+              testId="archive-disclosure-files"
+              title="资料"
+              meta={contextFiles.length > 0 ? `${contextFiles.length} 个文件` : "未添加"}
+            >
+              <ContextFilesSection files={contextFiles} />
+            </ArchiveDisclosure>
 
             <ProductLayerHeader title="交付" meta="最近状态" />
 
             {activeId ? (
               <ProjectStatusCard sessionId={activeId} />
             ) : (
-              <div className="rounded-md border border-border bg-card px-3 py-3 text-xs text-muted-foreground">
+              <div className="forge-empty">
                 选择一个任务后查看预览和检查点。
-              </div>
-            )}
-
-            {session && (
-              <div className="flex flex-col gap-1 border-t border-border pt-4">
-                <div className="flex justify-between gap-3 text-xs font-mono text-muted-foreground">
-                  <span className="min-w-0 truncate">{getProviderModelLabel(session.agentType, session.model)}</span>
-                  <span className="shrink-0 text-primary">${session.costUsd.toFixed(2)}</span>
-                </div>
-                {contextWindowLabel && (
-                  <div className="text-[11px] text-muted-foreground/75">
-                    上下文长度：{contextWindowLabel}
-                  </div>
-                )}
               </div>
             )}
           </div>
         </ScrollArea>
       </aside>
     </>
+  );
+}
+
+function ArchiveDisclosure({
+  children,
+  defaultOpen = false,
+  meta,
+  testId,
+  title,
+}: {
+  children: ReactNode;
+  defaultOpen?: boolean;
+  meta?: string | null;
+  testId: string;
+  title: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const Icon = open ? ChevronDown : ChevronRight;
+
+  return (
+    <section data-testid={testId}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center justify-between gap-3 border-t border-border pt-3 text-left first:border-t-0 first:pt-0"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <Icon className="size-3.5 shrink-0 text-muted-foreground/75" />
+          <span className="truncate text-[11px] font-medium text-muted-foreground">{title}</span>
+        </span>
+        {meta && <span className="shrink-0 text-[10px] text-muted-foreground/65">{meta}</span>}
+      </button>
+      {open && <div className="mt-2 space-y-3">{children}</div>}
+    </section>
   );
 }
 
@@ -162,20 +202,19 @@ function ProductLayerHeader({ title, meta }: { title: string; meta?: string | nu
 function ContextFilesSection({ files }: { files: ContextFile[] }) {
   return (
     <section>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-medium text-muted-foreground">资料</h3>
+      <div className="mb-2 flex items-center justify-end">
         <button
           type="button"
           disabled
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors disabled:cursor-default disabled:opacity-70"
-          title="后续接入文件上传与解析"
+          className="forge-action text-muted-foreground disabled:cursor-default disabled:opacity-70"
+          title="添加文件"
         >
           <FilePlus2 className="size-3" />
           添加文件
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-md border border-border bg-card">
+      <div className="forge-surface overflow-hidden">
         <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
           <span>文件名</span>
           <span>类型</span>
@@ -187,9 +226,6 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
           <div className="flex flex-col items-center justify-center gap-2 px-3 py-8 text-center">
             <FileText className="size-5 text-muted-foreground/60" />
             <div className="text-xs text-muted-foreground">还没有添加资料</div>
-            <div className="max-w-[220px] text-[11px] leading-relaxed text-muted-foreground/70">
-              之后可在这里接入 PPT、Word、Excel、PDF 等资料解析。
-            </div>
           </div>
         ) : (
           <div className="divide-y divide-border">

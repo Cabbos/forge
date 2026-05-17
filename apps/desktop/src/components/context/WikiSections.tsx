@@ -318,7 +318,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           onRefresh={refresh}
           refreshDisabled={loading}
         />
-        <div className="overflow-hidden rounded-md border border-border bg-card">
+        <div className="forge-surface overflow-hidden">
           {!currentProjectPath ? (
             <EmptyState label="打开项目后可以建立项目记录" />
           ) : !forgeWikiState?.exists ? (
@@ -328,7 +328,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
                 type="button"
                 onClick={handleInitForgeWiki}
                 disabled={busyId === "forge-wiki:init"}
-                className="rounded border border-border bg-secondary px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+                className="forge-action h-8 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
               >
                 建立项目记录
               </button>
@@ -357,7 +357,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
         <p className="-mt-1 mb-2 text-[10px] leading-relaxed text-muted-foreground/70">
           确认后会进入项目记录或已保存背景
         </p>
-        <div className="overflow-hidden rounded-md border border-border bg-card">
+        <div className="forge-surface overflow-hidden">
           {visibleForgeWikiProposals.length === 0 && candidateMemories.length === 0 ? (
             <EmptyState label="没有待确认的记录更新" />
           ) : (
@@ -394,7 +394,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
 
       <section>
         <SectionHeader title="已保存背景" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
-        <div className="overflow-hidden rounded-md border border-border bg-card">
+        <div className="forge-surface overflow-hidden">
           {projectMemories.length === 0 ? (
             <EmptyState label="还没有已保存背景" />
           ) : (
@@ -441,16 +441,16 @@ function SectionHeader({
   refreshDisabled?: boolean;
 }) {
   return (
-    <div className="mb-2 flex items-center justify-between gap-2">
-      <h3 className="text-[11px] font-medium text-muted-foreground">{title}</h3>
+    <div className="forge-section-head">
+      <h3 className="forge-section-title">{title}</h3>
       <div className="flex items-center gap-1.5">
-        {meta && <span className="text-[10px] text-muted-foreground/70">{meta}</span>}
+        {meta && <span className="forge-section-meta">{meta}</span>}
         {onRefresh && (
           <button
             type="button"
             onClick={onRefresh}
             disabled={refreshDisabled}
-            className="flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+            className="forge-icon-button focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
             title="刷新"
           >
             <RefreshCw className={cn("size-3", loading && "animate-spin")} />
@@ -668,7 +668,7 @@ function IconButton({
       title={title}
       onClick={onClick}
       disabled={disabled || !onClick}
-      className="flex size-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+      className="forge-icon-button focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
     >
       {children}
     </button>

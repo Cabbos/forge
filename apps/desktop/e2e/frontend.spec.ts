@@ -245,6 +245,24 @@ async function setup(page: Page) {
   });
 }
 
+function projectArchive(page: Page) {
+  return page.locator("aside").last();
+}
+
+async function expandArchiveRecords(page: Page) {
+  const archive = projectArchive(page);
+  const records = archive.getByTestId("archive-disclosure-records");
+  await records.getByRole("button").click();
+  return records;
+}
+
+async function expandArchiveFiles(page: Page) {
+  const archive = projectArchive(page);
+  const files = archive.getByTestId("archive-disclosure-files");
+  await files.getByRole("button").click();
+  return files;
+}
+
 test.describe("Timeline Message Flow", () => {
   test.beforeEach(async ({ page }) => {
     await setup(page);
@@ -254,11 +272,11 @@ test.describe("Timeline Message Flow", () => {
 
   test("app loads and shows empty state", async ({ page }) => {
     const main = page.getByRole("main");
-    await expect(main.locator("p", { hasText: "从当前任务开始" })).toBeVisible();
-    await expect(main.getByText("Forge 会带着项目档案，把结果推进到可预览、可检查、可继续。")).toBeVisible();
-    await expect(main.getByText("当前任务", { exact: true })).toBeVisible();
-    await expect(main.locator("span").filter({ hasText: "项目档案" })).toBeVisible();
-    await expect(main.getByText("交付", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("app-titlebar")).toHaveAttribute("data-tauri-drag-region", "true");
+    await expect(main.locator("p", { hasText: "从当前对话开始" })).toBeVisible();
+    await expect(main.getByText("Forge 会带着项目档案，把结果推进到可预览、可检查、可继续。")).toHaveCount(0);
+    await expect(main.getByText("当前任务", { exact: true })).toHaveCount(0);
+    await expect(main.getByText("交付", { exact: true })).toHaveCount(0);
     await expect(main.getByText("创建一个任务开始")).toHaveCount(0);
   });
 
@@ -268,9 +286,15 @@ test.describe("Timeline Message Flow", () => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     // Input should appear
     await expect(page.locator("textarea")).toBeVisible();
-    await expect(page.getByRole("button", { name: "我想做一个番茄钟小工具，可以开始、暂停、重置。" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "我想做一个记账小工具，先能记录一笔收入或支出。" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "我想做一个文案小工具，输入主题后生成一版短文案。" })).toBeVisible();
+    await expect(page.getByText("运行中", { exact: true })).toHaveCount(0);
+    const composer = page.getByTestId("composer-lane");
+    await expect(composer).toBeVisible();
+    await expect(composer.getByRole("button", { name: "引用文件" })).toBeVisible();
+    await expect(composer.getByRole("button", { name: "常用请求" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "我想做一个番茄钟小工具，可以开始、暂停、重置。" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "我想做一个记账小工具，先能记录一笔收入或支出。" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "我想做一个文案小工具，输入主题后生成一版短文案。" })).toHaveCount(0);
+    await expect(page.getByText("可以继续描述任务")).toHaveCount(0);
   });
 
   test("missing API key is shown as an actionable setup card", async ({ page }) => {
@@ -289,7 +313,51 @@ test.describe("Timeline Message Flow", () => {
     await expect(page.getByText("需要配置模型密钥")).toBeVisible();
     await expect(page.getByText("需要配置模型密钥")).toHaveCount(1);
     await page.getByRole("button", { name: "打开设置" }).click();
-    await expect(page.getByRole("heading", { name: "模型密钥" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "本机数据" })).toBeVisible();
+    await expect(page.getByText("API Key")).toHaveCount(0);
+    await expect(page.getByText("~/.forge/config.json")).toHaveCount(0);
+    await expect(page.getByText("IndexedDB")).toHaveCount(0);
+  });
+
+  test("session creation errors stay inline and can open settings", async ({ page }) => {
+    const dialogs: string[] = [];
+    page.on("dialog", async (dialog) => {
+      dialogs.push(dialog.message());
+      await dialog.dismiss();
+    });
+
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      const original = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "create_session") {
+          throw new Error("No DeepSeek API key configured. Open Settings (Cmd+,) to set one.");
+        }
+        return original?.(cmd, args);
+      };
+    });
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const sidebar = page.locator("aside").first();
+    await expect(sidebar.getByRole("status")).toContainText("模型服务还没有可用密钥");
+    expect(dialogs).toEqual([]);
+
+    await sidebar.getByRole("button", { name: "打开设置" }).click();
+    await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
+  });
+
+  test("settings show provider defaults and context window quietly", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    const deepseek = dialog.locator("section").filter({ hasText: "DeepSeek" });
+    await expect(deepseek.getByText("DeepSeek V4 Flash 1M")).toBeVisible();
+    await expect(deepseek.getByText("默认模型 · 上下文 1M")).toBeVisible();
+    await expect(deepseek.getByText("deepseek-v4-flash[1m]")).toHaveCount(0);
   });
 
   test("internal skill context is not rendered in the conversation", async ({ page }) => {
@@ -320,6 +388,37 @@ test.describe("Timeline Message Flow", () => {
 
     await expect(page.getByRole("main").getByText("Active Skills")).toHaveCount(0);
     await expect(page.getByRole("main").getByText("code-review")).toHaveCount(0);
+  });
+
+  test("long assistant replies do not add an automatic acceptance checklist", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "long-answer" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "long-answer",
+        content: "我已经把第一版方向整理好了。这个版本会先保留一个核心界面，一个主要交互，以及一个清楚的下一步。用户可以直接继续描述想改哪里，Forge 会在当前项目里继续推进，而不是让用户管理一堆流程提示。这里还会补充当前版本包含什么、暂时不包含什么、为什么先从最小可用版本开始，以及如果预览失败应该优先检查哪个地方。",
+      },
+      { event_type: "text_end", session_id: sessionId, block_id: "long-answer" },
+    ], 5);
+
+    const main = page.getByRole("main");
+    await expect(main.getByText("验收清单", { exact: true })).toHaveCount(0);
+    await expect(main.getByText("下一步提示词", { exact: true })).toHaveCount(0);
   });
 
   test("restores the active conversation after reload", async ({ page }) => {
@@ -397,6 +496,276 @@ test.describe("Timeline Message Flow", () => {
     await expect(page.locator("text=The fibonacci function works correctly")).toBeVisible();
   });
 
+  test("structured conversation blocks stay compact while collapsed", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, fullConversation(sessionId), 10);
+
+    const thinkingTrigger = page.getByTestId("thinking-trigger").first();
+    const toolTrigger = page.getByTestId("tool-card-trigger").first();
+    const shellTrigger = page.getByTestId("shell-card-trigger").first();
+    await expect(thinkingTrigger).toBeVisible();
+    await expect(toolTrigger).toBeVisible();
+    await expect(shellTrigger).toBeVisible();
+
+    const widths = await page.evaluate(() => {
+      const thinking = document.querySelector("[data-testid='thinking-trigger']")?.getBoundingClientRect();
+      const tool = document.querySelector("[data-testid='tool-card-trigger']")?.getBoundingClientRect();
+      const shell = document.querySelector("[data-testid='shell-card-trigger']")?.getBoundingClientRect();
+      return thinking && tool && shell
+        ? { thinking: Math.round(thinking.width), tool: Math.round(tool.width), shell: Math.round(shell.width) }
+        : null;
+    });
+    expect(widths).not.toBeNull();
+    expect(widths!.thinking).toBeLessThanOrEqual(220);
+    expect(widths!.tool).toBeLessThanOrEqual(520);
+    expect(widths!.shell).toBeLessThanOrEqual(520);
+    await expect(thinkingTrigger).toHaveCSS("border-top-width", "0px");
+
+    await toolTrigger.click();
+    await expect(page.getByRole("button", { name: "复制工具输出" }).first()).toBeVisible();
+    await shellTrigger.click();
+    await expect(page.getByRole("button", { name: "复制命令输出" }).first()).toBeVisible();
+  });
+
+  test("conversation area uses a compact centered prose lane", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await page.locator("textarea").fill("把这个页面整理得更像正式产品。");
+    await page.locator("textarea").press("Enter");
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "style-assistant-message" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "style-assistant-message",
+        content: "可以。先把默认对话区收成一条安静的阅读栏，再处理行动卡片。",
+      },
+      { event_type: "text_end", session_id: sessionId, block_id: "style-assistant-message" },
+    ], 10);
+
+    const lane = page.getByTestId("message-lane");
+    await expect(lane).toBeVisible();
+    await expect(page.getByText("你的请求")).toHaveCount(0);
+
+    const laneWidth = await lane.evaluate((node) => Math.round(node.getBoundingClientRect().width));
+    expect(laneWidth).toBeLessThanOrEqual(860);
+
+    const userMessage = page.getByTestId("user-message").last();
+    await expect(userMessage).toHaveCSS("border-top-width", "0px");
+    const userRadius = await userMessage.evaluate((node) =>
+      Number.parseFloat(getComputedStyle(node).borderTopLeftRadius),
+    );
+    expect(userRadius).toBeLessThanOrEqual(8);
+    await expect(page.getByTestId("assistant-message").last()).toHaveCSS("border-top-width", "0px");
+  });
+
+  test("scroll-to-bottom control stays quiet and editor-like", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    const events = Array.from({ length: 24 }, (_, index) => ([
+      { event_type: "text_start" as const, session_id: sessionId, block_id: `scroll-${index}` },
+      {
+        event_type: "text_chunk" as const,
+        session_id: sessionId,
+        block_id: `scroll-${index}`,
+        content: `第 ${index + 1} 条输出，用来撑开滚动区域。这里保持足够长度，让对话区出现滚动。`,
+      },
+      { event_type: "text_end" as const, session_id: sessionId, block_id: `scroll-${index}` },
+    ])).flat();
+    await simulateStream(page, sessionId, events, 1);
+
+    await page.evaluate(() => {
+      const lane = document.querySelector("[data-testid='message-lane']");
+      const scroller = lane?.parentElement;
+      if (!scroller) return;
+      scroller.scrollTop = 0;
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    const control = page.getByTestId("scroll-to-bottom");
+    await expect(control).toBeVisible();
+    const metrics = await control.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        radius: Number.parseFloat(style.borderTopLeftRadius),
+        shadow: style.boxShadow,
+        width: Math.round(node.getBoundingClientRect().width),
+        height: Math.round(node.getBoundingClientRect().height),
+      };
+    });
+    expect(metrics.radius).toBeLessThanOrEqual(8);
+    expect(metrics.shadow).toBe("none");
+    expect(metrics.width).toBe(28);
+    expect(metrics.height).toBe(28);
+  });
+
+  test("composer aligns with the conversation lane and keeps pending state quiet", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const messageLane = page.getByTestId("message-lane");
+    const composerLane = page.getByTestId("composer-lane");
+    await expect(messageLane).toBeVisible();
+    await expect(composerLane).toBeVisible();
+
+    const layout = await page.evaluate(() => {
+      const message = document.querySelector("[data-testid='message-lane']")?.getBoundingClientRect();
+      const composer = document.querySelector("[data-testid='composer-lane']")?.getBoundingClientRect();
+      return message && composer
+        ? {
+            messageX: Math.round(message.x),
+            composerX: Math.round(composer.x),
+            messageWidth: Math.round(message.width),
+            composerWidth: Math.round(composer.width),
+          }
+        : null;
+    });
+    expect(layout).not.toBeNull();
+    expect(layout!.messageWidth).toBeLessThanOrEqual(860);
+    expect(layout!.composerWidth).toBeLessThanOrEqual(860);
+    expect(Math.abs(layout!.messageX - layout!.composerX)).toBeLessThanOrEqual(4);
+    await expect(composerLane.getByText("引用文件", { exact: true })).toHaveCount(0);
+    await expect(composerLane.getByText("常用请求", { exact: true })).toHaveCount(0);
+    await expect(composerLane.getByText("上下文 1M", { exact: true })).toHaveCount(0);
+    await expect(composerLane.getByText("已启用能力")).toHaveCount(0);
+    await expect(composerLane.getByRole("button", { name: /DeepSeek V4 Flash 1M/ })).toBeVisible();
+    await expect(composerLane.getByText("DeepSeek V4 Flash 1M", { exact: true })).toBeVisible();
+
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      const original = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "send_input") {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          return undefined;
+        }
+        return original?.(cmd, args);
+      };
+    });
+
+    await page.locator("textarea").fill("继续把对话区域靠近 Codex。");
+    await page.locator("textarea").press("Enter");
+
+    const pending = page.getByTestId("pending-block");
+    await expect(pending).toBeVisible();
+    await expect(pending).toHaveText(/正在处理/);
+    await expect(pending).toHaveCSS("border-top-width", "0px");
+  });
+
+  test("composer uses a grounded editor surface instead of a plastic card", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const surface = page.getByTestId("composer-surface");
+    const send = surface.getByRole("button", { name: "发送" });
+    await expect(surface).toBeVisible();
+    await expect(send).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const surface = document.querySelector("[data-testid='composer-surface']");
+      const send = document.querySelector("[data-testid='composer-send']");
+      if (!surface || !send) return null;
+      const surfaceStyle = getComputedStyle(surface);
+      const sendStyle = getComputedStyle(send);
+      return {
+        surfaceShadow: surfaceStyle.boxShadow,
+        surfaceRadius: Number.parseFloat(surfaceStyle.borderTopLeftRadius),
+        sendRadius: Number.parseFloat(sendStyle.borderTopLeftRadius),
+        sendBackground: sendStyle.backgroundColor,
+        sendWidth: Math.round(send.getBoundingClientRect().width),
+        sendHeight: Math.round(send.getBoundingClientRect().height),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.surfaceShadow).toBe("none");
+    expect(metrics!.surfaceRadius).toBeLessThanOrEqual(8);
+    expect(metrics!.sendRadius).toBeLessThanOrEqual(8);
+    expect(metrics!.sendBackground).not.toBe("rgb(212, 168, 83)");
+    expect(metrics!.sendWidth).toBe(28);
+    expect(metrics!.sendHeight).toBe(28);
+  });
+
+  test("core shell surfaces keep a restrained product radius", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await page.getByTitle("打开项目档案").click();
+    const archive = projectArchive(page);
+    await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
+
+    const radii = await page.evaluate(() => {
+      const composer = document.querySelector("[data-testid='composer-lane'] > div:last-child");
+      const archivePanel = [...document.querySelectorAll("aside:last-of-type section div")]
+        .find((node) => node.textContent?.includes("项目概览"));
+      return [composer, archivePanel]
+        .filter(Boolean)
+        .map((node) => Number.parseFloat(getComputedStyle(node as Element).borderTopLeftRadius));
+    });
+
+    expect(radii.length).toBeGreaterThanOrEqual(2);
+    expect(radii.every((radius) => radius <= 8)).toBeTruthy();
+  });
+
   test("write confirmation shows project boundary before approving", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -431,7 +800,7 @@ test.describe("Timeline Message Flow", () => {
       },
     ], 5);
 
-    const card = page.getByText("准备修改项目").locator("xpath=ancestor::div[contains(@class,'mb-3')][1]");
+    const card = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
     await expect(card.getByText("准备修改项目")).toBeVisible();
     await expect(card.getByText("目标项目", { exact: true })).toBeVisible();
     await expect(card.getByText("forge")).toBeVisible();
@@ -440,6 +809,72 @@ test.describe("Timeline Message Flow", () => {
     await expect(card.getByText("src/App.tsx", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: "继续" })).toBeVisible();
     await expect(card.getByRole("button", { name: "取消" })).toBeVisible();
+  });
+
+  test("structured message panels use one compact conversation style", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "style-confirm",
+        question: "Allow write_file?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "write_file",
+          affected_files: ["src/App.tsx"],
+          risk_level: "low",
+          checkpoint_status: "ready",
+          command: null,
+        },
+      },
+      {
+        event_type: "diff_view",
+        session_id: sessionId,
+        block_id: "style-diff",
+        file_path: "src/App.tsx",
+        old_content: "-old",
+        new_content: "diff --git a/src/App.tsx b/src/App.tsx\n@@\n-old\n+new",
+      },
+      {
+        event_type: "delivery_summary",
+        session_id: sessionId,
+        block_id: "style-delivery",
+        summary: {
+          project_path: "/Users/cabbos/project/forge",
+          preview_label: "预览未运行",
+          checkpoint_label: "检查点已就绪",
+          next_action: "下一步：检查当前版本。",
+        },
+      },
+    ], 5);
+
+    const panels = page.getByTestId("message-panel");
+    await expect(panels).toHaveCount(3);
+    await expect(panels.filter({ hasText: "准备修改项目" })).toBeVisible();
+    await expect(panels.filter({ hasText: "文件改动" })).toContainText("src/App.tsx");
+    await expect(panels.filter({ hasText: "文件改动" }).getByRole("button", { name: "复制文件改动" })).toBeVisible();
+    await expect(panels.filter({ hasText: "本轮交付" })).toBeVisible();
+
+    const widths = await panels.evaluateAll((nodes) =>
+      nodes.map((node) => Math.round(node.getBoundingClientRect().width)),
+    );
+    expect(widths.every((width) => width <= 780)).toBeTruthy();
   });
 
   test("thinking block expands and shows content", async ({ page }) => {
@@ -502,7 +937,7 @@ test.describe("Timeline Message Flow", () => {
 
     // Should show running status
     await expect(page.getByRole("button", { name: /正在读取文件/ })).toBeVisible({ timeout: 3000 });
-    await expect(page.getByText("进行中")).toBeVisible();
+    await expect(page.getByText("进行中", { exact: true })).toHaveCount(0);
 
     // Send tool_result (done state)
     await simulateStream(page, sessionId, [
@@ -510,18 +945,61 @@ test.describe("Timeline Message Flow", () => {
     ], 30);
 
     // Should show done
-    await expect(page.getByRole("button", { name: /已读取文件/ })).toBeVisible({ timeout: 3000 });
-    await expect(page.getByText("完成")).toBeVisible();
+    const doneTool = page.getByRole("button", { name: /已读取文件/ });
+    await expect(doneTool).toBeVisible({ timeout: 3000 });
+    await expect(doneTool).toContainText("100ms");
+    await expect(page.getByText("完成", { exact: true })).toHaveCount(0);
   });
 
   test("sidebar shows persistent navigation", async ({ page }) => {
     const sidebar = page.locator("aside").first();
 
     const width = (await sidebar.boundingBox())?.width ?? 0;
-    expect(width).toBeGreaterThanOrEqual(220);
+    expect(width).toBeGreaterThanOrEqual(212);
+    expect(width).toBeLessThanOrEqual(224);
     await expect(sidebar.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "插件" })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "自动化" })).toBeVisible();
+    await expect(sidebar.getByText("当前工作空间", { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByText("插件", { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByText("自动化", { exact: true })).toHaveCount(0);
+
+    await sidebar.getByRole("button", { name: "插件" }).click();
+    const drawer = page.getByRole("complementary", { name: "插件" });
+    await expect(drawer.getByText("插件", { exact: true }).first()).toBeVisible();
+    await expect(drawer.getByRole("tab", { name: /插件/ })).toHaveAttribute("aria-selected", "true");
+    await expect(drawer.getByRole("textbox", { name: "搜索插件" })).toBeVisible();
+    await page.waitForTimeout(300);
+    const drawerX = Math.round((await drawer.boundingBox())?.x ?? 0);
+    expect(drawerX).toBe(Math.round(width));
+    await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("complementary", { name: "插件" })).toHaveCount(0);
+  });
+
+  test("global new conversation shortcut starts from the active workspace", async ({ page }) => {
+    await page.keyboard.down("Control");
+    await page.keyboard.press("n");
+    await page.keyboard.up("Control");
+
+    await expect(page.locator("textarea")).toBeVisible();
+    await expect(page.getByRole("main").getByText("选择一个项目开始")).toHaveCount(0);
+  });
+
+  test("command palette shows compact desktop shortcuts", async ({ page }) => {
+    await page.keyboard.down("Control");
+    await page.keyboard.press("k");
+    await page.keyboard.up("Control");
+
+    const palette = page.getByRole("dialog");
+    await expect(palette.getByRole("option", { name: /新建对话/ })).toContainText("⌘N");
+    await expect(palette.getByRole("option", { name: /设置/ })).toContainText("⌘,");
+
+    await page.keyboard.press("Escape");
+    await page.keyboard.down("Control");
+    await page.keyboard.press(",");
+    await page.keyboard.up("Control");
+    await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
   });
 });
 
@@ -638,15 +1116,169 @@ test.describe("Workspace Safety v0", () => {
 
     const sidebar = page.locator("aside").first();
     await expect(sidebar.getByRole("button", { name: /app-one/ })).toBeVisible();
+    await expect(sidebar.getByText(workspaceA, { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByText("对话", { exact: true })).toBeVisible();
+    await expect(sidebar.getByText("任务", { exact: true })).toHaveCount(0);
     await expect(sidebar.getByText("Build A timer")).toBeVisible();
     await expect(sidebar.getByText("Build B dashboard")).toHaveCount(0);
+    await expect(sidebar.getByText(/DeepSeek|上下文|条记录/)).toHaveCount(0);
 
-    await sidebar.getByRole("button", { name: /app-one/ }).click();
-    await page.getByRole("button", { name: /app-two/ }).click();
+    await page.keyboard.down("Control");
+    await page.keyboard.press("k");
+    await page.keyboard.up("Control");
+    await expect(page.getByRole("option", { name: /Build A timer/ })).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("当前项目 · app-one")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("最近对话")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText(/DeepSeek|上下文|条记录/)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    const workspaceTrigger = sidebar.getByRole("button", { name: /app-one/ });
+    await expect(workspaceTrigger).toHaveAttribute("aria-haspopup", "menu");
+    await workspaceTrigger.click();
+    const workspaceMenu = page.getByRole("menu", { name: "项目工作空间" });
+    await expect(workspaceMenu).toBeVisible();
+    await expect(workspaceMenu.getByRole("menuitemradio", { name: /app-one/ })).toHaveAttribute("aria-checked", "true");
+    await expect(workspaceMenu.getByRole("menuitemradio", { name: /app-two/ })).toHaveAttribute("aria-checked", "false");
+    await expect(sidebar.getByText(workspaceA, { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByText(workspaceB, { exact: true })).toHaveCount(0);
+    await workspaceMenu.getByRole("menuitemradio", { name: /app-two/ }).click();
 
     await expect(sidebar.getByRole("button", { name: /app-two/ })).toBeVisible();
     await expect(sidebar.getByText("Build B dashboard")).toBeVisible();
     await expect(sidebar.getByText("Build A timer")).toHaveCount(0);
+    await expect(sidebar.getByText(/DeepSeek|上下文|条记录/)).toHaveCount(0);
+  });
+
+  test("conversation list supports keyboard navigation", async ({ page }) => {
+    const workspace = "/Users/cabbos/project/forge";
+    const sessions = [
+      { id: "keyboard-a", title: "Build alpha tool" },
+      { id: "keyboard-b", title: "Build beta tool" },
+      { id: "keyboard-c", title: "Build gamma tool" },
+    ];
+
+    await setup(page);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(async ({ workspace, sessions }) => {
+      const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("keyval-store");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const db = await openDb();
+      const tx = db.transaction("keyval", "readwrite");
+      tx.objectStore("keyval").put([{ id: workspace, name: "forge", path: workspace, lastOpenedAt: 3 }], "forge-workspaces");
+      tx.objectStore("keyval").put(workspace, "forge-active-workspace");
+      tx.objectStore("keyval").put(sessions.map((session) => ({
+        id: session.id,
+        agentType: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        contextWindowTokens: 1_000_000,
+        status: "stopped",
+        workflowState: null,
+        workingDir: workspace,
+        workspaceId: workspace,
+      })), "forge-sessions");
+      for (const session of sessions) {
+        tx.objectStore("keyval").put([
+          {
+            block_id: `${session.id}-message`,
+            event_type: "user_message",
+            content: session.title,
+            isComplete: true,
+            metadata: {},
+          },
+        ], `forge-blocks:${session.id}`);
+      }
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, { workspace, sessions });
+
+    await page.reload();
+    const sidebar = page.locator("aside").first();
+    const first = sidebar.getByRole("button", { name: "Build alpha tool", exact: true });
+    const second = sidebar.getByRole("button", { name: "Build beta tool", exact: true });
+    const third = sidebar.getByRole("button", { name: "Build gamma tool", exact: true });
+    await expect(first).toBeVisible();
+    await first.focus();
+
+    await page.keyboard.press("ArrowDown");
+    await expect(second).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(third).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(second).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByRole("main").getByText("Build beta tool").last()).toBeVisible();
+  });
+
+  test("conversation list groups sessions by recency", async ({ page }) => {
+    const workspace = "/Users/cabbos/project/forge";
+    const now = Date.now();
+    const sessions = [
+      { id: "recent-today", title: "Today build", updatedAt: now },
+      { id: "recent-yesterday", title: "Yesterday build", updatedAt: now - 26 * 60 * 60 * 1000 },
+      { id: "recent-older", title: "Older build", updatedAt: now - 8 * 24 * 60 * 60 * 1000 },
+    ];
+
+    await setup(page);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(async ({ workspace, sessions }) => {
+      const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("keyval-store");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const db = await openDb();
+      const tx = db.transaction("keyval", "readwrite");
+      tx.objectStore("keyval").put([{ id: workspace, name: "forge", path: workspace, lastOpenedAt: 3 }], "forge-workspaces");
+      tx.objectStore("keyval").put(workspace, "forge-active-workspace");
+      tx.objectStore("keyval").put(sessions.map((session) => ({
+        id: session.id,
+        agentType: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        contextWindowTokens: 1_000_000,
+        status: "stopped",
+        workflowState: null,
+        workingDir: workspace,
+        workspaceId: workspace,
+        createdAt: session.updatedAt,
+        updatedAt: session.updatedAt,
+      })), "forge-sessions");
+      for (const session of sessions) {
+        tx.objectStore("keyval").put([
+          {
+            block_id: `${session.id}-message`,
+            event_type: "user_message",
+            content: session.title,
+            isComplete: true,
+            metadata: {},
+          },
+        ], `forge-blocks:${session.id}`);
+      }
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, { workspace, sessions });
+
+    await page.reload();
+    const sidebar = page.locator("aside").first();
+    await expect(sidebar.getByText("今天", { exact: true })).toBeVisible();
+    await expect(sidebar.getByText("昨天", { exact: true })).toBeVisible();
+    await expect(sidebar.getByText("更早", { exact: true })).toBeVisible();
+
+    const order = await sidebar.getByRole("button").evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.getAttribute("aria-label") ?? "")
+        .filter((label) => ["Today build", "Yesterday build", "Older build"].includes(label)),
+    );
+    expect(order).toEqual(["Today build", "Yesterday build", "Older build"]);
   });
 
   test("folder picker activates new conversations", async ({ page }) => {
@@ -669,11 +1301,47 @@ test.describe("Workspace Safety v0", () => {
     await page.waitForSelector("aside", { timeout: 10000 });
 
     const sidebar = page.locator("aside").first();
-    await sidebar.getByRole("button", { name: /选择一个项目开始/ }).click();
-    await page.getByRole("button", { name: "选择文件夹" }).click();
+    await sidebar.getByRole("button", { name: /选择项目/ }).click();
+    await page.getByRole("menuitem", { name: "选择文件夹" }).click();
 
     await expect(sidebar.getByRole("button", { name: /demo-tool/ })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "新对话", exact: true })).toBeEnabled();
+  });
+
+  test("workspace menu can remove the current project from the recent list", async ({ page }) => {
+    const workspaceA = "/Users/cabbos/project/remove-one";
+    const workspaceB = "/Users/cabbos/project/remove-two";
+    await setup(page);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(async ({ workspaceA, workspaceB }) => {
+      const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("keyval-store");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+      const db = await openDb();
+      const tx = db.transaction("keyval", "readwrite");
+      tx.objectStore("keyval").put([
+        { id: workspaceA, name: "remove-one", path: workspaceA, lastOpenedAt: 2 },
+        { id: workspaceB, name: "remove-two", path: workspaceB, lastOpenedAt: 1 },
+      ], "forge-workspaces");
+      tx.objectStore("keyval").put(workspaceA, "forge-active-workspace");
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, { workspaceA, workspaceB });
+
+    await page.reload();
+    const sidebar = page.locator("aside").first();
+    await expect(sidebar.getByRole("button", { name: /remove-one/ })).toBeVisible();
+    await sidebar.getByRole("button", { name: /remove-one/ }).click();
+    await page.getByRole("menuitem", { name: "从列表移除当前项目" }).click();
+
+    await expect(sidebar.getByRole("button", { name: /remove-two/ })).toBeVisible();
+    await sidebar.getByRole("button", { name: /remove-two/ }).click();
+    await expect(page.getByRole("menuitemradio", { name: /remove-one/ })).toHaveCount(0);
   });
 
   test("manual workspace path entry remains available as fallback", async ({ page }) => {
@@ -692,8 +1360,8 @@ test.describe("Workspace Safety v0", () => {
     await page.waitForSelector("aside", { timeout: 10000 });
 
     const sidebar = page.locator("aside").first();
-    await sidebar.getByRole("button", { name: /选择一个项目开始/ }).click();
-    await page.getByRole("button", { name: "手动输入路径" }).click();
+    await sidebar.getByRole("button", { name: /选择项目/ }).click();
+    await page.getByRole("menuitem", { name: "手动输入路径" }).click();
 
     const pathInput = page.getByLabel("项目文件夹路径");
     await expect(pathInput).toBeVisible();
@@ -716,12 +1384,14 @@ test.describe("Workspace Safety v0", () => {
 
     const sidebar = page.locator("aside").first();
     await expect(sidebar.getByRole("button", { name: /forge-test-app/ })).toBeVisible();
-    await expect(sidebar.getByText("新对话会创建在 forge-test-app")).toBeVisible();
+    await expect(sidebar.getByText(sandboxPath, { exact: true })).toHaveCount(0);
+    await expect(sidebar.getByText("新对话会创建在 forge-test-app")).toHaveCount(0);
 
     const workspaceBoundary = page.getByLabel("当前项目边界");
     await expect(workspaceBoundary.getByText("当前项目")).toBeVisible();
     await expect(workspaceBoundary.getByText("forge-test-app", { exact: true })).toBeVisible();
-    await expect(workspaceBoundary.getByText(sandboxPath)).toBeVisible();
+    await expect(workspaceBoundary.getByText(sandboxPath)).toHaveCount(0);
+    await expect(workspaceBoundary.getByText(/DeepSeek|上下文|条记录/)).toHaveCount(0);
 
     await page.getByRole("button", { name: "新对话", exact: true }).click();
 
@@ -731,7 +1401,8 @@ test.describe("Workspace Safety v0", () => {
     });
     expect(createArgs.workingDir).toBe(sandboxPath);
     const main = page.getByRole("main");
-    await expect(main.getByText(`本轮会作用于 forge-test-app · ${sandboxPath}`)).toBeVisible();
+    await expect(main.getByText(`本轮会作用于 forge-test-app · ${sandboxPath}`)).toHaveCount(0);
+    await expect(main.getByText("准备开始")).toBeVisible();
   });
 });
 
@@ -776,6 +1447,32 @@ test.describe("InputBar", () => {
     // Should still be in the textarea, not sent
     await expect(textarea).toContainText("line1\nline2");
   });
+
+  test("composer command surface stays compact but exposes structured controls", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const composer = page.getByTestId("composer-lane");
+    const slash = composer.getByRole("button", { name: "常用请求" });
+    await expect(slash).toHaveAttribute("aria-expanded", "false");
+    await slash.click();
+    await expect(slash).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("composer-command-menu")).toHaveAttribute("role", "listbox");
+    await expect(page.getByRole("option", { name: /\/code-review/ })).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    const model = composer.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ });
+    await expect(model).toHaveAttribute("aria-expanded", "false");
+    await model.click();
+    await expect(model).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("menuitemradio", { name: /DeepSeek V4 Flash 1M/ })).toHaveAttribute("aria-checked", "true");
+  });
 });
 
 test.describe("First loop v0", () => {
@@ -793,8 +1490,6 @@ test.describe("First loop v0", () => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
 
-    await expect(page.getByRole("button", { name: "我想做一个番茄钟小工具，可以开始、暂停、重置。" })).toBeVisible();
-
     const request = "我想做一个番茄钟小工具，可以开始、暂停、重置。";
     await page.locator("textarea").fill(request);
     await page.locator("textarea").press("Enter");
@@ -811,7 +1506,7 @@ test.describe("First loop v0", () => {
     await expect(firstVersion.getByText("番茄钟小工具")).toBeVisible();
     await expect(firstVersion.getByText("开始、暂停、重置")).toBeVisible();
     await expect(firstVersion.getByText("下一步", { exact: true })).toBeVisible();
-    await expect(archive.getByRole("heading", { name: "本轮参考" })).toBeVisible();
+    await expect(archive.getByRole("heading", { name: "本轮参考" })).toHaveCount(0);
     await expect(archive.getByText("工作台", { exact: true })).toHaveCount(0);
   });
 
@@ -855,13 +1550,18 @@ test.describe("First loop v1", () => {
 
     const main = page.getByRole("main");
     await expect(main.getByText("准备开始")).toBeVisible();
-    await expect(main.getByText("工作空间")).toBeVisible();
-    await expect(main.getByText("模型密钥")).toBeVisible();
-    await expect(main.getByText("预览", { exact: true })).toBeVisible();
-    await expect(main.getByText("检查点", { exact: true })).toBeVisible();
+    const readiness = main.getByTestId("start-readiness");
+    await expect(readiness).toBeVisible();
+    await expect(readiness).toHaveCSS("border-top-width", "0px");
+    await expect(main.getByText("工作空间")).toHaveCount(0);
+    await expect(main.getByText("模型密钥")).toHaveCount(0);
+    await expect(main.getByText("预览", { exact: true })).toHaveCount(0);
+    await expect(main.getByText("检查点", { exact: true })).toHaveCount(0);
+    await expect(main.getByText("理解目标")).toHaveCount(0);
+    await expect(main.getByText("准备修改")).toHaveCount(0);
   });
 
-  test("first loop progress advances after a request", async ({ page }) => {
+  test("first loop keeps progress implicit in the conversation", async ({ page }) => {
     const sessionId = "first-loop-progress";
     await setup(page);
     await page.addInitScript((sessionId) => {
@@ -874,13 +1574,14 @@ test.describe("First loop v1", () => {
     await page.goto("http://localhost:1420");
     await page.getByRole("button", { name: "新对话", exact: true }).click();
 
-    await expect(page.getByText("理解目标")).toBeVisible();
+    await expect(page.getByText("理解目标")).toHaveCount(0);
 
     await page.locator("textarea").fill("我想做一个番茄钟小工具，可以开始、暂停、重置。");
     await page.locator("textarea").press("Enter");
 
-    await expect(page.getByText("正在制作")).toBeVisible();
-    await expect(page.getByText("等你验收")).toBeVisible();
+    await expect(page.getByText("正在制作")).toHaveCount(0);
+    await expect(page.getByText("等你验收")).toHaveCount(0);
+    await expect(page.getByText("本轮交付")).toBeVisible();
   });
 
   test("delivery summary offers follow-up actions", async ({ page }) => {
@@ -899,16 +1600,68 @@ test.describe("First loop v1", () => {
     await page.locator("textarea").fill("我想做一个番茄钟小工具，可以开始、暂停、重置。");
     await page.locator("textarea").press("Enter");
 
-    await expect(page.getByRole("button", { name: "检查风险" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "继续优化" })).toBeVisible();
+    await expect(page.getByText("验收提示", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "检查风险" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "开始验收" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "继续优化" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "检查这版" })).toBeVisible();
 
-    await page.getByRole("button", { name: "检查风险" }).click();
-    await expect(page.locator("textarea")).toHaveValue(/检查刚才的改动有没有风险/);
-    await expect(page.locator("textarea")).toHaveValue(/目标项目：\/Users\/cabbos\/project\/forge/);
+    await page.getByRole("button", { name: "检查这版" }).click();
+    await expect(page.locator("textarea")).toHaveValue(/检查当前版本有没有明显问题/);
+    await expect(page.locator("textarea")).not.toHaveValue(/目标项目：/);
   });
 });
 
 test.describe("Project Archive v1", () => {
+  test("project archive hides empty loop and low-level metadata by default", async ({ page }) => {
+    const sessionId = "project-archive-quiet-empty";
+    const projectPath = "/Users/cabbos/project/forge";
+
+    await setup(page);
+    await page.addInitScript(({ sessionId, projectPath }) => {
+      window.localStorage.clear();
+      window.localStorage.setItem("forge-working-dir", projectPath);
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, { sessionId, projectPath });
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await page.getByTitle("打开项目档案").click();
+    const archive = projectArchive(page);
+    await expect(page.getByRole("complementary", { name: "项目档案" })).toBeVisible();
+    const archiveWidth = (await archive.boundingBox())?.width ?? 0;
+    expect(archiveWidth).toBeLessThanOrEqual(304);
+    const modalBackdropCount = await page.evaluate(() =>
+      [...document.querySelectorAll("div")].filter((node) => {
+        const className = String(node.getAttribute("class") ?? "");
+        return className.includes("fixed inset-0") && className.includes("bg-black/20");
+      }).length,
+    );
+    expect(modalBackdropCount).toBe(0);
+
+    await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
+    await expect(archive.getByText("forge", { exact: true }).first()).toBeVisible();
+    await expect(archive.getByTestId("archive-disclosure-records")).toBeVisible();
+    await expect(archive.getByTestId("archive-disclosure-files")).toBeVisible();
+    await expect(archive.getByText("还没有项目记录", { exact: true })).toHaveCount(0);
+    await expect(archive.getByText("文件名", { exact: true })).toHaveCount(0);
+    await expect(archive.getByRole("heading", { name: "第一版" })).toHaveCount(0);
+    await expect(archive.getByText("小工具闭环")).toHaveCount(0);
+    await expect(archive.getByText(projectPath, { exact: true })).toHaveCount(0);
+    await expect(archive.getByText("上下文长度")).toHaveCount(0);
+    await expect(archive.getByText("$0.00")).toHaveCount(0);
+    await expect(archive.getByText("工作方式")).toHaveCount(0);
+
+    await expandArchiveFiles(page);
+    await expect(archive.getByText("文件名", { exact: true })).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("complementary", { name: "项目档案" })).toHaveCount(0);
+  });
+
   test("restored project archive shows overview and continuation actions", async ({ page }) => {
     const sessionId = "project-archive-return-session";
     const projectPath = "/Users/cabbos/project/forge";
@@ -975,7 +1728,7 @@ test.describe("Project Archive v1", () => {
     await page.reload();
     await page.getByTitle("打开项目档案").click();
 
-    const archive = page.locator("aside").last();
+    const archive = projectArchive(page);
     await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
     await expect(archive.getByText("番茄钟小工具")).toBeVisible();
     await expect(archive.getByText("预览可打开 · 检查点已就绪")).toBeVisible();
@@ -984,7 +1737,7 @@ test.describe("Project Archive v1", () => {
 
     await archive.getByRole("button", { name: "继续上次任务" }).click();
     await expect(page.locator("textarea")).toHaveValue(/继续上次任务/);
-    await expect(page.locator("textarea")).toHaveValue(/目标项目：\/Users\/cabbos\/project\/forge/);
+    await expect(page.locator("textarea")).not.toHaveValue(/目标项目：/);
   });
 });
 
@@ -1032,9 +1785,10 @@ test.describe("Project records context panel", () => {
     });
 
     await page.getByTitle("打开项目档案").click();
-    const projectRecords = page.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
+    const recordsDisclosure = await expandArchiveRecords(page);
+    const projectRecords = recordsDisclosure.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮参考" }) });
-    const updateProposals = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
+    const updateProposals = recordsDisclosure.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
     await expect(projectRecords.getByText("还没有项目记录", { exact: true })).toBeVisible();
 
@@ -1189,18 +1943,19 @@ test.describe("Project records context panel", () => {
       },
     ], 5);
 
-    await expect(page.getByText("本轮已参考 1 条档案")).toBeVisible();
+    await expect(page.getByRole("main").getByText("本轮已参考 1 条档案")).toHaveCount(0);
 
     await page.getByTitle("打开项目档案").click();
+    const recordsDisclosure = await expandArchiveRecords(page);
 
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮参考" }) });
-    const projectMemories = page.locator("section").filter({ has: page.getByRole("heading", { name: "已保存背景" }) });
+    const projectMemories = recordsDisclosure.locator("section").filter({ has: page.getByRole("heading", { name: "已保存背景" }) });
 
     await expect(selectedContext.getByText(selectedMemory.body)).toBeVisible();
-    await expect(page.getByRole("heading", { name: "建议更新记录" })).toBeVisible();
+    await expect(recordsDisclosure.getByRole("heading", { name: "建议更新记录" })).toBeVisible();
     await expect(page.getByText(candidateMemory.body)).toBeVisible();
     await expect(page.getByTitle("接受")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "项目记录", exact: true })).toBeVisible();
+    await expect(recordsDisclosure.getByRole("heading", { name: "项目记录", exact: true })).toBeVisible();
     await expect(projectMemories.getByText(projectMemory.body)).toBeVisible();
     await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
     await expect(page.getByText("最近状态")).toBeVisible();
@@ -1322,13 +2077,14 @@ test.describe("Project records context panel", () => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
     await page.getByTitle("打开项目档案").click();
+    await expandArchiveRecords(page);
 
     await simulateStream(page, sessionId, [
       { event_type: "memory_candidate", session_id: sessionId, memory: candidateMemory },
       { event_type: "forge_wiki_update_proposed", session_id: sessionId, proposal },
     ], 5);
 
-    const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
+    const inbox = projectArchive(page).locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
 
     await expect(inbox.getByText("确认后会进入项目记录或已保存背景")).toBeVisible();
     await expect(inbox.getByText("建议保存为已保存背景")).toBeVisible();
@@ -1386,21 +2142,26 @@ test.describe("Work style controls", () => {
       { event_type: "workflow_updated", session_id: sessionId, state: softWorkflow },
     ], 5);
 
-    const workflowPill = page.getByTestId("workflow-status-pill");
-    await expect(workflowPill.getByText("梳理想法", { exact: true })).toBeVisible();
-    await expect(page.getByText("这个需求会影响多个部分，我会先帮你梳理方案。你也可以选择直接做。", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("workflow-status-pill")).toHaveCount(0);
+    await expect(page.getByText("这个需求会影响多个部分，我会先帮你梳理方案。你也可以选择直接做。", { exact: true })).toHaveCount(0);
 
     await page.keyboard.down("Control");
     await page.keyboard.press("k");
     await page.keyboard.up("Control");
+    await expect(page.getByRole("option", { name: "打开项目档案" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "设置" })).toBeVisible();
+    await expect(page.getByRole("dialog").getByText("工作方式", { exact: true })).toHaveCount(0);
     await page.getByRole("option", { name: "排查问题" }).click();
 
-    await expect(workflowPill.getByText("排查问题", { exact: true })).toBeVisible();
+    await page.getByTitle("打开项目档案").click();
+    const currentTask = page.locator("section").filter({ has: page.getByRole("heading", { name: "当前任务" }) });
+    await expect(currentTask.getByText("排查问题", { exact: true })).toBeVisible();
+    await expect(currentTask.getByText("正在定位问题")).toBeVisible();
   });
 });
 
 test.describe("Current task work style", () => {
-  test("shows stable mode copy and manual override actions", async ({ page }) => {
+  test("shows stable mode copy without inline override controls", async ({ page }) => {
     const sessionId = "task-mode-session";
     await setup(page);
     await page.addInitScript((sessionId) => {
@@ -1445,13 +2206,17 @@ test.describe("Current task work style", () => {
     await expect(currentTask.getByText("拆成步骤")).toBeVisible();
     await expect(currentTask.getByText("正在拆成可执行步骤")).toBeVisible();
     await expect(currentTask.getByText("这个需求会影响多个部分")).toBeVisible();
-    await expect(currentTask.getByRole("button", { name: "直接回答" })).toBeVisible();
-    await expect(currentTask.getByRole("button", { name: "先拆方案" })).toBeVisible();
-    await expect(currentTask.getByRole("button", { name: "排查问题" })).toBeVisible();
-    await expect(currentTask.getByRole("button", { name: "检查结果" })).toBeVisible();
+    await expect(currentTask.getByRole("button", { name: "直接回答" })).toHaveCount(0);
+    await expect(currentTask.getByRole("button", { name: "先拆方案" })).toHaveCount(0);
+    await expect(currentTask.getByRole("button", { name: "排查问题" })).toHaveCount(0);
+    await expect(currentTask.getByRole("button", { name: "检查结果" })).toHaveCount(0);
+    await expect(currentTask.getByText("开发者详情")).toHaveCount(0);
+    await expect(currentTask.getByText("workflow/planning")).toHaveCount(0);
+    await expect(currentTask.getByText("route")).toHaveCount(0);
+    await expect(currentTask.getByText("phase")).toHaveCount(0);
   });
 
-  test("top-level mode pill opens the Context panel and shows context count", async ({ page }) => {
+  test("keeps current task out of the top bar and shows it in Project Archive", async ({ page }) => {
     const sessionId = "top-level-mode-session";
     await setup(page);
     await page.addInitScript((sessionId) => {
@@ -1504,17 +2269,18 @@ test.describe("Current task work style", () => {
       },
     ], 5);
 
-    const pill = page.getByTestId("workflow-status-pill");
-    await expect(pill).toContainText("梳理想法");
-    await expect(pill).toContainText("已参考 1");
-    await pill.click();
+    await expect(page.getByTestId("workflow-status-pill")).toHaveCount(0);
+    await page.getByTitle("打开项目档案").click();
 
     const workbench = page.locator("aside").last();
     await expect(workbench.getByText("项目档案", { exact: true }).first()).toBeVisible();
+    const currentTask = workbench.locator("section").filter({ has: page.getByRole("heading", { name: "当前任务" }) });
+    await expect(currentTask.getByText("梳理想法", { exact: true })).toBeVisible();
+    await expect(currentTask.getByText("已参考 1 条档案")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "当前任务" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "本轮参考" })).toBeVisible();
-    const resources = workbench.locator("section").filter({ has: page.getByRole("heading", { name: "资料" }) });
+    const resources = await expandArchiveFiles(page);
     await expect(resources.getByText("文件名", { exact: true })).toBeVisible();
     await expect(resources.getByText("类型", { exact: true })).toBeVisible();
     await expect(resources.getByText("解析状态", { exact: true })).toBeVisible();
@@ -1576,11 +2342,10 @@ test.describe("Turn context", () => {
     await expect(activeContext.getByText("已参考 2 条档案")).toBeVisible();
     await expect(activeContext.getByText("中文优先")).toBeVisible();
     await expect(activeContext.getByText("当前任务")).toBeVisible();
-    await expect(activeContext.getByText("为什么参考").first()).toBeVisible();
-    await expect(activeContext.getByText("来源").first()).toBeVisible();
-    await expect(activeContext.getByText("本轮状态").first()).toBeVisible();
-    await expect(activeContext.getByText("这是你固定的偏好")).toBeVisible();
-    await expect(activeContext.getByText("这页项目记录与本轮请求相关")).toBeVisible();
+    await expect(activeContext.getByText("偏好", { exact: true })).toBeVisible();
+    await expect(activeContext.getByText("项目记录 · tasks.md")).toBeVisible();
+    await expect(activeContext.getByText("为什么参考")).toHaveCount(0);
+    await expect(activeContext.getByText("本轮状态")).toHaveCount(0);
   });
 
   test("does not suggest saved background when user says not to remember", async ({ page }) => {
@@ -1603,8 +2368,9 @@ test.describe("Turn context", () => {
     await page.locator("textarea").fill("不要记住这个，只是临时测试：以后默认用亮色主题。");
     await page.locator("textarea").press("Enter");
     await page.getByTitle("打开项目档案").click();
+    await expandArchiveRecords(page);
 
-    const inbox = page.locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
+    const inbox = projectArchive(page).locator("section").filter({ has: page.getByRole("heading", { name: "建议更新记录" }) });
     await expect(inbox.getByText("没有待确认的记录更新")).toBeVisible();
     await expect(inbox.getByText("以后默认用亮色主题")).not.toBeVisible();
   });

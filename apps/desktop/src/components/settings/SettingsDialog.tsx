@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Settings, Key, Eye, EyeOff, Check, AlertCircle, Trash2 } from "lucide-react";
 import { getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
 import { useStore } from "@/store";
-import { PROVIDERS } from "@/lib/providers";
+import { formatContextWindow, PROVIDERS } from "@/lib/providers";
 
 export function SettingsDialog() {
   const [open, setOpen] = useState(false);
@@ -106,104 +106,132 @@ export function SettingsDialog() {
         <Settings className="size-4" />
         <span className="sr-only">设置</span>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Key className="size-4" />
-            模型密钥
+            <Settings className="size-4" />
+            设置
           </DialogTitle>
           <DialogDescription>
-            管理 Anthropic、DeepSeek、OpenAI 和 OpenRouter 的 API Key。
-            密钥保存在 <code className="mx-1 bg-muted px-1 py-0.5 rounded text-xs">~/.forge/config.json</code>。
+            管理模型服务和本机对话。密钥只保存在这台电脑。
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          {sortedKeys.map((k) => {
-            const provider = PROVIDERS.find((item) => item.id === k.provider);
-            return (
-            <div key={k.provider} className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                {provider?.label ?? k.provider}
-              </label>
-              {editing === k.provider ? (
-                <div className="space-y-2">
-                  <div className="relative">
-                    <Input
-                      type={visible ? "text" : "password"}
-                      value={value}
-                      onChange={(e) => setValue(e.target.value)}
-                      placeholder={provider?.keyPlaceholder ?? "sk-..."}
-                      className="h-8 text-xs pr-16"
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => setVisible(!visible)}
-                      className="absolute right-8 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                    </button>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <Button size="xs" onClick={handleSave} disabled={saving}>
-                      <Check className="size-3" />
-                      保存
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => {
-                        setEditing(null);
-                        setValue("");
-                        setError(null);
-                      }}
-                    >
-                      取消
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  {k.set ? (
-                    <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-1 rounded flex-1">
-                      {k.preview}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground italic flex-1">
-                      未配置
-                    </span>
-                  )}
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() => {
-                      setEditing(k.provider);
-                      setValue("");
-                      setError(null);
-                    }}
-                  >
-                    {k.set ? "编辑" : "设置"}
-                  </Button>
-                  {k.set && (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => handleRemove(k.provider)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      清除
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-            );
-          })}
-        </div>
+        <section className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Key className="size-3.5 text-muted-foreground" />
+            <h3 className="text-sm font-medium text-foreground">模型服务</h3>
+          </div>
+          <div className="forge-surface overflow-hidden">
+            {sortedKeys.map((k) => {
+              const provider = PROVIDERS.find((item) => item.id === k.provider);
+              const providerLabel = provider?.label ?? k.provider;
+              const defaultModel = provider?.models.find((model) => model.id === provider.defaultModel);
+              const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);
 
-        <div className="pt-3 border-t border-border/40">
-          <p className="text-xs text-muted-foreground mb-2">
-            清除本机保存的任务记录（IndexedDB）。
+              return (
+                <div key={k.provider} className="border-t border-border px-3 py-3 first:border-t-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium text-foreground">{providerLabel}</div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground">
+                        {k.set ? "已连接" : "需要添加密钥"}
+                      </div>
+                      {defaultModel && (
+                        <>
+                          <div className="mt-1 truncate text-[11px] text-muted-foreground/80">
+                            {defaultModel.name}
+                          </div>
+                          <div className="mt-0.5 text-[10px] text-muted-foreground/60">
+                            {["默认模型", defaultContext && `上下文 ${defaultContext}`].filter(Boolean).join(" · ")}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    <span
+                      className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                      title={k.set ? k.preview : undefined}
+                    >
+                      {k.set ? "已配置" : "未配置"}
+                    </span>
+                  </div>
+
+                  {editing === k.provider ? (
+                    <div className="mt-2 space-y-2">
+                      <div className="relative">
+                        <Input
+                          type={visible ? "text" : "password"}
+                          value={value}
+                          onChange={(e) => setValue(e.target.value)}
+                          placeholder={provider?.keyPlaceholder ?? "sk-..."}
+                          className="h-8 pr-9 text-xs"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setVisible(!visible)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          title={visible ? "隐藏密钥" : "显示密钥"}
+                        >
+                          {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                        </button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        <Button size="xs" onClick={handleSave} disabled={saving}>
+                          <Check className="size-3" />
+                          保存
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => {
+                            setEditing(null);
+                            setValue("");
+                            setError(null);
+                          }}
+                        >
+                          取消
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          setEditing(k.provider);
+                          setValue("");
+                          setError(null);
+                        }}
+                      >
+                        {k.set ? "更新" : "添加"}
+                      </Button>
+                      {k.set && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => handleRemove(k.provider)}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          移除
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="space-y-2 border-t border-border/40 pt-3">
+          <div className="flex items-center gap-2">
+            <Trash2 className="size-3.5 text-muted-foreground" />
+            <h3 className="text-sm font-medium text-foreground">本机数据</h3>
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            清除这台电脑保存的对话列表，不会删除项目文件。
           </p>
           <Button
             size="sm"
@@ -213,9 +241,9 @@ export function SettingsDialog() {
             className="w-full"
           >
             <Trash2 className="size-3.5" />
-            {cleared ? "已清除" : `清除任务记录（${sessions.size}）`}
+            {cleared ? "已清除" : `清除本机对话（${sessions.size}）`}
           </Button>
-        </div>
+        </section>
 
         {error && (
           <div className="flex items-center gap-1.5 text-xs text-destructive">

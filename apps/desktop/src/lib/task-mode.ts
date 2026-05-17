@@ -28,7 +28,7 @@ const MODE_COPY: Record<TaskModeId, TaskModeView> = {
   ready: {
     id: "ready",
     label: "准备判断",
-    title: "正在判断工作方式",
+    title: "正在判断当前任务",
     description: "描述一个小工具、修改或问题，Forge 会判断下一步。",
     tone: "neutral",
   },

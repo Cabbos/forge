@@ -1,19 +1,15 @@
-import { ArrowUpRight, ClipboardCheck, ExternalLink, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowUpRight, ClipboardCheck, ExternalLink, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { BlockState, DeliverySummary } from "@/lib/protocol";
 import { useStore } from "@/store";
+import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
 
 const FOLLOW_UP_ACTIONS = [
   {
-    label: "检查风险",
+    label: "检查这版",
     icon: ShieldCheck,
-    prompt: "请检查刚才的改动有没有风险、遗漏或需要我确认的地方，并按严重程度排序。",
-  },
-  {
-    label: "继续优化",
-    icon: Sparkles,
-    prompt: "请基于当前结果，继续找一个最影响使用体验的问题并直接优化，最后给我验收提示词。",
+    prompt: "帮我检查当前版本有没有明显问题。重点看交互、状态变化、预览可用性和下一步风险。",
   },
 ];
 
@@ -23,25 +19,18 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
   const summary = parseSummary(block.metadata.summary);
 
   const loadPrompt = (prompt: string) => {
-    const scopedPrompt = withTargetProject(prompt, summary.project_path);
-    setPendingInput(scopedPrompt);
-    setLoadedPrompt(scopedPrompt);
+    setPendingInput(prompt);
+    setLoadedPrompt(prompt);
     window.setTimeout(() => setLoadedPrompt(null), 1200);
   };
 
   return (
-    <div className="mb-4 max-w-[760px] rounded-lg border" style={{ background: "var(--card)", borderColor: "var(--border)" }}>
-      <div className="flex items-center gap-2 border-b px-3 py-2" style={{ borderColor: "var(--border)" }}>
-        <ClipboardCheck className="size-4" style={{ color: "#D4A853" }} />
-        <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground">本轮交付</div>
-          {summary.project_path && (
-            <div className="truncate font-mono text-[10px] text-muted-foreground/75">
-              {summary.project_path}
-            </div>
-          )}
-        </div>
-      </div>
+    <MessagePanel>
+      <MessagePanelHeader
+        icon={<ClipboardCheck className="size-4" style={{ color: "#D4A853" }} />}
+        title="本轮交付"
+        meta={summary.project_path ? <span className="font-mono">{summary.project_path}</span> : null}
+      />
 
       <div className="grid gap-2 px-3 py-3 text-xs sm:grid-cols-3" style={{ color: "#D0D5DD" }}>
         <SummaryItem icon={<ExternalLink className="size-3.5" style={{ color: "#5B9BD5" }} />} label="预览" value={summary.preview_label} />
@@ -49,11 +38,10 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
         <SummaryItem icon={<ClipboardCheck className="size-3.5" style={{ color: "#4A9E6B" }} />} label="下一步" value={summary.next_action} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2" style={{ borderColor: "var(--border)" }}>
+      <div className="flex items-center justify-end border-t px-3 py-2" style={{ borderColor: "var(--border)" }}>
         {FOLLOW_UP_ACTIONS.map((action) => {
           const Icon = action.icon;
-          const prompt = withTargetProject(action.prompt, summary.project_path);
-          const loaded = loadedPrompt === prompt;
+          const loaded = loadedPrompt === action.prompt;
 
           return (
             <button
@@ -73,7 +61,7 @@ export function DeliverySummaryCard({ block }: { block: BlockState }) {
           );
         })}
       </div>
-    </div>
+    </MessagePanel>
   );
 }
 
@@ -105,11 +93,6 @@ function parseSummary(value: unknown): DeliverySummary {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function withTargetProject(prompt: string, projectPath: string | null): string {
-  if (!projectPath) return prompt;
-  return `${prompt}\n\n目标项目：${projectPath}`;
 }
 
 function fallbackSummary(): DeliverySummary {

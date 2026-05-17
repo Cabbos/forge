@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { Circle, Clock3, FileSearch, Puzzle, Search, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
 
@@ -23,18 +25,18 @@ function getColor(kind: string): string {
   }
 }
 
-function getIcon(kind: string): string {
+function getIcon(kind: string): ReactNode {
   switch (kind) {
     case "skill":
-      return "☖";
+      return <Puzzle className="size-3.5" />;
     case "tool":
-      return "⎔";
+      return <FileSearch className="size-3.5" />;
     case "mcp_server":
-      return "◈";
+      return <Server className="size-3.5" />;
     case "hook":
-      return "⚙";
+      return <Clock3 className="size-3.5" />;
     default:
-      return "●";
+      return <Circle className="size-3.5" />;
   }
 }
 
@@ -61,14 +63,16 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
   }, []);
 
   return (
-    <div className={cn("flex min-h-[420px] flex-col overflow-hidden rounded-lg border border-border bg-background", className)}>
-      <div className="flex border-b border-border">
+    <div className={cn("flex min-h-[420px] flex-col overflow-hidden rounded-md border border-border bg-background", className)}>
+      <div role="tablist" aria-label="能力类型" className="flex border-b border-border">
         {(["skills", "mcp", "hooks"] as CapabilityTab[]).map((item) => (
           <button
             key={item}
+            role="tab"
+            aria-selected={tab === item}
             onClick={() => setTab(item)}
             className={cn(
-              "flex-1 border-b-2 py-3 text-center text-xs font-medium uppercase tracking-wider transition-colors",
+              "flex-1 border-b-2 py-3 text-center text-xs font-medium transition-colors",
               tab === item
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground/60 hover:text-muted-foreground",
@@ -83,10 +87,11 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
       </div>
 
       <div className="border-b border-border p-3">
-        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">⌕</span>
+        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+          <Search className="size-3.5 shrink-0 text-muted-foreground" />
           <input
             type="text"
+            aria-label={`搜索${tabLabel(tab)}`}
             placeholder={`搜索${tabLabel(tab)}...`}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -109,7 +114,7 @@ function tabLabel(tab: CapabilityTab) {
     case "skills":
       return "插件";
     case "mcp":
-      return "MCP";
+      return "连接";
     case "hooks":
       return "自动化";
   }
@@ -159,6 +164,7 @@ function SkillsContent({ search }: { search: string }) {
               </div>
               <button
                 onClick={() => handleToggle(s.id, s.enabled === false)}
+                aria-pressed={s.enabled !== false}
                 className={cn(
                   "rounded px-1.5 py-0.5 text-[10px] font-medium",
                   s.enabled !== false
@@ -221,6 +227,7 @@ function MCPContent({ search }: { search: string }) {
           <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: s.enabled !== false ? "#4A9E6B" : "#8C93A0" }} />
           <span className="flex-1 font-mono text-xs text-foreground">{s.name}</span>
           <button
+            aria-pressed={s.enabled !== false}
             className="relative h-4 w-7 flex-shrink-0 rounded-full transition-colors"
             style={{ background: s.enabled !== false ? "#D4A853" : "var(--secondary)" }}
             onClick={() => handleToggle(s.id, s.enabled === false)}
@@ -234,7 +241,7 @@ function MCPContent({ search }: { search: string }) {
       ))}
       {filtered.length === 0 && (
         <div className="rounded-md border border-border px-2.5 py-3 text-[11px] text-muted-foreground">
-          没有匹配的 MCP 服务
+          没有匹配的连接
         </div>
       )}
     </section>
@@ -277,6 +284,7 @@ function HooksContent({ search }: { search: string }) {
           </div>
           <button
             onClick={() => handleToggle(h.id, h.enabled === false)}
+            aria-pressed={h.enabled !== false}
             className={cn(
               "rounded px-1.5 py-0.5 text-[10px] font-medium",
               h.enabled !== false

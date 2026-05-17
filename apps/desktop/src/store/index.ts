@@ -51,6 +51,7 @@ interface AppStore {
   setActiveSession: (id: string | null) => void;
   setActiveWorkspace: (id: string | null) => void;
   upsertWorkspace: (workspace: Workspace) => void;
+  removeWorkspace: (id: string) => void;
   addSession: (id: string, provider: string, model: string, workingDir?: string | null) => void;
   removeSession: (id: string) => void;
   setMemories: (memories: WikiMemory[]) => void;
@@ -93,6 +94,8 @@ interface PersistedSession {
   model: string;
   workingDir?: string | null;
   workspaceId?: string | null;
+  createdAt?: number | null;
+  updatedAt?: number | null;
   contextWindowTokens?: number | null;
   status: SessionState["status"];
   workflowState?: WorkflowState | null;
@@ -120,6 +123,8 @@ function persistSessions(
       model: s.model,
       workingDir: s.workingDir ?? null,
       workspaceId: s.workspaceId ?? null,
+      createdAt: s.createdAt ?? null,
+      updatedAt: s.updatedAt ?? null,
       contextWindowTokens: s.contextWindowTokens ?? null,
       status: s.status,
       workflowState: workflowBySession.get(s.id) ?? null,
@@ -245,6 +250,7 @@ export const useStore = create<AppStore>((set, get) => ({
       if (data && data.length > 0) {
         const sessions = new Map<string, SessionState>();
         const workflowBySession = new Map<string, WorkflowState>();
+        const hydratedAt = Date.now();
         for (const s of data) {
           const blocks = await loadBlocks(s.id);
           const workingDir = normalizeWorkspacePath(s.workingDir ?? "");
@@ -256,6 +262,8 @@ export const useStore = create<AppStore>((set, get) => ({
             ...s,
             workingDir: workspaceId,
             workspaceId,
+            createdAt: s.createdAt ?? hydratedAt,
+            updatedAt: s.updatedAt ?? s.createdAt ?? hydratedAt,
             blocks,
             costUsd: 0,
             streaming: false,
@@ -354,6 +362,21 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 
+  removeWorkspace: (id) => {
+    const workspaces = new Map(get().workspaces);
+    workspaces.delete(id);
+    const nextWorkspaceId = sortWorkspaces(workspaces.values())[0]?.id ?? null;
+    const scopedSessionIds = workspaceSessionIds(get().sessions, nextWorkspaceId);
+    const activeSessionId = scopedSessionIds[scopedSessionIds.length - 1] ?? null;
+    set({ workspaces, activeWorkspaceId: nextWorkspaceId, activeSessionId });
+    persistWorkspaces(workspaces, nextWorkspaceId);
+    if (activeSessionId) {
+      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    } else {
+      idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+    }
+  },
+
   setMemories: (memories) => set({ memories }),
 
   upsertMemory: (memory) => {
@@ -406,6 +429,8 @@ export const useStore = create<AppStore>((set, get) => ({
       model,
       workingDir: workspaceId,
       workspaceId,
+      createdAt: existing?.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
       contextWindowTokens: existing?.contextWindowTokens ?? getModelContextWindow(model),
       status: "running",
       blocks: existing?.blocks ?? [],
@@ -519,7 +544,7 @@ export const useStore = create<AppStore>((set, get) => ({
       isComplete: false,
       metadata: {},
     });
-    sessions.set(sessionId, { ...session, blocks: filtered });
+    sessions.set(sessionId, { ...session, blocks: filtered, updatedAt: Date.now() });
     set({ sessions });
     persistBlocks(sessionId, filtered);
   },
@@ -906,12 +931,20 @@ export const useActiveSession = () =>
 export const useSessionList = () =>
   useStore((s) => {
     if (!s.activeWorkspaceId) {
-      return Array.from(s.sessions.values()).filter((session) => !session.workspaceId && !session.workingDir);
+      return sortSessionsByRecency(Array.from(s.sessions.values()).filter((session) => !session.workspaceId && !session.workingDir));
     }
-    return Array.from(s.sessions.values()).filter((session) =>
+    return sortSessionsByRecency(Array.from(s.sessions.values()).filter((session) =>
       session.workspaceId === s.activeWorkspaceId || session.workingDir === s.activeWorkspaceId
-    );
+    ));
   });
+
+function sortSessionsByRecency(sessions: SessionState[]) {
+  return [...sessions].sort((a, b) => sessionTime(b) - sessionTime(a));
+}
+
+function sessionTime(session: SessionState) {
+  return session.updatedAt ?? session.createdAt ?? 0;
+}
 
 export const useWorkspaceList = () =>
   useStore((s) => sortWorkspaces(s.workspaces.values()));

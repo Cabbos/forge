@@ -8,19 +8,16 @@ export function ProjectOverviewCard({ overview }: { overview: ProjectArchiveOver
 
   return (
     <section>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-medium text-muted-foreground">项目概览</h3>
-        <span className="text-[10px] text-muted-foreground/70">回来继续</span>
+      <div className="forge-section-head">
+        <h3 className="forge-section-title">项目概览</h3>
+        <span className="forge-section-meta">回来继续</span>
       </div>
 
-      <div className="rounded-md border border-border bg-card px-3 py-3">
+      <div className="forge-surface px-3 py-3">
         <div className="flex min-w-0 items-start gap-2 border-b border-border pb-2.5">
           <FolderOpen className="mt-0.5 size-3.5 shrink-0 text-primary" />
-          <div className="min-w-0">
+          <div className="min-w-0" title={overview.projectPath}>
             <div className="truncate text-xs font-medium text-foreground">{overview.projectName}</div>
-            <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70">
-              {overview.projectPath}
-            </div>
           </div>
         </div>
 
@@ -36,7 +33,7 @@ export function ProjectOverviewCard({ overview }: { overview: ProjectArchiveOver
               key={action.id}
               type="button"
               onClick={() => setPendingInput(action.prompt)}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-2 text-[11px] text-foreground transition-colors hover:bg-secondary"
+              className="forge-action"
             >
               {action.id === "continue_polish" ? <Sparkles className="size-3" /> : <ArrowUpRight className="size-3" />}
               {action.label}

@@ -23,7 +23,7 @@ export function useSession() {
             event_type: "error",
             session_id: result.session_id,
             block_id: crypto.randomUUID(),
-            message: `还没有配置 ${providerLabel} API Key。请打开设置，粘贴密钥后就可以开始发送。`,
+            message: `还没有配置 ${providerLabel} 模型密钥。请打开设置，粘贴密钥后就可以开始发送。`,
             code: "missing_api_key",
           });
         }
@@ -47,7 +47,7 @@ export function useSession() {
             event_type: "error",
             session_id: result.session_id,
             block_id: crypto.randomUUID(),
-            message: `还没有配置 ${providerLabel} API Key。请打开设置，粘贴密钥后就可以开始发送。`,
+            message: `还没有配置 ${providerLabel} 模型密钥。请打开设置，粘贴密钥后就可以开始发送。`,
             code: "missing_api_key",
           });
         }

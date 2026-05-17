@@ -6,12 +6,12 @@ import { FIRST_LOOP_STANDARD } from "@/lib/first-loop";
 export function FirstLoopCard({ draft }: { draft: FirstLoopDraft | null }) {
   return (
     <section>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-medium text-muted-foreground">第一版</h3>
-        <span className="text-[10px] text-muted-foreground/70">小工具闭环</span>
+      <div className="forge-section-head">
+        <h3 className="forge-section-title">第一版</h3>
+        <span className="forge-section-meta">小工具闭环</span>
       </div>
 
-      <div className="rounded-md border border-border bg-card px-3 py-3">
+      <div className="forge-surface px-3 py-3">
         {!draft ? (
           <div className="space-y-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-2 text-foreground/85">

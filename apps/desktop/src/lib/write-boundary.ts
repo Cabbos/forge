@@ -82,7 +82,7 @@ export function recoveryLabel(recovery: unknown, checkpointStatus: unknown): str
   if (status === "pending") return "正在准备恢复点";
   if (status === "unavailable" || status === "missing") return "暂无恢复点";
 
-  return stringValue(recovery) ?? "继续前会保留可检查的项目状态";
+  return stringValue(recovery) ?? "继续前会保留可检查的交付状态";
 }
 
 export function parseWriteBoundary(value: unknown): WriteBoundaryViewModel | null {

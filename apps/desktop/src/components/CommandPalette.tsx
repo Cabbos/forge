@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   Command,
   CommandDialog,
@@ -9,12 +9,12 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { Bug, CheckCircle2, Compass, MessageSquarePlus, Moon, Sun, Zap } from "lucide-react";
+import { Bug, CheckCircle2, Compass, FolderOpen, MessageSquarePlus, Moon, PanelRightOpen, Settings, Sun, Zap } from "lucide-react";
 import { useActiveWorkspace, useSessionList, useStore } from "@/store";
 import { useSession } from "@/hooks/useSession";
 import { overrideWorkflowRoute } from "@/lib/tauri";
 import type { WorkflowOverrideAction } from "@/lib/protocol";
-import { getSessionMeta, getSessionStatus, getSessionTitle } from "@/lib/session-display";
+import { getSessionTitle } from "@/lib/session-display";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -32,6 +32,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setWorkflowState = useStore((s) => s.setWorkflowState);
   const { create } = useSession();
+  const [notice, setNotice] = useState("");
 
   // Keyboard shortcut
   useEffect(() => {
@@ -45,17 +46,32 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     return () => document.removeEventListener("keydown", down);
   }, [onOpenChange]);
 
+  useEffect(() => {
+    if (!open) setNotice("");
+  }, [open]);
+
   const handleCreate = async () => {
-    onOpenChange(false);
     if (!activeWorkspace) {
-      alert("请先选择一个项目工作空间。");
+      setNotice("先选择一个具体项目，再开始新对话。");
       return;
     }
     try {
       await create(activeWorkspace.path, selectedProvider, selectedModel);
+      onOpenChange(false);
     } catch (e) {
       console.error("Failed to create session:", e);
+      setNotice(createSessionNotice(e));
     }
+  };
+
+  const handleOpenProjectArchive = () => {
+    onOpenChange(false);
+    window.dispatchEvent(new Event("open-hub"));
+  };
+
+  const handleOpenSettings = () => {
+    onOpenChange(false);
+    window.dispatchEvent(new Event("forge:open-settings"));
   };
 
   const handleWorkflowOverride = async (action: WorkflowOverrideAction) => {
@@ -74,21 +90,44 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <Command>
-        <CommandInput placeholder="搜索任务、命令或设置..." />
+        <CommandInput placeholder="搜索或输入命令..." />
         <CommandList>
           <CommandEmpty>没有匹配结果</CommandEmpty>
 
-          <CommandGroup heading="操作">
-            <CommandItem onSelect={handleCreate}>
+          {activeWorkspace && (
+            <div className="mx-2 mb-1 flex items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <FolderOpen className="size-3.5 shrink-0" />
+              <span className="min-w-0 truncate">当前项目 · {activeWorkspace.name}</span>
+            </div>
+          )}
+
+          {notice && (
+            <div role="status" className="mx-2 mb-1 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+              {notice}
+            </div>
+          )}
+
+          <CommandGroup heading="常用">
+            <CommandItem onSelect={handleCreate} disabled={!activeWorkspace}>
               <MessageSquarePlus className="size-4" />
-              新建任务
+              <span className="min-w-0 flex-1 truncate">{activeWorkspace ? "新建对话" : "先选择项目"}</span>
+              {activeWorkspace && <ShortcutHint keys="⌘N" />}
+            </CommandItem>
+            <CommandItem onSelect={handleOpenProjectArchive}>
+              <PanelRightOpen className="size-4" />
+              打开项目档案
+            </CommandItem>
+            <CommandItem onSelect={handleOpenSettings}>
+              <Settings className="size-4" />
+              <span className="min-w-0 flex-1 truncate">设置</span>
+              <ShortcutHint keys="⌘," />
             </CommandItem>
           </CommandGroup>
 
           {activeSessionId && (
             <>
               <CommandSeparator />
-              <CommandGroup heading="工作方式">
+              <CommandGroup heading="当前任务">
                 <CommandItem onSelect={() => handleWorkflowOverride("plan_first")}>
                   <Compass className="size-4" />
                   先梳理方案
@@ -112,29 +151,24 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           {sessionList.length > 0 && (
             <>
               <CommandSeparator />
-              <CommandGroup heading="切换任务">
-                {sessionList.map((s) => {
-                  const status = getSessionStatus(s);
-                  return (
-                    <CommandItem
-                      key={s.id}
-                      onSelect={() => {
-                        setActiveSession(s.id);
-                        onOpenChange(false);
-                      }}
-                    >
-                      <span className="size-2 flex-shrink-0 rounded-full" style={{ background: status.color }} />
-                      <span className="min-w-0 flex-1 truncate">{getSessionTitle(s)}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{getSessionMeta(s)}</span>
-                    </CommandItem>
-                  );
-                })}
+              <CommandGroup heading="最近对话">
+                {sessionList.map((s) => (
+                  <CommandItem
+                    key={s.id}
+                    onSelect={() => {
+                      setActiveSession(s.id);
+                      onOpenChange(false);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{getSessionTitle(s)}</span>
+                  </CommandItem>
+                ))}
               </CommandGroup>
             </>
           )}
 
           <CommandSeparator />
-          <CommandGroup heading="偏好设置">
+          <CommandGroup heading="外观">
             <CommandItem
               onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
@@ -150,4 +184,20 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       </Command>
     </CommandDialog>
   );
+}
+
+function ShortcutHint({ keys }: { keys: string }) {
+  return (
+    <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+      {keys}
+    </span>
+  );
+}
+
+function createSessionNotice(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/api key|密钥/i.test(message)) {
+    return "模型服务还没有可用密钥。选择下方「设置」添加后再试。";
+  }
+  return "新对话没有创建成功。请检查设置后重试。";
 }

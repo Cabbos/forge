@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { X } from "lucide-react";
 import { CapabilityManager, type CapabilityTab } from "@/components/settings/CapabilityManager";
 
@@ -9,16 +10,28 @@ interface CapabilityDrawerProps {
 }
 
 export function CapabilityDrawer({ open, initialTab, title, onClose }: CapabilityDrawerProps) {
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
   if (!open) return null;
 
   return (
     <>
       <div
-        className="fixed inset-y-0 left-[240px] right-0 z-40 bg-black/20"
+        className="fixed inset-y-0 left-[220px] right-0 z-40 bg-black/20"
         onClick={onClose}
       />
       <aside
-        className="fixed left-[240px] top-0 z-50 flex h-full w-[360px] flex-col overflow-hidden animate-[slide-in-left_0.22s_ease-out]"
+        aria-label={title}
+        className="fixed left-[220px] top-0 z-50 flex h-full w-[340px] flex-col overflow-hidden animate-[slide-in-left_0.22s_ease-out]"
         style={{
           background: "rgba(18,19,24,0.94)",
           backdropFilter: "blur(20px)",
@@ -26,9 +39,11 @@ export function CapabilityDrawer({ open, initialTab, title, onClose }: Capabilit
           borderRight: "1px solid rgba(255,255,255,0.12)",
         }}
       >
-        <div className="flex h-12 flex-shrink-0 items-center justify-between px-4">
+        <div className="flex h-12 flex-shrink-0 items-center justify-between px-3">
           <span className="text-xs font-semibold text-foreground">{title}</span>
           <button
+            type="button"
+            aria-label={`关闭${title}`}
             onClick={onClose}
             className="text-muted-foreground transition-colors hover:text-foreground"
             title="关闭"
