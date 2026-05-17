@@ -239,7 +239,7 @@ impl Harness {
             hooks::HookDecision::Block(reason) => {
                 let result = format!("Tool execution blocked by hook: {reason}");
                 emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
-                return result;
+                result
             }
             hooks::HookDecision::Proceed(input) => {
                 // 2. Permission check — ask user if not pre-approved

@@ -58,6 +58,12 @@ export function StartReadinessCard({ sessionId }: StartReadinessCardProps) {
   }), [activeWorkspace, checkpoint, keys, runtime, selectedProvider]);
 
   const primaryAction = readiness.rows.find((row) => row.action && row.actionLabel);
+  const workspaceRow = readiness.rows.find((row) => row.label === "当前项目");
+  const keyRow = readiness.rows.find((row) => row.label === "模型密钥");
+  const secondaryStatus = [
+    workspaceRow?.tone === "ready" ? workspaceRow.value.replace("当前项目：", "") : null,
+    keyRow?.tone === "blocked" ? keyRow.value : null,
+  ].filter(Boolean).join(" · ");
 
   const runAction = async (action: ReadinessAction) => {
     if (!action || busyAction) return;
@@ -85,7 +91,7 @@ export function StartReadinessCard({ sessionId }: StartReadinessCardProps) {
           <div className="min-w-0">
             <div className="text-sm font-medium text-foreground">{readiness.title}</div>
             <div className="truncate text-xs text-muted-foreground">
-              {primaryAction ? primaryAction.value : "描述你想做什么，Forge 会在当前项目里继续。"}
+              {secondaryStatus || (primaryAction ? primaryAction.value : "描述你想做什么，Forge 会在当前项目里继续。")}
             </div>
           </div>
         </div>

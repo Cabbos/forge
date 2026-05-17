@@ -82,7 +82,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
     }
     const workspace = workspaceFromPath(path);
     if (!workspace) {
-      setWorkspacePathError("这个路径暂时不能作为工作空间。");
+      setWorkspacePathError("这个路径暂时不能作为项目文件夹。");
       return false;
     }
     upsertWorkspace(workspace);
@@ -148,7 +148,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
           <div
             id="workspace-menu"
             role="menu"
-            aria-label="项目工作空间"
+            aria-label="项目文件夹"
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
@@ -423,6 +423,12 @@ function createSessionNotice(error: unknown): SidebarNotice {
       message: "模型服务还没有可用密钥。添加密钥后就可以开始新对话。",
       action: "settings",
     };
+  }
+  if (message.includes("请选择具体项目文件夹")) {
+    return { message: "请选择具体项目文件夹，不要直接使用用户主目录。" };
+  }
+  if (message.includes("无法打开项目文件夹") || message.includes("不是项目文件夹")) {
+    return { message: "这个项目文件夹打不开。请重新选择一个具体项目文件夹。" };
   }
   return { message: "新对话没有创建成功。请检查设置后重试。" };
 }

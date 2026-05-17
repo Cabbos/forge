@@ -25,11 +25,13 @@ export function deriveProjectArchiveOverview(input: {
   session: SessionState | null;
   blocks: BlockState[];
   firstLoopDraft: FirstLoopDraft | null;
+  deliverySummary?: DeliverySummary | null;
 }): ProjectArchiveOverview {
   const projectPath = normalizeProjectPath(input.session?.workingDir || input.workspace?.path || "");
   const projectName = input.workspace?.name || nameFromPath(projectPath) || "当前项目";
   const latestUserMessage = latestBlock(input.blocks, "user_message")?.content.trim() ?? "";
-  const latestDelivery = parseDeliverySummary(latestBlock(input.blocks, "delivery_summary")?.metadata.summary);
+  const latestDelivery = input.deliverySummary
+    ?? parseDeliverySummary(latestBlock(input.blocks, "delivery_summary")?.metadata.summary);
   const derivedDraft = input.firstLoopDraft ?? (
     latestUserMessage ? deriveFirstLoopDraft(input.session?.id ?? "project", latestUserMessage) : null
   );
@@ -82,11 +84,21 @@ function parseDeliverySummary(value: unknown): DeliverySummary | null {
     preview_label: preview,
     checkpoint_label: checkpoint,
     next_action: stringValue(record.next_action) ?? "下一步：继续检查交付状态。",
+    verification_label: stringValue(record.verification_label),
+    verification_status: stringValue(record.verification_status),
+    verification_command: stringValue(record.verification_command),
+    record_label: stringValue(record.record_label),
+    record_status: stringValue(record.record_status),
+    record_target_pages: stringList(record.record_target_pages),
   };
 }
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }
 
 function normalizeProjectPath(path: string): string {

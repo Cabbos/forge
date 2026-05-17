@@ -5,7 +5,7 @@ use std::path::PathBuf;
 const KNOWN_PROVIDERS: &[&str] = &["deepseek", "anthropic", "openai", "openrouter"];
 
 /// Persisted user settings stored in ~/.forge/config.json
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub api_keys: HashMap<String, String>,
@@ -20,7 +20,7 @@ pub struct Credentials {
 }
 
 /// Raw Claude Code settings.json structure (only the fields we care about)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ClaudeSettings {
     #[serde(default)]
     api_key: Option<String>,
@@ -134,19 +134,6 @@ fn read_claude_settings() -> ClaudeSettings {
     }
 }
 
-impl Default for ClaudeSettings {
-    fn default() -> Self {
-        Self {
-            api_key: None,
-            api_base: None,
-            api_key_camel: None,
-            api_base_camel: None,
-            model: None,
-            env: None,
-        }
-    }
-}
-
 impl Settings {
     fn path() -> PathBuf {
         home_dir().join(".forge").join("config.json")
@@ -208,14 +195,6 @@ impl Settings {
         }
         status.sort_by(|a, b| a.provider.cmp(&b.provider));
         status
-    }
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            api_keys: HashMap::new(),
-        }
     }
 }
 

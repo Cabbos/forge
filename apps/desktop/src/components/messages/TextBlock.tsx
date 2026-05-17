@@ -1,24 +1,21 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { BlockState } from "@/lib/protocol";
 import { CodeBlock } from "@/components/messages/CodeBlock";
 import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
+import { MessageCopyAction } from "@/components/messages/MessageCopyAction";
 import { Loader2 } from "lucide-react";
 
 const STREAM_THROTTLE_MS = 96;
 const FILE_REF_PREFIX = "#file-ref=";
+const LONG_REPLY_SECTION_INDEX_MIN_CHARS = 320;
+const LONG_REPLY_SECTION_INDEX_MIN_HEADINGS = 3;
 
 // Match file:line patterns like src/foo.rs:42 or path/to/file.ts:123
 const FILE_REF_RE = /(^|[^\w/.-])((?:\.{1,2}\/|\/)?[\w@./-]+\.[A-Za-z0-9]{1,8}):(\d+)(?::(\d+))?/g;
 const INLINE_FILE_REF_RE = /^((?:\.{1,2}\/|\/)?[\w@./-]+\.[A-Za-z0-9]{1,8}):(\d+)(?::\d+)?$/;
-
-const fileRefStyle = {
-  color: "#5B9BD5",
-  textDecoration: "underline",
-  cursor: "pointer",
-} as const;
 
 function linkifyFileRefs(text: string): string {
   return text.replace(FILE_REF_RE, (_, prefix, path, line, column) => {
@@ -46,6 +43,57 @@ function preprocessFileRefs(text: string): string {
         .join("");
     })
     .join("\n");
+}
+
+function stabilizeStreamingMarkdown(content: string): string {
+  const lines = content.split("\n");
+  let openFence: "```" | "~~~" | null = null;
+
+  for (const line of lines) {
+    const match = line.match(/^\s*(```|~~~)/);
+    if (!match) continue;
+    const marker = match[1] as "```" | "~~~";
+    openFence = openFence === marker ? null : marker;
+  }
+
+  if (!openFence) return content;
+  return `${content}\n${openFence}`;
+}
+
+interface MarkdownHeading {
+  id: string;
+  level: 2 | 3;
+  title: string;
+}
+
+function extractMarkdownHeadings(content: string): MarkdownHeading[] {
+  const headings: MarkdownHeading[] = [];
+  const seen = new Map<string, number>();
+
+  content.split("\n").forEach((line) => {
+    const match = line.match(/^(#{2,3})\s+(.+?)\s*#*\s*$/);
+    if (!match) return;
+    const title = match[2].replace(/\[[^\]]+\]\([^)]+\)/g, "").replace(/[`*_~]/g, "").trim();
+    if (!title) return;
+    const base = stableHeadingId(title);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    headings.push({
+      id: count ? `${base}-${count + 1}` : base,
+      level: match[1].length as 2 | 3,
+      title,
+    });
+  });
+
+  return headings;
+}
+
+function stableHeadingId(title: string) {
+  let hash = 0;
+  for (let i = 0; i < title.length; i += 1) {
+    hash = (Math.imul(31, hash) + title.charCodeAt(i)) | 0;
+  }
+  return `forge-section-${Math.abs(hash).toString(36)}`;
 }
 
 function parseFileRef(href: string): { path: string; line?: number } | null {
@@ -89,57 +137,28 @@ function FileRefLink({
   return (
     <a
       href={href}
+      className="forge-file-ref"
       onClick={(e) => {
         e.preventDefault();
         onOpen({ path, line });
       }}
-      style={fileRefStyle}
     >
       {children}
     </a>
   );
 }
 
-function TextWithFileRefs({ content, onOpenFileRef }: { content: string; onOpenFileRef: (fileRef: FileRef) => void }) {
-  const parts: ReactNode[] = [];
-  const regex = new RegExp(FILE_REF_RE);
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
-
-  while ((match = regex.exec(content)) !== null) {
-    const [fullMatch, prefix, path, line, column] = match;
-    const prefixStart = match.index;
-    const linkStart = prefixStart + prefix.length;
-    const fullEnd = prefixStart + fullMatch.length;
-
-    if (linkStart > lastIndex) {
-      parts.push(content.slice(lastIndex, linkStart));
-    }
-
-    const lineNumber = Number.parseInt(line, 10);
-    parts.push(
-      <FileRefLink
-        key={key++}
-        path={path}
-        line={Number.isFinite(lineNumber) ? lineNumber : undefined}
-        onOpen={onOpenFileRef}
-      >
-        {`${path}:${line}${column ? `:${column}` : ""}`}
-      </FileRefLink>
-    );
-
-    lastIndex = fullEnd;
-  }
-
-  if (lastIndex < content.length) {
-    parts.push(content.slice(lastIndex));
-  }
-
-  return <>{parts}</>;
-}
-
-function MarkdownRenderer({ content, onOpenFileRef }: { content: string; onOpenFileRef: (fileRef: FileRef) => void }) {
+export function MarkdownRenderer({
+  content,
+  onOpenFileRef,
+  streaming = false,
+  showSectionIndex = false,
+}: {
+  content: string;
+  onOpenFileRef: (fileRef: FileRef) => void;
+  streaming?: boolean;
+  showSectionIndex?: boolean;
+}) {
   const handleFileClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     const link = target.closest("a");
@@ -152,19 +171,48 @@ function MarkdownRenderer({ content, onOpenFileRef }: { content: string; onOpenF
     }
   }, [onOpenFileRef]);
 
-  const processed = preprocessFileRefs(content);
+  const stableContent = streaming ? stabilizeStreamingMarkdown(content) : content;
+  const processed = preprocessFileRefs(stableContent);
+  const headings = useMemo(() => extractMarkdownHeadings(stableContent), [stableContent]);
+  const shouldShowSectionIndex = showSectionIndex &&
+    !streaming &&
+    stableContent.length >= LONG_REPLY_SECTION_INDEX_MIN_CHARS &&
+    headings.length >= LONG_REPLY_SECTION_INDEX_MIN_HEADINGS;
+  let headingRenderIndex = 0;
 
   return (
     <div onClick={handleFileClick}>
+      {shouldShowSectionIndex && (
+        <nav data-testid="answer-section-index" className="forge-answer-section-index" aria-label="回复结构">
+          <span>回复结构</span>
+          <div>
+            {headings.slice(0, 4).map((heading) => (
+              <a key={heading.id} href={`#${heading.id}`}>
+                {heading.title}
+              </a>
+            ))}
+          </div>
+        </nav>
+      )}
       <ReactMarkdown remarkPlugins={[remarkGfm]}
         components={{
+          h2({ children }) {
+            const heading = headings[headingRenderIndex];
+            headingRenderIndex += 1;
+            return <h2 id={heading?.id}>{children}</h2>;
+          },
+          h3({ children }) {
+            const heading = headings[headingRenderIndex];
+            headingRenderIndex += 1;
+            return <h3 id={heading?.id}>{children}</h3>;
+          },
           code({ className, children }) {
             const match = /language-(\w+)/.exec(className || "");
             if (!className) {
               const inlineFileRef = parseInlineFileRef(String(children));
               if (inlineFileRef) {
                 return (
-                  <code style={{ color: "#5B9BD5" }}>
+                  <code className="forge-inline-code forge-inline-code-file">
                     <FileRefLink path={inlineFileRef.path} line={inlineFileRef.line} onOpen={onOpenFileRef}>
                       {inlineFileRef.label}
                     </FileRefLink>
@@ -172,7 +220,7 @@ function MarkdownRenderer({ content, onOpenFileRef }: { content: string; onOpenF
                 );
               }
 
-              return <code style={{ color: "#D4A853" }}>{children}</code>;
+              return <code className="forge-inline-code">{children}</code>;
             }
             return <CodeBlock code={String(children).replace(/\n$/, "")} lang={match?.[1] || ""} />;
           },
@@ -186,7 +234,7 @@ function MarkdownRenderer({ content, onOpenFileRef }: { content: string; onOpenF
                 </FileRefLink>
               );
             }
-            return <a href={href} target="_blank" rel="noreferrer" style={{ color: "#D4A853" }}>{children}</a>;
+            return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
           },
         }}>
         {processed}
@@ -237,16 +285,16 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       {hasContent ? (
         <div
           data-testid="assistant-message"
-          className="forge-assistant-message break-words"
+          className="forge-message-with-actions forge-assistant-message break-words"
         >
+          <MessageCopyAction text={block.content} label="回复" />
           <div className="markdown-content">
-            {block.isComplete ? (
-              <MarkdownRenderer content={renderedContent} onOpenFileRef={setPreviewFileRef} />
-            ) : (
-              <div className="whitespace-pre-wrap break-words" style={{ overflowWrap: "anywhere" }}>
-                <TextWithFileRefs content={renderedContent} onOpenFileRef={setPreviewFileRef} />
-              </div>
-            )}
+            <MarkdownRenderer
+              content={renderedContent}
+              onOpenFileRef={setPreviewFileRef}
+              streaming={!block.isComplete}
+              showSectionIndex
+            />
           </div>
         </div>
       ) : (

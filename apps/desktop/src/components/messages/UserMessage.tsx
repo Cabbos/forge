@@ -1,14 +1,24 @@
+import { useState } from "react";
 import type { BlockState } from "@/lib/protocol";
+import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
+import { MessageCopyAction } from "@/components/messages/MessageCopyAction";
+import { MarkdownRenderer } from "@/components/messages/TextBlock";
 
 export function UserMessage({ block }: { block: BlockState }) {
+  const [previewFileRef, setPreviewFileRef] = useState<FileRef | null>(null);
+
   return (
     <div className="flex justify-end">
       <div
         data-testid="user-message"
-        className="forge-user-message"
+        className="forge-message-with-actions forge-user-message"
       >
-        {block.content}
+        <MessageCopyAction text={block.content} label="提问" />
+        <div className="markdown-content">
+          <MarkdownRenderer content={block.content} onOpenFileRef={setPreviewFileRef} />
+        </div>
       </div>
+      <FilePreviewSheet fileRef={previewFileRef} onClose={() => setPreviewFileRef(null)} />
     </div>
   );
 }

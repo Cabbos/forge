@@ -23,7 +23,11 @@ fn ensure_dir() {
 pub fn log(level: &str, message: &str) {
     let _guard = LOG_MUTEX.lock().unwrap();
     ensure_dir();
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())

@@ -35,7 +35,9 @@ pub struct FileExecutor {
 }
 
 impl FileExecutor {
-    pub fn working_dir(&self) -> &PathBuf { &self.working_dir }
+    pub fn working_dir(&self) -> &PathBuf {
+        &self.working_dir
+    }
 }
 
 impl FileExecutor {
@@ -81,8 +83,7 @@ impl FileExecutor {
             String::new()
         };
 
-        std::fs::write(&resolved, content)
-            .map_err(|e| format!("Write error: {}", e))?;
+        std::fs::write(&resolved, content).map_err(|e| format!("Write error: {}", e))?;
 
         Ok(FileWriteResult {
             path: resolved.to_string_lossy().to_string(),
@@ -95,8 +96,8 @@ impl FileExecutor {
     /// Only searches files with common text extensions to avoid binary files.
     pub fn search_files(&self, pattern: &str) -> Result<Vec<SearchMatch>, String> {
         let mut results = Vec::new();
-        let regex = regex::Regex::new(pattern)
-            .map_err(|e| format!("Invalid regex pattern: {}", e))?;
+        let regex =
+            regex::Regex::new(pattern).map_err(|e| format!("Invalid regex pattern: {}", e))?;
 
         self.walk_files(&self.working_dir.clone(), &regex, &mut results)?;
         Ok(results)
@@ -150,7 +151,11 @@ impl FileExecutor {
 
     /// List files and directories at the given path.
     pub fn list_directory(&self, path: &str) -> Result<String, String> {
-        let dir = if path.is_empty() { self.working_dir.clone() } else { self.resolve(path)? };
+        let dir = if path.is_empty() {
+            self.working_dir.clone()
+        } else {
+            self.resolve(path)?
+        };
         let mut entries: Vec<String> = Vec::new();
         let mut truncated = false;
         let iter = std::fs::read_dir(&dir).map_err(|e| format!("Cannot read directory: {}", e))?;
@@ -160,12 +165,18 @@ impl FileExecutor {
                 break;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            let ft = entry.file_type().map(|t| if t.is_dir() { "/" } else { "" }).unwrap_or("");
+            let ft = entry
+                .file_type()
+                .map(|t| if t.is_dir() { "/" } else { "" })
+                .unwrap_or("");
             entries.push(format!("{}{}", name, ft));
         }
         entries.sort();
         if truncated {
-            entries.push(format!("... truncated to first {} entries", MAX_LIST_ENTRIES));
+            entries.push(format!(
+                "... truncated to first {} entries",
+                MAX_LIST_ENTRIES
+            ));
         }
         Ok(entries.join("\n"))
     }
@@ -182,7 +193,8 @@ impl FileExecutor {
                 MAX_WRITE_FILE_BYTES
             ));
         }
-        let content = std::fs::read_to_string(&resolved).map_err(|e| format!("Read error: {}", e))?;
+        let content =
+            std::fs::read_to_string(&resolved).map_err(|e| format!("Read error: {}", e))?;
         if !content.contains(old_str) {
             return Err("old_string not found in file".to_string());
         }
@@ -193,10 +205,15 @@ impl FileExecutor {
 
     fn resolve(&self, path: &str) -> Result<PathBuf, String> {
         let p = std::path::Path::new(path);
-        let resolved = if p.is_absolute() { p.to_path_buf() } else { self.working_dir.join(p) };
+        let resolved = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.working_dir.join(p)
+        };
         // Canonicalize existing path; for new files, canonicalize parent + append filename
         let canonical = resolved.canonicalize().or_else(|_| {
-            resolved.parent()
+            resolved
+                .parent()
                 .and_then(|parent| {
                     let parent_canon = parent.canonicalize().ok()?;
                     let filename = resolved.file_name()?;
@@ -204,9 +221,12 @@ impl FileExecutor {
                 })
                 .ok_or_else(|| format!("Path error: cannot resolve {}", resolved.display()))
         })?;
-        let work_canon = self.working_dir.canonicalize().unwrap_or_else(|_| self.working_dir.clone());
+        let work_canon = self
+            .working_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.working_dir.clone());
         if !canonical.starts_with(&work_canon) {
-            return Err(format!("Access denied: outside working directory"));
+            return Err("Access denied: outside working directory".to_string());
         }
         Ok(canonical)
     }

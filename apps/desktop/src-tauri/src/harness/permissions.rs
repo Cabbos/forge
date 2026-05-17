@@ -32,11 +32,17 @@ impl PermissionGate {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
             allowed_patterns: RwLock::new(vec![
-                "read_file".into(), "read".into(),
-                "list_directory".into(), "ls".into(), "list".into(),
-                "search_files".into(), "glob".into(),
-                "search_content".into(), "grep".into(),
-                "web_search".into(), "web_fetch".into(),
+                "read_file".into(),
+                "read".into(),
+                "list_directory".into(),
+                "ls".into(),
+                "list".into(),
+                "search_files".into(),
+                "glob".into(),
+                "search_content".into(),
+                "grep".into(),
+                "web_search".into(),
+                "web_fetch".into(),
                 "git_diff".into(),
             ]),
             session_cache: RwLock::new(HashMap::new()),
@@ -98,7 +104,12 @@ impl PermissionGate {
     }
 
     /// Check if a tool is allowed without prompting.
-    pub async fn is_allowed(&self, session_id: &str, tool: &str, _input: &serde_json::Value) -> bool {
+    pub async fn is_allowed(
+        &self,
+        session_id: &str,
+        tool: &str,
+        _input: &serde_json::Value,
+    ) -> bool {
         let tool = canonical_tool(tool);
 
         // 0. Check persistent database first
@@ -131,14 +142,18 @@ impl PermissionGate {
     /// Cache a user's approval for the current session.
     pub async fn approve_in_session(&self, session_id: &str, tool: &str) {
         let mut cache = self.session_cache.write().await;
-        cache.entry(session_id.to_string())
+        cache
+            .entry(session_id.to_string())
             .or_default()
             .insert(canonical_tool(tool).to_string(), true);
     }
 
     /// Add a global allowed pattern (persisted to config).
     pub async fn allow_pattern(&self, pattern: &str) {
-        self.allowed_patterns.write().await.push(pattern.to_string());
+        self.allowed_patterns
+            .write()
+            .await
+            .push(pattern.to_string());
     }
 
     /// Permanently approve a tool: add to in-memory allowed patterns and persist to database.
@@ -210,7 +225,10 @@ fn ensure_path_in_workspace(working_dir: &std::path::Path, path: &str) -> Result
 }
 
 fn format_file_question(tool: &str, input: &serde_json::Value) -> String {
-    let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("(未提供路径)");
+    let path = input
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(未提供路径)");
     let action = match canonical_tool(tool) {
         "edit_file" => "修改文件",
         _ => "写入文件",

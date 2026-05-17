@@ -1,5 +1,7 @@
+use crate::harness::capability::{
+    Capability, CapabilityKind, CapabilityMetadata, Event, EventType,
+};
 use async_trait::async_trait;
-use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata, Event, EventType};
 
 pub struct BuiltinToolCap {
     enabled: bool,
@@ -66,6 +68,12 @@ impl FileToolCap {
     }
 }
 
+impl Default for FileToolCap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Capability for FileToolCap {
     fn id(&self) -> &str {
@@ -107,6 +115,12 @@ impl WriteFileToolCap {
                 kind: CapabilityKind::Tool,
             },
         }
+    }
+}
+
+impl Default for WriteFileToolCap {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -154,6 +168,12 @@ impl ShellToolCap {
     }
 }
 
+impl Default for ShellToolCap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl Capability for ShellToolCap {
     fn id(&self) -> &str {
@@ -195,6 +215,12 @@ impl SearchToolCap {
                 kind: CapabilityKind::Tool,
             },
         }
+    }
+}
+
+impl Default for SearchToolCap {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

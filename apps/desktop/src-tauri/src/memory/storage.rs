@@ -43,7 +43,7 @@ impl WikiMemoryStore {
                 filter
                     .scope
                     .as_ref()
-                    .map_or(true, |scope| &memory.scope == scope)
+                    .is_none_or(|scope| &memory.scope == scope)
             })
             .filter(|memory| matches_project_filter(memory, filter.project_path.as_deref()))
             .cloned()
@@ -283,9 +283,7 @@ fn matches_project_filter(memory: &WikiMemory, project_path: Option<&str>) -> bo
     memory
         .project_path
         .as_deref()
-        .map_or(false, |memory_project| {
-            same_normalized_path(memory_project, project_path)
-        })
+        .is_some_and(|memory_project| same_normalized_path(memory_project, project_path))
 }
 
 fn same_project_path(left: Option<&str>, right: Option<&str>) -> bool {

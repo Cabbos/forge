@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
@@ -46,13 +46,15 @@ impl SubAgent {
         working_dir: &std::path::Path,
     ) -> String {
         // Build context: project CLAUDE.md if available, plus working directory
-        let project_ctx = crate::harness::read_project_context(working_dir)
-            .unwrap_or_default();
+        let project_ctx = crate::harness::read_project_context(working_dir).unwrap_or_default();
         let context_section = if project_ctx.is_empty() {
             format!("Working directory: {}\n", working_dir.display())
         } else {
-            format!("Working directory: {}\n\nProject context:\n{}\n",
-                working_dir.display(), project_ctx)
+            format!(
+                "Working directory: {}\n\nProject context:\n{}\n",
+                working_dir.display(),
+                project_ctx
+            )
         };
 
         let system = ChatMessage {
@@ -107,7 +109,11 @@ impl SubAgent {
                 "[subagent] round {}: {} tool calls — {:?}",
                 round,
                 stream_result.tool_calls.len(),
-                stream_result.tool_calls.iter().map(|tc| tc.name.clone()).collect::<Vec<_>>()
+                stream_result
+                    .tool_calls
+                    .iter()
+                    .map(|tc| tc.name.clone())
+                    .collect::<Vec<_>>()
             );
 
             // Execute tools in parallel (block dangerous tools)
@@ -120,25 +126,38 @@ impl SubAgent {
                 let input = tc.input.clone();
                 let input_str = serde_json::to_string(&tc.input).unwrap_or_default();
                 let tool_id = tc.id.clone();
-                let is_blocked = matches!(name.as_str(), "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task");
+                let is_blocked = matches!(
+                    name.as_str(),
+                    "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task"
+                );
                 let app = app_handle.clone();
                 handles.push(tokio::spawn(async move {
                     let result = if is_blocked {
-                        format!("Tool '{}' is blocked for sub-agents (read-only access only)", name)
+                        format!(
+                            "Tool '{}' is blocked for sub-agents (read-only access only)",
+                            name
+                        )
                     } else {
-                        h.execute_tool_with_block_id("sub", &name, &input, &app, Some(&tool_id)).await
+                        h.execute_tool_with_block_id("sub", &name, &input, &app, Some(&tool_id))
+                            .await
                     };
                     (i, name, input_str, result, tool_id)
                 }));
             }
 
             let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
-            let mut tool_results: Vec<serde_json::Value> = vec![serde_json::Value::Null; tool_count];
+            let mut tool_results: Vec<serde_json::Value> =
+                vec![serde_json::Value::Null; tool_count];
 
             for handle in handles {
                 match handle.await {
                     Ok((i, name, input_str, result, tool_id)) => {
-                        crate::app_log!("INFO", "[subagent] tool '{}' result ({} chars)", name, result.len());
+                        crate::app_log!(
+                            "INFO",
+                            "[subagent] tool '{}' result ({} chars)",
+                            name,
+                            result.len()
+                        );
                         let truncated_input = truncate_each(input_str, 200);
                         let truncated_result = truncate_each(result.clone(), 1500);
                         tool_traces.push(ToolCallTrace {
@@ -174,7 +193,9 @@ impl SubAgent {
         }
 
         // Max rounds — request final summary
-        messages.push(ChatMessage::user("Summarize your findings concisely. Do not use tools."));
+        messages.push(ChatMessage::user(
+            "Summarize your findings concisely. Do not use tools.",
+        ));
         match adapter.call(&messages, cancel.clone()).await {
             Ok(r) => {
                 let text = extract_by_type(&r.assistant_content, "text");
@@ -192,7 +213,10 @@ fn extract_by_type(content: &[serde_json::Value], target_type: &str) -> String {
         .filter_map(|block| {
             let t = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if t == target_type {
-                block.get(target_type).and_then(|v| v.as_str()).map(|s| s.to_string())
+                block
+                    .get(target_type)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
             } else {
                 None
             }
@@ -223,7 +247,9 @@ fn build_error_json(error: &str, traces: &[RoundTrace]) -> String {
 }
 
 fn truncate_each(s: String, max: usize) -> String {
-    if s.len() <= max { s } else {
+    if s.len() <= max {
+        s
+    } else {
         let mut t = s.chars().take(max).collect::<String>();
         t.push_str("...");
         t
@@ -231,7 +257,9 @@ fn truncate_each(s: String, max: usize) -> String {
 }
 
 fn truncate_any(s: String, max: usize) -> String {
-    if s.len() <= max { s } else {
+    if s.len() <= max {
+        s
+    } else {
         let mut t = s.chars().take(max).collect::<String>();
         t.push_str("\n\n... (truncated)");
         t

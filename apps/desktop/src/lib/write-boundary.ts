@@ -91,15 +91,16 @@ export function parseWriteBoundary(value: unknown): WriteBoundaryViewModel | nul
   const boundary = value as BoundaryRecord;
   const workspacePath = stringValue(boundary.workspace_path) ?? "当前项目";
   const workspaceName = stringValue(boundary.workspace_name);
-  const affectedFiles = stringList(boundary.affected_files);
+  const affectedFiles = stringList(boundary.affected_files)
+    .map((file) => displayProjectPath(file, workspacePath));
   const filesLabel = affectedFiles.length > 0
     ? affectedFiles.slice(0, 3).join("、") + (affectedFiles.length > 3 ? ` 等 ${affectedFiles.length} 个文件` : "")
-    : "当前工作空间";
+    : "当前项目";
   const risk = riskLabel(boundary.risk_level ?? boundary.risk);
 
   return {
     title: stringValue(boundary.title) ?? "准备修改项目",
-    workspaceLabel: workspaceName ? `${workspaceName} · ${workspacePath}` : workspacePath,
+    workspaceLabel: workspaceName ?? workspaceDisplayName(workspacePath),
     operationLabel: operationLabel(boundary.operation),
     affectedFiles,
     affectedSummary: affectedFiles.length > 0 ? `${affectedFiles.length} 个文件 · ${filesLabel}` : filesLabel,
@@ -109,4 +110,21 @@ export function parseWriteBoundary(value: unknown): WriteBoundaryViewModel | nul
     command: stringValue(boundary.command),
     warning: stringValue(boundary.warning),
   };
+}
+
+function workspaceDisplayName(path: string) {
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : "当前项目";
+}
+
+function displayProjectPath(path: string, workspacePath: string) {
+  const normalizedPath = path.replace(/\\/g, "/");
+  const normalizedWorkspace = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (normalizedWorkspace && normalizedPath.startsWith(`${normalizedWorkspace}/`)) {
+    return normalizedPath.slice(normalizedWorkspace.length + 1);
+  }
+  if (normalizedPath.startsWith("/") || normalizedPath.startsWith("~")) {
+    return workspaceDisplayName(normalizedPath) || "项目外文件";
+  }
+  return path;
 }

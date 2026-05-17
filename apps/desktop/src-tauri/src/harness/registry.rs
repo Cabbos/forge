@@ -1,6 +1,8 @@
-use std::sync::{Arc, RwLock};
-use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata, Event, EventType};
+use crate::harness::capability::{
+    Capability, CapabilityKind, CapabilityMetadata, Event, EventType,
+};
 use crate::harness::db::Database;
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone)]
 pub struct CapabilityEntry {
@@ -8,17 +10,25 @@ pub struct CapabilityEntry {
     pub enabled: bool,
 }
 
+struct RegisteredCapability {
+    cap: Arc<dyn Capability>,
+    enabled: bool,
+}
+
 pub struct CapabilityRegistry {
-    capabilities: RwLock<Vec<Box<dyn Capability>>>,
+    capabilities: RwLock<Vec<RegisteredCapability>>,
     db: Arc<Database>,
 }
 
 impl CapabilityRegistry {
     pub fn new(db: Arc<Database>) -> Self {
-        Self { capabilities: RwLock::new(Vec::new()), db }
+        Self {
+            capabilities: RwLock::new(Vec::new()),
+            db,
+        }
     }
 
-    pub fn register(&self, cap: Box<dyn Capability>) {
+    pub fn register(&self, mut cap: Box<dyn Capability>) {
         let meta = cap.metadata().clone();
         let kind_str = match meta.kind {
             CapabilityKind::Skill => "skill",
@@ -26,15 +36,31 @@ impl CapabilityRegistry {
             CapabilityKind::McpServer => "mcp_server",
             CapabilityKind::Tool => "tool",
         };
-        let enabled = self.db.get_capability_enabled(&meta.id).unwrap_or(None).unwrap_or(cap.enabled());
-        let _ = self.db.upsert_capability(&meta.id, &meta.name, kind_str, &meta.source, enabled);
-        let mut cap = cap;
+        let enabled = self
+            .db
+            .get_capability_enabled(&meta.id)
+            .unwrap_or(None)
+            .unwrap_or(cap.enabled());
+        let _ = self
+            .db
+            .upsert_capability(&meta.id, &meta.name, kind_str, &meta.source, enabled);
         cap.set_enabled(enabled);
-        self.capabilities.write().unwrap().push(cap);
+        self.capabilities
+            .write()
+            .unwrap()
+            .push(RegisteredCapability {
+                cap: Arc::from(cap),
+                enabled,
+            });
     }
 
     pub fn all(&self) -> Vec<CapabilityMetadata> {
-        self.capabilities.read().unwrap().iter().map(|c| c.metadata().clone()).collect()
+        self.capabilities
+            .read()
+            .unwrap()
+            .iter()
+            .map(|c| c.cap.metadata().clone())
+            .collect()
     }
 
     pub fn all_entries(&self) -> Vec<CapabilityEntry> {
@@ -43,23 +69,28 @@ impl CapabilityRegistry {
             .unwrap()
             .iter()
             .map(|c| CapabilityEntry {
-                metadata: c.metadata().clone(),
-                enabled: c.enabled(),
+                metadata: c.cap.metadata().clone(),
+                enabled: c.enabled,
             })
             .collect()
     }
 
     pub fn get(&self, id: &str) -> Option<CapabilityMetadata> {
-        self.capabilities.read().unwrap().iter()
-            .find(|c| c.metadata().id == id)
-            .map(|c| c.metadata().clone())
+        self.capabilities
+            .read()
+            .unwrap()
+            .iter()
+            .find(|c| c.cap.metadata().id == id)
+            .map(|c| c.cap.metadata().clone())
     }
 
     pub fn toggle(&self, id: &str, enabled: bool) -> Result<(), String> {
         let mut caps = self.capabilities.write().unwrap();
-        let cap = caps.iter_mut().find(|c| c.metadata().id == id)
+        let cap = caps
+            .iter_mut()
+            .find(|c| c.cap.metadata().id == id)
             .ok_or_else(|| format!("Capability not found: {id}"))?;
-        cap.set_enabled(enabled);
+        cap.enabled = enabled;
         let _ = self.db.set_enabled(id, enabled);
         Ok(())
     }
@@ -70,27 +101,35 @@ impl CapabilityRegistry {
             .read()
             .unwrap()
             .iter()
-            .find(|c| c.metadata().id == id)
-            .map(|c| c.enabled())
+            .find(|c| c.cap.metadata().id == id)
+            .map(|c| c.enabled)
             .unwrap_or(true)
     }
 
     pub fn remove(&self, id: &str) -> Result<(), String> {
         let mut caps = self.capabilities.write().unwrap();
-        caps.retain(|c| c.metadata().id != id);
+        caps.retain(|c| c.cap.metadata().id != id);
         let _ = self.db.delete_capability(id);
         Ok(())
     }
 
     pub async fn dispatch_event(&self, event: &Event) {
-        let caps = self.capabilities.read().unwrap();
-        for cap in caps.iter() {
-            if cap.enabled() {
-                let subscribed = cap.subscribed_events();
-                if subscribed.iter().any(|e| matches_event(e, event)) {
-                    let _ = cap.on_event(event).await;
-                }
-            }
+        let matching: Vec<Arc<dyn Capability>> = {
+            let caps = self.capabilities.read().unwrap();
+            caps.iter()
+                .filter(|entry| entry.enabled)
+                .filter_map(|entry| {
+                    let subscribed = entry.cap.subscribed_events();
+                    subscribed
+                        .iter()
+                        .any(|e| matches_event(e, event))
+                        .then(|| Arc::clone(&entry.cap))
+                })
+                .collect()
+        };
+
+        for cap in matching {
+            let _ = cap.on_event(event).await;
         }
     }
 }
@@ -109,12 +148,15 @@ fn capability_id_for_tool(tool_name: &str) -> &str {
 }
 
 fn matches_event(et: &EventType, event: &Event) -> bool {
-    match (et, event) {
-        (EventType::SessionStart, Event::SessionStart { .. }) => true,
-        (EventType::SessionStop, Event::SessionStop { .. }) => true,
-        (EventType::PreTool, Event::PreTool { .. }) => true,
-        (EventType::PostTool, Event::PostTool { .. }) => true,
-        (EventType::CapabilityChanged, Event::CapabilityChanged { .. }) => true,
-        _ => false,
-    }
+    matches!(
+        (et, event),
+        (EventType::SessionStart, Event::SessionStart { .. })
+            | (EventType::SessionStop, Event::SessionStop { .. })
+            | (EventType::PreTool, Event::PreTool { .. })
+            | (EventType::PostTool, Event::PostTool { .. })
+            | (
+                EventType::CapabilityChanged,
+                Event::CapabilityChanged { .. }
+            )
+    )
 }

@@ -13,6 +13,7 @@ mod protocol;
 pub mod settings;
 mod state;
 mod workflow;
+mod workspace_safety;
 
 use harness::Harness;
 use state::AppState;
@@ -33,8 +34,7 @@ pub fn run() {
     let project_root = if cwd.join("src-tauri").join("Cargo.toml").exists() {
         // cwd is the project root (npm run tauri dev)
         cwd
-    } else if cwd.join("Cargo.toml").exists() && cwd.file_name().map_or(false, |n| n == "src-tauri")
-    {
+    } else if cwd.join("Cargo.toml").exists() && cwd.file_name().is_some_and(|n| n == "src-tauri") {
         // cwd is src-tauri/ (cargo run), use parent
         cwd.parent().map(|p| p.to_path_buf()).unwrap_or(cwd)
     } else {

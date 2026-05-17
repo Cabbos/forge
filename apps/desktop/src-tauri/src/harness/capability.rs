@@ -31,11 +31,27 @@ pub enum EventType {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    SessionStart { session_id: String, working_dir: String },
-    SessionStop { session_id: String },
-    PreTool { session_id: String, tool_name: String, input: serde_json::Value },
-    PostTool { session_id: String, tool_name: String, result: String },
-    CapabilityChanged { capability_id: String, action: String },
+    SessionStart {
+        session_id: String,
+        working_dir: String,
+    },
+    SessionStop {
+        session_id: String,
+    },
+    PreTool {
+        session_id: String,
+        tool_name: String,
+        input: serde_json::Value,
+    },
+    PostTool {
+        session_id: String,
+        tool_name: String,
+        result: String,
+    },
+    CapabilityChanged {
+        capability_id: String,
+        action: String,
+    },
 }
 
 #[async_trait]
@@ -44,6 +60,10 @@ pub trait Capability: Send + Sync {
     fn metadata(&self) -> &CapabilityMetadata;
     fn enabled(&self) -> bool;
     fn set_enabled(&mut self, enabled: bool);
-    fn subscribed_events(&self) -> Vec<EventType> { vec![] }
-    async fn on_event(&self, _event: &Event) -> Result<(), String> { Ok(()) }
+    fn subscribed_events(&self) -> Vec<EventType> {
+        vec![]
+    }
+    async fn on_event(&self, _event: &Event) -> Result<(), String> {
+        Ok(())
+    }
 }

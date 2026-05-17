@@ -11,6 +11,7 @@ export function ShellCard({ block }: { block: BlockState }) {
   const isError = exitCode !== undefined && exitCode !== 0;
   const command = (block.metadata.command as string) || "命令";
   const output = block.content || "";
+  const outputSections = parseShellOutput(output, isError);
 
   useEffect(() => {
     if (block.isComplete && isError) setExpanded(true);
@@ -34,8 +35,13 @@ export function ShellCard({ block }: { block: BlockState }) {
           <Terminal className="size-3 shrink-0" />
           <span className="min-w-0 truncate font-mono">{command}</span>
           {block.isComplete && (
-            <span className="shrink-0" style={{ color: isError ? "#D47777" : "#4A9E6B", fontSize: "10px" }} title={isError ? `退出码 ${exitCode}` : "完成"}>
-              {isError ? `退出码 ${exitCode}` : <CheckCircle2 className="size-3" />}
+            <span
+              data-testid={isError ? "shell-exit-code" : undefined}
+              className="shrink-0"
+              style={{ color: isError ? "#D47777" : "#4A9E6B", fontSize: "10px" }}
+              title={isError ? `退出码 ${exitCode}` : "完成"}
+            >
+              {isError ? `exit ${exitCode}` : <CheckCircle2 className="size-3" />}
             </span>
           )}
         </CollapsibleTrigger>
@@ -54,12 +60,44 @@ export function ShellCard({ block }: { block: BlockState }) {
                 {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
               </button>
             </div>
-            <pre data-testid="log-detail-output" className="forge-log-output">
-              {output}
-            </pre>
+            <div data-testid="log-detail-output" className="forge-log-output">
+              {outputSections.map((section, index) => (
+                <div key={`${section.label}-${index}`} data-testid="shell-output-section" className="forge-shell-output-section" data-tone={section.label === "stderr" ? "error" : "default"}>
+                  <div className="forge-shell-output-label">{section.label}</div>
+                  <pre>{section.content || " "}</pre>
+                </div>
+              ))}
+            </div>
           </div>
         </CollapsibleContent>
       </Collapsible>
     </div>
   );
+}
+
+function parseShellOutput(output: string, isError: boolean) {
+  const lines = output.split("\n");
+  const sections: Array<{ label: string; content: string }> = [];
+  let currentLabel: string | null = null;
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (!currentLabel) return;
+    sections.push({ label: currentLabel, content: currentLines.join("\n").trimEnd() });
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const match = line.match(/^(stdout|stderr):\s*$/i);
+    if (match) {
+      flush();
+      currentLabel = match[1].toLowerCase();
+      continue;
+    }
+    if (!currentLabel) currentLabel = isError ? "output" : "stdout";
+    currentLines.push(line);
+  }
+  flush();
+
+  return sections.length ? sections : [{ label: isError ? "output" : "stdout", content: output }];
 }

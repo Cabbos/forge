@@ -126,7 +126,7 @@ export function AppShell() {
               <p className="mt-1.5 max-w-[360px] text-xs leading-relaxed text-muted-foreground/75">
                 {activeWorkspace
                   ? "描述你想做什么，Forge 会在当前项目里继续。"
-                  : "先选择一个具体项目，Forge 会把对话和交付状态绑定到这个工作空间。"}
+                  : "先选择一个具体项目，Forge 会把对话和交付状态绑定到当前项目。"}
               </p>
               {activeWorkspace && (
                 <button

@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -85,8 +85,7 @@ impl ForgeWikiStore {
         let parent = dir
             .parent()
             .ok_or_else(|| "无法解析项目记录目录的上级目录".to_string())?;
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("无法创建项目记录目录: {err}"))?;
+        fs::create_dir_all(parent).map_err(|err| format!("无法创建项目记录目录: {err}"))?;
         match fs::symlink_metadata(&dir) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() {
@@ -94,8 +93,7 @@ impl ForgeWikiStore {
                 }
             }
             Err(err) if err.kind() == ErrorKind::NotFound => {
-                fs::create_dir(&dir)
-                    .map_err(|err| format!("无法创建项目记录目录: {err}"))?;
+                fs::create_dir(&dir).map_err(|err| format!("无法创建项目记录目录: {err}"))?;
             }
             Err(err) => return Err(format!("无法检查项目记录目录: {err}")),
         }
@@ -171,8 +169,7 @@ impl ForgeWikiStore {
 
     pub async fn read_page(&self, project_path: &str, page_path: &str) -> Result<String, String> {
         let path = resolve_wiki_page_path(project_path, page_path)?;
-        fs::read_to_string(&path)
-            .map_err(|err| format!("无法读取项目记录页面 {page_path}: {err}"))
+        fs::read_to_string(&path).map_err(|err| format!("无法读取项目记录页面 {page_path}: {err}"))
     }
 
     pub async fn create_update_proposal(
@@ -199,18 +196,33 @@ impl ForgeWikiStore {
             return Err("记录更新包含敏感内容".to_string());
         }
 
-        for target in &target_pages {
-            resolve_wiki_page_path(project_path, target)?;
+        let clean_target_pages = clean_target_pages(project_path, &target_pages)?;
+
+        let clean_title = truncate_chars(title.trim(), 160);
+        let clean_summary = truncate_chars(summary.trim(), 1200);
+        let clean_session_id = session_id.map(str::to_string);
+
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "项目记录更新暂时不可用".to_string())?;
+        let mut proposals = load_proposals(project_path)?;
+        if let Some(existing) = proposals.iter().find(|proposal| {
+            proposal.status == ForgeWikiProposalStatus::Pending
+                && proposal.session_id == clean_session_id
+                && proposal.target_pages == clean_target_pages
+                && proposal.title == clean_title
+                && proposal.summary == clean_summary
+        }) {
+            return Ok(existing.clone());
         }
 
         let created_at = unix_timestamp_string();
-        let clean_title = truncate_chars(title.trim(), 160);
-        let clean_summary = truncate_chars(summary.trim(), 1200);
         let proposal = ForgeWikiUpdateProposal {
             id: uuid::Uuid::now_v7().to_string(),
             project_path: project_path.to_string(),
-            session_id: session_id.map(str::to_string),
-            target_pages,
+            session_id: clean_session_id,
+            target_pages: clean_target_pages,
             title: clean_title.clone(),
             summary: clean_summary.clone(),
             patch_preview: Some(format_proposal_append_preview(
@@ -222,11 +234,6 @@ impl ForgeWikiStore {
             created_at,
         };
 
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "项目记录更新暂时不可用".to_string())?;
-        let mut proposals = load_proposals(project_path)?;
         proposals.push(proposal.clone());
         save_proposals(project_path, &proposals)?;
         Ok(proposal)
@@ -450,12 +457,37 @@ fn proposals_path(project_path: &str) -> Result<std::path::PathBuf, String> {
     Ok(dir.join(".proposals.json"))
 }
 
+fn clean_target_pages(project_path: &str, target_pages: &[String]) -> Result<Vec<String>, String> {
+    target_pages
+        .iter()
+        .map(|target| clean_target_page(project_path, target))
+        .collect()
+}
+
+fn clean_target_page(project_path: &str, target: &str) -> Result<String, String> {
+    let resolved = resolve_wiki_page_path(project_path, target)?;
+    let root = wiki_dir(project_path);
+    let relative = resolved
+        .strip_prefix(&root)
+        .map_err(|err| format!("无法规范化项目记录页面路径: {err}"))?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            _ => return Err("项目记录页面路径不能离开项目记录目录".to_string()),
+        }
+    }
+    Ok(parts.join("/"))
+}
+
 fn load_proposals(project_path: &str) -> Result<Vec<ForgeWikiUpdateProposal>, String> {
     let path = proposals_path(project_path)?;
     reject_symlink_path(&path, "项目记录建议元数据")?;
     match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)
-            .map_err(|err| format!("无法解析项目记录建议: {err}")),
+        Ok(text) => {
+            serde_json::from_str(&text).map_err(|err| format!("无法解析项目记录建议: {err}"))
+        }
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(Vec::new()),
         Err(err) => Err(format!("无法读取项目记录建议: {err}")),
     }
@@ -500,9 +532,7 @@ fn save_proposals(project_path: &str, proposals: &[ForgeWikiUpdateProposal]) -> 
 
 fn reject_symlink_path(path: &Path, label: &str) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(format!("{label}不能是符号链接"))
-        }
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!("{label}不能是符号链接")),
         Ok(_) => Ok(()),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!("无法检查{label}: {err}")),
@@ -511,9 +541,7 @@ fn reject_symlink_path(path: &Path, label: &str) -> Result<(), String> {
 
 fn reject_existing_symlink_path(path: &Path, label: &str) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            Err(format!("{label}不能是符号链接"))
-        }
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!("{label}不能是符号链接")),
         Ok(_) => Err(format!("{label}已存在")),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
         Err(err) => Err(format!("无法检查{label}: {err}")),
@@ -576,8 +604,7 @@ fn page_from_file(
 }
 
 fn collect_markdown_pages(root: &Path, dir: &Path, pages: &mut Vec<String>) -> Result<(), String> {
-    let entries =
-        fs::read_dir(dir).map_err(|err| format!("无法列出项目记录目录: {err}"))?;
+    let entries = fs::read_dir(dir).map_err(|err| format!("无法列出项目记录目录: {err}"))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("无法读取项目记录条目: {err}"))?;
         let path = entry.path();
@@ -1206,6 +1233,86 @@ mod tests {
             error.contains("sensitive") || error.contains("敏感"),
             "expected sensitive rejection, got {error}"
         );
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn duplicate_pending_update_proposal_is_reused() {
+        let project = temp_project_dir("proposal-dedupe");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+
+        let first = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["tasks.md".to_string(), "log.md".to_string()],
+                "  记录本轮工作  ".to_string(),
+                "  更新设置入口并完成检查。  ".to_string(),
+            )
+            .await
+            .expect("first proposal");
+        let second = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["tasks.md".to_string(), "log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "更新设置入口并完成检查。".to_string(),
+            )
+            .await
+            .expect("second proposal");
+        let proposals_text =
+            fs::read_to_string(project.join(".forge/wiki/.proposals.json")).expect("proposals");
+        let proposals: Vec<ForgeWikiUpdateProposal> =
+            serde_json::from_str(&proposals_text).expect("parse proposals");
+
+        assert_eq!(second.id, first.id);
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].id, first.id);
+        cleanup(&project);
+    }
+
+    #[tokio::test]
+    async fn duplicate_pending_update_proposal_reuses_canonical_target_pages() {
+        let project = temp_project_dir("proposal-dedupe-canonical");
+        let store = ForgeWikiStore::new();
+        store
+            .init(project.to_str().unwrap())
+            .await
+            .expect("init wiki");
+
+        let first = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "更新设置入口并完成检查。".to_string(),
+            )
+            .await
+            .expect("first proposal");
+        let second = store
+            .create_update_proposal(
+                project.to_str().unwrap(),
+                Some("session-1"),
+                vec!["./log.md".to_string()],
+                "记录本轮工作".to_string(),
+                "更新设置入口并完成检查。".to_string(),
+            )
+            .await
+            .expect("second proposal");
+        let proposals_text =
+            fs::read_to_string(project.join(".forge/wiki/.proposals.json")).expect("proposals");
+        let proposals: Vec<ForgeWikiUpdateProposal> =
+            serde_json::from_str(&proposals_text).expect("parse proposals");
+
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.target_pages, vec!["log.md"]);
+        assert_eq!(proposals.len(), 1);
         cleanup(&project);
     }
 

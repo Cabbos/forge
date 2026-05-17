@@ -7,10 +7,16 @@ mod integration {
     #[test]
     fn test_credential_detection_anthropic() {
         let creds = settings::detect_credentials("anthropic");
-        assert!(!creds.api_key.is_empty(), "Anthropic API key should be detected");
+        assert!(
+            !creds.api_key.is_empty(),
+            "Anthropic API key should be detected"
+        );
         assert!(creds.api_base.is_some(), "Base URL should be detected");
         assert!(creds.model.is_some(), "Model should be detected");
-        println!("PASS: API key detected, base={:?}, model={:?}", creds.api_base, creds.model);
+        println!(
+            "PASS: API key detected, base={:?}, model={:?}",
+            creds.api_base, creds.model
+        );
     }
 
     // ═══ File I/O ═══
@@ -72,8 +78,10 @@ mod integration {
         // Simulate path traversal: resolve ../../etc/passwd relative to sandbox
         let traversal = dir.join("../../etc/passwd");
         if let Ok(canonical) = traversal.canonicalize() {
-            assert!(!canonical.starts_with(&dir.canonicalize().unwrap()),
-                "Traversal path should not be inside working dir");
+            assert!(
+                !canonical.starts_with(dir.canonicalize().unwrap()),
+                "Traversal path should not be inside working dir"
+            );
             println!("PASS: Path traversal blocked correctly");
         }
 
@@ -95,7 +103,11 @@ mod integration {
         };
         assert_eq!(kept.len(), max);
         assert_eq!(kept[0], "msg40");
-        println!("PASS: Window trims {} messages to {}", msgs.len(), kept.len());
+        println!(
+            "PASS: Window trims {} messages to {}",
+            msgs.len(),
+            kept.len()
+        );
     }
 
     // ═══ Simple Glob ═══
@@ -104,14 +116,28 @@ mod integration {
     fn test_simple_match_basic() {
         // Test the simple_match logic from executor/mod.rs
         fn simple_match(name: &str, pattern: &str) -> bool {
-            if pattern == "*" || pattern == "**" { return true; }
-            if !pattern.contains('*') { return name.contains(pattern); }
+            if pattern == "*" || pattern == "**" {
+                return true;
+            }
+            if !pattern.contains('*') {
+                return name.contains(pattern);
+            }
             // **/ must come before prefix* and *suffix to avoid false matches
-            if let Some(suffix) = pattern.strip_prefix("**/") { return name.ends_with(suffix) || name.contains(&format!("/{}", suffix)); }
-            if let Some(prefix) = pattern.strip_suffix("/**") { return name.starts_with(prefix); }
-            if let Some(ext) = pattern.strip_prefix("*.") { return name.ends_with(&format!(".{}", ext)); }
-            if let Some(prefix) = pattern.strip_suffix('*') { return name.starts_with(prefix); }
-            if let Some(suffix) = pattern.strip_prefix('*') { return name.ends_with(suffix); }
+            if let Some(suffix) = pattern.strip_prefix("**/") {
+                return name.ends_with(suffix) || name.contains(&format!("/{}", suffix));
+            }
+            if let Some(prefix) = pattern.strip_suffix("/**") {
+                return name.starts_with(prefix);
+            }
+            if let Some(ext) = pattern.strip_prefix("*.") {
+                return name.ends_with(&format!(".{}", ext));
+            }
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                return name.starts_with(prefix);
+            }
+            if let Some(suffix) = pattern.strip_prefix('*') {
+                return name.ends_with(suffix);
+            }
             false
         }
 
@@ -128,7 +154,15 @@ mod integration {
 
     #[test]
     fn test_dangerous_command_check() {
-        let patterns = ["rm ", "sudo ", "chmod ", "curl ", "> /dev/", "git push", "npm publish"];
+        let patterns = [
+            "rm ",
+            "sudo ",
+            "chmod ",
+            "curl ",
+            "> /dev/",
+            "git push",
+            "npm publish",
+        ];
 
         fn is_dangerous(cmd: &str, patterns: &[&str]) -> bool {
             let lower = cmd.to_lowercase().trim().to_string();
@@ -173,8 +207,12 @@ mod integration {
 
         let creds = settings::detect_credentials("anthropic");
         let mut adapter = AnthropicAdapter::new(creds.api_key).unwrap();
-        if let Some(base) = creds.api_base { adapter = adapter.with_base_url(&base); }
-        if let Some(ref m) = creds.model { adapter = adapter.with_model(m); }
+        if let Some(base) = creds.api_base {
+            adapter = adapter.with_base_url(&base);
+        }
+        if let Some(ref m) = creds.model {
+            adapter = adapter.with_model(m);
+        }
 
         assert!(!adapter.model_id().is_empty());
         println!("PASS: Adapter configured: model={}", adapter.model_name());

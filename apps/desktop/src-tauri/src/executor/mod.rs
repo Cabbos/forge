@@ -72,7 +72,7 @@ impl ToolExecutor {
             "read_file" | "read" => {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match self.file.read_file(path) {
-                    Ok(r) => format!("{}", r.content),
+                    Ok(r) => r.content.to_string(),
                     Err(e) => format!("Error: {}", e),
                 }
             }
@@ -99,13 +99,20 @@ impl ToolExecutor {
                 }
             }
             "git_diff" => {
-                let staged = tool_input.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+                let staged = tool_input
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let file_path = get_str(tool_input, "path").unwrap_or("");
                 let mut cmd = std::process::Command::new("git");
                 cmd.arg("diff").arg("-U3");
-                if staged { cmd.arg("--cached"); }
+                if staged {
+                    cmd.arg("--cached");
+                }
                 cmd.arg("--");
-                if !file_path.is_empty() { cmd.arg(file_path); }
+                if !file_path.is_empty() {
+                    cmd.arg(file_path);
+                }
                 cmd.current_dir(self.file.working_dir());
                 match cmd.output() {
                     Ok(output) if output.status.success() => {
@@ -114,22 +121,31 @@ impl ToolExecutor {
                             "No changes (working tree clean)".to_string()
                         } else {
                             let diff = truncate_text(&diff, GIT_DIFF_TEXT_LIMIT);
-                            let file = if file_path.is_empty() { "all files".to_string() } else { file_path.to_string() };
-                            let _ = app_handle.emit("session-output",
+                            let file = if file_path.is_empty() {
+                                "all files".to_string()
+                            } else {
+                                file_path.to_string()
+                            };
+                            let _ = app_handle.emit(
+                                "session-output",
                                 StreamEvent::DiffView {
                                     session_id: session_id.to_string(),
                                     block_id: block_id.clone(),
                                     file_path: file.clone(),
                                     old_content: String::new(),
                                     new_content: diff.clone(),
-                                });
+                                },
+                            );
                             diff
                         }
                     }
                     Ok(output) => {
                         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                         if stderr.is_empty() {
-                            format!("git diff failed with exit code {}", output.status.code().unwrap_or(-1))
+                            format!(
+                                "git diff failed with exit code {}",
+                                output.status.code().unwrap_or(-1)
+                            )
                         } else {
                             format!("git diff failed: {}", stderr)
                         }
@@ -169,38 +185,35 @@ impl ToolExecutor {
 
                 match self
                     .shell
-                    .execute_streaming(
-                        command,
-                        move |line: String, is_stderr: bool| {
-                            // Accumulate for AI response
-                            let cap = if is_stderr {
-                                &stderr_for_cb
-                            } else {
-                                &stdout_for_cb
-                            };
-                            {
-                                let mut guard = cap.lock().unwrap();
-                                append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
-                            }
+                    .execute_streaming(command, move |line: String, is_stderr: bool| {
+                        // Accumulate for AI response
+                        let cap = if is_stderr {
+                            &stderr_for_cb
+                        } else {
+                            &stdout_for_cb
+                        };
+                        {
+                            let mut guard = cap.lock().unwrap();
+                            append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
+                        }
 
-                            // Emit to frontend line by line
-                            if let Some(content) = next_stream_line(
-                                &line,
-                                &emitted_for_cb,
-                                &notice_for_cb,
-                                SHELL_STREAM_LIMIT,
-                            ) {
-                                let _ = ah_for_cb.emit(
-                                    "session-output",
-                                    StreamEvent::ShellOutput {
-                                        session_id: sid_for_cb.clone(),
-                                        block_id: bid_for_cb.clone(),
-                                        content,
-                                    },
-                                );
-                            }
-                        },
-                    )
+                        // Emit to frontend line by line
+                        if let Some(content) = next_stream_line(
+                            &line,
+                            &emitted_for_cb,
+                            &notice_for_cb,
+                            SHELL_STREAM_LIMIT,
+                        ) {
+                            let _ = ah_for_cb.emit(
+                                "session-output",
+                                StreamEvent::ShellOutput {
+                                    session_id: sid_for_cb.clone(),
+                                    block_id: bid_for_cb.clone(),
+                                    content,
+                                },
+                            );
+                        }
+                    })
                     .await
                 {
                     Ok(exit_code) => {
@@ -216,11 +229,7 @@ impl ToolExecutor {
                         let stderr = stderr_captured.lock().unwrap().clone();
                         let trunc = |s: &str, max: usize| {
                             if s.len() > max {
-                                format!(
-                                    "{}... [truncated {} bytes]",
-                                    &s[..max],
-                                    s.len() - max
-                                )
+                                format!("{}... [truncated {} bytes]", &s[..max], s.len() - max)
                             } else {
                                 s.to_string()
                             }
@@ -277,7 +286,9 @@ impl ToolExecutor {
                         } else if looks_like_plain_search(pattern) {
                             search_content_with_rg(&dir, pattern)
                                 .await
-                                .unwrap_or_else(|| "Search failed: ripgrep (rg) is unavailable".to_string())
+                                .unwrap_or_else(|| {
+                                    "Search failed: ripgrep (rg) is unavailable".to_string()
+                                })
                         } else {
                             "No files matched".to_string()
                         }
@@ -291,7 +302,9 @@ impl ToolExecutor {
                 match resolve_search_path(self.file.working_dir(), path) {
                     Ok(dir) => search_content_with_rg(&dir, pattern)
                         .await
-                        .unwrap_or_else(|| "Search failed: ripgrep (rg) is unavailable".to_string()),
+                        .unwrap_or_else(|| {
+                            "Search failed: ripgrep (rg) is unavailable".to_string()
+                        }),
                     Err(e) => e,
                 }
             }
@@ -306,14 +319,22 @@ impl ToolExecutor {
             "ask_user" => {
                 let question = get_str(tool_input, "question").unwrap_or("");
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                { self.pending_confirms.write().await.insert(block_id.clone(), tx); }
-                let _ = app_handle.emit("session-output", StreamEvent::ConfirmAsk {
-                    session_id: session_id.to_string(),
-                    block_id: block_id.clone(),
-                    question: question.to_string(),
-                    kind: "ask_user".to_string(),
-                    boundary: None,
-                });
+                {
+                    self.pending_confirms
+                        .write()
+                        .await
+                        .insert(block_id.clone(), tx);
+                }
+                let _ = app_handle.emit(
+                    "session-output",
+                    StreamEvent::ConfirmAsk {
+                        session_id: session_id.to_string(),
+                        block_id: block_id.clone(),
+                        question: question.to_string(),
+                        kind: "ask_user".to_string(),
+                        boundary: None,
+                    },
+                );
                 match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
                     Ok(Ok(true)) => {
                         self.pending_confirms.write().await.remove(&block_id);
@@ -373,13 +394,23 @@ fn summarize_tool_input(tool_name: &str, val: &serde_json::Value) -> String {
         "search_content" | "grep" | "search_files" | "glob" => {
             let pattern = get_str(val, "pattern").unwrap_or("");
             let path = get_str(val, "path").unwrap_or("");
-            format!("pattern={} path={}", preview_for_log(pattern), preview_for_log(path))
+            format!(
+                "pattern={} path={}",
+                preview_for_log(pattern),
+                preview_for_log(path)
+            )
         }
         "read_file" | "read" | "list_directory" | "ls" | "list" => {
-            format!("path={}", preview_for_log(get_str(val, "path").unwrap_or("")))
+            format!(
+                "path={}",
+                preview_for_log(get_str(val, "path").unwrap_or(""))
+            )
         }
         "run_shell" | "bash" | "execute_command" | "shell" => {
-            format!("command={}", preview_for_log(get_str(val, "command").unwrap_or("")))
+            format!(
+                "command={}",
+                preview_for_log(get_str(val, "command").unwrap_or(""))
+            )
         }
         "write_file" | "write_to_file" | "write" => {
             let path = get_str(val, "path").unwrap_or("");
@@ -390,7 +421,12 @@ fn summarize_tool_input(tool_name: &str, val: &serde_json::Value) -> String {
             let path = get_str(val, "path").unwrap_or("");
             let old_len = get_str(val, "old_string").map(str::len).unwrap_or(0);
             let new_len = get_str(val, "new_string").map(str::len).unwrap_or(0);
-            format!("path={} old_len={} new_len={}", preview_for_log(path), old_len, new_len)
+            format!(
+                "path={} old_len={} new_len={}",
+                preview_for_log(path),
+                old_len,
+                new_len
+            )
         }
         _ => String::new(),
     }
@@ -488,10 +524,13 @@ fn next_stream_line(
 }
 
 fn browser_headers() -> reqwest::header::HeaderMap {
-    use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT, ACCEPT, ACCEPT_LANGUAGE};
+    use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, ACCEPT_LANGUAGE, USER_AGENT};
     let mut headers = HeaderMap::new();
     headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"));
-    headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"));
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+    );
     headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
     headers
 }
@@ -500,8 +539,8 @@ fn browser_headers() -> reqwest::header::HeaderMap {
 /// Tries Bing first, falls back to DuckDuckGo Lite.
 /// Uses a cache to avoid re-searching identical queries within the same session.
 async fn web_search(query: &str) -> String {
-    use std::sync::Mutex;
     use std::collections::HashMap;
+    use std::sync::Mutex;
     static CACHE: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -510,35 +549,68 @@ async fn web_search(query: &str) -> String {
     }
 
     // Try Bing first (more accessible globally), fallback to DDG
-    let bing_url = format!("https://www.bing.com/search?q={}&count=10", urlencoding(query));
+    let bing_url = format!(
+        "https://www.bing.com/search?q={}&count=10",
+        urlencoding(query)
+    );
     let result = try_search(&bing_url, "Bing").await;
     if !result.contains("No results") && !result.contains("unavailable") {
-        let _ = CACHE.lock().unwrap().insert(query.to_string(), result.clone());
+        let _ = CACHE
+            .lock()
+            .unwrap()
+            .insert(query.to_string(), result.clone());
         return result;
     }
     let ddg_url = format!("https://lite.duckduckgo.com/lite/?q={}", urlencoding(query));
     let result = try_search(&ddg_url, "DDG").await;
-    let _ = CACHE.lock().unwrap().insert(query.to_string(), result.clone());
+    let _ = CACHE
+        .lock()
+        .unwrap()
+        .insert(query.to_string(), result.clone());
     result
 }
 
 async fn try_search(url: &str, engine: &str) -> String {
     let client = reqwest::Client::new();
-    match client.get(url).headers(browser_headers()).timeout(std::time::Duration::from_secs(10)).send().await {
+    match client
+        .get(url)
+        .headers(browser_headers())
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+    {
         Ok(resp) => {
-            let (html, _) = read_body_limited(resp, WEB_BODY_LIMIT).await.unwrap_or_default();
+            let (html, _) = read_body_limited(resp, WEB_BODY_LIMIT)
+                .await
+                .unwrap_or_default();
             let mut results: Vec<(String, String)> = Vec::new();
             for part in html.split("<a ").skip(1) {
-                let href = part.split("href=\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or("");
-                let visible = part.split('>').nth(1).and_then(|s| s.split("</a>").next())
-                    .map(|s| strip_html(s).trim().to_string()).unwrap_or_default();
+                let href = part
+                    .split("href=\"")
+                    .nth(1)
+                    .and_then(|s| s.split('"').next())
+                    .unwrap_or("");
+                let visible = part
+                    .split('>')
+                    .nth(1)
+                    .and_then(|s| s.split("</a>").next())
+                    .map(|s| strip_html(s).trim().to_string())
+                    .unwrap_or_default();
                 if href.starts_with("http") && visible.len() > 10 && visible.len() < 300 {
                     results.push((visible, href.to_string()));
                 }
             }
             results.truncate(8);
-            if results.is_empty() { format!("No results from {}", engine) }
-            else { results.iter().enumerate().map(|(i,(t,u))| format!("{}. {} - {}", i+1, t, u)).collect::<Vec<_>>().join("\n") }
+            if results.is_empty() {
+                format!("No results from {}", engine)
+            } else {
+                results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (t, u))| format!("{}. {} - {}", i + 1, t, u))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
         }
         Err(e) => format!("Search unavailable via {}: {}", engine, e),
     }
@@ -546,17 +618,30 @@ async fn try_search(url: &str, engine: &str) -> String {
 
 /// Fetch a URL and return cleaned text content.
 async fn web_fetch(url_str: &str) -> String {
-    let url = if !url_str.starts_with("http") { format!("https://{}", url_str) } else { url_str.to_string() };
+    let url = if !url_str.starts_with("http") {
+        format!("https://{}", url_str)
+    } else {
+        url_str.to_string()
+    };
     if let Err(reason) = validate_fetch_url(&url) {
         return reason;
     }
     let client = reqwest::Client::new();
-    match client.get(&url).headers(browser_headers()).timeout(std::time::Duration::from_secs(30)).send().await {
+    match client
+        .get(&url)
+        .headers(browser_headers())
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+    {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let content_type = resp.headers().get("content-type")
+            let content_type = resp
+                .headers()
+                .get("content-type")
                 .and_then(|v| v.to_str().ok())
-                .unwrap_or("").to_string();
+                .unwrap_or("")
+                .to_string();
             let (body, body_truncated) = match read_body_limited(resp, WEB_BODY_LIMIT).await {
                 Ok(body) => body,
                 Err(e) => return format!("Fetch failed while reading response: {}", e),
@@ -574,7 +659,10 @@ async fn web_fetch(url_str: &str) -> String {
 
             let text = text.chars().take(8000).collect::<String>();
             if body_truncated {
-                format!("HTTP {} — {}\n\n{}... [response truncated at {} bytes]", status, url, text, WEB_BODY_LIMIT)
+                format!(
+                    "HTTP {} — {}\n\n{}... [response truncated at {} bytes]",
+                    status, url, text, WEB_BODY_LIMIT
+                )
             } else if text.len() >= 8000 {
                 format!("HTTP {} — {}\n\n{}... [truncated]", status, url, text)
             } else {
@@ -586,11 +674,16 @@ async fn web_fetch(url_str: &str) -> String {
 }
 
 fn validate_fetch_url(url: &str) -> Result<(), String> {
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| format!("Fetch blocked: invalid URL ({})", e))?;
+    let parsed =
+        reqwest::Url::parse(url).map_err(|e| format!("Fetch blocked: invalid URL ({})", e))?;
     match parsed.scheme() {
         "http" | "https" => {}
-        scheme => return Err(format!("Fetch blocked: unsupported URL scheme '{}'", scheme)),
+        scheme => {
+            return Err(format!(
+                "Fetch blocked: unsupported URL scheme '{}'",
+                scheme
+            ))
+        }
     }
 
     let host = parsed.host_str().unwrap_or("").to_lowercase();
@@ -598,7 +691,9 @@ fn validate_fetch_url(url: &str) -> Result<(), String> {
         return Err("Fetch blocked: URL has no host".to_string());
     }
     if host == "localhost" || host.ends_with(".localhost") {
-        return Err("Fetch blocked: local hosts are not available to the AI web_fetch tool".to_string());
+        return Err(
+            "Fetch blocked: local hosts are not available to the AI web_fetch tool".to_string(),
+        );
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_private_or_local_ip(ip) {
@@ -671,15 +766,22 @@ fn strip_html(html: &str) -> String {
 }
 
 fn urlencoding(s: &str) -> String {
-    s.chars().map(|c| match c {
-        ' ' => "+".to_string(),
-        c if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' => c.to_string(),
-        c => format!("%{:02X}", c as u8),
-    }).collect()
+    s.chars()
+        .map(|c| match c {
+            ' ' => "+".to_string(),
+            c if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' => {
+                c.to_string()
+            }
+            c => format!("%{:02X}", c as u8),
+        })
+        .collect()
 }
 
 /// Resolve a search directory and keep it inside the session workspace.
-fn resolve_search_path(working_dir: &std::path::Path, path: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_search_path(
+    working_dir: &std::path::Path,
+    path: &str,
+) -> Result<std::path::PathBuf, String> {
     let requested = std::path::Path::new(path);
     let raw = if path.trim().is_empty() {
         working_dir.to_path_buf()
@@ -704,7 +806,10 @@ fn resolve_search_path(working_dir: &std::path::Path, path: &str) -> Result<std:
         ));
     }
     if !resolved.is_dir() {
-        return Err(format!("Search path is not a directory: {}", resolved.display()));
+        return Err(format!(
+            "Search path is not a directory: {}",
+            resolved.display()
+        ));
     }
     if is_too_broad_search_root(&resolved) {
         return Err(format!(
@@ -843,7 +948,11 @@ async fn search_content_with_rg(base: &std::path::Path, pattern: &str) -> Option
         .collect::<Vec<_>>();
     if lines.is_empty() {
         Some("No matches found".to_string())
-    } else if String::from_utf8_lossy(&output.stdout).lines().nth(SEARCH_RESULT_LIMIT).is_some() {
+    } else if String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .nth(SEARCH_RESULT_LIMIT)
+        .is_some()
+    {
         Some(format!(
             "{}\n... truncated to first {} matches",
             lines.join("\n"),
@@ -871,7 +980,12 @@ fn simple_glob(base: &std::path::Path, pattern: &str) -> Vec<String> {
     results
 }
 
-fn walk_glob(root: &std::path::Path, dir: &std::path::Path, pattern: &str, results: &mut Vec<String>) -> Result<(), ()> {
+fn walk_glob(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    pattern: &str,
+    results: &mut Vec<String>,
+) -> Result<(), ()> {
     if results.len() >= SEARCH_RESULT_LIMIT {
         return Ok(());
     }
@@ -882,11 +996,17 @@ fn walk_glob(root: &std::path::Path, dir: &std::path::Path, pattern: &str, resul
         }
         let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if name.starts_with('.') || name == "target" || name == "node_modules" { continue; }
+        if name.starts_with('.') || name == "target" || name == "node_modules" {
+            continue;
+        }
         if path.is_dir() {
             walk_glob(root, &path, pattern, results)?;
         } else {
-            let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
             // Simple * matching
             if simple_match(&rel, pattern) {
                 results.push(rel);
@@ -897,14 +1017,20 @@ fn walk_glob(root: &std::path::Path, dir: &std::path::Path, pattern: &str, resul
 }
 
 fn simple_match(name: &str, pattern: &str) -> bool {
-    if pattern == "*" || pattern == "**" { return true; }
-    if !pattern.contains('*') { return name.contains(pattern); }
+    if pattern == "*" || pattern == "**" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return name.contains(pattern);
+    }
     // **/<rest> — match any directory prefix, then match the rest recursively
     if let Some(rest) = pattern.strip_prefix("**/") {
-        if simple_match(name, rest) { return true; }
+        if simple_match(name, rest) {
+            return true;
+        }
         // Also check if name contains "/<rest>" (for paths with directories)
         for (i, c) in name.char_indices() {
-            if c == '/' && simple_match(&name[i+1..], rest) {
+            if c == '/' && simple_match(&name[i + 1..], rest) {
                 return true;
             }
         }

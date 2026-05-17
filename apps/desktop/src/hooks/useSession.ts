@@ -1,8 +1,7 @@
 import { useCallback } from "react";
 import { useStore } from "../store";
-import { createSession, deleteSession, getProjectCheckpointStatus, getProjectRuntimeStatus, resumeSession, sendInput, killSession } from "../lib/tauri";
+import { createSession, deleteSession, resumeSession, sendInput, killSession } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
-import { getDeliveryConfidence } from "../lib/delivery-confidence";
 
 export function useSession() {
   const addSession = useStore((s) => s.addSession);
@@ -63,26 +62,6 @@ export function useSession() {
   const send = useCallback(async (sessionId: string, text: string) => {
     try {
       await sendInput(sessionId, text);
-      try {
-        const [runtime, checkpoint] = await Promise.all([
-          getProjectRuntimeStatus(sessionId),
-          getProjectCheckpointStatus(sessionId),
-        ]);
-        const delivery = getDeliveryConfidence(runtime, checkpoint);
-        dispatchOutputEvent({
-          event_type: "delivery_summary",
-          session_id: sessionId,
-          block_id: crypto.randomUUID(),
-          summary: {
-            project_path: runtime.working_dir || checkpoint.working_dir || null,
-            preview_label: delivery.preview.label,
-            checkpoint_label: delivery.checkpoint.label,
-            next_action: delivery.nextAction,
-          },
-        });
-      } catch (summaryError) {
-        console.warn("Failed to summarize delivery:", summaryError);
-      }
     } catch (e) {
       console.error("Failed to send input:", e);
       dispatchOutputEvent({

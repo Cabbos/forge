@@ -40,11 +40,11 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
   };
 
   return (
-    <figure className="code-surface group my-3 overflow-hidden rounded-md border border-border bg-background shadow-none">
-      <figcaption className="flex min-h-9 items-center justify-between gap-3 border-b border-border bg-muted px-3">
+    <figure className="code-surface group my-2.5 overflow-hidden rounded-md border border-border bg-background shadow-none">
+      <figcaption className="flex min-h-8 items-center justify-between gap-3 border-b border-border bg-muted px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-[#4A9E6B]" />
-          <span className="truncate font-mono text-[11px] font-medium uppercase tracking-normal text-muted-foreground">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#4A9E6B]" />
+          <span className="truncate font-mono text-[10px] font-medium uppercase tracking-normal text-muted-foreground">
             {label}
           </span>
           {lineCount > 1 && (

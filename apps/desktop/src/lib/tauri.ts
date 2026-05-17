@@ -67,7 +67,6 @@ export interface ProjectCheckpoint {
   created_at: number;
   head: string;
   status: string;
-  diff_patch: string;
 }
 
 export interface ProjectCheckpointStatus {

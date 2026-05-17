@@ -106,6 +106,7 @@ pub fn extract_candidates_from_user_message(
     candidates
 }
 
+#[allow(clippy::too_many_arguments)]
 fn candidate(
     session_id: &str,
     project_path: Option<&str>,

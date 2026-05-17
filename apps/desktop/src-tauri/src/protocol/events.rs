@@ -1,3 +1,4 @@
+use crate::agent::turn_state::AgentTurnProjection;
 use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
 use crate::harness::write_boundary::WriteBoundary;
 use crate::memory::{SelectedContextMemory, WikiMemory};
@@ -10,6 +11,18 @@ pub struct DeliverySummary {
     pub preview_label: String,
     pub checkpoint_label: String,
     pub next_action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub record_target_pages: Vec<String>,
 }
 
 /// Streaming events emitted from Rust backend to frontend.
@@ -169,6 +182,13 @@ pub enum StreamEvent {
         state: WorkflowState,
     },
 
+    // ── Agent Turn Projection ──
+    #[serde(rename = "agent_turn_updated")]
+    AgentTurnUpdated {
+        session_id: String,
+        state: AgentTurnProjection,
+    },
+
     // ── Delivery Summary ──
     #[serde(rename = "delivery_summary")]
     DeliverySummary {
@@ -235,6 +255,7 @@ impl StreamEvent {
             | ForgeWikiUpdateProposed { session_id, .. }
             | ForgeWikiUpdated { session_id, .. }
             | WorkflowUpdated { session_id, .. }
+            | AgentTurnUpdated { session_id, .. }
             | DeliverySummary { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }

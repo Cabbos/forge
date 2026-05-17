@@ -29,9 +29,11 @@ export function deriveStartReadiness(input: {
 }): StartReadinessView {
   const keyStatuses = Array.isArray(input.keyStatuses) ? input.keyStatuses : [];
   const keySet = keyStatuses.some((item) => item.provider === input.providerId && item.set);
+  const workspaceBlocked = !input.workspace;
+  const keyBlocked = !keySet;
   const rows: StartReadinessRow[] = [
     {
-      label: "工作空间",
+      label: "当前项目",
       value: input.workspace ? `当前项目：${input.workspace.name}` : "还没有选择项目",
       tone: input.workspace ? "ready" : "blocked",
       action: null,
@@ -70,8 +72,12 @@ export function deriveStartReadiness(input: {
 
   const issueCount = rows.filter((row) => row.tone === "blocked" || row.tone === "warning").length;
   return {
-    title: "准备开始",
-    subtitle: issueCount === 0 ? "可以开始做第一版小工具。" : "开始前有几项可以先确认。",
+    title: workspaceBlocked ? "选择一个项目开始" : keyBlocked ? "需要配置模型密钥" : "准备开始",
+    subtitle: issueCount === 0
+      ? "可以开始做第一版小工具。"
+      : keyBlocked
+        ? `添加 ${input.providerLabel} 密钥后就可以发送第一句话。`
+        : "开始前有几项可以先确认。",
     issueCount,
     rows,
   };

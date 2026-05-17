@@ -55,7 +55,9 @@ impl ShellExecutor {
                 });
             }
 
-            let child = cmd.spawn().map_err(|e| format!("Failed to execute command: {}", e))?;
+            let child = cmd
+                .spawn()
+                .map_err(|e| format!("Failed to execute command: {}", e))?;
 
             let output = child
                 .wait_with_output()
@@ -78,11 +80,18 @@ impl ShellExecutor {
                 stderr.push_str(&format!("\n... (truncated {} bytes)", truncated));
             }
 
-            Ok(ShellResult { command: cmd_str, stdout, stderr, exit_code })
+            Ok(ShellResult {
+                command: cmd_str,
+                stdout,
+                stderr,
+                exit_code,
+            })
         });
 
         match tokio::time::timeout(std::time::Duration::from_secs(30), handle).await {
-            Ok(result) => result.map_err(|e| format!("Task panicked: {}", e)).and_then(|inner| inner),
+            Ok(result) => result
+                .map_err(|e| format!("Task panicked: {}", e))
+                .and_then(|inner| inner),
             Err(_) => {
                 // Kill the spawn_blocking task's process
                 // The task handle is dropped, but the thread continues running.
@@ -97,11 +106,7 @@ impl ShellExecutor {
     /// Execute a shell command and stream output line-by-line via a callback.
     /// Kills the process group on timeout (30s).
     /// Returns the exit code on success.
-    pub async fn execute_streaming<F>(
-        &self,
-        command: &str,
-        mut on_line: F,
-    ) -> Result<i32, String>
+    pub async fn execute_streaming<F>(&self, command: &str, mut on_line: F) -> Result<i32, String>
     where
         F: FnMut(String, bool) + Send + 'static,
     {
@@ -164,8 +169,12 @@ impl ShellExecutor {
                     match reader.read_until(b'\n', &mut buf) {
                         Ok(0) => break,
                         Ok(_) => {
-                            if buf.ends_with(b"\n") { buf.pop(); }
-                            if buf.ends_with(b"\r") { buf.pop(); }
+                            if buf.ends_with(b"\n") {
+                                buf.pop();
+                            }
+                            if buf.ends_with(b"\r") {
+                                buf.pop();
+                            }
                             let _ = tx_out.send((String::from_utf8_lossy(&buf).to_string(), false));
                         }
                         Err(_) => break,
@@ -182,8 +191,12 @@ impl ShellExecutor {
                     match reader.read_until(b'\n', &mut buf) {
                         Ok(0) => break,
                         Ok(_) => {
-                            if buf.ends_with(b"\n") { buf.pop(); }
-                            if buf.ends_with(b"\r") { buf.pop(); }
+                            if buf.ends_with(b"\n") {
+                                buf.pop();
+                            }
+                            if buf.ends_with(b"\r") {
+                                buf.pop();
+                            }
                             let _ = tx.send((String::from_utf8_lossy(&buf).to_string(), true));
                         }
                         Err(_) => break,
@@ -196,7 +209,9 @@ impl ShellExecutor {
                 on_line(line, is_stderr);
             }
 
-            let status = child.wait().map_err(|e| format!("Failed to wait on process: {}", e));
+            let status = child
+                .wait()
+                .map_err(|e| format!("Failed to wait on process: {}", e));
             let _ = result_tx.send(status.map(|s| s.code().unwrap_or(-1)));
         });
 
@@ -206,7 +221,8 @@ impl ShellExecutor {
             .map_err(|_| "Shell did not start in time".to_string())?
             .map_err(|_| "Failed to get process PID".to_string())?;
 
-        let timeout_result = tokio::time::timeout(std::time::Duration::from_secs(30), result_rx).await;
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_secs(30), result_rx).await;
         match timeout_result {
             Ok(Ok(Ok(exit_code))) => Ok(exit_code),
             Ok(Ok(Err(e))) => Err(e),

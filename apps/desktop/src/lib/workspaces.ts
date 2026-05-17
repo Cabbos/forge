@@ -14,7 +14,12 @@ export function normalizeWorkspacePath(path?: string | null): string {
 export function isBroadWorkspacePath(path?: string | null): boolean {
   const normalized = (path ?? "").trim().replace(/\/+$/, "");
   if (!normalized || normalized === "/") return true;
-  return /^\/Users\/[^/]+$/.test(normalized) || /^\/home\/[^/]+$/.test(normalized);
+  return (
+    normalized === "/Users" ||
+    normalized === "/home" ||
+    /^\/Users\/[^/]+$/.test(normalized) ||
+    /^\/home\/[^/]+$/.test(normalized)
+  );
 }
 
 export function workspaceFromPath(path: string, lastOpenedAt = Date.now()): Workspace | null {

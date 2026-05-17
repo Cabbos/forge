@@ -154,6 +154,39 @@ export interface DeliverySummary {
   preview_label: string;
   checkpoint_label: string;
   next_action: string;
+  verification_label?: string | null;
+  verification_status?: string | null;
+  verification_command?: string | null;
+  record_label?: string | null;
+  record_status?: string | null;
+  record_target_pages?: string[];
+}
+
+export type AgentTurnStatus =
+  | "started"
+  | "gathering_context"
+  | "calling_model"
+  | "running_tools"
+  | "verifying"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type AgentVerificationStatus =
+  | "not_needed"
+  | "skipped"
+  | "running"
+  | "passed"
+  | "failed"
+  | "error";
+
+export interface AgentTurnProjection {
+  session_id: string;
+  status: AgentTurnStatus;
+  step_label: string;
+  workspace_path: string;
+  compact_count: number;
+  verification_status: AgentVerificationStatus;
 }
 
 export type StreamEvent =
@@ -204,6 +237,7 @@ export type StreamEvent =
   | { event_type: "forge_wiki_update_proposed"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "forge_wiki_updated"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
+  | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
   | { event_type: "delivery_summary"; session_id: string; block_id: string; summary: DeliverySummary }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }

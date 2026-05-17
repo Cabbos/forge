@@ -24,21 +24,21 @@ struct RuntimeConfig {
 
 #[derive(serde::Serialize)]
 pub struct ProjectRuntimeStatus {
-    working_dir: String,
-    has_package_json: bool,
-    package_manager: String,
-    dev_script: Option<String>,
-    command: Option<String>,
-    port: u16,
-    url: String,
-    running: bool,
-    managed: bool,
-    pid: Option<u32>,
-    can_start: bool,
-    can_stop: bool,
-    can_open: bool,
-    message: String,
-    logs: Vec<String>,
+    pub(crate) working_dir: String,
+    pub(crate) has_package_json: bool,
+    pub(crate) package_manager: String,
+    pub(crate) dev_script: Option<String>,
+    pub(crate) command: Option<String>,
+    pub(crate) port: u16,
+    pub(crate) url: String,
+    pub(crate) running: bool,
+    pub(crate) managed: bool,
+    pub(crate) pid: Option<u32>,
+    pub(crate) can_start: bool,
+    pub(crate) can_stop: bool,
+    pub(crate) can_open: bool,
+    pub(crate) message: String,
+    pub(crate) logs: Vec<String>,
 }
 
 #[tauri::command]
@@ -46,7 +46,7 @@ pub async fn get_project_runtime_status(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
 ) -> Result<ProjectRuntimeStatus, String> {
-    project_runtime_status(&state, session_id.as_deref()).await
+    project_runtime_status_for_session(&state, session_id.as_deref()).await
 }
 
 #[tauri::command]
@@ -66,14 +66,14 @@ pub async fn start_project_dev_server(
     }
 
     if port_is_open(config.port) {
-        return project_runtime_status(&state, session_id.as_deref()).await;
+        return project_runtime_status_for_session(&state, session_id.as_deref()).await;
     }
 
     if refresh_managed_server(&state, &config.working_dir)
         .await
         .is_some()
     {
-        return project_runtime_status(&state, session_id.as_deref()).await;
+        return project_runtime_status_for_session(&state, session_id.as_deref()).await;
     }
 
     let mut command = Command::new(&config.package_manager);
@@ -132,7 +132,7 @@ pub async fn start_project_dev_server(
     }
 
     tokio::time::sleep(Duration::from_millis(800)).await;
-    project_runtime_status(&state, session_id.as_deref()).await
+    project_runtime_status_for_session(&state, session_id.as_deref()).await
 }
 
 #[tauri::command]
@@ -151,7 +151,7 @@ pub async fn stop_project_dev_server(
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    project_runtime_status(&state, session_id.as_deref()).await
+    project_runtime_status_for_session(&state, session_id.as_deref()).await
 }
 
 #[tauri::command]
@@ -159,7 +159,7 @@ pub async fn open_project_preview(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
 ) -> Result<ProjectRuntimeStatus, String> {
-    let status = project_runtime_status(&state, session_id.as_deref()).await?;
+    let status = project_runtime_status_for_session(&state, session_id.as_deref()).await?;
     if !status.running {
         return Err("预览服务还没有运行。请先启动预览。".into());
     }
@@ -167,7 +167,7 @@ pub async fn open_project_preview(
     Ok(status)
 }
 
-async fn project_runtime_status(
+pub(crate) async fn project_runtime_status_for_session(
     state: &Arc<AppState>,
     session_id: Option<&str>,
 ) -> Result<ProjectRuntimeStatus, String> {

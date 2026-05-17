@@ -1,7 +1,9 @@
+use crate::harness::capability::{
+    Capability, CapabilityKind, CapabilityMetadata, Event, EventType,
+};
+use crate::harness::skills::SkillLoader;
 use async_trait::async_trait;
 use std::sync::Arc;
-use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata, Event, EventType};
-use crate::harness::skills::SkillLoader;
 
 pub struct SkillLoaderCap {
     pub loader: Arc<SkillLoader>,

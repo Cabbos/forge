@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
 import type {
+  AgentTurnProjection,
   BlockState,
   ForgeWikiUpdateProposal,
   SelectedContextMemory,
@@ -9,6 +10,7 @@ import type {
   SessionState,
   WikiMemory,
   WorkflowState,
+  DeliverySummary,
 } from "../lib/protocol";
 import type { FirstLoopDraft } from "../lib/first-loop";
 import type { Workspace } from "../lib/workspaces";
@@ -38,7 +40,9 @@ interface AppStore {
   forgeWikiContextBySession: Map<string, SelectedForgeWikiPage[]>;
   forgeWikiProposalsBySession: Map<string, ForgeWikiUpdateProposal[]>;
   workflowBySession: Map<string, WorkflowState>;
+  agentTurnBySession: Map<string, AgentTurnProjection>;
   firstLoopDraftBySession: Map<string, FirstLoopDraft>;
+  deliverySummaryBySession: Map<string, DeliverySummary>;
 
   // Provider
   selectedProvider: ProviderId;
@@ -99,6 +103,7 @@ interface PersistedSession {
   contextWindowTokens?: number | null;
   status: SessionState["status"];
   workflowState?: WorkflowState | null;
+  deliverySummary?: DeliverySummary | null;
 }
 
 function persistWorkspaces(workspaces: Map<string, Workspace>, activeWorkspaceId: string | null) {
@@ -114,6 +119,7 @@ function persistWorkspaces(workspaces: Map<string, Workspace>, activeWorkspaceId
 function persistSessions(
   sessions: Map<string, SessionState>,
   workflowBySession: Map<string, WorkflowState>,
+  deliverySummaryBySession: Map<string, DeliverySummary>,
 ) {
   const data: PersistedSession[] = [];
   sessions.forEach((s) => {
@@ -128,6 +134,7 @@ function persistSessions(
       contextWindowTokens: s.contextWindowTokens ?? null,
       status: s.status,
       workflowState: workflowBySession.get(s.id) ?? null,
+      deliverySummary: deliverySummaryBySession.get(s.id) ?? null,
     });
   });
   return idbSet(PERSIST_KEY, data).catch(() => {});
@@ -173,6 +180,56 @@ async function loadBlocks(sessionId: string): Promise<BlockState[]> {
   }
 }
 
+function latestDeliverySummaryFromBlocks(blocks: BlockState[]): DeliverySummary | null {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.event_type !== "delivery_summary") continue;
+    return parsePersistedDeliverySummary(block.metadata?.summary);
+  }
+  return null;
+}
+
+function lastNonPendingBlock(blocks: BlockState[]): BlockState | null {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.event_type !== "pending") return block;
+  }
+  return null;
+}
+
+function isSameAsLastDeliveryBlock(blocks: BlockState[], summary: DeliverySummary): boolean {
+  const lastBlock = lastNonPendingBlock(blocks);
+  if (lastBlock?.event_type !== "delivery_summary") return false;
+  return deliverySummariesEqual(parsePersistedDeliverySummary(lastBlock.metadata?.summary), summary);
+}
+
+function parsePersistedDeliverySummary(value: unknown): DeliverySummary | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Partial<Record<keyof DeliverySummary, unknown>>;
+  const previewLabel = stringValue(record.preview_label);
+  const checkpointLabel = stringValue(record.checkpoint_label);
+  const nextAction = stringValue(record.next_action);
+  if (!previewLabel || !checkpointLabel || !nextAction) return null;
+  return {
+    project_path: stringValue(record.project_path),
+    preview_label: previewLabel,
+    checkpoint_label: checkpointLabel,
+    next_action: nextAction,
+    verification_label: stringValue(record.verification_label),
+    verification_status: stringValue(record.verification_status),
+    verification_command: stringValue(record.verification_command),
+    record_label: stringValue(record.record_label),
+    record_status: stringValue(record.record_status),
+    record_target_pages: Array.isArray(record.record_target_pages)
+      ? record.record_target_pages.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [],
+  };
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function getLegacyWorkspace(): Workspace | null {
   if (typeof window === "undefined") return null;
   return workspaceFromPath(window.localStorage.getItem(LEGACY_WORKING_DIR_KEY) ?? "");
@@ -200,7 +257,9 @@ export const useStore = create<AppStore>((set, get) => ({
   forgeWikiContextBySession: new Map(),
   forgeWikiProposalsBySession: new Map(),
   workflowBySession: new Map(),
+  agentTurnBySession: new Map(),
   firstLoopDraftBySession: new Map(),
+  deliverySummaryBySession: new Map(),
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
   selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),
@@ -250,6 +309,7 @@ export const useStore = create<AppStore>((set, get) => ({
       if (data && data.length > 0) {
         const sessions = new Map<string, SessionState>();
         const workflowBySession = new Map<string, WorkflowState>();
+        const deliverySummaryBySession = new Map<string, DeliverySummary>();
         const hydratedAt = Date.now();
         for (const s of data) {
           const blocks = await loadBlocks(s.id);
@@ -272,6 +332,10 @@ export const useStore = create<AppStore>((set, get) => ({
           if (s.workflowState) {
             workflowBySession.set(s.id, s.workflowState);
           }
+          const latestDeliverySummary = s.deliverySummary ?? latestDeliverySummaryFromBlocks(blocks);
+          if (latestDeliverySummary) {
+            deliverySummaryBySession.set(s.id, latestDeliverySummary);
+          }
         }
         const workspaceScopedSessionIds = workspaceSessionIds(sessions, activeWorkspaceId);
         const fallbackActiveSessionId = workspaceScopedSessionIds[workspaceScopedSessionIds.length - 1] ?? null;
@@ -284,6 +348,7 @@ export const useStore = create<AppStore>((set, get) => ({
           workspaces,
           activeWorkspaceId,
           workflowBySession,
+          deliverySummaryBySession,
           hydrated: true,
           theme: (savedTheme as "light" | "dark") || get().theme,
           selectedProvider,
@@ -292,7 +357,7 @@ export const useStore = create<AppStore>((set, get) => ({
         if (activeSessionId) {
           idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
         }
-        persistSessions(sessions, workflowBySession);
+        persistSessions(sessions, workflowBySession, deliverySummaryBySession);
         persistWorkspaces(workspaces, activeWorkspaceId);
       } else {
         set({
@@ -438,7 +503,7 @@ export const useStore = create<AppStore>((set, get) => ({
       streaming: existing?.streaming ?? false,
     });
     set({ sessions, workspaces, activeWorkspaceId: workspaceId, activeSessionId: id });
-    persistSessions(sessions, get().workflowBySession);
+    persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
     persistWorkspaces(workspaces, workspaceId);
     idbSet(ACTIVE_SESSION_KEY, id).catch(() => {});
   },
@@ -449,13 +514,17 @@ export const useStore = create<AppStore>((set, get) => ({
     const forgeWikiContextBySession = new Map(get().forgeWikiContextBySession);
     const forgeWikiProposalsBySession = new Map(get().forgeWikiProposalsBySession);
     const workflowBySession = new Map(get().workflowBySession);
+    const agentTurnBySession = new Map(get().agentTurnBySession);
     const firstLoopDraftBySession = new Map(get().firstLoopDraftBySession);
+    const deliverySummaryBySession = new Map(get().deliverySummaryBySession);
     sessions.delete(id);
     selectedContextBySession.delete(id);
     forgeWikiContextBySession.delete(id);
     forgeWikiProposalsBySession.delete(id);
     workflowBySession.delete(id);
+    agentTurnBySession.delete(id);
     firstLoopDraftBySession.delete(id);
+    deliverySummaryBySession.delete(id);
     const remainingSessionIds = workspaceSessionIds(sessions, get().activeWorkspaceId);
     const activeSessionId =
       get().activeSessionId === id
@@ -468,12 +537,14 @@ export const useStore = create<AppStore>((set, get) => ({
       forgeWikiContextBySession,
       forgeWikiProposalsBySession,
       workflowBySession,
+      agentTurnBySession,
       firstLoopDraftBySession,
+      deliverySummaryBySession,
     });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
     Promise.all([
-      persistSessions(sessions, workflowBySession),
+      persistSessions(sessions, workflowBySession, deliverySummaryBySession),
       idbDel(BLOCKS_PREFIX + id).catch(() => {}),
       activeSessionId
         ? idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {})
@@ -485,7 +556,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const workflowBySession = new Map(get().workflowBySession);
     workflowBySession.set(sessionId, workflow);
     set({ workflowBySession });
-    persistSessions(get().sessions, workflowBySession);
+    persistSessions(get().sessions, workflowBySession, get().deliverySummaryBySession);
   },
 
   setFirstLoopDraft: (sessionId, draft) => {
@@ -507,7 +578,7 @@ export const useStore = create<AppStore>((set, get) => ({
     );
     sessions.set(sessionId, { ...session, blocks });
     set({ sessions });
-    persistSessions(sessions, get().workflowBySession);
+    persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
     persistBlocks(sessionId, blocks);
   },
 
@@ -518,7 +589,7 @@ export const useStore = create<AppStore>((set, get) => ({
       sessions.set(id, { ...session, status });
     }
     set({ sessions });
-    persistSessions(sessions, get().workflowBySession);
+    persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
   },
 
   addUserMessage: (sessionId, text) => {
@@ -555,6 +626,25 @@ export const useStore = create<AppStore>((set, get) => ({
     if (event_type === "workflow_updated") {
       get().setWorkflowState(session_id, event.state);
       return;
+    }
+
+    if (event_type === "agent_turn_updated") {
+      const agentTurnBySession = new Map(get().agentTurnBySession);
+      agentTurnBySession.set(session_id, event.state);
+      set({ agentTurnBySession });
+      return;
+    }
+
+    if (event_type === "delivery_summary") {
+      const sessionBlocks = get().sessions.get(session_id)?.blocks ?? [];
+      const shouldDedupeReplay = isSameAsLastDeliveryBlock(sessionBlocks, event.summary);
+      const deliverySummaryBySession = new Map(get().deliverySummaryBySession);
+      deliverySummaryBySession.set(session_id, event.summary);
+      set({ deliverySummaryBySession });
+      persistSessions(get().sessions, get().workflowBySession, deliverySummaryBySession);
+      if (shouldDedupeReplay) {
+        return;
+      }
     }
 
     if (event_type === "memory_selection") {
@@ -600,7 +690,7 @@ export const useStore = create<AppStore>((set, get) => ({
         };
         sessions.set(session_id, session);
         set({ sessions });
-        persistSessions(sessions, get().workflowBySession);
+        persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
         return;
       }
       return;
@@ -643,7 +733,7 @@ export const useStore = create<AppStore>((set, get) => ({
         streaming: false,
       });
       set({ sessions });
-      persistSessions(sessions, get().workflowBySession);
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
       return;
     }
 
@@ -655,7 +745,7 @@ export const useStore = create<AppStore>((set, get) => ({
         streaming: false,
       });
       set({ sessions });
-      persistSessions(sessions, get().workflowBySession);
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
       persistBlocksNow(session_id, blocks);
       return;
     }
@@ -668,7 +758,7 @@ export const useStore = create<AppStore>((set, get) => ({
         blocks,
       });
       set({ sessions });
-      persistSessions(sessions, get().workflowBySession);
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
       return;
     }
 
@@ -919,6 +1009,22 @@ function eventToBlock(event: StreamEvent): BlockState | null {
     default:
       return null;
   }
+}
+
+function deliverySummariesEqual(left: DeliverySummary | null, right: DeliverySummary | null) {
+  if (!left || !right) return false;
+  return (
+    (left.project_path ?? null) === (right.project_path ?? null) &&
+    left.preview_label === right.preview_label &&
+    left.checkpoint_label === right.checkpoint_label &&
+    left.next_action === right.next_action &&
+    (left.verification_label ?? null) === (right.verification_label ?? null) &&
+    (left.verification_status ?? null) === (right.verification_status ?? null) &&
+    (left.verification_command ?? null) === (right.verification_command ?? null) &&
+    (left.record_label ?? null) === (right.record_label ?? null) &&
+    (left.record_status ?? null) === (right.record_status ?? null) &&
+    JSON.stringify(left.record_target_pages ?? []) === JSON.stringify(right.record_target_pages ?? [])
+  );
 }
 
 // Selector hooks

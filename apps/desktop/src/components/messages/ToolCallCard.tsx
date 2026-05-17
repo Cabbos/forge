@@ -39,6 +39,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
   const actionText = status === "running" ? toolCopy.running : status === "error" ? `${toolCopy.label}遇到问题` : toolCopy.done;
   const inputSummary = summarizeToolInput(toolName, toolInput);
   const detailText = block.content || (status === "running" ? "等待工具返回结果..." : "");
+  const resultSummary = summarizeToolResult(detailText, isError);
   const durationMs = typeof block.metadata.duration_ms === "number" ? block.metadata.duration_ms : null;
   const durationLabel = block.isComplete && durationMs !== null ? formatDuration(durationMs) : "";
 
@@ -95,6 +96,12 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                   </button>
                 </div>
               </div>
+              {resultSummary && (
+                <div data-testid="tool-result-summary" className="forge-log-summary" data-tone={isError ? "error" : "default"}>
+                  <span>{isError ? "失败原因" : "结果"}</span>
+                  <strong>{resultSummary}</strong>
+                </div>
+              )}
               <div data-testid="log-detail-output" className="forge-log-output">
                 {detailText}
               </div>
@@ -158,4 +165,13 @@ function truncateMiddle(text: string, limit: number) {
 function formatDuration(ms: number) {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+}
+
+function summarizeToolResult(text: string, isError: boolean) {
+  const firstUsefulLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstUsefulLine) return "";
+  return truncateMiddle(firstUsefulLine, isError ? 96 : 72);
 }

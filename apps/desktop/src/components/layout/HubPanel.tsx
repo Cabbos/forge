@@ -27,12 +27,14 @@ const contextFiles: ContextFile[] = [];
 
 export function HubPanel() {
   const [open, setOpen] = useState(false);
+  const [recordsRequestedOpen, setRecordsRequestedOpen] = useState(false);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const activeWorkspace = useActiveWorkspace();
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
   const workflow = useStore((s) => activeId ? s.workflowBySession.get(activeId) ?? null : null);
   const firstLoopDraft = useStore((s) => activeId ? s.firstLoopDraftBySession.get(activeId) ?? null : null);
+  const deliverySummary = useStore((s) => activeId ? s.deliverySummaryBySession.get(activeId) ?? null : null);
   const selectedMemories = useStore((s) => activeId ? s.selectedContextBySession.get(activeId) ?? [] : []);
   const selectedWikiPages = useStore((s) => activeId ? s.forgeWikiContextBySession.get(activeId) ?? [] : []);
   const session = activeId ? sessions.get(activeId) : null;
@@ -43,11 +45,17 @@ export function HubPanel() {
     session: session ?? null,
     blocks,
     firstLoopDraft,
-  }), [activeWorkspace, blocks, firstLoopDraft, session]);
+    deliverySummary,
+  }), [activeWorkspace, blocks, deliverySummary, firstLoopDraft, session]);
 
   useEffect(() => {
     const toggleHandler = () => setOpen((value) => !value);
-    const openHandler = () => setOpen(true);
+    const openHandler = (event: Event) => {
+      setOpen(true);
+      if ((event as CustomEvent<{ section?: string }>).detail?.section === "records") {
+        setRecordsRequestedOpen(true);
+      }
+    };
     const shortcutHandler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "i") return;
       event.preventDefault();
@@ -129,6 +137,7 @@ export function HubPanel() {
               testId="archive-disclosure-records"
               title="项目记录"
               meta="记录与建议"
+              defaultOpen={recordsRequestedOpen || deliverySummary?.record_status === "pending"}
             >
               <WikiSections sessionId={activeId} projectPath={projectPath} />
             </ArchiveDisclosure>
@@ -172,6 +181,10 @@ function ArchiveDisclosure({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const Icon = open ? ChevronDown : ChevronRight;
+
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
 
   return (
     <section data-testid={testId}>

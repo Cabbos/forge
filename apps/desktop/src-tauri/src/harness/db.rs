@@ -9,14 +9,17 @@ pub struct Database {
 impl Database {
     pub fn open(path: &PathBuf) -> SqlResult<Self> {
         let conn = Connection::open(path)?;
-        let db = Self { conn: Mutex::new(conn) };
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
         db.migrate()?;
         Ok(db)
     }
 
     fn migrate(&self) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS capabilities (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -33,11 +36,19 @@ impl Database {
                 approved INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now'))
             );
-        ")?;
+        ",
+        )?;
         Ok(())
     }
 
-    pub fn upsert_capability(&self, id: &str, name: &str, kind: &str, source: &str, enabled: bool) -> SqlResult<()> {
+    pub fn upsert_capability(
+        &self,
+        id: &str,
+        name: &str,
+        kind: &str,
+        source: &str,
+        enabled: bool,
+    ) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO capabilities (id, name, kind, source, enabled) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -58,8 +69,10 @@ impl Database {
 
     pub fn set_enabled(&self, id: &str, enabled: bool) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE capabilities SET enabled = ?1 WHERE id = ?2",
-            rusqlite::params![enabled as i32, id])?;
+        conn.execute(
+            "UPDATE capabilities SET enabled = ?1 WHERE id = ?2",
+            rusqlite::params![enabled as i32, id],
+        )?;
         Ok(())
     }
 
@@ -77,7 +90,10 @@ impl Database {
 
     pub fn delete_capability(&self, id: &str) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM capabilities WHERE id = ?1", rusqlite::params![id])?;
+        conn.execute(
+            "DELETE FROM capabilities WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
         Ok(())
     }
 
@@ -88,9 +104,14 @@ impl Database {
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(CapRow {
-                id: row.get(0)?, name: row.get(1)?, description: row.get(2)?,
-                version: row.get(3)?, source: row.get(4)?, kind: row.get(5)?,
-                enabled: row.get(6)?, config_json: row.get(7)?,
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                version: row.get(3)?,
+                source: row.get(4)?,
+                kind: row.get(5)?,
+                enabled: row.get(6)?,
+                config_json: row.get(7)?,
             })
         })?;
         rows.collect()
@@ -109,7 +130,8 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM permission_rules WHERE tool_name = ?1 AND approved = 1",
-            rusqlite::params![tool_name], |row| row.get(0),
+            rusqlite::params![tool_name],
+            |row| row.get(0),
         )?;
         Ok(count > 0)
     }
@@ -117,7 +139,12 @@ impl Database {
 
 #[derive(Debug, Clone)]
 pub struct CapRow {
-    pub id: String, pub name: String, pub description: String,
-    pub version: String, pub source: String, pub kind: String,
-    pub enabled: bool, pub config_json: String,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub source: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub config_json: String,
 }

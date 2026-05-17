@@ -305,13 +305,11 @@ impl AiAdapter for AnthropicAdapter {
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let text = match tokio::select! {
+            let text: String = tokio::select! {
                 t = response.text() => t,
                 _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-            } {
-                Ok(t) => t,
-                Err(_) => String::new(),
-            };
+            }
+            .unwrap_or_default();
             return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
         }
 

@@ -26,13 +26,23 @@ impl PermissionGate {
         Self {
             working_dir,
             dangerous_patterns: vec![
-                "rm ", "rmdir ", "del ", "deltree ",
-                "sudo ", "su ",
-                "chmod 777", "chown ",
-                "> /dev/", "mkfs.", "dd if=",
-                "curl ", "wget ",
-                "git push", "git reset --hard",
-                "npm publish", "cargo publish",
+                "rm ",
+                "rmdir ",
+                "del ",
+                "deltree ",
+                "sudo ",
+                "su ",
+                "chmod 777",
+                "chown ",
+                "> /dev/",
+                "mkfs.",
+                "dd if=",
+                "curl ",
+                "wget ",
+                "git push",
+                "git reset --hard",
+                "npm publish",
+                "cargo publish",
             ],
             approved: HashSet::new(),
         }
@@ -46,7 +56,11 @@ impl PermissionGate {
     /// Check a file write operation.
     pub fn check_file_write(&self, path: &str) -> PermissionDecision {
         let p = std::path::Path::new(path);
-        let resolved = if p.is_absolute() { p.to_path_buf() } else { self.working_dir.join(p) };
+        let resolved = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.working_dir.join(p)
+        };
         let work_canon = self
             .working_dir
             .canonicalize()
@@ -54,14 +68,20 @@ impl PermissionGate {
         if let Ok(canonical) = resolved.canonicalize() {
             if !canonical.starts_with(&work_canon) {
                 return PermissionDecision::Deny {
-                    reason: format!("Write to {} blocked: outside working directory", canonical.display()),
+                    reason: format!(
+                        "Write to {} blocked: outside working directory",
+                        canonical.display()
+                    ),
                 };
             }
         } else if let Some(parent) = resolved.parent() {
             if let Ok(parent_canon) = parent.canonicalize() {
                 if !parent_canon.starts_with(&work_canon) {
                     return PermissionDecision::Deny {
-                        reason: format!("Write to {} blocked: outside working directory", resolved.display()),
+                        reason: format!(
+                            "Write to {} blocked: outside working directory",
+                            resolved.display()
+                        ),
                     };
                 }
             }
@@ -90,7 +110,10 @@ impl PermissionGate {
                     return PermissionDecision::Allow;
                 }
                 return PermissionDecision::Ask {
-                    question: format!("Allow this potentially dangerous command?\n\n```\n{}\n```", command),
+                    question: format!(
+                        "Allow this potentially dangerous command?\n\n```\n{}\n```",
+                        command
+                    ),
                     kind: "dangerous_cmd".to_string(),
                 };
             }

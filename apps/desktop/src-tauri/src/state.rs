@@ -2,6 +2,7 @@ use crate::agent::session::AgentSession;
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
 use crate::memory::WikiMemoryStore;
+use crate::protocol::events::DeliverySummary;
 use crate::workflow::WorkflowState;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +26,7 @@ pub struct AppState {
     pub wiki_memory: Arc<WikiMemoryStore>,
     pub forge_wiki: Arc<ForgeWikiStore>,
     pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
+    pub delivery_states: Arc<RwLock<HashMap<String, DeliverySummary>>>,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
             wiki_memory: Arc::new(WikiMemoryStore::default()),
             forge_wiki: Arc::new(ForgeWikiStore::new()),
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
+            delivery_states: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

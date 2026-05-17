@@ -19,13 +19,13 @@ export function ThinkingBlock({ block }: { block: BlockState }) {
         style={{ color: "var(--muted-foreground)" }}>
         <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
         <span className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-          {isRunning ? "思考中" : "思考记录"}
+          {isRunning ? "正在梳理思路" : "思考记录"}
         </span>
         {isRunning ? (
-          <span className="flex gap-1">
-            <span className="inline-block w-1 h-1 rounded-full animate-[pulse-dot_1s_infinite]" style={{ background: "#4B9CD3" }} />
-            <span className="inline-block w-1 h-1 rounded-full animate-[pulse-dot_1s_infinite]" style={{ background: "#4B9CD3", animationDelay: "0.2s" }} />
-            <span className="inline-block w-1 h-1 rounded-full animate-[pulse-dot_1s_infinite]" style={{ background: "#4B9CD3", animationDelay: "0.4s" }} />
+          <span data-testid="thinking-dots" className="flex gap-1">
+            <span className="inline-block h-1 w-1 rounded-full animate-[pulse-dot_1.15s_infinite]" style={{ background: "currentColor" }} />
+            <span className="inline-block h-1 w-1 rounded-full animate-[pulse-dot_1.15s_infinite]" style={{ background: "currentColor", animationDelay: "0.18s" }} />
+            <span className="inline-block h-1 w-1 rounded-full animate-[pulse-dot_1.15s_infinite]" style={{ background: "currentColor", animationDelay: "0.36s" }} />
           </span>
         ) : null}
       </button>

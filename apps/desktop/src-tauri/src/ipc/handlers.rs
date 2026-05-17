@@ -5,19 +5,32 @@ use crate::adapters::anthropic::AnthropicAdapter;
 use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::adapters::openai_compatible::OpenAiCompatibleAdapter;
+use crate::agent::delivery_state::{
+    build_delivery_summary, DeliveryCheckpointInput, DeliveryRecordInput, DeliveryRuntimeInput,
+};
+use crate::agent::provider_capabilities::{
+    context_window_tokens, default_model, missing_api_key_message, normalize_provider,
+    provider_label,
+};
 use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
     delete_session_snapshot, load_session_snapshot, save_session_snapshot,
 };
+use crate::agent::turn_state::AgentTurnMetadata;
+use crate::forge_wiki::model::ForgeWikiProposalStatus;
 use crate::forge_wiki::storage::ForgeWikiStore;
+use crate::forge_wiki::writeback::build_project_archive_writeback;
 use crate::harness::Harness;
+use crate::ipc::project_checkpoint::project_checkpoint_status_for_session;
+use crate::ipc::project_runtime::project_runtime_status_for_session;
 use crate::memory::{extract_candidates_from_user_message, format_selected_memory_context};
 use crate::protocol::commands::SessionCreated;
-use crate::protocol::events::StreamEvent;
+use crate::protocol::events::{DeliverySummary, StreamEvent};
 use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
 use crate::workflow::{classify_workflow, WorkflowRoute};
+use crate::workspace_safety::resolve_workspace_path as resolve_safe_workspace_path;
 
 #[derive(serde::Serialize)]
 pub struct FilePreviewLine {
@@ -40,57 +53,6 @@ pub struct FilePreview {
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/anthropic";
 const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
-const DEFAULT_PROVIDER: &str = "deepseek";
-
-fn normalize_provider(provider: Option<&str>) -> String {
-    match provider
-        .unwrap_or(DEFAULT_PROVIDER)
-        .trim()
-        .to_lowercase()
-        .as_str()
-    {
-        "anthropic" | "claude" => "anthropic".to_string(),
-        "openai" | "gpt" => "openai".to_string(),
-        "openrouter" => "openrouter".to_string(),
-        "deepseek" | "" => "deepseek".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn default_model(provider: &str) -> &'static str {
-    match provider {
-        "anthropic" => "claude-sonnet-4-6",
-        "openai" => "gpt-4o",
-        "openrouter" => "openai/gpt-4o-mini",
-        _ => "deepseek-v4-flash[1m]",
-    }
-}
-
-fn context_window_tokens(provider: &str, model: &str) -> Option<u32> {
-    match provider {
-        "deepseek" if model.contains("[1m]") => Some(1_000_000),
-        "deepseek" if model.contains("v4-pro") => Some(1_000_000),
-        "deepseek" => Some(128_000),
-        _ => None,
-    }
-}
-
-fn provider_label(provider: &str) -> &'static str {
-    match provider {
-        "anthropic" => "Anthropic",
-        "openai" => "OpenAI",
-        "openrouter" => "OpenRouter",
-        "deepseek" => "DeepSeek",
-        _ => "provider",
-    }
-}
-
-fn missing_api_key_message(provider: &str) -> String {
-    format!(
-        "还没有配置 {} API Key。请打开设置，粘贴密钥后就可以开始发送。",
-        provider_label(provider)
-    )
-}
 
 fn emit_missing_api_key_notice(app_handle: &tauri::AppHandle, session_id: &str, provider: &str) {
     let _ = app_handle.emit(
@@ -127,7 +89,7 @@ async fn upgrade_missing_key_session_if_possible(
         &model_str,
         credentials.api_base.as_deref(),
     )?;
-    let working_dir = resolve_working_dir(&snapshot.working_dir)?;
+    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
         working_dir.clone(),
         state.pending_confirms.clone(),
@@ -141,7 +103,7 @@ async fn upgrade_missing_key_session_if_possible(
         system_prompt,
         snapshot.context_window_tokens,
     );
-    upgraded.restore_state(snapshot.messages, snapshot.summary);
+    upgraded.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let upgraded = Arc::new(upgraded);
     state
         .sessions
@@ -158,6 +120,22 @@ async fn upgrade_missing_key_session_if_possible(
         },
     );
     Ok(upgraded)
+}
+
+async fn save_session_snapshot_with_workflow(
+    state: &Arc<AppState>,
+    session: &AgentSession,
+) -> Result<(), String> {
+    let latest_workflow = state.workflow_states.read().await.get(&session.id).cloned();
+    let latest_delivery = state.delivery_states.read().await.get(&session.id).cloned();
+    let mut snapshot = session.snapshot();
+    if let Some(workflow) = latest_workflow {
+        snapshot = snapshot.with_latest_workflow(workflow);
+    }
+    if let Some(delivery) = latest_delivery {
+        snapshot = snapshot.with_latest_delivery(delivery);
+    }
+    save_session_snapshot(&snapshot)
 }
 
 fn build_adapter(
@@ -234,7 +212,7 @@ pub async fn create_session(
         build_adapter(&provider, &key, &model_str, credentials.api_base.as_deref())?
     };
 
-    let working_dir = resolve_working_dir(&working_dir)?;
+    let working_dir = resolve_safe_workspace_path(&working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
         working_dir.clone(),
         state.pending_confirms.clone(),
@@ -292,6 +270,19 @@ pub async fn resume_session(
     if let Some(session) = existing_session {
         let session = upgrade_missing_key_session_if_possible(&app_handle, &state, session).await?;
         session.resume();
+        if let Some(workflow) = state.workflow_states.read().await.get(&session_id).cloned() {
+            let _ = app_handle.emit(
+                "session-output",
+                StreamEvent::WorkflowUpdated {
+                    session_id: session_id.clone(),
+                    state: workflow,
+                },
+            );
+        }
+        session.emit_latest_turn_projection(&app_handle);
+        if let Some(delivery) = state.delivery_states.read().await.get(&session_id).cloned() {
+            emit_delivery_summary(&app_handle, &session_id, delivery);
+        }
         return Ok(SessionCreated {
             session_id,
             provider: normalize_provider(Some(&session.agent_type)),
@@ -303,6 +294,8 @@ pub async fn resume_session(
     let snapshot = load_session_snapshot(&session_id)?;
     let provider = normalize_provider(Some(&snapshot.provider));
     let credentials = settings::detect_credentials(&provider);
+    let latest_workflow = snapshot.latest_workflow.clone();
+    let latest_delivery = snapshot.latest_delivery.clone();
 
     let model_str = snapshot.model.clone();
     let context_window_tokens = snapshot
@@ -322,7 +315,7 @@ pub async fn resume_session(
             credentials.api_base.as_deref(),
         )?
     };
-    let working_dir = resolve_working_dir(&snapshot.working_dir)?;
+    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
         working_dir.clone(),
         state.pending_confirms.clone(),
@@ -337,13 +330,13 @@ pub async fn resume_session(
         system_prompt,
         context_window_tokens,
     );
-    session.restore_state(snapshot.messages, snapshot.summary);
+    session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let session = Arc::new(session);
     state
         .sessions
         .write()
         .await
-        .insert(snapshot.session_id.clone(), session);
+        .insert(snapshot.session_id.clone(), session.clone());
 
     let _ = app_handle.emit(
         "session-output",
@@ -354,6 +347,29 @@ pub async fn resume_session(
             context_window_tokens,
         },
     );
+    if let Some(workflow) = latest_workflow {
+        state
+            .workflow_states
+            .write()
+            .await
+            .insert(snapshot.session_id.clone(), workflow.clone());
+        let _ = app_handle.emit(
+            "session-output",
+            StreamEvent::WorkflowUpdated {
+                session_id: snapshot.session_id.clone(),
+                state: workflow,
+            },
+        );
+    }
+    session.emit_latest_turn_projection(&app_handle);
+    if let Some(delivery) = latest_delivery {
+        state
+            .delivery_states
+            .write()
+            .await
+            .insert(snapshot.session_id.clone(), delivery.clone());
+        emit_delivery_summary(&app_handle, &snapshot.session_id, delivery);
+    }
     if missing_api_key {
         emit_missing_api_key_notice(&app_handle, &snapshot.session_id, &provider);
     }
@@ -364,26 +380,6 @@ pub async fn resume_session(
         model: model_str,
         missing_api_key,
     })
-}
-
-fn resolve_working_dir(working_dir: &str) -> Result<std::path::PathBuf, String> {
-    let requested = working_dir.trim();
-    if requested.is_empty() {
-        return std::env::current_dir()
-            .map_err(|e| format!("Cannot read current directory: {}", e));
-    }
-
-    let path = std::path::PathBuf::from(requested);
-    let resolved = path
-        .canonicalize()
-        .map_err(|e| format!("Cannot open project folder '{}': {}", requested, e))?;
-    if !resolved.is_dir() {
-        return Err(format!(
-            "Project folder is not a directory: {}",
-            resolved.display()
-        ));
-    }
-    Ok(resolved)
 }
 
 fn now_ms() -> u64 {
@@ -402,8 +398,67 @@ fn combine_hidden_contexts(first: Option<String>, second: Option<String>) -> Opt
     }
 }
 
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect()
+fn emit_delivery_summary(
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    summary: DeliverySummary,
+) {
+    let _ = app_handle.emit(
+        "session-output",
+        StreamEvent::DeliverySummary {
+            session_id: session_id.to_string(),
+            block_id: BlockId::new().to_string(),
+            summary,
+        },
+    );
+}
+
+async fn build_store_emit_delivery_summary(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
+    record: Option<DeliveryRecordInput>,
+) {
+    let runtime = match project_runtime_status_for_session(state, Some(session_id)).await {
+        Ok(status) => Some(DeliveryRuntimeInput {
+            project_path: Some(status.working_dir),
+            running: status.running,
+            can_start: status.can_start,
+            can_open: status.can_open,
+        }),
+        Err(error) => {
+            crate::app_log!("WARN", "[delivery_state] runtime status failed: {}", error);
+            None
+        }
+    };
+    let checkpoint = match project_checkpoint_status_for_session(state, Some(session_id)).await {
+        Ok(status) => Some(DeliveryCheckpointInput {
+            is_git_repo: status.is_git_repo,
+            dirty: status.dirty,
+            has_checkpoint: status.last_checkpoint.is_some(),
+        }),
+        Err(error) => {
+            crate::app_log!(
+                "WARN",
+                "[delivery_state] checkpoint status failed: {}",
+                error
+            );
+            None
+        }
+    };
+    let summary = build_delivery_summary(
+        runtime,
+        checkpoint,
+        latest_turn.map(|turn| &turn.verification),
+        record,
+    );
+    state
+        .delivery_states
+        .write()
+        .await
+        .insert(session_id.to_string(), summary.clone());
+    emit_delivery_summary(app_handle, session_id, summary);
 }
 
 #[tauri::command]
@@ -477,10 +532,30 @@ pub async fn send_input(
             );
             let memory_context = format_selected_memory_context(&selected);
             let combined_context = combine_hidden_contexts(memory_context, wiki_context);
+            let turn_metadata = AgentTurnMetadata {
+                session_id: session_id.clone(),
+                workspace_path: project_path.clone(),
+                provider: s.agent_type.clone(),
+                model: s.model_id.clone(),
+                route: serde_json::to_value(&workflow.route)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_else(|| workflow.developer_label.clone()),
+                phase: serde_json::to_value(&workflow.phase)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_else(|| workflow.developer_label.clone()),
+                user_goal: text.clone(),
+            };
             let result = s
-                .send_message_with_context(&text, &app_handle, combined_context)
+                .send_message_with_context(
+                    &text,
+                    &app_handle,
+                    combined_context,
+                    Some(turn_metadata),
+                )
                 .await;
-            if let Err(error) = save_session_snapshot(&s.snapshot()) {
+            if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
                 crate::app_log!("WARN", "[session_snapshot] {}", error);
             }
             if result.is_ok() {
@@ -507,42 +582,49 @@ pub async fn send_input(
                         }
                     }
                 }
+                let latest_turn_for_delivery = s.snapshot().latest_turn;
+                let mut record_evidence = None;
                 if workflow.route != WorkflowRoute::Direct {
                     match state.forge_wiki.get_state(&project_path).await {
                         Ok(wiki_state) if wiki_state.exists => {
-                            let summary = truncate_chars(
-                                &format!(
-                                    "{} / {}：{}",
-                                    workflow.developer_label, workflow.beginner_label, text
-                                ),
-                                600,
-                            );
-                            match state
-                                .forge_wiki
-                                .create_update_proposal(
-                                    &project_path,
-                                    Some(&session_id),
-                                    vec!["log.md".to_string()],
-                                    "记录本轮工作".to_string(),
-                                    summary,
-                                )
-                                .await
-                            {
-                                Ok(proposal) => {
-                                    let _ = app_handle.emit(
-                                        "session-output",
-                                        StreamEvent::ForgeWikiUpdateProposed {
-                                            session_id: session_id.clone(),
-                                            proposal,
-                                        },
-                                    );
-                                }
-                                Err(error) => {
-                                    crate::app_log!(
-                                        "WARN",
-                                        "[forge_wiki] proposal creation failed: {}",
-                                        error
-                                    );
+                            if let Some(writeback) = build_project_archive_writeback(
+                                &workflow,
+                                &text,
+                                latest_turn_for_delivery.as_ref(),
+                            ) {
+                                match state
+                                    .forge_wiki
+                                    .create_update_proposal(
+                                        &project_path,
+                                        Some(&session_id),
+                                        writeback.target_pages,
+                                        writeback.title,
+                                        writeback.summary,
+                                    )
+                                    .await
+                                {
+                                    Ok(proposal) => {
+                                        if proposal.status == ForgeWikiProposalStatus::Pending {
+                                            record_evidence = Some(DeliveryRecordInput {
+                                                status: "pending".to_string(),
+                                                target_pages: proposal.target_pages.clone(),
+                                            });
+                                        }
+                                        let _ = app_handle.emit(
+                                            "session-output",
+                                            StreamEvent::ForgeWikiUpdateProposed {
+                                                session_id: session_id.clone(),
+                                                proposal,
+                                            },
+                                        );
+                                    }
+                                    Err(error) => {
+                                        crate::app_log!(
+                                            "WARN",
+                                            "[forge_wiki] proposal creation failed: {}",
+                                            error
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -551,6 +633,17 @@ pub async fn send_input(
                             crate::app_log!("WARN", "[forge_wiki] state check failed: {}", error);
                         }
                     }
+                }
+                build_store_emit_delivery_summary(
+                    &state,
+                    &app_handle,
+                    &session_id,
+                    latest_turn_for_delivery.as_ref(),
+                    record_evidence,
+                )
+                .await;
+                if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
+                    crate::app_log!("WARN", "[session_snapshot] {}", error);
                 }
             }
             result
@@ -567,7 +660,7 @@ pub async fn kill_session(
 ) -> Result<(), String> {
     if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
         s.kill(&app_handle);
-        if let Err(error) = save_session_snapshot(&s.snapshot()) {
+        if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
             crate::app_log!("WARN", "[session_snapshot] {}", error);
         }
     }
@@ -585,6 +678,7 @@ pub async fn delete_session(
     }
     state.sessions.write().await.remove(&session_id);
     state.workflow_states.write().await.remove(&session_id);
+    state.delivery_states.write().await.remove(&session_id);
     if let Err(error) = delete_session_snapshot(&session_id) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }

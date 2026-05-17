@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 
-const FORGE_SOURCE_WARNING: &str = "这是 Forge 自己的开发目录。继续操作可能修改 Forge 本体。";
+use crate::workspace_safety::{classify_existing_workspace_path, WorkspaceRisk};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,19 +42,23 @@ pub fn build_write_boundary(
     } else {
         None
     };
-    let is_forge_source = is_forge_source_workspace(working_dir);
+    let workspace_safety = classify_existing_workspace_path(working_dir);
+    let is_forge_source = workspace_safety.risk == WorkspaceRisk::High;
 
     WriteBoundary {
         title: "准备修改项目".to_string(),
-        workspace_name: workspace_name(working_dir),
-        workspace_path: working_dir.to_string_lossy().into_owned(),
+        workspace_name: workspace_safety.display_name,
+        workspace_path: workspace_safety
+            .canonical_path
+            .to_string_lossy()
+            .into_owned(),
         operation: operation_label(tool_name).to_string(),
         impact: impact_text(&affected_files),
         affected_files,
         command,
         risk: risk_for(kind, is_forge_source),
         recovery: "交付区会显示预览和检查点状态。".to_string(),
-        warning: is_forge_source.then(|| FORGE_SOURCE_WARNING.to_string()),
+        warning: workspace_safety.warning,
     }
 }
 
@@ -90,7 +94,7 @@ fn operation_label(tool_name: &str) -> &'static str {
 
 fn impact_text(affected_files: &[String]) -> String {
     if affected_files.is_empty() {
-        "这个命令可能影响当前工作空间".to_string()
+        "这个命令可能影响当前项目".to_string()
     } else {
         format!("将修改 {} 个文件", affected_files.len())
     }
@@ -104,34 +108,4 @@ fn risk_for(kind: &str, is_forge_source: bool) -> WriteBoundaryRisk {
     } else {
         WriteBoundaryRisk::Normal
     }
-}
-
-fn workspace_name(working_dir: &Path) -> String {
-    working_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("当前项目")
-        .to_string()
-}
-
-fn is_forge_source_workspace(working_dir: &Path) -> bool {
-    if !working_dir.join("src-tauri").is_dir() {
-        return false;
-    }
-
-    let Ok(package_json) = std::fs::read_to_string(working_dir.join("package.json")) else {
-        return false;
-    };
-
-    serde_json::from_str::<Value>(&package_json)
-        .ok()
-        .and_then(|package| {
-            package
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .as_deref()
-        == Some("forge")
 }

@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod harness {
-    use forge::harness::permissions::{PermissionDecision, PermissionGate};
-    use forge::harness::write_boundary::{build_write_boundary, WriteBoundaryRisk};
-    use forge::harness::hooks::{HookEngine, LoggingHook, FileSystemAuditHook};
     use forge::harness::capability::{CapabilityKind, CapabilityMetadata};
     use forge::harness::db::Database;
+    use forge::harness::hooks::{FileSystemAuditHook, HookEngine, LoggingHook};
+    use forge::harness::permissions::{PermissionDecision, PermissionGate};
+    use forge::harness::write_boundary::{build_write_boundary, WriteBoundaryRisk};
     use std::sync::Arc;
 
     fn unique_temp_workspace(prefix: &str) -> std::path::PathBuf {
@@ -12,12 +12,8 @@ mod harness {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "{}-{}-{}",
-            prefix,
-            std::process::id(),
-            nanos
-        ));
+        let path =
+            std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos));
         std::fs::create_dir_all(&path).unwrap();
         path
     }
@@ -31,10 +27,22 @@ mod harness {
         let db = Arc::new(Database::open(&db_path).unwrap());
         let gate = PermissionGate::new(db);
 
-        assert!(gate.is_allowed("s1", "read_file", &serde_json::json!({})).await);
-        assert!(gate.is_allowed("s1", "search_files", &serde_json::json!({})).await);
-        assert!(gate.is_allowed("s1", "web_search", &serde_json::json!({})).await);
-        assert!(gate.is_allowed("s1", "git_diff", &serde_json::json!({})).await);
+        assert!(
+            gate.is_allowed("s1", "read_file", &serde_json::json!({}))
+                .await
+        );
+        assert!(
+            gate.is_allowed("s1", "search_files", &serde_json::json!({}))
+                .await
+        );
+        assert!(
+            gate.is_allowed("s1", "web_search", &serde_json::json!({}))
+                .await
+        );
+        assert!(
+            gate.is_allowed("s1", "git_diff", &serde_json::json!({}))
+                .await
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -47,13 +55,19 @@ mod harness {
         let gate = PermissionGate::new(db);
         let working_dir = std::env::temp_dir();
 
-        assert!(!gate.is_allowed("s1", "write_to_file", &serde_json::json!({})).await);
-        let decision = gate.check(
-            "s1",
-            "write_to_file",
-            &serde_json::json!({"path":"test-write.txt","content":"hello"}),
-            &working_dir,
-        ).await;
+        assert!(
+            !gate
+                .is_allowed("s1", "write_to_file", &serde_json::json!({}))
+                .await
+        );
+        let decision = gate
+            .check(
+                "s1",
+                "write_to_file",
+                &serde_json::json!({"path":"test-write.txt","content":"hello"}),
+                &working_dir,
+            )
+            .await;
         assert!(matches!(decision, PermissionDecision::Ask { kind, .. } if kind == "file_write"));
 
         let _ = std::fs::remove_file(&db_path);
@@ -66,7 +80,11 @@ mod harness {
         let db = Arc::new(Database::open(&db_path).unwrap());
         let gate = PermissionGate::new(db);
 
-        assert!(!gate.is_allowed("s1", "run_shell", &serde_json::json!({})).await);
+        assert!(
+            !gate
+                .is_allowed("s1", "run_shell", &serde_json::json!({}))
+                .await
+        );
         assert!(!gate.is_allowed("s1", "bash", &serde_json::json!({})).await);
 
         let _ = std::fs::remove_file(&db_path);
@@ -80,29 +98,37 @@ mod harness {
         let gate = PermissionGate::new(db);
         let working_dir = std::env::temp_dir();
 
-        let safe = gate.check(
-            "s1",
-            "run_shell",
-            &serde_json::json!({"command":"rg PermissionDecision src-tauri/src"}),
-            &working_dir,
-        ).await;
+        let safe = gate
+            .check(
+                "s1",
+                "run_shell",
+                &serde_json::json!({"command":"rg PermissionDecision src-tauri/src"}),
+                &working_dir,
+            )
+            .await;
         assert!(matches!(safe, PermissionDecision::Allow));
 
-        let chained = gate.check(
-            "s1",
-            "run_shell",
-            &serde_json::json!({"command":"ls && rm -rf target"}),
-            &working_dir,
-        ).await;
+        let chained = gate
+            .check(
+                "s1",
+                "run_shell",
+                &serde_json::json!({"command":"ls && rm -rf target"}),
+                &working_dir,
+            )
+            .await;
         assert!(matches!(chained, PermissionDecision::Ask { kind, .. } if kind == "dangerous_cmd"));
 
-        let external_read = gate.check(
-            "s1",
-            "run_shell",
-            &serde_json::json!({"command":"cat /Users/example/.ssh/id_rsa"}),
-            &working_dir,
-        ).await;
-        assert!(matches!(external_read, PermissionDecision::Ask { kind, .. } if kind == "shell_cmd"));
+        let external_read = gate
+            .check(
+                "s1",
+                "run_shell",
+                &serde_json::json!({"command":"cat /Users/example/.ssh/id_rsa"}),
+                &working_dir,
+            )
+            .await;
+        assert!(
+            matches!(external_read, PermissionDecision::Ask { kind, .. } if kind == "shell_cmd")
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -114,9 +140,16 @@ mod harness {
         let db = Arc::new(Database::open(&db_path).unwrap());
         let gate = PermissionGate::new(db);
 
-        assert!(!gate.is_allowed("s2", "run_shell", &serde_json::json!({})).await);
+        assert!(
+            !gate
+                .is_allowed("s2", "run_shell", &serde_json::json!({}))
+                .await
+        );
         gate.approve_in_session("s2", "run_shell").await;
-        assert!(gate.is_allowed("s2", "run_shell", &serde_json::json!({})).await);
+        assert!(
+            gate.is_allowed("s2", "run_shell", &serde_json::json!({}))
+                .await
+        );
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -129,14 +162,21 @@ mod harness {
         engine.register(LoggingHook);
         engine.register(FileSystemAuditHook);
 
-        let result = engine.run_pre_tool("s1", "write_to_file", &serde_json::json!({"path":"test.txt"}))
+        let result = engine
+            .run_pre_tool(
+                "s1",
+                "write_to_file",
+                &serde_json::json!({"path":"test.txt"}),
+            )
             .await;
         match result {
             forge::harness::hooks::HookDecision::Proceed(_) => {}
             _ => panic!("Expected Proceed from pre-tool hook"),
         }
 
-        let result = engine.run_post_tool("s1", "write_to_file", "File written").await;
+        let result = engine
+            .run_post_tool("s1", "write_to_file", "File written")
+            .await;
         assert_eq!(result, "File written");
     }
 
@@ -165,8 +205,10 @@ mod harness {
         let db_path = std::env::temp_dir().join("test-db-crud.db");
         let db = Database::open(&db_path).unwrap();
 
-        db.upsert_capability("c1", "Cap One", "skill", "builtin", true).unwrap();
-        db.upsert_capability("c2", "Cap Two", "tool", "github", false).unwrap();
+        db.upsert_capability("c1", "Cap One", "skill", "builtin", true)
+            .unwrap();
+        db.upsert_capability("c2", "Cap Two", "tool", "github", false)
+            .unwrap();
 
         let all = db.list_all().unwrap();
         assert_eq!(all.len(), 2);
@@ -212,7 +254,10 @@ mod harness {
 
         assert_eq!(boundary.title, "准备修改项目");
         assert_eq!(boundary.operation, "写入文件");
-        assert_eq!(boundary.workspace_path, workspace.to_string_lossy());
+        assert_eq!(
+            boundary.workspace_path,
+            workspace.canonicalize().unwrap().to_string_lossy()
+        );
         assert_eq!(boundary.affected_files, vec!["src/app.tsx".to_string()]);
         assert_eq!(boundary.impact, "将修改 1 个文件");
         assert_eq!(boundary.risk, WriteBoundaryRisk::Caution);
@@ -234,7 +279,7 @@ mod harness {
         assert_eq!(boundary.operation, "执行命令");
         assert_eq!(boundary.command.as_deref(), Some("npm install"));
         assert!(boundary.affected_files.is_empty());
-        assert_eq!(boundary.impact, "这个命令可能影响当前工作空间");
+        assert_eq!(boundary.impact, "这个命令可能影响当前项目");
         assert_eq!(boundary.risk, WriteBoundaryRisk::Caution);
 
         let _ = std::fs::remove_dir_all(&workspace);
@@ -247,6 +292,52 @@ mod harness {
         std::fs::write(
             workspace.join("package.json"),
             r#"{"name":"forge","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("src-tauri").join("Cargo.toml"),
+            "[package]\nname = \"forge\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("src-tauri").join("tauri.conf.json"),
+            r#"{"productName":"Forge","identifier":"com.cabbos.forge"}"#,
+        )
+        .unwrap();
+
+        let boundary = build_write_boundary(
+            "write_to_file",
+            &serde_json::json!({"path":"src/main.tsx","content":"hello"}),
+            &workspace,
+            "file_write",
+        );
+
+        assert_eq!(boundary.risk, WriteBoundaryRisk::High);
+        assert_eq!(
+            boundary.warning.as_deref(),
+            Some("这是 Forge 自己的开发目录。继续操作可能修改 Forge 本体。")
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn test_write_boundary_warns_for_forge_source_workspace_without_package_name_marker() {
+        let workspace = unique_temp_workspace("forge-source-cargo-tauri");
+        std::fs::create_dir_all(workspace.join("src-tauri")).unwrap();
+        std::fs::write(
+            workspace.join("package.json"),
+            r#"{"name":"demo-app","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("src-tauri").join("Cargo.toml"),
+            "[package]\nname = \"forge\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("src-tauri").join("tauri.conf.json"),
+            r#"{"productName":"Forge","identifier":"com.cabbos.forge"}"#,
         )
         .unwrap();
 

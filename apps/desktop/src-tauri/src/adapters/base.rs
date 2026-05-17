@@ -7,7 +7,7 @@ use tokio::sync::Notify;
 /// (for structured content like tool_use and tool_result blocks).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    pub role: String, // "user" | "assistant"
+    pub role: String,               // "user" | "assistant"
     pub content: serde_json::Value, // String or Vec<ContentBlock>
 }
 

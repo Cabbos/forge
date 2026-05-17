@@ -179,3 +179,9 @@ impl EventBus {
         });
     }
 }
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
