@@ -10,6 +10,17 @@ export interface FirstLoopDraft {
 export const FIRST_LOOP_STANDARD = "可见、可点、可继续";
 
 const FIRST_LOOP_SIGNALS = ["小工具", "番茄钟", "记账", "文案"];
+const IDEA_SHAPING_SIGNALS = [
+  "不知道怎么说",
+  "不知道怎么概括",
+  "帮我想想",
+  "大概是",
+  "类似",
+  "我想做个",
+  "能不能做一个",
+  "最好能",
+];
+const DIRECT_MAKE_SIGNALS = ["直接做", "直接开始", "先做", "开始做", "做到第一版"];
 
 export function deriveFirstLoopDraft(sessionId: string, text: string): FirstLoopDraft | null {
   const sourceText = collapseWhitespace(text);
@@ -31,6 +42,9 @@ export function deriveFirstLoopDraft(sessionId: string, text: string): FirstLoop
 }
 
 export function buildFirstLoopAgentPrompt(text: string): string {
+  if (isIdeaShapingRequest(text)) {
+    return buildIdeaShapingPrompt(text);
+  }
   if (!isFirstLoopRequest(text)) return text;
 
   return [
@@ -42,12 +56,37 @@ export function buildFirstLoopAgentPrompt(text: string): string {
   ].join("\n");
 }
 
+function buildIdeaShapingPrompt(text: string): string {
+  return [
+    text,
+    "",
+    "Forge 需求梳理提示：这个请求还不适合立刻改代码。请先帮用户把想法整理成一个可执行的第一版。",
+    "请用中文，保持简短：",
+    "1. 用一句话复述你理解的作品或小工具。",
+    "2. 提出一个小的第一版，只包含 2-3 个核心动作。",
+    "3. 明确列出先不做的内容。",
+    "4. 最后只问一个轻确认问题，例如“我先按这个第一版开始，可以吗？”",
+    "不要执行命令，不要修改文件，不要要求用户先理解项目、工作区或代码仓库。",
+    "如果用户说“可以 / ok / 就这样 / 直接做”，再进入制作。",
+  ].join("\n");
+}
+
 function isFirstLoopRequest(text: string): boolean {
   const normalized = collapseWhitespace(text);
   if (!normalized) return false;
 
   if (FIRST_LOOP_SIGNALS.some((signal) => normalized.includes(signal))) return true;
   return normalized.includes("我想做") && normalized.includes("工具");
+}
+
+function isIdeaShapingRequest(text: string): boolean {
+  const normalized = collapseWhitespace(text);
+  if (!normalized) return false;
+  if (DIRECT_MAKE_SIGNALS.some((signal) => normalized.includes(signal))) return false;
+  if (IDEA_SHAPING_SIGNALS.some((signal) => normalized.includes(signal))) return true;
+
+  const featureCount = ["提醒", "导出", "登录", "统计", "同步", "分享", "表格"].filter((signal) => normalized.includes(signal)).length;
+  return featureCount >= 2 && /我想做|做个|做一个|能不能/.test(normalized);
 }
 
 function deriveGoal(text: string): string {

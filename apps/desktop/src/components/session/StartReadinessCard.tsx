@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, RefreshCw } from "lucide-react";
+import { CheckCircle2, Circle, FolderOpen, GitBranch, KeyRound, Play, RefreshCw } from "lucide-react";
 import { useActiveWorkspace, useStore } from "@/store";
 import {
   createProjectCheckpoint,
@@ -17,9 +17,11 @@ import { cn } from "@/lib/utils";
 
 interface StartReadinessCardProps {
   sessionId?: string;
+  variant?: "panel" | "setup-strip";
+  showDetails?: boolean;
 }
 
-export function StartReadinessCard({ sessionId }: StartReadinessCardProps) {
+export function StartReadinessCard({ sessionId, variant = "panel", showDetails = false }: StartReadinessCardProps) {
   const activeWorkspace = useActiveWorkspace();
   const selectedProvider = useStore((s) => s.selectedProvider);
   const [keys, setKeys] = useState<KeyStatus[]>([]);
@@ -60,6 +62,7 @@ export function StartReadinessCard({ sessionId }: StartReadinessCardProps) {
   const primaryAction = readiness.rows.find((row) => row.action && row.actionLabel);
   const workspaceRow = readiness.rows.find((row) => row.label === "当前项目");
   const keyRow = readiness.rows.find((row) => row.label === "模型密钥");
+  const panelState = readiness.issueCount === 0 ? "ready" : primaryAction?.tone === "blocked" ? "blocked" : "attention";
   const secondaryStatus = [
     workspaceRow?.tone === "ready" ? workspaceRow.value.replace("当前项目：", "") : null,
     keyRow?.tone === "blocked" ? keyRow.value : null,
@@ -83,39 +86,115 @@ export function StartReadinessCard({ sessionId }: StartReadinessCardProps) {
     }
   };
 
-  return (
-    <div data-testid="start-readiness" className="mx-auto max-w-[760px] px-1 py-1">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <CheckCircle2 className="size-4 shrink-0" style={{ color: readiness.issueCount === 0 ? "#4A9E6B" : "#D4A853" }} />
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">{readiness.title}</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {secondaryStatus || (primaryAction ? primaryAction.value : "描述你想做什么，Forge 会在当前项目里继续。")}
-            </div>
+  if (variant === "setup-strip") {
+    const setupAction = primaryAction?.tone === "blocked" ? primaryAction : null;
+    if (!setupAction?.action || !setupAction.actionLabel) return null;
+
+    return (
+      <div data-testid="start-readiness" className="mx-auto w-full max-w-[460px] px-1 py-1">
+        <div data-testid="start-readiness-panel" className="forge-readiness-strip" data-state={panelState}>
+          <div className="forge-readiness-strip-icon" aria-hidden="true">
+            <KeyRound className="size-3.5" />
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {primaryAction?.action && primaryAction.actionLabel && (
-            <button
-              type="button"
-              disabled={busyAction === primaryAction.action}
-              onClick={() => runAction(primaryAction.action)}
-              className="forge-action justify-center disabled:cursor-default disabled:opacity-70"
-            >
-              {busyAction === primaryAction.action ? "处理中" : primaryAction.actionLabel}
-            </button>
-          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium text-foreground">{readiness.title}</div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">{setupAction.value}</div>
+          </div>
           <button
             type="button"
-            onClick={refresh}
-            className="forge-icon-button"
-            title="刷新准备状态"
+            disabled={busyAction === setupAction.action}
+            onClick={() => runAction(setupAction.action)}
+            className="forge-action justify-center disabled:cursor-default disabled:opacity-70"
           >
-            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            {busyAction === setupAction.action ? "处理中" : setupAction.actionLabel}
           </button>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div data-testid="start-readiness" className="mx-auto max-w-[760px] px-1 py-1">
+      <div
+        data-testid="start-readiness-panel"
+        className="forge-readiness-panel"
+        data-state={panelState}
+        data-details={showDetails ? "true" : "false"}
+      >
+        <div className="forge-readiness-header">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="forge-readiness-orb" aria-hidden="true">
+              <CheckCircle2 className="size-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-foreground">{readiness.title}</div>
+              <div className="mt-1 max-w-[34rem] truncate text-xs text-muted-foreground">
+                {secondaryStatus || readiness.subtitle || (primaryAction ? primaryAction.value : "描述你想做什么，Forge 会在当前项目里继续。")}
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {primaryAction?.action && primaryAction.actionLabel && (
+              <button
+                type="button"
+                disabled={busyAction === primaryAction.action}
+                onClick={() => runAction(primaryAction.action)}
+                className="forge-action justify-center disabled:cursor-default disabled:opacity-70"
+              >
+                {busyAction === primaryAction.action ? "处理中" : primaryAction.actionLabel}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={refresh}
+              className="forge-icon-button"
+              title="刷新准备状态"
+              aria-label="刷新准备状态"
+            >
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            </button>
+          </div>
+        </div>
+
+        {showDetails && (
+          <div className="forge-readiness-grid" aria-label="开始前状态">
+            {readiness.rows.map((row) => {
+              const RowIcon = readinessIconFor(row.label);
+              return (
+                <div key={row.label} data-testid="start-readiness-row" className="forge-readiness-row" data-tone={row.tone}>
+                  <RowIcon className="size-3.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="forge-readiness-row-label">{row.label}</div>
+                    <div className="forge-readiness-row-value">{row.value}</div>
+                  </div>
+                  {row.action && row.actionLabel ? (
+                    <button
+                      type="button"
+                      disabled={busyAction === row.action}
+                      onClick={() => runAction(row.action)}
+                      className="forge-readiness-row-action disabled:cursor-default disabled:opacity-70"
+                    >
+                      {busyAction === row.action ? "处理中" : row.actionLabel}
+                    </button>
+                  ) : (
+                    <span className="forge-readiness-row-state">
+                      {row.tone === "ready" ? "就绪" : row.tone === "blocked" ? "待处理" : "可选"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+function readinessIconFor(label: string) {
+  if (label === "当前项目") return FolderOpen;
+  if (label === "模型密钥") return KeyRound;
+  if (label === "预览") return Play;
+  if (label === "检查点") return GitBranch;
+  return Circle;
 }

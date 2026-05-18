@@ -65,7 +65,7 @@ pub fn select_relevant_memories(
                 reasons.push("方向相关");
             }
 
-            if memory.use_count > 0 {
+            if score > 0.0 && memory.use_count > 0 {
                 score += (memory.use_count.min(3) as f32) * 0.4;
                 reasons.push("曾被使用");
             }
@@ -154,6 +154,26 @@ mod tests {
         }
     }
 
+    fn global_preference_memory(id: &str, body: &str, use_count: u32) -> WikiMemory {
+        WikiMemory {
+            id: id.to_string(),
+            category: MemoryCategory::Preference,
+            scope: MemoryScope::UserProfile,
+            status: MemoryStatus::Accepted,
+            title: "用户偏好".to_string(),
+            body: body.to_string(),
+            project_path: None,
+            source_session_id: Some("session-1".to_string()),
+            source_message_ids: Vec::new(),
+            confidence: 0.8,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+            last_used_at: Some("1".to_string()),
+            use_count,
+            tags: vec!["preference".to_string()],
+        }
+    }
+
     #[test]
     fn selects_pinned_same_project_memory() {
         let memories = vec![memory("m1", MemoryStatus::Pinned, "渐进式 Project Records")];
@@ -188,5 +208,30 @@ mod tests {
         assert_eq!(repeated.len(), 1);
         assert_eq!(single.len(), 1);
         assert_eq!(repeated[0].score, single[0].score);
+    }
+
+    #[test]
+    fn use_count_alone_does_not_select_unrelated_global_memory() {
+        let memories = vec![global_preference_memory(
+            "old-demo",
+            "我想做一个番茄钟小工具，可以开始、暂停、重置。",
+            12,
+        )];
+
+        let selected = select_relevant_memories(&memories, "我们之前说了什么东西", None, 5);
+
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn use_count_still_boosts_relevant_memory() {
+        let mut used = memory("used", MemoryStatus::Accepted, "资料系统");
+        used.use_count = 3;
+        let unused = memory("unused", MemoryStatus::Accepted, "资料系统");
+
+        let selected = select_relevant_memories(&[unused, used], "继续做资料系统", None, 5);
+
+        assert_eq!(selected[0].memory_id, "used");
+        assert!(selected[0].reason.contains("曾被使用"));
     }
 }

@@ -7,27 +7,47 @@ import { cn } from "@/lib/utils";
 interface CodeBlockProps {
   code: string;
   lang: string;
+  streaming?: boolean;
 }
 
-export function CodeBlock({ code, lang }: CodeBlockProps) {
+const highlightedCodeCache = new Map<string, string>();
+
+export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
   const theme = useStore((s) => s.theme);
-  const [html, setHtml] = useState("");
+  const cacheKey = `${theme}:${lang}:${code}`;
+  const cachedHtml = highlightedCodeCache.get(cacheKey) ?? "";
+  const [htmlState, setHtmlState] = useState<{ key: string; html: string }>({
+    key: cacheKey,
+    html: cachedHtml,
+  });
   const [copied, setCopied] = useState(false);
   const label = formatLanguageLabel(lang);
   const lineCount = code ? code.split("\n").length : 0;
+  const html = htmlState.key === cacheKey ? htmlState.html : cachedHtml;
+  const shouldShowHighlighted = !streaming && Boolean(html);
+  const renderer = shouldShowHighlighted ? "highlighted" : "plain";
 
   useEffect(() => {
+    if (streaming) return;
+
+    const cached = highlightedCodeCache.get(cacheKey);
+    if (cached) {
+      setHtmlState({ key: cacheKey, html: cached });
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       await getHighlighter();
       if (cancelled) return;
       const result = highlightCode(code, lang, theme);
-      setHtml(result);
+      highlightedCodeCache.set(cacheKey, result);
+      setHtmlState({ key: cacheKey, html: result });
     })();
     return () => {
       cancelled = true;
     };
-  }, [code, lang, theme]);
+  }, [cacheKey, code, lang, streaming, theme]);
 
   const copy = async () => {
     try {
@@ -40,10 +60,13 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
   };
 
   return (
-    <figure className="code-surface group my-2.5 overflow-hidden rounded-md border border-border bg-background shadow-none">
-      <figcaption className="flex min-h-8 items-center justify-between gap-3 border-b border-border bg-muted px-3">
+    <figure
+      className="code-surface group my-2.5 overflow-hidden rounded-md border border-border bg-background shadow-none"
+      data-renderer={renderer}
+    >
+      <figcaption className="code-caption">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#4A9E6B]" />
+          <span className="code-caption-dot" />
           <span className="truncate font-mono text-[10px] font-medium uppercase tracking-normal text-muted-foreground">
             {label}
           </span>
@@ -67,7 +90,7 @@ export function CodeBlock({ code, lang }: CodeBlockProps) {
         </button>
       </figcaption>
       <div className="code-scroll max-h-[520px] overflow-auto">
-        {html ? (
+        {shouldShowHighlighted ? (
           <div className="shiki-wrapper" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <pre className="code-fallback">

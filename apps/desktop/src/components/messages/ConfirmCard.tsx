@@ -9,9 +9,9 @@ import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessageP
 
 function BoundaryLine({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid gap-1 py-2 sm:grid-cols-[88px_1fr] sm:gap-3">
-      <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 text-sm leading-relaxed text-foreground">{children}</dd>
+    <div data-testid="confirm-boundary-row" className="forge-confirm-boundary-row">
+      <dt className="forge-confirm-boundary-label">{label}</dt>
+      <dd className="forge-confirm-boundary-value">{children}</dd>
     </div>
   );
 }
@@ -29,12 +29,21 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
     file_write: "确认改文件",
     shell_cmd: "确认执行命令",
     dangerous_cmd: "高风险命令",
+    mcp_tool: "确认调用连接",
+    mcp_resource_read: "确认读取连接资料",
+    mcp_prompt_get: "确认使用连接提示词",
     ask_user: "需要你确认",
   };
   const kindLabel = kindLabels[kind] || "需要你确认";
   const helperText = kind === "dangerous_cmd"
     ? "这一步可能影响项目或本机环境。不确定时可以取消，再让 Forge 解释原因。"
-    : "继续后 Forge 会执行这一步；取消后这一步不会继续。";
+    : kind === "mcp_tool"
+      ? "继续后 Forge 会调用这个连接提供的工具；取消后这一步不会继续。"
+      : kind === "mcp_resource_read"
+        ? "继续后 Forge 会读取连接里的资料并用于本轮上下文；取消后不会读取。"
+        : kind === "mcp_prompt_get"
+          ? "继续后 Forge 会使用连接提供的提示词辅助本轮任务；取消后不会使用。"
+          : "继续后 Forge 会执行这一步；取消后这一步不会继续。";
 
   const handleResponse = async (approved: boolean) => {
     setResponded(true);
@@ -57,25 +66,27 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
   };
 
   const actions = responded ? (
-    <div className="flex items-center gap-2 border-t border-border px-3 py-2">
-      <span className={`text-xs font-medium ${answer ? "text-green-500" : "text-destructive"}`}>
+    <div data-testid="confirm-action-bar" className="forge-confirm-action-bar">
+      <span className="forge-confirm-resolved" data-state={answer ? "approved" : "cancelled"}>
         {answer ? "已继续" : "已取消"}
       </span>
     </div>
   ) : (
-    <div className="flex items-center gap-2 border-t px-3 py-2" style={{ borderColor: "rgba(212,168,83,0.1)" }}>
+    <div data-testid="confirm-action-bar" className="forge-confirm-action-bar">
       <button
+        data-testid="confirm-approve"
         onClick={(e) => { e.stopPropagation(); handleResponse(true); }}
-        className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors"
-        style={{ background: "#D4A853", color: "#111216" }}
+        className="forge-confirm-button"
+        data-variant="approve"
       >
         <Check className="size-3.5" />
         继续
       </button>
       <button
+        data-testid="confirm-cancel"
         onClick={(e) => { e.stopPropagation(); handleResponse(false); }}
-        className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors hover:text-foreground"
-        style={{ borderColor: "rgba(212,119,119,0.32)", color: "#D47777" }}
+        className="forge-confirm-button"
+        data-variant="cancel"
       >
         <X className="size-3.5" />
         取消
@@ -98,8 +109,8 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
           meta="继续前确认改动范围"
         />
 
-        <dl className="px-3 py-2">
-          <BoundaryLine label="目标项目">{boundary.workspaceLabel}</BoundaryLine>
+        <dl data-testid="confirm-boundary-grid" className="forge-confirm-boundary-grid">
+          <BoundaryLine label={boundary.targetLabel}>{boundary.workspaceLabel}</BoundaryLine>
           <BoundaryLine label="操作">{boundary.operationLabel}</BoundaryLine>
           <BoundaryLine label="影响范围">
             <span>{boundary.affectedSummary}</span>
@@ -108,7 +119,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
                 {boundary.affectedFiles.slice(0, 4).map((file) => (
                   <code
                     key={file}
-                    className="max-w-full truncate rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground"
+                    className="forge-confirm-file-chip"
                   >
                     {file}
                   </code>
@@ -117,18 +128,18 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
             ) : null}
           </BoundaryLine>
           <BoundaryLine label="风险">
-            <span className="font-medium" style={{ color: riskColor }}>{boundary.riskLabel}</span>
+            <span className="forge-confirm-risk" style={{ color: riskColor }}>{boundary.riskLabel}</span>
           </BoundaryLine>
           <BoundaryLine label="恢复点">{boundary.recoveryLabel}</BoundaryLine>
           {boundary.command ? (
-            <BoundaryLine label="命令">
-              <code className="block max-w-full overflow-x-auto rounded border border-border bg-muted px-2 py-1 text-xs text-foreground">
+            <BoundaryLine label={boundaryCommandLabel(boundary.operationLabel)}>
+              <code className="forge-confirm-command">
                 {boundary.command}
               </code>
             </BoundaryLine>
           ) : null}
           {boundary.warning ? (
-            <div className="mt-2 rounded-md border px-3 py-2 text-xs leading-relaxed" style={{ borderColor: "rgba(248,113,113,0.22)", background: "rgba(248,113,113,0.08)", color: "#FCA5A5" }}>
+            <div data-testid="confirm-warning" role="note" className="forge-confirm-warning">
               {boundary.warning}
             </div>
           ) : null}
@@ -154,4 +165,11 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
       {actions}
     </MessagePanel>
   );
+}
+
+function boundaryCommandLabel(operationLabel: string) {
+  if (operationLabel === "调用工具") return "工具";
+  if (operationLabel === "读取资料") return "资料";
+  if (operationLabel === "使用提示词") return "提示词";
+  return "命令";
 }

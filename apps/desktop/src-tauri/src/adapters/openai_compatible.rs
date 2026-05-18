@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::Emitter;
 use tokio::sync::Notify;
 
+use super::anthropic::ToolDef;
 use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -33,6 +34,7 @@ pub struct OpenAiCompatibleAdapter {
     base_url: String,
     max_tokens: u32,
     client: reqwest::Client,
+    external_tools: Vec<ToolDef>,
 }
 
 impl OpenAiCompatibleAdapter {
@@ -45,6 +47,7 @@ impl OpenAiCompatibleAdapter {
             model: DEFAULT_MODEL.to_string(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             max_tokens: 8192,
+            external_tools: Vec::new(),
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .timeout(std::time::Duration::from_secs(600))
@@ -60,6 +63,17 @@ impl OpenAiCompatibleAdapter {
     pub fn with_base_url(mut self, url: &str) -> Self {
         self.base_url = url.to_string();
         self
+    }
+
+    pub fn with_external_tools(mut self, tools: Vec<ToolDef>) -> Self {
+        self.external_tools = tools;
+        self
+    }
+
+    fn tool_definitions_for_request(&self) -> Vec<ToolDef> {
+        let mut tools = tool_definitions();
+        tools.extend(self.external_tools.clone());
+        tools
     }
 }
 
@@ -156,7 +170,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         let openai_msgs = convert_messages(messages);
         crate::app_log!("INFO", "Converted to {} OpenAI messages", openai_msgs.len());
 
-        let tools: Vec<OpenAiTool> = tool_definitions()
+        let tools: Vec<OpenAiTool> = self
+            .tool_definitions_for_request()
             .into_iter()
             .map(|td| OpenAiTool {
                 type_: "function".to_string(),
@@ -631,4 +646,30 @@ pub fn tool_definitions() -> Vec<super::anthropic::ToolDef> {
             input_schema: serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::anthropic::ToolDef;
+
+    #[test]
+    fn external_tools_are_included_in_openai_compatible_definitions() {
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_external_tools(vec![ToolDef::new(
+                "mcp__fixture__echo",
+                "Echo through MCP",
+                serde_json::json!({"type": "object"}),
+            )]);
+
+        let names = adapter
+            .tool_definitions_for_request()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"read_file".to_string()));
+        assert!(names.contains(&"mcp__fixture__echo".to_string()));
+    }
 }

@@ -13,6 +13,7 @@ import { ConfirmCard } from "@/components/messages/ConfirmCard";
 import { PendingBlock } from "@/components/messages/PendingBlock";
 import { ContextCompactCard } from "@/components/messages/ContextCompactCard";
 import { DeliverySummaryCard } from "@/components/messages/DeliverySummaryCard";
+import { ErrorCard } from "@/components/messages/ErrorCard";
 import { MissingApiKeyCard } from "@/components/messages/MissingApiKeyCard";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 
@@ -159,7 +160,7 @@ function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: st
     case "error":
       return block.metadata?.code === "missing_api_key"
         ? <MissingApiKeyCard block={block} />
-        : <TextBlock block={block} sessionId={sessionId} />;
+        : <ErrorCard block={block} />;
     case "tool_call": case "tool_call_result": return <ToolCallCard block={block} />;
     case "user_message": return <UserMessage block={block} />;
     case "shell": return <ShellCard block={block} />;

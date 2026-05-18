@@ -109,9 +109,9 @@ export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
       >
         <Settings className="size-4" />
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="forge-settings-dialog sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="forge-settings-title">
             <Settings className="size-4" />
             设置
           </DialogTitle>
@@ -120,12 +120,12 @@ export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
           </DialogDescription>
         </DialogHeader>
 
-        <section className="space-y-2">
-          <div className="flex items-center gap-2">
+        <section className="forge-settings-section space-y-2">
+          <div className="forge-settings-heading">
             <Key className="size-3.5 text-muted-foreground" />
             <h3 className="text-sm font-medium text-foreground">模型服务</h3>
           </div>
-          <div className="forge-surface overflow-hidden">
+          <div data-testid="settings-preferences-panel" className="forge-settings-preferences-panel">
             {sortedKeys.map((k) => {
               const provider = PROVIDERS.find((item) => item.id === k.provider);
               const providerLabel = provider?.label ?? k.provider;
@@ -133,34 +133,69 @@ export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
               const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);
 
               return (
-                <div key={k.provider} className="border-t border-border px-3 py-3 first:border-t-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
+                <div
+                  key={k.provider}
+                  data-testid="settings-provider-row"
+                  data-configured={k.set}
+                  className="forge-settings-row"
+                >
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
                       <div className="truncate text-xs font-medium text-foreground">{providerLabel}</div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">
-                        {k.set ? "已连接" : "需要添加密钥"}
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {k.set ? "已连接" : "等待密钥"}
                       </div>
-                      {defaultModel && (
-                        <>
-                          <div className="mt-1 truncate text-[11px] text-muted-foreground/80">
-                            {defaultModel.name}
-                          </div>
-                          <div className="mt-0.5 text-[10px] text-muted-foreground/60">
-                            {["默认模型", defaultContext && `上下文 ${defaultContext}`].filter(Boolean).join(" · ")}
-                          </div>
-                        </>
-                      )}
                     </div>
+                    {defaultModel && (
+                      <>
+                        <div className="mt-1 truncate text-[11px] text-muted-foreground/85">
+                          {defaultModel.name}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-muted-foreground/60">
+                          {["默认模型", defaultContext && `上下文 ${defaultContext}`].filter(Boolean).join(" · ")}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="forge-settings-row-side">
                     <span
-                      className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                      data-testid="settings-provider-status"
+                      data-state={k.set ? "configured" : "empty"}
+                      className="forge-settings-status-pill"
                       title={k.set ? k.preview : undefined}
                     >
                       {k.set ? "已配置" : "未配置"}
                     </span>
+                    {editing !== k.provider && (
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => {
+                            setEditing(k.provider);
+                            setValue("");
+                            setError(null);
+                          }}
+                        >
+                          {k.set ? "更新" : "添加"}
+                        </Button>
+                        {k.set && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => handleRemove(k.provider)}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            移除
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {editing === k.provider ? (
-                    <div className="mt-2 space-y-2">
+                  {editing === k.provider && (
+                    <div className="forge-settings-edit-row">
                       <div className="relative">
                         <Input
                           type={visible ? "text" : "password"}
@@ -197,30 +232,6 @@ export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
                         </Button>
                       </div>
                     </div>
-                  ) : (
-                    <div className="mt-2 flex items-center justify-end gap-2">
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => {
-                          setEditing(k.provider);
-                          setValue("");
-                          setError(null);
-                        }}
-                      >
-                        {k.set ? "更新" : "添加"}
-                      </Button>
-                      {k.set && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => handleRemove(k.provider)}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          移除
-                        </Button>
-                      )}
-                    </div>
                   )}
                 </div>
               );
@@ -228,24 +239,25 @@ export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
           </div>
         </section>
 
-        <section className="space-y-2 border-t border-border/40 pt-3">
-          <div className="flex items-center gap-2">
+        <section className="forge-settings-section space-y-2">
+          <div className="forge-settings-heading">
             <Trash2 className="size-3.5 text-muted-foreground" />
             <h3 className="text-sm font-medium text-foreground">本机数据</h3>
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            清除这台电脑保存的对话列表，不会删除项目文件。
-          </p>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={handleClearAll}
-            disabled={sessions.size === 0}
-            className="w-full"
-          >
-            <Trash2 className="size-3.5" />
-            {cleared ? "已清除" : `清除本机对话（${sessions.size}）`}
-          </Button>
+          <div className="forge-settings-danger-zone">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              清除这台电脑保存的对话列表，不会删除项目文件。
+            </p>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleClearAll}
+              disabled={sessions.size === 0}
+            >
+              <Trash2 className="size-3.5" />
+              {cleared ? "已清除" : `清除本机对话（${sessions.size}）`}
+            </Button>
+          </div>
         </section>
 
         {error && (

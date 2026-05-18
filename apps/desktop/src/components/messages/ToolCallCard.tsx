@@ -56,8 +56,10 @@ export function ToolCallCard({ block }: { block: BlockState }) {
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger
           data-testid="tool-card-trigger"
+          data-state={status}
           className="forge-log-line"
-          style={{ borderColor: isError ? "rgba(212,119,119,0.34)" : undefined }}>
+          data-tone={isError ? "error" : "default"}
+        >
           <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
           <Wrench className="size-3.5 shrink-0" style={{ color: statusColor }} />
           <span className="shrink-0 font-medium">{actionText}</span>
@@ -90,7 +92,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                     title={copied ? "已复制" : "复制工具输出"}
                     onClick={copyDetails}
                     disabled={!detailText}
-                    className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-default disabled:opacity-45"
+                    className="forge-log-action disabled:cursor-default disabled:opacity-45"
                   >
                     {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
                   </button>

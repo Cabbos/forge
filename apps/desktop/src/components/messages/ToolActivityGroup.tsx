@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronRight, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
 import type { BlockState } from "@/lib/protocol";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ShellCard } from "@/components/messages/ShellCard";
@@ -17,8 +17,12 @@ export function ToolActivityGroup({ blocks }: { blocks: BlockState[] }) {
   const [open, setOpen] = useState(hasError);
   const activitySummary = summarizeActivity(blocks);
   const isRunning = blocks.some((block) => !block.isComplete);
-  const label = hasError ? `处理遇到问题 · ${blocks.length} 步` : isRunning ? "正在处理" : `已处理 ${blocks.length} 步`;
-  const StatusIcon = hasError ? XCircle : CheckCircle2;
+  const label = hasError
+    ? `处理遇到问题 · ${blocks.length} 步`
+    : isRunning
+      ? `正在处理 · ${blocks.length} 步`
+      : `过程已收起 · ${blocks.length} 步`;
+  const StatusIcon = hasError ? XCircle : isRunning ? Loader2 : CheckCircle2;
 
   useEffect(() => {
     if (hasError) setOpen(true);
@@ -27,9 +31,16 @@ export function ToolActivityGroup({ blocks }: { blocks: BlockState[] }) {
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div data-testid="tool-activity-group" className="forge-tool-activity-group" data-tone={hasError ? "error" : "default"}>
-        <CollapsibleTrigger data-testid="tool-activity-summary" className="forge-tool-activity-summary">
+        <CollapsibleTrigger
+          data-testid="tool-activity-summary"
+          data-state={hasError ? "error" : isRunning ? "running" : "done"}
+          className="forge-tool-activity-summary"
+        >
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
-          <StatusIcon className="size-3.5 shrink-0" />
+          <StatusIcon
+            data-running-icon={isRunning ? "true" : undefined}
+            className={cn("size-3.5 shrink-0", isRunning && "animate-spin")}
+          />
           <span className="shrink-0 font-medium">{label}</span>
           {activitySummary.map((item) => (
             <span key={item} className="forge-tool-activity-summary-item">{item}</span>

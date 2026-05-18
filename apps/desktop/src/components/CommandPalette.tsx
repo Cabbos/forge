@@ -88,21 +88,21 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const sessionList = sessions;
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
-      <Command>
-        <CommandInput placeholder="搜索或输入命令..." />
-        <CommandList>
+    <CommandDialog open={open} onOpenChange={onOpenChange} className="forge-command-dialog sm:max-w-[580px]">
+      <Command data-testid="command-palette-surface" className="forge-command-surface">
+        <CommandInput placeholder="搜索或输入命令..." className="forge-command-input" />
+        <CommandList className="forge-command-list">
           <CommandEmpty>没有匹配结果</CommandEmpty>
 
           {activeWorkspace && (
-            <div className="mx-2 mb-1 flex items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <div className="forge-command-context-strip">
               <FolderOpen className="size-3.5 shrink-0" />
               <span className="min-w-0 truncate">当前项目 · {activeWorkspace.name}</span>
             </div>
           )}
 
           {notice && (
-            <div role="status" className="mx-2 mb-1 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            <div role="status" className="forge-command-notice">
               {notice}
             </div>
           )}
@@ -189,7 +189,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
 function ShortcutHint({ keys }: { keys: string }) {
   return (
-    <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+    <span data-testid="command-shortcut" className="forge-command-shortcut">
       {keys}
     </span>
   );

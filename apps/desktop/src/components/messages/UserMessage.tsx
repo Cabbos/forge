@@ -6,11 +6,13 @@ import { MarkdownRenderer } from "@/components/messages/TextBlock";
 
 export function UserMessage({ block }: { block: BlockState }) {
   const [previewFileRef, setPreviewFileRef] = useState<FileRef | null>(null);
+  const isLong = block.content.length > 640 || block.content.split("\n").length > 8;
 
   return (
     <div className="flex justify-end">
       <div
         data-testid="user-message"
+        data-long={isLong ? "true" : "false"}
         className="forge-message-with-actions forge-user-message"
       >
         <MessageCopyAction text={block.content} label="提问" />

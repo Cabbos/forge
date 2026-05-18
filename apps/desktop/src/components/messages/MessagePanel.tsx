@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { AriaRole, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 type MessagePanelTone = "default" | "warning" | "danger";
@@ -13,10 +13,14 @@ export function MessagePanel({
   children,
   className,
   tone = "default",
+  role,
+  ariaLive,
 }: {
   children: ReactNode;
   className?: string;
   tone?: MessagePanelTone;
+  role?: AriaRole;
+  ariaLive?: "off" | "polite" | "assertive";
 }) {
   const style = toneStyles[tone];
 
@@ -24,6 +28,8 @@ export function MessagePanel({
     <div
       data-testid="message-panel"
       className={cn("forge-message-panel", className)}
+      role={role}
+      aria-live={ariaLive}
       style={{ borderColor: style.border, background: style.background }}
     >
       {children}
@@ -43,7 +49,7 @@ export function MessagePanelHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border px-2.5 py-1.5">
+    <div className="forge-message-panel-header">
       <div className="flex min-w-0 items-center gap-2">
         {icon ? <div className="shrink-0 opacity-85">{icon}</div> : null}
         <div className="min-w-0">

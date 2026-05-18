@@ -152,6 +152,15 @@ impl AgentSession {
             "Agent received user message, history size: {}",
             self.messages.lock().unwrap().len()
         );
+        let turn_system_prompt = self
+            .harness
+            .build_system_prompt_for_request(
+                &self.agent_type,
+                &self.harness.working_dir,
+                Some(text),
+            )
+            .await;
+        *self.system_prompt.lock().unwrap() = turn_system_prompt;
 
         // Add user message to history
         self.messages.lock().unwrap().push(ChatMessage::user(text));

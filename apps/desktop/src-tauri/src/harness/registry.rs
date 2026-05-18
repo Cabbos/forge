@@ -106,6 +106,28 @@ impl CapabilityRegistry {
             .unwrap_or(true)
     }
 
+    pub fn is_hook_enabled(&self, hook_name: &str) -> bool {
+        let id = format!("hook:{hook_name}");
+        self.capabilities
+            .read()
+            .unwrap()
+            .iter()
+            .find(|c| c.cap.metadata().id == id)
+            .map(|c| c.enabled)
+            .unwrap_or(true)
+    }
+
+    pub fn is_mcp_enabled(&self, server_id: &str) -> bool {
+        let id = format!("mcp:{server_id}");
+        self.capabilities
+            .read()
+            .unwrap()
+            .iter()
+            .find(|c| c.cap.metadata().id == id)
+            .map(|c| c.enabled)
+            .unwrap_or(false)
+    }
+
     pub fn remove(&self, id: &str) -> Result<(), String> {
         let mut caps = self.capabilities.write().unwrap();
         caps.retain(|c| c.cap.metadata().id != id);

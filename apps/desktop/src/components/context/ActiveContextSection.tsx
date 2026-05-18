@@ -1,4 +1,4 @@
-import { BookOpen, Database } from "lucide-react";
+import { BookOpen, Database, FileText, MessageSquareText } from "lucide-react";
 import type { ActiveContextItem } from "@/lib/context-activation";
 import { activeContextSummary } from "@/lib/context-activation";
 import { cn } from "@/lib/utils";
@@ -27,7 +27,13 @@ export function ActiveContextSection({ items }: { items: ActiveContextItem[] }) 
 }
 
 function ActiveContextRow({ item }: { item: ActiveContextItem }) {
-  const Icon = item.kind === "forge_wiki_page" ? BookOpen : Database;
+  const Icon = item.kind === "forge_wiki_page"
+    ? BookOpen
+    : item.kind === "mcp_resource"
+      ? FileText
+      : item.kind === "mcp_prompt"
+        ? MessageSquareText
+        : Database;
 
   return (
     <article className="forge-surface px-3 py-2.5">

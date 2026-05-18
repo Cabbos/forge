@@ -212,6 +212,10 @@ const STRICT_WORKFLOW_SIGNALS: &[&str] = &[
 
 const WORKFLOW_SIGNALS: &[&str] = &[
     "我想做",
+    "我想做个",
+    "不知道怎么说",
+    "不知道怎么概括",
+    "帮我想想",
     "能力",
     "支持",
     "新增",
@@ -273,6 +277,18 @@ mod tests {
         assert_eq!(state.route, WorkflowRoute::Workflow);
         assert_eq!(state.phase, WorkflowPhase::Clarifying);
         assert_eq!(state.gate, WorkflowGate::Soft);
+    }
+
+    #[test]
+    fn classifies_vague_beginner_idea_as_workflow() {
+        let state = route("我想做个能记录客户的东西，最好能提醒我，还能导出表格，但我也不知道怎么说。");
+        assert_eq!(state.route, WorkflowRoute::Workflow);
+        assert_eq!(state.phase, WorkflowPhase::Clarifying);
+        assert_eq!(state.gate, WorkflowGate::Soft);
+        assert!(state
+            .matched_signals
+            .iter()
+            .any(|signal| signal.contains("不知道怎么说")));
     }
 
     #[test]

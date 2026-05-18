@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 /// Decision from a hook: proceed (possibly with modified data) or block.
@@ -74,12 +75,27 @@ impl HookEngine {
         tool: &str,
         input: &serde_json::Value,
     ) -> HookDecision {
+        self.run_pre_tool_with_enabled(session_id, tool, input, |_| true)
+            .await
+    }
+
+    pub async fn run_pre_tool_with_enabled<F>(
+        &self,
+        session_id: &str,
+        tool: &str,
+        input: &serde_json::Value,
+        is_enabled: F,
+    ) -> HookDecision
+    where
+        F: Fn(&str) -> bool,
+    {
         // Collect matching hooks first, drop read guard before awaiting
         let matching: Vec<Arc<dyn Hook>> = {
             let hooks = self.hooks.read().unwrap();
             hooks
                 .iter()
                 .filter(|h| Self::matches(h.as_ref(), tool, &HookTrigger::PreTool))
+                .filter(|h| is_enabled(h.name()))
                 .cloned()
                 .collect()
         };
@@ -94,11 +110,26 @@ impl HookEngine {
     }
 
     pub async fn run_post_tool(&self, session_id: &str, tool: &str, result: &str) -> String {
+        self.run_post_tool_with_enabled(session_id, tool, result, |_| true)
+            .await
+    }
+
+    pub async fn run_post_tool_with_enabled<F>(
+        &self,
+        session_id: &str,
+        tool: &str,
+        result: &str,
+        is_enabled: F,
+    ) -> String
+    where
+        F: Fn(&str) -> bool,
+    {
         let matching: Vec<Arc<dyn Hook>> = {
             let hooks = self.hooks.read().unwrap();
             hooks
                 .iter()
                 .filter(|h| Self::matches(h.as_ref(), tool, &HookTrigger::PostTool))
+                .filter(|h| is_enabled(h.name()))
                 .cloned()
                 .collect()
         };
@@ -166,5 +197,178 @@ impl Hook for FileSystemAuditHook {
     async fn on_post_tool(&self, session_id: &str, tool: &str, result: String) -> String {
         log::info!("[AUDIT][{session_id}] {tool} completed");
         result
+    }
+}
+
+pub struct SensitiveContentHook;
+
+#[async_trait::async_trait]
+impl Hook for SensitiveContentHook {
+    fn name(&self) -> &str {
+        "sensitive-content"
+    }
+
+    fn triggers(&self) -> Vec<HookTrigger> {
+        vec![HookTrigger::PreTool]
+    }
+
+    fn filter_tools(&self) -> Vec<String> {
+        vec![
+            "write_to_file".into(),
+            "edit_file".into(),
+            "run_shell".into(),
+        ]
+    }
+
+    async fn on_pre_tool(
+        &self,
+        _session_id: &str,
+        tool: &str,
+        input: serde_json::Value,
+    ) -> HookDecision {
+        if sensitive_tool_text(tool, &input)
+            .iter()
+            .any(|text| looks_like_secret(text))
+        {
+            return HookDecision::Block(
+                "已阻止：工具输入中疑似包含敏感信息，请移除密钥、令牌或私钥后再继续。".to_string(),
+            );
+        }
+
+        HookDecision::Proceed(input)
+    }
+}
+
+pub struct WorkspaceBoundaryHook {
+    working_dir: PathBuf,
+}
+
+impl WorkspaceBoundaryHook {
+    pub fn new(working_dir: PathBuf) -> Self {
+        Self { working_dir }
+    }
+}
+
+#[async_trait::async_trait]
+impl Hook for WorkspaceBoundaryHook {
+    fn name(&self) -> &str {
+        "workspace-boundary"
+    }
+
+    fn triggers(&self) -> Vec<HookTrigger> {
+        vec![HookTrigger::PreTool]
+    }
+
+    fn filter_tools(&self) -> Vec<String> {
+        vec![
+            "read_file".into(),
+            "write_to_file".into(),
+            "edit_file".into(),
+            "list_directory".into(),
+            "search_files".into(),
+            "search_content".into(),
+        ]
+    }
+
+    async fn on_pre_tool(
+        &self,
+        _session_id: &str,
+        _tool: &str,
+        input: serde_json::Value,
+    ) -> HookDecision {
+        let Some(path) = input.get("path").and_then(|value| value.as_str()) else {
+            return HookDecision::Proceed(input);
+        };
+        if path.trim().is_empty() {
+            return HookDecision::Proceed(input);
+        }
+
+        match ensure_path_in_workspace(&self.working_dir, path) {
+            Ok(()) => HookDecision::Proceed(input),
+            Err(reason) => HookDecision::Block(reason),
+        }
+    }
+}
+
+fn sensitive_tool_text(tool: &str, input: &serde_json::Value) -> Vec<String> {
+    match tool {
+        "write_to_file" => input
+            .get("content")
+            .and_then(|value| value.as_str())
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default(),
+        "edit_file" => ["old_string", "new_string"]
+            .iter()
+            .filter_map(|key| input.get(*key).and_then(|value| value.as_str()))
+            .map(str::to_string)
+            .collect(),
+        "run_shell" => input
+            .get("command")
+            .and_then(|value| value.as_str())
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn looks_like_secret(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let patterns = [
+        r"sk-[A-Za-z0-9_\-]{16,}",
+        r"ghp_[A-Za-z0-9_]{16,}",
+        r"gho_[A-Za-z0-9_]{16,}",
+        r"ghu_[A-Za-z0-9_]{16,}",
+        r"ghs_[A-Za-z0-9_]{16,}",
+        r"ghr_[A-Za-z0-9_]{16,}",
+        r"github_pat_[A-Za-z0-9_]{20,}",
+        r"AIza[0-9A-Za-z_\-]{20,}",
+        r"AKIA[0-9A-Z]{16}",
+        r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
+        r"(?i)\btoken\s*[:=]\s*[A-Za-z0-9._~+/=-]{8,}",
+        r"(?i)\bmy\s+token\s+(?:is|=|:)\s*[A-Za-z0-9._~+/=-]{8,}",
+        r"(?i)\b(?:auth|access)\s+token(?:\s*(?:is|=|:))?\s+[A-Za-z0-9._~+/=-]{8,}",
+        r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}",
+    ];
+
+    patterns.iter().any(|pattern| {
+        regex::Regex::new(pattern)
+            .map(|regex| regex.is_match(trimmed))
+            .unwrap_or(false)
+    })
+}
+
+fn ensure_path_in_workspace(working_dir: &std::path::Path, path: &str) -> Result<(), String> {
+    let requested = std::path::Path::new(path);
+    let resolved = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        working_dir.join(requested)
+    };
+    let canonical = resolved.canonicalize().or_else(|_| {
+        resolved
+            .parent()
+            .and_then(|parent| {
+                let parent = parent.canonicalize().ok()?;
+                let file_name = resolved.file_name()?;
+                Some(parent.join(file_name))
+            })
+            .ok_or_else(|| format!("无法确认路径是否安全：{}", resolved.display()))
+    })?;
+    let workspace = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+
+    if canonical.starts_with(&workspace) {
+        Ok(())
+    } else {
+        Err(format!(
+            "已阻止：这个操作会访问项目目录之外的文件。\n目标：{}\n项目：{}",
+            canonical.display(),
+            workspace.display()
+        ))
     }
 }

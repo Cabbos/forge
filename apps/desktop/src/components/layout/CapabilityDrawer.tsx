@@ -25,21 +25,13 @@ export function CapabilityDrawer({ open, initialTab, title, onClose }: Capabilit
 
   return (
     <>
-      <div
-        className="fixed inset-y-0 left-[220px] right-0 z-40 bg-black/20"
-        onClick={onClose}
-      />
+      <div className="forge-capability-overlay" onClick={onClose} />
       <aside
         aria-label={title}
-        className="fixed left-[220px] top-0 z-50 flex h-full w-[320px] flex-col overflow-hidden animate-[slide-in-left_0.22s_ease-out]"
-        style={{
-          background: "rgba(17, 18, 22, 0.94)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          borderRight: "1px solid var(--forge-border-subtle)",
-        }}
+        data-testid="capability-drawer-surface"
+        className="forge-capability-drawer"
       >
-        <div data-testid="capability-drawer-header" className="forge-titlebar flex flex-shrink-0 items-center justify-between px-3">
+        <div data-testid="capability-drawer-header" className="forge-titlebar forge-capability-drawer-header">
           <span className="text-xs font-semibold text-foreground">{title}</span>
           <button
             type="button"

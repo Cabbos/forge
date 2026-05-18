@@ -175,6 +175,16 @@ pub enum StreamEvent {
         proposal: ForgeWikiUpdateProposal,
     },
 
+    // ── Connector Context ──
+    #[serde(rename = "mcp_context_status")]
+    McpContextStatus {
+        session_id: String,
+        source_id: String,
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+
     // ── Workflow Routing ──
     #[serde(rename = "workflow_updated")]
     WorkflowUpdated {
@@ -254,6 +264,7 @@ impl StreamEvent {
             | ForgeWikiContextSelected { session_id, .. }
             | ForgeWikiUpdateProposed { session_id, .. }
             | ForgeWikiUpdated { session_id, .. }
+            | McpContextStatus { session_id, .. }
             | WorkflowUpdated { session_id, .. }
             | AgentTurnUpdated { session_id, .. }
             | DeliverySummary { session_id, .. }

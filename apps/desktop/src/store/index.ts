@@ -4,6 +4,7 @@ import type {
   AgentTurnProjection,
   BlockState,
   ForgeWikiUpdateProposal,
+  McpContextStatus,
   SelectedContextMemory,
   SelectedForgeWikiPage,
   StreamEvent,
@@ -13,6 +14,7 @@ import type {
   DeliverySummary,
 } from "../lib/protocol";
 import type { FirstLoopDraft } from "../lib/first-loop";
+import type { McpContextSelection } from "../lib/tauri";
 import type { Workspace } from "../lib/workspaces";
 import {
   normalizeWorkspacePath,
@@ -38,6 +40,8 @@ interface AppStore {
   memories: WikiMemory[];
   selectedContextBySession: Map<string, SelectedContextMemory[]>;
   forgeWikiContextBySession: Map<string, SelectedForgeWikiPage[]>;
+  mcpContextBySession: Map<string, McpContextSelection[]>;
+  mcpContextStatusBySession: Map<string, Map<string, McpContextStatus>>;
   forgeWikiProposalsBySession: Map<string, ForgeWikiUpdateProposal[]>;
   workflowBySession: Map<string, WorkflowState>;
   agentTurnBySession: Map<string, AgentTurnProjection>;
@@ -61,6 +65,8 @@ interface AppStore {
   setMemories: (memories: WikiMemory[]) => void;
   upsertMemory: (memory: WikiMemory) => void;
   setForgeWikiContext: (sessionId: string, selected: SelectedForgeWikiPage[]) => void;
+  toggleMcpContext: (sessionId: string, selection: McpContextSelection) => void;
+  clearMcpContext: (sessionId: string) => void;
   upsertForgeWikiProposal: (sessionId: string, proposal: ForgeWikiUpdateProposal) => void;
   setWorkflowState: (sessionId: string, workflow: WorkflowState) => void;
   setFirstLoopDraft: (sessionId: string, draft: FirstLoopDraft | null) => void;
@@ -246,6 +252,13 @@ function workspaceSessionIds(sessions: Map<string, SessionState>, workspaceId: s
     .map((session) => session.id);
 }
 
+function sameMcpContextSelection(a: McpContextSelection, b: McpContextSelection) {
+  if (a.kind !== b.kind || a.server_id !== b.server_id) return false;
+  return a.kind === "resource" && b.kind === "resource"
+    ? a.uri === b.uri
+    : a.kind === "prompt" && b.kind === "prompt" && a.name === b.name;
+}
+
 export const useStore = create<AppStore>((set, get) => ({
   sessions: new Map(),
   activeSessionId: null,
@@ -255,6 +268,8 @@ export const useStore = create<AppStore>((set, get) => ({
   memories: [],
   selectedContextBySession: new Map(),
   forgeWikiContextBySession: new Map(),
+  mcpContextBySession: new Map(),
+  mcpContextStatusBySession: new Map(),
   forgeWikiProposalsBySession: new Map(),
   workflowBySession: new Map(),
   agentTurnBySession: new Map(),
@@ -468,6 +483,27 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ forgeWikiContextBySession });
   },
 
+  toggleMcpContext: (sessionId, selection) => {
+    const mcpContextBySession = new Map(get().mcpContextBySession);
+    const current = mcpContextBySession.get(sessionId) ?? [];
+    const exists = current.some((item) => sameMcpContextSelection(item, selection));
+    const next = exists
+      ? current.filter((item) => !sameMcpContextSelection(item, selection))
+      : [...current, selection];
+    if (next.length === 0) {
+      mcpContextBySession.delete(sessionId);
+    } else {
+      mcpContextBySession.set(sessionId, next);
+    }
+    set({ mcpContextBySession });
+  },
+
+  clearMcpContext: (sessionId) => {
+    const mcpContextBySession = new Map(get().mcpContextBySession);
+    mcpContextBySession.delete(sessionId);
+    set({ mcpContextBySession });
+  },
+
   upsertForgeWikiProposal: (sessionId, proposal) => {
     const forgeWikiProposalsBySession = new Map(get().forgeWikiProposalsBySession);
     const proposals = forgeWikiProposalsBySession.get(sessionId) ?? [];
@@ -512,6 +548,8 @@ export const useStore = create<AppStore>((set, get) => ({
     const sessions = new Map(get().sessions);
     const selectedContextBySession = new Map(get().selectedContextBySession);
     const forgeWikiContextBySession = new Map(get().forgeWikiContextBySession);
+    const mcpContextBySession = new Map(get().mcpContextBySession);
+    const mcpContextStatusBySession = new Map(get().mcpContextStatusBySession);
     const forgeWikiProposalsBySession = new Map(get().forgeWikiProposalsBySession);
     const workflowBySession = new Map(get().workflowBySession);
     const agentTurnBySession = new Map(get().agentTurnBySession);
@@ -520,6 +558,8 @@ export const useStore = create<AppStore>((set, get) => ({
     sessions.delete(id);
     selectedContextBySession.delete(id);
     forgeWikiContextBySession.delete(id);
+    mcpContextBySession.delete(id);
+    mcpContextStatusBySession.delete(id);
     forgeWikiProposalsBySession.delete(id);
     workflowBySession.delete(id);
     agentTurnBySession.delete(id);
@@ -535,6 +575,8 @@ export const useStore = create<AppStore>((set, get) => ({
       activeSessionId,
       selectedContextBySession,
       forgeWikiContextBySession,
+      mcpContextBySession,
+      mcpContextStatusBySession,
       forgeWikiProposalsBySession,
       workflowBySession,
       agentTurnBySession,
@@ -661,6 +703,19 @@ export const useStore = create<AppStore>((set, get) => ({
 
     if (event_type === "forge_wiki_context_selected") {
       get().setForgeWikiContext(session_id, event.selected);
+      return;
+    }
+
+    if (event_type === "mcp_context_status") {
+      const mcpContextStatusBySession = new Map(get().mcpContextStatusBySession);
+      const current = new Map(mcpContextStatusBySession.get(session_id) ?? []);
+      current.set(event.source_id, {
+        source_id: event.source_id,
+        status: event.status,
+        message: event.message ?? null,
+      });
+      mcpContextStatusBySession.set(session_id, current);
+      set({ mcpContextStatusBySession });
       return;
     }
 

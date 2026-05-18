@@ -17,7 +17,13 @@ export interface ProjectArchiveOverview {
   goal: string;
   currentVersion: string;
   nextStep: string;
+  recordReview: ProjectArchiveRecordReview | null;
   actions: ProjectOverviewAction[];
+}
+
+export interface ProjectArchiveRecordReview {
+  label: string;
+  targetPages: string[];
 }
 
 export function deriveProjectArchiveOverview(input: {
@@ -41,6 +47,12 @@ export function deriveProjectArchiveOverview(input: {
     ? `${latestDelivery.preview_label} · ${latestDelivery.checkpoint_label}`
     : derivedDraft?.scope || "还没有形成可验收版本";
   const nextStep = latestDelivery?.next_action || derivedDraft?.nextStep || "描述一个小工具，Forge 会先推进到可预览第一版。";
+  const recordReview = latestDelivery?.record_label && latestDelivery.record_status === "pending"
+    ? {
+        label: latestDelivery.record_label,
+        targetPages: latestDelivery.record_target_pages ?? [],
+      }
+    : null;
 
   return {
     projectName,
@@ -48,6 +60,7 @@ export function deriveProjectArchiveOverview(input: {
     goal,
     currentVersion,
     nextStep,
+    recordReview,
     actions: [
       {
         id: "continue_last_task",

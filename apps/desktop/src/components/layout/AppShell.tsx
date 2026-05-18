@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { FolderOpen, PanelRightOpen, Search } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ArrowUp, FolderOpen, PanelRightOpen, Search, SquarePen } from "lucide-react";
 import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
 import { SessionView } from "@/components/session/SessionView";
+import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 import { HubPanel } from "./HubPanel";
 import { CapabilityDrawer } from "./CapabilityDrawer";
 import { useOutputStream } from "@/hooks/useOutputStream";
@@ -10,19 +11,39 @@ import { useSession } from "@/hooks/useSession";
 import { CommandPalette } from "@/components/CommandPalette";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
 import { getProjectDisplay, getSessionStatus, getSessionTitle } from "@/lib/session-display";
+import { buildFirstLoopAgentPrompt, deriveFirstLoopDraft } from "@/lib/first-loop";
+import { createProjectCheckpoint } from "@/lib/tauri";
+
+const EMPTY_START_HINTS = [
+  "做一个可以预览的小工具",
+  "检查这个项目能不能运行",
+  "继续优化当前页面体验",
+];
 
 export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [activeSidebarPanel, setActiveSidebarPanel] = useState<SidebarPanel | null>(null);
+  const [emptyPrompt, setEmptyPrompt] = useState("");
+  const [emptyPromptStarting, setEmptyPromptStarting] = useState(false);
+  const emptyPromptRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const sessions = useStore((s) => s.sessions);
   const activeWorkspace = useActiveWorkspace();
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
-  const { create } = useSession();
+  const setFirstLoopDraft = useStore((s) => s.setFirstLoopDraft);
+  const addUserMessage = useStore((s) => s.addUserMessage);
+  const { create, send } = useSession();
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
   const status = getSessionStatus(activeSession);
-  const showSessionStatus = activeSession?.streaming || activeSession?.status === "error";
+  const hasPendingOutput = activeSession?.blocks.some((block) => block.event_type === "pending") ?? false;
+  const titlebarStatus = hasPendingOutput ? { label: "响应中", color: "#D4A853" } : status;
+  const showSessionStatus = hasPendingOutput || activeSession?.streaming || activeSession?.status === "error";
+  const titlebarStatusState = activeSession?.status === "error"
+    ? "error"
+    : hasPendingOutput || activeSession?.streaming
+      ? "running"
+      : "idle";
   const project = getProjectDisplay(activeSession?.workingDir || activeWorkspace?.path);
   useOutputStream(activeSessionId);
   const capabilityTab: CapabilityTab = activeSidebarPanel === "automation" ? "hooks" : "skills";
@@ -38,6 +59,52 @@ export function AppShell() {
     });
   }, [activeWorkspace, create, selectedModel, selectedProvider]);
 
+  const startConversationWithPrompt = useCallback(async () => {
+    const text = emptyPrompt.trim();
+    if (!activeWorkspace || !text || emptyPromptStarting) return;
+
+    setEmptyPromptStarting(true);
+    try {
+      const sessionId = await create(activeWorkspace.path, selectedProvider, selectedModel);
+      const firstLoopDraft = deriveFirstLoopDraft(sessionId, text);
+      if (firstLoopDraft) {
+        setFirstLoopDraft(sessionId, firstLoopDraft);
+      }
+      await createProjectCheckpoint(sessionId).catch(() => {});
+      addUserMessage(sessionId, text);
+      await send(sessionId, buildFirstLoopAgentPrompt(text), []);
+      setEmptyPrompt("");
+    } catch (error) {
+      console.error("Failed to start conversation from prompt:", error);
+    } finally {
+      setEmptyPromptStarting(false);
+    }
+  }, [
+    activeWorkspace,
+    addUserMessage,
+    create,
+    emptyPrompt,
+    emptyPromptStarting,
+    selectedModel,
+    selectedProvider,
+    send,
+    setFirstLoopDraft,
+  ]);
+
+  const handleEmptyPromptKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    startConversationWithPrompt();
+  }, [startConversationWithPrompt]);
+
+  const useEmptyHint = useCallback((hint: string) => {
+    setEmptyPrompt(hint);
+    requestAnimationFrame(() => {
+      emptyPromptRef.current?.focus();
+      emptyPromptRef.current?.setSelectionRange(hint.length, hint.length);
+    });
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "n") return;
@@ -52,7 +119,7 @@ export function AppShell() {
   }, [startConversation]);
 
   return (
-    <div className="h-screen grid bg-background" style={{ gridTemplateColumns: "220px minmax(0, 1fr)" }}>
+    <div className="forge-app-shell h-screen grid bg-background" style={{ gridTemplateColumns: "var(--forge-sidebar-width) minmax(0, 1fr)" }}>
       <Sidebar
         activePanel={activeSidebarPanel}
         onOpenPanel={toggleSidebarPanel}
@@ -65,42 +132,47 @@ export function AppShell() {
         <div
           data-testid="app-titlebar"
           data-tauri-drag-region="true"
-          className="forge-titlebar flex flex-shrink-0 items-center justify-between gap-4 border-b border-border px-4"
+          className="forge-titlebar forge-app-titlebar"
         >
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex min-w-0 flex-col">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium text-foreground">
-                  {getSessionTitle(activeSession)}
+          <div data-testid="titlebar-context" className="forge-titlebar-context">
+            <div className="forge-titlebar-title-row">
+              <span data-testid="titlebar-title" className="forge-titlebar-title">
+                {getSessionTitle(activeSession)}
+              </span>
+              {showSessionStatus && (
+                <span
+                  data-testid="titlebar-status-pill"
+                  data-state={titlebarStatusState}
+                  className="forge-titlebar-status-pill"
+                  style={{
+                    color: titlebarStatus.color,
+                    borderColor: `${titlebarStatus.color}38`,
+                    backgroundColor: `${titlebarStatus.color}14`,
+                  }}
+                >
+                  <span className="forge-titlebar-status-dot" style={{ background: titlebarStatus.color }} />
+                  {titlebarStatus.label}
                 </span>
-                {showSessionStatus && (
-                  <span
-                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[10px]"
-                    style={{ color: status.color }}
-                  >
-                    <span className="size-1.5 rounded-full" style={{ background: status.color }} />
-                    {status.label}
-                  </span>
-                )}
-              </div>
-              <div
-                aria-label="当前项目边界"
-                className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground/75"
-                title={project.path}
-              >
-                <FolderOpen className="size-3 shrink-0" />
-                <span className="shrink-0 text-muted-foreground/60">当前项目</span>
-                <span className="truncate text-foreground/80">{project.name}</span>
-              </div>
+              )}
+            </div>
+            <div
+              data-testid="titlebar-project-boundary"
+              aria-label="当前项目边界"
+              className="forge-titlebar-project"
+              title={project.path}
+            >
+              <FolderOpen className="forge-titlebar-project-icon" />
+              <span className="forge-titlebar-project-label">当前项目</span>
+              <span className="forge-titlebar-project-name">{project.name}</span>
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div data-testid="titlebar-actions" className="forge-titlebar-actions">
             <button
               onClick={() => setSearchOpen(true)}
               aria-label="搜索"
               title="搜索"
-              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              className="forge-titlebar-button"
             >
               <Search className="size-3.5" />
             </button>
@@ -108,7 +180,7 @@ export function AppShell() {
               onClick={() => window.dispatchEvent(new Event("toggle-hub"))}
               aria-label="打开项目档案"
               title="打开项目档案"
-              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              className="forge-titlebar-button"
             >
               <PanelRightOpen className="size-4" />
             </button>
@@ -118,26 +190,82 @@ export function AppShell() {
         {activeSessionId && sessions.has(activeSessionId) ? (
           <SessionView sessionId={activeSessionId} />
         ) : (
-          <div className="flex h-full items-center justify-center px-6 text-center">
+          <div className={activeWorkspace ? "forge-empty-shell forge-empty-shell-codex" : "forge-empty-shell forge-empty-shell-centered"}>
             <div data-testid="empty-workbench" className="forge-empty-workbench">
-              <p className="text-sm font-medium text-foreground">
-                {activeWorkspace ? "准备开始" : "选择一个项目开始"}
-              </p>
-              <p className="mt-1.5 max-w-[360px] text-xs leading-relaxed text-muted-foreground/75">
-                {activeWorkspace
-                  ? "描述你想做什么，Forge 会在当前项目里继续。"
-                  : "先选择一个具体项目，Forge 会把对话和交付状态绑定到当前项目。"}
-              </p>
-              {activeWorkspace && (
-                <button
-                  type="button"
-                  onClick={startConversation}
-                  className="forge-action mt-4 justify-center"
-                >
-                  开始新对话
-                </button>
+              {activeWorkspace ? (
+                <div data-testid="empty-middle-hints" className="forge-empty-hints">
+                  <div className="forge-empty-hints-inner">
+                    <p className="forge-empty-hints-title">可以这样开始</p>
+                    <div className="forge-empty-hint-list">
+                      {EMPTY_START_HINTS.map((hint) => (
+                        <button
+                          key={hint}
+                          type="button"
+                          onClick={() => useEmptyHint(hint)}
+                          className="forge-empty-hint"
+                        >
+                          {hint}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="forge-empty-title">选择一个项目开始</p>
+                  <p className="forge-empty-copy">
+                    先选择一个具体项目，Forge 会把对话和交付状态放在同一个工作空间里。
+                  </p>
+                </>
               )}
             </div>
+            {activeWorkspace && (
+              <div className="forge-empty-composer-frame">
+                <div className="forge-conversation-lane">
+                  <div className="forge-empty-context-row">
+                    <div data-testid="empty-workbench-project" className="forge-empty-project">
+                      <FolderOpen className="forge-empty-project-icon" />
+                      <span className="forge-empty-project-name">{project.name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="empty-workbench-action"
+                      onClick={startConversation}
+                      className="forge-empty-action"
+                    >
+                      <SquarePen className="size-3.5" />
+                      开始新对话
+                    </button>
+                  </div>
+                  <div data-testid="empty-start-composer" className="forge-empty-composer">
+                    <textarea
+                      ref={emptyPromptRef}
+                      value={emptyPrompt}
+                      onChange={(event) => setEmptyPrompt(event.target.value)}
+                      onKeyDown={handleEmptyPromptKeyDown}
+                      placeholder="描述你想做的小工具或要改的地方"
+                      rows={3}
+                      className="forge-empty-composer-input"
+                    />
+                    <div className="forge-empty-composer-footer">
+                      <span className="forge-empty-composer-context">Enter 发送 · Shift+Enter 换行</span>
+                      <button
+                        type="button"
+                        data-testid="empty-start-send"
+                        aria-label="发送并开始"
+                        onClick={startConversationWithPrompt}
+                        disabled={!emptyPrompt.trim() || emptyPromptStarting}
+                        data-ready={emptyPrompt.trim() ? "true" : "false"}
+                        className="forge-empty-composer-send"
+                      >
+                        <ArrowUp className="size-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <StartReadinessCard variant="setup-strip" />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>

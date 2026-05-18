@@ -26,6 +26,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
   if (!diff) return null;
 
   const parsed = parseDiff(diff);
+  const isLongDiff = parsed.lines.length > INITIAL_VISIBLE_DIFF_LINES;
   const visibleLines = expanded ? parsed.lines : parsed.lines.slice(0, INITIAL_VISIBLE_DIFF_LINES);
   const hiddenLineCount = Math.max(0, parsed.lines.length - visibleLines.length);
   const firstChangedLine = parsed.firstChangedLine ?? undefined;
@@ -104,7 +105,6 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
               key={`${i}-${line.raw}`}
               data-testid={`diff-line-${line.type === "add" ? "added" : line.type === "remove" ? "removed" : line.type}`}
               className={`forge-diff-line forge-diff-line-${line.type === "add" ? "added" : line.type === "remove" ? "removed" : line.type}`}
-              style={{ background: diffLineBackground(line.type), color: diffLineColor(line.type) }}
             >
               <span data-testid="diff-line-old-number" className="forge-diff-line-number">
                 {line.oldNumber ?? ""}
@@ -116,16 +116,18 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
             </div>
           ))}
         </div>
-        {hiddenLineCount > 0 && (
+        {isLongDiff && (
           <div className="forge-diff-footer">
             <button
               type="button"
-              onClick={() => setExpanded(true)}
+              onClick={() => setExpanded((current) => !current)}
               className="forge-diff-expand"
             >
-              <ChevronDown className="size-3" />
-              展开完整改动
-              <span className="font-mono text-[10px] text-muted-foreground/70">+{hiddenLineCount} 行</span>
+              <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              {expanded ? "收起改动" : "展开完整改动"}
+              {!expanded && (
+                <span className="font-mono text-[10px] text-muted-foreground/70">+{hiddenLineCount} 行</span>
+              )}
             </button>
           </div>
         )}
@@ -133,21 +135,6 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
       </MessagePanel>
     </div>
   );
-}
-
-function diffLineBackground(type: DiffLineType) {
-  if (type === "add") return "rgba(74, 158, 107, 0.07)";
-  if (type === "remove") return "rgba(212, 119, 119, 0.07)";
-  if (type === "hunk") return "rgba(212, 168, 83, 0.045)";
-  return undefined;
-}
-
-function diffLineColor(type: DiffLineType) {
-  if (type === "add") return "#9BC7A8";
-  if (type === "remove") return "#E1A0A0";
-  if (type === "hunk") return "#D4A853";
-  if (type === "header") return "#7CAED8";
-  return undefined;
 }
 
 function parseDiff(diff: string) {

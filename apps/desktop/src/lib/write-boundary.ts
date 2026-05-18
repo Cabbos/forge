@@ -4,6 +4,7 @@ export type WriteBoundaryRiskView = "low" | "medium" | "high";
 
 export interface WriteBoundaryViewModel {
   title: string;
+  targetLabel: string;
   workspaceLabel: string;
   operationLabel: string;
   affectedFiles: string[];
@@ -50,6 +51,15 @@ export function operationLabel(operation: unknown): string {
     case "run_shell":
     case "shell":
       return "执行命令";
+    case "mcp_tool":
+    case "调用工具":
+      return "调用工具";
+    case "mcp_resource_read":
+    case "读取资料":
+      return "读取资料";
+    case "mcp_prompt_get":
+    case "使用提示词":
+      return "使用提示词";
     case "写入文件":
     case "编辑文件":
     case "修改文件":
@@ -93,13 +103,15 @@ export function parseWriteBoundary(value: unknown): WriteBoundaryViewModel | nul
   const workspaceName = stringValue(boundary.workspace_name);
   const affectedFiles = stringList(boundary.affected_files)
     .map((file) => displayProjectPath(file, workspacePath));
+  const impact = stringValue(boundary.impact);
   const filesLabel = affectedFiles.length > 0
     ? affectedFiles.slice(0, 3).join("、") + (affectedFiles.length > 3 ? ` 等 ${affectedFiles.length} 个文件` : "")
-    : "当前项目";
+    : impact ?? "当前项目";
   const risk = riskLabel(boundary.risk_level ?? boundary.risk);
 
   return {
     title: stringValue(boundary.title) ?? "准备修改项目",
+    targetLabel: stringValue(boundary.target_label) ?? "目标项目",
     workspaceLabel: workspaceName ?? workspaceDisplayName(workspacePath),
     operationLabel: operationLabel(boundary.operation),
     affectedFiles,

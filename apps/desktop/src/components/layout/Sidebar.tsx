@@ -119,13 +119,16 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
   return (
     <aside
-      className="h-full w-full flex flex-col select-none overflow-hidden bg-sidebar px-3"
-      style={{ borderRight: "1px solid var(--forge-border-subtle)" }}
+      data-testid="app-sidebar"
+      className="forge-sidebar h-full w-full flex flex-col select-none overflow-hidden"
     >
       {/* Brand */}
-      <div className="flex items-center justify-between px-1 py-4">
+      <div className="forge-sidebar-brand">
         <img src={forgeMark} alt="" className="size-7 flex-shrink-0 rounded-md" />
-        <span className="text-xs font-semibold text-sidebar-foreground tracking-tight">Forge</span>
+        <div className="forge-sidebar-brand-copy">
+          <span className="forge-sidebar-brand-title">Forge</span>
+          <span className="forge-sidebar-brand-subtitle">Local agent</span>
+        </div>
       </div>
 
       <div className="relative mb-2 px-1">
@@ -134,7 +137,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
           data-testid="workspace-trigger"
           onClick={toggleWorkspaceMenu}
           title={activeWorkspace?.path}
-          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="forge-sidebar-workspace-trigger"
           aria-controls={workspaceMenuOpen ? "workspace-menu" : undefined}
           aria-expanded={workspaceMenuOpen}
           aria-haspopup="menu"
@@ -263,7 +266,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         )}
       </div>
 
-      <nav className="mb-3 flex flex-col gap-1">
+      <nav data-testid="sidebar-primary-nav" className="forge-sidebar-primary-nav">
         <SidebarAction icon={<SquarePen className="size-4" />} label="新对话" disabled={!activeWorkspace} onClick={newSession} />
         <SidebarAction icon={<Search className="size-4" />} label="搜索" onClick={onOpenSearch} />
       </nav>
@@ -340,18 +343,13 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                         setActiveSession(s.id);
                       }
                     }}
-                    className={cn(
-                      "forge-sidebar-history-row group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/55",
-                      isActive
-                        ? "text-sidebar-accent-foreground"
-                        : "text-muted-foreground",
-                    )}
+                    className={cn("forge-sidebar-history-row group", isActive ? "text-sidebar-accent-foreground" : "text-muted-foreground")}
                   >
                     <span className={cn("min-w-0 flex-1 truncate", isActive && "font-medium")}>{title}</span>
                     <button
                       type="button"
                       aria-label={`删除对话 ${title}`}
-                      className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/45 opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive/45 group-hover:opacity-100"
+                      className="forge-sidebar-history-delete"
                       onClick={(event) => {
                         event.stopPropagation();
                         deleteConversation(s.id);
@@ -374,7 +372,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
       <nav
         data-testid="sidebar-utility-nav"
-        className="mt-3 flex h-10 items-center gap-1 border-t border-border pt-2"
+        className="mt-3 flex h-9 items-center gap-1 border-t border-border pt-2"
       >
         <SidebarIconAction
           icon={<Blocks className="size-4" />}
@@ -448,17 +446,13 @@ function SidebarAction({
 }) {
   return (
     <button
+      data-testid="sidebar-primary-action"
       onClick={onClick}
       disabled={disabled}
-      className={cn(
-        "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors",
-        disabled && "cursor-default opacity-45",
-        active
-          ? "bg-secondary text-foreground"
-          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-      )}
+      data-active={active ? "true" : "false"}
+      className="forge-sidebar-action"
     >
-      <span className={cn("flex size-4 items-center justify-center", active && "text-primary")}>
+      <span className="forge-sidebar-action-icon">
         {icon}
       </span>
       <span className="truncate">{label}</span>

@@ -497,6 +497,16 @@ function ForgeWikiProposalRow({
           <div className="mt-1 max-h-[4.6rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
             {proposal.summary}
           </div>
+          {proposal.patch_preview ? (
+            <div className="mt-2 border-l border-border pl-2">
+              <div className="text-[10px] font-medium leading-none text-muted-foreground/65">
+                写入预览
+              </div>
+              <div className="mt-1 max-h-20 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground">
+                {proposal.patch_preview}
+              </div>
+            </div>
+          ) : null}
           <RecordMetaGrid
             rows={[
               ["保存位置", "项目记录"],
@@ -697,7 +707,7 @@ function categoryLabel(category: MemoryCategory) {
     case "preference":
       return "偏好";
     case "project_fact":
-      return "项目事实";
+      return "项目信息";
     case "decision":
       return "决策";
     case "task_state":

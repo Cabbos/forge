@@ -1,5 +1,5 @@
-import { useRef, useState, useCallback, useEffect } from "react";
-import { ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, RotateCcw } from "lucide-react";
+import { useRef, useState, useCallback, useEffect, type CSSProperties } from "react";
+import { AlertCircle, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, RotateCcw } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
 import { createProjectCheckpoint, searchWorkspaceFiles } from "@/lib/tauri";
@@ -22,6 +22,11 @@ const COMMANDS = [
 ];
 
 const COMPOSER_MAX_INPUT_HEIGHT = 140;
+const ACTIVE_MENU_OPTION_STYLE: CSSProperties = {
+  backgroundColor: "rgba(255, 255, 255, 0.052)",
+  borderColor: "var(--forge-border-subtle)",
+  color: "var(--forge-text-primary)",
+};
 
 export function InputBar({ sessionId }: InputBarProps) {
   const composerRootRef = useRef<HTMLDivElement>(null);
@@ -37,6 +42,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   const pendingInput = useStore((s) => s.pendingInput);
   const setPendingInput = useStore((s) => s.setPendingInput);
   const setFirstLoopDraft = useStore((s) => s.setFirstLoopDraft);
+  const selectedMcpContext = useStore((s) => s.mcpContextBySession.get(sessionId) ?? []);
   const workflow = useStore((s) => s.workflowBySession.get(sessionId) ?? null);
   const [showSuggestions, setShowSuggestions] = useState<"@" | "/" | null>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
@@ -162,14 +168,14 @@ export function InputBar({ sessionId }: InputBarProps) {
 
     await createProjectCheckpoint(sessionId).catch(() => {});
     useStore.getState().addUserMessage(sessionId, message);
-    send(sessionId, buildFirstLoopAgentPrompt(message));
+    send(sessionId, buildFirstLoopAgentPrompt(message), selectedMcpContext);
     setValue("");
     setChips([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.overflowY = "hidden";
     }
-  }, [value, chips, sessionId, send, isRunning, setFirstLoopDraft]);
+  }, [value, chips, sessionId, send, isRunning, setFirstLoopDraft, selectedMcpContext]);
 
   const handleResume = useCallback(async () => {
     if (isRunning || isResuming) return;
@@ -241,9 +247,9 @@ export function InputBar({ sessionId }: InputBarProps) {
     <div data-testid="composer-frame" className="forge-composer-frame relative flex-shrink-0">
       <div ref={composerRootRef} data-testid="composer-lane" className="forge-conversation-lane relative">
       {!isRunning && resumeError && (
-        <div className="mb-2 rounded-md border px-3 py-2 text-xs"
-          style={{ borderColor: "rgba(212,119,119,0.35)", background: "rgba(212,119,119,0.08)", color: "#D47777" }}>
-          {resumeError}
+        <div data-testid="composer-error" role="status" aria-live="polite" className="forge-composer-error">
+          <AlertCircle className="size-3.5 shrink-0" />
+          <span className="min-w-0 truncate">{resumeError}</span>
         </div>
       )}
       {/* Suggestion popup */}
@@ -260,7 +266,8 @@ export function InputBar({ sessionId }: InputBarProps) {
               {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/65">输入文件名搜索</div>}
               {atResults.map((f, index) => (
                 <button key={f} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("file", f)}
-                  className="forge-menu-option font-mono">
+                  className="forge-menu-option font-mono"
+                  style={index === activeSuggestionIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}>
                   {f.endsWith("/") ? <FileText className="size-3" style={{ color: "#5B9BD5" }} /> : <FileText className="size-3" style={{ color: "var(--muted-foreground)" }} />}
                   {f}
                 </button>
@@ -272,7 +279,8 @@ export function InputBar({ sessionId }: InputBarProps) {
               <div className="forge-menu-heading">常用请求</div>
               {COMMANDS.map((cmd, index) => (
                 <button key={cmd.prefix} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("command", cmd.text)}
-                  className="forge-menu-option justify-between">
+                  className="forge-menu-option justify-between"
+                  style={index === activeSuggestionIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}>
                   <span className="font-mono">{cmd.text}</span>
                   <span className="text-[10px] text-muted-foreground">{cmd.desc}</span>
                 </button>
@@ -285,6 +293,8 @@ export function InputBar({ sessionId }: InputBarProps) {
       <div
         data-testid="composer-surface"
         data-menu-open={showSuggestions || showModelMenu ? "true" : "false"}
+        data-streaming={isStreaming ? "true" : "false"}
+        data-state={isStreaming ? "running" : isRunning ? "busy" : "idle"}
         className="forge-composer"
       >
         {/* Chips row */}
@@ -336,47 +346,55 @@ export function InputBar({ sessionId }: InputBarProps) {
 
         {/* Toolbar */}
         <div data-testid="composer-toolbar" className="forge-composer-toolbar">
-          <div className="flex gap-1.5 text-[10px] font-mono" style={{ color: "var(--muted-foreground)" }}>
-            <button
-              type="button"
-              aria-label="引用文件"
-              aria-controls={showSuggestions === "@" ? suggestionListId : undefined}
-              aria-expanded={showSuggestions === "@"}
-              aria-haspopup="listbox"
-              title="引用文件"
-              onClick={() => {
-                textareaRef.current?.focus();
-                setShowModelMenu(false);
-                setShowSuggestions((s) => s === "@" ? null : "@");
-              }}
-              data-active={showSuggestions === "@" ? "true" : "false"}
-              className="forge-composer-tool"
-            >
-              <AtSign className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              aria-label="常用请求"
-              aria-controls={showSuggestions === "/" ? suggestionListId : undefined}
-              aria-expanded={showSuggestions === "/"}
-              aria-haspopup="listbox"
-              title="常用请求"
-              onClick={() => {
-                textareaRef.current?.focus();
-                setShowModelMenu(false);
-                setShowSuggestions((s) => s === "/" ? null : "/");
-              }}
-              data-active={showSuggestions === "/" ? "true" : "false"}
-              className="forge-composer-tool"
-            >
-              <Slash className="size-3.5" />
-            </button>
+          <div data-testid="composer-tool-cluster" className="forge-composer-tool-cluster">
+            <div className="forge-composer-tool-buttons">
+              <button
+                type="button"
+                data-testid="composer-tool-button"
+                aria-label="引用文件"
+                aria-controls={showSuggestions === "@" ? suggestionListId : undefined}
+                aria-expanded={showSuggestions === "@"}
+                aria-haspopup="listbox"
+                title="引用文件"
+                onClick={() => {
+                  textareaRef.current?.focus();
+                  setShowModelMenu(false);
+                  setShowSuggestions((s) => s === "@" ? null : "@");
+                }}
+                data-active={showSuggestions === "@" ? "true" : "false"}
+                className="forge-composer-tool"
+              >
+                <AtSign className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                data-testid="composer-tool-button"
+                aria-label="常用请求"
+                aria-controls={showSuggestions === "/" ? suggestionListId : undefined}
+                aria-expanded={showSuggestions === "/"}
+                aria-haspopup="listbox"
+                title="常用请求"
+                onClick={() => {
+                  textareaRef.current?.focus();
+                  setShowModelMenu(false);
+                  setShowSuggestions((s) => s === "/" ? null : "/");
+                }}
+                data-active={showSuggestions === "/" ? "true" : "false"}
+                className="forge-composer-tool"
+              >
+                <Slash className="size-3.5" />
+              </button>
+            </div>
+            <span className="forge-composer-hint hidden truncate sm:inline">
+              Enter 发送 · Shift↵ 换行
+            </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div data-testid="composer-control-cluster" className="forge-composer-control-cluster">
             <div className="relative">
               <button
                 type="button"
+                data-testid="composer-model-chip"
                 id={`${modelMenuId}-button`}
                 onClick={() => {
                   setShowSuggestions(null);
@@ -389,6 +407,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                 data-active={showModelMenu ? "true" : "false"}
                 className="forge-composer-model"
                 title={selectedContextWindow ? `${selectedProviderLabel} · ${selectedModelLabel} · 上下文 ${selectedContextWindow}` : `${selectedProviderLabel} · ${selectedModelLabel}`}>
+                <span data-testid="composer-model-indicator" className="forge-composer-model-indicator" aria-hidden="true" />
                 <span className="truncate">{selectedModelLabel}</span>
                 <ChevronDown className="size-3" style={{ color: "var(--muted-foreground)" }} />
               </button>
@@ -413,7 +432,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                             aria-checked={active}
                             onClick={() => selectModel(provider.id, model.id)}
                             className="forge-menu-option h-auto min-h-10 flex-col items-stretch gap-0.5 py-1.5"
-                            style={{ color: active ? "var(--primary)" : "var(--forge-text-secondary)" }}
+                            style={active ? { ...ACTIVE_MENU_OPTION_STYLE, color: "var(--primary)" } : { color: "var(--forge-text-secondary)" }}
                           >
                             <div className="flex items-center justify-between gap-3">
                               <span className="font-mono">{model.name}</span>

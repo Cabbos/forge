@@ -13,6 +13,8 @@ pub struct LoadedSkill {
     pub instruction: String, // full SKILL.md content
     pub source: SkillSource,
     pub enabled: bool,
+    pub triggers: Vec<String>,
+    pub always_on: bool,
     /// Extra tools contributed by this skill.
     pub tools: Vec<SkillTool>,
 }
@@ -102,16 +104,18 @@ impl SkillLoader {
                     {
                         if let Ok(content) = std::fs::read_to_string(&md_path) {
                             let name = entry.file_name().to_string_lossy().to_string();
-                            let (desc, tools) = parse_skill_metadata(&content);
+                            let metadata = parse_skill_metadata(&content);
                             let enabled = self.skill_enabled(&name);
                             discovered.push(LoadedSkill {
                                 id: name.clone(),
                                 name: name.clone(),
-                                description: desc,
+                                description: metadata.description,
                                 instruction: content,
                                 source: SkillSource::Local(entry.path()),
                                 enabled,
-                                tools,
+                                triggers: metadata.triggers,
+                                always_on: metadata.always_on,
+                                tools: metadata.tools,
                             });
                         }
                     }
@@ -138,17 +142,19 @@ impl SkillLoader {
                             {
                                 if let Ok(content) = std::fs::read_to_string(&md_path) {
                                     let name = entry.file_name().to_string_lossy().to_string();
-                                    let (desc, tools) = parse_skill_metadata(&content);
+                                    let metadata = parse_skill_metadata(&content);
                                     let id = format!("builtin-{name}");
                                     let enabled = self.skill_enabled(&id);
                                     discovered.push(LoadedSkill {
                                         id,
                                         name,
-                                        description: desc,
+                                        description: metadata.description,
                                         instruction: content,
                                         source: SkillSource::Local(entry.path()),
                                         enabled,
-                                        tools,
+                                        triggers: metadata.triggers,
+                                        always_on: metadata.always_on,
+                                        tools: metadata.tools,
                                     });
                                 }
                             }
@@ -184,6 +190,22 @@ impl SkillLoader {
             .await
             .iter()
             .filter(|s| s.enabled)
+            .cloned()
+            .collect()
+    }
+
+    pub async fn enabled_skills_for_request(&self, request: &str) -> Vec<LoadedSkill> {
+        let request_lower = request.to_lowercase();
+        self.skills
+            .read()
+            .await
+            .iter()
+            .filter(|skill| skill.enabled)
+            .filter(|skill| {
+                skill.always_on
+                    || skill.triggers.is_empty()
+                    || skill_matches_request(skill, &request_lower)
+            })
             .cloned()
             .collect()
     }
@@ -238,14 +260,62 @@ impl Default for SkillLoader {
     }
 }
 
-/// Parse basic metadata from a SKILL.md file: description and contributed tools.
-fn parse_skill_metadata(content: &str) -> (String, Vec<SkillTool>) {
-    let desc = content
+#[derive(Debug, Clone)]
+struct ParsedSkillMetadata {
+    description: String,
+    triggers: Vec<String>,
+    always_on: bool,
+    tools: Vec<SkillTool>,
+}
+
+/// Parse basic metadata from a SKILL.md file: description, triggers, and contributed tools.
+fn parse_skill_metadata(content: &str) -> ParsedSkillMetadata {
+    let description = content
         .lines()
         .find(|l| l.starts_with("description:"))
         .map(|l| l.trim_start_matches("description:").trim().to_string())
         .unwrap_or_default();
+    let triggers = content
+        .lines()
+        .find(|line| {
+            line.trim_start().starts_with("triggers:") || line.trim_start().starts_with("keywords:")
+        })
+        .map(|line| {
+            line.split_once(':')
+                .map(|(_, value)| parse_inline_string_list(value))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let always_on = content
+        .lines()
+        .find(|line| line.trim_start().starts_with("always_on:"))
+        .and_then(|line| line.split_once(':').map(|(_, value)| value.trim()))
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
 
     // Try to parse embedded tools.json alongside SKILL.md (handled separately)
-    (desc, Vec::new())
+    ParsedSkillMetadata {
+        description,
+        triggers,
+        always_on,
+        tools: Vec::new(),
+    }
+}
+
+fn parse_inline_string_list(value: &str) -> Vec<String> {
+    let value = value.trim();
+    if value.starts_with('[') {
+        return serde_json::from_str::<Vec<String>>(value).unwrap_or_default();
+    }
+    value
+        .split(',')
+        .map(|item| item.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn skill_matches_request(skill: &LoadedSkill, request_lower: &str) -> bool {
+    skill
+        .triggers
+        .iter()
+        .any(|trigger| request_lower.contains(&trigger.to_lowercase()))
 }

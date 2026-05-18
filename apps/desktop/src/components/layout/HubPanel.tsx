@@ -11,9 +11,11 @@ import { CurrentTaskCard } from "@/components/workflow/CurrentTaskCard";
 import { cn } from "@/lib/utils";
 import { getActiveContextItems } from "@/lib/context-activation";
 import { deriveProjectArchiveOverview } from "@/lib/project-archive-overview";
-import { getProjectRuntimeStatus } from "@/lib/tauri";
+import { getProjectRuntimeStatus, listMcpContextSources, type McpContextSources } from "@/lib/tauri";
+import type { McpContextPromptArgument, McpContextSelection } from "@/lib/tauri";
+import type { McpContextStatus } from "@/lib/protocol";
 
-type ParseStatus = "pending" | "parsed" | "failed";
+type ParseStatus = "pending" | "parsed" | "failed" | "available" | "read_failed";
 
 interface ContextFile {
   id: string;
@@ -21,14 +23,21 @@ interface ContextFile {
   type: string;
   status: ParseStatus;
   inContext: boolean;
+  selection?: McpContextSelection;
+  promptArguments?: McpContextPromptArgument[];
+  sourceLabel?: string;
+  description?: string;
+  statusMessage?: string | null;
 }
 
 const contextFiles: ContextFile[] = [];
+const emptyMcpContextSources: McpContextSources = { resources: [], prompts: [] };
 
 export function HubPanel() {
   const [open, setOpen] = useState(false);
   const [recordsRequestedOpen, setRecordsRequestedOpen] = useState(false);
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [mcpContextSources, setMcpContextSources] = useState<McpContextSources>(emptyMcpContextSources);
   const activeWorkspace = useActiveWorkspace();
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
@@ -37,9 +46,16 @@ export function HubPanel() {
   const deliverySummary = useStore((s) => activeId ? s.deliverySummaryBySession.get(activeId) ?? null : null);
   const selectedMemories = useStore((s) => activeId ? s.selectedContextBySession.get(activeId) ?? [] : []);
   const selectedWikiPages = useStore((s) => activeId ? s.forgeWikiContextBySession.get(activeId) ?? [] : []);
+  const selectedMcpContext = useStore((s) => activeId ? s.mcpContextBySession.get(activeId) ?? [] : []);
+  const mcpContextStatus = useStore((s) => activeId ? s.mcpContextStatusBySession.get(activeId) ?? null : null);
+  const toggleMcpContext = useStore((s) => s.toggleMcpContext);
   const session = activeId ? sessions.get(activeId) : null;
   const blocks = useActiveBlocks();
-  const activeContextItems = getActiveContextItems(selectedMemories, selectedWikiPages);
+  const activeContextItems = getActiveContextItems(selectedMemories, selectedWikiPages, selectedMcpContext);
+  const contextMaterials = useMemo(
+    () => buildContextMaterials(contextFiles, mcpContextSources, selectedMcpContext, mcpContextStatus),
+    [mcpContextSources, selectedMcpContext, mcpContextStatus],
+  );
   const projectOverview = useMemo(() => deriveProjectArchiveOverview({
     workspace: activeWorkspace,
     session: session ?? null,
@@ -101,6 +117,27 @@ export function HubPanel() {
     };
   }, [activeId, activeWorkspace?.path, open]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!open || !activeId) {
+      setMcpContextSources(emptyMcpContextSources);
+      return;
+    }
+
+    listMcpContextSources(activeId)
+      .then((sources) => {
+        if (!cancelled) setMcpContextSources(sources);
+      })
+      .catch(() => {
+        if (!cancelled) setMcpContextSources(emptyMcpContextSources);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, open]);
+
   if (!open) return null;
 
   return (
@@ -145,9 +182,14 @@ export function HubPanel() {
             <ArchiveDisclosure
               testId="archive-disclosure-files"
               title="资料"
-              meta={contextFiles.length > 0 ? `${contextFiles.length} 个文件` : "未添加"}
+              meta={contextMaterials.length > 0 ? `${contextMaterials.length} 个资料` : "未添加"}
             >
-              <ContextFilesSection files={contextFiles} />
+              <ContextFilesSection
+                files={contextMaterials}
+                onToggle={(selection) => {
+                  if (activeId) toggleMcpContext(activeId, selection);
+                }}
+              />
             </ArchiveDisclosure>
 
             <ProductLayerHeader title="交付" meta="最近状态" />
@@ -214,7 +256,13 @@ function ProductLayerHeader({ title, meta }: { title: string; meta?: string | nu
   );
 }
 
-function ContextFilesSection({ files }: { files: ContextFile[] }) {
+function ContextFilesSection({
+  files,
+  onToggle,
+}: {
+  files: ContextFile[];
+  onToggle: (selection: McpContextSelection) => void;
+}) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-end">
@@ -245,7 +293,7 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
         ) : (
           <div className="divide-y divide-border">
             {files.map((file) => (
-              <ContextFileRow key={file.id} file={file} />
+              <ContextFileRow key={file.id} file={file} onToggle={onToggle} />
             ))}
           </div>
         )}
@@ -254,25 +302,146 @@ function ContextFilesSection({ files }: { files: ContextFile[] }) {
   );
 }
 
-function ContextFileRow({ file }: { file: ContextFile }) {
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] items-center gap-2 px-3 py-2 text-xs">
+function ContextFileRow({
+  file,
+  onToggle,
+}: {
+  file: ContextFile;
+  onToggle: (selection: McpContextSelection) => void;
+}) {
+  const content = (
+    <>
       <div className="min-w-0">
         <div className="truncate text-foreground">{file.name}</div>
+        <div className="mt-0.5 truncate text-[10px] text-muted-foreground/75">
+          {[file.sourceLabel, file.statusMessage].filter(Boolean).join(" · ")}
+        </div>
       </div>
       <span className="truncate font-mono text-[10px] text-muted-foreground">{file.type}</span>
       <span className={cn("truncate text-[10px]", statusClass(file.status))}>
         {statusLabel(file.status)}
       </span>
-      <span className="text-right text-[10px] text-muted-foreground">
+      <span className={cn(
+        "text-right text-[10px]",
+        file.inContext ? "text-primary" : "text-muted-foreground",
+      )}>
         {file.inContext ? "已加入" : "未加入"}
       </span>
+    </>
+  );
+
+  if (file.selection) {
+    const hasPromptArguments =
+      file.selection.kind === "prompt" && (file.promptArguments?.length ?? 0) > 0;
+    if (hasPromptArguments) {
+      return (
+        <ContextPromptRow
+          content={content}
+          file={file}
+          onToggle={onToggle}
+        />
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        aria-pressed={file.inContext}
+        onClick={() => onToggle(file.selection!)}
+        className="grid w-full grid-cols-[minmax(0,1fr)_42px_58px_52px] items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/25"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] items-center gap-2 px-3 py-2 text-xs">
+      {content}
+    </div>
+  );
+}
+
+function ContextPromptRow({
+  content,
+  file,
+  onToggle,
+}: {
+  content: ReactNode;
+  file: ContextFile;
+  onToggle: (selection: McpContextSelection) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const argumentsList = file.promptArguments ?? [];
+
+  const handleRowClick = () => {
+    if (file.inContext) {
+      onToggle(file.selection!);
+      return;
+    }
+    setEditing((value) => !value);
+  };
+
+  const addPrompt = () => {
+    if (!file.selection || file.selection.kind !== "prompt") return;
+    onToggle({
+      ...file.selection,
+      arguments: values,
+    });
+    setEditing(false);
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        aria-pressed={file.inContext}
+        onClick={handleRowClick}
+        className="grid w-full grid-cols-[minmax(0,1fr)_42px_58px_52px] items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/25"
+      >
+        {content}
+      </button>
+      {editing && !file.inContext ? (
+        <div className="space-y-2 border-t border-border/70 px-3 py-2.5">
+          {argumentsList.map((argument) => (
+            <label key={argument.name} className="block space-y-1">
+              <span className="text-[10px] text-muted-foreground">
+                {argument.name}{argument.required ? " *" : ""}
+              </span>
+              <input
+                aria-label={argument.name}
+                value={values[argument.name] ?? ""}
+                onChange={(event) => setValues((current) => ({
+                  ...current,
+                  [argument.name]: event.target.value,
+                }))}
+                placeholder={argument.description || argument.name}
+                className="h-7 w-full rounded-md border border-border bg-muted/20 px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/45"
+              />
+            </label>
+          ))}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={addPrompt}
+              className="forge-action"
+            >
+              加入本轮
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function statusLabel(status: ParseStatus) {
   switch (status) {
+    case "read_failed":
+      return "读取失败";
+    case "available":
+      return "可用";
     case "pending":
       return "解析中";
     case "parsed":
@@ -284,6 +453,10 @@ function statusLabel(status: ParseStatus) {
 
 function statusClass(status: ParseStatus) {
   switch (status) {
+    case "read_failed":
+      return "text-destructive";
+    case "available":
+      return "text-emerald-400";
     case "pending":
       return "text-primary";
     case "parsed":
@@ -291,4 +464,80 @@ function statusClass(status: ParseStatus) {
     case "failed":
       return "text-destructive";
   }
+}
+
+function buildContextMaterials(
+  files: ContextFile[],
+  sources: McpContextSources,
+  selected: McpContextSelection[],
+  statuses: Map<string, McpContextStatus> | null,
+): ContextFile[] {
+  const connectorResources = sources.resources.map((resource): ContextFile => {
+    const id = `mcp-resource:${resource.server_id}:${resource.uri}`;
+    const selection: McpContextSelection = {
+      kind: "resource",
+      server_id: resource.server_id,
+      uri: resource.uri,
+      name: resource.name || resource.uri,
+      description: resource.description,
+      mime_type: resource.mime_type,
+    };
+    const status = statuses?.get(id) ?? null;
+    return {
+      id,
+      name: selection.name,
+      type: compactResourceType(resource.mime_type),
+      status: contextFileStatus(status),
+      inContext: selected.some((item) => sameContextSelection(item, selection)),
+      selection,
+      sourceLabel: `连接资料 · ${resource.server_id}`,
+      description: resource.description,
+      statusMessage: status?.status === "failed" ? status.message ?? null : null,
+    };
+  });
+  const connectorPrompts = sources.prompts.map((prompt): ContextFile => {
+    const id = `mcp-prompt:${prompt.server_id}:${prompt.name}`;
+    const selection: McpContextSelection = {
+      kind: "prompt",
+      server_id: prompt.server_id,
+      name: prompt.name,
+      description: prompt.description,
+    };
+    const status = statuses?.get(id) ?? null;
+    return {
+      id,
+      name: prompt.name,
+      type: "提示词",
+      status: contextFileStatus(status),
+      inContext: selected.some((item) => sameContextSelection(item, selection)),
+      selection,
+      promptArguments: prompt.arguments,
+      sourceLabel: `连接提示词 · ${prompt.server_id}`,
+      description: prompt.description,
+      statusMessage: status?.status === "failed" ? status.message ?? null : null,
+    };
+  });
+
+  return [...files, ...connectorResources, ...connectorPrompts];
+}
+
+function contextFileStatus(status: McpContextStatus | null): ParseStatus {
+  if (!status) return "available";
+  return status.status === "failed" ? "read_failed" : "parsed";
+}
+
+function sameContextSelection(a: McpContextSelection, b: McpContextSelection) {
+  if (a.kind !== b.kind || a.server_id !== b.server_id) return false;
+  return a.kind === "resource" && b.kind === "resource"
+    ? a.uri === b.uri
+    : a.kind === "prompt" && b.kind === "prompt" && a.name === b.name;
+}
+
+function compactResourceType(mimeType: string | null) {
+  if (!mimeType) return "资料";
+  if (mimeType.includes("markdown")) return "md";
+  if (mimeType.includes("pdf")) return "pdf";
+  if (mimeType.includes("json")) return "json";
+  if (mimeType.includes("text")) return "txt";
+  return "资料";
 }

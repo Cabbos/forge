@@ -8,17 +8,26 @@ export function useOutputStream(sessionId: string | null) {
     if (!sessionId) return;
 
     let unlisten: UnlistenFn | null = null;
+    let disposed = false;
 
     const setup = async () => {
-      unlisten = await listen<StreamEvent>("session-output", (event) => {
+      const cleanup = await listen<StreamEvent>("session-output", (event) => {
         if (event.payload.session_id !== sessionId) return;
         useStore.getState().dispatchOutputEvent(event.payload);
       });
+
+      if (disposed) {
+        cleanup();
+        return;
+      }
+
+      unlisten = cleanup;
     };
 
     setup();
 
     return () => {
+      disposed = true;
       if (unlisten) {
         unlisten();
       }

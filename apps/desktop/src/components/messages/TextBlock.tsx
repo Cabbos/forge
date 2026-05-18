@@ -4,9 +4,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { BlockState } from "@/lib/protocol";
 import { CodeBlock } from "@/components/messages/CodeBlock";
+import { DiagramBlock, shouldRenderDiagram } from "@/components/messages/DiagramBlock";
 import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
 import { MessageCopyAction } from "@/components/messages/MessageCopyAction";
-import { Loader2 } from "lucide-react";
 
 const STREAM_THROTTLE_MS = 96;
 const FILE_REF_PREFIX = "#file-ref=";
@@ -208,7 +208,11 @@ export function MarkdownRenderer({
           },
           code({ className, children }) {
             const match = /language-(\w+)/.exec(className || "");
+            const codeText = String(children).replace(/\n$/, "");
             if (!className) {
+              if (codeText.includes("\n") && shouldRenderDiagram(codeText, "")) {
+                return <DiagramBlock code={codeText} lang="" />;
+              }
               const inlineFileRef = parseInlineFileRef(String(children));
               if (inlineFileRef) {
                 return (
@@ -222,7 +226,11 @@ export function MarkdownRenderer({
 
               return <code className="forge-inline-code">{children}</code>;
             }
-            return <CodeBlock code={String(children).replace(/\n$/, "")} lang={match?.[1] || ""} />;
+            const lang = match?.[1] || "";
+            if (shouldRenderDiagram(codeText, lang)) {
+              return <DiagramBlock code={codeText} lang={lang} />;
+            }
+            return <CodeBlock code={codeText} lang={lang} streaming={streaming} />;
           },
           pre({ children }) { return <>{children}</>; },
           a({ href, children }) {
@@ -298,8 +306,19 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
           </div>
         </div>
       ) : (
-        <div className="py-1 text-muted-foreground/70">
-          <Loader2 className="size-4 animate-spin" />
+        <div
+          data-testid="assistant-streaming-status"
+          data-state="running"
+          role="status"
+          aria-live="polite"
+          className="forge-status-row"
+        >
+          <span className="forge-status-dots">
+            <span className="forge-status-dot" />
+            <span className="forge-status-dot" style={{ animationDelay: "0.18s" }} />
+            <span className="forge-status-dot" style={{ animationDelay: "0.36s" }} />
+          </span>
+          <span>正在组织回复</span>
         </div>
       )}
       <FilePreviewSheet fileRef={previewFileRef} sessionId={sessionId} onClose={() => setPreviewFileRef(null)} />

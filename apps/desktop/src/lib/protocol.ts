@@ -138,6 +138,7 @@ export type WriteBoundaryRisk = "normal" | "caution" | "high";
 
 export interface WriteBoundary {
   title: string;
+  target_label?: string | null;
   workspace_name: string;
   workspace_path: string;
   operation: string;
@@ -160,6 +161,12 @@ export interface DeliverySummary {
   record_label?: string | null;
   record_status?: string | null;
   record_target_pages?: string[];
+}
+
+export interface McpContextStatus {
+  source_id: string;
+  status: "ready" | "failed";
+  message?: string | null;
 }
 
 export type AgentTurnStatus =
@@ -236,6 +243,7 @@ export type StreamEvent =
   | { event_type: "forge_wiki_context_selected"; session_id: string; selected: SelectedForgeWikiPage[] }
   | { event_type: "forge_wiki_update_proposed"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "forge_wiki_updated"; session_id: string; proposal: ForgeWikiUpdateProposal }
+  | { event_type: "mcp_context_status"; session_id: string; source_id: string; status: "ready" | "failed"; message?: string | null }
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
   | { event_type: "delivery_summary"; session_id: string; block_id: string; summary: DeliverySummary }

@@ -1,6 +1,7 @@
 import type { SelectedContextMemory, SelectedForgeWikiPage } from "@/lib/protocol";
+import type { McpContextSelection } from "@/lib/tauri";
 
-export type ActiveContextKind = "memory" | "forge_wiki_page";
+export type ActiveContextKind = "memory" | "forge_wiki_page" | "mcp_resource" | "mcp_prompt";
 
 export interface ActiveContextItem {
   id: string;
@@ -17,6 +18,7 @@ export interface ActiveContextItem {
 export function getActiveContextItems(
   memories: SelectedContextMemory[],
   pages: SelectedForgeWikiPage[],
+  mcpSelections: McpContextSelection[] = [],
 ): ActiveContextItem[] {
   const memoryItems = memories.map((memory): ActiveContextItem => ({
     id: memory.memory_id,
@@ -41,7 +43,22 @@ export function getActiveContextItems(
     sourcePath: page.path,
   }));
 
-  return [...memoryItems, ...pageItems].sort(
+  const mcpItems = mcpSelections.map((selection): ActiveContextItem => ({
+    id: selection.kind === "resource"
+      ? `${selection.server_id}:${selection.uri}`
+      : `${selection.server_id}:${selection.name}`,
+    kind: selection.kind === "resource" ? "mcp_resource" : "mcp_prompt",
+    title: selection.kind === "resource" ? selection.name || selection.uri : selection.name,
+    summary: selection.description || (selection.kind === "resource" ? selection.uri : "连接提示词"),
+    reason: "手动加入本轮参考",
+    injected: true,
+    sourceLabel: selection.kind === "resource"
+      ? `连接资料 · ${selection.server_id}`
+      : `连接提示词 · ${selection.server_id}`,
+    sourcePath: selection.kind === "resource" ? selection.uri : undefined,
+  }));
+
+  return [...mcpItems, ...memoryItems, ...pageItems].sort(
     (a, b) => Number(b.injected) - Number(a.injected) || (b.score ?? 0) - (a.score ?? 0),
   );
 }

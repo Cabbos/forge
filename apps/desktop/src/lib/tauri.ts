@@ -77,6 +77,49 @@ export interface ProjectCheckpointStatus {
   message: string;
 }
 
+export interface McpContextResource {
+  server_id: string;
+  uri: string;
+  name: string;
+  description: string;
+  mime_type: string | null;
+}
+
+export interface McpContextPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface McpContextPrompt {
+  server_id: string;
+  name: string;
+  description: string;
+  arguments: McpContextPromptArgument[];
+}
+
+export interface McpContextSources {
+  resources: McpContextResource[];
+  prompts: McpContextPrompt[];
+}
+
+export type McpContextSelection =
+  | {
+      kind: "resource";
+      server_id: string;
+      uri: string;
+      name: string;
+      description?: string;
+      mime_type?: string | null;
+    }
+  | {
+      kind: "prompt";
+      server_id: string;
+      name: string;
+      description?: string;
+      arguments?: Record<string, string>;
+    };
+
 export async function createSession(
   workingDir: string,
   provider: string,
@@ -105,8 +148,12 @@ export async function resumeSession(sessionId: string): Promise<SessionCreated> 
   return invoke<SessionCreated>("resume_session", { sessionId });
 }
 
-export async function sendInput(sessionId: string, text: string): Promise<void> {
-  return invoke("send_input", { sessionId, text });
+export async function sendInput(
+  sessionId: string,
+  text: string,
+  mcpContext: McpContextSelection[] = [],
+): Promise<void> {
+  return invoke("send_input", { sessionId, text, mcpContext });
 }
 
 export async function killSession(sessionId: string): Promise<void> {
@@ -119,6 +166,11 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
 export async function listSessions(): Promise<SessionInfo[]> {
   return invoke("list_sessions");
+}
+
+export async function listMcpContextSources(sessionId?: string): Promise<McpContextSources> {
+  if (!hasTauriRuntime()) return { resources: [], prompts: [] };
+  return invoke("list_mcp_context_sources", { sessionId: sessionId ?? null });
 }
 
 export async function getDefaultWorkingDir(): Promise<string> {

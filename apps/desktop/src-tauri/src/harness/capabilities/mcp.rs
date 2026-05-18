@@ -1,36 +1,30 @@
 use crate::harness::capability::{Capability, CapabilityKind, CapabilityMetadata};
+use crate::harness::mcp::McpServerDefinition;
 use async_trait::async_trait;
 
-pub struct BuiltinHookCap {
-    hook_name: String,
+pub struct McpServerCap {
     enabled: bool,
     meta: CapabilityMetadata,
 }
 
-impl BuiltinHookCap {
-    pub fn new(
-        hook_name: impl Into<String>,
-        display_name: impl Into<String>,
-        description: impl Into<String>,
-    ) -> Self {
-        let hook_name = hook_name.into();
+impl McpServerCap {
+    pub fn new(server: McpServerDefinition) -> Self {
         Self {
+            enabled: server.enabled,
             meta: CapabilityMetadata {
-                id: format!("hook:{hook_name}"),
-                name: display_name.into(),
-                description: description.into(),
+                id: format!("mcp:{}", server.id),
+                name: server.name,
+                description: server.description,
                 version: "1.0.0".into(),
-                source: "builtin".into(),
-                kind: CapabilityKind::Hook,
+                source: server.source,
+                kind: CapabilityKind::McpServer,
             },
-            hook_name,
-            enabled: true,
         }
     }
 }
 
 #[async_trait]
-impl Capability for BuiltinHookCap {
+impl Capability for McpServerCap {
     fn id(&self) -> &str {
         &self.meta.id
     }

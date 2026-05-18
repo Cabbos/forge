@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, CheckCircle2, ChevronRight, Copy, Terminal } from "lucide-react";
+import { Check, CheckCircle2, ChevronRight, Copy, Loader2, Terminal } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ export function ShellCard({ block }: { block: BlockState }) {
   const [copied, setCopied] = useState(false);
   const exitCode = block.metadata.exit_code as number | undefined;
   const isError = exitCode !== undefined && exitCode !== 0;
+  const isRunning = !block.isComplete;
   const command = (block.metadata.command as string) || "命令";
   const output = block.content || "";
   const outputSections = parseShellOutput(output, isError);
@@ -28,17 +29,26 @@ export function ShellCard({ block }: { block: BlockState }) {
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <CollapsibleTrigger
           data-testid="shell-card-trigger"
+          data-state={isRunning ? "running" : isError ? "error" : "done"}
           className="forge-log-line"
-          style={{ borderColor: isError ? "rgba(212,119,119,0.34)" : undefined, color: "var(--muted-foreground)" }}
+          data-tone={isError ? "error" : "default"}
         >
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />
           <Terminal className="size-3 shrink-0" />
           <span className="min-w-0 truncate font-mono">{command}</span>
-          {block.isComplete && (
+          {isRunning ? (
+            <span
+              className="forge-log-status"
+              data-tone="running"
+              title="运行中"
+            >
+              <Loader2 className="size-3 animate-spin" />
+            </span>
+          ) : (
             <span
               data-testid={isError ? "shell-exit-code" : undefined}
-              className="shrink-0"
-              style={{ color: isError ? "#D47777" : "#4A9E6B", fontSize: "10px" }}
+              className="forge-log-status"
+              data-tone={isError ? "error" : "success"}
               title={isError ? `退出码 ${exitCode}` : "完成"}
             >
               {isError ? `exit ${exitCode}` : <CheckCircle2 className="size-3" />}
@@ -55,7 +65,7 @@ export function ShellCard({ block }: { block: BlockState }) {
                 title={copied ? "已复制" : "复制命令输出"}
                 onClick={copyOutput}
                 disabled={!output}
-                className="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-default disabled:opacity-45"
+                className="forge-log-action disabled:cursor-default disabled:opacity-45"
               >
                 {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
               </button>

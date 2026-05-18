@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::harness::capability::CapabilityKind;
 use crate::state::AppState;
 use serde::Serialize;
 
@@ -34,7 +35,7 @@ pub async fn list_capabilities(
                 id: m.id.clone(),
                 name: m.name.clone(),
                 description: m.description.clone(),
-                kind: format!("{:?}", m.kind).to_lowercase(),
+                kind: capability_kind_label(&m.kind).to_string(),
                 source: m.source.clone(),
                 version: m.version.clone(),
                 enabled: entry.enabled,
@@ -58,6 +59,31 @@ pub async fn list_capabilities(
         }
     }
     Ok(result)
+}
+
+fn capability_kind_label(kind: &CapabilityKind) -> &'static str {
+    match kind {
+        CapabilityKind::Skill => "skill",
+        CapabilityKind::Hook => "hook",
+        CapabilityKind::McpServer => "mcp_server",
+        CapabilityKind::Tool => "tool",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_kind_labels_match_frontend_contract() {
+        assert_eq!(capability_kind_label(&CapabilityKind::Skill), "skill");
+        assert_eq!(capability_kind_label(&CapabilityKind::Hook), "hook");
+        assert_eq!(
+            capability_kind_label(&CapabilityKind::McpServer),
+            "mcp_server"
+        );
+        assert_eq!(capability_kind_label(&CapabilityKind::Tool), "tool");
+    }
 }
 
 #[tauri::command]
