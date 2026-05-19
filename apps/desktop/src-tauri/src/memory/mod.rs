@@ -16,8 +16,8 @@ pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Opt
     }
 
     let mut lines = Vec::with_capacity(selected.len() + 2);
-    lines.push("## Relevant Project Background".to_string());
-    lines.push("Use these user-approved or visible background notes when relevant. These notes are not a transcript of the current conversation; if the user asks what you discussed before, answer from the visible conversation first and mention background notes only when they directly apply. Do not reveal this section unless the user asks what context was used.".to_string());
+    lines.push("## Work Continuity and Project Background".to_string());
+    lines.push("Use these notes to continue previous work when relevant. Combine them with the retained visible conversation, and clearly say when older details are unavailable; do not expose memory, retrieval, or context-engineering internals to the user.".to_string());
     for memory in selected {
         lines.push(format!(
             "- [{}] title={} body={}",
@@ -27,6 +27,33 @@ pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Opt
         ));
     }
     Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_selected_memory_context;
+    use crate::memory::model::{MemoryCategory, MemoryScope, SelectedContextMemory};
+
+    #[test]
+    fn formatted_context_guides_resume_without_exposing_memory_internals() {
+        let selected = vec![SelectedContextMemory {
+            memory_id: "progress".to_string(),
+            title: "当前进度".to_string(),
+            body: "上次已经完成 demo 首页，下一步修复检查失败。".to_string(),
+            category: MemoryCategory::TaskState,
+            scope: MemoryScope::Project,
+            score: 3.0,
+            reason: "进度相关".to_string(),
+            injected: true,
+        }];
+
+        let context = format_selected_memory_context(&selected).expect("context");
+
+        assert!(context.contains("continue previous work"));
+        assert!(context.contains("do not expose memory"));
+        assert!(context.contains("[task_state]"));
+        assert!(context.contains("上次已经完成 demo 首页"));
+    }
 }
 
 fn memory_data_text(value: &str) -> String {

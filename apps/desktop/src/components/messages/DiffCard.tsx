@@ -16,6 +16,14 @@ interface ParsedDiffLine {
   newNumber: number | null;
 }
 
+const DIFF_LINE_CLASS: Record<DiffLineType, string> = {
+  add: "forge-diff-line forge-diff-line-added",
+  remove: "forge-diff-line forge-diff-line-removed",
+  hunk: "forge-diff-line forge-diff-line-hunk",
+  header: "forge-diff-line forge-diff-line-header",
+  context: "forge-diff-line forge-diff-line-context",
+};
+
 export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: string }) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -104,7 +112,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
             <div
               key={`${i}-${line.raw}`}
               data-testid={`diff-line-${line.type === "add" ? "added" : line.type === "remove" ? "removed" : line.type}`}
-              className={`forge-diff-line forge-diff-line-${line.type === "add" ? "added" : line.type === "remove" ? "removed" : line.type}`}
+              className={DIFF_LINE_CLASS[line.type]}
             >
               <span data-testid="diff-line-old-number" className="forge-diff-line-number">
                 {line.oldNumber ?? ""}

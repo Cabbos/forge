@@ -50,6 +50,40 @@ pub fn extract_candidates_from_user_message(
         ));
     }
 
+    if project_path.is_some()
+        && contains_any(
+            &body,
+            &[
+                "只改",
+                "只修改",
+                "不要动",
+                "不要改",
+                "不要碰",
+                "不能改",
+                "不要污染",
+                "工作区",
+                "当前项目",
+                "目标项目",
+                "workspace",
+                "only change",
+                "do not touch",
+                "don't touch",
+            ],
+        )
+    {
+        candidates.push(candidate(
+            session_id,
+            project_path,
+            MemoryCategory::ProjectFact,
+            MemoryScope::Project,
+            &candidate_title("项目事实", &body),
+            &body,
+            0.66,
+            "project_fact",
+            &now,
+        ));
+    }
+
     if contains_any(
         &body,
         &[
@@ -324,6 +358,24 @@ mod tests {
                 && memory.confidence == 0.6
                 && memory.tags == vec!["task_state"]
         }));
+    }
+
+    #[test]
+    fn extracts_project_safety_boundary_as_project_fact() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/forge-test-app"),
+            "这个任务只改 demo 项目，不要动 Forge 本体。",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        let memory = &candidates[0];
+        assert_eq!(memory.category, MemoryCategory::ProjectFact);
+        assert_eq!(memory.scope, MemoryScope::Project);
+        assert_eq!(memory.project_path.as_deref(), Some("/tmp/forge-test-app"));
+        assert!(memory.title.starts_with("项目事实："));
+        assert_eq!(memory.body, "这个任务只改 demo 项目，不要动 Forge 本体。");
+        assert_eq!(memory.tags, vec!["project_fact"]);
     }
 
     #[test]

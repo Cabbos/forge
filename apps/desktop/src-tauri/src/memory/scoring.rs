@@ -18,13 +18,19 @@ pub fn select_relevant_memories(
     let mut scored = memories
         .iter()
         .filter(|memory| {
-            memory.status != MemoryStatus::Forgotten
-                && memory.status != MemoryStatus::Archived
-                && memory.status != MemoryStatus::Candidate
+            memory.status != MemoryStatus::Forgotten && memory.status != MemoryStatus::Archived
         })
         .filter_map(|memory| {
             let mut score = 0.0_f32;
             let mut reasons = Vec::new();
+
+            if memory.status == MemoryStatus::Candidate {
+                if memory.confidence < 0.55 {
+                    return None;
+                }
+                score -= 0.75;
+                reasons.push("自动记录");
+            }
 
             if memory.status == MemoryStatus::Pinned {
                 score += 4.0;
@@ -63,6 +69,20 @@ pub fn select_relevant_memories(
             {
                 score += 1.5;
                 reasons.push("方向相关");
+            }
+
+            if matches!(memory.category, MemoryCategory::TaskState)
+                && contains_progress_signal(&message_lower)
+            {
+                score += 2.0;
+                reasons.push("进度相关");
+            }
+
+            if matches!(memory.category, MemoryCategory::ProjectFact)
+                && contains_project_signal(&message_lower)
+            {
+                score += 1.5;
+                reasons.push("项目相关");
             }
 
             if score > 0.0 && memory.use_count > 0 {
@@ -107,6 +127,40 @@ fn contains_direction_signal(message: &str) -> bool {
     ["方向", "方案", "之前", "继续", "按之前", "产品"]
         .iter()
         .any(|signal| message.contains(signal))
+}
+
+fn contains_progress_signal(message: &str) -> bool {
+    [
+        "之前",
+        "上次",
+        "继续",
+        "接着",
+        "做到哪",
+        "进度",
+        "完成了什么",
+        "做了什么",
+        "下一步",
+        "resume",
+        "continue",
+    ]
+    .iter()
+    .any(|signal| message.contains(signal))
+}
+
+fn contains_project_signal(message: &str) -> bool {
+    [
+        "项目",
+        "工作区",
+        "目录",
+        "路径",
+        "只改",
+        "不要动",
+        "不要改",
+        "workspace",
+        "project",
+    ]
+    .iter()
+    .any(|signal| message.contains(signal))
 }
 
 fn terms(text: &str) -> Vec<String> {
@@ -174,6 +228,26 @@ mod tests {
         }
     }
 
+    fn task_state_memory(id: &str, status: MemoryStatus, body: &str) -> WikiMemory {
+        WikiMemory {
+            id: id.to_string(),
+            category: MemoryCategory::TaskState,
+            scope: MemoryScope::Project,
+            status,
+            title: "当前进度".to_string(),
+            body: body.to_string(),
+            project_path: Some("/tmp/forge".to_string()),
+            source_session_id: Some("session-1".to_string()),
+            source_message_ids: Vec::new(),
+            confidence: 0.8,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+            last_used_at: None,
+            use_count: 0,
+            tags: vec!["task_state".to_string()],
+        }
+    }
+
     #[test]
     fn selects_pinned_same_project_memory() {
         let memories = vec![memory("m1", MemoryStatus::Pinned, "渐进式 Project Records")];
@@ -186,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn excludes_forgotten_archived_and_candidates() {
+    fn excludes_forgotten_and_archived_but_keeps_relevant_candidates() {
         let memories = vec![
             memory("forgotten", MemoryStatus::Forgotten, "资料系统"),
             memory("archived", MemoryStatus::Archived, "资料系统"),
@@ -195,7 +269,26 @@ mod tests {
 
         let selected = select_relevant_memories(&memories, "继续做资料系统", Some("/tmp/forge"), 5);
 
-        assert!(selected.is_empty());
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].memory_id, "candidate");
+        assert!(selected[0].reason.contains("自动记录"));
+    }
+
+    #[test]
+    fn candidate_task_state_can_support_resume_question() {
+        let memories = vec![task_state_memory(
+            "progress",
+            MemoryStatus::Candidate,
+            "上次已经完成 demo 首页和检查失败后的继续修复入口。",
+        )];
+
+        let selected =
+            select_relevant_memories(&memories, "我们之前做到哪了？", Some("/tmp/forge"), 5);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].memory_id, "progress");
+        assert!(selected[0].reason.contains("自动记录"));
+        assert!(selected[0].reason.contains("进度相关"));
     }
 
     #[test]

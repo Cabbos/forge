@@ -293,7 +293,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       {hasContent ? (
         <div
           data-testid="assistant-message"
-          className="forge-message-with-actions forge-assistant-message break-words"
+          className="forge-message-with-actions forge-assistant-message"
         >
           <MessageCopyAction text={block.content} label="回复" />
           <div className="markdown-content">

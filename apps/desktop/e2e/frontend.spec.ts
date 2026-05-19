@@ -324,7 +324,23 @@ async function setup(page: Page) {
 }
 
 function projectArchive(page: Page) {
-  return page.locator("aside").last();
+  return page.getByTestId("project-archive-panel");
+}
+
+async function openProjectArchive(page: Page, section?: "records") {
+  const archive = projectArchive(page);
+  if (await archive.isVisible().catch(() => false)) return archive;
+
+  await page.getByRole("button", { name: "打开项目档案" }).click();
+  if (await archive.isVisible({ timeout: 750 }).catch(() => false)) return archive;
+
+  await page.evaluate((targetSection) => {
+    window.dispatchEvent(new CustomEvent("open-hub", {
+      detail: targetSection ? { section: targetSection } : undefined,
+    }));
+  }, section);
+  await expect(archive).toBeVisible();
+  return archive;
 }
 
 async function expandArchiveRecords(page: Page) {
@@ -547,7 +563,7 @@ test.describe("Timeline Message Flow", () => {
     await simulateStream(page, sessionId, fullConversation(sessionId), 10);
     const processSummary = page.getByTestId("tool-activity-summary").first();
     await expect(processSummary).toContainText("过程已收起 · 2 步");
-    await expect(processSummary).toHaveCSS("min-height", "25px");
+    await expect(processSummary).toHaveCSS("min-height", "26px");
   });
 
   test("titlebar presents session and project state as a compact desktop status bar", async ({ page }) => {
@@ -1191,14 +1207,18 @@ test.describe("Timeline Message Flow", () => {
     const metrics = await control.evaluate((node) => {
       const style = getComputedStyle(node);
       return {
+        background: style.backgroundColor,
+        backdrop: style.backdropFilter || style.getPropertyValue("-webkit-backdrop-filter"),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         shadow: style.boxShadow,
         width: Math.round(node.getBoundingClientRect().width),
         height: Math.round(node.getBoundingClientRect().height),
       };
     });
+    expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.backdrop).not.toBe("none");
     expect(metrics.radius).toBeLessThanOrEqual(8);
-    expect(metrics.shadow).toBe("none");
+    expect(metrics.shadow).not.toBe("none");
     expect(metrics.width).toBe(28);
     expect(metrics.height).toBe(28);
   });
@@ -1543,6 +1563,7 @@ test.describe("Timeline Message Flow", () => {
         toolbarPadLeft: Math.round(Number.parseFloat(toolbarStyle.paddingLeft)),
         toolbarPadBottom: Math.round(Number.parseFloat(toolbarStyle.paddingBottom)),
         textareaLineHeight: Math.round(Number.parseFloat(textareaStyle.lineHeight)),
+        textareaScrollbarWidth: textareaStyle.scrollbarWidth,
       };
     });
 
@@ -1554,6 +1575,7 @@ test.describe("Timeline Message Flow", () => {
     expect(rhythm!.toolbarPadLeft).toBe(16);
     expect(rhythm!.toolbarPadBottom).toBe(10);
     expect(rhythm!.textareaLineHeight).toBe(22);
+    expect(rhythm!.textareaScrollbarWidth).toBe("thin");
   });
 
   test("composer floating menus sit above the editor without overlap", async ({ page }) => {
@@ -1804,6 +1826,8 @@ test.describe("Timeline Message Flow", () => {
     const assistantMessage = page.getByTestId("assistant-message").last();
     const userCopy = userMessage.getByRole("button", { name: "复制提问" });
     const assistantCopy = assistantMessage.getByRole("button", { name: "复制回复" });
+    const assistantOpacityBeforeHover = await assistantCopy.evaluate((action) => Number.parseFloat(getComputedStyle(action).opacity));
+    expect(assistantOpacityBeforeHover).toBe(0);
 
     await userMessage.hover();
     await expect(userCopy).toBeVisible();
@@ -1824,14 +1848,21 @@ test.describe("Timeline Message Flow", () => {
     })).resolves.toContain("## 结论");
 
     const metrics = await page.evaluate(() => {
-      const action = document.querySelector("[data-testid='message-copy-action']");
+      const action = document.querySelector<HTMLElement>("[data-testid='assistant-message'] [data-testid='message-copy-action']");
       if (!action) return null;
       const style = getComputedStyle(action);
+      const styleWithWebkit = style as CSSStyleDeclaration & { webkitBackdropFilter?: string };
       return {
         width: Math.round(action.getBoundingClientRect().width),
         height: Math.round(action.getBoundingClientRect().height),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         position: style.position,
+        top: Math.round(Number.parseFloat(style.top)),
+        background: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        backdropFilter: style.backdropFilter || styleWithWebkit.webkitBackdropFilter || "",
+        transform: style.transform,
+        transitionProperty: style.transitionProperty,
       };
     });
 
@@ -1840,6 +1871,12 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.height).toBe(24);
     expect(metrics!.radius).toBeLessThanOrEqual(8);
     expect(metrics!.position).toBe("absolute");
+    expect(metrics!.top).toBeLessThanOrEqual(-1);
+    expect(metrics!.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.boxShadow).not.toBe("none");
+    expect(metrics!.backdropFilter).not.toBe("none");
+    expect(metrics!.transform).not.toBe("none");
+    expect(metrics!.transitionProperty).toContain("transform");
   });
 
   test("assistant markdown uses a compact editorial rhythm", async ({ page }) => {
@@ -1887,6 +1924,7 @@ test.describe("Timeline Message Flow", () => {
       const root = document.documentElement;
       const assistant = document.querySelector("[data-testid='assistant-message']");
       if (!assistant) return null;
+      const assistantStyle = getComputedStyle(assistant);
       const paragraph = assistant.querySelector("p");
       const heading = assistant.querySelector("h2");
       const list = assistant.querySelector("ul");
@@ -1908,6 +1946,10 @@ test.describe("Timeline Message Flow", () => {
       return {
         paragraphGapToken: getComputedStyle(root).getPropertyValue("--forge-markdown-paragraph-gap").trim(),
         blockGapToken: getComputedStyle(root).getPropertyValue("--forge-markdown-block-gap").trim(),
+        assistantMaxWidth: assistantStyle.maxWidth,
+        assistantWidth: Math.round(assistant.getBoundingClientRect().width),
+        assistantPaddingRight: Math.round(Number.parseFloat(assistantStyle.paddingRight)),
+        assistantOverflowWrap: assistantStyle.overflowWrap,
         paragraphMarginBottom: Math.round(Number.parseFloat(paragraphStyle.marginBottom)),
         headingFontSize: Math.round(Number.parseFloat(headingStyle.fontSize)),
         headingLineHeight: Math.round(Number.parseFloat(headingStyle.lineHeight)),
@@ -1927,6 +1969,10 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics).not.toBeNull();
     expect(metrics!.paragraphGapToken).toBe("10px");
     expect(metrics!.blockGapToken).toBe("12px");
+    expect(metrics!.assistantMaxWidth).not.toBe("none");
+    expect(metrics!.assistantWidth).toBeLessThanOrEqual(760);
+    expect(metrics!.assistantPaddingRight).toBeGreaterThanOrEqual(34);
+    expect(metrics!.assistantOverflowWrap).toBe("anywhere");
     expect(metrics!.paragraphMarginBottom).toBe(10);
     expect(metrics!.headingFontSize).toBe(15);
     expect(metrics!.headingLineHeight).toBe(24);
@@ -1940,6 +1986,61 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.tableDisplay).toBe("block");
     expect(metrics!.tableMarginTop).toBe(12);
     expect(metrics!.cellPaddingTop).toBe(6);
+  });
+
+  test("conversation turns keep quiet separation without card framing", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await page.locator("textarea").fill("第一轮问题");
+    await page.locator("textarea").press("Enter");
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "turn-one" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "turn-one", content: "第一轮回复。" },
+      { event_type: "text_end", session_id: sessionId, block_id: "turn-one" },
+    ], 1);
+
+    await page.locator("textarea").fill("第二轮问题");
+    await page.locator("textarea").press("Enter");
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "turn-two" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "turn-two", content: "第二轮回复。" },
+      { event_type: "text_end", session_id: sessionId, block_id: "turn-two" },
+    ], 1);
+
+    await expect(page.getByTestId("conversation-turn")).toHaveCount(2);
+
+    const metrics = await page.evaluate(() => {
+      const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
+      const turns = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-turn']"));
+      const second = turns[1];
+      if (!lane || !second) return null;
+      const laneStyle = getComputedStyle(lane);
+      const turnStyle = getComputedStyle(second);
+      return {
+        laneGap: Math.round(Number.parseFloat(laneStyle.rowGap)),
+        secondPaddingTop: Math.round(Number.parseFloat(turnStyle.paddingTop)),
+        secondBorderRadius: Math.round(Number.parseFloat(turnStyle.borderTopLeftRadius)),
+        secondBackground: turnStyle.backgroundColor,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.laneGap).toBe(12);
+    expect(metrics!.secondPaddingTop).toBe(12);
+    expect(metrics!.secondBorderRadius).toBe(0);
+    expect(metrics!.secondBackground).toBe("rgba(0, 0, 0, 0)");
   });
 
   test("code blocks use a compact reader surface", async ({ page }) => {
@@ -2063,15 +2164,21 @@ test.describe("Timeline Message Flow", () => {
       const viewport = node.querySelector<HTMLElement>("[data-testid='diagram-viewport']");
       const code = node.querySelector<HTMLElement>(".diagram-code");
       const style = getComputedStyle(node);
+      const viewportStyle = viewport ? getComputedStyle(viewport) : null;
       const codeStyle = code ? getComputedStyle(code) : null;
       const rect = node.getBoundingClientRect();
       return {
         width: Math.round(rect.width),
+        marginTop: Math.round(Number.parseFloat(style.marginTop)),
+        marginBottom: Math.round(Number.parseFloat(style.marginBottom)),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         background: style.backgroundColor,
         border: style.borderTopColor,
-        viewportDisplay: viewport ? getComputedStyle(viewport).display : "",
-        viewportJustify: viewport ? getComputedStyle(viewport).justifyContent : "",
+        viewportDisplay: viewportStyle?.display ?? "",
+        viewportJustify: viewportStyle?.justifyContent ?? "",
+        viewportPaddingTop: viewportStyle ? Math.round(Number.parseFloat(viewportStyle.paddingTop)) : 0,
+        viewportMaxHeight: viewportStyle?.maxHeight ?? "",
+        viewportBackground: viewportStyle?.backgroundColor ?? "",
         codeColor: codeStyle?.color ?? "",
         codeLineHeight: codeStyle ? Math.round(Number.parseFloat(codeStyle.lineHeight)) : 0,
         codeFontSize: codeStyle ? Number.parseFloat(codeStyle.fontSize) : 0,
@@ -2079,13 +2186,19 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics.width).toBeLessThanOrEqual(780);
+    expect(metrics.marginTop).toBeLessThanOrEqual(10);
+    expect(metrics.marginBottom).toBeLessThanOrEqual(10);
     expect(metrics.radius).toBeLessThanOrEqual(8);
     expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.border).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.viewportDisplay).toBe("flex");
     expect(metrics.viewportJustify).toBe("center");
+    expect(metrics.viewportPaddingTop).toBeLessThanOrEqual(16);
+    expect(metrics.viewportMaxHeight).not.toBe("none");
+    expect(metrics.viewportBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.codeColor).not.toBe("rgb(212, 168, 83)");
     expect(metrics.codeLineHeight).toBeGreaterThanOrEqual(20);
+    expect(metrics.codeLineHeight).toBeLessThanOrEqual(21);
     expect(metrics.codeFontSize).toBeLessThanOrEqual(12.5);
   });
 
@@ -2477,11 +2590,23 @@ test.describe("Timeline Message Flow", () => {
 
     const metrics = await page.evaluate(() => {
       const root = document.documentElement;
+      const group = document.querySelector("[data-testid='tool-activity-group']");
+      const summary = document.querySelector("[data-testid='tool-activity-summary']");
+      const list = document.querySelector(".forge-tool-activity-list");
       const tool = document.querySelector("[data-testid='tool-card-trigger']");
       const shell = document.querySelector("[data-testid='shell-card-trigger']");
-      if (!tool || !shell) return null;
+      if (!group || !summary || !list || !tool || !shell) return null;
+      const groupStyle = getComputedStyle(group);
+      const summaryStyle = getComputedStyle(summary);
+      const listStyle = getComputedStyle(list);
       return {
         token: getComputedStyle(root).getPropertyValue("--forge-log-row-height").trim(),
+        groupWidth: Math.round(group.getBoundingClientRect().width),
+        groupBorderLeft: Math.round(Number.parseFloat(groupStyle.borderLeftWidth)),
+        summaryHeight: Math.round(summary.getBoundingClientRect().height),
+        summaryDisplay: summaryStyle.display,
+        summaryBackground: summaryStyle.backgroundColor,
+        listGap: Math.round(Number.parseFloat(listStyle.gap)),
         toolHeight: Math.round(tool.getBoundingClientRect().height),
         shellHeight: Math.round(shell.getBoundingClientRect().height),
         toolMargin: getComputedStyle(tool.parentElement as Element).marginBottom,
@@ -2491,6 +2616,12 @@ test.describe("Timeline Message Flow", () => {
 
     expect(metrics).not.toBeNull();
     expect(metrics!.token).toBe("30px");
+    expect(metrics!.groupWidth).toBeLessThanOrEqual(760);
+    expect(metrics!.groupBorderLeft).toBe(1);
+    expect(metrics!.summaryHeight).toBe(26);
+    expect(metrics!.summaryDisplay).toBe("inline-flex");
+    expect(metrics!.summaryBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.listGap).toBe(4);
     expect(metrics!.toolHeight).toBe(30);
     expect(metrics!.shellHeight).toBe(30);
     expect(metrics!.toolMargin).toBe("0px");
@@ -2543,20 +2674,31 @@ test.describe("Timeline Message Flow", () => {
         const style = getComputedStyle(surface);
         const header = surface.querySelector("[data-testid='log-detail-header']");
         const output = surface.querySelector("[data-testid='log-detail-output']");
+        const outputStyle = output ? getComputedStyle(output) : null;
         return {
           maxHeightToken: getComputedStyle(root).getPropertyValue("--forge-log-output-max-height").trim(),
           radius: Number.parseFloat(style.borderTopLeftRadius),
           headerHeight: header ? Math.round(header.getBoundingClientRect().height) : 0,
-          outputMaxHeight: output ? getComputedStyle(output).maxHeight : "",
+          detailBackground: style.backgroundColor,
+          detailBoxShadow: style.boxShadow,
+          outputMaxHeight: outputStyle?.maxHeight ?? "",
+          outputPaddingTop: outputStyle ? Math.round(Number.parseFloat(outputStyle.paddingTop)) : 0,
+          outputFontSize: outputStyle ? Number.parseFloat(outputStyle.fontSize) : 0,
+          outputWordBreak: outputStyle?.wordBreak ?? "",
         };
       });
     });
 
     expect(surfaces).toHaveLength(2);
-    expect(surfaces.every((surface) => surface.maxHeightToken === "260px")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.maxHeightToken === "240px")).toBeTruthy();
     expect(surfaces.every((surface) => surface.radius <= 8)).toBeTruthy();
-    expect(surfaces.every((surface) => surface.headerHeight === 36)).toBeTruthy();
-    expect(surfaces.every((surface) => surface.outputMaxHeight === "260px")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.headerHeight === 34)).toBeTruthy();
+    expect(surfaces.every((surface) => surface.detailBackground !== "rgba(0, 0, 0, 0)")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.detailBoxShadow !== "none")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.outputMaxHeight === "240px")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.outputPaddingTop === 8)).toBeTruthy();
+    expect(surfaces.every((surface) => surface.outputFontSize <= 11.5)).toBeTruthy();
+    expect(surfaces.every((surface) => surface.outputWordBreak === "normal")).toBeTruthy();
   });
 
   test("context compaction notice follows message rhythm", async ({ page }) => {
@@ -2637,6 +2779,8 @@ test.describe("Timeline Message Flow", () => {
       const modelStyle = getComputedStyle(model);
       const sendStyle = getComputedStyle(send);
       return {
+        surfaceBackdrop: surfaceStyle.backdropFilter || surfaceStyle.getPropertyValue("-webkit-backdrop-filter"),
+        surfaceOverflow: surfaceStyle.overflow,
         surfaceShadow: surfaceStyle.boxShadow,
         surfaceRadius: Number.parseFloat(surfaceStyle.borderTopLeftRadius),
         toolbarHeight: Math.round(toolbar.getBoundingClientRect().height),
@@ -2657,6 +2801,8 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
+    expect(metrics!.surfaceBackdrop).not.toBe("none");
+    expect(metrics!.surfaceOverflow).toBe("hidden");
     expect(metrics!.surfaceShadow).not.toBe("none");
     expect(metrics!.surfaceRadius).toBeLessThanOrEqual(8);
     expect(metrics!.toolbarHeight).toBeLessThanOrEqual(36);
@@ -3041,19 +3187,33 @@ test.describe("Timeline Message Flow", () => {
     await expect(diff.getByText("line34")).toHaveCount(0);
 
     const metrics = await diff.evaluate((node) => {
+      const panel = node.querySelector("[data-testid='message-panel']");
       const added = node.querySelector("[data-testid='diff-line-added']");
       const removed = node.querySelector("[data-testid='diff-line-removed']");
       const hunk = node.querySelector("[data-testid='diff-line-hunk']");
       const oldNo = node.querySelector("[data-testid='diff-line-old-number']");
       const newNo = node.querySelector("[data-testid='diff-line-new-number']");
-      if (!added || !removed || !hunk || !oldNo || !newNo) return null;
+      const body = node.querySelector(".forge-diff-body");
+      const summary = node.querySelector("[data-testid='diff-summary']");
+      const code = node.querySelector(".forge-diff-line-code");
+      if (!panel || !added || !removed || !hunk || !oldNo || !newNo || !body || !summary || !code) return null;
+      const panelStyle = getComputedStyle(panel);
       const addedStyle = getComputedStyle(added);
       const removedStyle = getComputedStyle(removed);
       const hunkStyle = getComputedStyle(hunk);
+      const bodyStyle = getComputedStyle(body);
+      const summaryStyle = getComputedStyle(summary);
+      const codeStyle = getComputedStyle(code);
       return {
+        cardWidth: Math.round(panel.getBoundingClientRect().width),
         grid: getComputedStyle(added).display,
         oldNumberWidth: Math.round(oldNo.getBoundingClientRect().width),
         newNumberWidth: Math.round(newNo.getBoundingClientRect().width),
+        maxWidth: panelStyle.maxWidth,
+        bodyMaxHeight: bodyStyle.maxHeight,
+        summaryHeight: Math.round(summary.getBoundingClientRect().height),
+        lineMinHeight: Math.round(Number.parseFloat(addedStyle.minHeight)),
+        codePaddingLeft: Math.round(Number.parseFloat(codeStyle.paddingLeft)),
         addedBackground: addedStyle.backgroundColor,
         removedBackground: removedStyle.backgroundColor,
         hunkBorderTop: hunkStyle.borderTopWidth,
@@ -3061,6 +3221,12 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
+    expect(metrics!.cardWidth).toBeLessThanOrEqual(760);
+    expect(metrics!.maxWidth).not.toBe("none");
+    expect(metrics!.bodyMaxHeight).toBe("320px");
+    expect(metrics!.summaryHeight).toBe(26);
+    expect(metrics!.lineMinHeight).toBe(18);
+    expect(metrics!.codePaddingLeft).toBeLessThanOrEqual(10);
     expect(metrics!.grid).toBe("grid");
     expect(metrics!.oldNumberWidth).toBeGreaterThanOrEqual(36);
     expect(metrics!.newNumberWidth).toBeGreaterThanOrEqual(36);
@@ -3145,7 +3311,7 @@ test.describe("Timeline Message Flow", () => {
     const summary = group.getByTestId("tool-activity-summary");
     await expect(summary).toBeVisible();
     await expect(summary).toHaveAttribute("aria-expanded", "false");
-    await expect(summary).toContainText("已处理 3 步");
+    await expect(summary).toContainText("过程已收起 · 3 步");
     await expect(summary).toContainText("查看 1 个文件");
     await expect(summary).toContainText("运行 1 次检查");
     await expect(group.getByText("过程证据")).toHaveCount(0);
@@ -5446,7 +5612,7 @@ test.describe("Project records context panel", () => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
 
-    await page.getByTitle("打开项目档案").click();
+    await openProjectArchive(page, "records");
     const recordsDisclosure = await expandArchiveRecords(page);
     const projectRecords = recordsDisclosure.locator("section").filter({ has: page.getByRole("heading", { name: "项目记录" }) });
     const selectedContext = page.locator("section").filter({ has: page.getByRole("heading", { name: "本轮参考" }) });
@@ -5534,7 +5700,9 @@ test.describe("Project records context panel", () => {
       window.localStorage.setItem("forge-working-dir", projectPath);
 
       // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string) => {
+      const original = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
         switch (cmd) {
           case "create_session":
             return { session_id: sessionId };
@@ -5569,7 +5737,7 @@ test.describe("Project records context panel", () => {
           case "list_memories":
             return memories;
           default:
-            return undefined;
+            return original?.(cmd, args);
         }
       };
     }, { sessionId, projectPath, memories: [selectedMemory, projectMemory, otherProjectMemory, candidateMemory] });
@@ -5637,7 +5805,9 @@ test.describe("Project records context panel", () => {
       window.localStorage.setItem("forge-working-dir", projectPath);
 
       // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string) => {
+      const original = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
         switch (cmd) {
           case "create_session":
             return { session_id: sessionId };
@@ -5675,7 +5845,7 @@ test.describe("Project records context panel", () => {
           case "list_memories":
             return [];
           default:
-            return undefined;
+            return original?.(cmd, args);
         }
       };
     }, { sessionId, projectPath });
@@ -5684,8 +5854,7 @@ test.describe("Project records context panel", () => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
 
-    await page.getByTitle("打开项目档案").click();
-    const delivery = page.locator("aside").last();
+    const delivery = await openProjectArchive(page);
 
     await expect(delivery.getByText("预览未运行")).toBeVisible();
     await expect(delivery.getByRole("button", { name: "启动预览" })).toBeVisible();
