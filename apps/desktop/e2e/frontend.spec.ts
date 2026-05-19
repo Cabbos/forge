@@ -485,6 +485,48 @@ test.describe("Timeline Message Flow", () => {
     expect(sentText).toContain("做一个可以记录收支的小工具");
   });
 
+  test("empty workbench composer send uses the same compact ready material", async ({ page }) => {
+    await page.goto("http://localhost:1420");
+
+    const composer = page.getByTestId("empty-start-composer");
+    const send = composer.getByRole("button", { name: "发送并开始" });
+    await expect(send).toBeDisabled();
+
+    const disabledMetrics = await send.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        cursor: style.cursor,
+        opacity: style.opacity,
+      };
+    });
+    expect(disabledMetrics.cursor).toBe("default");
+    expect(Number.parseFloat(disabledMetrics.opacity)).toBeLessThan(1);
+
+    await composer.getByRole("textbox").fill("继续优化当前页面体验");
+    await expect(send).toBeEnabled();
+    await expect(send).toHaveAttribute("data-ready", "true");
+    await page.waitForTimeout(150);
+
+    const readyMetrics = await send.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        width: Math.round(node.getBoundingClientRect().width),
+        height: Math.round(node.getBoundingClientRect().height),
+        background: style.backgroundColor,
+        borderColor: style.borderTopColor,
+        boxShadow: style.boxShadow,
+        radius: Number.parseFloat(style.borderTopLeftRadius),
+      };
+    });
+
+    expect(readyMetrics.width).toBe(30);
+    expect(readyMetrics.height).toBe(30);
+    expect(readyMetrics.background).not.toBe("rgb(212, 168, 83)");
+    expect(readyMetrics.borderColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(readyMetrics.boxShadow).not.toBe("none");
+    expect(readyMetrics.radius).toBeLessThanOrEqual(8);
+  });
+
   test("vague beginner idea is shaped before making", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -619,6 +661,7 @@ test.describe("Timeline Message Flow", () => {
           width: Math.round(button.getBoundingClientRect().width),
           height: Math.round(button.getBoundingClientRect().height),
         })),
+        buttonTransitions: buttons.map((button) => getComputedStyle(button).transitionProperty),
       };
     });
 
@@ -631,6 +674,11 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.statusBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.actionsGap).toBeLessThanOrEqual(8);
     expect(metrics!.buttonSizes).toEqual([{ width: 30, height: 30 }, { width: 30, height: 30 }]);
+    expect(metrics!.buttonTransitions.every((value) => value.includes("box-shadow"))).toBe(true);
+
+    const searchButton = titlebar.getByRole("button", { name: "搜索" });
+    await searchButton.hover();
+    await expect(searchButton).not.toHaveCSS("box-shadow", "none");
   });
 
   test("start readiness stays compact in an empty session", async ({ page }) => {
@@ -748,13 +796,19 @@ test.describe("Timeline Message Flow", () => {
         panelRadius: panelStyle ? Number.parseFloat(panelStyle.borderTopLeftRadius) : 0,
         firstRowHeight: rows[0] ? Math.round(rows[0].getBoundingClientRect().height) : 0,
         firstRowDisplay: rowStyle?.display ?? "",
+        firstRowTransition: rowStyle?.transitionProperty ?? "",
         statusRadius: status ? Number.parseFloat(getComputedStyle(status).borderTopLeftRadius) : 0,
+        statusBoxShadow: status ? getComputedStyle(status).boxShadow : "",
       };
     });
     expect(settingsMetrics.panelRadius).toBeLessThanOrEqual(8);
     expect(settingsMetrics.firstRowHeight).toBeGreaterThanOrEqual(64);
     expect(settingsMetrics.firstRowDisplay).toBe("grid");
+    expect(settingsMetrics.firstRowTransition.includes("box-shadow")).toBe(true);
     expect(settingsMetrics.statusRadius).toBeLessThanOrEqual(8);
+    expect(settingsMetrics.statusBoxShadow).not.toBe("none");
+    await providerRows.first().hover();
+    await expect(providerRows.first()).not.toHaveCSS("box-shadow", "none");
     const deepseek = dialog.locator("section").filter({ hasText: "DeepSeek" });
     await expect(deepseek.getByText("DeepSeek V4 Flash 1M")).toBeVisible();
     await expect(deepseek.getByText("默认模型 · 上下文 1M")).toBeVisible();
@@ -1678,6 +1732,56 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.headingHeight).toBeLessThanOrEqual(28);
   });
 
+  test("composer send states stay compact without primary fill", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const send = page.getByTestId("composer-send");
+    await expect(send).toBeDisabled();
+    await send.hover({ force: true });
+
+    const metrics = await send.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        background: style.backgroundColor,
+        borderColor: style.borderTopColor,
+        color: style.color,
+        cursor: style.cursor,
+      };
+    });
+
+    expect(metrics.background).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.borderColor).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.color).toBe("rgba(174, 182, 194, 0.48)");
+    expect(metrics.cursor).toBe("default");
+
+    await page.locator("textarea").fill("继续优化当前界面");
+    await expect(send).toBeEnabled();
+    await expect(send).toHaveAttribute("data-ready", "true");
+    await page.waitForTimeout(150);
+
+    const readyMetrics = await send.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        background: style.backgroundColor,
+        borderColor: style.borderTopColor,
+        boxShadow: style.boxShadow,
+      };
+    });
+
+    expect(readyMetrics.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(readyMetrics.background).not.toBe("rgb(212, 168, 83)");
+    expect(readyMetrics.borderColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(readyMetrics.boxShadow).not.toBe("none");
+  });
+
   test("composer command menu keeps keyboard selection visible and compact", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -1853,8 +1957,8 @@ test.describe("Timeline Message Flow", () => {
       const style = getComputedStyle(action);
       const styleWithWebkit = style as CSSStyleDeclaration & { webkitBackdropFilter?: string };
       return {
-        width: Math.round(action.getBoundingClientRect().width),
-        height: Math.round(action.getBoundingClientRect().height),
+        width: Math.round(Number.parseFloat(style.width)),
+        height: Math.round(Number.parseFloat(style.height)),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         position: style.position,
         top: Math.round(Number.parseFloat(style.top)),
@@ -1961,7 +2065,11 @@ test.describe("Timeline Message Flow", () => {
         codeBackground: codeStyle.backgroundColor,
         codePaddingLeft: Math.round(Number.parseFloat(codeStyle.paddingLeft)),
         tableDisplay: tableStyle.display,
+        tableBackground: tableStyle.backgroundColor,
         tableMarginTop: Math.round(Number.parseFloat(tableStyle.marginTop)),
+        tableMaxWidth: tableStyle.maxWidth,
+        tableOverflowX: tableStyle.overflowX,
+        tableScrollbarWidth: tableStyle.scrollbarWidth,
         cellPaddingTop: Math.round(Number.parseFloat(cellStyle.paddingTop)),
       };
     });
@@ -1984,7 +2092,11 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.codeBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.codePaddingLeft).toBeGreaterThanOrEqual(4);
     expect(metrics!.tableDisplay).toBe("block");
+    expect(metrics!.tableBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.tableMarginTop).toBe(12);
+    expect(metrics!.tableMaxWidth).toBe("100%");
+    expect(metrics!.tableOverflowX).toBe("auto");
+    expect(metrics!.tableScrollbarWidth).toBe("thin");
     expect(metrics!.cellPaddingTop).toBe(6);
   });
 
@@ -2660,7 +2772,12 @@ test.describe("Timeline Message Flow", () => {
         duration_ms: 42,
       },
       { event_type: "shell_start", session_id: sessionId, block_id: "detail-shell", command: "npm run build" },
-      { event_type: "shell_output", session_id: sessionId, block_id: "detail-shell", content: "done" },
+      {
+        event_type: "shell_output",
+        session_id: sessionId,
+        block_id: "detail-shell",
+        content: "stdout:\n/Users/cabbos/project/forge-test-app/src/components/really-long-output-path-with-build-artifacts.tsx:42: done",
+      },
       { event_type: "shell_end", session_id: sessionId, block_id: "detail-shell", exit_code: 0 },
     ], 1);
 
@@ -2674,7 +2791,9 @@ test.describe("Timeline Message Flow", () => {
         const style = getComputedStyle(surface);
         const header = surface.querySelector("[data-testid='log-detail-header']");
         const output = surface.querySelector("[data-testid='log-detail-output']");
+        const shellPre = surface.querySelector(".forge-shell-output-section pre");
         const outputStyle = output ? getComputedStyle(output) : null;
+        const shellPreStyle = shellPre ? getComputedStyle(shellPre) : null;
         return {
           maxHeightToken: getComputedStyle(root).getPropertyValue("--forge-log-output-max-height").trim(),
           radius: Number.parseFloat(style.borderTopLeftRadius),
@@ -2685,6 +2804,8 @@ test.describe("Timeline Message Flow", () => {
           outputPaddingTop: outputStyle ? Math.round(Number.parseFloat(outputStyle.paddingTop)) : 0,
           outputFontSize: outputStyle ? Number.parseFloat(outputStyle.fontSize) : 0,
           outputWordBreak: outputStyle?.wordBreak ?? "",
+          shellPreWordBreak: shellPreStyle?.wordBreak ?? "",
+          shellPreOverflowWrap: shellPreStyle?.overflowWrap ?? "",
         };
       });
     });
@@ -2699,6 +2820,9 @@ test.describe("Timeline Message Flow", () => {
     expect(surfaces.every((surface) => surface.outputPaddingTop === 8)).toBeTruthy();
     expect(surfaces.every((surface) => surface.outputFontSize <= 11.5)).toBeTruthy();
     expect(surfaces.every((surface) => surface.outputWordBreak === "normal")).toBeTruthy();
+    const shellSurface = surfaces.find((surface) => surface.shellPreWordBreak);
+    expect(shellSurface?.shellPreWordBreak).toBe("normal");
+    expect(shellSurface?.shellPreOverflowWrap).toBe("anywhere");
   });
 
   test("context compaction notice follows message rhythm", async ({ page }) => {
@@ -3609,6 +3733,7 @@ test.describe("Timeline Message Flow", () => {
         workspaceBackground: style?.backgroundColor ?? "",
         primaryGap: primaryNav ? Math.round(Number.parseFloat(getComputedStyle(primaryNav).rowGap)) : -1,
         primaryActions: primaryActions.map((button) => Math.round(button.getBoundingClientRect().height)),
+        primaryTransitions: primaryActions.map((button) => getComputedStyle(button).transitionProperty),
         brandHeight: brand ? Math.round(brand.getBoundingClientRect().height) : 0,
       };
     });
@@ -3625,10 +3750,20 @@ test.describe("Timeline Message Flow", () => {
         const item = button.getBoundingClientRect();
         return Math.round(item.width);
       });
-      return { height: Math.round(rect.height), buttons };
+      const transitions = Array.from(node.querySelectorAll("button")).map((button) => getComputedStyle(button).transitionProperty);
+      return { height: Math.round(rect.height), buttons, transitions };
     });
     expect(utilityMetrics.height).toBeLessThanOrEqual(40);
     expect(utilityMetrics.buttons).toEqual([28, 28, 28]);
+    expect(railMetrics.primaryTransitions.every((value) => value === "all" || value.includes("box-shadow"))).toBe(true);
+    expect(utilityMetrics.transitions.every((value) => value === "all" || value.includes("box-shadow"))).toBe(true);
+
+    const searchAction = sidebar.getByRole("button", { name: "搜索" });
+    await searchAction.hover();
+    await expect(searchAction).not.toHaveCSS("box-shadow", "none");
+    const pluginsAction = sidebar.getByRole("button", { name: "插件" });
+    await pluginsAction.hover();
+    await expect(pluginsAction).not.toHaveCSS("box-shadow", "none");
 
     await sidebar.getByRole("button", { name: "插件" }).click();
     const drawer = page.getByRole("complementary", { name: "插件" });
@@ -4070,11 +4205,12 @@ test.describe("Workspace Safety v0", () => {
 
   test("conversation list groups sessions by recency", async ({ page }) => {
     const workspace = "/Users/cabbos/project/forge";
-    const now = Date.now();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
     const sessions = [
-      { id: "recent-today", title: "Today build", updatedAt: now },
-      { id: "recent-yesterday", title: "Yesterday build", updatedAt: now - 26 * 60 * 60 * 1000 },
-      { id: "recent-older", title: "Older build", updatedAt: now - 8 * 24 * 60 * 60 * 1000 },
+      { id: "recent-today", title: "Today build", updatedAt: Date.now() },
+      { id: "recent-yesterday", title: "Yesterday build", updatedAt: todayStart.getTime() - 12 * 60 * 60 * 1000 },
+      { id: "recent-older", title: "Older build", updatedAt: todayStart.getTime() - 8 * 24 * 60 * 60 * 1000 },
     ];
 
     await setup(page);
