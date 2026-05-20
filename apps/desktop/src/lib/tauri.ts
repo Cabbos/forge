@@ -246,8 +246,8 @@ export async function toggleCapability(id: string, enabled: boolean): Promise<vo
 }
 
 /** Search workspace files for @ autocomplete */
-export async function searchWorkspaceFiles(query: string): Promise<string[]> {
-  return invoke("search_workspace_files", { query });
+export async function searchWorkspaceFiles(query: string, sessionId?: string): Promise<string[]> {
+  return invoke("search_workspace_files", { query, sessionId: sessionId ?? null });
 }
 
 /** Install a skill from GitHub (owner/repo) */

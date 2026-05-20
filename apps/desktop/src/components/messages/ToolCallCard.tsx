@@ -44,7 +44,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
   const durationLabel = block.isComplete && durationMs !== null ? formatDuration(durationMs) : "";
 
   const StatusIcon = { running: Loader2, done: CheckCircle2, error: XCircle }[status];
-  const statusColor = { running: "#D4A853", done: "#4A9E6B", error: "#D47777" }[status];
+  const statusColor = { running: "var(--forge-text-faint)", done: "var(--forge-icon-safety)", error: "var(--destructive)" }[status];
   const copyDetails = async () => {
     await navigator.clipboard?.writeText(detailText);
     setCopied(true);

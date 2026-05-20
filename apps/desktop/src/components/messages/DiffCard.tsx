@@ -2,6 +2,7 @@ import { Check, ChevronDown, Copy, ExternalLink, FileDiff, LocateFixed } from "l
 import { useState } from "react";
 import type { BlockState } from "@/lib/protocol";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
 import { openFile } from "@/lib/tauri";
 
@@ -56,7 +57,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
     <div data-testid="diff-card">
       <MessagePanel className="forge-diff-card">
         <MessagePanelHeader
-          icon={<FileDiff className="size-3.5" style={{ color: "#5B9BD5" }} />}
+          icon={<ForgeIcon icon={FileDiff} tone="context" contained={false} className="size-3.5" />}
           title="文件改动"
           meta={(
             <div className="flex min-w-0 items-center gap-2">

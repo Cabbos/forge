@@ -1,10 +1,15 @@
-use std::sync::Arc;
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tauri::Emitter;
 
 use crate::adapters::anthropic::{AnthropicAdapter, ToolDef};
 use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::adapters::openai_compatible::OpenAiCompatibleAdapter;
+use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
 use crate::agent::delivery_state::{
     build_delivery_summary, DeliveryCheckpointInput, DeliveryRecordInput, DeliveryRuntimeInput,
 };
@@ -100,6 +105,9 @@ pub enum McpContextSelection {
 }
 
 const MCP_CONTEXT_ITEM_CHAR_LIMIT: usize = 12_000;
+const FILE_REFERENCE_MAX_FILES: usize = 6;
+const FILE_REFERENCE_MAX_BYTES: u64 = 80_000;
+const FILE_REFERENCE_TOTAL_CHAR_LIMIT: usize = 120_000;
 
 /// DeepSeek Anthropic-compatible API (recommended by DeepSeek docs)
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/anthropic";
@@ -516,15 +524,6 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn combine_hidden_contexts(first: Option<String>, second: Option<String>) -> Option<String> {
-    match (first, second) {
-        (Some(first), Some(second)) => Some(format!("{}\n\n{}", first.trim(), second.trim())),
-        (Some(first), None) => Some(first),
-        (None, Some(second)) => Some(second),
-        (None, None) => None,
-    }
-}
-
 async fn build_mcp_context(
     harness: &Harness,
     selections: &[McpContextSelection],
@@ -772,6 +771,219 @@ fn truncate_mcp_context_text(text: &str) -> String {
     )
 }
 
+fn build_file_reference_context(working_dir: &Path, text: &str) -> Option<String> {
+    let references = extract_file_reference_paths(text);
+    if references.is_empty() {
+        return None;
+    }
+
+    let workspace = working_dir.canonicalize().ok()?;
+    let mut total_chars = 0usize;
+    let mut parts = Vec::new();
+    for reference in references.iter().take(FILE_REFERENCE_MAX_FILES) {
+        let Some(item) = read_file_reference(&workspace, reference) else {
+            continue;
+        };
+        let mut body = item.content.trim().to_string();
+        if total_chars + body.chars().count() > FILE_REFERENCE_TOTAL_CHAR_LIMIT {
+            let remaining = FILE_REFERENCE_TOTAL_CHAR_LIMIT.saturating_sub(total_chars);
+            if remaining == 0 {
+                break;
+            }
+            body = take_chars(&body, remaining);
+            body.push_str("\n\n[truncated selected file context: total limit reached]");
+        }
+        total_chars += body.chars().count();
+        parts.push(format!(
+            "### @{}\nPath: {}\n\n```text\n{}\n```",
+            item.display_path,
+            item.display_path,
+            sanitize_context_fence(&body)
+        ));
+        if total_chars >= FILE_REFERENCE_TOTAL_CHAR_LIMIT {
+            break;
+        }
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "## User-selected file references\n\n\
+        These files were explicitly selected by the user with @ for this turn. Treat them as read-only project context.\n\n{}",
+        parts.join("\n\n---\n\n")
+    ))
+}
+
+fn extract_file_reference_paths(text: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut chars = text.char_indices().peekable();
+
+    while let Some((index, ch)) = chars.next() {
+        if ch != '@' || is_embedded_at_sign(text, index) {
+            continue;
+        }
+
+        let mut end = index + ch.len_utf8();
+        while let Some(&(next_index, next_ch)) = chars.peek() {
+            if is_file_reference_boundary(next_ch) {
+                break;
+            }
+            chars.next();
+            end = next_index + next_ch.len_utf8();
+        }
+
+        let raw = text[index + ch.len_utf8()..end].trim();
+        if let Some(reference) = normalize_file_reference(raw) {
+            if !refs.contains(&reference) {
+                refs.push(reference);
+            }
+        }
+    }
+
+    refs
+}
+
+fn is_embedded_at_sign(text: &str, at_index: usize) -> bool {
+    text[..at_index]
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+}
+
+fn is_file_reference_boundary(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '@' | ','
+                | ';'
+                | '"'
+                | '\''
+                | '`'
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '，'
+                | '。'
+                | '、'
+                | '；'
+                | '：'
+                | '！'
+                | '？'
+                | '（'
+                | '）'
+                | '【'
+                | '】'
+                | '《'
+                | '》'
+        )
+}
+
+fn normalize_file_reference(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '.' | ',' | ';' | ':' | '，' | '。' | '；' | '：' | ')' | '）' | ']' | '】'
+        )
+    });
+    if trimmed.is_empty() || trimmed == "@" || trimmed.len() > 240 {
+        return None;
+    }
+
+    let without_line = strip_line_suffix(trimmed);
+    if without_line.is_empty() || without_line.contains('\\') {
+        return None;
+    }
+
+    Some(without_line.trim_start_matches("./").to_string())
+}
+
+fn strip_line_suffix(reference: &str) -> &str {
+    if let Some((path, suffix)) = reference.rsplit_once(':') {
+        if !path.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            return path;
+        }
+    }
+    reference
+}
+
+struct FileReferenceContextItem {
+    display_path: String,
+    content: String,
+}
+
+fn read_file_reference(workspace: &Path, reference: &str) -> Option<FileReferenceContextItem> {
+    let full_path = resolve_file_reference_path(workspace, reference)?;
+    let metadata = std::fs::metadata(&full_path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+
+    let mut file = std::fs::File::open(&full_path).ok()?;
+    let bytes_to_read = metadata.len().min(FILE_REFERENCE_MAX_BYTES);
+    let mut bytes = Vec::with_capacity(bytes_to_read as usize);
+    file.by_ref()
+        .take(FILE_REFERENCE_MAX_BYTES)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.contains(&0) {
+        return None;
+    }
+
+    let mut content = String::from_utf8(bytes).ok()?;
+    if metadata.len() > FILE_REFERENCE_MAX_BYTES {
+        content.push_str(&format!(
+            "\n\n[truncated selected file: {} bytes omitted]",
+            metadata.len().saturating_sub(FILE_REFERENCE_MAX_BYTES)
+        ));
+    }
+
+    let display_path = full_path
+        .strip_prefix(workspace)
+        .unwrap_or(&full_path)
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+
+    Some(FileReferenceContextItem {
+        display_path,
+        content,
+    })
+}
+
+fn resolve_file_reference_path(workspace: &Path, reference: &str) -> Option<PathBuf> {
+    let requested = reference.trim();
+    if requested.is_empty() {
+        return None;
+    }
+
+    let candidate = if let Some(src_path) = requested.strip_prefix("@/") {
+        workspace.join("src").join(src_path)
+    } else if Path::new(requested).is_absolute() {
+        return None;
+    } else {
+        workspace.join(requested)
+    };
+    let canonical = candidate.canonicalize().ok()?;
+    if !canonical.starts_with(workspace) {
+        return None;
+    }
+    Some(canonical)
+}
+
+fn sanitize_context_fence(text: &str) -> String {
+    text.replace("```", "` ` `")
+}
+
+fn take_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
 fn emit_delivery_summary(
     app_handle: &tauri::AppHandle,
     session_id: &str,
@@ -913,8 +1125,39 @@ pub async fn send_input(
                 &session_id,
             )
             .await;
-            let combined_context =
-                combine_hidden_contexts(combine_hidden_contexts(memory_context, wiki_context), mcp_context);
+            let mut hidden_contexts = Vec::new();
+            if let Some(context) = build_file_reference_context(&s.harness.working_dir, &text) {
+                hidden_contexts.push(HiddenContextPart::new(
+                    ContextSourceKind::SelectedFiles,
+                    "选中文件",
+                    "用户用 @ 选中的本轮参考文件",
+                    context,
+                ));
+            }
+            if let Some(context) = memory_context {
+                hidden_contexts.push(HiddenContextPart::new(
+                    ContextSourceKind::MemoryContext,
+                    "已保存背景",
+                    "自动匹配到的用户和项目背景",
+                    context,
+                ));
+            }
+            if let Some(context) = wiki_context {
+                hidden_contexts.push(HiddenContextPart::new(
+                    ContextSourceKind::ProjectRecords,
+                    "项目记录",
+                    "自动匹配到的项目记录",
+                    context,
+                ));
+            }
+            if let Some(context) = mcp_context {
+                hidden_contexts.push(HiddenContextPart::new(
+                    ContextSourceKind::ConnectorContext,
+                    "连接资料",
+                    "用户选中的连接资料",
+                    context,
+                ));
+            }
             let turn_metadata = AgentTurnMetadata {
                 session_id: session_id.clone(),
                 workspace_path: project_path.clone(),
@@ -931,10 +1174,10 @@ pub async fn send_input(
                 user_goal: text.clone(),
             };
             let result = s
-                .send_message_with_context(
+                .send_message_with_context_parts(
                     &text,
                     &app_handle,
-                    combined_context,
+                    hidden_contexts,
                     Some(turn_metadata),
                 )
                 .await;
@@ -1109,9 +1352,10 @@ pub async fn confirm_response(
 pub async fn search_workspace_files(
     state: tauri::State<'_, Arc<AppState>>,
     query: String,
+    session_id: Option<String>,
 ) -> Result<Vec<String>, String> {
-    // Search the harness working dir for files matching the query
-    let results = find_files(&state.harness.working_dir, &query, 20);
+    let working_dir = working_dir_for_request(&state, session_id.as_deref()).await;
+    let results = find_files(&working_dir, &query, 20);
     Ok(results)
 }
 
@@ -1474,5 +1718,39 @@ mod tests {
 
         assert!(context.len() < MCP_CONTEXT_ITEM_CHAR_LIMIT + 800);
         assert!(context.contains("truncated"));
+    }
+
+    #[test]
+    fn extracts_user_selected_file_references_without_emails() {
+        let refs = extract_file_reference_paths(
+            "请看 @src/App.tsx、@package.json 和 me@test.com；不要把裸 @ 当成文件。",
+        );
+
+        assert_eq!(refs, vec!["src/App.tsx", "package.json"]);
+    }
+
+    #[test]
+    fn file_reference_context_reads_workspace_files_only() {
+        let nonce = uuid::Uuid::now_v7();
+        let workspace = std::env::temp_dir().join(format!("forge-file-context-{nonce}"));
+        let outside = std::env::temp_dir().join(format!("forge-outside-{nonce}.txt"));
+        std::fs::create_dir_all(workspace.join("src")).expect("workspace");
+        std::fs::write(workspace.join("src/app.ts"), "export const answer = 42;")
+            .expect("workspace file");
+        std::fs::write(&outside, "outside secret").expect("outside file");
+
+        let context = build_file_reference_context(
+            &workspace,
+            &format!("请参考 @src/app.ts，也不要读 @{}", outside.display()),
+        )
+        .expect("context");
+
+        assert!(context.contains("User-selected file references"));
+        assert!(context.contains("@src/app.ts"));
+        assert!(context.contains("export const answer = 42;"));
+        assert!(!context.contains("outside secret"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_file(&outside);
     }
 }

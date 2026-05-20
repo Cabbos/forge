@@ -1,11 +1,13 @@
 import { useRef, useState, useCallback, useEffect, type CSSProperties } from "react";
-import { AlertCircle, ArrowUp, AtSign, Slash, ChevronDown, X, FileText, Terminal, RotateCcw } from "lucide-react";
+import { AlertCircle, ArrowUp, ChevronDown, X, RotateCcw } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
 import { createProjectCheckpoint, searchWorkspaceFiles } from "@/lib/tauri";
 import { formatContextWindow, getModelContextWindow, getModelLabel, getProviderDefinition, PROVIDERS } from "@/lib/providers";
 import { modeAwarePlaceholder } from "@/lib/task-mode";
 import { buildFirstLoopAgentPrompt, deriveFirstLoopDraft } from "@/lib/first-loop";
+import { commandIconMeta, composerToolbarIcons, fileReferenceIconMeta } from "@/lib/capability-icons";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import { cn } from "@/lib/utils";
 
 interface InputBarProps { sessionId: string }
@@ -140,7 +142,7 @@ export function InputBar({ sessionId }: InputBarProps) {
       setShowModelMenu(false);
       setShowSuggestions("@");
       const q = lastWord.slice(1);
-      searchWorkspaceFiles(q).then(setAtResults).catch(() => setAtResults([]));
+      searchWorkspaceFiles(q, sessionId).then(setAtResults).catch(() => setAtResults([]));
     } else if (lastWord === "/") {
       setShowModelMenu(false);
       setShowSuggestions("/");
@@ -264,27 +266,34 @@ export function InputBar({ sessionId }: InputBarProps) {
             <>
               <div className="forge-menu-heading">引用文件</div>
               {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/65">输入文件名搜索</div>}
-              {atResults.map((f, index) => (
-                <button key={f} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("file", f)}
-                  className="forge-menu-option font-mono"
-                  style={index === activeSuggestionIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}>
-                  {f.endsWith("/") ? <FileText className="size-3" style={{ color: "#5B9BD5" }} /> : <FileText className="size-3" style={{ color: "var(--muted-foreground)" }} />}
-                  {f}
-                </button>
-              ))}
+              {atResults.map((f, index) => {
+                const meta = fileReferenceIconMeta(f);
+                return (
+                  <button key={f} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("file", f)}
+                    className="forge-menu-option font-mono"
+                    style={index === activeSuggestionIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}>
+                    <ForgeIcon icon={meta.icon} tone={meta.tone} />
+                    {f}
+                  </button>
+                );
+              })}
             </>
           )}
           {showSuggestions === "/" && (
             <>
               <div className="forge-menu-heading">常用请求</div>
-              {COMMANDS.map((cmd, index) => (
-                <button key={cmd.prefix} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("command", cmd.text)}
-                  className="forge-menu-option justify-between"
-                  style={index === activeSuggestionIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}>
-                  <span className="font-mono">{cmd.text}</span>
-                  <span className="text-[10px] text-muted-foreground">{cmd.desc}</span>
-                </button>
-              ))}
+              {COMMANDS.map((cmd, index) => {
+                const meta = commandIconMeta(cmd.text);
+                return (
+                  <button key={cmd.prefix} role="option" aria-selected={index === activeSuggestionIndex} onMouseEnter={() => setActiveSuggestionIndex(index)} onClick={() => addChip("command", cmd.text)}
+                    className="forge-menu-option"
+                    style={index === activeSuggestionIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}>
+                    <ForgeIcon icon={meta.icon} tone={meta.tone} />
+                    <span className="min-w-0 flex-1 truncate font-mono">{cmd.text}</span>
+                    <span className="text-[10px] text-muted-foreground">{cmd.desc}</span>
+                  </button>
+                );
+              })}
             </>
           )}
         </div>
@@ -300,25 +309,24 @@ export function InputBar({ sessionId }: InputBarProps) {
         {/* Chips row */}
         {chips.length > 0 && (
           <div className="forge-composer-chips">
-            {chips.map(chip => (
-              <span key={chip.id}
-                className="forge-composer-chip">
-                {chip.type === "file" ? (
-                  <FileText className="size-3 text-[#6BA6D8]" />
-                ) : (
-                  <Terminal className="size-3 text-primary/80" />
-                )}
-                {chip.value}
-                <button
-                  type="button"
-                  aria-label={`移除 ${chip.value}`}
-                  onClick={() => removeChip(chip.id)}
-                  className="ml-0.5 opacity-45 transition-opacity hover:opacity-100"
-                >
-                  <X className="size-2.5" />
-                </button>
-              </span>
-            ))}
+            {chips.map((chip) => {
+              const meta = chip.type === "file" ? fileReferenceIconMeta(chip.value) : commandIconMeta(chip.value);
+              return (
+                <span key={chip.id}
+                  className="forge-composer-chip">
+                  <ForgeIcon icon={meta.icon} tone={meta.tone} contained={false} className="size-3.5" />
+                  {chip.value}
+                  <button
+                    type="button"
+                    aria-label={`移除 ${chip.value}`}
+                    onClick={() => removeChip(chip.id)}
+                    className="ml-0.5 opacity-45 transition-opacity hover:opacity-100"
+                  >
+                    <X className="size-2.5" />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -364,7 +372,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                 data-active={showSuggestions === "@" ? "true" : "false"}
                 className="forge-composer-tool"
               >
-                <AtSign className="size-3.5" />
+                <ForgeIcon icon={composerToolbarIcons.file.icon} tone={composerToolbarIcons.file.tone} contained={false} />
               </button>
               <button
                 type="button"
@@ -382,7 +390,7 @@ export function InputBar({ sessionId }: InputBarProps) {
                 data-active={showSuggestions === "/" ? "true" : "false"}
                 className="forge-composer-tool"
               >
-                <Slash className="size-3.5" />
+                <ForgeIcon icon={composerToolbarIcons.command.icon} tone={composerToolbarIcons.command.tone} contained={false} />
               </button>
             </div>
             <span className="forge-composer-hint hidden truncate sm:inline">

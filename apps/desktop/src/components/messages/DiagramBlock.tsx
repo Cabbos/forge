@@ -44,7 +44,7 @@ export function DiagramBlock({ code, lang }: DiagramBlockProps) {
           aria-label={copied ? "已复制" : "复制图示源码"}
           title={copied ? "已复制" : "复制图示源码"}
         >
-          {copied ? <Check className="size-3.5 text-[#4A9E6B]" /> : <Copy className="size-3.5" />}
+          {copied ? <Check className="size-3.5" style={{ color: "var(--forge-icon-safety)" }} /> : <Copy className="size-3.5" />}
         </button>
       </figcaption>
       <div data-testid="diagram-viewport" className="diagram-viewport">

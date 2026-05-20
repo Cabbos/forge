@@ -41,7 +41,7 @@ function ToolStepRow({ step }: { step: ToolStep }) {
       >
         <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
         <ToolIcon name={step.name} />
-        <span className="font-mono" style={{ color: "#5B9BD5" }}>{step.name}</span>
+        <span className="font-mono" style={{ color: "var(--forge-icon-context)" }}>{step.name}</span>
         <span className="truncate" style={{ color: "var(--muted-foreground)" }}>{step.input.slice(0, 40)}</span>
         <span style={{ color: "var(--muted-foreground)" }}>→</span>
         <span className="truncate" style={{ color: "#D0D5DD" }}>{shortResult}</span>

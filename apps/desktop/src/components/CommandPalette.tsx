@@ -10,6 +10,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Bug, CheckCircle2, Compass, FolderOpen, MessageSquarePlus, Moon, PanelRightOpen, Settings, Sun, Zap } from "lucide-react";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import { useActiveWorkspace, useSessionList, useStore } from "@/store";
 import { useSession } from "@/hooks/useSession";
 import { overrideWorkflowRoute } from "@/lib/tauri";
@@ -96,7 +97,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
           {activeWorkspace && (
             <div className="forge-command-context-strip">
-              <FolderOpen className="size-3.5 shrink-0" />
+              <ForgeIcon icon={FolderOpen} tone="context" contained={false} />
               <span className="min-w-0 truncate">当前项目 · {activeWorkspace.name}</span>
             </div>
           )}
@@ -109,17 +110,17 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
           <CommandGroup heading="常用">
             <CommandItem onSelect={handleCreate} disabled={!activeWorkspace}>
-              <MessageSquarePlus className="size-4" />
+              <ForgeIcon icon={MessageSquarePlus} tone="action" />
               <span className="min-w-0 flex-1 truncate">{activeWorkspace ? "新建对话" : "先选择项目"}</span>
               {activeWorkspace && <ShortcutHint keys="⌘N" />}
             </CommandItem>
             <CommandItem onSelect={handleOpenProjectArchive}>
-              <PanelRightOpen className="size-4" />
+              <ForgeIcon icon={PanelRightOpen} tone="context" />
               <span className="min-w-0 flex-1 truncate">打开项目档案</span>
               <ShortcutHint keys="⌘I" />
             </CommandItem>
             <CommandItem onSelect={handleOpenSettings}>
-              <Settings className="size-4" />
+              <ForgeIcon icon={Settings} tone="neutral" />
               <span className="min-w-0 flex-1 truncate">设置</span>
               <ShortcutHint keys="⌘," />
             </CommandItem>
@@ -130,19 +131,19 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
               <CommandSeparator />
               <CommandGroup heading="当前任务">
                 <CommandItem onSelect={() => handleWorkflowOverride("plan_first")}>
-                  <Compass className="size-4" />
+                  <ForgeIcon icon={Compass} tone="reasoning" />
                   先梳理方案
                 </CommandItem>
                 <CommandItem onSelect={() => handleWorkflowOverride("direct")}>
-                  <Zap className="size-4" />
+                  <ForgeIcon icon={Zap} tone="action" />
                   直接处理
                 </CommandItem>
                 <CommandItem onSelect={() => handleWorkflowOverride("debug")}>
-                  <Bug className="size-4" />
+                  <ForgeIcon icon={Bug} tone="safety" />
                   排查问题
                 </CommandItem>
                 <CommandItem onSelect={() => handleWorkflowOverride("verify")}>
-                  <CheckCircle2 className="size-4" />
+                  <ForgeIcon icon={CheckCircle2} tone="safety" />
                   检查结果
                 </CommandItem>
               </CommandGroup>
@@ -173,11 +174,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             <CommandItem
               onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
-              {theme === "dark" ? (
-                <Sun className="size-4" />
-              ) : (
-                <Moon className="size-4" />
-              )}
+              <ForgeIcon icon={theme === "dark" ? Sun : Moon} tone="neutral" />
               切换主题（{theme === "dark" ? "浅色" : "深色"}）
             </CommandItem>
           </CommandGroup>

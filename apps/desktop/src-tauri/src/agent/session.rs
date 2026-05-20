@@ -7,7 +7,9 @@ use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::auto_compact::{
     compact_messages_for_overflow_retry, compact_messages_if_needed, CompactResult, CompactStats,
 };
-use crate::agent::context_builder::{ContextBuilder, ContextBundle};
+use crate::agent::context_builder::{
+    ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
+};
 use crate::agent::provider_capabilities::is_context_overflow_error;
 use crate::agent::snapshot::AgentSessionSnapshot;
 use crate::agent::turn_state::{
@@ -142,6 +144,30 @@ impl AgentSession {
         memory_context: Option<String>,
         turn_metadata: Option<AgentTurnMetadata>,
     ) -> Result<(), String> {
+        let hidden_contexts = memory_context
+            .filter(|context| !context.trim().is_empty())
+            .map(|context| {
+                vec![HiddenContextPart::new(
+                    ContextSourceKind::MemoryContext,
+                    "Memory and wiki context",
+                    "Hidden context provided for this turn",
+                    context,
+                )]
+            })
+            .unwrap_or_default();
+
+        self.send_message_with_context_parts(text, app_handle, hidden_contexts, turn_metadata)
+            .await
+    }
+
+    /// Send a user message with structured hidden context parts for this turn.
+    pub async fn send_message_with_context_parts(
+        &self,
+        text: &str,
+        app_handle: &tauri::AppHandle,
+        hidden_contexts: Vec<HiddenContextPart>,
+        turn_metadata: Option<AgentTurnMetadata>,
+    ) -> Result<(), String> {
         if !self.running.load(Ordering::SeqCst) {
             return Err("Session is not running".to_string());
         }
@@ -164,7 +190,10 @@ impl AgentSession {
 
         // Add user message to history
         self.messages.lock().unwrap().push(ChatMessage::user(text));
-        let memory_context = memory_context.filter(|context| !context.trim().is_empty());
+        let hidden_contexts = hidden_contexts
+            .into_iter()
+            .filter(|context| !context.content.trim().is_empty())
+            .collect::<Vec<_>>();
         self.mark_latest_turn_status(AgentTurnStatus::GatheringContext, app_handle);
 
         // Fresh cancel token for this request
@@ -201,7 +230,7 @@ impl AgentSession {
             let context_bundle = build_context_bundle(
                 compacted.messages,
                 compacted.summary,
-                memory_context.clone(),
+                hidden_contexts.clone(),
                 sp.clone(),
                 self.context_window_tokens,
             );
@@ -238,7 +267,7 @@ impl AgentSession {
                                 let context_bundle = build_context_bundle(
                                     compacted.messages,
                                     compacted.summary,
-                                    memory_context.clone(),
+                                    hidden_contexts.clone(),
                                     sp.clone(),
                                     self.context_window_tokens,
                                 );
@@ -527,7 +556,7 @@ impl AgentSession {
             let context_bundle = build_context_bundle(
                 messages,
                 summary,
-                memory_context.clone(),
+                hidden_contexts.clone(),
                 sp,
                 self.context_window_tokens,
             );
@@ -756,14 +785,14 @@ impl AgentSession {
 fn build_context_bundle(
     messages: Vec<ChatMessage>,
     summary: Option<String>,
-    memory_context: Option<String>,
+    hidden_contexts: Vec<HiddenContextPart>,
     system_prompt: String,
     context_window_tokens: Option<u32>,
 ) -> ContextBundle {
     ContextBuilder::new()
         .messages(messages)
         .summary(summary)
-        .memory_context(memory_context)
+        .hidden_contexts(hidden_contexts)
         .system_prompt(system_prompt)
         .context_window_tokens(context_window_tokens)
         .build()
