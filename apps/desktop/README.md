@@ -1,53 +1,55 @@
 # Forge
 
-Forge is a local-first desktop AI agent for building and maintaining software projects.
+[English](./README.en.md)
 
-It is built with Tauri 2, React, TypeScript, and Rust. The product direction is simple: open a local project, describe what you want, and let Forge gather the right context, act inside the project boundary, show evidence, and keep enough project records to continue later.
+Forge 是一个本地优先的桌面端 AI Agent，用来帮助用户开发、维护和继续推进自己的本地项目。
 
-Forge is currently an early product build. Expect fast iteration and breaking changes.
+它基于 Tauri 2、React、TypeScript 和 Rust 构建。当前的产品方向很明确：用户选择一个本地项目，直接描述想做的事，Forge 负责理解任务、带入合适上下文、在项目边界内行动、展示过程证据，并把有价值的项目背景沉淀下来，方便之后继续。
 
-## What Forge Does
+Forge 还处在早期产品阶段，功能和交互会持续快速变化。
 
-- Works against a selected local project folder.
-- Runs multi-turn coding agent loops with tool calls.
-- Streams thinking, tool activity, shell output, diffs, confirmations, and delivery summaries into a desktop UI.
-- Supports provider/model selection, including DeepSeek, Anthropic, OpenAI, and OpenRouter.
-- Uses project records, saved background, selected files, and connector context as hidden turn context.
-- Lets users reference project files with `@file` and scopes file search to the active session project.
-- Requires confirmation for risky shell commands, file writes, and connector actions.
-- Tracks turn state, context sources, tool evidence, verification results, checkpoints, and delivery state.
-- Supports MCP resources/prompts/tools, hooks, skills, and local capability management.
+## Forge 能做什么
 
-## Product Shape
+- 围绕用户选择的本地项目文件夹工作。
+- 运行多轮 coding agent 循环，并支持工具调用。
+- 在桌面 UI 中流式展示思考、工具调用、Shell 输出、Diff、确认请求和交付总结。
+- 支持 Provider 和模型选择，包括 DeepSeek、Anthropic、OpenAI、OpenRouter。
+- 将项目记录、已保存背景、用户选中文件和连接资料作为本轮隐藏上下文。
+- 支持用 `@file` 引用项目文件，并且文件搜索会限定在当前会话项目内。
+- 对高风险 Shell 命令、文件写入和连接工具调用进行确认拦截。
+- 记录每轮任务状态、上下文来源、工具证据、验证结果、检查点和交付状态。
+- 支持 MCP 资源 / Prompt / 工具、Hooks、Skills 和本地能力管理。
 
-Forge keeps the user-facing model intentionally small:
+## 产品骨架
 
-| Product Layer | Meaning |
+Forge 希望用户侧只理解三个层级：
+
+| 产品层级 | 含义 |
 | --- | --- |
-| Current Task | What Forge believes the user is trying to do right now. |
-| Project Archive | Durable project notes, decisions, sources, task logs, and saved background. |
-| Delivery | Preview/runtime state, checkpoint state, verification, and next action. |
+| 当前任务 | Forge 当前判断用户正在做什么。 |
+| 项目档案 | 长期保存的项目说明、决策、资料、任务日志和背景信息。 |
+| 交付 | 预览状态、检查点、验证结果和下一步动作。 |
 
-Internal terms such as workflow routing, context activation, memory, auto compact, and wiki storage are implementation details. The UI should speak in product language.
+Workflow Router、Context Activation、Memory、Auto Compact、Wiki Storage 等都属于内部实现名词，不应该成为用户理解产品的负担。
 
-## Quick Start
+## 快速开始
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-For frontend-only development:
+只启动前端开发服务：
 
 ```bash
 npm run dev
 ```
 
-Vite runs on `http://localhost:1420`. The full desktop app is launched through Tauri.
+Vite 默认运行在 `http://localhost:1420`。完整桌面端需要通过 Tauri 启动。
 
-## API Keys
+## API Key
 
-Set provider keys from Settings (`Cmd+,`) or write them to `~/.forge/config.json`:
+可以在设置页（`Cmd+,`）配置 Provider API Key，也可以写入 `~/.forge/config.json`：
 
 ```json
 {
@@ -60,7 +62,7 @@ Set provider keys from Settings (`Cmd+,`) or write them to `~/.forge/config.json
 }
 ```
 
-Environment variables are also detected for common providers:
+也支持从常见环境变量读取：
 
 ```bash
 DEEPSEEK_API_KEY=...
@@ -69,73 +71,73 @@ OPENAI_API_KEY=...
 OPENROUTER_API_KEY=...
 ```
 
-DeepSeek is the default provider. The default model is `deepseek-v4-flash[1m]`.
+默认 Provider 是 DeepSeek，默认模型是 `deepseek-v4-flash[1m]`。
 
-## Development Commands
+## 开发命令
 
 ```bash
-npm run dev          # Vite dev server only
-npm run tauri dev    # Full Tauri desktop app
-npm run build        # TypeScript check + Vite production build
-npm run tauri:build  # Desktop bundle
-npm run test:e2e     # Playwright e2e tests
+npm run dev          # 只启动 Vite 前端服务
+npm run tauri dev    # 启动完整 Tauri 桌面应用
+npm run build        # TypeScript 检查 + Vite 生产构建
+npm run tauri:build  # 打包桌面应用
+npm run test:e2e     # Playwright E2E 测试
 ```
 
-Rust tests:
+Rust 测试：
 
 ```bash
 cd src-tauri
 cargo test
 ```
 
-## Architecture
+## 架构概览
 
 ```text
-React frontend (Vite + TypeScript)
+React 前端（Vite + TypeScript）
   -> Tauri IPC commands
   <- StreamEvent protocol
-Rust backend (Tokio)
-  - AgentSession: agent loop, context assembly, compaction, verification
-  - ContextBuilder: system prompt, summaries, selected files, project records, saved background, connectors, history
-  - ToolExecutor / Harness: file, shell, MCP, hooks, skills, permissions
-  - Project Archive: local markdown-like project records and writeback proposals
-  - Snapshot storage: session, turn, workflow, delivery, and resume state
+Rust 后端（Tokio）
+  - AgentSession：agent 循环、上下文组装、压缩、验证
+  - ContextBuilder：系统提示词、摘要、选中文件、项目记录、已保存背景、连接资料、历史消息
+  - ToolExecutor / Harness：文件、Shell、MCP、Hooks、Skills、权限控制
+  - Project Archive：本地 markdown-like 项目记录和写回建议
+  - Snapshot storage：会话、轮次、当前任务、交付和恢复状态
 ```
 
-The streaming protocol is the backbone of the app. When adding a backend-to-frontend event, update both:
+流式协议是 Forge 的主干。新增后端到前端事件时，需要同时更新：
 
 - `src-tauri/src/protocol/events.rs`
 - `src/lib/protocol.ts`
 
-Then update the Zustand store and add or adjust a renderer under `src/components/messages/`.
+然后更新 Zustand store，并在 `src/components/messages/` 中新增或调整对应渲染组件。
 
-## Local Context Model
+## 本地上下文模型
 
-Forge assembles context per turn from typed sources:
+Forge 会在每一轮任务中组装多种上下文来源：
 
-- System prompt and project instructions
-- Compacted conversation summary
-- User-selected `@file` references
-- Saved background
-- Project Archive records
-- MCP connector context
-- Recent conversation history
+- 系统提示词和项目说明
+- 压缩后的历史摘要
+- 用户通过 `@file` 选择的文件
+- 已保存背景
+- 项目档案记录
+- MCP 连接资料
+- 最近对话历史
 
-Selected files are read only from the active workspace, size-limited, and blocked from escaping the workspace through absolute paths or symlinks.
+用户选中文件只会从当前工作区读取，并带有大小限制；绝对路径、符号链接逃逸和工作区外路径都会被阻止。
 
-## Project Instructions
+## 项目说明文件
 
-Forge reads project-level instructions from files such as:
+Forge 会读取项目中的说明文件作为项目级指导，例如：
 
 - `AGENTS.md`
 - `CLAUDE.md`
 - `GEMINI.md`
 
-These are used as project guidance when the selected workspace contains them.
+这些文件用于告诉 Forge 当前项目的构建方式、开发约定和注意事项。
 
-## Repository Hygiene
+## 仓库卫生
 
-Local tool state and development workflow notes should not be committed:
+本地工具状态和开发工作流沉淀不要提交到产品仓库：
 
 - `.forge/`
 - `.agents/`
@@ -144,14 +146,14 @@ Local tool state and development workflow notes should not be committed:
 - `docs/superpowers/`
 - `test-results/`
 
-Use Obsidian or another external knowledge base for long-running product planning notes.
+长期产品思考和研发记录应放在 Obsidian 或其他外部知识库中。
 
-## Status
+## 当前状态
 
-Forge is not yet a polished public release. The current focus is:
+Forge 还不是一个稳定公开发行版本。当前重点是：
 
-- making the local agent loop reliable,
-- keeping workspace boundaries clear,
-- improving context and resume behavior,
-- making the desktop UI feel calm and professional,
-- supporting non-programmers without slowing down professional developers.
+- 让本地 agent 循环更可靠；
+- 保持清晰的工作区边界；
+- 改进上下文、恢复会话和继续任务能力；
+- 让桌面 UI 更安静、专业、可信；
+- 让不会写代码的人也能开始做自己的小工具，同时不牺牲专业开发者的使用效率。
