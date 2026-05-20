@@ -11,6 +11,8 @@ import {
 } from "@/lib/tauri";
 import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confidence";
 import { cn } from "@/lib/utils";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import type { ForgeIconTone } from "@/lib/capability-icons";
 
 interface ProjectStatusCardProps {
   sessionId: string | null;
@@ -80,7 +82,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     <section className="forge-surface">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+          <ForgeIcon icon={Folder} tone="context" contained={false} className="size-3.5" />
           <div className="min-w-0" title={projectPath}>
             <div className="truncate text-xs font-medium text-foreground">{projectName}</div>
           </div>
@@ -150,7 +152,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
           <DetailLine label="检查点" value={checkpoint?.message || "暂无"} />
           {checkpoint?.last_checkpoint && (
             <div className="flex min-w-0 items-center gap-2 rounded bg-background/60 px-2 py-1.5 font-mono text-[10px] text-muted-foreground">
-              <GitBranch className="size-3 shrink-0" />
+              <ForgeIcon icon={GitBranch} tone="safety" contained={false} className="size-3.5" />
               <span className="truncate">{checkpoint.last_checkpoint.head}</span>
             </div>
           )}
@@ -184,6 +186,7 @@ function DeliveryButton({
   onClick: (action: DeliveryAction) => void;
 }) {
   const Icon = action === "start_preview" ? Play : action === "open_preview" ? ExternalLink : ShieldCheck;
+  const tone: ForgeIconTone = action === "create_checkpoint" ? "safety" : "action";
 
   return (
     <button
@@ -192,7 +195,7 @@ function DeliveryButton({
       onClick={() => onClick(action)}
       className="forge-action disabled:cursor-default disabled:opacity-70"
     >
-      <Icon className={cn("size-3.5", busy && "animate-pulse")} />
+      <ForgeIcon icon={Icon} tone={tone} contained={false} className={cn("size-3.5", busy && "animate-pulse")} />
       {label}
     </button>
   );

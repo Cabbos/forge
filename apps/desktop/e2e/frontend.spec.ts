@@ -183,6 +183,8 @@ async function setup(page: Page) {
             { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: true },
           ];
         case "search_workspace_files":
+          // @ts-expect-error mock
+          window.__lastSearchWorkspaceFilesArgs = args;
           return ["src/App.tsx", "src/components/session/InputBar.tsx", "README.md"]
             .filter((path) => path.toLowerCase().includes(String(args.query ?? "").toLowerCase()));
         case "toggle_capability":
@@ -527,6 +529,34 @@ test.describe("Timeline Message Flow", () => {
     expect(readyMetrics.radius).toBeLessThanOrEqual(8);
   });
 
+  test("empty workbench stays grounded in short desktop windows", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 520 });
+    await page.goto("http://localhost:1420");
+
+    const main = page.getByRole("main");
+    await expect(main.getByTestId("empty-start-composer")).toBeVisible();
+    await expect(main.getByTestId("empty-middle-hints")).toBeHidden();
+
+    const metrics = await main.evaluate((node) => {
+      const mainRect = (node as HTMLElement).getBoundingClientRect();
+      const frame = node.querySelector<HTMLElement>(".forge-empty-composer-frame");
+      const composer = node.querySelector<HTMLElement>("[data-testid='empty-start-composer']");
+      const input = node.querySelector<HTMLElement>(".forge-empty-composer-input");
+      const frameRect = frame?.getBoundingClientRect();
+      const composerRect = composer?.getBoundingClientRect();
+      return {
+        composerBottomGap: frameRect ? Math.round(mainRect.bottom - frameRect.bottom) : -1,
+        composerTop: composerRect ? Math.round(composerRect.top - mainRect.top) : 0,
+        mainHeight: Math.round(mainRect.height),
+        inputMinHeight: input ? Math.round(Number.parseFloat(getComputedStyle(input).minHeight)) : 0,
+      };
+    });
+
+    expect(metrics.composerBottomGap).toBeLessThanOrEqual(1);
+    expect(metrics.composerTop).toBeGreaterThan(metrics.mainHeight * 0.5);
+    expect(metrics.inputMinHeight).toBeLessThanOrEqual(64);
+  });
+
   test("vague beginner idea is shaped before making", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -605,7 +635,7 @@ test.describe("Timeline Message Flow", () => {
     await simulateStream(page, sessionId, fullConversation(sessionId), 10);
     const processSummary = page.getByTestId("tool-activity-summary").first();
     await expect(processSummary).toContainText("过程已收起 · 2 步");
-    await expect(processSummary).toHaveCSS("min-height", "26px");
+    await expect(processSummary).toHaveCSS("min-height", "24px");
   });
 
   test("titlebar presents session and project state as a compact desktop status bar", async ({ page }) => {
@@ -681,6 +711,49 @@ test.describe("Timeline Message Flow", () => {
     await expect(searchButton).not.toHaveCSS("box-shadow", "none");
   });
 
+  test("reduced motion keeps running chrome steady", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      const original = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "send_input") {
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          return undefined;
+        }
+        return original?.(cmd, args);
+      };
+    });
+    await page.locator("textarea").fill("Reduced motion status");
+    await page.locator("textarea").press("Enter");
+
+    const metrics = await page.evaluate(() => {
+      const statusDot = document.querySelector<HTMLElement>(".forge-titlebar-status-dot");
+      const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
+      const dotStyle = statusDot ? getComputedStyle(statusDot) : null;
+      const composerStyle = composer ? getComputedStyle(composer) : null;
+      return {
+        dotAnimationName: dotStyle?.animationName ?? "",
+        dotAnimationDuration: dotStyle?.animationDuration ?? "",
+        composerTransitionDuration: composerStyle?.transitionDuration ?? "",
+      };
+    });
+
+    expect(metrics.dotAnimationName).toBe("none");
+    expect(metrics.dotAnimationDuration).toBe("0s");
+    expect(metrics.composerTransitionDuration.split(", ").every((duration) => duration === "0s")).toBe(true);
+  });
+
   test("start readiness stays compact in an empty session", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -723,6 +796,7 @@ test.describe("Timeline Message Flow", () => {
       const body = node.querySelector<HTMLElement>("[data-testid='missing-api-key-card']");
       const action = node.querySelector<HTMLElement>("[data-testid='missing-api-key-action']");
       const style = getComputedStyle(node);
+      const actionStyle = action ? getComputedStyle(action) : null;
       return {
         width: Math.round(node.getBoundingClientRect().width),
         radius: Number.parseFloat(style.borderTopLeftRadius),
@@ -731,6 +805,9 @@ test.describe("Timeline Message Flow", () => {
         bodyHeight: body ? Math.round(body.getBoundingClientRect().height) : 0,
         actionHeight: action ? Math.round(action.getBoundingClientRect().height) : 0,
         actionRadius: action ? Number.parseFloat(getComputedStyle(action).borderTopLeftRadius) : 0,
+        actionBackground: actionStyle?.backgroundColor ?? "",
+        actionBorder: actionStyle?.borderTopColor ?? "",
+        actionShadow: actionStyle?.boxShadow ?? "",
       };
     });
     expect(setupMetrics.width).toBeLessThanOrEqual(620);
@@ -740,6 +817,9 @@ test.describe("Timeline Message Flow", () => {
     expect(setupMetrics.bodyHeight).toBeLessThanOrEqual(38);
     expect(setupMetrics.actionHeight).toBe(28);
     expect(setupMetrics.actionRadius).toBeLessThanOrEqual(8);
+    expect(setupMetrics.actionBackground).not.toBe("rgb(212, 168, 83)");
+    expect(setupMetrics.actionBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(setupMetrics.actionShadow).not.toBe("none");
     await page.getByRole("button", { name: "打开设置" }).click();
     await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "模型服务" })).toBeVisible();
@@ -1135,14 +1215,23 @@ test.describe("Timeline Message Flow", () => {
     const widths = await page.evaluate(() => {
       const thinking = document.querySelector("[data-testid='thinking-trigger']")?.getBoundingClientRect();
       const process = document.querySelector("[data-testid='tool-activity-summary']")?.getBoundingClientRect();
+      const processNode = document.querySelector<HTMLElement>("[data-testid='tool-activity-summary']");
+      const processStyle = processNode ? getComputedStyle(processNode) : null;
       return thinking && process
-        ? { thinking: Math.round(thinking.width), process: Math.round(process.width) }
+        ? {
+          thinking: Math.round(thinking.width),
+          process: Math.round(process.width),
+          processBorderTop: processStyle ? Math.round(Number.parseFloat(processStyle.borderTopWidth)) : -1,
+          processBackground: processStyle?.backgroundColor ?? "",
+        }
         : null;
     });
     expect(widths).not.toBeNull();
     expect(widths!.thinking).toBeLessThanOrEqual(220);
     expect(widths!.process).toBeLessThanOrEqual(520);
     await expect(thinkingTrigger).toHaveCSS("border-top-width", "0px");
+    expect(widths!.processBorderTop).toBe(0);
+    expect(widths!.processBackground).toBe("rgba(0, 0, 0, 0)");
 
     await processSummary.click();
     const toolTrigger = page.getByTestId("tool-card-trigger").first();
@@ -1819,6 +1908,7 @@ test.describe("Timeline Message Flow", () => {
         selectedBackground: selectedStyle.backgroundColor,
         selectedRadius: Number.parseFloat(selectedStyle.borderTopLeftRadius),
         selectedBorder: Math.round(Number.parseFloat(selectedStyle.borderTopWidth)),
+        selectedShadow: selectedStyle.boxShadow,
       };
     });
 
@@ -1829,6 +1919,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.selectedBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.selectedRadius).toBeLessThanOrEqual(8);
     expect(metrics!.selectedBorder).toBe(1);
+    expect(metrics!.selectedShadow).not.toBe("none");
   });
 
   test("assistant prose and user bubbles share readable message primitives", async ({ page }) => {
@@ -2718,6 +2809,7 @@ test.describe("Timeline Message Flow", () => {
         summaryHeight: Math.round(summary.getBoundingClientRect().height),
         summaryDisplay: summaryStyle.display,
         summaryBackground: summaryStyle.backgroundColor,
+        summaryBorderTop: Math.round(Number.parseFloat(summaryStyle.borderTopWidth)),
         listGap: Math.round(Number.parseFloat(listStyle.gap)),
         toolHeight: Math.round(tool.getBoundingClientRect().height),
         shellHeight: Math.round(shell.getBoundingClientRect().height),
@@ -2727,15 +2819,16 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.token).toBe("30px");
+    expect(metrics!.token).toBe("28px");
     expect(metrics!.groupWidth).toBeLessThanOrEqual(760);
-    expect(metrics!.groupBorderLeft).toBe(1);
-    expect(metrics!.summaryHeight).toBe(26);
+    expect(metrics!.groupBorderLeft).toBe(0);
+    expect(metrics!.summaryHeight).toBeLessThanOrEqual(28);
     expect(metrics!.summaryDisplay).toBe("inline-flex");
-    expect(metrics!.summaryBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.summaryBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.summaryBorderTop).toBe(0);
     expect(metrics!.listGap).toBe(4);
-    expect(metrics!.toolHeight).toBe(30);
-    expect(metrics!.shellHeight).toBe(30);
+    expect(metrics!.toolHeight).toBe(28);
+    expect(metrics!.shellHeight).toBe(28);
     expect(metrics!.toolMargin).toBe("0px");
     expect(metrics!.shellMargin).toBe("0px");
   });
@@ -2866,7 +2959,7 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.height).toBe(30);
+    expect(metrics!.height).toBe(28);
     expect(metrics!.marginTop).toBe(0);
     expect(metrics!.marginBottom).toBe(0);
   });
@@ -2976,14 +3069,39 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.borderSubtle).toBe("rgba(148, 163, 184, 0.13)");
-    expect(metrics!.bgRaised).toBe("rgba(255, 255, 255, 0.024)");
-    expect(metrics!.hover).toBe("rgba(255, 255, 255, 0.036)");
-    expect(metrics!.focusRing).toBe("rgba(212, 168, 83, 0.42)");
-    expect(metrics!.titlebarBorder).toBe("rgba(148, 163, 184, 0.13)");
-    expect(metrics!.sidebarBorder).toBe("rgba(148, 163, 184, 0.13)");
-    expect(metrics!.composerBorder).toBe("rgba(148, 163, 184, 0.13)");
-    expect(metrics!.composerBg).toBe("rgba(20, 23, 29, 0.88)");
+    expect(metrics!.borderSubtle).toBe("rgba(178, 188, 204, 0.16)");
+    expect(metrics!.bgRaised).toBe("#252932");
+    expect(metrics!.hover).toBe("rgba(255, 255, 255, 0.05)");
+    expect(metrics!.focusRing).toBe("rgba(212, 168, 83, 0.38)");
+    expect(metrics!.titlebarBorder).toBe("rgba(178, 188, 204, 0.16)");
+    expect(metrics!.sidebarBorder).toBe("rgba(178, 188, 204, 0.16)");
+    expect(metrics!.composerBorder).toBe("rgba(178, 188, 204, 0.16)");
+    expect(metrics!.composerBg).toBe("rgba(31, 34, 41, 0.9)");
+  });
+
+  test("graphite color ladder keeps dark surfaces readable", async ({ page }) => {
+    await page.goto("http://localhost:1420");
+
+    const tokens = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      return {
+        base: root.getPropertyValue("--forge-bg-base").trim(),
+        depth: root.getPropertyValue("--forge-bg-depth").trim(),
+        surface: root.getPropertyValue("--forge-bg-surface").trim(),
+        raised: root.getPropertyValue("--forge-bg-raised").trim(),
+        composer: root.getPropertyValue("--forge-bg-composer").trim(),
+        muted: root.getPropertyValue("--forge-text-muted").trim(),
+      };
+    });
+
+    expect(tokens).toEqual({
+      base: "#17191D",
+      depth: "#121419",
+      surface: "#20232A",
+      raised: "#252932",
+      composer: "#1F2229",
+      muted: "#8F99A8",
+    });
   });
 
   test("core shell surfaces keep a restrained product radius", async ({ page }) => {
@@ -3096,6 +3214,75 @@ test.describe("Timeline Message Flow", () => {
     expect(confirmMetrics.actionHeight).toBeLessThanOrEqual(42);
     expect(confirmMetrics.primaryHeight).toBe(28);
     expect(confirmMetrics.secondaryHeight).toBe(28);
+  });
+
+  test("write confirmation bounds long file paths and commands", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "confirm-long-command-boundary",
+        question: "Allow run_shell?",
+        kind: "shell_cmd",
+        boundary: {
+          title: "准备执行命令",
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "run_shell",
+          affected_files: [
+            "src/features/conversation/surfaces/really-long-generated-output-path-without-natural-breaks/ExtremelyLongComponentNameForRegressionCoverage.tsx",
+          ],
+          impact: "将检查构建输出",
+          risk: "medium",
+          recovery: "继续前会保留可检查的交付状态",
+          command: "npm run build -- --filter=src/features/conversation/surfaces/really-long-generated-output-path-without-natural-breaks/ExtremelyLongComponentNameForRegressionCoverage.tsx",
+          warning: "确认命令仍在当前项目内执行。",
+        },
+      },
+    ], 5);
+
+    const card = page.getByTestId("message-panel").filter({ hasText: "准备执行命令" });
+    await expect(card.getByTestId("confirm-boundary-grid").getByText("执行命令", { exact: true })).toBeVisible();
+    const metrics = await card.evaluate((node) => {
+      const command = node.querySelector<HTMLElement>(".forge-confirm-command");
+      const chip = node.querySelector<HTMLElement>(".forge-confirm-file-chip");
+      const commandStyle = command ? getComputedStyle(command) : null;
+      const chipStyle = chip ? getComputedStyle(chip) : null;
+      return {
+        panelScrollWidth: Math.round((node as HTMLElement).scrollWidth),
+        panelClientWidth: Math.round((node as HTMLElement).clientWidth),
+        commandOverflowX: commandStyle?.overflowX ?? "",
+        commandWhiteSpace: commandStyle?.whiteSpace ?? "",
+        commandScrollbarWidth: commandStyle?.scrollbarWidth ?? "",
+        commandOverscrollX: commandStyle?.overscrollBehaviorX ?? "",
+        chipOverflow: chipStyle?.overflowX ?? "",
+        chipTextOverflow: chipStyle?.textOverflow ?? "",
+        chipMaxWidth: chipStyle?.maxWidth ?? "",
+      };
+    });
+
+    expect(metrics.panelScrollWidth).toBeLessThanOrEqual(metrics.panelClientWidth + 1);
+    expect(metrics.commandOverflowX).toBe("auto");
+    expect(metrics.commandWhiteSpace).toBe("pre");
+    expect(metrics.commandScrollbarWidth).toBe("thin");
+    expect(metrics.commandOverscrollX).toBe("contain");
+    expect(metrics.chipOverflow).toBe("hidden");
+    expect(metrics.chipTextOverflow).toBe("ellipsis");
+    expect(metrics.chipMaxWidth).toBe("100%");
   });
 
   test("structured message panels use one compact conversation style", async ({ page }) => {
@@ -3452,7 +3639,7 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(metrics.height).toBeLessThanOrEqual(28);
     expect(metrics.radius).toBeLessThanOrEqual(8);
-    expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.background).toBe("rgba(0, 0, 0, 0)");
 
     await summary.click();
     await expect(summary).toHaveAttribute("aria-expanded", "true");
@@ -3549,6 +3736,8 @@ test.describe("Timeline Message Flow", () => {
       height: Math.round(node.getBoundingClientRect().height),
       minHeight: Math.round(Number.parseFloat(getComputedStyle(node).minHeight)),
       color: getComputedStyle(node).color,
+      background: getComputedStyle(node).backgroundColor,
+      borderTop: Math.round(Number.parseFloat(getComputedStyle(node).borderTopWidth)),
     }));
 
     await simulateStream(page, sessionId, [
@@ -3568,16 +3757,22 @@ test.describe("Timeline Message Flow", () => {
         thinkingHeight: Math.round(thinking.getBoundingClientRect().height),
         thinkingMinHeight: Math.round(Number.parseFloat(getComputedStyle(thinking).minHeight)),
         thinkingColor: getComputedStyle(thinking).color,
+        thinkingBackground: getComputedStyle(thinking).backgroundColor,
+        thinkingBorderTop: Math.round(Number.parseFloat(getComputedStyle(thinking).borderTopWidth)),
       };
     });
 
     expect(metrics).not.toBeNull();
-    expect(pendingMetrics.minHeight).toBe(26);
-    expect(metrics!.thinkingMinHeight).toBe(26);
-    expect(pendingMetrics.height).toBeGreaterThanOrEqual(26);
-    expect(pendingMetrics.height).toBeLessThanOrEqual(30);
-    expect(metrics!.thinkingHeight).toBeGreaterThanOrEqual(26);
-    expect(metrics!.thinkingHeight).toBeLessThanOrEqual(30);
+    expect(pendingMetrics.minHeight).toBe(24);
+    expect(metrics!.thinkingMinHeight).toBe(24);
+    expect(pendingMetrics.height).toBeGreaterThanOrEqual(24);
+    expect(pendingMetrics.height).toBeLessThanOrEqual(26);
+    expect(metrics!.thinkingHeight).toBeGreaterThanOrEqual(24);
+    expect(metrics!.thinkingHeight).toBeLessThanOrEqual(26);
+    expect(pendingMetrics.background).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.thinkingBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(pendingMetrics.borderTop).toBe(0);
+    expect(metrics!.thinkingBorderTop).toBe(0);
     expect(pendingMetrics.color).toBe(metrics!.thinkingColor);
   });
 
@@ -3684,15 +3879,23 @@ test.describe("Timeline Message Flow", () => {
     await expect(runningShell).toHaveAttribute("data-state", "running");
     const runningMetrics = await runningShell.evaluate((node) => {
       const status = node.querySelector<HTMLElement>(".forge-log-status");
+      const style = getComputedStyle(node);
+      const statusStyle = status ? getComputedStyle(status) : null;
       return {
         minHeight: Math.round(Number.parseFloat(getComputedStyle(node).minHeight)),
+        background: style.backgroundColor,
+        borderTop: Math.round(Number.parseFloat(style.borderTopWidth)),
         statusTone: status?.getAttribute("data-tone") ?? "",
         statusTitle: status?.getAttribute("title") ?? "",
+        statusColor: statusStyle?.color ?? "",
       };
     });
-    expect(runningMetrics.minHeight).toBe(30);
+    expect(runningMetrics.minHeight).toBe(28);
+    expect(runningMetrics.background).toBe("rgba(0, 0, 0, 0)");
+    expect(runningMetrics.borderTop).toBe(0);
     expect(runningMetrics.statusTone).toBe("running");
     expect(runningMetrics.statusTitle).toBe("运行中");
+    expect(runningMetrics.statusColor).not.toBe("rgb(212, 168, 83)");
 
     await simulateStream(page, sessionId, [
       { event_type: "shell_end", session_id: sessionId, block_id: shellId, exit_code: 0 },
@@ -3739,7 +3942,7 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(railMetrics.workspaceHeight).toBe(30);
     expect(railMetrics.workspaceRadius).toBeLessThanOrEqual(8);
-    expect(railMetrics.workspaceBorder).toBe("rgba(148, 163, 184, 0.13)");
+    expect(railMetrics.workspaceBorder).toBe("rgba(178, 188, 204, 0.16)");
     expect(railMetrics.workspaceBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(railMetrics.primaryGap).toBeLessThanOrEqual(4);
     expect(railMetrics.primaryActions).toEqual([28, 28]);
@@ -3788,7 +3991,8 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(drawerMaterial.token).toBe("216px");
     expect(drawerMaterial.backdrop).toContain("blur");
-    expect(drawerMaterial.background).toBe("rgba(17, 18, 22, 0.94)");
+    expect(drawerMaterial.background).toBe("rgba(30, 33, 40, 0.94)");
+    await expect(drawer.getByTestId("forge-icon-action").first()).toBeVisible();
     await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("complementary", { name: "插件" })).toHaveCount(0);
@@ -4651,6 +4855,26 @@ test.describe("InputBar", () => {
     await expect(page.getByRole("menuitemradio", { name: /DeepSeek V4 Flash 1M/ })).toHaveAttribute("aria-checked", "true");
   });
 
+  test("composer capability rows use semantic icon tones", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const composer = page.getByTestId("composer-lane");
+    await composer.getByRole("button", { name: "常用请求" }).click();
+    await expect(page.getByTestId("composer-command-menu").getByTestId("forge-icon-action").first()).toBeVisible();
+
+    await page.keyboard.press("Escape");
+    const textarea = page.locator("textarea");
+    await textarea.fill("@src");
+    await expect(page.getByTestId("composer-command-menu").getByTestId("forge-icon-context").first()).toBeVisible();
+  });
+
   test("composer command menu supports keyboard selection", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -4701,6 +4925,28 @@ test.describe("InputBar", () => {
     await expect(composer.getByText("src/App.tsx", { exact: true })).toBeVisible();
     await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
     await expect(textarea).toHaveValue("");
+  });
+
+  test("composer file search is scoped to the active session project", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const textarea = page.locator("textarea");
+    await expect(textarea).toBeVisible();
+
+    await textarea.fill("@src");
+    await expect(page.getByTestId("composer-command-menu")).toBeVisible();
+
+    const args = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastSearchWorkspaceFilesArgs;
+    });
+
+    expect(args).toMatchObject({ query: "src", sessionId });
   });
 
   test("composer keeps active tool state quiet and explicit", async ({ page }) => {

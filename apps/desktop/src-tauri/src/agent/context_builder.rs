@@ -5,7 +5,10 @@ use crate::agent::turn_state::{AgentTurnContextSnapshot, AgentTurnContextSource}
 pub(crate) enum ContextSourceKind {
     SystemPrompt,
     PreviousSummary,
+    SelectedFiles,
     MemoryContext,
+    ProjectRecords,
+    ConnectorContext,
     History,
 }
 
@@ -14,7 +17,10 @@ impl ContextSourceKind {
         match self {
             ContextSourceKind::SystemPrompt => "system_prompt",
             ContextSourceKind::PreviousSummary => "previous_summary",
+            ContextSourceKind::SelectedFiles => "selected_files",
             ContextSourceKind::MemoryContext => "memory_context",
+            ContextSourceKind::ProjectRecords => "project_records",
+            ContextSourceKind::ConnectorContext => "connector_context",
             ContextSourceKind::History => "history",
         }
     }
@@ -57,6 +63,30 @@ impl ContextSource {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HiddenContextPart {
+    pub(crate) kind: ContextSourceKind,
+    pub(crate) label: String,
+    pub(crate) reason: String,
+    pub(crate) content: String,
+}
+
+impl HiddenContextPart {
+    pub(crate) fn new(
+        kind: ContextSourceKind,
+        label: impl Into<String>,
+        reason: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+            reason: reason.into(),
+            content: content.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ContextBundle {
     pub(crate) messages: Vec<ChatMessage>,
@@ -90,6 +120,7 @@ pub(crate) struct ContextBuilder {
     messages: Vec<ChatMessage>,
     summary: Option<String>,
     memory_context: Option<String>,
+    hidden_contexts: Vec<HiddenContextPart>,
     system_prompt: String,
     context_window_tokens: Option<u32>,
 }
@@ -111,6 +142,25 @@ impl ContextBuilder {
 
     pub(crate) fn memory_context(mut self, memory_context: Option<String>) -> Self {
         self.memory_context = memory_context.filter(|context| !context.trim().is_empty());
+        self
+    }
+
+    pub(crate) fn hidden_context(mut self, hidden_context: HiddenContextPart) -> Self {
+        if !hidden_context.content.trim().is_empty() {
+            self.hidden_contexts.push(hidden_context);
+        }
+        self
+    }
+
+    pub(crate) fn hidden_contexts(
+        mut self,
+        hidden_contexts: impl IntoIterator<Item = HiddenContextPart>,
+    ) -> Self {
+        self.hidden_contexts.extend(
+            hidden_contexts
+                .into_iter()
+                .filter(|context| !context.content.trim().is_empty()),
+        );
         self
     }
 
@@ -162,6 +212,29 @@ impl ContextBuilder {
                 Some(estimate_text_tokens_u32(content)),
                 true,
             ));
+        }
+
+        let hidden_blocks = self
+            .hidden_contexts
+            .into_iter()
+            .filter_map(|part| {
+                let content = part.content.trim();
+                if content.is_empty() {
+                    return None;
+                }
+                let block = format!("## {}\n\n{}", part.label.trim(), content);
+                sources.push(ContextSource::new(
+                    part.kind,
+                    part.label,
+                    part.reason,
+                    Some(estimate_text_tokens_u32(&block)),
+                    true,
+                ));
+                Some(block)
+            })
+            .collect::<Vec<_>>();
+        if !hidden_blocks.is_empty() {
+            messages.push(ChatMessage::user(&hidden_blocks.join("\n\n---\n\n")));
         }
 
         let history_tokens = estimate_messages_tokens_u32(&self.messages);
@@ -228,7 +301,7 @@ fn to_u32_tokens(value: usize) -> u32 {
 mod tests {
     use crate::adapters::base::ChatMessage;
 
-    use super::{ContextBuilder, ContextSourceKind};
+    use super::{ContextBuilder, ContextSourceKind, HiddenContextPart};
 
     fn history() -> Vec<ChatMessage> {
         vec![ChatMessage::user("hello")]
@@ -285,6 +358,58 @@ mod tests {
         );
         assert_eq!(text(&bundle.messages[1]), "wiki notes");
         assert_eq!(text(&bundle.messages[2]), "hello");
+    }
+
+    #[test]
+    fn hidden_context_parts_keep_distinct_source_kinds() {
+        let bundle = ContextBuilder::new()
+            .messages(history())
+            .hidden_context(HiddenContextPart::new(
+                ContextSourceKind::SelectedFiles,
+                "Selected files",
+                "Files selected by the user for this turn",
+                "file body",
+            ))
+            .hidden_context(HiddenContextPart::new(
+                ContextSourceKind::MemoryContext,
+                "Saved background",
+                "Relevant saved user/project background",
+                "memory body",
+            ))
+            .hidden_context(HiddenContextPart::new(
+                ContextSourceKind::ProjectRecords,
+                "Project records",
+                "Relevant project notes selected for this turn",
+                "record body",
+            ))
+            .hidden_context(HiddenContextPart::new(
+                ContextSourceKind::ConnectorContext,
+                "Connector context",
+                "Connector material selected by the user",
+                "connector body",
+            ))
+            .build();
+
+        let injected_context_messages = bundle
+            .messages
+            .iter()
+            .filter(|message| {
+                message.role == "user"
+                    && text(message).contains("file body")
+                    && text(message).contains("connector body")
+            })
+            .count();
+        let source_kinds = bundle
+            .sources
+            .iter()
+            .map(|source| source.kind.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(injected_context_messages, 1);
+        assert!(source_kinds.contains(&"selected_files"));
+        assert!(source_kinds.contains(&"memory_context"));
+        assert!(source_kinds.contains(&"project_records"));
+        assert!(source_kinds.contains(&"connector_context"));
     }
 
     #[test]

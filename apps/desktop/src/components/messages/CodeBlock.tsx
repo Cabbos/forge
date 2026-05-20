@@ -86,7 +86,7 @@ export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
           aria-label={copied ? "已复制" : "复制代码"}
           title={copied ? "已复制" : "复制代码"}
         >
-          {copied ? <Check className="size-3.5 text-[#4A9E6B]" /> : <Copy className="size-3.5" />}
+          {copied ? <Check className="size-3.5" style={{ color: "var(--forge-icon-safety)" }} /> : <Copy className="size-3.5" />}
         </button>
       </figcaption>
       <div className="code-scroll max-h-[520px] overflow-auto">

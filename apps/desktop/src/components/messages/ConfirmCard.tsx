@@ -6,6 +6,7 @@ import { confirmResponse } from "@/lib/tauri";
 import { parseWriteBoundary } from "@/lib/write-boundary";
 import { useStore } from "@/store";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
 
 function BoundaryLine({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -96,15 +97,16 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
 
   if (boundary) {
     const riskColor = boundary.riskTone === "high"
-      ? "#F87171"
+      ? "var(--destructive)"
       : boundary.riskTone === "medium"
-        ? "#D4A853"
-        : "#6EE7B7";
+        ? "var(--primary)"
+        : "var(--forge-icon-safety)";
+    const iconTone = boundary.riskTone === "high" ? "danger" : "safety";
 
     return (
       <MessagePanel tone={boundary.riskTone === "high" ? "danger" : "warning"}>
         <MessagePanelHeader
-          icon={<ShieldAlert className="size-4" style={{ color: "#D4A853" }} />}
+          icon={<ForgeIcon icon={ShieldAlert} tone={iconTone} />}
           title={boundary.title}
           meta="继续前确认改动范围"
         />
@@ -153,7 +155,7 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
   return (
     <MessagePanel tone="warning">
       <MessagePanelHeader
-        icon={<ShieldAlert className="size-4" style={{ color: "#D4A853" }} />}
+        icon={<ForgeIcon icon={ShieldAlert} tone="safety" />}
         title={kindLabel}
         meta="继续前需要你确认"
       />

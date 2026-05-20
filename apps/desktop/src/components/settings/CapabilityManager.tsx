@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
-import { Circle, Clock3, FileSearch, Puzzle, Search, Server } from "lucide-react";
+import { Search } from "lucide-react";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { capabilityIconMeta } from "@/lib/capability-icons";
 import { cn } from "@/lib/utils";
 import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
 
@@ -9,35 +10,6 @@ export type CapabilityTab = "skills" | "mcp" | "hooks";
 interface CapabilityManagerProps {
   initialTab?: CapabilityTab;
   className?: string;
-}
-
-function getColor(kind: string): string {
-  switch (kind) {
-    case "skill":
-    case "tool":
-      return "#5B9BD5";
-    case "mcp_server":
-      return "#4A9E6B";
-    case "hook":
-      return "#D47777";
-    default:
-      return "#AEB4BF";
-  }
-}
-
-function getIcon(kind: string): ReactNode {
-  switch (kind) {
-    case "skill":
-      return <Puzzle className="size-3.5" />;
-    case "tool":
-      return <FileSearch className="size-3.5" />;
-    case "mcp_server":
-      return <Server className="size-3.5" />;
-    case "hook":
-      return <Clock3 className="size-3.5" />;
-    default:
-      return <Circle className="size-3.5" />;
-  }
 }
 
 export function CapabilityManager({ initialTab = "skills", className }: CapabilityManagerProps = {}) {
@@ -155,27 +127,30 @@ function SkillsContent({ search }: { search: string }) {
           <span className="text-[10px] text-muted-foreground/50">{skills.length} 个</span>
         </div>
         <div className="flex flex-col gap-1.5">
-          {filterFn(skills).map((s) => (
-            <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
-              <span className="flex h-6 w-6 items-center justify-center rounded text-xs" style={{ background: `${getColor(s.kind)}18`, color: getColor(s.kind) }}>{getIcon(s.kind)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium text-foreground">{s.name}</div>
-                <div className="truncate text-[10px] text-muted-foreground">{s.description}</div>
+          {filterFn(skills).map((s) => {
+            const meta = capabilityIconMeta(s.kind);
+            return (
+              <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
+                <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={s.enabled === false} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium text-foreground">{s.name}</div>
+                  <div className="truncate text-[10px] text-muted-foreground">{s.description}</div>
+                </div>
+                <button
+                  onClick={() => handleToggle(s.id, s.enabled === false)}
+                  aria-pressed={s.enabled !== false}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                    s.enabled !== false
+                      ? "bg-emerald-500/10 text-emerald-400"
+                      : "bg-muted/20 text-muted-foreground",
+                  )}
+                >
+                  {s.enabled !== false ? "已启用" : "已停用"}
+                </button>
               </div>
-              <button
-                onClick={() => handleToggle(s.id, s.enabled === false)}
-                aria-pressed={s.enabled !== false}
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                  s.enabled !== false
-                    ? "bg-emerald-500/10 text-emerald-400"
-                    : "bg-muted/20 text-muted-foreground",
-                )}
-              >
-                {s.enabled !== false ? "已启用" : "已停用"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
           {filterFn(skills).length === 0 && (
             <div className="forge-empty px-2.5 py-3 text-[11px]">
               没有匹配的已安装插件
@@ -222,23 +197,26 @@ function MCPContent({ search }: { search: string }) {
 
   return (
     <section className="flex flex-col gap-0.5">
-      {filtered.map((s) => (
-        <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
-          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: s.enabled !== false ? "#4A9E6B" : "#8C93A0" }} />
-          <span className="flex-1 font-mono text-xs text-foreground">{s.name}</span>
-          <button
-            aria-pressed={s.enabled !== false}
-            className="relative h-4 w-7 flex-shrink-0 rounded-full transition-colors"
-            style={{ background: s.enabled !== false ? "#D4A853" : "var(--secondary)" }}
-            onClick={() => handleToggle(s.id, s.enabled === false)}
-          >
-            <div
-              className="absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all"
-              style={{ left: s.enabled !== false ? "14px" : "2px" }}
-            />
-          </button>
-        </div>
-      ))}
+      {filtered.map((s) => {
+        const meta = capabilityIconMeta(s.kind);
+        return (
+          <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
+            <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={s.enabled === false} />
+            <span className="flex-1 font-mono text-xs text-foreground">{s.name}</span>
+            <button
+              aria-pressed={s.enabled !== false}
+              className="relative h-4 w-7 flex-shrink-0 rounded-full transition-colors"
+              style={{ background: s.enabled !== false ? "#D4A853" : "var(--secondary)" }}
+              onClick={() => handleToggle(s.id, s.enabled === false)}
+            >
+              <div
+                className="absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all"
+                style={{ left: s.enabled !== false ? "14px" : "2px" }}
+              />
+            </button>
+          </div>
+        );
+      })}
       {filtered.length === 0 && (
         <div className="forge-empty px-2.5 py-3 text-[11px]">
           没有匹配的连接
@@ -276,26 +254,30 @@ function HooksContent({ search }: { search: string }) {
 
   return (
     <section className="flex flex-col gap-1.5">
-      {filtered.map((h) => (
-        <div key={h.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
-          <div className="flex-1">
-            <div className="text-xs font-medium text-foreground">{h.name}</div>
-            <div className="font-mono text-[10px] text-muted-foreground">{h.version || h.source}</div>
+      {filtered.map((h) => {
+        const meta = capabilityIconMeta(h.kind);
+        return (
+          <div key={h.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
+            <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={h.enabled === false} />
+            <div className="flex-1">
+              <div className="text-xs font-medium text-foreground">{h.name}</div>
+              <div className="font-mono text-[10px] text-muted-foreground">{h.version || h.source}</div>
+            </div>
+            <button
+              onClick={() => handleToggle(h.id, h.enabled === false)}
+              aria-pressed={h.enabled !== false}
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                h.enabled !== false
+                  ? "bg-emerald-500/10 text-emerald-400"
+                  : "bg-muted/20 text-muted-foreground",
+              )}
+            >
+              {h.enabled !== false ? "已启用" : "已停用"}
+            </button>
           </div>
-          <button
-            onClick={() => handleToggle(h.id, h.enabled === false)}
-            aria-pressed={h.enabled !== false}
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[10px] font-medium",
-              h.enabled !== false
-                ? "bg-emerald-500/10 text-emerald-400"
-                : "bg-muted/20 text-muted-foreground",
-            )}
-          >
-            {h.enabled !== false ? "已启用" : "已停用"}
-          </button>
-        </div>
-      ))}
+        );
+      })}
       {filtered.length === 0 && (
         <div className="forge-empty px-2.5 py-3 text-[11px]">
           没有匹配的自动化

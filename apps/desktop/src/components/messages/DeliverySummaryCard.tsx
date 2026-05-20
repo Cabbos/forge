@@ -4,6 +4,8 @@ import { useState } from "react";
 import type { BlockState, DeliverySummary } from "@/lib/protocol";
 import { useStore } from "@/store";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import type { ForgeIconTone } from "@/lib/capability-icons";
 import { workspaceNameFromPath } from "@/lib/workspaces";
 import { deriveDeliveryCardView, type DeliverySummaryItem } from "@/lib/turn-closure";
 
@@ -31,7 +33,7 @@ export function DeliverySummaryCard({ block, sessionId }: { block: BlockState; s
   return (
     <MessagePanel tone={messagePanelTone(view.tone)}>
       <MessagePanelHeader
-        icon={<ClipboardCheck className="size-4" style={{ color: toneColor(view.tone) }} />}
+        icon={<ForgeIcon icon={ClipboardCheck} tone={deliveryTone(view.tone)} />}
         title="本轮交付"
         meta={projectName ? <span>{projectName}</span> : null}
       />
@@ -54,7 +56,7 @@ export function DeliverySummaryCard({ block, sessionId }: { block: BlockState; s
             color: loaded ? "#D4A853" : "var(--muted-foreground)",
           }}
         >
-          {loaded ? <ArrowUpRight className="size-3" /> : primaryIcon(view.primaryAction.action)}
+          {loaded ? <ForgeIcon icon={ArrowUpRight} tone="action" contained={false} className="size-3.5" /> : primaryIcon(view.primaryAction.action)}
           {loaded ? "已放入" : view.primaryAction.label}
         </button>
       </div>
@@ -77,28 +79,28 @@ function SummaryItem({ item }: { item: DeliverySummaryItem }) {
 function itemIcon(item: DeliverySummaryItem): ReactNode {
   switch (item.kind) {
     case "preview":
-      return <ExternalLink className="size-3.5" style={{ color: "#5B9BD5" }} />;
+      return <ForgeIcon icon={ExternalLink} tone="context" contained={false} className="size-3.5" />;
     case "checkpoint":
-      return <ShieldCheck className="size-3.5" style={{ color: "#D4A853" }} />;
+      return <ForgeIcon icon={ShieldCheck} tone="safety" contained={false} className="size-3.5" />;
     case "verification":
-      return <ClipboardCheck className="size-3.5" style={{ color: "#8BA4F9" }} />;
+      return <ForgeIcon icon={ClipboardCheck} tone="safety" contained={false} className="size-3.5" />;
     case "record":
-      return <FileText className="size-3.5" style={{ color: "#4A9E6B" }} />;
+      return <ForgeIcon icon={FileText} tone="context" contained={false} className="size-3.5" />;
     case "next":
-      return <ClipboardCheck className="size-3.5" style={{ color: "#4A9E6B" }} />;
+      return <ForgeIcon icon={ClipboardCheck} tone="reasoning" contained={false} className="size-3.5" />;
   }
 }
 
 function primaryIcon(action: string): ReactNode {
-  if (action === "open_records") return <FileText className="size-3" />;
-  if (action === "continue_fix") return <ArrowUpRight className="size-3" />;
-  return <ShieldCheck className="size-3" />;
+  if (action === "open_records") return <ForgeIcon icon={FileText} tone="context" contained={false} className="size-3.5" />;
+  if (action === "continue_fix") return <ForgeIcon icon={ArrowUpRight} tone="action" contained={false} className="size-3.5" />;
+  return <ForgeIcon icon={ShieldCheck} tone="safety" contained={false} className="size-3.5" />;
 }
 
-function toneColor(tone: string) {
-  if (tone === "danger") return "#E06C75";
-  if (tone === "warning") return "#D4A853";
-  return "#4A9E6B";
+function deliveryTone(tone: string): ForgeIconTone {
+  if (tone === "danger") return "danger";
+  if (tone === "warning") return "safety";
+  return "safety";
 }
 
 function messagePanelTone(tone: string): "danger" | "warning" | "default" {

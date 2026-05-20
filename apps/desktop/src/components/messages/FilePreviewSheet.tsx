@@ -115,7 +115,7 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
                   key={line.number}
                   className="grid min-w-full grid-cols-[64px_minmax(0,1fr)] border-l-2"
                   style={{
-                    borderLeftColor: line.is_target ? "#5B9BD5" : "transparent",
+                    borderLeftColor: line.is_target ? "var(--forge-icon-context)" : "transparent",
                     background: line.is_target ? "rgba(91,155,213,0.13)" : "transparent",
                   }}
                 >

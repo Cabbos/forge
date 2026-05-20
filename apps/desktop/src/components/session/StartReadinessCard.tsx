@@ -14,6 +14,8 @@ import {
 import { getProviderLabel } from "@/lib/providers";
 import { deriveStartReadiness, type ReadinessAction } from "@/lib/start-readiness";
 import { cn } from "@/lib/utils";
+import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import type { ForgeIconTone } from "@/lib/capability-icons";
 
 interface StartReadinessCardProps {
   sessionId?: string;
@@ -162,7 +164,7 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
               const RowIcon = readinessIconFor(row.label);
               return (
                 <div key={row.label} data-testid="start-readiness-row" className="forge-readiness-row" data-tone={row.tone}>
-                  <RowIcon className="size-3.5 shrink-0" />
+                  <ForgeIcon icon={RowIcon} tone={readinessIconTone(row.label, row.tone)} contained={false} className="size-3.5" />
                   <div className="min-w-0 flex-1">
                     <div className="forge-readiness-row-label">{row.label}</div>
                     <div className="forge-readiness-row-value">{row.value}</div>
@@ -197,4 +199,12 @@ function readinessIconFor(label: string) {
   if (label === "预览") return Play;
   if (label === "检查点") return GitBranch;
   return Circle;
+}
+
+function readinessIconTone(label: string, tone: string): ForgeIconTone {
+  if (tone === "blocked") return "danger";
+  if (label === "当前项目") return "context";
+  if (label === "模型密钥" || label === "检查点") return "safety";
+  if (label === "预览") return "action";
+  return tone === "ready" ? "safety" : "neutral";
 }

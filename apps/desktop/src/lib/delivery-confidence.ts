@@ -26,13 +26,13 @@ export function getDeliveryConfidence(
   const preview = previewRunning
     ? {
         label: "预览运行中",
-        color: "#4A9E6B",
+        color: "var(--forge-icon-safety)",
         action: runtime?.can_open ? "open_preview" as const : null,
         actionLabel: runtime?.can_open ? "打开预览" : null,
       }
     : {
         label: runtime ? "预览未运行" : "预览状态未知",
-        color: "#8C93A0",
+        color: "var(--forge-icon-neutral)",
         action: runtime?.can_start ? "start_preview" as const : null,
         actionLabel: runtime?.can_start ? "启动预览" : null,
       };
@@ -41,7 +41,7 @@ export function getDeliveryConfidence(
   const checkpointView = hasCheckpoint
     ? {
         label: checkpoint?.dirty ? "已有检查点，当前有改动" : "检查点已就绪",
-        color: "#D4A853",
+        color: "var(--primary)",
         action: null,
         actionLabel: null,
       }
@@ -51,7 +51,7 @@ export function getDeliveryConfidence(
             ? "还没有检查点"
             : "当前不是 Git 项目"
           : "检查点状态未知",
-        color: "#8C93A0",
+        color: "var(--forge-icon-neutral)",
         action: checkpoint?.is_git_repo ? "create_checkpoint" as const : null,
         actionLabel: checkpoint?.is_git_repo ? "创建检查点" : null,
       };

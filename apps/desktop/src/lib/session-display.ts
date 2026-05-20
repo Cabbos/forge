@@ -23,17 +23,17 @@ export function getSessionTitle(session?: SessionState | null): string {
 }
 
 export function getSessionStatus(session?: SessionState | null) {
-  if (!session) return { label: "未开始", color: "#8C93A0" };
-  if (session.streaming) return { label: "响应中", color: "#D4A853" };
+  if (!session) return { label: "未开始", color: "var(--forge-icon-neutral)" };
+  if (session.streaming) return { label: "响应中", color: "var(--primary)" };
   switch (session.status) {
     case "running":
-      return { label: "运行中", color: "#4A9E6B" };
+      return { label: "运行中", color: "var(--forge-icon-safety)" };
     case "error":
-      return { label: "异常", color: "#D47777" };
+      return { label: "异常", color: "var(--destructive)" };
     case "stopped":
-      return { label: "已停止", color: "#8C93A0" };
+      return { label: "已停止", color: "var(--forge-icon-neutral)" };
     default:
-      return { label: "未知", color: "#8C93A0" };
+      return { label: "未知", color: "var(--forge-icon-neutral)" };
   }
 }
 
