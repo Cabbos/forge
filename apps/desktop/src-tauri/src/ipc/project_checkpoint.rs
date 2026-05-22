@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::State;
 
+use crate::ipc::workspace::resolve_bound_working_dir;
 use crate::state::AppState;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
@@ -49,15 +50,26 @@ pub struct ProjectCheckpointStatus {
 pub async fn get_project_checkpoint_status(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectCheckpointStatus, String> {
-    project_checkpoint_status_for_session(&state, session_id.as_deref()).await
+    project_checkpoint_status_for_request(&state, session_id.as_deref(), working_dir.as_deref())
+        .await
 }
 
 pub(crate) async fn project_checkpoint_status_for_session(
     state: &Arc<AppState>,
     session_id: Option<&str>,
 ) -> Result<ProjectCheckpointStatus, String> {
-    let working_dir = checkpoint_working_dir(state, session_id).await;
+    let working_dir = resolve_bound_working_dir(state, session_id, None).await?;
+    checkpoint_status(&working_dir)
+}
+
+async fn project_checkpoint_status_for_request(
+    state: &Arc<AppState>,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+) -> Result<ProjectCheckpointStatus, String> {
+    let working_dir = checkpoint_working_dir_or_explicit(state, session_id, working_dir).await?;
     checkpoint_status(&working_dir)
 }
 
@@ -65,8 +77,11 @@ pub(crate) async fn project_checkpoint_status_for_session(
 pub async fn create_project_checkpoint(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectCheckpointStatus, String> {
-    let working_dir = checkpoint_working_dir(&state, session_id.as_deref()).await;
+    let working_dir =
+        checkpoint_working_dir_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     if !is_git_repo(&working_dir) {
         return Ok(ProjectCheckpointStatus {
             working_dir: working_dir.to_string_lossy().to_string(),
@@ -99,8 +114,11 @@ pub async fn create_project_checkpoint(
 pub async fn restore_project_checkpoint(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectCheckpointStatus, String> {
-    let working_dir = checkpoint_working_dir(&state, session_id.as_deref()).await;
+    let working_dir =
+        checkpoint_working_dir_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     let checkpoint =
         load_checkpoint(&working_dir)?.ok_or_else(|| "还没有可回退的检查点".to_string())?;
 
@@ -112,16 +130,12 @@ pub async fn restore_project_checkpoint(
     checkpoint_status(&working_dir)
 }
 
-async fn checkpoint_working_dir(
+async fn checkpoint_working_dir_or_explicit(
     state: &Arc<AppState>,
     session_id: Option<&str>,
-) -> std::path::PathBuf {
-    if let Some(session_id) = session_id {
-        if let Some(session) = state.sessions.read().await.get(session_id).cloned() {
-            return session.harness.working_dir.clone();
-        }
-    }
-    state.harness.working_dir.clone()
+    working_dir: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    resolve_bound_working_dir(state, session_id, working_dir).await
 }
 
 fn checkpoint_status(working_dir: &std::path::Path) -> Result<ProjectCheckpointStatus, String> {
@@ -409,6 +423,22 @@ mod tests {
             error.contains("符号链接"),
             "expected symlink rejection, got {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_request_requires_session_or_explicit_workspace() {
+        let workspace = temp_project("missing-workspace-binding");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(workspace.clone()),
+        )));
+
+        let error = checkpoint_working_dir_or_explicit(&state, None, None)
+            .await
+            .expect_err("missing workspace should fail");
+
+        assert!(error.contains("工作空间"));
+
+        let _ = fs::remove_dir_all(workspace);
     }
 
     fn sample_checkpoint() -> StoredProjectCheckpoint {

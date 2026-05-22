@@ -7,6 +7,10 @@ export interface FirstLoopDraft {
   createdAt: number;
 }
 
+export interface FirstLoopPromptContext {
+  workingDir?: string | null;
+}
+
 export const FIRST_LOOP_STANDARD = "可见、可点、可继续";
 
 const FIRST_LOOP_SIGNALS = ["小工具", "番茄钟", "记账", "文案"];
@@ -41,7 +45,7 @@ export function deriveFirstLoopDraft(sessionId: string, text: string): FirstLoop
   };
 }
 
-export function buildFirstLoopAgentPrompt(text: string): string {
+export function buildFirstLoopAgentPrompt(text: string, context: FirstLoopPromptContext = {}): string {
   if (isIdeaShapingRequest(text)) {
     return buildIdeaShapingPrompt(text);
   }
@@ -51,9 +55,24 @@ export function buildFirstLoopAgentPrompt(text: string): string {
     text,
     "",
     "Forge 第一闭环提示：请优先推进到一个可预览的第一版。",
+    ...buildExecutionEnvelope(context),
+    "默认交付物：本地网页小工具；优先 React/Vite 可预览应用，除非当前项目明显不是前端项目。",
+    "少问问题：用途、核心操作、展示内容已经足够时，直接做第一版；只有无法开工时才问一个确认。",
     `第一版标准：${FIRST_LOOP_STANDARD}。`,
     "不需要完整、漂亮、可发布；需要有真实界面、一个核心动作、清楚说明当前范围和下一步。",
+    "保持专业能力隐形：可以使用文件搜索、diff、验证、预览和检查点，但不要要求用户先理解 /、@、MCP、hooks 或 skills。",
   ].join("\n");
+}
+
+function buildExecutionEnvelope(context: FirstLoopPromptContext): string[] {
+  const workingDir = collapseWhitespace(context.workingDir ?? "");
+  if (!workingDir) return [];
+
+  return [
+    `当前工作空间：${workingDir}`,
+    "所有文件搜索、修改、预览、检查点和验证都必须限定在当前工作空间。",
+    "如果预览端口来自其他项目，必须提示冲突，不要打开别的项目。",
+  ];
 }
 
 function buildIdeaShapingPrompt(text: string): string {
@@ -66,6 +85,7 @@ function buildIdeaShapingPrompt(text: string): string {
     "2. 提出一个小的第一版，只包含 2-3 个核心动作。",
     "3. 明确列出先不做的内容。",
     "4. 最后只问一个轻确认问题，例如“我先按这个第一版开始，可以吗？”",
+    "默认把交付物收敛为本地网页小工具，优先 React/Vite 可预览第一版。",
     "不要执行命令，不要修改文件，不要要求用户先理解项目、工作区或代码仓库。",
     "如果用户说“可以 / ok / 就这样 / 直接做”，再进入制作。",
   ].join("\n");

@@ -14,15 +14,16 @@ pub mod write_boundary;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
-use tokio::sync::RwLock;
+use tauri::AppHandle;
+use tokio::sync::{Notify, RwLock};
 
-use crate::adapters::anthropic::ToolDef;
+use crate::adapters::base::ToolDef;
 use crate::executor::ToolExecutor;
 use crate::harness::capabilities::hooks::BuiltinHookCap;
 use crate::harness::capabilities::mcp::McpServerCap;
 use crate::harness::capabilities::skills::SkillLoaderCap;
 use crate::harness::capabilities::tools;
+use crate::harness::capability::{CapabilityDispatchReport, Event};
 use crate::harness::db::Database;
 use crate::harness::registry::CapabilityRegistry;
 use crate::harness::write_boundary::build_write_boundary;
@@ -243,12 +244,19 @@ impl Harness {
         parts.push(format!(
             "You are a coding agent running in a desktop app with filesystem and shell access. Provider: {}.\n\
             You have tools for reading/writing files, running shell commands, searching code, and web access.\n\
+            当前工作空间：{}\n\
+            所有文件搜索、修改、命令、预览、检查点和验证都必须限定在当前工作空间。\n\
+            不要把 Forge 应用源码当作目标项目，除非当前工作空间本身就是 Forge 源码。\n\
+            如果预览端口属于其他项目，必须报告端口冲突，不要打开或复用别的项目预览。\n\
             Default to reading files before editing, making targeted edits, and verifying with build/test commands.\n\
             Answer in the user's language by default.\n\
             When asked what was discussed before, summarize only the retained visible conversation and clearly say when older context is unavailable; do not invent.\n\
+            当用户询问“之前说了什么”“我们聊到哪里了”或类似连续性问题时，只基于可见对话记录、历史摘要和已保存背景回答。\n\
+            如果没有相关记录，就直接说明“我这边没有足够上下文”，不要编造之前的讨论。\n\
             For small-tool creation requests, prefer a previewable first version: visible, clickable, and continueable.\n\
             Keep the first version scoped; explain what is included, what is not included yet, and the next step.",
-            provider
+            provider,
+            working_dir.display()
         ));
 
         // Project context (CLAUDE.md etc.)
@@ -386,6 +394,7 @@ impl Harness {
         &self,
         public_tool_name: &str,
         input: serde_json::Value,
+        cancel: Option<Arc<Notify>>,
     ) -> Option<String> {
         if !mcp::is_public_tool_name(public_tool_name) {
             return None;
@@ -393,13 +402,109 @@ impl Harness {
         for resolved in self.resolved_mcp_tools().await {
             if resolved.public_name == public_tool_name {
                 return Some(
-                    mcp::call_stdio_tool(&resolved.server, &resolved.tool.name, input)
-                        .await
-                        .unwrap_or_else(|err| format!("Error: {err}")),
+                    mcp::call_stdio_tool_with_cancel(
+                        &resolved.server,
+                        &resolved.tool.name,
+                        input,
+                        cancel,
+                    )
+                    .await
+                    .unwrap_or_else(|err| format!("Error: {err}")),
                 );
             }
         }
         Some(format!("Unknown MCP tool: {public_tool_name}"))
+    }
+
+    pub async fn ensure_public_mcp_tool_available(
+        &self,
+        public_tool_name: &str,
+    ) -> Result<(), String> {
+        if !mcp::is_public_tool_name(public_tool_name) {
+            return Ok(());
+        }
+        let Some((server_segment, _tool_segment)) = mcp::public_tool_segments(public_tool_name)
+        else {
+            return Err(format!(
+                "连接工具名无效：{public_tool_name}。工具名应类似 mcp__连接__工具。"
+            ));
+        };
+        let Some(server) = self
+            .mcp_servers
+            .iter()
+            .find(|server| mcp_server_public_segment(&server.id) == server_segment)
+        else {
+            return Err(format!(
+                "连接工具不可用：{public_tool_name}。连接 {server_segment} 未配置，请先添加或启用对应连接。"
+            ));
+        };
+        if !self.capability_registry.is_mcp_enabled(&server.id) {
+            return Err(format!(
+                "连接工具不可用：{public_tool_name}。连接 {} 未启用，请先启用后再调用。",
+                server.name
+            ));
+        }
+        if self
+            .resolved_mcp_tools()
+            .await
+            .iter()
+            .any(|tool| tool.public_name == public_tool_name)
+        {
+            return Ok(());
+        }
+
+        Err(format!(
+            "连接工具不可用：{public_tool_name}。连接 {} 已启用，但没有发现这个工具；可能是连接服务启动失败，或工具名已经变化。",
+            server.name
+        ))
+    }
+
+    pub async fn dispatch_pre_tool_event(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        input: serde_json::Value,
+    ) -> CapabilityDispatchReport {
+        self.capability_registry
+            .dispatch_event(&Event::PreTool {
+                session_id: session_id.to_string(),
+                tool_name: tool_name.to_string(),
+                input,
+            })
+            .await
+    }
+
+    pub async fn dispatch_post_tool_event(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        result: String,
+    ) -> CapabilityDispatchReport {
+        self.capability_registry
+            .dispatch_event(&Event::PostTool {
+                session_id: session_id.to_string(),
+                tool_name: tool_name.to_string(),
+                result,
+            })
+            .await
+    }
+
+    pub async fn dispatch_session_start_event(&self, session_id: &str) -> CapabilityDispatchReport {
+        self.capability_registry
+            .dispatch_event(&Event::SessionStart {
+                session_id: session_id.to_string(),
+                working_dir: self.working_dir.to_string_lossy().to_string(),
+            })
+            .await
+    }
+
+    pub async fn dispatch_session_stop_event(&self, session_id: &str) -> CapabilityDispatchReport {
+        self.permission_gate.clear_session(session_id).await;
+        self.capability_registry
+            .dispatch_event(&Event::SessionStop {
+                session_id: session_id.to_string(),
+            })
+            .await
     }
 
     async fn resolved_mcp_tools(&self) -> Vec<ResolvedMcpTool> {
@@ -478,11 +583,34 @@ impl Harness {
         app_handle: &AppHandle,
         tool_block_id: Option<&str>,
     ) -> String {
+        self.execute_tool_with_block_id_and_cancel(
+            session_id,
+            tool_name,
+            tool_input,
+            app_handle,
+            tool_block_id,
+            None,
+        )
+        .await
+    }
+
+    pub async fn execute_tool_with_block_id_and_cancel(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &serde_json::Value,
+        app_handle: &AppHandle,
+        tool_block_id: Option<&str>,
+        cancel: Option<Arc<Notify>>,
+    ) -> String {
         if !self.capability_registry.is_tool_enabled(tool_name) {
             let result = format!("Tool disabled by capability settings: {}", tool_name);
             emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
             return result;
         }
+
+        self.dispatch_pre_tool_event(session_id, tool_name, tool_input.clone())
+            .await;
 
         // 1. Pre-tool hooks (can modify input or block)
         let modified_input = self
@@ -496,9 +624,18 @@ impl Harness {
             hooks::HookDecision::Block(reason) => {
                 let result = format!("Tool execution blocked by hook: {reason}");
                 emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
+                self.dispatch_post_tool_event(session_id, tool_name, result.clone())
+                    .await;
                 result
             }
             hooks::HookDecision::Proceed(input) => {
+                if let Err(result) = self.ensure_public_mcp_tool_available(tool_name).await {
+                    emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
+                    self.dispatch_post_tool_event(session_id, tool_name, result.clone())
+                        .await;
+                    return result;
+                }
+
                 // 2. Permission check — ask user if not pre-approved
                 match self
                     .permission_gate
@@ -508,6 +645,8 @@ impl Harness {
                     PermissionDecision::Allow => {}
                     PermissionDecision::Deny { reason } => {
                         emit_blocked_tool_result(session_id, tool_block_id, &reason, app_handle);
+                        self.dispatch_post_tool_event(session_id, tool_name, reason.clone())
+                            .await;
                         return reason;
                     }
                     PermissionDecision::Ask {
@@ -525,8 +664,8 @@ impl Harness {
                                 .await
                                 .insert(block_id.clone(), tx);
                         }
-                        let _ = app_handle.emit(
-                            "session-output",
+                        crate::transcript::emit_stream_event(
+                            app_handle,
                             crate::protocol::events::StreamEvent::ConfirmAsk {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
@@ -536,7 +675,28 @@ impl Harness {
                             },
                         );
                         // Wait 120s for user response
-                        let approved =
+                        let mut cancelled = false;
+                        let approved = if let Some(cancel) = cancel.clone() {
+                            tokio::select! {
+                                response = tokio::time::timeout(std::time::Duration::from_secs(120), rx) => {
+                                    match response {
+                                        Ok(Ok(true)) => {
+                                            if let Some(key) = remember_key {
+                                                self.permission_gate
+                                                    .approve_in_session(session_id, &key)
+                                                    .await;
+                                            }
+                                            true
+                                        }
+                                        _ => false,
+                                    }
+                                }
+                                _ = cancel.notified() => {
+                                    cancelled = true;
+                                    false
+                                }
+                            }
+                        } else {
                             match tokio::time::timeout(std::time::Duration::from_secs(120), rx)
                                 .await
                             {
@@ -549,16 +709,23 @@ impl Harness {
                                     true
                                 }
                                 _ => false,
-                            };
+                            }
+                        };
                         self.pending_confirms.write().await.remove(&block_id);
                         if !approved {
-                            let result = "Permission denied by user".to_string();
+                            let result = if cancelled {
+                                "Tool execution cancelled".to_string()
+                            } else {
+                                "Permission denied by user".to_string()
+                            };
                             emit_blocked_tool_result(
                                 session_id,
                                 tool_block_id,
                                 &result,
                                 app_handle,
                             );
+                            self.dispatch_post_tool_event(session_id, tool_name, result.clone())
+                                .await;
                             return result;
                         }
                     }
@@ -568,7 +735,7 @@ impl Harness {
                 if mcp::is_public_tool_name(tool_name) {
                     let started = std::time::Instant::now();
                     let result = self
-                        .call_public_mcp_tool(tool_name, input.clone())
+                        .call_public_mcp_tool(tool_name, input.clone(), cancel.clone())
                         .await
                         .unwrap_or_else(|| format!("Unknown MCP tool: {tool_name}"));
                     emit_tool_result(
@@ -580,17 +747,27 @@ impl Harness {
                         app_handle,
                     );
 
-                    return self
+                    let modified_result = self
                         .hook_engine
                         .run_post_tool_with_enabled(session_id, tool_name, &result, |hook| {
                             self.capability_registry.is_hook_enabled(hook)
                         })
                         .await;
+                    self.dispatch_post_tool_event(session_id, tool_name, modified_result.clone())
+                        .await;
+                    return modified_result;
                 }
 
                 let result = self
                     .tool_executor
-                    .execute(session_id, tool_name, &input, app_handle, tool_block_id)
+                    .execute_with_cancel(
+                        session_id,
+                        tool_name,
+                        &input,
+                        app_handle,
+                        tool_block_id,
+                        cancel,
+                    )
                     .await;
 
                 // 4. Post-tool hooks (can modify result)
@@ -599,6 +776,9 @@ impl Harness {
                     .run_post_tool_with_enabled(session_id, tool_name, &result, |hook| {
                         self.capability_registry.is_hook_enabled(hook)
                     })
+                    .await;
+
+                self.dispatch_post_tool_event(session_id, tool_name, modified_result.clone())
                     .await;
 
                 modified_result
@@ -616,6 +796,13 @@ fn format_mcp_tool_description(
     } else {
         format!("MCP connector {}: {}", server.name, tool.description)
     }
+}
+
+fn mcp_server_public_segment(server_id: &str) -> String {
+    let public_name = mcp::public_tool_name(server_id, "tool");
+    mcp::public_tool_segments(&public_name)
+        .map(|(server_segment, _)| server_segment.to_string())
+        .unwrap_or_else(|| server_id.to_string())
 }
 
 fn emit_blocked_tool_result(
@@ -638,8 +825,8 @@ fn emit_tool_result(
     let block_id = tool_block_id
         .map(str::to_string)
         .unwrap_or_else(|| crate::protocol::BlockId::new().to_string());
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        app_handle,
         crate::protocol::events::StreamEvent::ToolCallResult {
             session_id: session_id.to_string(),
             block_id,
@@ -663,4 +850,54 @@ pub fn read_project_context(working_dir: &std::path::Path) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Harness;
+
+    #[tokio::test]
+    async fn system_prompt_has_honest_conversation_recall_rule_for_chinese_users() {
+        let workspace = temp_workspace("honest-recall");
+        let harness = Harness::new(workspace.clone());
+
+        let prompt = harness
+            .build_system_prompt_for_request("deepseek", &workspace, Some("我们之前说了什么"))
+            .await;
+
+        assert!(prompt.contains("只基于可见对话记录、历史摘要和已保存背景回答"));
+        assert!(prompt.contains("如果没有相关记录，就直接说明“我这边没有足够上下文”"));
+        assert!(prompt.contains("不要编造之前的讨论"));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn system_prompt_injects_workspace_boundary_for_every_turn() {
+        let workspace = temp_workspace("workspace-boundary");
+        let harness = Harness::new(workspace.clone());
+
+        let prompt = harness
+            .build_system_prompt_for_request("deepseek", &workspace, Some("修一下页面"))
+            .await;
+
+        assert!(prompt.contains(&format!("当前工作空间：{}", workspace.display())));
+        assert!(
+            prompt.contains("所有文件搜索、修改、命令、预览、检查点和验证都必须限定在当前工作空间")
+        );
+        assert!(prompt.contains("不要把 Forge 应用源码当作目标项目"));
+        assert!(prompt.contains("如果预览端口属于其他项目，必须报告端口冲突"));
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    fn temp_workspace(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("forge-harness-{name}-{nanos}"));
+        std::fs::create_dir_all(&path).expect("workspace");
+        path
+    }
 }

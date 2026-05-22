@@ -104,7 +104,7 @@ export function HubPanel() {
     setProjectPath(activeWorkspace?.path ?? null);
     if (!open || !activeId) return;
 
-    getProjectRuntimeStatus(activeId)
+    getProjectRuntimeStatus(activeId, activeWorkspace?.path)
       .then((status) => {
         if (!cancelled) setProjectPath(status.working_dir || null);
       })

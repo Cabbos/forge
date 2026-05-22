@@ -32,6 +32,27 @@ pub struct SkillTool {
     pub input_schema: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct MatchedSkill {
+    pub skill: LoadedSkill,
+    pub reason: String,
+}
+
+impl MatchedSkill {
+    pub fn label(&self) -> String {
+        let reason = match self.reason.as_str() {
+            "always_on" => "常驻".to_string(),
+            "default" => "默认".to_string(),
+            reason if reason.starts_with("trigger:") => {
+                let triggers = reason.trim_start_matches("trigger:");
+                format!("触发：{triggers}")
+            }
+            other => other.to_string(),
+        };
+        format!("{}（{}）", self.skill.name, reason)
+    }
+}
+
 pub struct SkillLoader {
     skills: RwLock<Vec<LoadedSkill>>,
     /// Directories to scan for skills.
@@ -195,18 +216,26 @@ impl SkillLoader {
     }
 
     pub async fn enabled_skills_for_request(&self, request: &str) -> Vec<LoadedSkill> {
+        self.matched_skills_for_request(request)
+            .await
+            .into_iter()
+            .map(|matched| matched.skill)
+            .collect()
+    }
+
+    pub async fn matched_skills_for_request(&self, request: &str) -> Vec<MatchedSkill> {
         let request_lower = request.to_lowercase();
         self.skills
             .read()
             .await
             .iter()
             .filter(|skill| skill.enabled)
-            .filter(|skill| {
-                skill.always_on
-                    || skill.triggers.is_empty()
-                    || skill_matches_request(skill, &request_lower)
+            .filter_map(|skill| {
+                skill_match_reason(skill, &request_lower).map(|reason| MatchedSkill {
+                    skill: skill.clone(),
+                    reason,
+                })
             })
-            .cloned()
             .collect()
     }
 
@@ -313,9 +342,23 @@ fn parse_inline_string_list(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn skill_matches_request(skill: &LoadedSkill, request_lower: &str) -> bool {
-    skill
+fn skill_match_reason(skill: &LoadedSkill, request_lower: &str) -> Option<String> {
+    if skill.always_on {
+        return Some("always_on".to_string());
+    }
+    if skill.triggers.is_empty() {
+        return Some("default".to_string());
+    }
+
+    let matched_triggers = skill
         .triggers
         .iter()
-        .any(|trigger| request_lower.contains(&trigger.to_lowercase()))
+        .filter(|trigger| request_lower.contains(&trigger.to_lowercase()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if matched_triggers.is_empty() {
+        None
+    } else {
+        Some(format!("trigger:{}", matched_triggers.join(",")))
+    }
 }

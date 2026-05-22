@@ -1,0 +1,42 @@
+@layer components {
+  .forge-inspector {
+    width: var(--forge-inspector-width);
+    background: var(--forge-material-overlay);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-left: 1px solid var(--forge-material-border);
+    box-shadow: -18px 0 38px rgba(0, 0, 0, 0.14);
+  }
+
+  .forge-inspector-header {
+    display: flex;
+    min-height: var(--forge-titlebar-height);
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--forge-material-border);
+    padding: 0 0.75rem;
+  }
+
+  .forge-inspector-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--forge-inspector-gap);
+    padding: 0.75rem;
+  }
+
+  .forge-disclosure-row {
+    display: flex;
+    min-height: var(--forge-disclosure-row-height);
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-top: 1px solid var(--forge-material-border);
+    text-align: left;
+  }
+
+  .forge-disclosure-row:first-child {
+    border-top: 0;
+  }
+}

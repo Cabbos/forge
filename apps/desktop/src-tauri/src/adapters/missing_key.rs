@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tauri::Emitter;
 use tokio::sync::Notify;
 
 use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult};
@@ -58,8 +57,8 @@ impl AiAdapter for MissingKeyAdapter {
         app_handle: &tauri::AppHandle,
         _cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        let _ = app_handle.emit(
-            "session-output",
+        crate::transcript::emit_stream_event(
+            app_handle,
             StreamEvent::Error {
                 session_id: session_id.to_string(),
                 block_id: BlockId::new().to_string(),

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { BlockState } from "@/lib/protocol";
-import { FilePreviewSheet, type FileRef } from "@/components/messages/FilePreviewSheet";
+import { FilePreviewSheet } from "@/components/messages/FilePreviewSheet";
+import type { FileRef } from "@/components/messages/filePreviewTypes";
+import { MarkdownRenderer } from "@/components/messages/MarkdownRenderer";
 import { MessageCopyAction } from "@/components/messages/MessageCopyAction";
-import { MarkdownRenderer } from "@/components/messages/TextBlock";
 
 export function UserMessage({ block }: { block: BlockState }) {
   const [previewFileRef, setPreviewFileRef] = useState<FileRef | null>(null);

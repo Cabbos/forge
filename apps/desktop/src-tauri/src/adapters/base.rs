@@ -56,12 +56,159 @@ impl ChatMessage {
     }
 }
 
+/// Repair Anthropic-style tool_use/tool_result adjacency before provider requests.
+///
+/// Some providers reject any assistant `tool_use` that is not immediately followed by
+/// matching `tool_result` blocks. This guard turns interrupted turns into explicit
+/// synthetic error results so the next request can continue instead of failing with
+/// a provider-side 400.
+pub fn repair_tool_result_adjacency(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    let mut repaired = Vec::with_capacity(messages.len());
+    let mut iter = messages.iter().cloned().peekable();
+
+    while let Some(message) = iter.next() {
+        let pending_tool_uses = assistant_tool_uses(&message);
+        if pending_tool_uses.is_empty() {
+            repaired.push(message);
+            continue;
+        }
+
+        repaired.push(message);
+
+        let Some(next_message) = iter.peek_mut() else {
+            repaired.push(synthetic_tool_result_message(&pending_tool_uses));
+            continue;
+        };
+
+        if next_message.role == "user" && message_has_tool_results(next_message) {
+            append_missing_tool_results(next_message, &pending_tool_uses);
+        } else {
+            repaired.push(synthetic_tool_result_message(&pending_tool_uses));
+        }
+    }
+
+    repaired
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingToolUse {
+    id: String,
+    name: String,
+}
+
+fn assistant_tool_uses(message: &ChatMessage) -> Vec<PendingToolUse> {
+    if message.role != "assistant" {
+        return Vec::new();
+    }
+    message
+        .content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(|value| value.as_str()) == Some("tool_use"))
+        .filter_map(|block| {
+            let id = block
+                .get("id")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .trim();
+            if id.is_empty() {
+                return None;
+            }
+            Some(PendingToolUse {
+                id: id.to_string(),
+                name: block
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown_tool")
+                    .to_string(),
+            })
+        })
+        .collect()
+}
+
+fn message_has_tool_results(message: &ChatMessage) -> bool {
+    message.content.as_array().is_some_and(|blocks| {
+        blocks
+            .iter()
+            .any(|block| block.get("type").and_then(|value| value.as_str()) == Some("tool_result"))
+    })
+}
+
+fn append_missing_tool_results(message: &mut ChatMessage, pending_tool_uses: &[PendingToolUse]) {
+    let Some(blocks) = message.content.as_array_mut() else {
+        return;
+    };
+    let existing = blocks
+        .iter()
+        .filter(|block| block.get("type").and_then(|value| value.as_str()) == Some("tool_result"))
+        .filter_map(|block| block.get("tool_use_id").and_then(|value| value.as_str()))
+        .collect::<std::collections::HashSet<_>>();
+
+    let missing = pending_tool_uses
+        .iter()
+        .filter(|tool_use| !existing.contains(tool_use.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    blocks.extend(synthetic_tool_result_blocks(
+        &missing,
+        "previous_tool_call_interrupted",
+    ));
+}
+
+fn synthetic_tool_result_message(pending_tool_uses: &[PendingToolUse]) -> ChatMessage {
+    ChatMessage {
+        role: "user".to_string(),
+        content: serde_json::Value::Array(synthetic_tool_result_blocks(
+            pending_tool_uses,
+            "previous_tool_call_interrupted",
+        )),
+    }
+}
+
+fn synthetic_tool_result_blocks(
+    pending_tool_uses: &[PendingToolUse],
+    reason: &str,
+) -> Vec<serde_json::Value> {
+    pending_tool_uses
+        .iter()
+        .map(|tool_use| {
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": tool_use.id,
+                "content": format!(
+                    "Tool result unavailable: {reason}. The previous tool call was interrupted before Forge could capture its result. Tool: '{}'. Re-check the current workspace state before continuing.",
+                    tool_use.name
+                ),
+                "is_error": true
+            })
+        })
+        .collect()
+}
+
 /// A tool call extracted from the streaming response.
 #[derive(Debug, Clone)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub input: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl ToolDef {
+    pub fn new(name: &str, description: &str, input_schema: serde_json::Value) -> Self {
+        Self {
+            name: name.to_string(),
+            description: description.to_string(),
+            input_schema,
+        }
+    }
 }
 
 /// Result of a streaming call — assistant content + any tool calls to execute.
@@ -117,5 +264,101 @@ pub trait AiAdapter: Send + Sync {
     /// True when this adapter is a placeholder waiting for user credentials.
     fn is_missing_api_key_adapter(&self) -> bool {
         false
+    }
+
+    /// Replace external tools, such as MCP tools discovered after the session was created.
+    fn set_external_tools(&self, _tools: Vec<ToolDef>) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_result_ids(message: &ChatMessage) -> Vec<String> {
+        message
+            .content
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|block| {
+                block.get("type").and_then(|value| value.as_str()) == Some("tool_result")
+            })
+            .filter_map(|block| block.get("tool_use_id").and_then(|value| value.as_str()))
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn repair_tool_result_adjacency_inserts_missing_result_before_follow_up() {
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": {"path": "src/App.tsx"}
+            }])),
+            ChatMessage::user("继续"),
+        ];
+
+        let repaired = repair_tool_result_adjacency(&messages);
+
+        assert_eq!(repaired.len(), 3);
+        assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1"]);
+        assert_eq!(
+            repaired[2].content,
+            serde_json::Value::String("继续".to_string())
+        );
+    }
+
+    #[test]
+    fn repair_tool_result_adjacency_fills_partial_result_message() {
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": {"path": "src/App.tsx"}
+                },
+                {
+                    "type": "tool_use",
+                    "id": "call_2",
+                    "name": "read_file",
+                    "input": {"path": "src/main.tsx"}
+                }
+            ])),
+            ChatMessage {
+                role: "user".to_string(),
+                content: serde_json::json!([{
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "ok"
+                }]),
+            },
+        ];
+
+        let repaired = repair_tool_result_adjacency(&messages);
+
+        assert_eq!(repaired.len(), 2);
+        assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1", "call_2"]);
+    }
+
+    #[test]
+    fn repair_tool_result_adjacency_preserves_valid_history() {
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": {"path": "src/App.tsx"}
+            }])),
+            ChatMessage::tool_result("call_1", "ok"),
+            ChatMessage::user("继续"),
+        ];
+
+        let repaired = repair_tool_result_adjacency(&messages);
+
+        assert_eq!(repaired.len(), 3);
+        assert_eq!(repaired[1].content, messages[1].content);
     }
 }

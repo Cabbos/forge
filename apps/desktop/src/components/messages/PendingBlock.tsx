@@ -1,3 +1,5 @@
+import { ProcessStatusDots } from "./ProcessStatusDots";
+
 export function PendingBlock() {
   return (
     <div
@@ -7,11 +9,7 @@ export function PendingBlock() {
       aria-live="polite"
       className="forge-status-row"
     >
-      <span data-testid="pending-dots" className="forge-status-dots">
-        <span className="forge-status-dot" />
-        <span className="forge-status-dot" style={{ animationDelay: "0.18s" }} />
-        <span className="forge-status-dot" style={{ animationDelay: "0.36s" }} />
-      </span>
+      <ProcessStatusDots testId="pending-dots" />
       <span>正在组织回答</span>
     </div>
   );

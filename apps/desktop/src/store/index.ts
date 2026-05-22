@@ -14,8 +14,15 @@ import type {
   DeliverySummary,
 } from "../lib/protocol";
 import type { FirstLoopDraft } from "../lib/first-loop";
-import type { McpContextSelection } from "../lib/tauri";
+import type { McpContextSelection, SessionInfo } from "../lib/tauri";
 import type { Workspace } from "../lib/workspaces";
+import {
+  hasTauriRuntime,
+  listSessions,
+  loadAppMetadata,
+  loadSessionTranscript,
+  saveAppMetadata,
+} from "../lib/tauri";
 import {
   normalizeWorkspacePath,
   sortWorkspaces,
@@ -112,7 +119,29 @@ interface PersistedSession {
   deliverySummary?: DeliverySummary | null;
 }
 
+function persistedSessionFromBackend(info: SessionInfo): PersistedSession {
+  return {
+    id: info.id,
+    agentType: info.provider,
+    model: info.model,
+    workingDir: info.working_dir ?? null,
+    workspaceId: info.working_dir ?? null,
+    createdAt: info.created_at_ms ?? null,
+    updatedAt: info.updated_at_ms ?? info.created_at_ms ?? null,
+    contextWindowTokens: info.context_window_tokens ?? null,
+    status: coerceSessionStatus(info.status),
+    workflowState: info.latest_workflow ?? null,
+    deliverySummary: info.latest_delivery ?? null,
+  };
+}
+
+function coerceSessionStatus(status: string): SessionState["status"] {
+  if (status === "running" || status === "error") return status;
+  return "stopped";
+}
+
 function persistWorkspaces(workspaces: Map<string, Workspace>, activeWorkspaceId: string | null) {
+  if (hasTauriRuntime()) return Promise.resolve([]);
   return Promise.all([
     idbSet(WORKSPACES_KEY, sortWorkspaces(workspaces.values())).catch(() => {}),
     activeWorkspaceId
@@ -127,6 +156,7 @@ function persistSessions(
   workflowBySession: Map<string, WorkflowState>,
   deliverySummaryBySession: Map<string, DeliverySummary>,
 ) {
+  if (hasTauriRuntime()) return Promise.resolve();
   const data: PersistedSession[] = [];
   sessions.forEach((s) => {
     data.push({
@@ -146,6 +176,30 @@ function persistSessions(
   return idbSet(PERSIST_KEY, data).catch(() => {});
 }
 
+function persistBackendAppMetadata(snapshot: {
+  workspaces: Map<string, Workspace>;
+  activeWorkspaceId: string | null;
+  activeSessionId: string | null;
+  selectedProvider: ProviderId;
+  selectedModel: string;
+}) {
+  if (!hasTauriRuntime()) return Promise.resolve();
+  return saveAppMetadata({
+    workspaces: sortWorkspaces(snapshot.workspaces.values()).map((workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      path: workspace.path,
+      lastOpenedAt: workspace.lastOpenedAt,
+    })),
+    activeWorkspaceId: snapshot.activeWorkspaceId,
+    activeSessionId: snapshot.activeSessionId,
+    selectedProvider: snapshot.selectedProvider,
+    selectedModel: snapshot.selectedModel,
+  }).catch((error) => {
+    console.warn("[app-metadata] failed to persist metadata", error);
+  });
+}
+
 function cappedBlocks(blocks: BlockState[]) {
   return blocks.length > MAX_PERSISTED_BLOCKS
     ? blocks.slice(blocks.length - MAX_PERSISTED_BLOCKS)
@@ -163,6 +217,7 @@ function clearPendingBlockPersist(sessionId: string) {
 // Save blocks for a session to IndexedDB (capped at MAX_PERSISTED_BLOCKS).
 // Streaming can produce dozens of chunks per second, so debounce disk writes.
 function persistBlocks(sessionId: string, blocks: BlockState[]) {
+  if (hasTauriRuntime()) return;
   const snapshot = cappedBlocks(blocks);
   clearPendingBlockPersist(sessionId);
   blockPersistTimers.set(sessionId, setTimeout(() => {
@@ -173,17 +228,136 @@ function persistBlocks(sessionId: string, blocks: BlockState[]) {
 
 function persistBlocksNow(sessionId: string, blocks: BlockState[]) {
   clearPendingBlockPersist(sessionId);
+  if (hasTauriRuntime()) return Promise.resolve();
   return idbSet(BLOCKS_PREFIX + sessionId, cappedBlocks(blocks)).catch(() => {});
 }
 
 // Load blocks for a session from IndexedDB
 async function loadBlocks(sessionId: string): Promise<BlockState[]> {
   try {
+    if (hasTauriRuntime()) {
+      const transcriptEvents = await loadSessionTranscript(sessionId).catch(() => []);
+      if (transcriptEvents.length > 0) return transcriptEventsToBlocks(transcriptEvents);
+    }
     const blocks = await idbGet<BlockState[]>(BLOCKS_PREFIX + sessionId);
     return blocks ?? [];
   } catch {
     return [];
   }
+}
+
+function transcriptEventsToBlocks(events: StreamEvent[]): BlockState[] {
+  let blocks: BlockState[] = [];
+  for (const event of events) {
+    blocks = applyTranscriptEventToBlocks(blocks, event);
+  }
+  return blocks.filter((block) => block.event_type !== "pending");
+}
+
+function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent): BlockState[] {
+  const event_type = event.event_type;
+
+  if (event_type === "delivery_summary" && isSameAsLastDeliveryBlock(blocks, event.summary)) {
+    return blocks;
+  }
+
+  if (event_type === "error") {
+    return [
+      ...blocks,
+      {
+        block_id: event.block_id,
+        event_type: "error",
+        content: event.message,
+        metadata: { code: event.code },
+        isComplete: true,
+      },
+    ];
+  }
+
+  if (event_type === "tool_call_result") {
+    const next = [...blocks];
+    let existingIdx = next.findIndex((block) =>
+      (block.event_type === "tool_call" || block.event_type === "shell" || block.event_type === "thinking") &&
+      block.block_id === event.block_id
+    );
+    if (existingIdx < 0) {
+      existingIdx = [...next].reverse().findIndex((block) =>
+        (block.event_type === "tool_call" || block.event_type === "shell" || block.event_type === "thinking") &&
+        (!block.content || block.content === "")
+      );
+      if (existingIdx >= 0) existingIdx = next.length - 1 - existingIdx;
+    }
+    if (existingIdx >= 0) {
+      next[existingIdx] = {
+        ...next[existingIdx],
+        content: event.result,
+        isComplete: true,
+        metadata: {
+          ...next[existingIdx].metadata,
+          is_error: event.is_error,
+          duration_ms: event.duration_ms,
+        },
+      };
+      return next;
+    }
+    return [
+      ...next,
+      {
+        block_id: event.block_id,
+        event_type: "tool_call",
+        content: event.result,
+        isComplete: true,
+        metadata: {
+          is_error: event.is_error,
+          duration_ms: event.duration_ms,
+          tool_name: "Tool",
+        },
+      },
+    ];
+  }
+
+  if (event_type === "thinking_chunk" || event_type === "text_chunk" || event_type === "shell_output") {
+    const next = [...blocks];
+    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+    const blockType = event_type === "thinking_chunk" ? "thinking" : event_type === "shell_output" ? "shell" : "text";
+    if (existingIdx >= 0) {
+      next[existingIdx] = {
+        ...next[existingIdx],
+        content: next[existingIdx].content + event.content,
+      };
+      return next;
+    }
+    return [
+      ...next,
+      {
+        block_id: event.block_id,
+        event_type: blockType,
+        content: event.content,
+        isComplete: false,
+        metadata: {},
+      },
+    ];
+  }
+
+  if (event_type === "thinking_end" || event_type === "text_end" || event_type === "shell_end" || event_type === "tool_call_end") {
+    const next = [...blocks];
+    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+    if (existingIdx >= 0) {
+      if (event_type !== "tool_call_end") {
+        next[existingIdx] = { ...next[existingIdx], isComplete: true };
+      }
+      if (event_type === "shell_end") {
+        next[existingIdx] = {
+          ...next[existingIdx],
+          metadata: { ...next[existingIdx].metadata, exit_code: event.exit_code },
+        };
+      }
+    }
+    return next;
+  }
+
+  const block = eventToBlock(event);
+  return block ? [...blocks, block] : blocks;
 }
 
 function latestDeliverySummaryFromBlocks(blocks: BlockState[]): DeliverySummary | null {
@@ -286,24 +460,59 @@ export const useStore = create<AppStore>((set, get) => ({
       ? currentModel
       : getDefaultModel(selectedProvider);
     set({ selectedProvider, selectedModel });
-    idbSet(PROVIDER_KEY, selectedProvider).catch(() => {});
-    idbSet(MODEL_KEY, selectedModel).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces: get().workspaces,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeSessionId: get().activeSessionId,
+        selectedProvider,
+        selectedModel,
+      });
+    } else {
+      idbSet(PROVIDER_KEY, selectedProvider).catch(() => {});
+      idbSet(MODEL_KEY, selectedModel).catch(() => {});
+    }
   },
 
   setSelectedModel: (m) => {
     set({ selectedModel: m });
-    idbSet(MODEL_KEY, m).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces: get().workspaces,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeSessionId: get().activeSessionId,
+        selectedProvider: get().selectedProvider,
+        selectedModel: m,
+      });
+    } else {
+      idbSet(MODEL_KEY, m).catch(() => {});
+    }
   },
 
   hydrate: async () => {
     try {
-      const data = await idbGet<PersistedSession[]>(PERSIST_KEY);
-      const savedWorkspaces = await idbGet<Workspace[]>(WORKSPACES_KEY).catch(() => null);
-      const savedActiveWorkspaceId = await idbGet<string>(ACTIVE_WORKSPACE_KEY).catch(() => null);
+      const tauriRuntime = hasTauriRuntime();
+      const backendMetadata = tauriRuntime ? await loadAppMetadata().catch(() => null) : null;
+      const backendSessions = tauriRuntime ? await listSessions().catch(() => []) : [];
+      const data = tauriRuntime
+        ? backendSessions.map(persistedSessionFromBackend)
+        : await idbGet<PersistedSession[]>(PERSIST_KEY);
+      const savedWorkspaces = tauriRuntime
+        ? backendMetadata?.workspaces ?? null
+        : await idbGet<Workspace[]>(WORKSPACES_KEY).catch(() => null);
+      const savedActiveWorkspaceId = tauriRuntime
+        ? backendMetadata?.activeWorkspaceId ?? null
+        : await idbGet<string>(ACTIVE_WORKSPACE_KEY).catch(() => null);
       const savedTheme = await idbGet<string>("tui-theme").catch(() => null);
-      const savedProvider = await idbGet<string>(PROVIDER_KEY).catch(() => null);
-      const savedModel = await idbGet<string>(MODEL_KEY).catch(() => null);
-      const savedActiveSessionId = await idbGet<string>(ACTIVE_SESSION_KEY).catch(() => null);
+      const savedProvider = tauriRuntime
+        ? backendMetadata?.selectedProvider ?? null
+        : await idbGet<string>(PROVIDER_KEY).catch(() => null);
+      const savedModel = tauriRuntime
+        ? backendMetadata?.selectedModel ?? null
+        : await idbGet<string>(MODEL_KEY).catch(() => null);
+      const savedActiveSessionId = tauriRuntime
+        ? backendMetadata?.activeSessionId ?? null
+        : await idbGet<string>(ACTIVE_SESSION_KEY).catch(() => null);
       const selectedProvider = normalizeProviderId(savedProvider);
       const selectedModel = savedModel && modelBelongsToProvider(selectedProvider, savedModel)
         ? savedModel
@@ -317,6 +526,12 @@ export const useStore = create<AppStore>((set, get) => ({
         const legacyWorkspace = getLegacyWorkspace();
         if (legacyWorkspace) workspaces.set(legacyWorkspace.id, legacyWorkspace);
       }
+      (data ?? []).forEach((session) => {
+        const workspace = workspaceFromPath(session.workingDir ?? "", session.updatedAt ?? Date.now());
+        if (workspace && !workspaces.has(workspace.id)) {
+          workspaces.set(workspace.id, workspace);
+        }
+      });
       const sortedWorkspaceIds = sortWorkspaces(workspaces.values()).map((workspace) => workspace.id);
       const activeWorkspaceId = savedActiveWorkspaceId && workspaces.has(savedActiveWorkspaceId)
         ? savedActiveWorkspaceId
@@ -370,7 +585,27 @@ export const useStore = create<AppStore>((set, get) => ({
           selectedModel,
         });
         if (activeSessionId) {
-          idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+          if (tauriRuntime) {
+            persistBackendAppMetadata({
+              workspaces,
+              activeWorkspaceId,
+              activeSessionId,
+              selectedProvider,
+              selectedModel,
+            });
+          } else {
+            idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+          }
+        } else if (tauriRuntime) {
+          persistBackendAppMetadata({
+            workspaces,
+            activeWorkspaceId,
+            activeSessionId: null,
+            selectedProvider,
+            selectedModel,
+          });
+        } else {
+          idbDel(ACTIVE_SESSION_KEY).catch(() => {});
         }
         persistSessions(sessions, workflowBySession, deliverySummaryBySession);
         persistWorkspaces(workspaces, activeWorkspaceId);
@@ -383,7 +618,17 @@ export const useStore = create<AppStore>((set, get) => ({
           selectedProvider,
           selectedModel,
         });
-        idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+        if (tauriRuntime) {
+          persistBackendAppMetadata({
+            workspaces,
+            activeWorkspaceId,
+            activeSessionId: null,
+            selectedProvider,
+            selectedModel,
+          });
+        } else {
+          idbDel(ACTIVE_SESSION_KEY).catch(() => {});
+        }
         persistWorkspaces(workspaces, activeWorkspaceId);
       }
     } catch {
@@ -397,7 +642,15 @@ export const useStore = create<AppStore>((set, get) => ({
 
   setActiveSession: (id) => {
     set({ activeSessionId: id });
-    if (id) {
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces: get().workspaces,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeSessionId: id,
+        selectedProvider: get().selectedProvider,
+        selectedModel: get().selectedModel,
+      });
+    } else if (id) {
       idbSet(ACTIVE_SESSION_KEY, id).catch(() => {});
     } else {
       idbDel(ACTIVE_SESSION_KEY).catch(() => {});
@@ -413,10 +666,20 @@ export const useStore = create<AppStore>((set, get) => ({
       ? currentSessionId
       : scopedSessionIds[scopedSessionIds.length - 1] ?? null;
     set({ activeWorkspaceId, activeSessionId });
-    persistWorkspaces(workspaces, activeWorkspaceId);
-    if (activeSessionId) {
-      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces,
+        activeWorkspaceId,
+        activeSessionId,
+        selectedProvider: get().selectedProvider,
+        selectedModel: get().selectedModel,
+      });
     } else {
+      persistWorkspaces(workspaces, activeWorkspaceId);
+    }
+    if (!hasTauriRuntime() && activeSessionId) {
+      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    } else if (!hasTauriRuntime()) {
       idbDel(ACTIVE_SESSION_KEY).catch(() => {});
     }
   },
@@ -434,10 +697,20 @@ export const useStore = create<AppStore>((set, get) => ({
     const scopedSessionIds = workspaceSessionIds(get().sessions, nextWorkspace.id);
     const activeSessionId = scopedSessionIds[scopedSessionIds.length - 1] ?? null;
     set({ workspaces, activeWorkspaceId: nextWorkspace.id, activeSessionId });
-    persistWorkspaces(workspaces, nextWorkspace.id);
-    if (activeSessionId) {
-      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces,
+        activeWorkspaceId: nextWorkspace.id,
+        activeSessionId,
+        selectedProvider: get().selectedProvider,
+        selectedModel: get().selectedModel,
+      });
     } else {
+      persistWorkspaces(workspaces, nextWorkspace.id);
+    }
+    if (!hasTauriRuntime() && activeSessionId) {
+      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    } else if (!hasTauriRuntime()) {
       idbDel(ACTIVE_SESSION_KEY).catch(() => {});
     }
   },
@@ -449,10 +722,20 @@ export const useStore = create<AppStore>((set, get) => ({
     const scopedSessionIds = workspaceSessionIds(get().sessions, nextWorkspaceId);
     const activeSessionId = scopedSessionIds[scopedSessionIds.length - 1] ?? null;
     set({ workspaces, activeWorkspaceId: nextWorkspaceId, activeSessionId });
-    persistWorkspaces(workspaces, nextWorkspaceId);
-    if (activeSessionId) {
-      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces,
+        activeWorkspaceId: nextWorkspaceId,
+        activeSessionId,
+        selectedProvider: get().selectedProvider,
+        selectedModel: get().selectedModel,
+      });
     } else {
+      persistWorkspaces(workspaces, nextWorkspaceId);
+    }
+    if (!hasTauriRuntime() && activeSessionId) {
+      idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {});
+    } else if (!hasTauriRuntime()) {
       idbDel(ACTIVE_SESSION_KEY).catch(() => {});
     }
   },
@@ -540,8 +823,18 @@ export const useStore = create<AppStore>((set, get) => ({
     });
     set({ sessions, workspaces, activeWorkspaceId: workspaceId, activeSessionId: id });
     persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
-    persistWorkspaces(workspaces, workspaceId);
-    idbSet(ACTIVE_SESSION_KEY, id).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces,
+        activeWorkspaceId: workspaceId,
+        activeSessionId: id,
+        selectedProvider: get().selectedProvider,
+        selectedModel: get().selectedModel,
+      });
+    } else {
+      persistWorkspaces(workspaces, workspaceId);
+      idbSet(ACTIVE_SESSION_KEY, id).catch(() => {});
+    }
   },
 
   removeSession: (id) => {
@@ -585,13 +878,23 @@ export const useStore = create<AppStore>((set, get) => ({
     });
     clearPendingBlockPersist(id);
     // Await both to prevent races with async persist from other actions
-    Promise.all([
-      persistSessions(sessions, workflowBySession, deliverySummaryBySession),
-      idbDel(BLOCKS_PREFIX + id).catch(() => {}),
-      activeSessionId
-        ? idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {})
-        : idbDel(ACTIVE_SESSION_KEY).catch(() => {}),
-    ]).catch(() => {});
+    if (hasTauriRuntime()) {
+      persistBackendAppMetadata({
+        workspaces: get().workspaces,
+        activeWorkspaceId: get().activeWorkspaceId,
+        activeSessionId,
+        selectedProvider: get().selectedProvider,
+        selectedModel: get().selectedModel,
+      });
+    } else {
+      Promise.all([
+        persistSessions(sessions, workflowBySession, deliverySummaryBySession),
+        idbDel(BLOCKS_PREFIX + id).catch(() => {}),
+        activeSessionId
+          ? idbSet(ACTIVE_SESSION_KEY, activeSessionId).catch(() => {})
+          : idbDel(ACTIVE_SESSION_KEY).catch(() => {}),
+      ]).catch(() => {});
+    }
   },
 
   setWorkflowState: (sessionId, workflow) => {
@@ -641,9 +944,10 @@ export const useStore = create<AppStore>((set, get) => ({
     const blocks = [...session.blocks];
     // Remove any stale pending blocks
     const filtered = blocks.filter(b => b.event_type !== "pending");
+    const blockId = crypto.randomUUID();
     // Add user message
     filtered.push({
-      block_id: crypto.randomUUID(),
+      block_id: blockId,
       event_type: "user_message",
       content: text,
       isComplete: true,
@@ -987,6 +1291,13 @@ function eventToBlock(event: StreamEvent): BlockState | null {
   };
 
   switch (event.event_type) {
+    case "user_message":
+      return {
+        ...base,
+        event_type: "user_message",
+        content: event.content,
+        isComplete: true,
+      };
     case "thinking_start":
       return { ...base, event_type: "thinking", content: "", metadata: {} };
     case "text_start":

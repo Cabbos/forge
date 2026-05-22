@@ -23,6 +23,7 @@ export function getDeliveryConfidence(
   checkpoint: ProjectCheckpointStatus | null,
 ): DeliveryConfidence {
   const previewRunning = runtime?.running ?? false;
+  const previewBlocked = Boolean(runtime?.message.includes("已被其他项目占用"));
   const preview = previewRunning
     ? {
         label: "预览运行中",
@@ -31,8 +32,8 @@ export function getDeliveryConfidence(
         actionLabel: runtime?.can_open ? "打开预览" : null,
       }
     : {
-        label: runtime ? "预览未运行" : "预览状态未知",
-        color: "var(--forge-icon-neutral)",
+        label: previewBlocked ? "预览端口被占用" : runtime ? "预览未运行" : "预览状态未知",
+        color: previewBlocked ? "var(--forge-icon-action)" : "var(--forge-icon-neutral)",
         action: runtime?.can_start ? "start_preview" as const : null,
         actionLabel: runtime?.can_start ? "启动预览" : null,
       };

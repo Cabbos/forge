@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod harness {
-    use forge::harness::capability::{CapabilityKind, CapabilityMetadata};
+    use forge::harness::capability::{
+        Capability, CapabilityKind, CapabilityMetadata, Event, EventType,
+    };
     use forge::harness::db::Database;
     use forge::harness::hooks::{
         FileSystemAuditHook, Hook, HookDecision, HookEngine, HookTrigger, LoggingHook,
@@ -10,7 +12,7 @@ mod harness {
     use forge::harness::skills::SkillLoader;
     use forge::harness::write_boundary::{build_write_boundary, WriteBoundaryRisk};
     use forge::harness::Harness;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     fn unique_temp_workspace(prefix: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -21,6 +23,86 @@ mod harness {
             std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    struct RecordingCapability {
+        events: Arc<Mutex<Vec<String>>>,
+        meta: CapabilityMetadata,
+    }
+
+    impl RecordingCapability {
+        fn new(events: Arc<Mutex<Vec<String>>>) -> Self {
+            Self {
+                events,
+                meta: CapabilityMetadata {
+                    id: "test:recorder".to_string(),
+                    name: "Test Recorder".to_string(),
+                    description: "Records harness events in tests".to_string(),
+                    version: "1.0.0".to_string(),
+                    source: "test".to_string(),
+                    kind: CapabilityKind::Tool,
+                },
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Capability for RecordingCapability {
+        fn id(&self) -> &str {
+            &self.meta.id
+        }
+
+        fn metadata(&self) -> &CapabilityMetadata {
+            &self.meta
+        }
+
+        fn enabled(&self) -> bool {
+            true
+        }
+
+        fn set_enabled(&mut self, _enabled: bool) {}
+
+        fn subscribed_events(&self) -> Vec<EventType> {
+            vec![
+                EventType::SessionStart,
+                EventType::SessionStop,
+                EventType::PreTool,
+                EventType::PostTool,
+                EventType::CapabilityChanged,
+            ]
+        }
+
+        async fn on_event(&self, event: &Event) -> Result<(), String> {
+            let label = match event {
+                Event::PreTool {
+                    session_id,
+                    tool_name,
+                    input,
+                } => format!(
+                    "pre:{session_id}:{tool_name}:{}",
+                    input
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                ),
+                Event::PostTool {
+                    session_id,
+                    tool_name,
+                    result,
+                } => format!("post:{session_id}:{tool_name}:{result}"),
+                Event::CapabilityChanged {
+                    capability_id,
+                    action,
+                } => format!("changed:{capability_id}:{action}"),
+                Event::SessionStart {
+                    session_id,
+                    working_dir,
+                } => format!("start:{session_id}:{working_dir}"),
+                Event::SessionStop { session_id } => format!("stop:{session_id}"),
+            };
+            self.events.lock().unwrap().push(label);
+            Ok(())
+        }
     }
 
     // ═══ PermissionGate Tests ═══
@@ -400,6 +482,97 @@ mod harness {
     }
 
     #[tokio::test]
+    async fn test_harness_dispatches_tool_lifecycle_events_to_capabilities() {
+        let workspace = unique_temp_workspace("forge-capability-events");
+        let harness = Harness::new(workspace.clone());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        harness
+            .capability_registry
+            .register(Box::new(RecordingCapability::new(events.clone())));
+
+        let pre_report = harness
+            .dispatch_pre_tool_event(
+                "session-1",
+                "read_file",
+                serde_json::json!({"path": "src/main.rs"}),
+            )
+            .await;
+        let post_report = harness
+            .dispatch_post_tool_event("session-1", "read_file", "ok".to_string())
+            .await;
+
+        assert!(pre_report.handled_by.contains(&"test:recorder".to_string()));
+        assert!(pre_report.errors.is_empty());
+        assert_eq!(post_report.handled_by, vec!["test:recorder".to_string()]);
+        assert!(post_report.errors.is_empty());
+        assert_eq!(
+            events.lock().unwrap().clone(),
+            vec![
+                "pre:session-1:read_file:src/main.rs".to_string(),
+                "post:session-1:read_file:ok".to_string(),
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_harness_dispatches_session_lifecycle_events_to_capabilities() {
+        let workspace = unique_temp_workspace("forge-session-lifecycle-events");
+        let harness = Harness::new(workspace.clone());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        harness
+            .capability_registry
+            .register(Box::new(RecordingCapability::new(events.clone())));
+
+        let start_report = harness.dispatch_session_start_event("session-1").await;
+        let stop_report = harness.dispatch_session_stop_event("session-1").await;
+
+        assert_eq!(
+            start_report.handled_by,
+            vec!["skill-loader", "test:recorder"]
+        );
+        assert!(start_report.errors.is_empty());
+        assert_eq!(stop_report.handled_by, vec!["test:recorder"]);
+        assert!(stop_report.errors.is_empty());
+        assert_eq!(
+            events.lock().unwrap().clone(),
+            vec![
+                format!("start:session-1:{}", workspace.display()),
+                "stop:session-1".to_string(),
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_capability_toggle_dispatches_changed_event_report() {
+        let workspace = unique_temp_workspace("forge-capability-toggle-events");
+        let harness = Harness::new(workspace.clone());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        harness
+            .capability_registry
+            .register(Box::new(RecordingCapability::new(events.clone())));
+
+        let report = harness
+            .capability_registry
+            .toggle_with_event("hook:fs-audit", false)
+            .await
+            .expect("toggle capability");
+
+        assert_eq!(report.event_type, EventType::CapabilityChanged);
+        assert!(report.handled_by.contains(&"test:recorder".to_string()));
+        assert!(report.errors.is_empty());
+        assert_eq!(
+            events.lock().unwrap().clone(),
+            vec!["changed:hook:fs-audit:disabled".to_string()]
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
     async fn test_skill_loader_selects_skills_by_request_triggers() {
         let workspace = unique_temp_workspace("forge-skill-router");
         let legacy_dir = workspace.join("skills").join("general-guidance");
@@ -447,6 +620,101 @@ Use this skill when shaping customer follow-up tools.
         let unrelated = loader.enabled_skills_for_request("帮我做收支记录").await;
         assert_eq!(unrelated.len(), 1);
         assert_eq!(unrelated[0].id, "general-guidance");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_skill_loader_explains_why_skills_match_request() {
+        let workspace = unique_temp_workspace("forge-skill-router-reasons");
+        let always_dir = workspace.join("skills").join("always-guide");
+        std::fs::create_dir_all(&always_dir).unwrap();
+        std::fs::write(
+            always_dir.join("SKILL.md"),
+            r#"---
+name: always-guide
+description: Always included.
+always_on: true
+---
+
+Always guide the agent.
+"#,
+        )
+        .unwrap();
+
+        let skill_dir = workspace.join("skills").join("customer-followup");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: customer-followup
+description: Helps shape customer follow-up tools.
+triggers: ["客户", "跟进"]
+---
+
+Use this skill when shaping customer follow-up tools.
+"#,
+        )
+        .unwrap();
+
+        let loader = SkillLoader::new_for_workspace(&workspace);
+        loader.scan_all().await;
+
+        let selected = loader
+            .matched_skills_for_request("我想做个能记录客户并提醒跟进的小工具")
+            .await;
+        let mut labels = selected
+            .iter()
+            .map(|selection| format!("{}:{}", selection.skill.id, selection.reason))
+            .collect::<Vec<_>>();
+        labels.sort_unstable();
+
+        assert_eq!(
+            labels,
+            vec![
+                "always-guide:always_on".to_string(),
+                "customer-followup:trigger:客户,跟进".to_string(),
+            ]
+        );
+        assert!(selected.iter().any(|selection| {
+            selection.label() == "customer-followup（触发：客户,跟进）"
+        }));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_skill_loader_matches_slash_action_intent_text() {
+        let workspace = unique_temp_workspace("forge-slash-skill-router");
+        let skill_dir = workspace.join("skills").join("fix-flow");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: fix-flow
+description: Helps diagnose and repair broken local app behavior.
+triggers: ["排查并修复"]
+---
+
+先定位根因，再做小范围修复，最后运行相关验证。
+"#,
+        )
+        .unwrap();
+
+        let loader = SkillLoader::new_for_workspace(&workspace);
+        loader.scan_all().await;
+
+        let selected = loader
+            .enabled_skills_for_request(
+                "按钮没有反应\n\nSelected slash command: /fix\n\nAction intent: 排查并修复用户描述的问题。",
+            )
+            .await;
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "fix-flow");
+
+        let unrelated = loader.enabled_skills_for_request("解释一下这个组件").await;
+        assert!(unrelated.is_empty());
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -1205,11 +1473,156 @@ for await (const line of rl) {
             .call_public_mcp_tool(
                 "mcp__fixture__echo_text",
                 serde_json::json!({"text": "hello"}),
+                None,
             )
             .await
             .expect("public MCP tool result");
 
         assert_eq!(result, "Echo: hello");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_harness_cancels_public_mcp_tool_call() {
+        let workspace = unique_temp_workspace("forge-mcp-public-cancel");
+        let script = workspace.join("mcp-public-cancel-server.mjs");
+        std::fs::write(
+            &script,
+            r#"
+import readline from "node:readline";
+
+const rl = readline.createInterface({ input: process.stdin });
+for await (const line of rl) {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "fixture", version: "0.1.0" }
+      }
+    }));
+  } else if (request.method === "tools/list") {
+    console.log(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        tools: [{
+          name: "slow.tool",
+          description: "Never responds quickly",
+          inputSchema: { type: "object" }
+        }]
+      }
+    }));
+  } else if (request.method === "tools/call") {
+    setTimeout(() => {
+      console.log(JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { content: [{ type: "text", text: "late" }] }
+      }));
+    }, 5000);
+  }
+}
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(workspace.join(".forge")).unwrap();
+        std::fs::write(
+            workspace.join(".forge").join("mcp.json"),
+            format!(
+                r#"{{
+  "servers": {{
+    "fixture": {{
+      "name": "Fixture",
+      "command": "node",
+      "args": [{}]
+    }}
+  }}
+}}"#,
+                serde_json::to_string(&script.to_string_lossy().to_string()).unwrap()
+            ),
+        )
+        .unwrap();
+
+        let harness = Arc::new(Harness::new(workspace.clone()));
+        let tools = harness.external_mcp_tool_definitions().await;
+        assert_eq!(tools.len(), 1);
+
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        let cancel_for_task = cancel.clone();
+        let harness_for_task = harness.clone();
+        let task = tokio::spawn(async move {
+            harness_for_task
+                .call_public_mcp_tool(
+                    "mcp__fixture__slow_tool",
+                    serde_json::json!({}),
+                    Some(cancel_for_task),
+                )
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        cancel.notify_waiters();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("cancel should finish promptly")
+            .expect("join task")
+            .expect("public MCP tool result");
+
+        assert_eq!(result, "Error: MCP tool call cancelled");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_harness_rejects_unavailable_public_mcp_tool_before_permission() {
+        let workspace = unique_temp_workspace("forge-mcp-unavailable-tool");
+        let harness = Harness::new(workspace.clone());
+
+        let status = harness
+            .ensure_public_mcp_tool_available("mcp__missing__search")
+            .await;
+
+        assert!(status.is_err());
+        assert!(status.unwrap_err().contains("连接工具不可用"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn test_harness_explains_disabled_public_mcp_server_before_permission() {
+        let workspace = unique_temp_workspace("forge-mcp-disabled-tool");
+        let forge_dir = workspace.join(".forge");
+        std::fs::create_dir_all(&forge_dir).unwrap();
+        std::fs::write(
+            forge_dir.join("mcp.json"),
+            r#"{
+  "servers": {
+    "notes": {
+      "name": "Notes",
+      "enabled": false,
+      "command": "node",
+      "args": ["server.js"]
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let harness = Harness::new(workspace.clone());
+        let status = harness
+            .ensure_public_mcp_tool_available("mcp__notes__search")
+            .await;
+
+        assert!(status.is_err());
+        let message = status.unwrap_err();
+        assert!(message.contains("Notes"));
+        assert!(message.contains("未启用"));
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -1308,6 +1721,7 @@ for await (const line of rl) {
             .call_public_mcp_tool(
                 "mcp__fixture__echo_text",
                 serde_json::json!({"text": "hello"}),
+                None,
             )
             .await
             .expect("public MCP tool result");

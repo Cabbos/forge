@@ -1,0 +1,183 @@
+@layer components {
+  .forge-conversation-scroll {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 5rem),
+      var(--forge-bg-base);
+    padding: var(--forge-conversation-gutter-y) var(--forge-conversation-gutter-x);
+    scroll-padding-block: var(--forge-conversation-gutter-y);
+  }
+
+  .forge-conversation-lane {
+    width: 100%;
+    max-width: var(--forge-conversation-lane-max);
+    margin-inline: auto;
+  }
+
+  .forge-message-lane {
+    row-gap: var(--forge-message-gap);
+  }
+
+  .forge-conversation-turn {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    row-gap: var(--forge-message-gap);
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .forge-conversation-turn[data-turn-shape="with-evidence"] {
+    border-left: 1px solid rgba(148, 163, 184, 0.12);
+    padding-left: 0.75rem;
+  }
+
+  .forge-conversation-turn + .forge-conversation-turn {
+    padding-top: 1rem;
+  }
+
+  .forge-message-block {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .forge-scroll-to-bottom {
+    bottom: var(--forge-conversation-gutter-y);
+    right: var(--forge-conversation-gutter-x);
+    background: var(--forge-glass-raised);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), 0 1px 0 rgba(255, 255, 255, 0.026) inset;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  @media (min-width: 640px) {
+    .forge-conversation-scroll {
+      padding-inline: var(--forge-conversation-gutter-x-wide);
+    }
+
+    .forge-scroll-to-bottom {
+      right: var(--forge-conversation-gutter-x-wide);
+    }
+  }
+
+  .forge-assistant-message {
+    max-width: min(760px, 100%);
+    min-width: 0;
+    position: relative;
+    padding-block: 0.125rem;
+    padding-right: 2.25rem;
+    color: var(--forge-text-primary);
+    font-size: 14px;
+    line-height: var(--forge-assistant-line-height);
+    font-weight: 400;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .forge-user-message {
+    max-width: 80%;
+    position: relative;
+    border: 1px solid rgba(188, 198, 214, 0.1);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.042);
+    box-shadow: none;
+    color: var(--forge-text-primary);
+    font-size: 14px;
+    line-height: var(--forge-user-line-height);
+    padding: 0.5rem 0.8125rem;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .forge-user-message[data-long="true"] {
+    max-width: 92%;
+  }
+
+  .forge-message-with-actions {
+    position: relative;
+  }
+
+  .forge-message-copy-action {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    z-index: 1;
+    display: inline-flex;
+    width: 26px;
+    height: 26px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-glass-raised);
+    color: var(--forge-text-muted);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-2px) scale(0.96);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18), 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: opacity 120ms ease, transform 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+
+  .forge-message-with-actions:hover > .forge-message-copy-action,
+  .forge-message-with-actions:focus-within > .forge-message-copy-action {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
+
+  .forge-message-copy-action:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(27, 30, 37, 0.96);
+    color: var(--forge-text-primary);
+  }
+
+  .forge-message-copy-action:focus-visible {
+    opacity: 1;
+    outline: 1px solid rgba(255, 255, 255, 0.32);
+    outline-offset: 2px;
+    pointer-events: auto;
+  }
+
+  .forge-user-message .forge-message-copy-action {
+    right: auto;
+    left: -34px;
+  }
+
+  .forge-user-message .markdown-content {
+    line-height: var(--forge-user-line-height);
+  }
+
+  .forge-user-message .markdown-content p {
+    margin-bottom: 6px;
+  }
+
+  .forge-user-message .markdown-content ul,
+  .forge-user-message .markdown-content ol {
+    margin-bottom: 6px;
+  }
+
+  .forge-user-message .code-surface {
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+
+  @media (min-width: 640px) {
+    .forge-user-message {
+      max-width: 68%;
+    }
+
+    .forge-user-message[data-long="true"] {
+      max-width: 78%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .forge-message-copy-action {
+      transform: none;
+    }
+  }
+}

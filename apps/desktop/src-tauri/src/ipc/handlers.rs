@@ -3,12 +3,15 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tauri::Emitter;
 
-use crate::adapters::anthropic::{AnthropicAdapter, ToolDef};
-use crate::adapters::base::AiAdapter;
+use crate::adapters::anthropic::AnthropicAdapter;
+use crate::adapters::base::{AiAdapter, ToolDef};
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::adapters::openai_compatible::OpenAiCompatibleAdapter;
+use crate::agent::capability_context::{
+    build_turn_input_intent, format_turn_capability_snapshot, ComposerCapabilitySelection,
+    TurnCapabilitySnapshot, TurnInputIntent,
+};
 use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
 use crate::agent::delivery_state::{
     build_delivery_summary, DeliveryCheckpointInput, DeliveryRecordInput, DeliveryRuntimeInput,
@@ -17,25 +20,30 @@ use crate::agent::provider_capabilities::{
     context_window_tokens, default_model, missing_api_key_message, normalize_provider,
     provider_label,
 };
-use crate::agent::session::AgentSession;
+use crate::agent::session::{AgentPreviewStatusUpdate, AgentSession};
 use crate::agent::snapshot::{
-    delete_session_snapshot, load_session_snapshot, save_session_snapshot,
+    delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
 };
-use crate::agent::turn_state::AgentTurnMetadata;
+use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
 use crate::forge_wiki::model::ForgeWikiProposalStatus;
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::forge_wiki::writeback::build_project_archive_writeback;
+use crate::harness::capability::CapabilityKind;
 use crate::harness::Harness;
 use crate::ipc::project_checkpoint::project_checkpoint_status_for_session;
 use crate::ipc::project_runtime::project_runtime_status_for_session;
+use crate::ipc::workspace::resolve_bound_working_dir;
 use crate::memory::{extract_candidates_from_user_message, format_selected_memory_context};
 use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::{DeliverySummary, StreamEvent};
 use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
-use crate::workflow::{classify_workflow, WorkflowRoute};
-use crate::workspace_safety::resolve_workspace_path as resolve_safe_workspace_path;
+use crate::workflow::{classify_workflow_with_command, WorkflowRoute};
+use crate::workspace_safety::{
+    resolve_session_workspace_path as resolve_session_working_dir,
+    resolve_workspace_path as resolve_safe_workspace_path,
+};
 
 #[derive(serde::Serialize)]
 pub struct FilePreviewLine {
@@ -114,9 +122,18 @@ const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/anthropic";
 const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
+struct DeliveryPreviewEvidence {
+    project_path: Option<String>,
+    running: bool,
+    can_start: bool,
+    can_open: bool,
+    label: String,
+    url: Option<String>,
+}
+
 fn emit_missing_api_key_notice(app_handle: &tauri::AppHandle, session_id: &str, provider: &str) {
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        app_handle,
         StreamEvent::Error {
             session_id: session_id.to_string(),
             block_id: BlockId::new().to_string(),
@@ -172,8 +189,12 @@ async fn upgrade_missing_key_session_if_possible(
         .write()
         .await
         .insert(snapshot.session_id.clone(), upgraded.clone());
-    let _ = app_handle.emit(
-        "session-output",
+    let _ = upgraded
+        .harness
+        .dispatch_session_start_event(&snapshot.session_id)
+        .await;
+    crate::transcript::emit_stream_event(
+        app_handle,
         StreamEvent::SessionStarted {
             session_id: snapshot.session_id,
             agent_type: provider,
@@ -268,7 +289,7 @@ pub async fn create_session(
     let model_str = model
         .or(credentials.model)
         .unwrap_or_else(|| default_model(&provider).to_string());
-    let working_dir = resolve_safe_workspace_path(&working_dir)?;
+    let working_dir = resolve_session_working_dir(&working_dir)?;
     let harness = Arc::new(Harness::new_with_pending(
         working_dir.clone(),
         state.pending_confirms.clone(),
@@ -307,8 +328,8 @@ pub async fn create_session(
         context_window_tokens,
     );
 
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        &app_handle,
         StreamEvent::SessionStarted {
             session_id: session_id.clone(),
             agent_type: provider.clone(),
@@ -329,6 +350,7 @@ pub async fn create_session(
         .write()
         .await
         .insert(session_id.clone(), session);
+    let _ = harness.dispatch_session_start_event(&session_id).await;
     Ok(SessionCreated {
         session_id,
         provider,
@@ -398,10 +420,17 @@ pub async fn resume_session(
     let existing_session = state.sessions.read().await.get(&session_id).cloned();
     if let Some(session) = existing_session {
         let session = upgrade_missing_key_session_if_possible(&app_handle, &state, session).await?;
-        session.resume();
+        session.resume(&app_handle);
+        let _ = session
+            .harness
+            .dispatch_session_start_event(&session_id)
+            .await;
+        if let Err(error) = save_session_snapshot_with_workflow(&state, &session).await {
+            crate::app_log!("WARN", "[session_snapshot] {}", error);
+        }
         if let Some(workflow) = state.workflow_states.read().await.get(&session_id).cloned() {
-            let _ = app_handle.emit(
-                "session-output",
+            crate::transcript::emit_stream_event(
+                &app_handle,
                 StreamEvent::WorkflowUpdated {
                     session_id: session_id.clone(),
                     state: workflow,
@@ -472,9 +501,16 @@ pub async fn resume_session(
         .write()
         .await
         .insert(snapshot.session_id.clone(), session.clone());
+    let _ = session
+        .harness
+        .dispatch_session_start_event(&snapshot.session_id)
+        .await;
+    if let Err(error) = save_session_snapshot_with_workflow(&state, &session).await {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
 
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        &app_handle,
         StreamEvent::SessionStarted {
             session_id: snapshot.session_id.clone(),
             agent_type: provider.clone(),
@@ -488,8 +524,8 @@ pub async fn resume_session(
             .write()
             .await
             .insert(snapshot.session_id.clone(), workflow.clone());
-        let _ = app_handle.emit(
-            "session-output",
+        crate::transcript::emit_stream_event(
+            &app_handle,
             StreamEvent::WorkflowUpdated {
                 session_id: snapshot.session_id.clone(),
                 state: workflow,
@@ -541,7 +577,9 @@ async fn build_mcp_context(
                 match harness.read_mcp_resource(server_id, uri).await {
                     Ok(contents) => {
                         if let Some(context) = format_mcp_resource_context(selection, &contents) {
-                            emit_mcp_context_status(app_handle, session_id, selection, "ready", None);
+                            emit_mcp_context_status(
+                                app_handle, session_id, selection, "ready", None,
+                            );
                             parts.push(context);
                         } else {
                             emit_mcp_context_status(
@@ -581,7 +619,9 @@ async fn build_mcp_context(
                 {
                     Ok(messages) => {
                         if let Some(context) = format_mcp_prompt_context(selection, &messages) {
-                            emit_mcp_context_status(app_handle, session_id, selection, "ready", None);
+                            emit_mcp_context_status(
+                                app_handle, session_id, selection, "ready", None,
+                            );
                             parts.push(context);
                         } else {
                             emit_mcp_context_status(
@@ -626,8 +666,8 @@ fn emit_mcp_context_status(
     status: &str,
     message: Option<&str>,
 ) {
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        app_handle,
         StreamEvent::McpContextStatus {
             session_id: session_id.to_string(),
             source_id: mcp_context_source_id(selection),
@@ -674,20 +714,33 @@ fn format_mcp_resource_context(
         return None;
     }
 
-    let title = name.as_deref().filter(|value| !value.trim().is_empty()).unwrap_or(uri);
+    let title = name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(uri);
     let mut header = vec![
         format!("### User-selected connector resource: {title}"),
         format!("Server: {server_id}"),
         format!("URI: {uri}"),
     ];
-    if let Some(mime_type) = mime_type.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(mime_type) = mime_type
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         header.push(format!("Type: {mime_type}"));
     }
-    if let Some(description) = description.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(description) = description
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         header.push(format!("Description: {description}"));
     }
 
-    Some(format!("{}\n\n```text\n{}\n```", header.join("\n"), body.trim()))
+    Some(format!(
+        "{}\n\n```text\n{}\n```",
+        header.join("\n"),
+        body.trim()
+    ))
 }
 
 fn format_mcp_prompt_context(
@@ -724,11 +777,18 @@ fn format_mcp_prompt_context(
         format!("### User-selected connector prompt: {name}"),
         format!("Server: {server_id}"),
     ];
-    if let Some(description) = description.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(description) = description
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         header.push(format!("Description: {description}"));
     }
 
-    Some(format!("{}\n\n```text\n{}\n```", header.join("\n"), body.trim()))
+    Some(format!(
+        "{}\n\n```text\n{}\n```",
+        header.join("\n"),
+        body.trim()
+    ))
 }
 
 fn format_mcp_context_error(selection: &McpContextSelection, error: &str) -> String {
@@ -771,8 +831,118 @@ fn truncate_mcp_context_text(text: &str) -> String {
     )
 }
 
+async fn collect_turn_capability_snapshot(
+    harness: &Harness,
+    input_intent: &TurnInputIntent,
+) -> TurnCapabilitySnapshot {
+    harness.skill_loader.scan_all().await;
+    let matched_skills = harness
+        .skill_loader
+        .matched_skills_for_request(&input_intent.activation_text)
+        .await
+        .into_iter()
+        .map(|matched| matched.label())
+        .collect::<Vec<_>>();
+
+    TurnCapabilitySnapshot {
+        slash_command: input_intent.slash_command.clone(),
+        file_references: input_intent.file_references.clone(),
+        selected_connectors: input_intent.selected_connectors.clone(),
+        matched_skills,
+        active_hooks: capability_names_by_kind(harness, CapabilityKind::Hook),
+        enabled_mcp_servers: capability_names_by_kind(harness, CapabilityKind::McpServer),
+        available_mcp_tools: harness
+            .external_mcp_tool_definitions()
+            .await
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect(),
+    }
+}
+
+fn capability_names_by_kind(harness: &Harness, kind: CapabilityKind) -> Vec<String> {
+    harness
+        .capability_registry
+        .all_entries()
+        .into_iter()
+        .filter(|entry| entry.enabled && entry.metadata.kind == kind)
+        .map(|entry| entry.metadata.name)
+        .collect()
+}
+
+fn should_select_project_records_for_request(text: &str) -> bool {
+    !is_conversation_recall_request(text)
+}
+
+fn is_conversation_recall_request(text: &str) -> bool {
+    let normalized = text.split_whitespace().collect::<String>();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let has_recall_topic = [
+        "之前说了什么",
+        "刚才说了什么",
+        "前面说了什么",
+        "之前聊了什么",
+        "刚才聊了什么",
+        "前面聊了什么",
+        "聊到哪里",
+        "说到哪里",
+        "前面讨论",
+        "之前讨论",
+        "刚才讨论",
+        "前面的内容",
+        "之前的内容",
+        "前面聊的",
+        "之前聊的",
+    ]
+    .iter()
+    .any(|signal| normalized.contains(signal));
+
+    let asks_for_summary = normalized.contains("总结")
+        || normalized.contains("回顾")
+        || normalized.contains("概括")
+        || normalized.contains("梳理");
+    let references_prior_chat = normalized.contains("之前")
+        || normalized.contains("刚才")
+        || normalized.contains("前面")
+        || normalized.contains("上面")
+        || normalized.contains("这段对话");
+
+    has_recall_topic || (asks_for_summary && references_prior_chat)
+}
+
+fn mcp_context_selection_label(selection: &McpContextSelection) -> String {
+    match selection {
+        McpContextSelection::Resource {
+            server_id,
+            uri,
+            name,
+            ..
+        } => format!(
+            "{}: {}",
+            server_id,
+            name.as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(uri)
+        ),
+        McpContextSelection::Prompt {
+            server_id, name, ..
+        } => format!("{server_id}: {name}"),
+    }
+}
+
 fn build_file_reference_context(working_dir: &Path, text: &str) -> Option<String> {
-    let references = extract_file_reference_paths(text);
+    build_file_reference_context_with_paths(working_dir, text, &[])
+}
+
+fn build_file_reference_context_with_paths(
+    working_dir: &Path,
+    text: &str,
+    explicit_references: &[String],
+) -> Option<String> {
+    let references = collect_file_reference_paths(text, explicit_references);
     if references.is_empty() {
         return None;
     }
@@ -811,9 +981,21 @@ fn build_file_reference_context(working_dir: &Path, text: &str) -> Option<String
 
     Some(format!(
         "## User-selected file references\n\n\
-        These files were explicitly selected by the user with @ for this turn. Treat them as read-only project context.\n\n{}",
+        These files were explicitly selected by the user for this turn. Treat them as read-only project context.\n\n{}",
         parts.join("\n\n---\n\n")
     ))
+}
+
+fn collect_file_reference_paths(text: &str, explicit_references: &[String]) -> Vec<String> {
+    let mut refs = extract_file_reference_paths(text);
+    for raw in explicit_references {
+        if let Some(reference) = normalize_file_reference(raw) {
+            if !refs.contains(&reference) {
+                refs.push(reference);
+            }
+        }
+    }
+    refs
 }
 
 fn extract_file_reference_paths(text: &str) -> Vec<String> {
@@ -989,8 +1171,8 @@ fn emit_delivery_summary(
     session_id: &str,
     summary: DeliverySummary,
 ) {
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        app_handle,
         StreamEvent::DeliverySummary {
             session_id: session_id.to_string(),
             block_id: BlockId::new().to_string(),
@@ -1006,24 +1188,41 @@ async fn build_store_emit_delivery_summary(
     latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
     record: Option<DeliveryRecordInput>,
 ) {
+    let mut preview_evidence: Option<DeliveryPreviewEvidence> = None;
     let runtime = match project_runtime_status_for_session(state, Some(session_id)).await {
-        Ok(status) => Some(DeliveryRuntimeInput {
-            project_path: Some(status.working_dir),
-            running: status.running,
-            can_start: status.can_start,
-            can_open: status.can_open,
-        }),
+        Ok(status) => {
+            let project_path = status.working_dir.clone();
+            preview_evidence = Some(DeliveryPreviewEvidence {
+                project_path: Some(project_path.clone()),
+                running: status.running,
+                can_start: status.can_start,
+                can_open: status.can_open,
+                label: status.message.clone(),
+                url: Some(status.url.clone()),
+            });
+            Some(DeliveryRuntimeInput {
+                project_path: Some(project_path),
+                running: status.running,
+                can_start: status.can_start,
+                can_open: status.can_open,
+            })
+        }
         Err(error) => {
             crate::app_log!("WARN", "[delivery_state] runtime status failed: {}", error);
             None
         }
     };
+    let mut checkpoint_evidence: Option<(bool, bool, bool)> = None;
     let checkpoint = match project_checkpoint_status_for_session(state, Some(session_id)).await {
-        Ok(status) => Some(DeliveryCheckpointInput {
-            is_git_repo: status.is_git_repo,
-            dirty: status.dirty,
-            has_checkpoint: status.last_checkpoint.is_some(),
-        }),
+        Ok(status) => {
+            let has_checkpoint = status.last_checkpoint.is_some();
+            checkpoint_evidence = Some((status.is_git_repo, status.dirty, has_checkpoint));
+            Some(DeliveryCheckpointInput {
+                is_git_repo: status.is_git_repo,
+                dirty: status.dirty,
+                has_checkpoint,
+            })
+        }
         Err(error) => {
             crate::app_log!(
                 "WARN",
@@ -1039,6 +1238,36 @@ async fn build_store_emit_delivery_summary(
         latest_turn.map(|turn| &turn.verification),
         record,
     );
+    if let Some(session) = state.sessions.read().await.get(session_id).cloned() {
+        if let Some(preview) = preview_evidence.as_ref() {
+            let label = if preview.label.trim().is_empty() {
+                summary.preview_label.as_str()
+            } else {
+                preview.label.as_str()
+            };
+            session.record_latest_preview_status(
+                AgentPreviewStatusUpdate {
+                    project_path: preview.project_path.as_deref(),
+                    running: preview.running,
+                    can_start: preview.can_start,
+                    can_open: preview.can_open,
+                    label,
+                    url: preview.url.as_deref(),
+                },
+                app_handle,
+            );
+        }
+        if let Some((is_git_repo, dirty, has_checkpoint)) = checkpoint_evidence {
+            session.record_latest_checkpoint_status(
+                is_git_repo,
+                dirty,
+                has_checkpoint,
+                &summary.checkpoint_label,
+                app_handle,
+            );
+        }
+        session.record_latest_delivery_summary(&summary, app_handle);
+    }
     state
         .delivery_states
         .write()
@@ -1054,83 +1283,123 @@ pub async fn send_input(
     session_id: String,
     text: String,
     mcp_context: Option<Vec<McpContextSelection>>,
+    capabilities: Option<Vec<ComposerCapabilitySelection>>,
 ) -> Result<(), String> {
     let session = state.sessions.read().await.get(&session_id).cloned();
     match session {
         Some(s) => {
             let s = upgrade_missing_key_session_if_possible(&app_handle, &state, s).await?;
             let project_path = s.harness.working_dir.to_string_lossy().to_string();
-            let workflow = classify_workflow(&session_id, &text, now_ms());
+            if let Err(error) = crate::transcript::append_stream_event(&StreamEvent::UserMessage {
+                session_id: session_id.clone(),
+                block_id: BlockId::new().to_string(),
+                content: text.clone(),
+            }) {
+                crate::app_log!("WARN", "[transcript] {}", error);
+            }
+            let capabilities = capabilities.unwrap_or_default();
+            let mcp_context_selections = mcp_context.unwrap_or_default();
+            let selected_connector_labels = mcp_context_selections
+                .iter()
+                .map(mcp_context_selection_label)
+                .collect::<Vec<_>>();
+            let input_intent =
+                build_turn_input_intent(&text, &capabilities, selected_connector_labels);
+            let workflow = classify_workflow_with_command(
+                &session_id,
+                &text,
+                input_intent.slash_command.as_deref(),
+                now_ms(),
+            );
             state
                 .workflow_states
                 .write()
                 .await
                 .insert(session_id.clone(), workflow.clone());
-            let _ = app_handle.emit(
-                "session-output",
+            crate::transcript::emit_stream_event(
+                &app_handle,
                 StreamEvent::WorkflowUpdated {
                     session_id: session_id.clone(),
                     state: workflow.clone(),
                 },
             );
-            let wiki_context = match state
-                .forge_wiki
-                .select_context(&project_path, &text, 4)
-                .await
-            {
-                Ok(selected_wiki) => {
-                    let _ = app_handle.emit(
-                        "session-output",
-                        StreamEvent::ForgeWikiContextSelected {
-                            session_id: session_id.clone(),
-                            selected: selected_wiki.clone(),
-                        },
-                    );
-                    match state
-                        .forge_wiki
-                        .format_selected_context_with_content(&project_path, &selected_wiki)
-                    {
-                        Ok(context) => context,
-                        Err(error) => {
-                            crate::app_log!(
-                                "WARN",
-                                "[forge_wiki] context formatting failed: {}",
-                                error
-                            );
-                            ForgeWikiStore::format_selected_context(&selected_wiki)
+            let wiki_context = if should_select_project_records_for_request(&text) {
+                match state
+                    .forge_wiki
+                    .select_context(&project_path, &text, 4)
+                    .await
+                {
+                    Ok(selected_wiki) => {
+                        crate::transcript::emit_stream_event(
+                            &app_handle,
+                            StreamEvent::ForgeWikiContextSelected {
+                                session_id: session_id.clone(),
+                                selected: selected_wiki.clone(),
+                            },
+                        );
+                        match state
+                            .forge_wiki
+                            .format_selected_context_with_content(&project_path, &selected_wiki)
+                        {
+                            Ok(context) => context,
+                            Err(error) => {
+                                crate::app_log!(
+                                    "WARN",
+                                    "[forge_wiki] context formatting failed: {}",
+                                    error
+                                );
+                                ForgeWikiStore::format_selected_context(&selected_wiki)
+                            }
                         }
                     }
+                    Err(error) => {
+                        crate::app_log!("WARN", "[forge_wiki] context selection failed: {}", error);
+                        None
+                    }
                 }
-                Err(error) => {
-                    crate::app_log!("WARN", "[forge_wiki] context selection failed: {}", error);
-                    None
-                }
+            } else {
+                None
             };
             let selected = state
                 .wiki_memory
                 .select(&text, Some(&project_path), 8)
                 .await;
-            let _ = app_handle.emit(
-                "session-output",
+            crate::transcript::emit_stream_event(
+                &app_handle,
                 StreamEvent::MemorySelection {
                     session_id: session_id.clone(),
                     selected: selected.clone(),
                 },
             );
             let memory_context = format_selected_memory_context(&selected);
+            let capability_snapshot =
+                collect_turn_capability_snapshot(&s.harness, &input_intent).await;
+            let activation_text = input_intent.activation_text.clone();
             let mcp_context = build_mcp_context(
                 &s.harness,
-                &mcp_context.unwrap_or_default(),
+                &mcp_context_selections,
                 &app_handle,
                 &session_id,
             )
             .await;
             let mut hidden_contexts = Vec::new();
-            if let Some(context) = build_file_reference_context(&s.harness.working_dir, &text) {
+            if let Some(context) = format_turn_capability_snapshot(&capability_snapshot) {
+                hidden_contexts.push(HiddenContextPart::new(
+                    ContextSourceKind::CapabilitySnapshot,
+                    "本轮能力",
+                    "本轮自动整理出的动作、资料、技能和安全规则",
+                    context,
+                ));
+            }
+            if let Some(context) = build_file_reference_context_with_paths(
+                &s.harness.working_dir,
+                &text,
+                &input_intent.file_references,
+            ) {
                 hidden_contexts.push(HiddenContextPart::new(
                     ContextSourceKind::SelectedFiles,
                     "选中文件",
-                    "用户用 @ 选中的本轮参考文件",
+                    "用户选中的本轮参考文件",
                     context,
                 ));
             }
@@ -1172,13 +1441,23 @@ pub async fn send_input(
                     .and_then(|value| value.as_str().map(str::to_string))
                     .unwrap_or_else(|| workflow.developer_label.clone()),
                 user_goal: text.clone(),
+                input_intent: AgentTurnInputIntent {
+                    slash_command: input_intent.slash_command.clone(),
+                    file_references: input_intent.file_references.clone(),
+                    selected_connectors: input_intent.selected_connectors.clone(),
+                    matched_skills: capability_snapshot.matched_skills.clone(),
+                    active_hooks: capability_snapshot.active_hooks.clone(),
+                    enabled_mcp_servers: capability_snapshot.enabled_mcp_servers.clone(),
+                    available_mcp_tools: capability_snapshot.available_mcp_tools.clone(),
+                },
             };
             let result = s
-                .send_message_with_context_parts(
+                .send_message_with_context_parts_and_activation_text(
                     &text,
                     &app_handle,
                     hidden_contexts,
                     Some(turn_metadata),
+                    Some(&activation_text),
                 )
                 .await;
             if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
@@ -1190,8 +1469,8 @@ pub async fn send_input(
                 {
                     match state.wiki_memory.upsert_candidate(candidate).await {
                         Ok(Some(memory)) => {
-                            let _ = app_handle.emit(
-                                "session-output",
+                            crate::transcript::emit_stream_event(
+                                &app_handle,
                                 StreamEvent::MemoryCandidate {
                                     session_id: session_id.clone(),
                                     memory,
@@ -1236,8 +1515,8 @@ pub async fn send_input(
                                                 target_pages: proposal.target_pages.clone(),
                                             });
                                         }
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            &app_handle,
                                             StreamEvent::ForgeWikiUpdateProposed {
                                                 session_id: session_id.clone(),
                                                 proposal,
@@ -1286,6 +1565,7 @@ pub async fn kill_session(
 ) -> Result<(), String> {
     if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
         s.kill(&app_handle);
+        let _ = s.harness.dispatch_session_stop_event(&session_id).await;
         if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
             crate::app_log!("WARN", "[session_snapshot] {}", error);
         }
@@ -1301,12 +1581,16 @@ pub async fn delete_session(
 ) -> Result<(), String> {
     if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
         s.kill(&app_handle);
+        let _ = s.harness.dispatch_session_stop_event(&session_id).await;
     }
     state.sessions.write().await.remove(&session_id);
     state.workflow_states.write().await.remove(&session_id);
     state.delivery_states.write().await.remove(&session_id);
     if let Err(error) = delete_session_snapshot(&session_id) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    if let Err(error) = crate::transcript::delete_transcript(&session_id) {
+        crate::app_log!("WARN", "[transcript] {}", error);
     }
     Ok(())
 }
@@ -1315,20 +1599,62 @@ pub async fn delete_session(
 pub async fn list_sessions(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Vec<crate::protocol::commands::SessionInfo>, String> {
+    let mut by_id = std::collections::HashMap::new();
+    for snapshot in list_session_snapshots()? {
+        by_id.insert(
+            snapshot.session_id.clone(),
+            crate::protocol::commands::SessionInfo {
+                id: snapshot.session_id,
+                provider: snapshot.provider,
+                model: snapshot.model,
+                status: "stopped".to_string(),
+                created_at: String::new(),
+                working_dir: Some(snapshot.working_dir),
+                created_at_ms: Some(snapshot.created_at_ms),
+                updated_at_ms: Some(snapshot.updated_at_ms),
+                context_window_tokens: snapshot.context_window_tokens,
+                latest_workflow: snapshot.latest_workflow,
+                latest_delivery: snapshot.latest_delivery,
+            },
+        );
+    }
+
     let sessions = state.sessions.read().await;
-    let result: Vec<_> = sessions
-        .iter()
-        .map(|(id, s)| {
-            let status = s.status.lock().unwrap();
+    let workflow_states = state.workflow_states.read().await;
+    let delivery_states = state.delivery_states.read().await;
+    for (id, session) in sessions.iter() {
+        let status = session.status.lock().unwrap();
+        let snapshot = session.snapshot();
+        by_id.insert(
+            id.clone(),
             crate::protocol::commands::SessionInfo {
                 id: id.clone(),
-                provider: s.agent_type.clone(),
-                model: s.model_id.clone(),
+                provider: session.agent_type.clone(),
+                model: session.model_id.clone(),
                 status: status.as_str().to_string(),
                 created_at: String::new(),
-            }
-        })
-        .collect();
+                working_dir: Some(snapshot.working_dir),
+                created_at_ms: Some(snapshot.created_at_ms),
+                updated_at_ms: Some(snapshot.updated_at_ms),
+                context_window_tokens: snapshot.context_window_tokens,
+                latest_workflow: workflow_states
+                    .get(id)
+                    .cloned()
+                    .or(snapshot.latest_workflow),
+                latest_delivery: delivery_states
+                    .get(id)
+                    .cloned()
+                    .or(snapshot.latest_delivery),
+            },
+        );
+    }
+
+    let mut result: Vec<_> = by_id.into_values().collect();
+    result.sort_by(|a, b| {
+        b.updated_at_ms
+            .unwrap_or(0)
+            .cmp(&a.updated_at_ms.unwrap_or(0))
+    });
     Ok(result)
 }
 
@@ -1353,8 +1679,11 @@ pub async fn search_workspace_files(
     state: tauri::State<'_, Arc<AppState>>,
     query: String,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let working_dir = working_dir_for_request(&state, session_id.as_deref()).await;
+    let working_dir =
+        working_dir_for_request_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     let results = find_files(&working_dir, &query, 20);
     Ok(results)
 }
@@ -1374,8 +1703,11 @@ pub async fn preview_file(
     line: Option<u32>,
     context: Option<u32>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<FilePreview, String> {
-    let working_dir = working_dir_for_request(&state, session_id.as_deref()).await;
+    let working_dir =
+        working_dir_for_request_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     let full_path = resolve_workspace_path(&working_dir, &path);
 
     crate::app_log!(
@@ -1448,8 +1780,11 @@ pub async fn open_file(
     path: String,
     line: Option<u32>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<(), String> {
-    let working_dir = working_dir_for_request(&state, session_id.as_deref()).await;
+    let working_dir =
+        working_dir_for_request_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     let full_path = resolve_workspace_path(&working_dir, &path);
 
     crate::app_log!(
@@ -1481,16 +1816,12 @@ pub async fn open_file(
     Ok(())
 }
 
-async fn working_dir_for_request(
+async fn working_dir_for_request_or_explicit(
     state: &Arc<AppState>,
     session_id: Option<&str>,
-) -> std::path::PathBuf {
-    if let Some(session_id) = session_id {
-        if let Some(session) = state.sessions.read().await.get(session_id).cloned() {
-            return session.harness.working_dir.clone();
-        }
-    }
-    state.harness.working_dir.clone()
+    working_dir: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    resolve_bound_working_dir(state, session_id, working_dir).await
 }
 
 fn resolve_workspace_path(working_dir: &std::path::Path, path: &str) -> std::path::PathBuf {
@@ -1613,50 +1944,76 @@ fn run_open_command(program: &str, args: &[String]) -> Result<(), String> {
 
 fn find_files(dir: &std::path::Path, query: &str, limit: usize) -> Vec<String> {
     let mut results = Vec::new();
-    let lower_query = query.to_lowercase();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if results.len() >= limit {
-                break;
-            }
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            // Skip hidden, node_modules, target
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist"
-            {
-                continue;
-            }
-            let rel = path
-                .strip_prefix(dir)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-            if name.to_lowercase().contains(&lower_query)
-                || rel.to_lowercase().contains(&lower_query)
-            {
-                if path.is_dir() {
-                    results.push(format!("{}/", rel));
-                    // Also search one level deep
-                    results.extend(
-                        find_files(&path, query, limit - results.len())
-                            .into_iter()
-                            .map(|f| format!("{}/{}", rel, f)),
-                    );
-                } else {
-                    results.push(rel);
-                }
-            }
-            if results.len() >= limit {
-                break;
-            }
-        }
-    }
+    let lower_query = query.trim().to_lowercase();
+    let mut visited = 0usize;
+    find_files_in_dir(dir, dir, &lower_query, limit, 0, &mut visited, &mut results);
     results.truncate(limit);
     results
+}
+
+fn find_files_in_dir(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    lower_query: &str,
+    limit: usize,
+    depth: usize,
+    visited: &mut usize,
+    results: &mut Vec<String>,
+) {
+    const MAX_DEPTH: usize = 8;
+    const MAX_VISITED: usize = 5000;
+
+    if results.len() >= limit || depth > MAX_DEPTH || *visited >= MAX_VISITED {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries = entries.flatten().collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        if results.len() >= limit || *visited >= MAX_VISITED {
+            break;
+        }
+        *visited += 1;
+
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if should_skip_file_search_entry(&name) {
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let matches_query =
+            name.to_lowercase().contains(lower_query) || rel.to_lowercase().contains(lower_query);
+
+        if path.is_dir() {
+            if matches_query {
+                results.push(format!("{}/", rel));
+            }
+            find_files_in_dir(root, &path, lower_query, limit, depth + 1, visited, results);
+        } else if matches_query {
+            results.push(rel);
+        }
+    }
+}
+
+fn should_skip_file_search_entry(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "target" | "dist" | "build" | ".next" | "coverage"
+        )
 }
 
 #[tauri::command]
@@ -1673,6 +2030,7 @@ pub async fn set_api_key(provider: String, key: String) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::harness::mcp::McpResourceContent;
+    use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
 
     #[test]
     fn mcp_resource_context_formats_source_and_text() {
@@ -1752,5 +2110,105 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_file(&outside);
+    }
+
+    #[test]
+    fn file_reference_context_accepts_structured_paths() {
+        let nonce = uuid::Uuid::now_v7();
+        let workspace = std::env::temp_dir().join(format!("forge-structured-file-context-{nonce}"));
+        std::fs::create_dir_all(workspace.join("src")).expect("workspace");
+        std::fs::write(
+            workspace.join("src/app.ts"),
+            "export const source = 'structured';",
+        )
+        .expect("workspace file");
+
+        let context = build_file_reference_context_with_paths(
+            &workspace,
+            "请参考这个文件",
+            &["src/app.ts".to_string()],
+        )
+        .expect("context");
+
+        assert!(context.contains("@src/app.ts"));
+        assert!(context.contains("structured"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn conversation_recall_requests_do_not_auto_inject_project_records() {
+        assert!(!should_select_project_records_for_request(
+            "我们之前说了什么"
+        ));
+        assert!(!should_select_project_records_for_request(
+            "刚才聊到哪里了？"
+        ));
+        assert!(!should_select_project_records_for_request(
+            "总结一下前面讨论过的内容"
+        ));
+
+        assert!(should_select_project_records_for_request(
+            "继续优化当前项目的首页"
+        ));
+        assert!(should_select_project_records_for_request(
+            "根据项目记录看看下一步"
+        ));
+    }
+
+    #[test]
+    fn explicit_working_dir_resolves_to_canonical_workspace() {
+        let nonce = uuid::Uuid::now_v7();
+        let workspace = std::env::temp_dir().join(format!("forge-explicit-workspace-{nonce}"));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        let resolved = resolve_requested_working_dir(Some(workspace.to_str().expect("utf8")))
+            .expect("resolve")
+            .expect("explicit workspace");
+
+        assert_eq!(resolved, workspace.canonicalize().expect("canonical"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn explicit_working_dir_rejects_broad_workspace() {
+        let result = resolve_requested_working_dir(Some("/"));
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn workspace_bound_request_requires_session_or_explicit_working_dir() {
+        let nonce = uuid::Uuid::now_v7();
+        let workspace = std::env::temp_dir().join(format!("forge-request-workspace-{nonce}"));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+
+        let error = working_dir_for_request_or_explicit(&state, None, None)
+            .await
+            .expect_err("missing workspace should fail");
+
+        assert!(error.contains("工作空间"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn workspace_file_search_finds_nested_file_matches() {
+        let nonce = uuid::Uuid::now_v7();
+        let workspace = std::env::temp_dir().join(format!("forge-file-search-{nonce}"));
+        std::fs::create_dir_all(workspace.join("src/components")).expect("workspace");
+        std::fs::write(
+            workspace.join("src/components/WaterTracker.tsx"),
+            "export function WaterTracker() {}",
+        )
+        .expect("file");
+
+        let results = find_files(&workspace, "water", 20);
+
+        assert_eq!(results, vec!["src/components/WaterTracker.tsx"]);
+
+        let _ = std::fs::remove_dir_all(&workspace);
     }
 }

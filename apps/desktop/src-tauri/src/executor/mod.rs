@@ -9,13 +9,10 @@ pub use shell::ShellExecutor;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
-use tauri::Emitter;
-
-// TEST: audit marker
 
 const SEARCH_RESULT_LIMIT: usize = 200;
 const SEARCH_TIMEOUT_SECS: u64 = 8;
@@ -55,6 +52,27 @@ impl ToolExecutor {
         app_handle: &tauri::AppHandle,
         tool_block_id: Option<&str>,
     ) -> String {
+        self.execute_with_cancel(
+            session_id,
+            tool_name,
+            tool_input,
+            app_handle,
+            tool_block_id,
+            None,
+        )
+        .await
+    }
+
+    /// Execute a tool call and stop cancellable tools when the provided token fires.
+    pub async fn execute_with_cancel(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &serde_json::Value,
+        app_handle: &tauri::AppHandle,
+        tool_block_id: Option<&str>,
+        cancel: Option<Arc<Notify>>,
+    ) -> String {
         let block_id = tool_block_id
             .map(str::to_string)
             .unwrap_or_else(|| BlockId::new().to_string());
@@ -83,8 +101,8 @@ impl ToolExecutor {
 
                 match self.file.write_file(path, content) {
                     Ok(wr) => {
-                        let _ = app_handle.emit(
-                            "session-output",
+                        crate::transcript::emit_stream_event(
+                            app_handle,
                             StreamEvent::DiffView {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
@@ -126,8 +144,8 @@ impl ToolExecutor {
                             } else {
                                 file_path.to_string()
                             };
-                            let _ = app_handle.emit(
-                                "session-output",
+                            crate::transcript::emit_stream_event(
+                                app_handle,
                                 StreamEvent::DiffView {
                                     session_id: session_id.to_string(),
                                     block_id: block_id.clone(),
@@ -157,8 +175,8 @@ impl ToolExecutor {
                 let command = get_str(tool_input, "command").unwrap_or("");
 
                 // Emit ShellStart before execution so the frontend creates the block immediately
-                let _ = app_handle.emit(
-                    "session-output",
+                crate::transcript::emit_stream_event(
+                    app_handle,
                     StreamEvent::ShellStart {
                         session_id: session_id.to_string(),
                         block_id: block_id.clone(),
@@ -175,50 +193,95 @@ impl ToolExecutor {
                     Arc::new(std::sync::Mutex::new(0));
                 let emitted_truncation_notice: Arc<std::sync::Mutex<bool>> =
                     Arc::new(std::sync::Mutex::new(false));
-                let stdout_for_cb = stdout_captured.clone();
-                let stderr_for_cb = stderr_captured.clone();
-                let emitted_for_cb = emitted_bytes.clone();
-                let notice_for_cb = emitted_truncation_notice.clone();
-                let sid_for_cb = session_id.to_string();
-                let bid_for_cb = block_id.clone();
-                let ah_for_cb = app_handle.clone();
 
-                match self
-                    .shell
-                    .execute_streaming(command, move |line: String, is_stderr: bool| {
-                        // Accumulate for AI response
-                        let cap = if is_stderr {
-                            &stderr_for_cb
-                        } else {
-                            &stdout_for_cb
-                        };
-                        {
-                            let mut guard = cap.lock().unwrap();
-                            append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
-                        }
+                let shell_result = if let Some(cancel) = cancel {
+                    let stdout_for_cb = stdout_captured.clone();
+                    let stderr_for_cb = stderr_captured.clone();
+                    let emitted_for_cb = emitted_bytes.clone();
+                    let notice_for_cb = emitted_truncation_notice.clone();
+                    let sid_for_cb = session_id.to_string();
+                    let bid_for_cb = block_id.clone();
+                    let ah_for_cb = app_handle.clone();
+                    self.shell
+                        .execute_streaming_with_cancel(
+                            command,
+                            cancel,
+                            move |line: String, is_stderr: bool| {
+                                // Accumulate for AI response
+                                let cap = if is_stderr {
+                                    &stderr_for_cb
+                                } else {
+                                    &stdout_for_cb
+                                };
+                                {
+                                    let mut guard = cap.lock().unwrap();
+                                    append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
+                                }
 
-                        // Emit to frontend line by line
-                        if let Some(content) = next_stream_line(
-                            &line,
-                            &emitted_for_cb,
-                            &notice_for_cb,
-                            SHELL_STREAM_LIMIT,
-                        ) {
-                            let _ = ah_for_cb.emit(
-                                "session-output",
-                                StreamEvent::ShellOutput {
-                                    session_id: sid_for_cb.clone(),
-                                    block_id: bid_for_cb.clone(),
-                                    content,
-                                },
-                            );
-                        }
-                    })
-                    .await
-                {
+                                // Emit to frontend line by line
+                                if let Some(content) = next_stream_line(
+                                    &line,
+                                    &emitted_for_cb,
+                                    &notice_for_cb,
+                                    SHELL_STREAM_LIMIT,
+                                ) {
+                                    crate::transcript::emit_stream_event(
+                                        &ah_for_cb,
+                                        StreamEvent::ShellOutput {
+                                            session_id: sid_for_cb.clone(),
+                                            block_id: bid_for_cb.clone(),
+                                            content,
+                                        },
+                                    );
+                                }
+                            },
+                        )
+                        .await
+                } else {
+                    let stdout_for_cb = stdout_captured.clone();
+                    let stderr_for_cb = stderr_captured.clone();
+                    let emitted_for_cb = emitted_bytes.clone();
+                    let notice_for_cb = emitted_truncation_notice.clone();
+                    let sid_for_cb = session_id.to_string();
+                    let bid_for_cb = block_id.clone();
+                    let ah_for_cb = app_handle.clone();
+                    self.shell
+                        .execute_streaming(command, move |line: String, is_stderr: bool| {
+                            // Accumulate for AI response
+                            let cap = if is_stderr {
+                                &stderr_for_cb
+                            } else {
+                                &stdout_for_cb
+                            };
+                            {
+                                let mut guard = cap.lock().unwrap();
+                                append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
+                            }
+
+                            // Emit to frontend line by line
+                            if let Some(content) = next_stream_line(
+                                &line,
+                                &emitted_for_cb,
+                                &notice_for_cb,
+                                SHELL_STREAM_LIMIT,
+                            ) {
+                                crate::transcript::emit_stream_event(
+                                    &ah_for_cb,
+                                    StreamEvent::ShellOutput {
+                                        session_id: sid_for_cb.clone(),
+                                        block_id: bid_for_cb.clone(),
+                                        content,
+                                    },
+                                );
+                            }
+                        })
+                        .await
+                };
+
+                match shell_result {
                     Ok(exit_code) => {
-                        let _ = app_handle.emit(
-                            "session-output",
+                        crate::transcript::emit_stream_event(
+                            app_handle,
                             StreamEvent::ShellEnd {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
@@ -243,8 +306,8 @@ impl ToolExecutor {
                     }
                     Err(e) => {
                         // Emit ShellEnd to close the block since ShellStart was already sent
-                        let _ = app_handle.emit(
-                            "session-output",
+                        crate::transcript::emit_stream_event(
+                            app_handle,
                             StreamEvent::ShellEnd {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
@@ -325,8 +388,8 @@ impl ToolExecutor {
                         .await
                         .insert(block_id.clone(), tx);
                 }
-                let _ = app_handle.emit(
-                    "session-output",
+                crate::transcript::emit_stream_event(
+                    app_handle,
                     StreamEvent::ConfirmAsk {
                         session_id: session_id.to_string(),
                         block_id: block_id.clone(),
@@ -370,8 +433,8 @@ impl ToolExecutor {
             is_error
         );
 
-        let _ = app_handle.emit(
-            "session-output",
+        crate::transcript::emit_stream_event(
+            app_handle,
             StreamEvent::ToolCallResult {
                 session_id: session_id.to_string(),
                 block_id,

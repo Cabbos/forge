@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use tauri::Emitter;
 
 use crate::protocol::events::StreamEvent;
 use crate::state::AppState;
@@ -26,8 +25,8 @@ pub async fn override_workflow_route(
         .write()
         .await
         .insert(session_id.clone(), workflow.clone());
-    let _ = app_handle.emit(
-        "session-output",
+    crate::transcript::emit_stream_event(
+        &app_handle,
         StreamEvent::WorkflowUpdated {
             session_id,
             state: workflow.clone(),

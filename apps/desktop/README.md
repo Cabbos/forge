@@ -157,3 +157,5 @@ Forge 还不是一个稳定公开发行版本。当前重点是：
 - 改进上下文、恢复会话和继续任务能力；
 - 让桌面 UI 更安静、专业、可信；
 - 让不会写代码的人也能开始做自己的小工具，同时不牺牲专业开发者的使用效率。
+
+V1 内测标准和 V2 方向见 [`docs/product/forge-v1-v2-roadmap.md`](./docs/product/forge-v1-v2-roadmap.md)。

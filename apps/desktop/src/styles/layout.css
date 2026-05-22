@@ -1,0 +1,24 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  font-family: "Geist Variable", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.24); border-radius: 2px; }
+::selection { background: rgba(212, 168, 83, 0.2); color: #fff; }
+
+@layer base {
+  * { @apply border-border; }
+
+  body {
+    @apply bg-background text-foreground;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 22rem),
+      var(--forge-bg-base);
+  }
+}

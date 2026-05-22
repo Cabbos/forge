@@ -28,6 +28,30 @@ pub fn classify_workflow(session_id: &str, text: &str, updated_at: u64) -> Workf
     )
 }
 
+pub fn classify_workflow_with_command(
+    session_id: &str,
+    text: &str,
+    command: Option<&str>,
+    updated_at: u64,
+) -> WorkflowState {
+    let Some(command) = command.and_then(normalize_slash_command) else {
+        return classify_workflow(session_id, text, updated_at);
+    };
+
+    let Some(route) = route_for_slash_command(command) else {
+        return classify_workflow(session_id, text, updated_at);
+    };
+
+    let reason = format!("用户选择了 {command}，本轮优先按这个动作处理。");
+    workflow_state(
+        session_id,
+        route,
+        vec![command.to_string()],
+        Some(&reason),
+        updated_at,
+    )
+}
+
 pub fn workflow_state_from_override(
     session_id: &str,
     action: WorkflowOverrideAction,
@@ -83,6 +107,29 @@ fn matched_signals(text: &str, signals: &[&str]) -> Vec<String> {
         .filter(|signal| text_lower.contains(&signal.to_lowercase()))
         .map(|signal| (*signal).to_string())
         .collect()
+}
+
+fn normalize_slash_command(command: &str) -> Option<&'static str> {
+    match command.trim().to_lowercase().as_str() {
+        "/cr" | "/code-review" => Some("/code-review"),
+        "/fix" => Some("/fix"),
+        "/explain" => Some("/explain"),
+        "/refactor" => Some("/refactor"),
+        "/test" => Some("/test"),
+        "/docs" => Some("/docs"),
+        _ => None,
+    }
+}
+
+fn route_for_slash_command(command: &str) -> Option<WorkflowRoute> {
+    match command {
+        "/code-review" | "/test" => Some(WorkflowRoute::Verification),
+        "/fix" => Some(WorkflowRoute::Recovery),
+        "/explain" => Some(WorkflowRoute::Direct),
+        "/refactor" => Some(WorkflowRoute::StrictWorkflow),
+        "/docs" => Some(WorkflowRoute::Light),
+        _ => None,
+    }
 }
 
 fn override_actions() -> Vec<WorkflowOverrideAction> {
@@ -252,6 +299,10 @@ mod tests {
         classify_workflow("session-1", text, 42)
     }
 
+    fn route_with_command(text: &str, command: Option<&str>) -> WorkflowState {
+        classify_workflow_with_command("session-1", text, command, 42)
+    }
+
     #[test]
     fn classifies_answer_only_request_as_direct() {
         let state = route("不要修改文件，不要执行命令。只回答：working-method routing 是什么？");
@@ -281,7 +332,8 @@ mod tests {
 
     #[test]
     fn classifies_vague_beginner_idea_as_workflow() {
-        let state = route("我想做个能记录客户的东西，最好能提醒我，还能导出表格，但我也不知道怎么说。");
+        let state =
+            route("我想做个能记录客户的东西，最好能提醒我，还能导出表格，但我也不知道怎么说。");
         assert_eq!(state.route, WorkflowRoute::Workflow);
         assert_eq!(state.phase, WorkflowPhase::Clarifying);
         assert_eq!(state.gate, WorkflowGate::Soft);
@@ -335,5 +387,27 @@ mod tests {
         assert_eq!(state.route, WorkflowRoute::Recovery);
         assert_eq!(state.updated_at, 99);
         assert!(state.reason.contains("手动切换"));
+    }
+
+    #[test]
+    fn slash_fix_command_routes_to_recovery() {
+        let state = route_with_command("按钮没有反应", Some("/fix"));
+        assert_eq!(state.route, WorkflowRoute::Recovery);
+        assert!(state.matched_signals.contains(&"/fix".to_string()));
+        assert!(state.reason.contains("/fix"));
+    }
+
+    #[test]
+    fn slash_test_command_routes_to_verification() {
+        let state = route_with_command("看看现在怎么样", Some("/test"));
+        assert_eq!(state.route, WorkflowRoute::Verification);
+        assert!(state.matched_signals.contains(&"/test".to_string()));
+    }
+
+    #[test]
+    fn slash_explain_command_routes_to_direct() {
+        let state = route_with_command("这段为什么这样写", Some("/explain"));
+        assert_eq!(state.route, WorkflowRoute::Direct);
+        assert!(state.matched_signals.contains(&"/explain".to_string()));
     }
 }

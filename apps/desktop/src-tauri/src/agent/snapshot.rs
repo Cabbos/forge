@@ -22,6 +22,8 @@ pub struct AgentSessionSnapshot {
     pub latest_workflow: Option<WorkflowState>,
     #[serde(default)]
     pub latest_delivery: Option<DeliverySummary>,
+    #[serde(default = "now_ms")]
+    pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
 
@@ -35,6 +37,7 @@ impl AgentSessionSnapshot {
         summary: Option<String>,
         context_window_tokens: Option<u32>,
     ) -> Self {
+        let timestamp = now_ms();
         Self {
             session_id,
             provider,
@@ -46,7 +49,8 @@ impl AgentSessionSnapshot {
             latest_turn: None,
             latest_workflow: None,
             latest_delivery: None,
-            updated_at_ms: now_ms(),
+            created_at_ms: timestamp,
+            updated_at_ms: timestamp,
         }
     }
 
@@ -70,12 +74,25 @@ impl AgentSessionSnapshot {
 }
 
 pub fn save_session_snapshot(snapshot: &AgentSessionSnapshot) -> Result<(), String> {
-    let path = snapshot_path(&snapshot.session_id)?;
+    save_session_snapshot_at(&app_data_dir(), snapshot)
+}
+
+fn save_session_snapshot_at(
+    root: &std::path::Path,
+    snapshot: &AgentSessionSnapshot,
+) -> Result<(), String> {
+    let path = snapshot_path_at(root, &snapshot.session_id)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create session snapshot dir: {e}"))?;
     }
-    let json = serde_json::to_string_pretty(snapshot)
+    let mut snapshot = snapshot.clone();
+    if let Ok(existing_json) = fs::read_to_string(&path) {
+        if let Ok(existing) = serde_json::from_str::<AgentSessionSnapshot>(&existing_json) {
+            snapshot.created_at_ms = existing.created_at_ms;
+        }
+    }
+    let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("Failed to serialize session snapshot: {e}"))?;
     fs::write(&path, json).map_err(|e| format!("Failed to write session snapshot: {e}"))?;
     Ok(())
@@ -98,12 +115,51 @@ pub fn delete_session_snapshot(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn list_session_snapshots() -> Result<Vec<AgentSessionSnapshot>, String> {
+    list_session_snapshots_from_dir(&app_data_dir())
+}
+
+fn list_session_snapshots_from_dir(
+    root: &std::path::Path,
+) -> Result<Vec<AgentSessionSnapshot>, String> {
+    let sessions_dir = root.join("sessions");
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = fs::read_dir(&sessions_dir)
+        .map_err(|e| format!("Failed to read session snapshot dir: {e}"))?;
+    let mut snapshots = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(json) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(snapshot) = serde_json::from_str::<AgentSessionSnapshot>(&json) else {
+            continue;
+        };
+        snapshots.push(snapshot);
+    }
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.updated_at_ms));
+    Ok(snapshots)
+}
+
 fn snapshot_path(session_id: &str) -> Result<PathBuf, String> {
+    snapshot_path_at(&app_data_dir(), session_id)
+}
+
+fn snapshot_path_at(root: &std::path::Path, session_id: &str) -> Result<PathBuf, String> {
     let id = safe_session_id(session_id);
     if id.is_empty() {
         return Err("Invalid session id".to_string());
     }
-    Ok(app_data_dir().join("sessions").join(format!("{id}.json")))
+    Ok(root.join("sessions").join(format!("{id}.json")))
 }
 
 fn safe_session_id(session_id: &str) -> String {
@@ -181,9 +237,86 @@ mod tests {
             serde_json::from_str(json).expect("old snapshot should deserialize");
 
         assert_eq!(restored.session_id, "session-1");
+        assert!(restored.created_at_ms > 0);
         assert!(restored.latest_turn.is_none());
         assert!(restored.latest_workflow.is_none());
         assert!(restored.latest_delivery.is_none());
+    }
+
+    #[test]
+    fn lists_session_snapshots_from_directory_in_updated_order() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-list-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut older = snapshot();
+        older.session_id = "older".to_string();
+        older.updated_at_ms = 10;
+        fs::write(
+            sessions_dir.join("older.json"),
+            serde_json::to_string(&older).expect("older json"),
+        )
+        .expect("write older");
+
+        let mut newer = snapshot();
+        newer.session_id = "newer".to_string();
+        newer.updated_at_ms = 20;
+        fs::write(
+            sessions_dir.join("newer.json"),
+            serde_json::to_string(&newer).expect("newer json"),
+        )
+        .expect("write newer");
+        fs::write(sessions_dir.join("broken.json"), "{").expect("write broken");
+
+        let listed = list_session_snapshots_from_dir(&root).expect("list snapshots");
+
+        assert_eq!(
+            listed
+                .iter()
+                .map(|snapshot| snapshot.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["newer", "older"]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_session_snapshot_preserves_original_created_timestamp() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-created-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+
+        let mut first = snapshot();
+        first.created_at_ms = 11;
+        first.updated_at_ms = 12;
+        save_session_snapshot_at(&root, &first).expect("save first");
+
+        let mut second = snapshot();
+        second.created_at_ms = 99;
+        second.updated_at_ms = 100;
+        save_session_snapshot_at(&root, &second).expect("save second");
+
+        let restored = serde_json::from_str::<AgentSessionSnapshot>(
+            &fs::read_to_string(root.join("sessions").join("session-1.json"))
+                .expect("read saved snapshot"),
+        )
+        .expect("deserialize saved snapshot");
+
+        assert_eq!(restored.created_at_ms, 11);
+        assert_eq!(restored.updated_at_ms, 100);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

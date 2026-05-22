@@ -80,6 +80,57 @@ pub(crate) fn resolve_workspace_path(path: &str) -> Result<PathBuf, String> {
     Ok(safety.canonical_path)
 }
 
+pub(crate) fn resolve_session_workspace_path(path: &str) -> Result<PathBuf, String> {
+    let requested = path.trim();
+    if requested.is_empty() {
+        return ensure_default_beginner_workspace();
+    }
+    resolve_workspace_path(requested)
+}
+
+pub(crate) fn default_beginner_workspace_path() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法定位默认工作空间：缺少 HOME 环境变量".to_string())?;
+    Ok(default_beginner_workspace_path_for_home(&home))
+}
+
+pub(crate) fn ensure_default_beginner_workspace() -> Result<PathBuf, String> {
+    let path = default_beginner_workspace_path()?;
+    std::fs::create_dir_all(&path).map_err(|err| format!("无法创建默认工作空间：{err}"))?;
+    resolve_workspace_path(path.to_string_lossy().as_ref())
+}
+
+pub(crate) fn default_beginner_workspace_path_for_home(home: &Path) -> PathBuf {
+    home.join(".forge").join("workspaces").join("my-tools")
+}
+
+pub(crate) fn ensure_default_beginner_workspace_at_home(home: &Path) -> Result<PathBuf, String> {
+    let path = default_beginner_workspace_path_for_home(home);
+    std::fs::create_dir_all(&path).map_err(|err| format!("无法创建默认工作空间：{err}"))?;
+    resolve_workspace_path(path.to_string_lossy().as_ref())
+}
+
+pub(crate) fn resolve_session_workspace_path_for_home(
+    path: &str,
+    home: &Path,
+) -> Result<PathBuf, String> {
+    let requested = path.trim();
+    if requested.is_empty() {
+        return ensure_default_beginner_workspace_at_home(home);
+    }
+    resolve_workspace_path(requested)
+}
+
+pub(crate) fn resolve_optional_workspace_path(
+    path: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return Ok(None);
+    };
+    resolve_workspace_path(path).map(Some)
+}
+
 pub(crate) fn is_forge_source_workspace(path: &Path) -> bool {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     is_forge_source_workspace_marker(&canonical)
@@ -195,8 +246,10 @@ fn tauri_config_mentions_forge(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_existing_workspace_path, classify_workspace_path, WorkspaceRisk,
-        BROAD_WORKSPACE_REASON, UNVERIFIED_WORKSPACE_WARNING,
+        classify_existing_workspace_path, classify_workspace_path,
+        default_beginner_workspace_path_for_home, resolve_optional_workspace_path,
+        resolve_session_workspace_path_for_home, WorkspaceRisk, BROAD_WORKSPACE_REASON,
+        UNVERIFIED_WORKSPACE_WARNING,
     };
     use std::path::Path;
 
@@ -234,6 +287,60 @@ mod tests {
             assert_eq!(safety.risk, WorkspaceRisk::Blocked, "{path}");
             assert_eq!(safety.block_reason.as_deref(), Some(BROAD_WORKSPACE_REASON));
         }
+    }
+
+    #[test]
+    fn optional_workspace_path_resolves_when_present() {
+        let workspace = temp_workspace("optional");
+
+        let resolved = resolve_optional_workspace_path(Some(workspace.to_str().expect("utf8")))
+            .expect("resolve")
+            .expect("workspace");
+
+        assert_eq!(resolved, workspace.canonicalize().expect("canonical"));
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn optional_workspace_path_ignores_blank_and_rejects_broad_roots() {
+        assert_eq!(
+            resolve_optional_workspace_path(Some("   ")).expect("blank"),
+            None
+        );
+
+        let error = resolve_optional_workspace_path(Some("/")).expect_err("broad root");
+
+        assert_eq!(error, BROAD_WORKSPACE_REASON);
+    }
+
+    #[test]
+    fn default_beginner_workspace_lives_under_forge_home() {
+        let home = Path::new("/Users/example");
+
+        let path = default_beginner_workspace_path_for_home(home);
+
+        assert_eq!(
+            path,
+            Path::new("/Users/example")
+                .join(".forge")
+                .join("workspaces")
+                .join("my-tools")
+        );
+    }
+
+    #[test]
+    fn blank_session_workspace_uses_safe_beginner_default() {
+        let home = temp_workspace("home");
+
+        let resolved =
+            resolve_session_workspace_path_for_home("   ", &home).expect("default workspace");
+
+        assert!(resolved.is_dir());
+        let canonical_home = home.canonicalize().expect("canonical home");
+        assert!(resolved.starts_with(canonical_home.join(".forge").join("workspaces")));
+        let safety = classify_workspace_path(resolved.to_str().expect("utf8")).expect("classify");
+        assert_eq!(safety.risk, WorkspaceRisk::Normal);
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

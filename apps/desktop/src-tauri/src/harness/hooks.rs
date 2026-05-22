@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use crate::harness::mcp;
+
 /// Decision from a hook: proceed (possibly with modified data) or block.
 #[derive(Debug, Clone)]
 pub enum HookDecision {
@@ -213,11 +215,7 @@ impl Hook for SensitiveContentHook {
     }
 
     fn filter_tools(&self) -> Vec<String> {
-        vec![
-            "write_to_file".into(),
-            "edit_file".into(),
-            "run_shell".into(),
-        ]
+        Vec::new()
     }
 
     async fn on_pre_tool(
@@ -291,6 +289,10 @@ impl Hook for WorkspaceBoundaryHook {
 }
 
 fn sensitive_tool_text(tool: &str, input: &serde_json::Value) -> Vec<String> {
+    if mcp::is_public_tool_name(tool) {
+        return collect_json_strings(input);
+    }
+
     match tool {
         "write_to_file" => input
             .get("content")
@@ -307,6 +309,17 @@ fn sensitive_tool_text(tool: &str, input: &serde_json::Value) -> Vec<String> {
             .and_then(|value| value.as_str())
             .map(|value| vec![value.to_string()])
             .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn collect_json_strings(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::String(text) => vec![text.clone()],
+        serde_json::Value::Array(values) => values.iter().flat_map(collect_json_strings).collect(),
+        serde_json::Value::Object(values) => {
+            values.values().flat_map(collect_json_strings).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -370,5 +383,50 @@ fn ensure_path_in_workspace(working_dir: &std::path::Path, path: &str) -> Result
             canonical.display(),
             workspace.display()
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Hook, HookDecision, SensitiveContentHook};
+
+    #[tokio::test]
+    async fn sensitive_content_hook_blocks_secret_mcp_tool_input() {
+        let hook = SensitiveContentHook;
+        let decision = hook
+            .on_pre_tool(
+                "session-1",
+                "mcp__notes__save_note",
+                serde_json::json!({
+                    "title": "deploy notes",
+                    "body": "API key: sk-1234567890abcdefghijkl"
+                }),
+            )
+            .await;
+
+        match decision {
+            HookDecision::Block(reason) => {
+                assert!(reason.contains("敏感信息"));
+            }
+            HookDecision::Proceed(_) => panic!("secret-like MCP input should be blocked"),
+        }
+    }
+
+    #[tokio::test]
+    async fn hook_engine_runs_sensitive_content_hook_for_dynamic_mcp_tools() {
+        let engine = super::HookEngine::new();
+        engine.register(SensitiveContentHook);
+
+        let decision = engine
+            .run_pre_tool(
+                "session-1",
+                "mcp__notes__save_note",
+                &serde_json::json!({
+                    "body": "bearer sk-1234567890abcdefghijkl"
+                }),
+            )
+            .await;
+
+        assert!(matches!(decision, HookDecision::Block(_)));
     }
 }

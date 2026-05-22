@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tauri::Emitter;
-
 use crate::memory::{
     MemoryListFilter, MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory,
 };
@@ -95,8 +93,8 @@ fn emit_memory_updated(
     memory: &WikiMemory,
 ) {
     if let Some(session_id) = session_id {
-        let _ = app_handle.emit(
-            "session-output",
+        crate::transcript::emit_stream_event(
+            app_handle,
             StreamEvent::MemoryUpdated {
                 session_id: session_id.to_string(),
                 memory: memory.clone(),

@@ -1,7 +1,6 @@
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use std::sync::Arc;
-use tauri::Emitter;
 
 /// Unified event dispatch for the harness.
 /// Wraps Tauri's event emitter with structured StreamEvent creation.
@@ -23,7 +22,7 @@ impl EventBus {
 
     fn emit(&self, event: StreamEvent) {
         if let Some(ref h) = *self.app_handle.lock().unwrap() {
-            let _ = h.emit("session-output", event);
+            crate::transcript::emit_stream_event(h, event);
         }
     }
 

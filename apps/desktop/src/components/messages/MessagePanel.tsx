@@ -1,4 +1,4 @@
-import type { AriaRole, ReactNode } from "react";
+import type { AriaRole, HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 type MessagePanelTone = "default" | "warning" | "danger";
@@ -15,7 +15,9 @@ export function MessagePanel({
   tone = "default",
   role,
   ariaLive,
-}: {
+  style: styleProp,
+  ...divProps
+}: Omit<HTMLAttributes<HTMLDivElement>, "role" | "aria-live"> & {
   children: ReactNode;
   className?: string;
   tone?: MessagePanelTone;
@@ -26,11 +28,12 @@ export function MessagePanel({
 
   return (
     <div
+      {...divProps}
       data-testid="message-panel"
       className={cn("forge-message-panel", className)}
       role={role}
       aria-live={ariaLive}
-      style={{ borderColor: style.border, background: style.background }}
+      style={{ ...styleProp, borderColor: style.border, background: style.background }}
     >
       {children}
     </div>

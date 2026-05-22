@@ -131,6 +131,7 @@ impl SubAgent {
                     "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task"
                 );
                 let app = app_handle.clone();
+                let cancel_for_tool = cancel.clone();
                 handles.push(tokio::spawn(async move {
                     let result = if is_blocked {
                         format!(
@@ -138,8 +139,15 @@ impl SubAgent {
                             name
                         )
                     } else {
-                        h.execute_tool_with_block_id("sub", &name, &input, &app, Some(&tool_id))
-                            .await
+                        h.execute_tool_with_block_id_and_cancel(
+                            "sub",
+                            &name,
+                            &input,
+                            &app,
+                            Some(&tool_id),
+                            Some(cancel_for_tool),
+                        )
+                        .await
                     };
                     (i, name, input_str, result, tool_id)
                 }));
