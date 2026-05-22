@@ -1,13 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentTurnState, AgentVerificationStatus,
     AgentVerificationTrace,
 };
+use crate::process_runner::{run_captured, ProcessRunOptions, ProcessSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VerificationStep {
@@ -205,18 +203,22 @@ pub(crate) async fn run_verification(plan: VerificationPlan) -> AgentVerificatio
 
 async fn run_verification_step(step: VerificationStep) -> AgentVerificationTrace {
     let started_at = Instant::now();
-    let mut child = match tokio::process::Command::new(&step.program)
-        .args(&step.args)
-        .current_dir(&step.cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let command = step.display_command.clone();
+    let output = match run_captured(
+        ProcessSpec::new(step.program, step.args, step.cwd),
+        ProcessRunOptions {
+            timeout: Duration::from_secs(step.timeout_secs.max(1)),
+            cancel: None,
+            output_limit: 120_000,
+        },
+    )
+    .await
     {
-        Ok(child) => child,
+        Ok(output) => output,
         Err(error) => {
             return AgentVerificationTrace {
                 status: AgentVerificationStatus::Error,
-                command: Some(step.display_command),
+                command: Some(command),
                 exit_code: None,
                 stdout_preview: None,
                 stderr_preview: Some(preview(&error.to_string())),
@@ -226,66 +228,39 @@ async fn run_verification_step(step: VerificationStep) -> AgentVerificationTrace
         }
     };
 
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let stdout_task = tokio::spawn(async move { read_pipe(&mut stdout).await });
-    let stderr_task = tokio::spawn(async move { read_pipe(&mut stderr).await });
-    let timeout = Duration::from_secs(step.timeout_secs.max(1));
-
-    let status_result = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(result) => result,
-        Err(_) => {
-            let _ = child.kill().await;
-            let stdout = stdout_task.await.unwrap_or_default();
-            let stderr = stderr_task.await.unwrap_or_default();
-            return AgentVerificationTrace {
-                status: AgentVerificationStatus::Error,
-                command: Some(step.display_command),
-                exit_code: None,
-                stdout_preview: optional_preview(&stdout),
-                stderr_preview: Some(preview(&format!(
-                    "verification timed out after {}s{}",
-                    step.timeout_secs,
-                    if stderr.trim().is_empty() {
-                        String::new()
-                    } else {
-                        format!("\n{}", stderr)
-                    }
-                ))),
-                duration_ms: Some(elapsed_ms(started_at)),
-                completed_at_ms: Some(now_ms()),
-            };
-        }
-    };
-
-    let stdout = stdout_task.await.unwrap_or_default();
-    let stderr = stderr_task.await.unwrap_or_default();
-    match status_result {
-        Ok(status) => {
-            let exit_code = status.code();
-            AgentVerificationTrace {
-                status: if status.success() {
-                    AgentVerificationStatus::Passed
-                } else {
-                    AgentVerificationStatus::Failed
-                },
-                command: Some(step.display_command),
-                exit_code,
-                stdout_preview: optional_preview(&stdout),
-                stderr_preview: optional_preview(&stderr),
-                duration_ms: Some(elapsed_ms(started_at)),
-                completed_at_ms: Some(now_ms()),
-            }
-        }
-        Err(error) => AgentVerificationTrace {
+    if output.timed_out {
+        return AgentVerificationTrace {
             status: AgentVerificationStatus::Error,
-            command: Some(step.display_command),
+            command: Some(command),
             exit_code: None,
-            stdout_preview: optional_preview(&stdout),
-            stderr_preview: Some(preview(&error.to_string())),
+            stdout_preview: optional_preview(&output.stdout),
+            stderr_preview: Some(preview(&format!(
+                "verification timed out after {}s{}",
+                step.timeout_secs,
+                if output.stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{}", output.stderr)
+                }
+            ))),
             duration_ms: Some(elapsed_ms(started_at)),
             completed_at_ms: Some(now_ms()),
+        };
+    }
+
+    let exit_code = output.exit_code;
+    AgentVerificationTrace {
+        status: if exit_code == Some(0) {
+            AgentVerificationStatus::Passed
+        } else {
+            AgentVerificationStatus::Failed
         },
+        command: Some(command),
+        exit_code,
+        stdout_preview: optional_preview(&output.stdout),
+        stderr_preview: optional_preview(&output.stderr),
+        duration_ms: Some(elapsed_ms(started_at)),
+        completed_at_ms: Some(now_ms()),
     }
 }
 
@@ -610,18 +585,6 @@ fn has_shell_control_operator(command: &str) -> bool {
         .any(|operator| normalized.contains(operator))
 }
 
-async fn read_pipe<T>(pipe: &mut Option<T>) -> String
-where
-    T: AsyncRead + Unpin,
-{
-    let Some(pipe) = pipe.as_mut() else {
-        return String::new();
-    };
-    let mut output = String::new();
-    let _ = pipe.read_to_string(&mut output).await;
-    output
-}
-
 fn optional_preview(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
@@ -714,6 +677,36 @@ mod tests {
             format!(r#"{{"scripts":{{{scripts}}}}}"#),
         )
         .expect("write package.json");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn verification_timeout_kills_process_group() {
+        let dir = temp_dir("timeout-process-group");
+        let marker = dir.join("marker");
+        let trace = run_verification_step(VerificationStep {
+            display_command: "timeout marker script".to_string(),
+            cwd: dir.clone(),
+            program: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "(sleep 2; echo should-not-run > marker) & wait".to_string(),
+            ],
+            timeout_secs: 1,
+        })
+        .await;
+
+        assert_eq!(trace.status, AgentVerificationStatus::Error);
+        assert!(trace
+            .stderr_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("verification timed out"));
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(!marker.exists());
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

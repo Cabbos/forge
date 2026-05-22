@@ -96,9 +96,10 @@ pub async fn toggle_capability(
     match state
         .harness
         .capability_registry
-        .toggle(&capability_id, enabled)
+        .toggle_with_event(&capability_id, enabled)
+        .await
     {
-        Ok(()) => {
+        Ok(_) => {
             let sessions = state
                 .sessions
                 .read()
@@ -110,7 +111,8 @@ pub async fn toggle_capability(
                 let _ = session
                     .harness
                     .capability_registry
-                    .toggle(&capability_id, enabled);
+                    .toggle_with_event(&capability_id, enabled)
+                    .await;
             }
             Ok(())
         }

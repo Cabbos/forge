@@ -10,6 +10,7 @@ pub fn extract_candidates_from_user_message(
     let body = collapse_whitespace(text);
     if body.chars().count() < 8
         || should_suppress_persistent_memory(&body)
+        || is_low_signal_continuation(&body)
         || should_reject_persistent_memory(&body)
     {
         return Vec::new();
@@ -222,6 +223,50 @@ fn should_suppress_persistent_memory(text: &str) -> bool {
     )
 }
 
+fn is_low_signal_continuation(text: &str) -> bool {
+    if text.chars().count() > 24 {
+        return false;
+    }
+    if contains_any(
+        text,
+        &[
+            "先把",
+            "已经完成",
+            "已经做到",
+            "做到",
+            "定了",
+            "已定",
+            "决定",
+            "方案",
+            "方向",
+            "不要",
+            "只改",
+            "默认",
+            "优先",
+            "生成",
+            "修复",
+            "补齐",
+        ],
+    ) {
+        return false;
+    }
+
+    contains_any(
+        text,
+        &[
+            "继续",
+            "接下来",
+            "下一步",
+            "往下走",
+            "然后呢",
+            "ok",
+            "OK",
+            "可以的",
+            "好的",
+        ],
+    )
+}
+
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
@@ -356,6 +401,32 @@ mod tests {
                 && memory.project_path.as_deref() == Some("/tmp/project")
                 && memory.title.starts_with("当前进度：")
                 && memory.confidence == 0.6
+                && memory.tags == vec!["task_state"]
+        }));
+    }
+
+    #[test]
+    fn ignores_low_signal_continuation_questions() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "接下来我们继续吧",
+        );
+
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn keeps_explicit_next_step_as_task_state() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "接下来先把 Agent Core 的恢复链路补齐。",
+        );
+
+        assert!(candidates.iter().any(|memory| {
+            memory.category == MemoryCategory::TaskState
+                && memory.scope == MemoryScope::Project
                 && memory.tags == vec!["task_state"]
         }));
     }

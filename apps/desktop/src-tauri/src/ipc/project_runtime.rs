@@ -9,6 +9,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
+use crate::ipc::workspace::resolve_bound_working_dir;
+use crate::process_runner::{configure_command_process_group, kill_child_process_group};
 use crate::state::{AppState, ManagedDevServer};
 
 #[derive(Clone)]
@@ -20,6 +22,20 @@ struct RuntimeConfig {
     command: Option<String>,
     port: u16,
     url: String,
+}
+
+#[derive(Clone)]
+struct PortOccupancy {
+    open: bool,
+    owner_pid: Option<u32>,
+    owner_working_dir: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone)]
+struct RuntimeAvailability {
+    running: bool,
+    blocked_by_port: bool,
+    message: String,
 }
 
 #[derive(serde::Serialize)]
@@ -45,35 +61,43 @@ pub struct ProjectRuntimeStatus {
 pub async fn get_project_runtime_status(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectRuntimeStatus, String> {
-    project_runtime_status_for_session(&state, session_id.as_deref()).await
+    project_runtime_status_for_request(&state, session_id.as_deref(), working_dir.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn start_project_dev_server(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectRuntimeStatus, String> {
-    let working_dir = runtime_working_dir(&state, session_id.as_deref()).await;
+    let working_dir =
+        runtime_working_dir_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     let config = runtime_config(&working_dir);
     if config.dev_script.is_none() {
+        let availability = RuntimeAvailability {
+            running: false,
+            blocked_by_port: false,
+            message: "当前项目没有 package.json 的 dev 脚本".to_string(),
+        };
         return Ok(status_from_config(
             &config,
             ManagedSnapshot::none(),
-            false,
-            "当前项目没有 package.json 的 dev 脚本",
+            availability,
         ));
     }
 
-    if port_is_open(config.port) {
-        return project_runtime_status_for_session(&state, session_id.as_deref()).await;
+    if inspect_port_occupancy(config.port).open {
+        return project_runtime_status_for_path(&state, working_dir).await;
     }
 
     if refresh_managed_server(&state, &config.working_dir)
         .await
         .is_some()
     {
-        return project_runtime_status_for_session(&state, session_id.as_deref()).await;
+        return project_runtime_status_for_path(&state, working_dir).await;
     }
 
     let mut command = Command::new(&config.package_manager);
@@ -95,6 +119,7 @@ pub async fn start_project_dev_server(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("BROWSER", "none");
+    configure_command_process_group(&mut command);
 
     let mut child = command
         .spawn()
@@ -132,34 +157,41 @@ pub async fn start_project_dev_server(
     }
 
     tokio::time::sleep(Duration::from_millis(800)).await;
-    project_runtime_status_for_session(&state, session_id.as_deref()).await
+    project_runtime_status_for_path(&state, config.working_dir.clone()).await
 }
 
 #[tauri::command]
 pub async fn stop_project_dev_server(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectRuntimeStatus, String> {
+    let working_dir =
+        runtime_working_dir_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     let mut server = {
         let mut guard = state.dev_server.write().await;
         guard.take()
     };
 
     if let Some(server) = server.as_mut() {
-        let _ = server.child.kill().await;
+        kill_child_process_group(&mut server.child).await;
         let _ = server.child.wait().await;
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    project_runtime_status_for_session(&state, session_id.as_deref()).await
+    project_runtime_status_for_path(&state, working_dir).await
 }
 
 #[tauri::command]
 pub async fn open_project_preview(
     state: State<'_, Arc<AppState>>,
     session_id: Option<String>,
+    working_dir: Option<String>,
 ) -> Result<ProjectRuntimeStatus, String> {
-    let status = project_runtime_status_for_session(&state, session_id.as_deref()).await?;
+    let status =
+        project_runtime_status_for_request(&state, session_id.as_deref(), working_dir.as_deref())
+            .await?;
     if !status.running {
         return Err("预览服务还没有运行。请先启动预览。".into());
     }
@@ -171,26 +203,31 @@ pub(crate) async fn project_runtime_status_for_session(
     state: &Arc<AppState>,
     session_id: Option<&str>,
 ) -> Result<ProjectRuntimeStatus, String> {
-    let working_dir = runtime_working_dir(state, session_id).await;
+    let working_dir = resolve_bound_working_dir(state, session_id, None).await?;
+    project_runtime_status_for_path(state, working_dir).await
+}
+
+async fn project_runtime_status_for_request(
+    state: &Arc<AppState>,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+) -> Result<ProjectRuntimeStatus, String> {
+    let working_dir = runtime_working_dir_or_explicit(state, session_id, working_dir).await?;
+    project_runtime_status_for_path(state, working_dir).await
+}
+
+async fn project_runtime_status_for_path(
+    state: &Arc<AppState>,
+    working_dir: std::path::PathBuf,
+) -> Result<ProjectRuntimeStatus, String> {
     let config = runtime_config(&working_dir);
     let managed = refresh_managed_server(state, &config.working_dir)
         .await
         .unwrap_or_else(ManagedSnapshot::none);
-    let running = managed.running || port_is_open(config.port);
+    let occupancy = inspect_port_occupancy(config.port);
+    let availability = runtime_availability(&config, &managed, &occupancy);
 
-    let message = if managed.running {
-        "预览服务由应用启动，正在运行"
-    } else if running {
-        "检测到预览地址已经在运行"
-    } else if config.dev_script.is_some() {
-        "可以启动项目预览"
-    } else if config.has_package_json {
-        "当前项目没有 dev 脚本"
-    } else {
-        "当前项目没有 package.json"
-    };
-
-    Ok(status_from_config(&config, managed, running, message))
+    Ok(status_from_config(&config, managed, availability))
 }
 
 #[derive(Clone)]
@@ -256,8 +293,7 @@ async fn refresh_managed_server(
 fn status_from_config(
     config: &RuntimeConfig,
     managed: ManagedSnapshot,
-    running: bool,
-    message: &str,
+    availability: RuntimeAvailability,
 ) -> ProjectRuntimeStatus {
     let port = managed.port.unwrap_or(config.port);
     let url = managed.url.unwrap_or_else(|| config.url.clone());
@@ -271,14 +307,78 @@ fn status_from_config(
         command,
         port,
         url,
-        running,
+        running: availability.running,
         managed: managed.running,
         pid: managed.pid,
-        can_start: config.dev_script.is_some() && !running,
+        can_start: config.dev_script.is_some()
+            && !availability.running
+            && !availability.blocked_by_port,
         can_stop: managed.running,
-        can_open: running,
-        message: message.to_string(),
+        can_open: availability.running,
+        message: availability.message,
         logs: managed.logs,
+    }
+}
+
+fn runtime_availability(
+    config: &RuntimeConfig,
+    managed: &ManagedSnapshot,
+    occupancy: &PortOccupancy,
+) -> RuntimeAvailability {
+    if managed.running {
+        return RuntimeAvailability {
+            running: true,
+            blocked_by_port: false,
+            message: "预览服务由应用启动，正在运行".to_string(),
+        };
+    }
+
+    if config.dev_script.is_none() {
+        let message = if config.has_package_json {
+            "当前项目没有 dev 脚本"
+        } else {
+            "当前项目没有 package.json"
+        };
+        return RuntimeAvailability {
+            running: false,
+            blocked_by_port: false,
+            message: message.to_string(),
+        };
+    }
+
+    if occupancy.open {
+        if let Some(owner_working_dir) = occupancy.owner_working_dir.as_deref() {
+            if same_workspace(owner_working_dir, &config.working_dir) {
+                return RuntimeAvailability {
+                    running: true,
+                    blocked_by_port: false,
+                    message: "检测到当前项目预览已经在运行".to_string(),
+                };
+            }
+
+            let owner_label = owner_working_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| owner_working_dir.to_string_lossy().to_string());
+            return RuntimeAvailability {
+                running: false,
+                blocked_by_port: true,
+                message: format!("端口 {} 已被其他项目占用：{}", config.port, owner_label),
+            };
+        }
+
+        return RuntimeAvailability {
+            running: true,
+            blocked_by_port: false,
+            message: "检测到预览地址已经在运行".to_string(),
+        };
+    }
+
+    RuntimeAvailability {
+        running: false,
+        blocked_by_port: false,
+        message: "可以启动项目预览".to_string(),
     }
 }
 
@@ -347,16 +447,12 @@ fn vite_config_port(working_dir: &std::path::Path) -> Option<u16> {
     None
 }
 
-async fn runtime_working_dir(
+async fn runtime_working_dir_or_explicit(
     state: &Arc<AppState>,
     session_id: Option<&str>,
-) -> std::path::PathBuf {
-    if let Some(session_id) = session_id {
-        if let Some(session) = state.sessions.read().await.get(session_id).cloned() {
-            return session.harness.working_dir.clone();
-        }
-    }
-    state.harness.working_dir.clone()
+    working_dir: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    resolve_bound_working_dir(state, session_id, working_dir).await
 }
 
 fn spawn_log_reader<R>(logs: Arc<RwLock<Vec<String>>>, label: &'static str, reader: R)
@@ -391,6 +487,80 @@ fn port_is_open(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(180)).is_ok()
 }
 
+fn inspect_port_occupancy(port: u16) -> PortOccupancy {
+    if !port_is_open(port) {
+        return PortOccupancy {
+            open: false,
+            owner_pid: None,
+            owner_working_dir: None,
+        };
+    }
+
+    if let Some((pid, working_dir)) = inspect_port_owner(port) {
+        return PortOccupancy {
+            open: true,
+            owner_pid: Some(pid),
+            owner_working_dir: working_dir,
+        };
+    }
+
+    PortOccupancy {
+        open: true,
+        owner_pid: None,
+        owner_working_dir: None,
+    }
+}
+
+fn inspect_port_owner(port: u16) -> Option<(u32, Option<std::path::PathBuf>)> {
+    #[cfg(unix)]
+    {
+        let output = std::process::Command::new("lsof")
+            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fp"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let pid = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix('p'))
+            .and_then(|value| value.parse::<u32>().ok())?;
+        Some((pid, inspect_process_working_dir(pid)))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+#[cfg(unix)]
+fn inspect_process_working_dir(pid: u32) -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("lsof")
+        .args(["-nP", "-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix('n'))
+        .filter(|path| !path.trim().is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+fn same_workspace(left: &std::path::Path, right: &std::path::Path) -> bool {
+    comparable_path(left) == comparable_path(right)
+}
+
+fn comparable_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let output = std::process::Command::new("open").arg(url).output();
@@ -413,5 +583,133 @@ fn open_url(url: &str) -> Result<(), String> {
         } else {
             stderr
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_workspace(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "forge-runtime-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn config_for(path: &std::path::Path) -> RuntimeConfig {
+        RuntimeConfig {
+            working_dir: path.to_path_buf(),
+            has_package_json: true,
+            package_manager: "npm".to_string(),
+            dev_script: Some("vite".to_string()),
+            command: Some("npm run dev".to_string()),
+            port: 5173,
+            url: "http://localhost:5173".to_string(),
+        }
+    }
+
+    fn config_without_dev(path: &std::path::Path) -> RuntimeConfig {
+        RuntimeConfig {
+            working_dir: path.to_path_buf(),
+            has_package_json: true,
+            package_manager: "npm".to_string(),
+            dev_script: None,
+            command: None,
+            port: 5173,
+            url: "http://localhost:5173".to_string(),
+        }
+    }
+
+    #[test]
+    fn runtime_does_not_treat_other_project_port_as_current_preview() {
+        let project = temp_workspace("project");
+        let other = temp_workspace("other");
+        let config = config_for(&project);
+        let managed = ManagedSnapshot::none();
+        let occupancy = PortOccupancy {
+            open: true,
+            owner_pid: Some(42),
+            owner_working_dir: Some(other.clone()),
+        };
+
+        let availability = runtime_availability(&config, &managed, &occupancy);
+        let status = status_from_config(&config, managed, availability);
+
+        assert!(!status.running);
+        assert!(!status.can_open);
+        assert!(!status.can_start);
+        assert!(status.message.contains("5173"));
+        assert!(status.message.contains("other"));
+
+        let _ = std::fs::remove_dir_all(project);
+        let _ = std::fs::remove_dir_all(other);
+    }
+
+    #[test]
+    fn runtime_treats_same_project_port_as_running_preview() {
+        let project = temp_workspace("project");
+        let config = config_for(&project);
+        let managed = ManagedSnapshot::none();
+        let occupancy = PortOccupancy {
+            open: true,
+            owner_pid: Some(42),
+            owner_working_dir: Some(project.clone()),
+        };
+
+        let availability = runtime_availability(&config, &managed, &occupancy);
+        let status = status_from_config(&config, managed, availability);
+
+        assert!(status.running);
+        assert!(status.can_open);
+        assert!(!status.can_start);
+        assert_eq!(status.message, "检测到当前项目预览已经在运行");
+
+        let _ = std::fs::remove_dir_all(project);
+    }
+
+    #[test]
+    fn runtime_without_dev_script_ignores_unrelated_default_port() {
+        let project = temp_workspace("project");
+        let other = temp_workspace("other");
+        let config = config_without_dev(&project);
+        let managed = ManagedSnapshot::none();
+        let occupancy = PortOccupancy {
+            open: true,
+            owner_pid: Some(42),
+            owner_working_dir: Some(other.clone()),
+        };
+
+        let availability = runtime_availability(&config, &managed, &occupancy);
+        let status = status_from_config(&config, managed, availability);
+
+        assert!(!status.running);
+        assert!(!status.can_open);
+        assert!(!status.can_start);
+        assert_eq!(status.message, "当前项目没有 dev 脚本");
+
+        let _ = std::fs::remove_dir_all(project);
+        let _ = std::fs::remove_dir_all(other);
+    }
+
+    #[tokio::test]
+    async fn runtime_request_requires_session_or_explicit_workspace() {
+        let workspace = temp_workspace("missing-workspace-binding");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(workspace.clone()),
+        )));
+
+        let error = runtime_working_dir_or_explicit(&state, None, None)
+            .await
+            .expect_err("missing workspace should fail");
+
+        assert!(error.contains("工作空间"));
+
+        let _ = std::fs::remove_dir_all(workspace);
     }
 }

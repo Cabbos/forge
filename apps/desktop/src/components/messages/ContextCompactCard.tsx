@@ -17,7 +17,7 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger
           data-testid="context-compact-trigger"
-          className="forge-log-line"
+          className="forge-log-line forge-context-compact-trigger"
         >
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
           <ForgeIcon icon={Archive} tone="context" contained={false} className="size-3.5" />

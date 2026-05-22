@@ -2,8 +2,12 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Notify;
+
+use crate::process_runner::{configure_command_process_group, kill_child_process_group};
 
 type McpStdoutLines = tokio::io::Lines<BufReader<ChildStdout>>;
 
@@ -262,6 +266,15 @@ pub async fn call_stdio_tool(
     tool_name: &str,
     arguments: serde_json::Value,
 ) -> Result<String, String> {
+    call_stdio_tool_with_cancel(server, tool_name, arguments, None).await
+}
+
+pub async fn call_stdio_tool_with_cancel(
+    server: &McpServerDefinition,
+    tool_name: &str,
+    arguments: serde_json::Value,
+    cancel: Option<Arc<Notify>>,
+) -> Result<String, String> {
     let mut session = start_stdio_session(server).await?;
     initialize_stdio_session(&mut session).await?;
     write_json_line(
@@ -277,7 +290,7 @@ pub async fn call_stdio_tool(
         }),
     )
     .await?;
-    let response = read_response(&mut session.reader, 2).await?;
+    let response = read_response_with_cancel(&mut session.reader, 2, cancel).await?;
     let result = parse_tool_call_response(&response);
 
     close_stdio_session(session).await;
@@ -291,12 +304,16 @@ async fn start_stdio_session(server: &McpServerDefinition) -> Result<StdioMcpSes
         .as_deref()
         .ok_or_else(|| format!("MCP server '{}' has no command configured", server.id))?;
 
-    let mut child = Command::new(command)
+    let mut command = Command::new(command);
+    command
         .args(&server.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    configure_command_process_group(&mut command);
+
+    let mut child = command
         .spawn()
         .map_err(|err| format!("Failed to start MCP server '{}': {err}", server.id))?;
 
@@ -348,7 +365,7 @@ async fn initialize_stdio_session(session: &mut StdioMcpSession) -> Result<(), S
 }
 
 async fn close_stdio_session(mut session: StdioMcpSession) {
-    let _ = session.child.start_kill();
+    kill_child_process_group(&mut session.child).await;
     let _ = session.child.wait().await;
 }
 
@@ -386,6 +403,21 @@ async fn read_response(
             return Err(format!("MCP response error: {}", error));
         }
         return Ok(value);
+    }
+}
+
+async fn read_response_with_cancel(
+    reader: &mut McpStdoutLines,
+    expected_id: u64,
+    cancel: Option<Arc<Notify>>,
+) -> Result<serde_json::Value, String> {
+    if let Some(cancel) = cancel {
+        tokio::select! {
+            result = read_response(reader, expected_id) => result,
+            _ = cancel.notified() => Err("MCP tool call cancelled".to_string()),
+        }
+    } else {
+        read_response(reader, expected_id).await
     }
 }
 

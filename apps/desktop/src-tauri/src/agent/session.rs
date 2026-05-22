@@ -1,20 +1,33 @@
 use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
 
-use tauri::Emitter;
 use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::auto_compact::{
-    compact_messages_for_overflow_retry, compact_messages_if_needed, CompactResult, CompactStats,
+    compact_messages_for_overflow_retry, compact_messages_if_needed, AutoCompactGuard,
+    CompactResult, CompactStats,
 };
 use crate::agent::context_builder::{
     ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
 };
 use crate::agent::provider_capabilities::is_context_overflow_error;
+use crate::agent::recovery::{
+    api_failure_trace, build_recovery_context, verification_failure_trace,
+};
 use crate::agent::snapshot::AgentSessionSnapshot;
+use crate::agent::time::now_ms;
+use crate::agent::tool_results::{
+    push_assistant_result_with_synthetic_tool_results, repair_tool_use_adjacency,
+    resolve_tool_result_for_model,
+};
+use crate::agent::turn_outcome::{
+    final_answer_instruction, final_turn_status_for_run, final_turn_transition_reason_for_run,
+    verification_has_failed,
+};
 use crate::agent::turn_state::{
-    completed_tool_trace, AgentCompactTrace, AgentTurnMetadata, AgentTurnState, AgentTurnStatus,
-    AgentVerificationStatus, AgentVerificationTrace,
+    completed_tool_trace, running_tool_trace, AgentCompactTrace, AgentFailureTrace,
+    AgentTurnMetadata, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
+    AgentVerificationTrace,
 };
 use crate::agent::verification;
 use crate::harness::Harness;
@@ -53,8 +66,18 @@ pub struct AgentSession {
     pub(crate) system_prompt: Mutex<String>,
     pub(crate) summary: Mutex<Option<String>>,
     pub(crate) latest_turn: Mutex<Option<AgentTurnState>>,
+    pub(crate) auto_compact_guard: Mutex<AutoCompactGuard>,
     pub(crate) context_window_tokens: Option<u32>,
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
+}
+
+pub(crate) struct AgentPreviewStatusUpdate<'a> {
+    pub project_path: Option<&'a str>,
+    pub running: bool,
+    pub can_start: bool,
+    pub can_open: bool,
+    pub label: &'a str,
+    pub url: Option<&'a str>,
 }
 
 impl AgentSession {
@@ -82,6 +105,7 @@ impl AgentSession {
             system_prompt: Mutex::new(system_prompt),
             summary: Mutex::new(None),
             latest_turn: Mutex::new(None),
+            auto_compact_guard: Mutex::new(AutoCompactGuard::default()),
             context_window_tokens,
             cancel: Mutex::new(None),
         };
@@ -104,9 +128,12 @@ impl AgentSession {
         summary: Option<String>,
         latest_turn: Option<AgentTurnState>,
     ) {
-        *self.messages.lock().unwrap() = messages;
+        *self.messages.lock().unwrap() = repair_tool_use_adjacency(messages);
         *self.summary.lock().unwrap() = summary;
-        *self.latest_turn.lock().unwrap() = latest_turn;
+        *self.latest_turn.lock().unwrap() = latest_turn.map(|mut turn| {
+            turn.normalize_for_session_resume();
+            turn
+        });
     }
 
     pub fn snapshot(&self) -> AgentSessionSnapshot {
@@ -149,8 +176,8 @@ impl AgentSession {
             .map(|context| {
                 vec![HiddenContextPart::new(
                     ContextSourceKind::MemoryContext,
-                    "Memory and wiki context",
-                    "Hidden context provided for this turn",
+                    "已保存背景",
+                    "本轮自动带入的用户和项目背景",
                     context,
                 )]
             })
@@ -168,10 +195,39 @@ impl AgentSession {
         hidden_contexts: Vec<HiddenContextPart>,
         turn_metadata: Option<AgentTurnMetadata>,
     ) -> Result<(), String> {
+        self.send_message_with_context_parts_and_activation_text(
+            text,
+            app_handle,
+            hidden_contexts,
+            turn_metadata,
+            None,
+        )
+        .await
+    }
+
+    /// Send a user message while allowing hidden composer intent to influence skill activation.
+    pub async fn send_message_with_context_parts_and_activation_text(
+        &self,
+        text: &str,
+        app_handle: &tauri::AppHandle,
+        hidden_contexts: Vec<HiddenContextPart>,
+        turn_metadata: Option<AgentTurnMetadata>,
+        activation_text: Option<&str>,
+    ) -> Result<(), String> {
         if !self.running.load(Ordering::SeqCst) {
             return Err("Session is not running".to_string());
         }
 
+        let previous_turn = self.latest_turn.lock().unwrap().clone();
+        let mut hidden_contexts = hidden_contexts;
+        if let Some(context) = build_recovery_context(previous_turn.as_ref(), text) {
+            hidden_contexts.push(HiddenContextPart::new(
+                ContextSourceKind::RecoveryTrace,
+                "恢复线索",
+                "上一轮失败后用于继续处理的内部线索",
+                context,
+            ));
+        }
         self.start_turn(text, turn_metadata, app_handle);
         crate::app_log!(
             "INFO",
@@ -183,18 +239,26 @@ impl AgentSession {
             .build_system_prompt_for_request(
                 &self.agent_type,
                 &self.harness.working_dir,
-                Some(text),
+                Some(activation_text.unwrap_or(text)),
             )
             .await;
         *self.system_prompt.lock().unwrap() = turn_system_prompt;
+        self.adapter
+            .set_external_tools(self.harness.external_mcp_tool_definitions().await);
 
         // Add user message to history
         self.messages.lock().unwrap().push(ChatMessage::user(text));
+        self.repair_message_history("before_model_call");
         let hidden_contexts = hidden_contexts
             .into_iter()
             .filter(|context| !context.content.trim().is_empty())
             .collect::<Vec<_>>();
-        self.mark_latest_turn_status(AgentTurnStatus::GatheringContext, app_handle);
+        self.mark_latest_turn_status_with_reason(
+            AgentTurnStatus::GatheringContext,
+            "gather_context",
+            None,
+            app_handle,
+        );
 
         // Fresh cancel token for this request
         let cancel = Arc::new(Notify::new());
@@ -210,11 +274,28 @@ impl AgentSession {
 
             let all_messages = self.messages.lock().unwrap().clone();
             let existing_summary = self.summary.lock().unwrap().clone();
-            let compacted = compact_messages_if_needed(
-                all_messages,
-                existing_summary,
-                self.context_window_tokens,
-            );
+            let compacted = if self
+                .auto_compact_guard
+                .lock()
+                .unwrap()
+                .should_skip_proactive_compaction()
+            {
+                self.auto_compact_guard
+                    .lock()
+                    .unwrap()
+                    .record_proactive_skip();
+                CompactResult::unchanged(all_messages, existing_summary)
+            } else {
+                compact_messages_if_needed(
+                    all_messages,
+                    existing_summary,
+                    self.context_window_tokens,
+                )
+            };
+            self.auto_compact_guard
+                .lock()
+                .unwrap()
+                .record_result(&compacted);
 
             if let Some(stats) = compacted.stats.as_ref() {
                 self.apply_compaction(&compacted, stats, "auto_compact", app_handle);
@@ -235,9 +316,14 @@ impl AgentSession {
                 self.context_window_tokens,
             );
             self.record_latest_context(&context_bundle, app_handle);
-            let mut msgs_with_context = context_bundle.messages;
+            let mut msgs_with_context = repair_tool_use_adjacency(context_bundle.messages);
 
-            self.mark_latest_turn_status(AgentTurnStatus::CallingModel, app_handle);
+            self.mark_latest_turn_status_with_reason(
+                AgentTurnStatus::CallingModel,
+                "call_model",
+                None,
+                app_handle,
+            );
             let mut retries = 0;
             let result = loop {
                 match self
@@ -254,6 +340,10 @@ impl AgentSession {
                             let existing_summary = self.summary.lock().unwrap().clone();
                             let compacted =
                                 compact_messages_for_overflow_retry(all_messages, existing_summary);
+                            self.auto_compact_guard
+                                .lock()
+                                .unwrap()
+                                .record_result(&compacted);
 
                             if let Some(stats) = compacted.stats.as_ref() {
                                 overflow_retry_used = true;
@@ -272,7 +362,8 @@ impl AgentSession {
                                     self.context_window_tokens,
                                 );
                                 self.record_latest_context(&context_bundle, app_handle);
-                                msgs_with_context = context_bundle.messages;
+                                msgs_with_context =
+                                    repair_tool_use_adjacency(context_bundle.messages);
                                 continue;
                             }
                         }
@@ -289,8 +380,8 @@ impl AgentSession {
                         }
                         let err_msg = format!("API error: {}", msg);
                         // Don't stop the session — let user retry
-                        let _ = app_handle.emit(
-                            "session-output",
+                        crate::transcript::emit_stream_event(
+                            app_handle,
                             StreamEvent::Error {
                                 session_id: self.id.clone(),
                                 block_id: BlockId::new().to_string(),
@@ -299,9 +390,17 @@ impl AgentSession {
                             },
                         );
                         if self.running.load(Ordering::SeqCst) {
-                            self.mark_latest_turn_status(AgentTurnStatus::Failed, app_handle);
+                            self.record_latest_turn_failure(
+                                api_failure_trace(&err_msg),
+                                app_handle,
+                            );
                         } else {
-                            self.mark_latest_turn_status(AgentTurnStatus::Cancelled, app_handle);
+                            self.mark_latest_turn_status_with_reason(
+                                AgentTurnStatus::Cancelled,
+                                "user_cancelled",
+                                Some("cancelled while handling api error"),
+                                app_handle,
+                            );
                         }
                         return Err(err_msg);
                     }
@@ -309,7 +408,12 @@ impl AgentSession {
             };
 
             if !self.running.load(Ordering::SeqCst) {
-                self.mark_latest_turn_status(AgentTurnStatus::Cancelled, app_handle);
+                self.mark_latest_turn_status_with_reason(
+                    AgentTurnStatus::Cancelled,
+                    "user_cancelled",
+                    Some("cancelled after model call"),
+                    app_handle,
+                );
                 break;
             }
 
@@ -323,11 +427,21 @@ impl AgentSession {
             // No tool calls = done
             if result.tool_calls.is_empty() {
                 crate::app_log!("INFO", "Agent turn {}: no tool calls, done", _round);
-                self.mark_latest_turn_status(AgentTurnStatus::Completed, app_handle);
+                self.mark_latest_turn_status_with_reason(
+                    AgentTurnStatus::Completed,
+                    "final_answer",
+                    Some("model returned no tool calls"),
+                    app_handle,
+                );
                 break;
             }
 
-            self.mark_latest_turn_status(AgentTurnStatus::RunningTools, app_handle);
+            self.mark_latest_turn_status_with_reason(
+                AgentTurnStatus::RunningTools,
+                "tool_calls_requested",
+                Some("model requested tool execution"),
+                app_handle,
+            );
 
             crate::app_log!(
                 "INFO",
@@ -352,6 +466,10 @@ impl AgentSession {
             if !delegated.is_empty() {
                 let mut handles = Vec::new();
                 for tc in &delegated {
+                    self.record_latest_tool(
+                        running_tool_trace(tc.id.clone(), tc.name.clone(), &tc.input, now_ms()),
+                        app_handle,
+                    );
                     let task = tc
                         .input
                         .get("task")
@@ -401,8 +519,8 @@ impl AgentSession {
                         );
                         // Emit full JSON to frontend for SubAgentTrace rendering
                         if let Some(tc) = result.tool_calls.get(idx) {
-                            let _ = app_handle.emit(
-                                "session-output",
+                            crate::transcript::emit_stream_event(
+                                app_handle,
                                 StreamEvent::ToolCallResult {
                                     session_id: self.id.clone(),
                                     block_id: tc.id.clone(),
@@ -446,9 +564,21 @@ impl AgentSession {
                     let app = app_handle.clone();
                     let id = tc.id.clone();
                     let started_at_ms = now_ms();
+                    let cancel_for_tool = cancel.clone();
+                    self.record_latest_tool(
+                        running_tool_trace(id.clone(), name.clone(), &input, started_at_ms),
+                        app_handle,
+                    );
                     handles.push(tokio::spawn(async move {
                         let result = h
-                            .execute_tool_with_block_id(&sid, &name, &input, &app, Some(&id))
+                            .execute_tool_with_block_id_and_cancel(
+                                &sid,
+                                &name,
+                                &input,
+                                &app,
+                                Some(&id),
+                                Some(cancel_for_tool),
+                            )
                             .await;
                         (id, name, input, started_at_ms, now_ms(), result)
                     }));
@@ -475,14 +605,19 @@ impl AgentSession {
             let mut write_results: Vec<(String, String)> = Vec::new();
             for tc in &writes {
                 let started_at_ms = now_ms();
+                self.record_latest_tool(
+                    running_tool_trace(tc.id.clone(), tc.name.clone(), &tc.input, started_at_ms),
+                    app_handle,
+                );
                 let result = self
                     .harness
-                    .execute_tool_with_block_id(
+                    .execute_tool_with_block_id_and_cancel(
                         &self.id,
                         &tc.name,
                         &tc.input,
                         app_handle,
                         Some(&tc.id),
+                        Some(cancel.clone()),
                     )
                     .await;
                 self.record_latest_tool(
@@ -517,10 +652,21 @@ impl AgentSession {
             // Feed results back in original order, grouped into one user message
             let mut tool_results: Vec<serde_json::Value> = Vec::new();
             for tc in &result.tool_calls {
-                let exec_result = result_map
-                    .get(&tc.id)
-                    .cloned()
-                    .unwrap_or_else(|| "Tool result missing".to_string());
+                let resolution = resolve_tool_result_for_model(&result_map, tc);
+                if resolution.missing {
+                    self.record_latest_tool(
+                        completed_tool_trace(
+                            tc.id.clone(),
+                            tc.name.clone(),
+                            &tc.input,
+                            &resolution.content,
+                            now_ms(),
+                            now_ms(),
+                        ),
+                        app_handle,
+                    );
+                }
+                let exec_result = resolution.content;
                 crate::app_log!(
                     "INFO",
                     "Agent tool '{}' result ({} chars)",
@@ -561,7 +707,7 @@ impl AgentSession {
                 self.context_window_tokens,
             );
             self.record_latest_context(&context_bundle, app_handle);
-            let mut msgs = context_bundle.messages;
+            let mut msgs = repair_tool_use_adjacency(context_bundle.messages);
             let last_role = msgs.last().map(|m| m.role.clone()).unwrap_or_default();
             if last_role == "tool" || last_role == "user" {
                 msgs.push(ChatMessage::user(&final_answer_instruction(
@@ -574,20 +720,30 @@ impl AgentSession {
                     .await
                 {
                     if !result.assistant_content.is_empty() {
-                        self.messages.lock().unwrap().push(ChatMessage::assistant(
-                            serde_json::Value::Array(result.assistant_content),
-                        ));
+                        let mut messages = self.messages.lock().unwrap();
+                        push_assistant_result_with_synthetic_tool_results(
+                            &mut messages,
+                            result.assistant_content,
+                            &result.tool_calls,
+                            "final_summary_tool_call_not_executed",
+                        );
                     }
                 }
             }
         }
 
         crate::app_log!("INFO", "Agent loop complete");
-        self.mark_latest_turn_status(
+        let final_reason = final_turn_transition_reason_for_run(
+            self.running.load(Ordering::SeqCst),
+            verification_trace.as_ref(),
+        );
+        self.mark_latest_turn_status_with_reason(
             final_turn_status_for_run(
                 self.running.load(Ordering::SeqCst),
                 verification_trace.as_ref(),
             ),
+            final_reason,
+            None,
             app_handle,
         );
         Ok(())
@@ -596,13 +752,18 @@ impl AgentSession {
     pub fn kill(&self, app_handle: &tauri::AppHandle) {
         self.running.store(false, Ordering::SeqCst);
         *self.status.lock().unwrap() = SessionStatus::Stopped;
-        self.mark_latest_turn_status(AgentTurnStatus::Cancelled, app_handle);
+        self.mark_latest_turn_status_with_reason(
+            AgentTurnStatus::Cancelled,
+            "user_cancelled",
+            Some("session killed"),
+            app_handle,
+        );
         // Cancel in-flight HTTP stream
         if let Some(cancel) = self.cancel.lock().unwrap().take() {
-            cancel.notify_one();
+            cancel.notify_waiters();
         }
-        let _ = app_handle.emit(
-            "session-output",
+        crate::transcript::emit_stream_event(
+            app_handle,
             StreamEvent::SessionStopped {
                 session_id: self.id.clone(),
                 reason: "killed".to_string(),
@@ -610,9 +771,13 @@ impl AgentSession {
         );
     }
 
-    pub fn resume(&self) {
+    pub fn resume(&self, app_handle: &tauri::AppHandle) {
         self.running.store(true, Ordering::SeqCst);
         *self.status.lock().unwrap() = SessionStatus::Running;
+        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+            turn.normalize_for_session_resume();
+        }
+        self.emit_latest_turn_projection(app_handle);
     }
 
     fn start_turn(
@@ -630,14 +795,56 @@ impl AgentSession {
                 text.to_string(),
             )
         });
-        *self.latest_turn.lock().unwrap() =
-            Some(metadata.into_turn_state(uuid::Uuid::now_v7().to_string()));
+        let mut turn = metadata.into_turn_state(uuid::Uuid::now_v7().to_string());
+        turn.set_execution_plan(
+            "处理本轮请求".to_string(),
+            vec![
+                "理解请求与上下文".to_string(),
+                "执行必要操作".to_string(),
+                "验证并交付结果".to_string(),
+            ],
+        );
+        *self.latest_turn.lock().unwrap() = Some(turn);
         self.emit_latest_turn_projection(app_handle);
     }
 
+    fn repair_message_history(&self, reason: &str) {
+        let mut messages = self.messages.lock().unwrap();
+        let before_len = messages.len();
+        let repaired = repair_tool_use_adjacency(std::mem::take(&mut *messages));
+        let after_len = repaired.len();
+        if after_len != before_len {
+            crate::app_log!(
+                "WARN",
+                "[agent_history] repaired dangling tool_use history before model call: reason={}, before={}, after={}",
+                reason,
+                before_len,
+                after_len
+            );
+        }
+        *messages = repaired;
+    }
+
     fn mark_latest_turn_status(&self, status: AgentTurnStatus, app_handle: &tauri::AppHandle) {
+        self.mark_latest_turn_status_with_reason(status, "status_update", None, app_handle);
+    }
+
+    fn mark_latest_turn_status_with_reason(
+        &self,
+        status: AgentTurnStatus,
+        reason: &str,
+        detail: Option<&str>,
+        app_handle: &tauri::AppHandle,
+    ) {
         if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
-            turn.mark_status(status);
+            turn.mark_status_with_reason(status, reason, detail);
+        }
+        self.emit_latest_turn_projection(app_handle);
+    }
+
+    fn record_latest_turn_failure(&self, trace: AgentFailureTrace, app_handle: &tauri::AppHandle) {
+        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+            turn.record_failure(trace);
         }
         self.emit_latest_turn_projection(app_handle);
     }
@@ -671,6 +878,49 @@ impl AgentSession {
         self.emit_latest_turn_projection(app_handle);
     }
 
+    pub fn record_latest_delivery_summary(
+        &self,
+        summary: &crate::protocol::events::DeliverySummary,
+        app_handle: &tauri::AppHandle,
+    ) {
+        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+            turn.record_delivery_summary(summary);
+        }
+        self.emit_latest_turn_projection(app_handle);
+    }
+
+    pub fn record_latest_preview_status(
+        &self,
+        update: AgentPreviewStatusUpdate<'_>,
+        app_handle: &tauri::AppHandle,
+    ) {
+        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+            turn.record_preview_status(
+                update.project_path,
+                update.running,
+                update.can_start,
+                update.can_open,
+                update.label,
+                update.url,
+            );
+        }
+        self.emit_latest_turn_projection(app_handle);
+    }
+
+    pub fn record_latest_checkpoint_status(
+        &self,
+        is_git_repo: bool,
+        dirty: bool,
+        has_checkpoint: bool,
+        label: &str,
+        app_handle: &tauri::AppHandle,
+    ) {
+        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+            turn.record_checkpoint_status(is_git_repo, dirty, has_checkpoint, label);
+        }
+        self.emit_latest_turn_projection(app_handle);
+    }
+
     async fn verify_latest_turn(
         &self,
         app_handle: &tauri::AppHandle,
@@ -700,10 +950,16 @@ impl AgentSession {
                 completed_at_ms: Some(now_ms()),
             };
             self.record_latest_verification(trace.clone(), app_handle);
+            self.record_latest_turn_failure(verification_failure_trace(&trace), app_handle);
             return Some(trace);
         };
 
-        self.mark_latest_turn_status(AgentTurnStatus::Verifying, app_handle);
+        self.mark_latest_turn_status_with_reason(
+            AgentTurnStatus::Verifying,
+            "verification_started",
+            None,
+            app_handle,
+        );
         self.record_latest_verification(
             AgentVerificationTrace {
                 status: AgentVerificationStatus::Running,
@@ -718,6 +974,9 @@ impl AgentSession {
         );
         let trace = verification::run_verification(plan).await;
         self.record_latest_verification(trace.clone(), app_handle);
+        if verification_has_failed(&trace) {
+            self.record_latest_turn_failure(verification_failure_trace(&trace), app_handle);
+        }
         Some(trace)
     }
 
@@ -730,8 +989,8 @@ impl AgentSession {
     ) {
         *self.summary.lock().unwrap() = compacted.summary.clone();
         *self.messages.lock().unwrap() = compacted.messages.clone();
-        let _ = app_handle.emit(
-            "session-output",
+        crate::transcript::emit_stream_event(
+            app_handle,
             StreamEvent::ContextCompacted {
                 session_id: self.id.clone(),
                 block_id: BlockId::new().to_string(),
@@ -771,8 +1030,8 @@ impl AgentSession {
             .map(AgentTurnState::to_projection);
 
         if let Some(state) = projection {
-            let _ = app_handle.emit(
-                "session-output",
+            crate::transcript::emit_stream_event(
+                app_handle,
                 StreamEvent::AgentTurnUpdated {
                     session_id: self.id.clone(),
                     state,
@@ -814,114 +1073,4 @@ fn is_read_only_tool(name: &str) -> bool {
             | "web_fetch"
             | "git_diff"
     )
-}
-
-fn final_answer_instruction(verification: Option<&AgentVerificationTrace>) -> String {
-    let Some(trace) = verification.filter(|trace| verification_has_failed(trace)) else {
-        return "Based on the above, provide your final answer as plain text. Do not use tools."
-            .to_string();
-    };
-
-    let mut detail = String::from(
-        "Based on the above, provide your final answer as plain text. Do not use tools. Verification did not pass, so clearly tell the user what failed and avoid claiming the task is fully complete.",
-    );
-    if let Some(command) = trace.command.as_deref() {
-        detail.push_str(&format!("\nVerification command: {command}"));
-    }
-    if let Some(exit_code) = trace.exit_code {
-        detail.push_str(&format!("\nExit code: {exit_code}"));
-    }
-    if let Some(stderr) = trace.stderr_preview.as_deref() {
-        detail.push_str(&format!("\nError output: {stderr}"));
-    }
-    if let Some(stdout) = trace.stdout_preview.as_deref() {
-        detail.push_str(&format!("\nOutput: {stdout}"));
-    }
-    detail
-}
-
-fn final_turn_status_for_run(
-    running: bool,
-    verification: Option<&AgentVerificationTrace>,
-) -> AgentTurnStatus {
-    if !running {
-        return AgentTurnStatus::Cancelled;
-    }
-    if verification.is_some_and(verification_has_failed) {
-        AgentTurnStatus::Failed
-    } else {
-        AgentTurnStatus::Completed
-    }
-}
-
-fn verification_has_failed(trace: &AgentVerificationTrace) -> bool {
-    matches!(
-        trace.status,
-        AgentVerificationStatus::Failed | AgentVerificationStatus::Error
-    )
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::final_turn_status_for_run;
-    use crate::agent::turn_state::{
-        AgentTurnStatus, AgentVerificationStatus, AgentVerificationTrace,
-    };
-
-    fn verification(status: AgentVerificationStatus) -> AgentVerificationTrace {
-        AgentVerificationTrace {
-            status,
-            command: Some("npm run build".to_string()),
-            exit_code: Some(1),
-            stdout_preview: None,
-            stderr_preview: Some("build failed".to_string()),
-            duration_ms: Some(10),
-            completed_at_ms: Some(20),
-        }
-    }
-
-    #[test]
-    fn failed_verification_keeps_turn_failed() {
-        let trace = verification(AgentVerificationStatus::Failed);
-
-        assert_eq!(
-            final_turn_status_for_run(true, Some(&trace)),
-            AgentTurnStatus::Failed
-        );
-    }
-
-    #[test]
-    fn error_verification_keeps_turn_failed() {
-        let trace = verification(AgentVerificationStatus::Error);
-
-        assert_eq!(
-            final_turn_status_for_run(true, Some(&trace)),
-            AgentTurnStatus::Failed
-        );
-    }
-
-    #[test]
-    fn passed_verification_allows_turn_completed() {
-        let trace = verification(AgentVerificationStatus::Passed);
-
-        assert_eq!(
-            final_turn_status_for_run(true, Some(&trace)),
-            AgentTurnStatus::Completed
-        );
-    }
-
-    #[test]
-    fn stopped_run_marks_turn_cancelled() {
-        assert_eq!(
-            final_turn_status_for_run(false, None),
-            AgentTurnStatus::Cancelled
-        );
-    }
 }

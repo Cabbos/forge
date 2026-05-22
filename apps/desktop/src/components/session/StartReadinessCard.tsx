@@ -25,20 +25,22 @@ interface StartReadinessCardProps {
 
 export function StartReadinessCard({ sessionId, variant = "panel", showDetails = false }: StartReadinessCardProps) {
   const activeWorkspace = useActiveWorkspace();
+  const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const [keys, setKeys] = useState<KeyStatus[]>([]);
   const [runtime, setRuntime] = useState<ProjectRuntimeStatus | null>(null);
   const [checkpoint, setCheckpoint] = useState<ProjectCheckpointStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<ReadinessAction>(null);
+  const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const [keyStatus, runtimeStatus, checkpointStatus] = await Promise.all([
         getApiKeyStatus().catch(() => []),
-        getProjectRuntimeStatus(sessionId).catch(() => null),
-        getProjectCheckpointStatus(sessionId).catch(() => null),
+        getProjectRuntimeStatus(sessionId, workingDir).catch(() => null),
+        getProjectCheckpointStatus(sessionId, workingDir).catch(() => null),
       ]);
       setKeys(keyStatus);
       setRuntime(runtimeStatus);
@@ -46,7 +48,7 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, workingDir]);
 
   useEffect(() => {
     refresh();
@@ -77,10 +79,10 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
       if (action === "open_settings") {
         window.dispatchEvent(new Event("forge:open-settings"));
       } else if (action === "start_preview") {
-        await startProjectDevServer(sessionId);
+        await startProjectDevServer(sessionId, workingDir);
         await refresh();
       } else if (action === "create_checkpoint") {
-        await createProjectCheckpoint(sessionId);
+        await createProjectCheckpoint(sessionId, workingDir);
         await refresh();
       }
     } finally {

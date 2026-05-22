@@ -1,5 +1,6 @@
 use crate::harness::capability::{
-    Capability, CapabilityKind, CapabilityMetadata, Event, EventType,
+    Capability, CapabilityDispatchError, CapabilityDispatchReport, CapabilityKind,
+    CapabilityMetadata, Event, EventType,
 };
 use crate::harness::db::Database;
 use std::sync::{Arc, RwLock};
@@ -95,6 +96,21 @@ impl CapabilityRegistry {
         Ok(())
     }
 
+    pub async fn toggle_with_event(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<CapabilityDispatchReport, String> {
+        self.toggle(id, enabled)?;
+        let action = if enabled { "enabled" } else { "disabled" };
+        Ok(self
+            .dispatch_event(&Event::CapabilityChanged {
+                capability_id: id.to_string(),
+                action: action.to_string(),
+            })
+            .await)
+    }
+
     pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
         let id = capability_id_for_tool(tool_name);
         self.capabilities
@@ -135,8 +151,8 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    pub async fn dispatch_event(&self, event: &Event) {
-        let matching: Vec<Arc<dyn Capability>> = {
+    pub async fn dispatch_event(&self, event: &Event) -> CapabilityDispatchReport {
+        let matching: Vec<(String, Arc<dyn Capability>)> = {
             let caps = self.capabilities.read().unwrap();
             caps.iter()
                 .filter(|entry| entry.enabled)
@@ -145,14 +161,22 @@ impl CapabilityRegistry {
                     subscribed
                         .iter()
                         .any(|e| matches_event(e, event))
-                        .then(|| Arc::clone(&entry.cap))
+                        .then(|| (entry.cap.metadata().id.clone(), Arc::clone(&entry.cap)))
                 })
                 .collect()
         };
 
-        for cap in matching {
-            let _ = cap.on_event(event).await;
+        let mut report = CapabilityDispatchReport::new(event.event_type());
+        for (capability_id, cap) in matching {
+            match cap.on_event(event).await {
+                Ok(()) => report.handled_by.push(capability_id),
+                Err(message) => report.errors.push(CapabilityDispatchError {
+                    capability_id,
+                    message,
+                }),
+            }
         }
+        report
     }
 }
 

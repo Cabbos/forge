@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::Serialize;
-use tauri::Emitter;
 use tokio::sync::Notify;
 
-use super::anthropic::ToolDef;
-use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
+use super::base::{
+    repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
+    ToolDef,
+};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -34,7 +35,7 @@ pub struct OpenAiCompatibleAdapter {
     base_url: String,
     max_tokens: u32,
     client: reqwest::Client,
-    external_tools: Vec<ToolDef>,
+    external_tools: RwLock<Vec<ToolDef>>,
 }
 
 impl OpenAiCompatibleAdapter {
@@ -47,7 +48,7 @@ impl OpenAiCompatibleAdapter {
             model: DEFAULT_MODEL.to_string(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             max_tokens: 8192,
-            external_tools: Vec::new(),
+            external_tools: RwLock::new(Vec::new()),
             client: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .timeout(std::time::Duration::from_secs(600))
@@ -65,14 +66,19 @@ impl OpenAiCompatibleAdapter {
         self
     }
 
-    pub fn with_external_tools(mut self, tools: Vec<ToolDef>) -> Self {
-        self.external_tools = tools;
+    pub fn with_external_tools(self, tools: Vec<ToolDef>) -> Self {
+        self.set_external_tools(tools);
         self
     }
 
     fn tool_definitions_for_request(&self) -> Vec<ToolDef> {
         let mut tools = tool_definitions();
-        tools.extend(self.external_tools.clone());
+        tools.extend(
+            self.external_tools
+                .read()
+                .expect("external tools lock poisoned")
+                .clone(),
+        );
         tools
     }
 }
@@ -130,6 +136,13 @@ struct OpenAiFunctionDef {
 
 #[async_trait]
 impl AiAdapter for OpenAiCompatibleAdapter {
+    fn set_external_tools(&self, tools: Vec<ToolDef>) {
+        *self
+            .external_tools
+            .write()
+            .expect("external tools lock poisoned") = tools;
+    }
+
     fn model_id(&self) -> &str {
         &self.model
     }
@@ -167,7 +180,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             messages.len(),
             self.model
         );
-        let openai_msgs = convert_messages(messages);
+        let repaired_messages = repair_tool_result_adjacency(messages);
+        let openai_msgs = convert_messages(&repaired_messages);
         crate::app_log!("INFO", "Converted to {} OpenAI messages", openai_msgs.len());
 
         let tools: Vec<OpenAiTool> = self
@@ -282,8 +296,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                         if let Some(content) = delta["content"].as_str() {
                             if current_text.is_empty() {
                                 active_text_block_id = Some(BlockId::new().to_string());
-                                let _ = app_handle.emit(
-                                    "session-output",
+                                crate::transcript::emit_stream_event(
+                                    app_handle,
                                     StreamEvent::TextStart {
                                         session_id: session.clone(),
                                         block_id: active_text_block_id.clone().unwrap(),
@@ -291,8 +305,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                                 );
                             }
                             current_text.push_str(content);
-                            let _ = app_handle.emit(
-                                "session-output",
+                            crate::transcript::emit_stream_event(
+                                app_handle,
                                 StreamEvent::TextChunk {
                                     session_id: session.clone(),
                                     block_id: active_text_block_id.clone().unwrap_or_default(),
@@ -351,8 +365,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                         input_toks,
                         output_toks,
                     );
-                    let _ = app_handle.emit(
-                        "session-output",
+                    crate::transcript::emit_stream_event(
+                        app_handle,
                         StreamEvent::Usage {
                             session_id: session.clone(),
                             input_tokens: input_toks,
@@ -367,8 +381,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     let msg = parsed["error"]["message"]
                         .as_str()
                         .unwrap_or("Unknown error");
-                    let _ = app_handle.emit(
-                        "session-output",
+                    crate::transcript::emit_stream_event(
+                        app_handle,
                         StreamEvent::Error {
                             session_id: session.clone(),
                             block_id: BlockId::new().to_string(),
@@ -384,8 +398,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         if !current_text.is_empty() {
             assistant_content.push(serde_json::json!({"type":"text","text":current_text}));
             let bid = active_text_block_id.unwrap_or_else(|| BlockId::new().to_string());
-            let _ = app_handle.emit(
-                "session-output",
+            crate::transcript::emit_stream_event(
+                app_handle,
                 StreamEvent::TextEnd {
                     session_id: session_id.to_string(),
                     block_id: bid,
@@ -418,8 +432,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     input: input.clone(),
                 });
                 let bid = id.clone();
-                let _ = app_handle.emit(
-                    "session-output",
+                crate::transcript::emit_stream_event(
+                    app_handle,
                     StreamEvent::ToolCallStart {
                         session_id: session_id.to_string(),
                         block_id: bid.clone(),
@@ -427,8 +441,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                         tool_input: input.clone(),
                     },
                 );
-                let _ = app_handle.emit(
-                    "session-output",
+                crate::transcript::emit_stream_event(
+                    app_handle,
                     StreamEvent::ToolCallEnd {
                         session_id: session_id.to_string(),
                         block_id: bid,
@@ -598,49 +612,49 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
     result
 }
 
-pub fn tool_definitions() -> Vec<super::anthropic::ToolDef> {
+pub fn tool_definitions() -> Vec<ToolDef> {
     vec![
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "read_file".into(),
             description: "Read the contents of a file".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "write_to_file".into(),
             description: "Create or overwrite a file".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "edit_file".into(),
             description: "Replace a string in a file".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "list_directory".into(),
             description: "List directory contents".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"path":{"type":"string"}}}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "search_files".into(),
             description: "Search files by glob pattern".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "search_content".into(),
             description: "Search file contents (grep)".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "run_shell".into(),
             description: "Execute a shell command".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"number"}},"required":["command"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "web_search".into(),
             description: "Search the web".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
         },
-        super::anthropic::ToolDef {
+        ToolDef {
             name: "web_fetch".into(),
             description: "Fetch a URL".into(),
             input_schema: serde_json::json!({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}),
@@ -651,7 +665,6 @@ pub fn tool_definitions() -> Vec<super::anthropic::ToolDef> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::anthropic::ToolDef;
 
     #[test]
     fn external_tools_are_included_in_openai_compatible_definitions() {
@@ -671,5 +684,31 @@ mod tests {
 
         assert!(names.contains(&"read_file".to_string()));
         assert!(names.contains(&"mcp__fixture__echo".to_string()));
+    }
+
+    #[test]
+    fn external_tools_can_be_replaced_after_session_creation() {
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_external_tools(vec![ToolDef::new(
+                "mcp__old__tool",
+                "Old MCP tool",
+                serde_json::json!({"type": "object"}),
+            )]);
+
+        adapter.set_external_tools(vec![ToolDef::new(
+            "mcp__new__tool",
+            "New MCP tool",
+            serde_json::json!({"type": "object"}),
+        )]);
+
+        let names = adapter
+            .tool_definitions_for_request()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"mcp__new__tool".to_string()));
+        assert!(!names.contains(&"mcp__old__tool".to_string()));
     }
 }

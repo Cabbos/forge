@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Check, Copy } from "lucide-react";
 import { getHighlighter, highlightCode } from "@/lib/shiki";
 import { useStore } from "@/store";
-import { cn } from "@/lib/utils";
+import { deriveCodeBlockView } from "@/components/messages/codeBlockPresentation";
+import { ReaderCaptionAction } from "@/components/messages/ReaderCaptionAction";
 
 interface CodeBlockProps {
   code: string;
@@ -14,18 +14,15 @@ const highlightedCodeCache = new Map<string, string>();
 
 export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
   const theme = useStore((s) => s.theme);
-  const cacheKey = `${theme}:${lang}:${code}`;
-  const cachedHtml = highlightedCodeCache.get(cacheKey) ?? "";
+  const seedView = deriveCodeBlockView({ code, lang, theme, streaming, highlightedHtml: "" });
+  const cachedHtml = highlightedCodeCache.get(seedView.cacheKey) ?? "";
   const [htmlState, setHtmlState] = useState<{ key: string; html: string }>({
-    key: cacheKey,
+    key: seedView.cacheKey,
     html: cachedHtml,
   });
-  const [copied, setCopied] = useState(false);
-  const label = formatLanguageLabel(lang);
-  const lineCount = code ? code.split("\n").length : 0;
-  const html = htmlState.key === cacheKey ? htmlState.html : cachedHtml;
-  const shouldShowHighlighted = !streaming && Boolean(html);
-  const renderer = shouldShowHighlighted ? "highlighted" : "plain";
+  const html = htmlState.key === seedView.cacheKey ? htmlState.html : cachedHtml;
+  const view = deriveCodeBlockView({ code, lang, theme, streaming, highlightedHtml: html });
+  const { cacheKey } = view;
 
   useEffect(() => {
     if (streaming) return;
@@ -49,48 +46,27 @@ export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
     };
   }, [cacheKey, code, lang, streaming, theme]);
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      setCopied(false);
-    }
-  };
-
   return (
     <figure
       className="code-surface group my-2.5 overflow-hidden rounded-md border border-border bg-background shadow-none"
-      data-renderer={renderer}
+      data-renderer={view.renderer}
     >
       <figcaption className="code-caption">
         <div className="flex min-w-0 items-center gap-2">
           <span className="code-caption-dot" />
           <span className="truncate font-mono text-[10px] font-medium uppercase tracking-normal text-muted-foreground">
-            {label}
+            {view.label}
           </span>
-          {lineCount > 1 && (
+          {view.lineCount > 1 && (
             <span className="hidden font-mono text-[10px] text-muted-foreground sm:inline">
-              {lineCount} 行
+              {view.lineCount} 行
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={copy}
-          className={cn(
-            "inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors",
-            "hover:bg-secondary hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary/60"
-          )}
-          aria-label={copied ? "已复制" : "复制代码"}
-          title={copied ? "已复制" : "复制代码"}
-        >
-          {copied ? <Check className="size-3.5" style={{ color: "var(--forge-icon-safety)" }} /> : <Copy className="size-3.5" />}
-        </button>
+        <ReaderCaptionAction text={code} idleLabel="复制代码" />
       </figcaption>
       <div className="code-scroll max-h-[520px] overflow-auto">
-        {shouldShowHighlighted ? (
+        {view.shouldShowHighlighted ? (
           <div className="shiki-wrapper" dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <pre className="code-fallback">
@@ -100,22 +76,4 @@ export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
       </div>
     </figure>
   );
-}
-
-function formatLanguageLabel(lang: string): string {
-  const value = lang.trim().toLowerCase();
-  if (!value) return "文本";
-  const labels: Record<string, string> = {
-    js: "javascript",
-    jsx: "jsx",
-    ts: "typescript",
-    tsx: "tsx",
-    rs: "rust",
-    sh: "shell",
-    bash: "shell",
-    zsh: "shell",
-    md: "markdown",
-    yml: "yaml",
-  };
-  return labels[value] || value;
 }

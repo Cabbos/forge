@@ -197,6 +197,8 @@ export interface AgentTurnProjection {
 }
 
 export type StreamEvent =
+  // ── Transcript ──
+  | { event_type: "user_message"; session_id: string; block_id: string; content: string }
   // ── AI Thinking ──
   | { event_type: "thinking_start"; session_id: string; block_id: string }
   | { event_type: "thinking_chunk"; session_id: string; block_id: string; content: string }

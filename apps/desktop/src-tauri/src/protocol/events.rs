@@ -30,6 +30,14 @@ pub struct DeliverySummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event_type")]
 pub enum StreamEvent {
+    // ── Transcript ──
+    #[serde(rename = "user_message")]
+    UserMessage {
+        session_id: String,
+        block_id: String,
+        content: String,
+    },
+
     // ── AI Thinking ──
     #[serde(rename = "thinking_start")]
     ThinkingStart {
@@ -243,7 +251,8 @@ impl StreamEvent {
     pub fn session_id(&self) -> &str {
         use StreamEvent::*;
         match self {
-            ThinkingStart { session_id, .. }
+            UserMessage { session_id, .. }
+            | ThinkingStart { session_id, .. }
             | ThinkingChunk { session_id, .. }
             | ThinkingEnd { session_id, .. }
             | TextStart { session_id, .. }

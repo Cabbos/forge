@@ -11,6 +11,9 @@ pub fn select_relevant_memories(
     if limit == 0 {
         return Vec::new();
     }
+    if is_low_signal_memory_query(message) {
+        return Vec::new();
+    }
 
     let message_terms = terms(message);
     let message_lower = message.to_lowercase();
@@ -23,6 +26,7 @@ pub fn select_relevant_memories(
         .filter_map(|memory| {
             let mut score = 0.0_f32;
             let mut reasons = Vec::new();
+            let mut has_relevance_signal = false;
 
             if memory.status == MemoryStatus::Candidate {
                 if memory.confidence < 0.55 {
@@ -35,6 +39,7 @@ pub fn select_relevant_memories(
             if memory.status == MemoryStatus::Pinned {
                 score += 4.0;
                 reasons.push("已固定");
+                has_relevance_signal = true;
             }
 
             if let (Some(active), Some(memory_project)) =
@@ -55,6 +60,7 @@ pub fn select_relevant_memories(
             if overlap > 0 {
                 score += overlap as f32;
                 reasons.push("关键词匹配");
+                has_relevance_signal = true;
             }
 
             if matches!(memory.category, MemoryCategory::Preference)
@@ -62,6 +68,7 @@ pub fn select_relevant_memories(
             {
                 score += 1.5;
                 reasons.push("偏好相关");
+                has_relevance_signal = true;
             }
 
             if matches!(memory.category, MemoryCategory::Decision)
@@ -69,6 +76,7 @@ pub fn select_relevant_memories(
             {
                 score += 1.5;
                 reasons.push("方向相关");
+                has_relevance_signal = true;
             }
 
             if matches!(memory.category, MemoryCategory::TaskState)
@@ -76,6 +84,7 @@ pub fn select_relevant_memories(
             {
                 score += 2.0;
                 reasons.push("进度相关");
+                has_relevance_signal = true;
             }
 
             if matches!(memory.category, MemoryCategory::ProjectFact)
@@ -83,6 +92,11 @@ pub fn select_relevant_memories(
             {
                 score += 1.5;
                 reasons.push("项目相关");
+                has_relevance_signal = true;
+            }
+
+            if !has_relevance_signal {
+                return None;
             }
 
             if score > 0.0 && memory.use_count > 0 {
@@ -158,6 +172,77 @@ fn contains_project_signal(message: &str) -> bool {
         "不要改",
         "workspace",
         "project",
+    ]
+    .iter()
+    .any(|signal| message.contains(signal))
+}
+
+fn is_low_signal_memory_query(message: &str) -> bool {
+    let message_lower = message.to_lowercase();
+    if has_explicit_context_signal(&message_lower) {
+        return false;
+    }
+
+    let compact = message_lower
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .collect::<String>();
+    if compact.is_empty() {
+        return true;
+    }
+
+    matches!(
+        compact.as_str(),
+        "继续"
+            | "继续吧"
+            | "继续呀"
+            | "接着"
+            | "接着吧"
+            | "往下"
+            | "往下走"
+            | "下一步"
+            | "下一步呢"
+            | "接下来"
+            | "接下来呢"
+            | "然后呢"
+            | "ok"
+            | "okay"
+            | "好"
+            | "好的"
+            | "可以"
+            | "可以的"
+            | "行"
+            | "嗯"
+    )
+}
+
+fn has_explicit_context_signal(message: &str) -> bool {
+    [
+        "刚才",
+        "上次",
+        "之前",
+        "前面",
+        "前文",
+        "历史",
+        "背景",
+        "记忆",
+        "项目记录",
+        "做到哪",
+        "进度",
+        "失败",
+        "报错",
+        "错误",
+        "继续做",
+        "继续改",
+        "继续修",
+        "接着做",
+        "接着改",
+        "接着修",
+        "我们说",
+        "说了什么",
+        "resume",
+        "history",
+        "memory",
     ]
     .iter()
     .any(|signal| message.contains(signal))
@@ -289,6 +374,40 @@ mod tests {
         assert_eq!(selected[0].memory_id, "progress");
         assert!(selected[0].reason.contains("自动记录"));
         assert!(selected[0].reason.contains("进度相关"));
+    }
+
+    #[test]
+    fn low_signal_continuation_does_not_select_project_memories() {
+        let memories = vec![
+            task_state_memory(
+                "progress",
+                MemoryStatus::Accepted,
+                "上次已经完成 demo 首页和检查失败后的继续修复入口。",
+            ),
+            memory(
+                "direction",
+                MemoryStatus::Accepted,
+                "V1 先证明本地网页小工具闭环。",
+            ),
+        ];
+
+        let selected = select_relevant_memories(&memories, "继续吧", Some("/tmp/forge"), 5);
+
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn same_project_alone_does_not_select_memory() {
+        let memories = vec![memory(
+            "direction",
+            MemoryStatus::Accepted,
+            "V1 先证明本地网页小工具闭环。",
+        )];
+
+        let selected =
+            select_relevant_memories(&memories, "帮我看看按钮颜色", Some("/tmp/forge"), 5);
+
+        assert!(selected.is_empty());
     }
 
     #[test]

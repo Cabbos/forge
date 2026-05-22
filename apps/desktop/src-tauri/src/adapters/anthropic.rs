@@ -1,13 +1,15 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde::Serialize;
-use tauri::Emitter;
 use tokio::sync::Notify;
 
-use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
+use super::base::{
+    repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
+    ToolDef,
+};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -48,7 +50,7 @@ pub struct AnthropicAdapter {
     max_tokens: u32,
     client: reqwest::Client,
     /// Extra tools from MCP servers or other external sources
-    external_tools: Vec<ToolDef>,
+    external_tools: RwLock<Vec<ToolDef>>,
     /// Disable anthropic thinking extension (DeepSeek may not support it)
     disable_thinking: bool,
 }
@@ -70,7 +72,7 @@ impl AnthropicAdapter {
             thinking_budget_tokens: 4000,
             max_tokens: 8192,
             client,
-            external_tools: Vec::new(),
+            external_tools: RwLock::new(Vec::new()),
             disable_thinking: false,
         })
     }
@@ -85,8 +87,8 @@ impl AnthropicAdapter {
         self
     }
 
-    pub fn with_external_tools(mut self, tools: Vec<ToolDef>) -> Self {
-        self.external_tools = tools;
+    pub fn with_external_tools(self, tools: Vec<ToolDef>) -> Self {
+        self.set_external_tools(tools);
         self
     }
 
@@ -125,23 +127,6 @@ struct ThinkingConfig {
     #[serde(rename = "type")]
     type_: String,
     budget_tokens: u32,
-}
-
-#[derive(Serialize, Clone)]
-pub struct ToolDef {
-    pub name: String,
-    pub description: String,
-    pub input_schema: serde_json::Value,
-}
-
-impl ToolDef {
-    pub fn new(name: &str, description: &str, input_schema: serde_json::Value) -> Self {
-        Self {
-            name: name.to_string(),
-            description: description.to_string(),
-            input_schema,
-        }
-    }
 }
 
 impl AnthropicAdapter {
@@ -225,13 +210,25 @@ impl AnthropicAdapter {
             input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to find or investigate."}},"required":["task"]}),
         },
     ];
-        tools.extend(self.external_tools.clone());
+        tools.extend(
+            self.external_tools
+                .read()
+                .expect("external tools lock poisoned")
+                .clone(),
+        );
         tools
     }
 }
 
 #[async_trait]
 impl AiAdapter for AnthropicAdapter {
+    fn set_external_tools(&self, tools: Vec<ToolDef>) {
+        *self
+            .external_tools
+            .write()
+            .expect("external tools lock poisoned") = tools;
+    }
+
     fn model_id(&self) -> &str {
         &self.model
     }
@@ -273,6 +270,8 @@ impl AiAdapter for AnthropicAdapter {
             })
             .cloned()
             .collect();
+
+        let filtered = repair_tool_result_adjacency(&filtered);
 
         let body = AnthropicRequest {
             model: &self.model,
@@ -368,6 +367,7 @@ impl AiAdapter for AnthropicAdapter {
             .cloned()
             .collect();
 
+        let filtered = repair_tool_result_adjacency(&filtered);
         let system = system_parts.join("\n\n");
 
         let body = AnthropicRequest {
@@ -471,8 +471,8 @@ impl AiAdapter for AnthropicAdapter {
                                         .unwrap_or(0)
                                         as u32;
                                 }
-                                let _ = app_handle.emit(
-                                    "session-output",
+                                crate::transcript::emit_stream_event(
+                                    app_handle,
                                     StreamEvent::SessionStatus {
                                         session_id: session.clone(),
                                         status: "working".to_string(),
@@ -493,8 +493,8 @@ impl AiAdapter for AnthropicAdapter {
                                     "thinking" => {
                                         block_type = Some("thinking".to_string());
                                         active_block_id = Some(bid.clone());
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::ThinkingStart {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -504,8 +504,8 @@ impl AiAdapter for AnthropicAdapter {
                                     "text" => {
                                         block_type = Some("text".to_string());
                                         active_block_id = Some(bid.clone());
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::TextStart {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -537,8 +537,8 @@ impl AiAdapter for AnthropicAdapter {
                                                     .unwrap_or_default();
                                         }
 
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::ToolCallStart {
                                                 session_id: session.clone(),
                                                 block_id: tool_block_id,
@@ -560,8 +560,8 @@ impl AiAdapter for AnthropicAdapter {
                                     "thinking_delta" => {
                                         let content = delta["thinking"].as_str().unwrap_or("");
                                         current_thinking.push_str(content);
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::ThinkingChunk {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -572,8 +572,8 @@ impl AiAdapter for AnthropicAdapter {
                                     "text_delta" => {
                                         let content = delta["text"].as_str().unwrap_or("");
                                         current_text.push_str(content);
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::TextChunk {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -598,8 +598,8 @@ impl AiAdapter for AnthropicAdapter {
                                         if !current_thinking.is_empty() {
                                             assistant_content.push(serde_json::json!({"type":"thinking","thinking":current_thinking}));
                                         }
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::ThinkingEnd {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -611,8 +611,8 @@ impl AiAdapter for AnthropicAdapter {
                                         if !current_text.is_empty() {
                                             assistant_content.push(serde_json::json!({"type":"text","text":current_text}));
                                         }
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::TextEnd {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -645,8 +645,8 @@ impl AiAdapter for AnthropicAdapter {
                                             "input": input,
                                         }));
 
-                                        let _ = app_handle.emit(
-                                            "session-output",
+                                        crate::transcript::emit_stream_event(
+                                            app_handle,
                                             StreamEvent::ToolCallEnd {
                                                 session_id: session.clone(),
                                                 block_id: bid,
@@ -676,8 +676,8 @@ impl AiAdapter for AnthropicAdapter {
                                         as u32;
                                     let cost =
                                         estimate_cost(&self.model, total_input_tokens, output);
-                                    let _ = app_handle.emit(
-                                        "session-output",
+                                    crate::transcript::emit_stream_event(
+                                        app_handle,
                                         StreamEvent::Usage {
                                             session_id: session.to_string(),
                                             input_tokens: total_input_tokens,
@@ -689,8 +689,8 @@ impl AiAdapter for AnthropicAdapter {
                             }
 
                             "message_stop" => {
-                                let _ = app_handle.emit(
-                                    "session-output",
+                                crate::transcript::emit_stream_event(
+                                    app_handle,
                                     StreamEvent::SessionStatus {
                                         session_id: session.clone(),
                                         status: "idle".to_string(),
@@ -702,8 +702,8 @@ impl AiAdapter for AnthropicAdapter {
                                 let msg = parsed["error"]["message"]
                                     .as_str()
                                     .unwrap_or("Unknown error");
-                                let _ = app_handle.emit(
-                                    "session-output",
+                                crate::transcript::emit_stream_event(
+                                    app_handle,
                                     StreamEvent::Error {
                                         session_id: session.clone(),
                                         block_id: BlockId::new().to_string(),
@@ -754,5 +754,36 @@ fn flush_content(block_type: Option<&str>, text: &str, content: &mut Vec<serde_j
             content.push(serde_json::json!({"type": "thinking", "thinking": text}));
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_tools_can_be_replaced_after_session_creation() {
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_external_tools(vec![ToolDef::new(
+                "mcp__old__tool",
+                "Old MCP tool",
+                serde_json::json!({"type": "object"}),
+            )]);
+
+        adapter.set_external_tools(vec![ToolDef::new(
+            "mcp__new__tool",
+            "New MCP tool",
+            serde_json::json!({"type": "object"}),
+        )]);
+
+        let names = adapter
+            .tool_definitions()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"mcp__new__tool".to_string()));
+        assert!(!names.contains(&"mcp__old__tool".to_string()));
     }
 }

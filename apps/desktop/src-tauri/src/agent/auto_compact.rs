@@ -9,12 +9,15 @@ const OVERFLOW_RETRY_RETAIN_RECENT_MESSAGES: usize = 16;
 const MIN_COMPACT_MESSAGES: usize = 8;
 const MAX_SUMMARY_CHARS: usize = 14_000;
 const MAX_SUMMARY_ITEM_CHARS: usize = 360;
+const MAX_CONSECUTIVE_AUTO_COMPACT_MISSES: u8 = 3;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CompactResult {
     pub(crate) messages: Vec<ChatMessage>,
     pub(crate) summary: Option<String>,
     pub(crate) stats: Option<CompactStats>,
+    pub(crate) attempted: bool,
+    pub(crate) skipped_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +27,68 @@ pub(crate) struct CompactStats {
     pub(crate) compacted_messages: usize,
     pub(crate) estimated_tokens_before: u32,
     pub(crate) estimated_tokens_after: u32,
+}
+
+impl CompactResult {
+    pub(crate) fn unchanged(messages: Vec<ChatMessage>, summary: Option<String>) -> Self {
+        Self {
+            messages,
+            summary,
+            stats: None,
+            attempted: false,
+            skipped_reason: None,
+        }
+    }
+
+    fn skipped(
+        messages: Vec<ChatMessage>,
+        summary: Option<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            messages,
+            summary,
+            stats: None,
+            attempted: true,
+            skipped_reason: Some(reason.into()),
+        }
+    }
+
+    fn compacted(messages: Vec<ChatMessage>, summary: String, stats: CompactStats) -> Self {
+        Self {
+            messages,
+            summary: Some(summary),
+            stats: Some(stats),
+            attempted: true,
+            skipped_reason: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AutoCompactGuard {
+    consecutive_misses: u8,
+}
+
+impl AutoCompactGuard {
+    pub(crate) fn record_result(&mut self, result: &CompactResult) {
+        if result.stats.is_some() {
+            self.consecutive_misses = 0;
+            return;
+        }
+
+        if result.attempted && result.skipped_reason.is_some() {
+            self.consecutive_misses = self.consecutive_misses.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn should_skip_proactive_compaction(&self) -> bool {
+        self.consecutive_misses >= MAX_CONSECUTIVE_AUTO_COMPACT_MISSES
+    }
+
+    pub(crate) fn record_proactive_skip(&mut self) {
+        self.consecutive_misses = self.consecutive_misses.saturating_sub(1);
+    }
 }
 
 pub(crate) fn compact_messages_if_needed(
@@ -47,11 +112,7 @@ pub(crate) fn compact_messages_if_needed(
     let too_many_messages = msgs.len() > MAX_HISTORY_MESSAGES_BEFORE_COMPACT;
 
     if !over_budget && !too_many_messages {
-        return CompactResult {
-            messages: msgs,
-            summary: existing_summary,
-            stats: None,
-        };
+        return CompactResult::unchanged(msgs, existing_summary);
     }
 
     compact_messages_with_retention(
@@ -87,11 +148,7 @@ fn compact_messages_with_retention(
     retain_recent_messages: usize,
 ) -> CompactResult {
     if msgs.len() <= retain_recent_messages || msgs.len() <= MIN_COMPACT_MESSAGES {
-        return CompactResult {
-            messages: msgs,
-            summary: existing_summary,
-            stats: None,
-        };
+        return CompactResult::skipped(msgs, existing_summary, "history_too_short");
     }
 
     let split_at = msgs.len().saturating_sub(retain_recent_messages);
@@ -103,32 +160,18 @@ fn compact_messages_with_retention(
                 .find(|&i| is_safe_retention_boundary(&msgs[i]))
         })
     else {
-        return CompactResult {
-            messages: msgs,
-            summary: existing_summary,
-            stats: None,
-        };
+        return CompactResult::skipped(msgs, existing_summary, "no_safe_retention_boundary");
     };
 
     if start < MIN_COMPACT_MESSAGES {
-        return CompactResult {
-            messages: msgs,
-            summary: existing_summary,
-            stats: None,
-        };
+        return CompactResult::skipped(msgs, existing_summary, "too_few_messages_to_compact");
     }
 
     let compacted_messages = msgs[..start].to_vec();
     let retained_messages = msgs[start..].to_vec();
     let new_summary = match build_summary(&compacted_messages) {
         Some(summary) => summary,
-        None => {
-            return CompactResult {
-                messages: msgs,
-                summary: existing_summary,
-                stats: None,
-            }
-        }
+        None => return CompactResult::skipped(msgs, existing_summary, "empty_summary"),
     };
     let merged_summary = merge_summaries(existing_summary, new_summary);
     let estimated_after =
@@ -141,11 +184,7 @@ fn compact_messages_with_retention(
         estimated_tokens_after: to_u32_tokens(estimated_after),
     };
 
-    CompactResult {
-        messages: retained_messages,
-        summary: Some(merged_summary),
-        stats: Some(stats),
-    }
+    CompactResult::compacted(retained_messages, merged_summary, stats)
 }
 
 fn build_summary(msgs: &[ChatMessage]) -> Option<String> {
@@ -346,7 +385,10 @@ fn is_safe_retention_boundary(msg: &ChatMessage) -> bool {
 mod tests {
     use crate::adapters::base::ChatMessage;
 
-    use super::{compact_messages_for_overflow_retry, compact_messages_if_needed};
+    use super::{
+        compact_messages_for_overflow_retry, compact_messages_if_needed, AutoCompactGuard,
+        CompactResult, CompactStats,
+    };
 
     fn numbered_messages(count: usize) -> Vec<ChatMessage> {
         (0..count)
@@ -524,5 +566,82 @@ mod tests {
             result.messages[0].content,
             serde_json::Value::String("current user request".to_string())
         );
+    }
+
+    #[test]
+    fn reports_attempted_compaction_when_no_safe_boundary_exists() {
+        let messages = (0..90)
+            .map(|index| {
+                ChatMessage::assistant(serde_json::Value::String(format!(
+                    "assistant-only message {index}"
+                )))
+            })
+            .collect::<Vec<_>>();
+
+        let result = compact_messages_if_needed(messages.clone(), None, None);
+
+        assert!(result.attempted);
+        assert_eq!(
+            result.skipped_reason.as_deref(),
+            Some("no_safe_retention_boundary")
+        );
+        assert!(result.stats.is_none());
+        assert_eq!(result.messages.len(), messages.len());
+    }
+
+    #[test]
+    fn auto_compact_guard_pauses_after_consecutive_misses_and_resets_on_success() {
+        let miss = CompactResult {
+            messages: numbered_messages(90),
+            summary: None,
+            stats: None,
+            attempted: true,
+            skipped_reason: Some("no_safe_retention_boundary".to_string()),
+        };
+        let success = CompactResult {
+            messages: numbered_messages(32),
+            summary: Some("summary".to_string()),
+            stats: Some(CompactStats {
+                summary: "summary".to_string(),
+                retained_messages: 32,
+                compacted_messages: 58,
+                estimated_tokens_before: 1000,
+                estimated_tokens_after: 250,
+            }),
+            attempted: true,
+            skipped_reason: None,
+        };
+        let mut guard = AutoCompactGuard::default();
+
+        guard.record_result(&miss);
+        guard.record_result(&miss);
+        assert!(!guard.should_skip_proactive_compaction());
+
+        guard.record_result(&miss);
+        assert!(guard.should_skip_proactive_compaction());
+
+        guard.record_result(&success);
+        assert!(!guard.should_skip_proactive_compaction());
+    }
+
+    #[test]
+    fn auto_compact_guard_cools_down_after_one_skipped_proactive_attempt() {
+        let miss = CompactResult {
+            messages: numbered_messages(90),
+            summary: None,
+            stats: None,
+            attempted: true,
+            skipped_reason: Some("no_safe_retention_boundary".to_string()),
+        };
+        let mut guard = AutoCompactGuard::default();
+
+        guard.record_result(&miss);
+        guard.record_result(&miss);
+        guard.record_result(&miss);
+        assert!(guard.should_skip_proactive_compaction());
+
+        guard.record_proactive_skip();
+
+        assert!(!guard.should_skip_proactive_compaction());
     }
 }

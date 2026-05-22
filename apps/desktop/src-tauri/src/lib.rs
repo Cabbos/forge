@@ -2,6 +2,7 @@
 
 pub mod adapters;
 mod agent;
+mod app_metadata;
 mod executor;
 mod forge_wiki;
 pub mod harness;
@@ -9,9 +10,11 @@ mod ipc;
 mod logger;
 mod memory;
 mod parser;
+mod process_runner;
 mod protocol;
 pub mod settings;
 mod state;
+mod transcript;
 mod workflow;
 mod workspace_safety;
 
@@ -62,6 +65,8 @@ pub fn run() {
             ipc::handlers::kill_session,
             ipc::handlers::delete_session,
             ipc::handlers::list_sessions,
+            app_metadata::load_app_metadata,
+            app_metadata::save_app_metadata,
             ipc::handlers::confirm_response,
             ipc::handlers::search_workspace_files,
             ipc::handlers::get_default_working_dir,
@@ -94,6 +99,7 @@ pub fn run() {
             ipc::forge_wiki_handlers::create_forge_wiki_update_proposal,
             ipc::forge_wiki_handlers::accept_forge_wiki_update_proposal,
             ipc::forge_wiki_handlers::discard_forge_wiki_update_proposal,
+            transcript::load_session_transcript,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

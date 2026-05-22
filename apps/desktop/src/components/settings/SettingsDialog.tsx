@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Settings, Key, Eye, EyeOff, Check, AlertCircle, Trash2 } from "lucide-react";
-import { getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
+import { deleteSession, getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
 import { useStore } from "@/store";
 import { formatContextWindow, PROVIDERS } from "@/lib/providers";
 
@@ -31,8 +31,9 @@ export function SettingsDialog({ triggerClassName }: SettingsDialogProps = {}) {
   const removeSession = useStore((s) => s.removeSession);
 
   const handleClearAll = async () => {
-    // Remove all sessions from store + IndexedDB
+    // Remove all sessions from the backend source of truth, then clear the UI projection.
     for (const [id] of sessions) {
+      await deleteSession(id).catch(() => {});
       removeSession(id);
     }
     setCleared(true);

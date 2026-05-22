@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useStore } from "../store";
 import { createSession, deleteSession, resumeSession, sendInput, killSession } from "../lib/tauri";
-import type { McpContextSelection } from "../lib/tauri";
+import type { ComposerCapabilitySelection, McpContextSelection } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
 
 export function useSession() {
@@ -64,9 +64,10 @@ export function useSession() {
     sessionId: string,
     text: string,
     mcpContext: McpContextSelection[] = [],
+    capabilities: ComposerCapabilitySelection[] = [],
   ) => {
     try {
-      await sendInput(sessionId, text, mcpContext);
+      await sendInput(sessionId, text, mcpContext, capabilities);
     } catch (e) {
       console.error("Failed to send input:", e);
       dispatchOutputEvent({

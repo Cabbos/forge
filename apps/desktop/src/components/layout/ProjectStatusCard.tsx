@@ -13,26 +13,30 @@ import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confi
 import { cn } from "@/lib/utils";
 import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import type { ForgeIconTone } from "@/lib/capability-icons";
+import { useActiveWorkspace, useStore } from "@/store";
 
 interface ProjectStatusCardProps {
   sessionId: string | null;
 }
 
 export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
+  const activeWorkspace = useActiveWorkspace();
+  const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
   const [runtime, setRuntime] = useState<ProjectRuntimeStatus | null>(null);
   const [checkpoint, setCheckpoint] = useState<ProjectCheckpointStatus | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState<DeliveryAction | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const [runtimeStatus, checkpointStatus] = await Promise.all([
-        getProjectRuntimeStatus(sessionId ?? undefined),
-        getProjectCheckpointStatus(sessionId ?? undefined),
+        getProjectRuntimeStatus(sessionId ?? undefined, workingDir),
+        getProjectCheckpointStatus(sessionId ?? undefined, workingDir),
       ]);
       setRuntime(runtimeStatus);
       setCheckpoint(checkpointStatus);
@@ -41,20 +45,20 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, workingDir]);
 
   const runDeliveryAction = useCallback(async (action: DeliveryAction) => {
     setActionBusy(action);
     setError("");
     try {
       if (action === "start_preview") {
-        const runtimeStatus = await startProjectDevServer(sessionId ?? undefined);
+        const runtimeStatus = await startProjectDevServer(sessionId ?? undefined, workingDir);
         setRuntime(runtimeStatus);
       } else if (action === "open_preview") {
-        const runtimeStatus = await openProjectPreview(sessionId ?? undefined);
+        const runtimeStatus = await openProjectPreview(sessionId ?? undefined, workingDir);
         setRuntime(runtimeStatus);
       } else if (action === "create_checkpoint") {
-        const checkpointStatus = await createProjectCheckpoint(sessionId ?? undefined);
+        const checkpointStatus = await createProjectCheckpoint(sessionId ?? undefined, workingDir);
         setCheckpoint(checkpointStatus);
       }
       await refresh();
@@ -63,7 +67,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     } finally {
       setActionBusy(null);
     }
-  }, [refresh, sessionId]);
+  }, [refresh, sessionId, workingDir]);
 
   useEffect(() => {
     refresh();
@@ -147,6 +151,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
 
       {expanded && (
         <div className="space-y-2 border-t border-border px-3 py-2.5 text-[11px]">
+          <DetailLine label="预览状态" value={runtime?.message || "暂无"} />
           <DetailLine label="预览地址" value={runtime?.url || "暂无"} />
           <DetailLine label="运行命令" value={runtime?.command || "未检测到"} />
           <DetailLine label="检查点" value={checkpoint?.message || "暂无"} />

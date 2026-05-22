@@ -29,6 +29,20 @@ pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Opt
     Some(lines.join("\n"))
 }
 
+fn memory_data_text(value: &str) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    serde_json::to_string(&normalized).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn memory_category_label(category: &MemoryCategory) -> &'static str {
+    match category {
+        MemoryCategory::Preference => "preference",
+        MemoryCategory::ProjectFact => "project_fact",
+        MemoryCategory::Decision => "decision",
+        MemoryCategory::TaskState => "task_state",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::format_selected_memory_context;
@@ -53,19 +67,5 @@ mod tests {
         assert!(context.contains("do not expose memory"));
         assert!(context.contains("[task_state]"));
         assert!(context.contains("上次已经完成 demo 首页"));
-    }
-}
-
-fn memory_data_text(value: &str) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    serde_json::to_string(&normalized).unwrap_or_else(|_| "\"\"".to_string())
-}
-
-fn memory_category_label(category: &MemoryCategory) -> &'static str {
-    match category {
-        MemoryCategory::Preference => "preference",
-        MemoryCategory::ProjectFact => "project_fact",
-        MemoryCategory::Decision => "decision",
-        MemoryCategory::TaskState => "task_state",
     }
 }

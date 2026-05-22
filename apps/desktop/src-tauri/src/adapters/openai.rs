@@ -244,23 +244,17 @@ impl AiAdapter for OpenAiAdapter {
                             let bid = BlockId::new().to_string();
                             active_block_id = Some(bid.clone());
                             block_started = true;
-                            let _ = app_handle.emit(
-                                "session-output",
-                                StreamEvent::TextStart {
+                            crate::transcript::emit_stream_event(&app_handle, StreamEvent::TextStart {
                                     session_id: session.clone(),
                                     block_id: bid,
-                                },
-                            );
+                                });
                         }
                         current_text.push_str(content);
-                        let _ = app_handle.emit(
-                            "session-output",
-                            StreamEvent::TextChunk {
+                        crate::transcript::emit_stream_event(&app_handle, StreamEvent::TextChunk {
                                 session_id: session.clone(),
                                 block_id: active_block_id.clone().unwrap_or_default(),
                                 content: content.to_string(),
-                            },
-                        );
+                            });
                     }
                 }
 
@@ -317,13 +311,10 @@ impl AiAdapter for OpenAiAdapter {
                         // End text block if was writing
                         if block_started {
                             let bid = active_block_id.clone().unwrap_or_default();
-                            let _ = app_handle.emit(
-                                "session-output",
-                                StreamEvent::TextEnd {
+                            crate::transcript::emit_stream_event(&app_handle, StreamEvent::TextEnd {
                                     session_id: session.clone(),
                                     block_id: bid,
-                                },
-                            );
+                                });
                             if !current_text.is_empty() {
                                 assistant_content.push(serde_json::json!({
                                     "type": "text",
@@ -348,13 +339,10 @@ impl AiAdapter for OpenAiAdapter {
                             }));
                         }
 
-                        let _ = app_handle.emit(
-                            "session-output",
-                            StreamEvent::SessionStatus {
+                        crate::transcript::emit_stream_event(&app_handle, StreamEvent::SessionStatus {
                                 session_id: session.clone(),
                                 status: "idle".to_string(),
-                            },
-                        );
+                            });
                     }
                 }
             }

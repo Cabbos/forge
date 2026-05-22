@@ -9,6 +9,8 @@ pub(crate) enum ContextSourceKind {
     MemoryContext,
     ProjectRecords,
     ConnectorContext,
+    CapabilitySnapshot,
+    RecoveryTrace,
     History,
 }
 
@@ -21,6 +23,8 @@ impl ContextSourceKind {
             ContextSourceKind::MemoryContext => "memory_context",
             ContextSourceKind::ProjectRecords => "project_records",
             ContextSourceKind::ConnectorContext => "connector_context",
+            ContextSourceKind::CapabilitySnapshot => "capability_snapshot",
+            ContextSourceKind::RecoveryTrace => "recovery_trace",
             ContextSourceKind::History => "history",
         }
     }
@@ -183,20 +187,20 @@ impl ContextBuilder {
             messages.push(ChatMessage::system(system_prompt));
             sources.push(ContextSource::new(
                 ContextSourceKind::SystemPrompt,
-                "System prompt",
-                "Base agent instructions for this request",
+                "基础规则",
+                "本轮请求的基础工作规则",
                 Some(estimate_text_tokens_u32(system_prompt)),
                 true,
             ));
         }
 
         if let Some(summary) = self.summary {
-            let content = format!("## Previous conversation summary\n{}", summary.trim());
+            let content = format!("## 历史摘要\n{}", summary.trim());
             messages.push(ChatMessage::user(&content));
             sources.push(ContextSource::new(
                 ContextSourceKind::PreviousSummary,
-                "Previous conversation summary",
-                "Compacted earlier conversation state",
+                "历史摘要",
+                "自动整理过的早期对话信息",
                 Some(estimate_text_tokens_u32(&content)),
                 true,
             ));
@@ -207,8 +211,8 @@ impl ContextBuilder {
             messages.push(ChatMessage::user(content));
             sources.push(ContextSource::new(
                 ContextSourceKind::MemoryContext,
-                "Memory and wiki context",
-                "Hidden context provided for this turn",
+                "已保存背景",
+                "本轮自动带入的用户和项目背景",
                 Some(estimate_text_tokens_u32(content)),
                 true,
             ));
@@ -243,8 +247,8 @@ impl ContextBuilder {
         if has_history {
             sources.push(ContextSource::new(
                 ContextSourceKind::History,
-                "Conversation history",
-                "Retained chat history for this turn",
+                "对话记录",
+                "本轮保留的可见对话记录",
                 Some(history_tokens),
                 true,
             ));
@@ -352,10 +356,7 @@ mod tests {
             .build();
 
         assert_eq!(bundle.messages.len(), 3);
-        assert_eq!(
-            text(&bundle.messages[0]),
-            "## Previous conversation summary\nearlier work"
-        );
+        assert_eq!(text(&bundle.messages[0]), "## 历史摘要\nearlier work");
         assert_eq!(text(&bundle.messages[1]), "wiki notes");
         assert_eq!(text(&bundle.messages[2]), "hello");
     }
@@ -440,6 +441,33 @@ mod tests {
             .sources
             .iter()
             .any(|source| source.kind == "system_prompt" && source.injected));
+    }
+
+    #[test]
+    fn context_source_labels_use_product_language() {
+        let bundle = ContextBuilder::new()
+            .messages(history())
+            .system_prompt("system rules")
+            .summary(Some("earlier work".to_string()))
+            .memory_context(Some("saved facts".to_string()))
+            .build();
+
+        let labels = bundle
+            .sources
+            .iter()
+            .map(|source| source.label.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec!["基础规则", "历史摘要", "已保存背景", "对话记录"]
+        );
+        assert!(bundle.sources.iter().all(|source| {
+            !source.label.contains("Memory")
+                && !source.label.contains("wiki")
+                && !source.label.contains("System")
+                && !source.label.contains("Conversation")
+        }));
     }
 
     #[test]

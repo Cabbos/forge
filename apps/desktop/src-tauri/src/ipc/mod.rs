@@ -5,3 +5,4 @@ pub mod memory_handlers;
 pub mod project_checkpoint;
 pub mod project_runtime;
 pub mod workflow_handlers;
+pub mod workspace;

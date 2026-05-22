@@ -11,6 +11,8 @@ import type {
   WikiMemory,
   WorkflowOverrideAction,
   WorkflowState,
+  StreamEvent,
+  DeliverySummary,
 } from "./protocol";
 
 const WORKING_DIR_KEY = "forge-working-dir";
@@ -27,6 +29,27 @@ export interface SessionCreated {
 export interface SessionInfo {
   id: string; provider: string; model: string;
   status: string; created_at: string;
+  working_dir?: string | null;
+  created_at_ms?: number | null;
+  updated_at_ms?: number | null;
+  context_window_tokens?: number | null;
+  latest_workflow?: WorkflowState | null;
+  latest_delivery?: DeliverySummary | null;
+}
+
+export interface AppWorkspaceMetadata {
+  id: string;
+  name: string;
+  path: string;
+  lastOpenedAt: number;
+}
+
+export interface AppMetadata {
+  workspaces: AppWorkspaceMetadata[];
+  activeWorkspaceId?: string | null;
+  activeSessionId?: string | null;
+  selectedProvider?: string | null;
+  selectedModel?: string | null;
 }
 
 export interface FilePreviewLine {
@@ -120,13 +143,23 @@ export type McpContextSelection =
       arguments?: Record<string, string>;
     };
 
+export type ComposerCapabilitySelection =
+  | {
+      kind: "slash_command";
+      command: string;
+    }
+  | {
+      kind: "file_reference";
+      path: string;
+    };
+
 export async function createSession(
   workingDir: string,
   provider: string,
   model: string,
   apiKey = "",
 ): Promise<SessionCreated> {
-  rememberWorkingDir(workingDir);
+  if (!hasTauriRuntime()) rememberWorkingDir(workingDir);
 
   try {
     return await invoke<SessionCreated>("create_session", {
@@ -152,8 +185,9 @@ export async function sendInput(
   sessionId: string,
   text: string,
   mcpContext: McpContextSelection[] = [],
+  capabilities: ComposerCapabilitySelection[] = [],
 ): Promise<void> {
-  return invoke("send_input", { sessionId, text, mcpContext });
+  return invoke("send_input", { sessionId, text, mcpContext, capabilities });
 }
 
 export async function killSession(sessionId: string): Promise<void> {
@@ -166,6 +200,29 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
 export async function listSessions(): Promise<SessionInfo[]> {
   return invoke("list_sessions");
+}
+
+export async function loadAppMetadata(): Promise<AppMetadata> {
+  if (!hasTauriRuntime()) {
+    return {
+      workspaces: [],
+      activeWorkspaceId: null,
+      activeSessionId: null,
+      selectedProvider: null,
+      selectedModel: null,
+    };
+  }
+  return invoke("load_app_metadata");
+}
+
+export async function saveAppMetadata(metadata: AppMetadata): Promise<void> {
+  if (!hasTauriRuntime()) return;
+  return invoke("save_app_metadata", { metadata });
+}
+
+export async function loadSessionTranscript(sessionId: string): Promise<StreamEvent[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke<StreamEvent[]>("load_session_transcript", { sessionId });
 }
 
 export async function listMcpContextSources(sessionId?: string): Promise<McpContextSources> {
@@ -246,8 +303,8 @@ export async function toggleCapability(id: string, enabled: boolean): Promise<vo
 }
 
 /** Search workspace files for @ autocomplete */
-export async function searchWorkspaceFiles(query: string, sessionId?: string): Promise<string[]> {
-  return invoke("search_workspace_files", { query, sessionId: sessionId ?? null });
+export async function searchWorkspaceFiles(query: string, sessionId?: string, workingDir?: string | null): Promise<string[]> {
+  return invoke("search_workspace_files", { query, sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
 /** Install a skill from GitHub (owner/repo) */
@@ -256,11 +313,11 @@ export async function installSkill(repo: string): Promise<CapabilityInfo> {
 }
 
 /** Open a file in the system editor at an optional line number */
-export async function openFile(path: string, line?: number, sessionId?: string): Promise<void> {
+export async function openFile(path: string, line?: number, sessionId?: string, workingDir?: string | null): Promise<void> {
   if (!hasTauriRuntime() && openFileViaUrlScheme(path, line)) return;
 
   try {
-    return await invoke("open_file", { path, line: line ?? null, sessionId: sessionId ?? null });
+    return await invoke("open_file", { path, line: line ?? null, sessionId: sessionId ?? null, workingDir: workingDir ?? null });
   } catch (error) {
     if (openFileViaUrlScheme(path, line)) return;
     throw error;
@@ -268,38 +325,38 @@ export async function openFile(path: string, line?: number, sessionId?: string):
 }
 
 /** Read a small, beginner-friendly preview around a file reference */
-export async function previewFile(path: string, line?: number, sessionId?: string): Promise<FilePreview> {
-  return invoke("preview_file", { path, line: line ?? null, context: 40, sessionId: sessionId ?? null });
+export async function previewFile(path: string, line?: number, sessionId?: string, workingDir?: string | null): Promise<FilePreview> {
+  return invoke("preview_file", { path, line: line ?? null, context: 40, sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function getProjectRuntimeStatus(sessionId?: string): Promise<ProjectRuntimeStatus> {
+export async function getProjectRuntimeStatus(sessionId?: string, workingDir?: string | null): Promise<ProjectRuntimeStatus> {
   if (!hasTauriRuntime()) return fallbackProjectRuntimeStatus();
-  return invoke("get_project_runtime_status", { sessionId: sessionId ?? null });
+  return invoke("get_project_runtime_status", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function startProjectDevServer(sessionId?: string): Promise<ProjectRuntimeStatus> {
-  return invoke("start_project_dev_server", { sessionId: sessionId ?? null });
+export async function startProjectDevServer(sessionId?: string, workingDir?: string | null): Promise<ProjectRuntimeStatus> {
+  return invoke("start_project_dev_server", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function stopProjectDevServer(sessionId?: string): Promise<ProjectRuntimeStatus> {
-  return invoke("stop_project_dev_server", { sessionId: sessionId ?? null });
+export async function stopProjectDevServer(sessionId?: string, workingDir?: string | null): Promise<ProjectRuntimeStatus> {
+  return invoke("stop_project_dev_server", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function openProjectPreview(sessionId?: string): Promise<ProjectRuntimeStatus> {
-  return invoke("open_project_preview", { sessionId: sessionId ?? null });
+export async function openProjectPreview(sessionId?: string, workingDir?: string | null): Promise<ProjectRuntimeStatus> {
+  return invoke("open_project_preview", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function getProjectCheckpointStatus(sessionId?: string): Promise<ProjectCheckpointStatus> {
+export async function getProjectCheckpointStatus(sessionId?: string, workingDir?: string | null): Promise<ProjectCheckpointStatus> {
   if (!hasTauriRuntime()) return fallbackProjectCheckpointStatus();
-  return invoke("get_project_checkpoint_status", { sessionId: sessionId ?? null });
+  return invoke("get_project_checkpoint_status", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function createProjectCheckpoint(sessionId?: string): Promise<ProjectCheckpointStatus> {
-  return invoke("create_project_checkpoint", { sessionId: sessionId ?? null });
+export async function createProjectCheckpoint(sessionId?: string, workingDir?: string | null): Promise<ProjectCheckpointStatus> {
+  return invoke("create_project_checkpoint", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function restoreProjectCheckpoint(sessionId?: string): Promise<ProjectCheckpointStatus> {
-  return invoke("restore_project_checkpoint", { sessionId: sessionId ?? null });
+export async function restoreProjectCheckpoint(sessionId?: string, workingDir?: string | null): Promise<ProjectCheckpointStatus> {
+  return invoke("restore_project_checkpoint", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
 export async function listMemories(scope?: MemoryScope, projectPath?: string): Promise<WikiMemory[]> {
