@@ -16,7 +16,6 @@ export function ToolCallCard({ block }: { block: BlockState }) {
   }, [block.isComplete, toolView.isError]);
 
   const StatusIcon = { running: Loader2, done: CheckCircle2, error: XCircle }[toolView.status];
-  const statusColor = { running: "var(--forge-text-faint)", done: "var(--forge-icon-safety)", error: "var(--destructive)" }[toolView.status];
   const copyDetails = async () => {
     await navigator.clipboard?.writeText(toolView.detailText);
     setCopied(true);
@@ -33,19 +32,23 @@ export function ToolCallCard({ block }: { block: BlockState }) {
           data-tone={toolView.isError ? "error" : "default"}
         >
           <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
-          <Wrench className="size-3.5 shrink-0" style={{ color: statusColor }} />
+          <Wrench className="forge-log-line-icon size-3.5" data-status={toolView.status} />
           <span className="shrink-0 font-medium">{toolView.actionText}</span>
           {toolView.inputSummary && (
-            <span className="min-w-0 truncate font-mono text-[11px]" style={{ color: "var(--muted-foreground)" }}>
+            <span className="forge-log-line-input">
               {toolView.inputSummary}
             </span>
           )}
           {toolView.durationLabel && (
-            <span className="ml-auto shrink-0 font-mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+            <span className="forge-log-line-meta forge-log-line-duration">
               {toolView.durationLabel}
             </span>
           )}
-          <span className={cn("flex shrink-0 items-center", !toolView.durationLabel && "ml-auto")} style={{ color: statusColor }} title={toolView.status === "running" ? "进行中" : toolView.status === "error" ? "异常" : "完成"}>
+          <span
+            className={cn("forge-log-line-status", !toolView.durationLabel && "ml-auto")}
+            data-status={toolView.status}
+            title={toolView.status === "running" ? "进行中" : toolView.status === "error" ? "异常" : "完成"}
+          >
             <StatusIcon className={cn("size-3", toolView.status === "running" && "animate-spin")} />
           </span>
         </CollapsibleTrigger>

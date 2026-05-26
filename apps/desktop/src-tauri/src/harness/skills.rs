@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 
@@ -62,23 +62,14 @@ pub struct SkillLoader {
 
 impl SkillLoader {
     pub fn new() -> Self {
-        let mut scan_dirs = Vec::new();
-        // User-level skills
-        if let Ok(home) = std::env::var("HOME") {
-            scan_dirs.push(PathBuf::from(home).join(".forge/skills"));
-        }
+        let scan_dirs = home_dir()
+            .map(|home| user_skill_scan_dirs(&home))
+            .unwrap_or_default();
         Self::with_scan_dirs(scan_dirs)
     }
 
-    pub fn new_for_workspace(working_dir: &std::path::Path) -> Self {
-        let mut scan_dirs = Vec::new();
-        // User-level skills
-        if let Ok(home) = std::env::var("HOME") {
-            scan_dirs.push(PathBuf::from(home).join(".forge/skills"));
-        }
-        scan_dirs.push(working_dir.join(".forge/skills"));
-        scan_dirs.push(working_dir.join("skills"));
-        Self::with_scan_dirs(scan_dirs)
+    pub fn new_for_workspace(working_dir: &Path) -> Self {
+        Self::with_scan_dirs(workspace_skill_scan_dirs(working_dir))
     }
 
     fn with_scan_dirs(scan_dirs: Vec<PathBuf>) -> Self {
@@ -283,6 +274,23 @@ impl SkillLoader {
     }
 }
 
+fn home_dir() -> Option<PathBuf> {
+    std::env::var("HOME").ok().map(PathBuf::from)
+}
+
+fn user_skill_scan_dirs(home: &Path) -> Vec<PathBuf> {
+    vec![home.join(".forge").join("skills")]
+}
+
+fn workspace_skill_scan_dirs(working_dir: &Path) -> Vec<PathBuf> {
+    let mut scan_dirs = home_dir()
+        .map(|home| user_skill_scan_dirs(&home))
+        .unwrap_or_default();
+    scan_dirs.push(working_dir.join(".forge").join("skills"));
+    scan_dirs.push(working_dir.join("skills"));
+    scan_dirs
+}
+
 impl Default for SkillLoader {
     fn default() -> Self {
         Self::new()
@@ -360,5 +368,31 @@ fn skill_match_reason(skill: &LoadedSkill, request_lower: &str) -> Option<String
         None
     } else {
         Some(format!("trigger:{}", matched_triggers.join(",")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_skill_scan_dirs_do_not_include_workspace_paths() {
+        let home = Path::new("/tmp/forge-home");
+
+        let dirs = user_skill_scan_dirs(home);
+
+        assert_eq!(dirs, vec![home.join(".forge").join("skills")]);
+    }
+
+    #[test]
+    fn workspace_skill_scan_dirs_include_project_overrides_after_user_dir() {
+        let workspace = Path::new("/tmp/project");
+        let dirs = workspace_skill_scan_dirs(workspace);
+        let project_dirs = [
+            workspace.join(".forge").join("skills"),
+            workspace.join("skills"),
+        ];
+
+        assert!(dirs.ends_with(&project_dirs));
     }
 }

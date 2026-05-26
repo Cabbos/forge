@@ -33,22 +33,23 @@ function ToolStepRow({ step }: { step: ToolStep }) {
   const [open, setOpen] = useState(false);
   const shortResult = step.result.slice(0, 200);
   return (
-    <div className="ml-2">
+    <div className="forge-sub-agent-tool">
       <button
+        type="button"
+        data-testid="sub-agent-tool-trigger"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[10px] py-0.5 cursor-pointer transition-colors w-full text-left"
-        style={{ color: "var(--muted-foreground)" }}
+        className="forge-sub-agent-tool-trigger"
       >
         <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
         <ToolIcon name={step.name} />
-        <span className="font-mono" style={{ color: "var(--forge-icon-context)" }}>{step.name}</span>
-        <span className="truncate" style={{ color: "var(--muted-foreground)" }}>{step.input.slice(0, 40)}</span>
-        <span style={{ color: "var(--muted-foreground)" }}>→</span>
-        <span className="truncate" style={{ color: "#D0D5DD" }}>{shortResult}</span>
+        <span className="forge-sub-agent-tool-name">{step.name}</span>
+        <span className="forge-sub-agent-muted">{step.input.slice(0, 40)}</span>
+        <span className="forge-sub-agent-muted">→</span>
+        <span className="forge-sub-agent-preview">{shortResult}</span>
       </button>
       {open && (
-        <div className="ml-5 mt-0.5 mb-1 p-1.5 rounded text-[10px] font-mono whitespace-pre-wrap break-all"
-          style={{ background: "var(--background)", border: "1px solid var(--border)", color: "#D0D5DD", maxHeight: "120px", overflow: "auto" }}>
+        <div data-testid="sub-agent-tool-result" className="forge-sub-agent-output forge-sub-agent-output--tool">
           {step.result}
         </div>
       )}
@@ -61,28 +62,30 @@ function RoundCard({ step }: { step: RoundStep }) {
   const hasDetail = step.thinking || step.tool_calls.length > 0 || step.text;
 
   return (
-    <div className="mb-1">
+    <div className="forge-sub-agent-round">
       <button
+        type="button"
+        data-testid="sub-agent-round-trigger"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[10px] py-1 cursor-pointer transition-colors w-full text-left"
-        style={{ color: "var(--muted-foreground)" }}
+        className="forge-sub-agent-round-trigger"
       >
         <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
-        <span style={{ color: "#D4A853" }}>第 {step.round + 1} 轮</span>
-        {step.thinking && <Brain className="size-2.5" style={{ color: "var(--muted-foreground)" }} />}
-        {step.text && <MessageSquare className="size-2.5" style={{ color: "var(--muted-foreground)" }} />}
-        <span style={{ color: "var(--muted-foreground)" }}>{step.tool_calls.length} 个工具</span>
+        <span className="forge-sub-agent-round-index">第 {step.round + 1} 轮</span>
+        {step.thinking && <Brain className="size-2.5" />}
+        {step.text && <MessageSquare className="size-2.5" />}
+        <span className="forge-sub-agent-muted">{step.tool_calls.length} 个工具</span>
       </button>
       {open && hasDetail && (
-        <div className="ml-3 pl-2" style={{ borderLeft: "1px solid var(--border)" }}>
+        <div data-testid="sub-agent-round-detail" className="forge-sub-agent-round-detail">
           {step.thinking && (
-            <div className="text-[10px] py-0.5" style={{ color: "var(--muted-foreground)" }}>
-              <span className="text-muted-foreground/70">思考：</span>
+            <div className="forge-sub-agent-prose">
+              <span className="forge-sub-agent-muted">思考：</span>
               {step.thinking.slice(0, 300)}
             </div>
           )}
           {step.text && (
-            <div className="text-[10px] py-0.5" style={{ color: "#D0D5DD" }}>
+            <div className="forge-sub-agent-prose forge-sub-agent-prose--answer">
               {step.text.slice(0, 300)}
             </div>
           )}
@@ -107,18 +110,15 @@ export function SubAgentTrace({ content }: { content: string }) {
   if (!payload) return null;
 
   return (
-    <div className="mt-1" style={{ borderLeft: "1px solid rgba(212,168,83,0.2)" }}>
-      {/* Steps */}
+    <div data-testid="sub-agent-trace" className="forge-sub-agent-trace">
       {payload.steps.length > 0 && (
-        <div className="ml-2 py-1">
+        <div className="forge-sub-agent-rounds">
           {payload.steps.map((step, i) => (
             <RoundCard key={i} step={step} />
           ))}
         </div>
       )}
-      {/* Final result */}
-      <div className="ml-2 p-2 rounded text-[11px] font-mono whitespace-pre-wrap break-all"
-        style={{ background: "var(--background)", border: "1px solid var(--border)", color: "#D0D5DD", maxHeight: "200px", overflow: "auto" }}>
+      <div data-testid="sub-agent-result" className="forge-sub-agent-output forge-sub-agent-output--final">
         {payload.result || "暂无结果"}
       </div>
     </div>

@@ -110,11 +110,12 @@ fn load_transcript_events_at(
 
     let _guard = lock_transcript_path(&path);
     let records = load_transcript_records_from_path(&path)?;
-    Ok(records
+    let events = records
         .into_iter()
         .filter(|record| !is_compact_marker(&record.event))
         .map(|record| record.event)
-        .collect())
+        .collect();
+    Ok(close_unfinished_renderable_events(events, session_id))
 }
 
 fn load_transcript_records_from_path(path: &Path) -> Result<Vec<TranscriptRecord>, String> {
@@ -204,6 +205,109 @@ fn is_compact_marker(event: &serde_json::Value) -> bool {
     event.get("event_type").and_then(|value| value.as_str()) == Some(TRANSCRIPT_COMPACT_MARKER)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingRenderableKind {
+    Shell,
+    ToolCall,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingRenderable {
+    block_id: String,
+    kind: PendingRenderableKind,
+}
+
+fn close_unfinished_renderable_events(
+    mut events: Vec<serde_json::Value>,
+    session_id: &str,
+) -> Vec<serde_json::Value> {
+    let mut pending = Vec::<PendingRenderable>::new();
+
+    for event in &events {
+        let event_type = event.get("event_type").and_then(|value| value.as_str());
+        let block_id = event
+            .get("block_id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let Some(block_id) = block_id else {
+            continue;
+        };
+
+        match event_type {
+            Some("shell_start") => upsert_pending(
+                &mut pending,
+                PendingRenderable {
+                    block_id,
+                    kind: PendingRenderableKind::Shell,
+                },
+            ),
+            Some("shell_end") => {
+                remove_pending(&mut pending, &block_id, PendingRenderableKind::Shell)
+            }
+            Some("tool_call_start") => upsert_pending(
+                &mut pending,
+                PendingRenderable {
+                    block_id,
+                    kind: PendingRenderableKind::ToolCall,
+                },
+            ),
+            Some("tool_call_result") => {
+                remove_pending(&mut pending, &block_id, PendingRenderableKind::ToolCall)
+            }
+            _ => {}
+        }
+    }
+
+    for item in pending {
+        match item.kind {
+            PendingRenderableKind::Shell => {
+                events.push(serde_json::json!({
+                    "event_type": "shell_output",
+                    "session_id": session_id,
+                    "block_id": item.block_id,
+                    "content": "\n命令已中断：会话恢复时没有收到结束事件，请根据当前项目状态继续。\n",
+                }));
+                events.push(serde_json::json!({
+                    "event_type": "shell_end",
+                    "session_id": session_id,
+                    "block_id": item.block_id,
+                    "exit_code": -1,
+                }));
+            }
+            PendingRenderableKind::ToolCall => {
+                events.push(serde_json::json!({
+                    "event_type": "tool_call_result",
+                    "session_id": session_id,
+                    "block_id": item.block_id,
+                    "result": "工具调用已中断：会话恢复时没有收到结果，请重新检查当前项目状态后继续。",
+                    "is_error": true,
+                    "duration_ms": 0,
+                }));
+                events.push(serde_json::json!({
+                    "event_type": "tool_call_end",
+                    "session_id": session_id,
+                    "block_id": item.block_id,
+                }));
+            }
+        }
+    }
+
+    events
+}
+
+fn upsert_pending(pending: &mut Vec<PendingRenderable>, item: PendingRenderable) {
+    remove_pending(pending, &item.block_id, item.kind);
+    pending.push(item);
+}
+
+fn remove_pending(
+    pending: &mut Vec<PendingRenderable>,
+    block_id: &str,
+    kind: PendingRenderableKind,
+) {
+    pending.retain(|item| !(item.block_id == block_id && item.kind == kind));
+}
+
 fn lock_transcript_path(path: &Path) -> MutexGuard<'static, ()> {
     let locks = TRANSCRIPT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let lock = {
@@ -226,7 +330,7 @@ fn delete_transcript_at(root: &Path, session_id: &str) -> Result<(), String> {
 
 fn transcript_path(root: &Path, session_id: &str) -> Result<PathBuf, String> {
     let id = safe_session_id(session_id);
-    if id.is_empty() {
+    if id.is_empty() || id != session_id {
         return Err("Invalid session id".to_string());
     }
     Ok(root.join("session-transcripts").join(format!("{id}.jsonl")))
@@ -309,6 +413,17 @@ mod tests {
     }
 
     #[test]
+    fn transcript_path_rejects_session_ids_that_would_be_sanitized() {
+        let root = test_root("reject-sanitized-id");
+
+        let error = transcript_path(&root, "../session-1")
+            .expect_err("session ids must not be silently rewritten");
+
+        assert!(error.contains("Invalid session id"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn transcript_load_skips_invalid_jsonl_records() {
         let root = test_root("skip-invalid");
         let event_one = json!({
@@ -364,6 +479,78 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(contents, vec!["event-5", "event-6", "event-7"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_load_closes_unfinished_shell_blocks_as_cancelled() {
+        let root = test_root("unfinished-shell");
+        let start = json!({
+            "event_type": "shell_start",
+            "session_id": "session-1",
+            "block_id": "shell-1",
+            "command": "npm install"
+        });
+        append_transcript_event_at(&root, start.clone()).expect("append shell start");
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+
+        assert_eq!(loaded.first(), Some(&start));
+        assert_eq!(
+            loaded.last(),
+            Some(&json!({
+                "event_type": "shell_end",
+                "session_id": "session-1",
+                "block_id": "shell-1",
+                "exit_code": -1
+            }))
+        );
+        assert!(loaded.iter().any(|event| {
+            event.get("event_type").and_then(|value| value.as_str()) == Some("shell_output")
+                && event
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|content| content.contains("已中断"))
+        }));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_load_closes_unfinished_tool_calls_as_cancelled() {
+        let root = test_root("unfinished-tool");
+        let start = json!({
+            "event_type": "tool_call_start",
+            "session_id": "session-1",
+            "block_id": "tool-1",
+            "tool_name": "run_shell",
+            "tool_input": { "command": "npm install" }
+        });
+        append_transcript_event_at(&root, start.clone()).expect("append tool start");
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+
+        assert_eq!(loaded.first(), Some(&start));
+        assert!(loaded.iter().any(|event| {
+            event.get("event_type").and_then(|value| value.as_str()) == Some("tool_call_result")
+                && event
+                    .get("is_error")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+                && event
+                    .get("result")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|result| result.contains("已中断"))
+        }));
+        assert_eq!(
+            loaded.last(),
+            Some(&json!({
+                "event_type": "tool_call_end",
+                "session_id": "session-1",
+                "block_id": "tool-1"
+            }))
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 

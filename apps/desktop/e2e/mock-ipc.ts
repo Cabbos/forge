@@ -269,12 +269,19 @@ function applyMemoryPatch(args: Record<string, unknown>): WikiMemory {
 }
 
 /** Simulate streaming events from the backend. */
-export function simulateStream(
+export async function simulateStream(
   page: import("@playwright/test").Page,
   sessionId: string,
   events: StreamEvent[],
   delayMs = 50,
 ) {
+  await page.waitForFunction(() => {
+    // @ts-expect-error Tauri listener registry installed by setup()
+    const hasSessionOutputListener = (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    const hasConversationComposer = Boolean(document.querySelector("[data-testid='composer-surface']"));
+    return hasSessionOutputListener && hasConversationComposer;
+  });
+
   return page.evaluate(
     ({ sessionId, events, delayMs }) => {
       return new Promise<void>((resolve) => {

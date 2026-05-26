@@ -44,7 +44,7 @@ export function FilePreviewBody({ loading, error, lines }: FilePreviewBodyProps)
             <div className="select-none px-3 py-0.5 text-right" style={tone.number}>
               {line.number}
             </div>
-            <pre className="m-0 whitespace-pre-wrap break-words px-3 py-0.5 text-[#c9c9c9]">
+            <pre className="m-0 whitespace-pre-wrap break-words px-3 py-0.5 text-[var(--forge-code-text)]">
               {line.content || " "}
             </pre>
           </div>

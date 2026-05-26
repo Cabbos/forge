@@ -86,8 +86,8 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     setError("");
     try {
       const [nextMemories, nextForgeWikiState] = await Promise.all([
-        listMemories(undefined, currentProjectPath),
-        getForgeWikiState(currentProjectPath),
+        listMemories(undefined, currentProjectPath, sessionId),
+        getForgeWikiState(currentProjectPath, sessionId),
       ]);
       if (requestIdRef.current === requestId) {
         setMemories(nextMemories);
@@ -165,7 +165,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     const busyToken = beginBusy(operationId);
     setError("");
     try {
-      const nextForgeWikiState = await initForgeWiki(projectAtStart);
+      const nextForgeWikiState = await initForgeWiki(projectAtStart, sessionAtStart);
       if (!isCurrentRequest(projectAtStart, sessionAtStart)) return;
       setForgeWikiState(nextForgeWikiState);
       await refresh();

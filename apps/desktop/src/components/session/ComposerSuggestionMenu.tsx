@@ -1,14 +1,7 @@
-import type { CSSProperties } from "react";
 import { commandIconMeta, fileReferenceIconMeta } from "@/lib/capability-icons";
 import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import { COMPOSER_COMMANDS } from "./composerCommands";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
-
-const ACTIVE_MENU_OPTION_STYLE: CSSProperties = {
-  backgroundColor: "rgba(255, 255, 255, 0.052)",
-  borderColor: "var(--forge-border-subtle)",
-  color: "var(--forge-text-primary)",
-};
 
 interface ComposerSuggestionMenuProps {
   activeIndex: number;
@@ -46,11 +39,10 @@ export function ComposerSuggestionMenu({
                 key={file}
                 role="option"
                 aria-selected={index === activeIndex}
-                onMouseEnter={() => onActiveIndexChange(index)}
+                onPointerMove={() => onActiveIndexChange(index)}
                 onClick={() => onAddChip("file", file)}
                 className="forge-menu-option forge-menu-option--path font-mono"
                 title={file}
-                style={index === activeIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}
               >
                 <ForgeIcon icon={meta.icon} tone={meta.tone} />
                 <span className="forge-menu-option-label">{file}</span>
@@ -69,10 +61,9 @@ export function ComposerSuggestionMenu({
                 key={command.prefix}
                 role="option"
                 aria-selected={index === activeIndex}
-                onMouseEnter={() => onActiveIndexChange(index)}
+                onPointerMove={() => onActiveIndexChange(index)}
                 onClick={() => onAddChip("command", command.text)}
                 className="forge-menu-option"
-                style={index === activeIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}
               >
                 <ForgeIcon icon={meta.icon} tone={meta.tone} />
                 <span className="forge-menu-option-label font-mono">{command.text}</span>

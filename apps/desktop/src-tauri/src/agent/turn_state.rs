@@ -579,6 +579,16 @@ impl AgentTurnState {
 
     pub fn record_failure(&mut self, trace: AgentFailureTrace) {
         let from_status = self.status.clone();
+        if from_status == AgentTurnStatus::Cancelled {
+            self.record_transition(
+                Some(from_status),
+                AgentTurnStatus::Cancelled,
+                "late_failure_ignored_after_cancel",
+                Some(format!("kind={}, stage={}", trace.kind, trace.stage)),
+            );
+            self.touch();
+            return;
+        }
         let detail = format!("kind={}, stage={}", trace.kind, trace.stage);
         let failure_kind = trace.kind.clone();
         self.failure = Some(trace);
@@ -826,9 +836,11 @@ impl AgentToolEvidence {
         let (status, outcome, failure_kind) = match trace.status {
             AgentVerificationStatus::Passed => (AgentToolStatus::Completed, "succeeded", None),
             AgentVerificationStatus::Skipped => (AgentToolStatus::Completed, "skipped", None),
-            AgentVerificationStatus::Failed | AgentVerificationStatus::Error => {
-                (AgentToolStatus::Failed, "failed", Some("verification"))
-            }
+            AgentVerificationStatus::Failed | AgentVerificationStatus::Error => (
+                AgentToolStatus::Failed,
+                "failed",
+                Some(classify_verification_failure_kind(trace)),
+            ),
             AgentVerificationStatus::NotNeeded | AgentVerificationStatus::Running => return None,
         };
         let created_at_ms = trace.completed_at_ms.unwrap_or_else(now_ms);
@@ -843,7 +855,7 @@ impl AgentToolEvidence {
             summary: verification_evidence_summary(trace),
             command: trace.command.clone(),
             affected_files: Vec::new(),
-            failure_kind: failure_kind.map(str::to_string),
+            failure_kind: failure_kind.map(ToString::to_string),
             created_at_ms,
         })
     }
@@ -1241,6 +1253,25 @@ fn preview_status_is_conflict(label: &str, running: bool, can_start: bool, can_o
             "port already in use",
         ],
     )
+}
+
+fn classify_verification_failure_kind(trace: &AgentVerificationTrace) -> &'static str {
+    let evidence = [
+        trace.stdout_preview.as_deref(),
+        trace.stderr_preview.as_deref(),
+        trace.command.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
+    .to_ascii_lowercase();
+
+    if contains_any(&evidence, &["cancelled", "interrupted", "中断"]) {
+        "interrupted"
+    } else {
+        "verification"
+    }
 }
 
 fn preview_evidence_summary(
@@ -1800,6 +1831,44 @@ mod tests {
     }
 
     #[test]
+    fn late_failure_does_not_override_cancelled_turn() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/workspace".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "workflow".to_string(),
+            "implementation".to_string(),
+            "运行检查".to_string(),
+        );
+        turn.mark_status_with_reason(
+            AgentTurnStatus::Cancelled,
+            "user_cancelled",
+            Some("session killed"),
+        );
+
+        turn.record_failure(AgentFailureTrace {
+            kind: "verification".to_string(),
+            stage: "verification_failed".to_string(),
+            message: "verification cancelled".to_string(),
+            retryable: false,
+            recovery_advice: None,
+            created_at_ms: 42,
+        });
+
+        assert_eq!(turn.status, AgentTurnStatus::Cancelled);
+        assert!(turn.failure.is_none());
+        assert_eq!(
+            turn.transition_log
+                .last()
+                .expect("last transition")
+                .to_status,
+            AgentTurnStatus::Cancelled
+        );
+    }
+
+    #[test]
     fn record_tool_updates_existing_tool_trace_and_terminal_evidence() {
         let mut turn = AgentTurnState::new(
             "turn-1".to_string(),
@@ -1908,6 +1977,35 @@ mod tests {
             .as_deref()
             .expect("summary")
             .contains("build failed"));
+    }
+
+    #[test]
+    fn cancelled_verification_evidence_is_interrupted_not_verification_failed() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/workspace".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "agent-core".to_string(),
+            "phase-1".to_string(),
+            "Cancel verification".to_string(),
+        );
+
+        turn.set_verification(AgentVerificationTrace {
+            status: AgentVerificationStatus::Error,
+            command: Some("npm run build".to_string()),
+            exit_code: None,
+            stdout_preview: None,
+            stderr_preview: Some("verification cancelled".to_string()),
+            duration_ms: Some(200),
+            completed_at_ms: Some(30),
+        });
+
+        let evidence = turn.evidence.last().expect("verification evidence");
+        assert_eq!(evidence.kind, AgentEvidenceKind::Verification);
+        assert_eq!(evidence.outcome, "failed");
+        assert_eq!(evidence.failure_kind.as_deref(), Some("interrupted"));
     }
 
     #[test]

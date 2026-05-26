@@ -127,7 +127,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         <img src={forgeMark} alt="" className="size-7 flex-shrink-0 rounded-md" />
         <div className="forge-sidebar-brand-copy">
           <span className="forge-sidebar-brand-title">Forge</span>
-          <span className="forge-sidebar-brand-subtitle">Local agent</span>
+          <span className="forge-sidebar-brand-subtitle">Local workbench</span>
         </div>
       </div>
 

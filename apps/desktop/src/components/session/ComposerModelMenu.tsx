@@ -1,11 +1,4 @@
-import type { CSSProperties } from "react";
 import { formatContextWindow, PROVIDERS } from "@/lib/providers";
-
-const ACTIVE_MENU_OPTION_STYLE: CSSProperties = {
-  backgroundColor: "rgba(255, 255, 255, 0.052)",
-  borderColor: "var(--forge-border-subtle)",
-  color: "var(--forge-text-primary)",
-};
 
 interface ComposerModelMenuProps {
   id: string;
@@ -44,11 +37,14 @@ export function ComposerModelMenu({
                 aria-checked={active}
                 onClick={() => onSelect(provider.id, model.id)}
                 className="forge-menu-option h-auto min-h-10 flex-col items-stretch gap-0.5 py-1.5"
-                style={active ? { ...ACTIVE_MENU_OPTION_STYLE, color: "var(--primary)" } : { color: "var(--forge-text-secondary)" }}
               >
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-mono">{model.name}</span>
-                  {active && <span className="text-[10px] text-primary">当前</span>}
+                  {active && (
+                    <span data-testid="composer-model-current-badge" className="forge-composer-model-current">
+                      当前
+                    </span>
+                  )}
                 </div>
                 {model.description && (
                   <div className="mt-0.5 truncate text-[10px] text-muted-foreground/75">

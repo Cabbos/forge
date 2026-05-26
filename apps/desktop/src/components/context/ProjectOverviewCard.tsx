@@ -1,4 +1,4 @@
-import { ArrowUpRight, FileText, FolderOpen, ListChecks, Sparkles, Target } from "lucide-react";
+import { ArrowUpRight, FileText, FolderOpen, ListChecks, Target } from "lucide-react";
 import type { ReactNode } from "react";
 import { useStore } from "@/store";
 import type { ProjectArchiveOverview } from "@/lib/project-archive-overview";
@@ -58,7 +58,7 @@ export function ProjectOverviewCard({ overview }: { overview: ProjectArchiveOver
               onClick={() => setPendingInput(action.prompt)}
               className="forge-action"
             >
-              {action.id === "continue_polish" ? <Sparkles className="size-3" /> : <ArrowUpRight className="size-3" />}
+              {action.id === "continue_polish" ? <ListChecks className="size-3" /> : <ArrowUpRight className="size-3" />}
               {action.label}
             </button>
           ))}

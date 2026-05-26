@@ -89,6 +89,8 @@ pub async fn start_project_dev_server(
         ));
     }
 
+    stop_managed_server_if_replacing_workspace(&state, &working_dir).await;
+
     if inspect_port_occupancy(config.port).open {
         return project_runtime_status_for_path(&state, working_dir).await;
     }
@@ -169,14 +171,10 @@ pub async fn stop_project_dev_server(
     let working_dir =
         runtime_working_dir_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
             .await?;
-    let mut server = {
-        let mut guard = state.dev_server.write().await;
-        guard.take()
-    };
+    let mut server = take_managed_server_for_workspace(&state, &working_dir).await;
 
     if let Some(server) = server.as_mut() {
-        kill_child_process_group(&mut server.child).await;
-        let _ = server.child.wait().await;
+        stop_managed_server(server).await;
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -290,6 +288,47 @@ async fn refresh_managed_server(
     }
 }
 
+async fn take_managed_server_for_workspace(
+    state: &Arc<AppState>,
+    working_dir: &std::path::Path,
+) -> Option<ManagedDevServer> {
+    let mut guard = state.dev_server.write().await;
+    let should_take = guard
+        .as_ref()
+        .is_some_and(|server| same_workspace(&server.working_dir, working_dir));
+    if should_take {
+        guard.take()
+    } else {
+        None
+    }
+}
+
+async fn stop_managed_server_if_replacing_workspace(
+    state: &Arc<AppState>,
+    working_dir: &std::path::Path,
+) {
+    let replacement = {
+        let mut guard = state.dev_server.write().await;
+        let should_replace = guard
+            .as_ref()
+            .is_some_and(|server| !same_workspace(&server.working_dir, working_dir));
+        if should_replace {
+            guard.take()
+        } else {
+            None
+        }
+    };
+
+    if let Some(mut server) = replacement {
+        stop_managed_server(&mut server).await;
+    }
+}
+
+async fn stop_managed_server(server: &mut ManagedDevServer) {
+    kill_child_process_group(&mut server.child).await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), server.child.wait()).await;
+}
+
 fn status_from_config(
     config: &RuntimeConfig,
     managed: ManagedSnapshot,
@@ -369,9 +408,9 @@ fn runtime_availability(
         }
 
         return RuntimeAvailability {
-            running: true,
-            blocked_by_port: false,
-            message: "检测到预览地址已经在运行".to_string(),
+            running: false,
+            blocked_by_port: true,
+            message: format!("端口 {} 已被占用，无法确认属于当前项目", config.port),
         };
     }
 
@@ -652,6 +691,29 @@ mod tests {
     }
 
     #[test]
+    fn runtime_does_not_open_unowned_occupied_port_as_current_preview() {
+        let project = temp_workspace("project");
+        let config = config_for(&project);
+        let managed = ManagedSnapshot::none();
+        let occupancy = PortOccupancy {
+            open: true,
+            owner_pid: Some(42),
+            owner_working_dir: None,
+        };
+
+        let availability = runtime_availability(&config, &managed, &occupancy);
+        let status = status_from_config(&config, managed, availability);
+
+        assert!(!status.running);
+        assert!(!status.can_open);
+        assert!(!status.can_start);
+        assert!(status.message.contains("5173"));
+        assert!(status.message.contains("无法确认"));
+
+        let _ = std::fs::remove_dir_all(project);
+    }
+
+    #[test]
     fn runtime_treats_same_project_port_as_running_preview() {
         let project = temp_workspace("project");
         let config = config_for(&project);
@@ -711,5 +773,84 @@ mod tests {
         assert!(error.contains("工作空间"));
 
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stop_runtime_does_not_take_managed_server_from_other_workspace() {
+        let project = temp_workspace("stop-project");
+        let other = temp_workspace("stop-other");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(project.clone()),
+        )));
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "sleep 5"])
+            .current_dir(&other)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        configure_command_process_group(&mut command);
+        let child = command.spawn().expect("spawn managed server");
+        *state.dev_server.write().await = Some(crate::state::ManagedDevServer {
+            child,
+            working_dir: other.clone(),
+            port: 5173,
+            url: "http://localhost:5173".to_string(),
+            command: "npm run dev".to_string(),
+            logs: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        });
+
+        let taken = take_managed_server_for_workspace(&state, &project).await;
+
+        assert!(taken.is_none());
+        let mut remaining = state
+            .dev_server
+            .write()
+            .await
+            .take()
+            .expect("other workspace server should remain managed");
+        kill_child_process_group(&mut remaining.child).await;
+        let _ = remaining.child.wait().await;
+
+        let _ = std::fs::remove_dir_all(project);
+        let _ = std::fs::remove_dir_all(other);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn replacing_runtime_stops_previous_managed_server_from_other_workspace() {
+        let project = temp_workspace("replace-project");
+        let other = temp_workspace("replace-other");
+        let marker = other.join("marker");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(project.clone()),
+        )));
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "sleep 5; echo should-not-run > marker"])
+            .current_dir(&other)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        configure_command_process_group(&mut command);
+        let child = command.spawn().expect("spawn previous managed server");
+        *state.dev_server.write().await = Some(crate::state::ManagedDevServer {
+            child,
+            working_dir: other.clone(),
+            port: 5173,
+            url: "http://localhost:5173".to_string(),
+            command: "npm run dev".to_string(),
+            logs: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        });
+
+        stop_managed_server_if_replacing_workspace(&state, &project).await;
+
+        assert!(state.dev_server.read().await.is_none());
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(project);
+        let _ = std::fs::remove_dir_all(other);
     }
 }

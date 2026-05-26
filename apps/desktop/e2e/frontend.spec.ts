@@ -574,6 +574,166 @@ async function expandArchiveFiles(page: Page) {
 }
 
 test.describe("Frontend maintainability guardrails", () => {
+  test("brand theme styles avoid pre-brand warm gray literals", () => {
+    const styleFiles = [
+      "src/styles/capabilities.css",
+      "src/styles/composer.css",
+      "src/styles/diff.css",
+      "src/styles/globals.css",
+      "src/styles/layout.css",
+      "src/styles/markdown.css",
+      "src/styles/messages.css",
+      "src/styles/process.css",
+    ];
+    const deprecatedBrandLiterals = [
+      "rgba(194, 187, 174",
+      "rgba(210, 204, 190",
+      "#181816",
+      "#22221E",
+      "#282822",
+      "#99958B",
+      "#DCB671",
+    ];
+
+    for (const path of styleFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      for (const literal of deprecatedBrandLiterals) {
+        expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
+      }
+    }
+  });
+
+  test("warm precision brand assets avoid cold graphite and blue code literals", () => {
+    const checkedFiles = [
+      "src/assets/forge-mark.svg",
+      "src/styles/diff.css",
+      "src/styles/markdown.css",
+    ];
+    const coldBrandLiterals = [
+      "#0D0D0D",
+      "#1C1C1C",
+      "#2A2A2A",
+      "rgba(9, 11, 14",
+      "rgba(10, 12, 15",
+      "#d6deeb",
+      "#D6DEEB",
+      "#CBD5E1",
+      "#7CAED8",
+      "rgba(148, 163, 184",
+      "rgba(188, 198, 214",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      for (const literal of coldBrandLiterals) {
+        expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
+      }
+    }
+  });
+
+  test("reader affordances avoid default blue links and cold hover surfaces", () => {
+    const checkedFiles = [
+      "src/styles/markdown.css",
+      "src/styles/messages.css",
+    ];
+    const coldAffordanceLiterals = [
+      "#6BA6D8",
+      "rgba(107, 166, 216",
+      "rgba(27, 30, 37",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      for (const literal of coldAffordanceLiterals) {
+        expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
+      }
+    }
+  });
+
+  test("warm precision semantic accents use shared tokens instead of legacy greens and preview blues", () => {
+    const checkedFiles = [
+      "src/components/messages/FilePreviewBody.tsx",
+      "src/components/messages/filePreviewPresentation.ts",
+      "src/styles/composer.css",
+      "src/styles/diff.css",
+      "src/styles/globals.css",
+      "src/styles/markdown.css",
+      "src/styles/process.css",
+      "src/styles/tokens.css",
+    ];
+    const legacySemanticLiterals = [
+      "rgba(91,155,213",
+      "#8FC7FF",
+      "text-[#c9c9c9]",
+      "#4A9E6B",
+      "rgba(74, 158, 107",
+      "#8BCB9D",
+      "#7AB88E",
+      "#9BC7A8",
+      "#8FB8C9",
+      "#B8A0D9",
+      "#78C08D",
+      "#D49CAB",
+      "#D9622A",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      for (const literal of legacySemanticLiterals) {
+        expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
+      }
+    }
+  });
+
+  test("brand metaphors avoid fire, magic spectacle, and raw agent framing", () => {
+    const checkedFiles = [
+      "src/components/context/ProjectOverviewCard.tsx",
+      "src/components/layout/Sidebar.tsx",
+      "src/lib/capability-icons.ts",
+      "src/styles/tokens.css",
+    ];
+    const offBrandMetaphors = [
+      "--forge-ember",
+      "WandSparkles",
+      "Sparkles",
+      "Local agent",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      for (const literal of offBrandMetaphors) {
+        expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
+      }
+    }
+
+    const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
+    expect(sidebar).toContain("Local workbench");
+  });
+
+  test("brand surfaces avoid decorative radial glows", () => {
+    const checkedFiles = [
+      "src/styles/capabilities.css",
+      "src/styles/composer.css",
+      "src/styles/globals.css",
+      "src/styles/layout.css",
+      "src/styles/messages.css",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${path} should not contain decorative radial-gradient glows`).not.toContain("radial-gradient");
+    }
+  });
+
+  test("shared card primitive keeps product radius within the design contract", () => {
+    const card = readFileSync(resolve(process.cwd(), "src/components/ui/card.tsx"), "utf8");
+
+    expect(card).not.toContain("rounded-xl");
+    expect(card).not.toContain("rounded-b-xl");
+    expect(card).not.toContain("rounded-2xl");
+    expect(card).not.toContain("rounded-3xl");
+  });
+
   test("markdown reader styles are owned by the markdown stylesheet", () => {
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
     const markdown = readFileSync(resolve(process.cwd(), "src/styles/markdown.css"), "utf8");
@@ -1342,7 +1502,7 @@ test.describe("Timeline Message Flow", () => {
 
     expect(readyMetrics.width).toBe(32);
     expect(readyMetrics.height).toBe(32);
-    expect(readyMetrics.background).not.toBe("rgb(212, 168, 83)");
+    expect(readyMetrics.background).not.toBe("rgb(184, 138, 86)");
     expect(readyMetrics.borderColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(readyMetrics.boxShadow).not.toBe("none");
     expect(readyMetrics.radius).toBeLessThanOrEqual(8);
@@ -1449,7 +1609,8 @@ test.describe("Timeline Message Flow", () => {
     await expect(titlebar).toHaveCSS("height", "56px");
 
     const composerFrame = page.getByTestId("composer-frame");
-    await expect(composerFrame).toHaveCSS("backdrop-filter", /blur/);
+    await expect(composerFrame).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(composerFrame).toHaveCSS("backdrop-filter", "none");
     await expect(page.getByTestId("composer-surface")).not.toHaveCSS("box-shadow", "none");
 
     await simulateStream(page, sessionId, fullConversation(sessionId), 10);
@@ -1648,7 +1809,7 @@ test.describe("Timeline Message Flow", () => {
     expect(setupMetrics.bodyHeight).toBeLessThanOrEqual(38);
     expect(setupMetrics.actionHeight).toBe(28);
     expect(setupMetrics.actionRadius).toBeLessThanOrEqual(8);
-    expect(setupMetrics.actionBackground).not.toBe("rgb(212, 168, 83)");
+    expect(setupMetrics.actionBackground).not.toBe("rgb(184, 138, 86)");
     expect(setupMetrics.actionBorder).not.toBe("rgba(0, 0, 0, 0)");
     expect(setupMetrics.actionShadow).not.toBe("none");
     await page.getByRole("button", { name: "打开设置" }).click();
@@ -2398,7 +2559,7 @@ test.describe("Timeline Message Flow", () => {
     await expect(page.getByTestId("composer-surface")).toHaveAttribute("data-state", "busy");
   });
 
-  test("conversation and composer share the same vertical gutters", async ({ page }) => {
+  test("composer floats in a transparent frame with bottom breathing room", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -2409,28 +2570,33 @@ test.describe("Timeline Message Flow", () => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
 
-    const gutters = await page.evaluate(() => {
-      const scroll = document.querySelector("[data-testid='conversation-scroll']")?.getBoundingClientRect();
-      const messageLane = document.querySelector("[data-testid='message-lane']")?.getBoundingClientRect();
+    const frameMetrics = await page.evaluate(() => {
       const composerFrameNode = document.querySelector("[data-testid='composer-frame']");
       const composerFrame = composerFrameNode?.getBoundingClientRect();
       const composerLane = document.querySelector("[data-testid='composer-lane']")?.getBoundingClientRect();
-      if (!scroll || !messageLane || !composerFrameNode || !composerFrame || !composerLane) return null;
-      const composerBorderTop = Number.parseFloat(getComputedStyle(composerFrameNode).borderTopWidth);
+      if (!composerFrameNode || !composerFrame || !composerLane) return null;
+      const frameStyle = getComputedStyle(composerFrameNode);
 
       return {
-        transcriptTop: Math.round(messageLane.top - scroll.top),
-        composerTop: Math.round(composerLane.top - composerFrame.top - composerBorderTop),
+        frameBackground: frameStyle.backgroundColor,
+        frameBorderTop: Math.round(Number.parseFloat(frameStyle.borderTopWidth)),
+        frameShadow: frameStyle.boxShadow,
+        frameBackdrop: frameStyle.backdropFilter || frameStyle.getPropertyValue("-webkit-backdrop-filter"),
+        composerTop: Math.round(composerLane.top - composerFrame.top),
+        composerBottom: Math.round(composerFrame.bottom - composerLane.bottom),
       };
     });
 
-    expect(gutters).not.toBeNull();
-    expect(gutters!.transcriptTop).toBe(18);
-    expect(gutters!.composerTop).toBe(18);
-    expect(Math.abs(gutters!.transcriptTop - gutters!.composerTop)).toBeLessThanOrEqual(1);
+    expect(frameMetrics).not.toBeNull();
+    expect(frameMetrics!.frameBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(frameMetrics!.frameBorderTop).toBe(0);
+    expect(frameMetrics!.frameShadow).toBe("none");
+    expect(frameMetrics!.frameBackdrop).toBe("none");
+    expect(frameMetrics!.composerTop).toBe(14);
+    expect(frameMetrics!.composerBottom).toBe(24);
   });
 
-  test("conversation shell uses one vertical rhythm token", async ({ page }) => {
+  test("conversation shell keeps transcript rhythm while composer floats", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -2491,8 +2657,8 @@ test.describe("Timeline Message Flow", () => {
     expect(rhythm!.token).toBe("18px");
     expect(rhythm!.scrollTop).toBe(18);
     expect(rhythm!.scrollBottom).toBe(18);
-    expect(rhythm!.composerTop).toBe(18);
-    expect(rhythm!.composerBottom).toBe(18);
+    expect(rhythm!.composerTop).toBe(14);
+    expect(rhythm!.composerBottom).toBe(24);
     expect(rhythm!.scrollButtonBottom).toBe(18);
   });
 
@@ -2682,11 +2848,11 @@ test.describe("Timeline Message Flow", () => {
 
     expect(rhythm).not.toBeNull();
     expect(rhythm!.innerX).toBe("18px");
-    expect(rhythm!.innerY).toBe("13px");
+    expect(rhythm!.innerY).toBe("16px");
     expect(rhythm!.textPadLeft).toBe(18);
-    expect(rhythm!.textPadTop).toBe(13);
+    expect(rhythm!.textPadTop).toBe(16);
     expect(rhythm!.toolbarPadLeft).toBe(18);
-    expect(rhythm!.toolbarPadBottom).toBe(12);
+    expect(rhythm!.toolbarPadBottom).toBe(8);
     expect(rhythm!.textareaLineHeight).toBe(24);
     expect(rhythm!.textareaScrollbarWidth).toBe("thin");
   });
@@ -2826,7 +2992,7 @@ test.describe("Timeline Message Flow", () => {
 
     expect(metrics.background).toBe("rgba(0, 0, 0, 0)");
     expect(metrics.borderColor).toBe("rgba(0, 0, 0, 0)");
-    expect(metrics.color).toBe("rgba(174, 182, 194, 0.48)");
+    expect(metrics.color).toBe("rgba(184, 180, 170, 0.48)");
     expect(metrics.cursor).toBe("default");
 
     await page.locator("textarea").fill("继续优化当前界面");
@@ -2844,7 +3010,7 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(readyMetrics.background).not.toBe("rgba(0, 0, 0, 0)");
-    expect(readyMetrics.background).not.toBe("rgb(212, 168, 83)");
+    expect(readyMetrics.background).not.toBe("rgb(184, 138, 86)");
     expect(readyMetrics.borderColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(readyMetrics.boxShadow).not.toBe("none");
   });
@@ -2868,8 +3034,9 @@ test.describe("Timeline Message Flow", () => {
     await page.waitForFunction(() => {
       const selected = document.querySelector("[data-testid='composer-command-menu'] [role='option'][aria-selected='true']");
       if (!selected) return false;
+      const rootStyle = getComputedStyle(document.documentElement);
       const style = getComputedStyle(selected);
-      return style.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+      return style.backgroundColor === rootStyle.getPropertyValue("--forge-hover").trim() &&
         Math.round(Number.parseFloat(style.borderTopWidth)) === 1;
     });
 
@@ -2878,8 +3045,10 @@ test.describe("Timeline Message Flow", () => {
       const selected = menu?.querySelector("[role='option'][aria-selected='true']");
       const options = Array.from(menu?.querySelectorAll("[role='option']") ?? []);
       if (!menu || !selected || options.length === 0) return null;
+      const rootStyle = getComputedStyle(document.documentElement);
       const selectedStyle = getComputedStyle(selected);
       return {
+        hoverToken: rootStyle.getPropertyValue("--forge-hover").trim(),
         optionCount: options.length,
         selectedText: selected.textContent ?? "",
         selectedHeight: Math.round(selected.getBoundingClientRect().height),
@@ -2894,7 +3063,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.optionCount).toBeGreaterThanOrEqual(6);
     expect(metrics!.selectedText).toContain("/fix");
     expect(metrics!.selectedHeight).toBe(34);
-    expect(metrics!.selectedBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.selectedBackground).toBe(metrics!.hoverToken);
     expect(metrics!.selectedRadius).toBeLessThanOrEqual(8);
     expect(metrics!.selectedBorder).toBe(1);
     expect(metrics!.selectedShadow).not.toBe("none");
@@ -3508,7 +3677,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.every((item) => item.radius <= 8)).toBe(true);
     expect(metrics!.every((item) => item.background !== "rgba(0, 0, 0, 0)")).toBe(true);
     expect(metrics!.every((item) => item.border !== "rgba(0, 0, 0, 0)")).toBe(true);
-    expect(metrics!.every((item) => item.color !== "rgb(212, 168, 83)")).toBe(true);
+    expect(metrics!.every((item) => item.color !== "rgb(184, 138, 86)")).toBe(true);
     expect(metrics!.every((item) => item.transitionProperty.includes("box-shadow"))).toBe(true);
 
     await page.getByRole("button", { name: "复制代码" }).hover();
@@ -3607,7 +3776,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.viewportPaddingTop).toBe(16);
     expect(metrics.viewportMaxHeight).not.toBe("none");
     expect(metrics.viewportBackground).not.toBe("rgba(0, 0, 0, 0)");
-    expect(metrics.codeColor).not.toBe("rgb(212, 168, 83)");
+    expect(metrics.codeColor).not.toBe("rgb(184, 138, 86)");
     expect(metrics.codeLineHeight).toBe(20);
     expect(metrics.codeFontSize).toBeLessThanOrEqual(12.5);
   });
@@ -4098,6 +4267,204 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.shellMargin).toBe("0px");
   });
 
+  test("process rows keep long evidence and status anchored", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.setViewportSize({ width: 900, height: 680 });
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "anchored-tool",
+        tool_name: "read_file",
+        tool_input: {
+          path: "src/components/messages/process-feedback/very-long-local-evidence-path-that-should-not-push-status-out-of-view.tsx",
+        },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "anchored-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 1328,
+      },
+      {
+        event_type: "shell_start",
+        session_id: sessionId,
+        block_id: "anchored-shell",
+        command: "npm run build -- --mode production --workspace src/components/messages/process-feedback/very-long-command-name-with-flags",
+      },
+      { event_type: "shell_output", session_id: sessionId, block_id: "anchored-shell", content: "done" },
+      { event_type: "shell_end", session_id: sessionId, block_id: "anchored-shell", exit_code: 0 },
+    ], 1);
+
+    await page.getByTestId("tool-activity-summary").click();
+
+    const metrics = await page.evaluate(() => {
+      const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
+      const tool = document.querySelector<HTMLElement>("[data-testid='tool-card-trigger']");
+      const shell = document.querySelector<HTMLElement>("[data-testid='shell-card-trigger']");
+      const toolInput = tool?.querySelector<HTMLElement>(".forge-log-line-input");
+      const toolDuration = tool?.querySelector<HTMLElement>(".forge-log-line-duration");
+      const toolStatus = tool?.querySelector<HTMLElement>(".forge-log-line-status");
+      const shellCommand = shell?.querySelector<HTMLElement>(".forge-log-line-command");
+      const shellStatus = shell?.querySelector<HTMLElement>(".forge-log-line-status");
+      if (!lane || !tool || !shell || !toolInput || !toolDuration || !toolStatus || !shellCommand || !shellStatus) return null;
+
+      const toolInputStyle = getComputedStyle(toolInput);
+      const shellCommandStyle = getComputedStyle(shellCommand);
+      const laneWidth = Math.round(lane.getBoundingClientRect().width);
+      const toolRect = tool.getBoundingClientRect();
+      const shellRect = shell.getBoundingClientRect();
+      const toolStatusRect = toolStatus.getBoundingClientRect();
+      const shellStatusRect = shellStatus.getBoundingClientRect();
+
+      return {
+        laneWidth,
+        toolWidth: Math.round(toolRect.width),
+        shellWidth: Math.round(shellRect.width),
+        toolInputOverflow: toolInputStyle.overflow,
+        toolInputTextOverflow: toolInputStyle.textOverflow,
+        toolInputWhiteSpace: toolInputStyle.whiteSpace,
+        shellCommandOverflow: shellCommandStyle.overflow,
+        shellCommandTextOverflow: shellCommandStyle.textOverflow,
+        shellCommandWhiteSpace: shellCommandStyle.whiteSpace,
+        toolStatusRightGap: Math.round(toolRect.right - toolStatusRect.right),
+        shellStatusRightGap: Math.round(shellRect.right - shellStatusRect.right),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.toolWidth).toBeLessThanOrEqual(metrics!.laneWidth);
+    expect(metrics!.shellWidth).toBeLessThanOrEqual(metrics!.laneWidth);
+    expect(metrics!.toolInputOverflow).toBe("hidden");
+    expect(metrics!.toolInputTextOverflow).toBe("ellipsis");
+    expect(metrics!.toolInputWhiteSpace).toBe("nowrap");
+    expect(metrics!.shellCommandOverflow).toBe("hidden");
+    expect(metrics!.shellCommandTextOverflow).toBe("ellipsis");
+    expect(metrics!.shellCommandWhiteSpace).toBe("nowrap");
+    expect(metrics!.toolStatusRightGap).toBeLessThanOrEqual(1);
+    expect(metrics!.shellStatusRightGap).toBeLessThanOrEqual(1);
+  });
+
+  test("delegate task trace uses shared warm process material", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "delegate-trace",
+        tool_name: "delegate_task",
+        tool_input: { prompt: "检查消息渲染和过程反馈材料一致性" },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "delegate-trace",
+        result: JSON.stringify({
+          result: "完成检查：SubAgentTrace 使用共享过程材料，长结果保持在消息 lane 内部滚动。",
+          steps: [
+            {
+              round: 0,
+              thinking: "先确认现有样式是否仍有硬编码冷色。",
+              text: "找到了一个可以收进 token 系统的 trace 片段。",
+              tool_calls: [
+                {
+                  name: "read_file",
+                  input: "src/components/messages/SubAgentTrace.tsx",
+                  result: "SubAgentTrace contains a long delegate result that should wrap quietly inside the raised process material without using cold debug text colors.",
+                },
+              ],
+            },
+          ],
+        }),
+        is_error: false,
+        duration_ms: 864,
+      },
+    ], 1);
+
+    await page.getByTestId("tool-card-trigger").click();
+    await expect(page.getByTestId("sub-agent-trace")).toBeVisible();
+    await page.getByTestId("sub-agent-round-trigger").click();
+    await page.getByTestId("sub-agent-tool-trigger").click();
+
+    const metrics = await page.evaluate(() => {
+      const rootStyle = getComputedStyle(document.documentElement);
+      const resolveColor = (color: string) => {
+        const probe = document.createElement("span");
+        probe.style.color = color;
+        document.body.append(probe);
+        const resolved = getComputedStyle(probe).color;
+        probe.remove();
+        return resolved;
+      };
+      const trace = document.querySelector<HTMLElement>("[data-testid='sub-agent-trace']");
+      const rounds = document.querySelector<HTMLElement>(".forge-sub-agent-rounds");
+      const result = document.querySelector<HTMLElement>("[data-testid='sub-agent-result']");
+      const toolResult = document.querySelector<HTMLElement>("[data-testid='sub-agent-tool-result']");
+      if (!trace || !rounds || !result || !toolResult) return null;
+
+      const traceStyle = getComputedStyle(trace);
+      const roundsStyle = getComputedStyle(rounds);
+      const resultStyle = getComputedStyle(result);
+      const toolResultStyle = getComputedStyle(toolResult);
+
+      return {
+        materialRaised: rootStyle.getPropertyValue("--forge-material-raised").trim(),
+        materialSurface: rootStyle.getPropertyValue("--forge-material-surface").trim(),
+        materialBorder: resolveColor(rootStyle.getPropertyValue("--forge-material-border").trim()),
+        traceBackground: traceStyle.backgroundColor,
+        traceBorder: traceStyle.borderTopColor,
+        traceRadius: Number.parseFloat(traceStyle.borderTopLeftRadius),
+        roundsBorder: roundsStyle.borderBottomColor,
+        resultOverflow: resultStyle.overflow,
+        resultOverflowWrap: resultStyle.overflowWrap,
+        resultMaxHeight: resultStyle.maxHeight,
+        toolResultBackground: toolResultStyle.backgroundColor,
+        toolResultOverflowWrap: toolResultStyle.overflowWrap,
+        inlineStyleCount: trace.querySelectorAll("[style]").length + (trace.hasAttribute("style") ? 1 : 0),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.traceBackground).toBe(metrics!.materialRaised);
+    expect(metrics!.traceBorder).toBe(metrics!.materialBorder);
+    expect(metrics!.traceRadius).toBeLessThanOrEqual(8);
+    expect(metrics!.roundsBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.resultOverflow).toBe("auto");
+    expect(metrics!.resultOverflowWrap).toBe("anywhere");
+    expect(metrics!.resultMaxHeight).toBe("200px");
+    expect(metrics!.toolResultBackground).toBe(metrics!.materialSurface);
+    expect(metrics!.toolResultOverflowWrap).toBe("anywhere");
+    expect(metrics!.inlineStyleCount).toBe(0);
+  });
+
   test("tool activity summary keeps dense process evidence on one quiet line", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -4357,14 +4724,14 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.toolbarHeight).toBeLessThanOrEqual(40);
     expect(metrics!.toolClusterHeight).toBeLessThanOrEqual(32);
     expect(metrics!.controlGap).toBeLessThanOrEqual(8);
-    expect(metrics!.toolSizes).toEqual([{ width: 32, height: 32 }, { width: 32, height: 32 }]);
+    expect(metrics!.toolSizes).toEqual([{ width: 30, height: 30 }, { width: 30, height: 30 }]);
     expect(metrics!.modelRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.modelHeight).toBe(32);
+    expect(metrics!.modelHeight).toBe(30);
     expect(metrics!.modelBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.sendRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.sendBackground).not.toBe("rgb(212, 168, 83)");
-    expect(metrics!.sendWidth).toBe(32);
-    expect(metrics!.sendHeight).toBe(32);
+    expect(metrics!.sendBackground).not.toBe("rgb(184, 138, 86)");
+    expect(metrics!.sendWidth).toBe(30);
+    expect(metrics!.sendHeight).toBe(30);
   });
 
   test("design system materials stay subtle and token-driven", async ({ page }) => {
@@ -4377,6 +4744,13 @@ test.describe("Timeline Message Flow", () => {
     await page.goto("http://localhost:1420");
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
+      if (!composer) return false;
+      const rootStyle = getComputedStyle(document.documentElement);
+      const composerStyle = getComputedStyle(composer);
+      return composerStyle.borderTopColor === rootStyle.getPropertyValue("--forge-material-border-focus").trim();
+    });
 
     const metrics = await page.evaluate(() => {
       const root = document.documentElement;
@@ -4396,6 +4770,11 @@ test.describe("Timeline Message Flow", () => {
         materialPopover: rootStyle.getPropertyValue("--forge-material-popover").trim(),
         materialOverlay: rootStyle.getPropertyValue("--forge-material-overlay").trim(),
         materialShadow: rootStyle.getPropertyValue("--forge-material-shadow").trim(),
+        composerBorderToken: rootStyle.getPropertyValue("--forge-composer-border").trim(),
+        composerBorderFocusToken: rootStyle.getPropertyValue("--forge-material-border-focus").trim(),
+        composerSurface: rootStyle.getPropertyValue("--forge-composer-surface").trim(),
+        composerSurfaceFocus: rootStyle.getPropertyValue("--forge-composer-surface-focus").trim(),
+        composerShadowToken: rootStyle.getPropertyValue("--forge-composer-shadow").trim(),
         bgRaised: rootStyle.getPropertyValue("--forge-bg-raised").trim(),
         hover: rootStyle.getPropertyValue("--forge-hover").trim(),
         focusRing: rootStyle.getPropertyValue("--forge-focus-ring").trim(),
@@ -4407,20 +4786,23 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.borderSubtle).toBe("rgba(178, 188, 204, 0.16)");
-    expect(metrics!.materialBorder).toBe("rgba(188, 198, 214, 0.14)");
-    expect(metrics!.materialSurface).toBe("rgba(18, 20, 25, 0.94)");
-    expect(metrics!.materialRaised).toBe("rgba(37, 41, 50, 0.92)");
-    expect(metrics!.materialPopover).toBe("rgba(17, 19, 24, 0.98)");
-    expect(metrics!.materialOverlay).toBe("rgba(23, 25, 29, 0.9)");
+    expect(metrics!.borderSubtle).toBe("#3A352C");
+    expect(metrics!.materialBorder).toBe("#3A352C");
+    expect(metrics!.materialSurface).toBe("rgba(18, 17, 15, 0.95)");
+    expect(metrics!.materialRaised).toBe("rgba(42, 39, 33, 0.92)");
+    expect(metrics!.materialPopover).toBe("rgba(18, 17, 15, 0.98)");
+    expect(metrics!.materialOverlay).toBe("rgba(27, 26, 23, 0.92)");
     expect(metrics!.materialShadow).toContain("0 18px 44px");
-    expect(metrics!.bgRaised).toBe("#252932");
-    expect(metrics!.hover).toBe("rgba(255, 255, 255, 0.05)");
-    expect(metrics!.focusRing).toBe("rgba(212, 168, 83, 0.38)");
-    expect(metrics!.titlebarBorder).toBe("rgba(178, 188, 204, 0.16)");
-    expect(metrics!.sidebarBorder).toBe("rgba(178, 188, 204, 0.16)");
-    expect(metrics!.composerBorder).toBe("rgba(188, 198, 214, 0.14)");
-    expect(metrics!.composerBg).toBe("rgba(18, 20, 25, 0.94)");
+    expect(metrics!.composerBorderToken).toBe("rgba(81, 71, 55, 0.46)");
+    expect(metrics!.composerSurface).toBe("rgba(34, 32, 28, 0.94)");
+    expect(metrics!.composerShadowToken).toContain("0 16px 38px");
+    expect(metrics!.bgRaised).toBe("#2A2721");
+    expect(metrics!.hover).toBe("rgba(238, 234, 225, 0.055)");
+    expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.34)");
+    expect(metrics!.titlebarBorder).toBe("rgb(58, 53, 44)");
+    expect(metrics!.sidebarBorder).toBe("rgb(58, 53, 44)");
+    expect(metrics!.composerBorder).toBe(metrics!.composerBorderFocusToken);
+    expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocus);
   });
 
   test("desktop material baseline covers composer, process detail, popover, and archive", async ({ page }) => {
@@ -4451,6 +4833,11 @@ test.describe("Timeline Message Flow", () => {
     const metrics = await page.evaluate(() => {
       const root = getComputedStyle(document.documentElement);
       const materialBorder = root.getPropertyValue("--forge-material-border").trim();
+      const colorProbe = document.createElement("span");
+      document.body.append(colorProbe);
+      colorProbe.style.color = materialBorder;
+      const materialBorderColor = getComputedStyle(colorProbe).color;
+      colorProbe.remove();
       const materialBorderFocus = root.getPropertyValue("--forge-material-border-focus").trim();
       const materialSurface = root.getPropertyValue("--forge-material-surface").trim();
       const materialSurfaceFocus = root.getPropertyValue("--forge-material-surface-focus").trim();
@@ -4459,6 +4846,8 @@ test.describe("Timeline Message Flow", () => {
       const materialOverlay = root.getPropertyValue("--forge-material-overlay").trim();
       const materialShadow = root.getPropertyValue("--forge-material-shadow").trim();
       const materialShadowStrong = root.getPropertyValue("--forge-material-shadow-strong").trim();
+      const composerSurfaceFocus = root.getPropertyValue("--forge-composer-surface-focus").trim();
+      const composerShadowFocus = root.getPropertyValue("--forge-composer-shadow-focus").trim();
       const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
       const detail = document.querySelector<HTMLElement>("[data-testid='log-detail-surface']");
       const menu = document.querySelector<HTMLElement>(".forge-composer-model-menu");
@@ -4472,6 +4861,7 @@ test.describe("Timeline Message Flow", () => {
       const archiveHeaderStyle = getComputedStyle(archiveHeader);
       return {
         materialBorder,
+        materialBorderColor,
         materialBorderFocus,
         materialSurface,
         materialSurfaceFocus,
@@ -4480,6 +4870,8 @@ test.describe("Timeline Message Flow", () => {
         materialOverlay,
         materialShadow,
         materialShadowStrong,
+        composerSurfaceFocus,
+        composerShadowFocus,
         composerBorder: composerStyle.borderTopColor,
         composerBackground: composerStyle.backgroundColor,
         composerShadow: composerStyle.boxShadow,
@@ -4496,20 +4888,21 @@ test.describe("Timeline Message Flow", () => {
 
     expect(metrics).not.toBeNull();
     expect(metrics!.composerBorder).toBe(metrics!.materialBorderFocus);
-    expect(metrics!.composerBackground).toBe(metrics!.materialSurfaceFocus);
+    expect(metrics!.composerBackground).toBe(metrics!.composerSurfaceFocus);
     expect(metrics!.materialShadowStrong).toContain("0 22px 52px");
-    expect(metrics!.composerShadow).toContain("22px 52px");
-    expect(metrics!.detailBorder).toBe(metrics!.materialBorder);
+    expect(metrics!.composerShadowFocus).toContain("0 18px 44px");
+    expect(metrics!.composerShadow).toContain("18px 44px");
+    expect(metrics!.detailBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.detailBackground).toBe(metrics!.materialRaised);
-    expect(metrics!.menuBorder).toBe(metrics!.materialBorder);
+    expect(metrics!.menuBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.menuBackground).toBe(metrics!.materialPopover);
-    expect(metrics!.archiveBorder).toBe(metrics!.materialBorder);
+    expect(metrics!.archiveBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.archiveBackground).toBe(metrics!.materialOverlay);
     expect(metrics!.archiveHeaderHeight).toBe(42);
-    expect(metrics!.archiveHeaderBorder).toBe(metrics!.materialBorder);
+    expect(metrics!.archiveHeaderBorder).toBe(metrics!.materialBorderColor);
   });
 
-  test("graphite color ladder keeps dark surfaces readable", async ({ page }) => {
+  test("warm precision color ladder keeps dark surfaces readable", async ({ page }) => {
     await page.goto("http://localhost:1420");
 
     const tokens = await page.evaluate(() => {
@@ -4525,12 +4918,12 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(tokens).toEqual({
-      base: "#17191D",
-      depth: "#121419",
-      surface: "#20232A",
-      raised: "#252932",
-      composer: "#1F2229",
-      muted: "#8F99A8",
+      base: "#1B1A17",
+      depth: "#12110F",
+      surface: "#26231E",
+      raised: "#2A2721",
+      composer: "#22201C",
+      muted: "#928B7E",
     });
   });
 
@@ -4715,7 +5108,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.height).toBeLessThan(pendingHeight - 80);
     expect(metrics.height).toBeLessThanOrEqual(68);
     expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
-    expect(metrics.borderColor).not.toBe("rgba(212, 168, 83, 0.22)");
+    expect(metrics.borderColor).not.toBe("rgba(184, 138, 86, 0.22)");
     expect(metrics.headerHeight).toBeLessThanOrEqual(32);
     expect(metrics.summaryHeight).toBeLessThanOrEqual(30);
     expect(metrics.summaryDisplay).toBe("flex");
@@ -5207,7 +5600,7 @@ test.describe("Timeline Message Flow", () => {
       };
     });
     expect(failureMetrics.detailTone).toBe("error");
-    expect(failureMetrics.detailBorder).not.toBe("rgba(178, 188, 204, 0.14)");
+    expect(failureMetrics.detailBorder).not.toBe("rgba(210, 204, 190, 0.14)");
     expect(failureMetrics.stderrBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(failureMetrics.stderrBorderLeft).toBe(1);
     expect(failureMetrics.stderrPaddingLeft).toBeGreaterThanOrEqual(8);
@@ -5527,7 +5920,7 @@ test.describe("Timeline Message Flow", () => {
     expect(runningMetrics.borderTop).toBe(0);
     expect(runningMetrics.statusTone).toBe("running");
     expect(runningMetrics.statusTitle).toBe("运行中");
-    expect(runningMetrics.statusColor).not.toBe("rgb(212, 168, 83)");
+    expect(runningMetrics.statusColor).not.toBe("rgb(184, 138, 86)");
 
     await simulateStream(page, sessionId, [
       { event_type: "shell_end", session_id: sessionId, block_id: shellId, exit_code: 0 },
@@ -5574,7 +5967,7 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(railMetrics.workspaceHeight).toBe(32);
     expect(railMetrics.workspaceRadius).toBeLessThanOrEqual(8);
-    expect(railMetrics.workspaceBorder).toBe("rgba(178, 188, 204, 0.16)");
+    expect(railMetrics.workspaceBorder).toBe("rgb(58, 53, 44)");
     expect(railMetrics.workspaceBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(railMetrics.primaryGap).toBe(3);
     expect(railMetrics.primaryActions).toEqual([28, 28]);
@@ -5624,11 +6017,61 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(drawerMaterial.token).toBe("216px");
     expect(drawerMaterial.backdrop).toContain("blur");
-    expect(drawerMaterial.background).toBe("rgba(30, 33, 40, 0.94)");
+    expect(drawerMaterial.background).toBe("rgba(27, 26, 23, 0.94)");
     await expect(drawer.getByTestId("forge-icon-action").first()).toBeVisible();
     await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(page.getByRole("complementary", { name: "插件" })).toHaveCount(0);
+  });
+
+  test("capability drawer reads as a compact safety console", async ({ page }) => {
+    const sidebar = page.locator("aside").first();
+    await sidebar.getByRole("button", { name: "插件" }).click();
+
+    const drawer = page.getByRole("complementary", { name: "插件" });
+    await expect(drawer).toBeVisible();
+    const manager = drawer.locator(".forge-capability-manager");
+    await expect(manager).toBeVisible();
+    const firstRow = manager.locator(".forge-capability-row").filter({ hasText: "File Reader" }).first();
+    await expect(firstRow).toBeVisible();
+
+    const metrics = await manager.evaluate((node) => {
+      const root = document.documentElement;
+      const style = getComputedStyle(node);
+      const tab = node.querySelector<HTMLElement>(".forge-capability-tab[aria-selected='true']");
+      const search = node.querySelector<HTMLElement>(".forge-capability-search");
+      const row = node.querySelector<HTMLElement>(".forge-capability-row");
+      const toggle = node.querySelector<HTMLElement>(".forge-capability-toggle[data-state='enabled']");
+      const inlineStyled = node.querySelectorAll<HTMLElement>("[style]");
+      const toggleStyle = toggle ? getComputedStyle(toggle) : null;
+      const tabStyle = tab ? getComputedStyle(tab) : null;
+      const searchStyle = search ? getComputedStyle(search) : null;
+      const rowStyle = row ? getComputedStyle(row) : null;
+      return {
+        accent: getComputedStyle(root).getPropertyValue("--forge-accent").trim(),
+        radius: Number.parseFloat(style.borderTopLeftRadius),
+        tabHeight: tab ? Math.round(tab.getBoundingClientRect().height) : 0,
+        tabBorder: tabStyle?.borderBottomColor ?? "",
+        searchHeight: search ? Math.round(search.getBoundingClientRect().height) : 0,
+        rowHeight: row ? Math.round(row.getBoundingClientRect().height) : 0,
+        rowBackground: rowStyle?.backgroundColor ?? "",
+        toggleColor: toggleStyle?.color ?? "",
+        toggleBackground: toggleStyle?.backgroundColor ?? "",
+        inlineStyledCount: inlineStyled.length,
+      };
+    });
+
+    expect(metrics.accent).toBe("#B88A56");
+    expect(metrics.radius).toBeLessThanOrEqual(8);
+    expect(metrics.tabHeight).toBe(32);
+    expect(metrics.tabBorder).toBe("rgb(184, 138, 86)");
+    expect(metrics.searchHeight).toBe(32);
+    expect(metrics.rowHeight).toBeGreaterThanOrEqual(44);
+    expect(metrics.rowBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.toggleColor).toBe("rgb(184, 138, 86)");
+    expect(metrics.toggleBackground).not.toContain("16, 185, 129");
+    expect(metrics.toggleBackground).not.toContain("52, 211, 153");
+    expect(metrics.inlineStyledCount).toBe(0);
   });
 
   test("sidebar history rows stay compact and scannable", async ({ page }) => {
@@ -6639,6 +7082,34 @@ test.describe("InputBar", () => {
     await expect(textarea).toHaveValue("");
   });
 
+  test("composer keyboard selection ignores a stationary pointer when file suggestions open", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const composer = page.getByTestId("composer-lane");
+    const textarea = composer.locator("textarea");
+    await expect(textarea).toBeEnabled();
+
+    await textarea.fill("@src");
+    const secondOption = page.getByRole("option", { name: /src\/components\/session\/InputBar\.tsx/ });
+    await expect(secondOption).toBeVisible();
+    const secondOptionBox = await secondOption.boundingBox();
+    expect(secondOptionBox).not.toBeNull();
+
+    await textarea.fill("");
+    await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
+    await page.mouse.move(secondOptionBox!.x + 8, secondOptionBox!.y + secondOptionBox!.height / 2);
+
+    await textarea.fill("@src");
+    await expect(page.getByRole("option", { name: /src\/App\.tsx/ })).toHaveAttribute("aria-selected", "true");
+    await textarea.press("Tab");
+    await expect(composer.getByText("src/App.tsx", { exact: true })).toBeVisible();
+  });
+
   test("composer file search is scoped to the active session project", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -6759,7 +7230,7 @@ test.describe("InputBar", () => {
     await expect(modelButton).toHaveAttribute("data-active", "true");
   });
 
-  test("composer surface has codex-like input proportions", async ({ page }) => {
+  test("composer surface uses claude-style conversation proportions", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -6779,6 +7250,7 @@ test.describe("InputBar", () => {
       const toolbarStyle = toolbar ? getComputedStyle(toolbar) : null;
       const sendRect = send?.getBoundingClientRect();
       return {
+        surfaceHeight: Math.round(surface.getBoundingClientRect().height),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         background: style.backgroundColor,
         borderColor: style.borderTopColor,
@@ -6786,6 +7258,8 @@ test.describe("InputBar", () => {
         minInputHeight: textareaStyle ? Number.parseFloat(textareaStyle.minHeight) : 0,
         lineHeight: textareaStyle ? Number.parseFloat(textareaStyle.lineHeight) : 0,
         toolbarHeight: toolbar ? Math.round(toolbar.getBoundingClientRect().height) : 0,
+        toolbarBorderTopWidth: toolbarStyle ? Math.round(Number.parseFloat(toolbarStyle.borderTopWidth)) : -1,
+        toolbarBackground: toolbarStyle?.backgroundColor ?? "",
         toolbarPaddingBottom: toolbarStyle ? Number.parseFloat(toolbarStyle.paddingBottom) : 0,
         sendWidth: sendRect ? Math.round(sendRect.width) : 0,
         sendHeight: sendRect ? Math.round(sendRect.height) : 0,
@@ -6793,15 +7267,89 @@ test.describe("InputBar", () => {
     });
 
     expect(metrics.radius).toBeLessThanOrEqual(8);
+    expect(metrics.surfaceHeight).toBeGreaterThanOrEqual(102);
+    expect(metrics.surfaceHeight).toBeLessThanOrEqual(110);
     expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.borderColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.shadow).not.toBe("none");
     expect(metrics.minInputHeight).toBeGreaterThanOrEqual(44);
-    expect(metrics.lineHeight).toBeGreaterThanOrEqual(23);
-    expect(metrics.toolbarHeight).toBeGreaterThanOrEqual(38);
-    expect(metrics.toolbarPaddingBottom).toBeGreaterThanOrEqual(10);
-    expect(metrics.sendWidth).toBe(32);
-    expect(metrics.sendHeight).toBe(32);
+    expect(metrics.minInputHeight).toBeLessThanOrEqual(46);
+    expect(metrics.lineHeight).toBe(24);
+    expect(metrics.toolbarHeight).toBeGreaterThanOrEqual(34);
+    expect(metrics.toolbarHeight).toBeLessThanOrEqual(38);
+    expect(metrics.toolbarBorderTopWidth).toBe(0);
+    expect(metrics.toolbarBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.toolbarPaddingBottom).toBe(8);
+    expect(metrics.sendWidth).toBe(30);
+    expect(metrics.sendHeight).toBe(30);
+  });
+
+  test("composer controls feel like a quiet conversation composer rail", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const textarea = page.locator("textarea");
+    await expect(textarea).toBeVisible();
+
+    await textarea.fill("@src/components/session");
+    const fileOption = page.getByRole("option", { name: /src\/components\/session\/InputBar\.tsx/ });
+    await expect(fileOption).toBeVisible();
+    await fileOption.click();
+
+    await page.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ }).click();
+    await expect(page.getByRole("menu")).toBeVisible();
+
+    const metrics = await page.getByTestId("composer-surface").evaluate((node) => {
+      const surface = node as HTMLElement;
+      const toolbar = surface.querySelector<HTMLElement>("[data-testid='composer-toolbar']");
+      const chip = surface.querySelector<HTMLElement>(".forge-composer-chip");
+      const remove = surface.querySelector<HTMLElement>(".forge-composer-chip-remove");
+      const menu = document.querySelector<HTMLElement>(".forge-composer-model-menu");
+      const activeOption = menu?.querySelector<HTMLElement>("[role='menuitemradio'][aria-checked='true']");
+      const currentBadge = menu?.querySelector<HTMLElement>("[data-testid='composer-model-current-badge']");
+      if (!toolbar || !chip || !remove || !menu || !activeOption || !currentBadge) return null;
+      const toolbarStyle = getComputedStyle(toolbar);
+      const chipStyle = getComputedStyle(chip);
+      const removeStyle = getComputedStyle(remove);
+      const activeStyle = getComputedStyle(activeOption);
+      const badgeStyle = getComputedStyle(currentBadge);
+      const removeRect = remove.getBoundingClientRect();
+      const badgeRect = currentBadge.getBoundingClientRect();
+      return {
+        toolbarBorderTopWidth: Math.round(Number.parseFloat(toolbarStyle.borderTopWidth)),
+        toolbarBackground: toolbarStyle.backgroundColor,
+        chipBackground: chipStyle.backgroundColor,
+        chipBorder: chipStyle.borderTopColor,
+        removeWidth: Math.round(removeRect.width),
+        removeHeight: Math.round(removeRect.height),
+        removeBorder: removeStyle.borderTopColor,
+        removeRadius: Number.parseFloat(removeStyle.borderTopLeftRadius),
+        activeOptionBackground: activeStyle.backgroundColor,
+        activeOptionBorder: activeStyle.borderTopColor,
+        badgeHeight: Math.round(badgeRect.height),
+        badgeBorder: badgeStyle.borderTopColor,
+        badgeRadius: Number.parseFloat(badgeStyle.borderTopLeftRadius),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.toolbarBorderTopWidth).toBe(0);
+    expect(metrics!.toolbarBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.chipBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.chipBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.removeWidth).toBe(18);
+    expect(metrics!.removeHeight).toBe(18);
+    expect(metrics!.removeBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.removeRadius).toBeLessThanOrEqual(6);
+    expect(metrics!.activeOptionBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.activeOptionBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.badgeHeight).toBe(18);
+    expect(metrics!.badgeBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.badgeRadius).toBeLessThanOrEqual(6);
   });
 
   test("composer suggestion menu and selected references stay visually bounded", async ({ page }) => {

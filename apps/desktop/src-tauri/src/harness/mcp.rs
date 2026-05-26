@@ -7,7 +7,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Notify;
 
-use crate::process_runner::{configure_command_process_group, kill_child_process_group};
+use crate::process_runner::{
+    configure_command_process_group, kill_child_process_group, kill_process_group,
+};
 
 type McpStdoutLines = tokio::io::Lines<BufReader<ChildStdout>>;
 
@@ -142,69 +144,72 @@ pub async fn discover_stdio_tools(
     server: &McpServerDefinition,
 ) -> Result<Vec<McpToolDefinition>, String> {
     let mut session = start_stdio_session(server).await?;
-    initialize_stdio_session(&mut session).await?;
-    write_json_line(
-        &mut session.stdin,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        }),
-    )
-    .await?;
-    let response = read_response(&mut session.reader, 2).await?;
-    let tools = parse_tools_response(&server.id, &response);
-
+    let result = async {
+        initialize_stdio_session(&mut session).await?;
+        write_json_line(
+            &mut session.stdin,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {}
+            }),
+        )
+        .await?;
+        let response = read_response(&mut session.reader, 2).await?;
+        Ok(parse_tools_response(&server.id, &response))
+    }
+    .await;
     close_stdio_session(session).await;
-
-    Ok(tools)
+    result
 }
 
 pub async fn discover_stdio_resources(
     server: &McpServerDefinition,
 ) -> Result<Vec<McpResourceDefinition>, String> {
     let mut session = start_stdio_session(server).await?;
-    initialize_stdio_session(&mut session).await?;
-    write_json_line(
-        &mut session.stdin,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "resources/list",
-            "params": {}
-        }),
-    )
-    .await?;
-    let response = read_response(&mut session.reader, 2).await?;
-    let resources = parse_resources_response(&server.id, &response);
-
+    let result = async {
+        initialize_stdio_session(&mut session).await?;
+        write_json_line(
+            &mut session.stdin,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "resources/list",
+                "params": {}
+            }),
+        )
+        .await?;
+        let response = read_response(&mut session.reader, 2).await?;
+        Ok(parse_resources_response(&server.id, &response))
+    }
+    .await;
     close_stdio_session(session).await;
-
-    Ok(resources)
+    result
 }
 
 pub async fn discover_stdio_prompts(
     server: &McpServerDefinition,
 ) -> Result<Vec<McpPromptDefinition>, String> {
     let mut session = start_stdio_session(server).await?;
-    initialize_stdio_session(&mut session).await?;
-    write_json_line(
-        &mut session.stdin,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "prompts/list",
-            "params": {}
-        }),
-    )
-    .await?;
-    let response = read_response(&mut session.reader, 2).await?;
-    let prompts = parse_prompts_response(&server.id, &response);
-
+    let result = async {
+        initialize_stdio_session(&mut session).await?;
+        write_json_line(
+            &mut session.stdin,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "prompts/list",
+                "params": {}
+            }),
+        )
+        .await?;
+        let response = read_response(&mut session.reader, 2).await?;
+        Ok(parse_prompts_response(&server.id, &response))
+    }
+    .await;
     close_stdio_session(session).await;
-
-    Ok(prompts)
+    result
 }
 
 pub async fn read_stdio_resource(
@@ -212,25 +217,26 @@ pub async fn read_stdio_resource(
     uri: &str,
 ) -> Result<Vec<McpResourceContent>, String> {
     let mut session = start_stdio_session(server).await?;
-    initialize_stdio_session(&mut session).await?;
-    write_json_line(
-        &mut session.stdin,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "resources/read",
-            "params": {
-                "uri": uri
-            }
-        }),
-    )
-    .await?;
-    let response = read_response(&mut session.reader, 2).await?;
-    let contents = parse_resource_read_response(&response);
-
+    let result = async {
+        initialize_stdio_session(&mut session).await?;
+        write_json_line(
+            &mut session.stdin,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "resources/read",
+                "params": {
+                    "uri": uri
+                }
+            }),
+        )
+        .await?;
+        let response = read_response(&mut session.reader, 2).await?;
+        Ok(parse_resource_read_response(&response))
+    }
+    .await;
     close_stdio_session(session).await;
-
-    Ok(contents)
+    result
 }
 
 pub async fn get_stdio_prompt(
@@ -239,26 +245,27 @@ pub async fn get_stdio_prompt(
     arguments: serde_json::Value,
 ) -> Result<Vec<McpPromptMessage>, String> {
     let mut session = start_stdio_session(server).await?;
-    initialize_stdio_session(&mut session).await?;
-    write_json_line(
-        &mut session.stdin,
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "prompts/get",
-            "params": {
-                "name": prompt_name,
-                "arguments": arguments
-            }
-        }),
-    )
-    .await?;
-    let response = read_response(&mut session.reader, 2).await?;
-    let messages = parse_prompt_get_response(&response);
-
+    let result = async {
+        initialize_stdio_session(&mut session).await?;
+        write_json_line(
+            &mut session.stdin,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "prompts/get",
+                "params": {
+                    "name": prompt_name,
+                    "arguments": arguments
+                }
+            }),
+        )
+        .await?;
+        let response = read_response(&mut session.reader, 2).await?;
+        Ok(parse_prompt_get_response(&response))
+    }
+    .await;
     close_stdio_session(session).await;
-
-    Ok(messages)
+    result
 }
 
 pub async fn call_stdio_tool(
@@ -276,7 +283,18 @@ pub async fn call_stdio_tool_with_cancel(
     cancel: Option<Arc<Notify>>,
 ) -> Result<String, String> {
     let mut session = start_stdio_session(server).await?;
-    initialize_stdio_session(&mut session).await?;
+    let result = call_stdio_tool_in_session(&mut session, tool_name, arguments, cancel).await;
+    close_stdio_session(session).await;
+    result
+}
+
+async fn call_stdio_tool_in_session(
+    session: &mut StdioMcpSession,
+    tool_name: &str,
+    arguments: serde_json::Value,
+    cancel: Option<Arc<Notify>>,
+) -> Result<String, String> {
+    initialize_stdio_session(session).await?;
     write_json_line(
         &mut session.stdin,
         serde_json::json!({
@@ -291,11 +309,7 @@ pub async fn call_stdio_tool_with_cancel(
     )
     .await?;
     let response = read_response_with_cancel(&mut session.reader, 2, cancel).await?;
-    let result = parse_tool_call_response(&response);
-
-    close_stdio_session(session).await;
-
-    Ok(result)
+    Ok(parse_tool_call_response(&response))
 }
 
 async fn start_stdio_session(server: &McpServerDefinition) -> Result<StdioMcpSession, String> {
@@ -365,8 +379,12 @@ async fn initialize_stdio_session(session: &mut StdioMcpSession) -> Result<(), S
 }
 
 async fn close_stdio_session(mut session: StdioMcpSession) {
+    let pid = session.child.id();
     kill_child_process_group(&mut session.child).await;
-    let _ = session.child.wait().await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), session.child.wait()).await;
+    if let Some(pid) = pid {
+        kill_process_group(pid);
+    }
 }
 
 async fn write_json_line(stdin: &mut ChildStdin, value: serde_json::Value) -> Result<(), String> {
@@ -677,4 +695,124 @@ fn normalize_id(id: &str) -> Option<String> {
         return None;
     }
     Some(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stdio_tool_cancel_kills_process_group() {
+        let root = temp_workspace("stdio-cancel");
+        let marker = root.join("marker");
+        let script = root.join("server.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+marker="$1"
+trap '' HUP
+IFS= read -r _initialize
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+IFS= read -r _initialized
+IFS= read -r _tool_call
+( trap '' HUP; sleep 1; printf should-not-run > "$marker" ) &
+wait
+"#,
+        )
+        .expect("write fake MCP server");
+
+        let server = McpServerDefinition {
+            id: "fake".to_string(),
+            name: "Fake".to_string(),
+            description: String::new(),
+            source: script.to_string_lossy().to_string(),
+            enabled: true,
+            command: Some("/bin/sh".to_string()),
+            args: vec![
+                script.to_string_lossy().to_string(),
+                marker.to_string_lossy().to_string(),
+            ],
+        };
+        let cancel = Arc::new(Notify::new());
+        let cancel_for_task = cancel.clone();
+
+        let task = tokio::spawn(async move {
+            call_stdio_tool_with_cancel(
+                &server,
+                "slow_tool",
+                serde_json::json!({}),
+                Some(cancel_for_task),
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        cancel.notify_waiters();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("cancel should finish quickly")
+            .expect("join task");
+
+        assert_eq!(result, Err("MCP tool call cancelled".to_string()));
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stdio_discovery_error_kills_process_group() {
+        let root = temp_workspace("stdio-discovery-error");
+        let marker = root.join("marker");
+        let script = root.join("server.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+marker="$1"
+trap '' HUP
+IFS= read -r _initialize
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+IFS= read -r _initialized
+IFS= read -r _tools_list
+printf '%s\n' 'not-json'
+( trap '' HUP; sleep 1; printf should-not-run > "$marker" ) &
+wait
+"#,
+        )
+        .expect("write fake MCP server");
+
+        let server = McpServerDefinition {
+            id: "fake".to_string(),
+            name: "Fake".to_string(),
+            description: String::new(),
+            source: script.to_string_lossy().to_string(),
+            enabled: true,
+            command: Some("/bin/sh".to_string()),
+            args: vec![
+                script.to_string_lossy().to_string(),
+                marker.to_string_lossy().to_string(),
+            ],
+        };
+
+        let result = discover_stdio_tools(&server).await;
+
+        assert!(result
+            .expect_err("invalid response should fail")
+            .contains("Invalid MCP response JSON"));
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn temp_workspace(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("forge-mcp-test-{name}-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&path).expect("temp workspace");
+        path
+    }
 }

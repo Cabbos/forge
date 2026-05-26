@@ -17,12 +17,12 @@ use crate::agent::recovery::{
 use crate::agent::snapshot::AgentSessionSnapshot;
 use crate::agent::time::now_ms;
 use crate::agent::tool_results::{
-    push_assistant_result_with_synthetic_tool_results, repair_tool_use_adjacency,
-    resolve_tool_result_for_model,
+    is_read_only_tool, push_assistant_result_with_synthetic_tool_results,
+    repair_tool_use_adjacency, resolve_tool_result_for_model,
 };
 use crate::agent::turn_outcome::{
-    final_answer_instruction, final_turn_status_for_run, final_turn_transition_reason_for_run,
-    verification_has_failed,
+    final_answer_instruction, final_turn_status_for_current_turn,
+    final_turn_transition_reason_for_current_turn, verification_has_failed,
 };
 use crate::agent::turn_state::{
     completed_tool_trace, running_tool_trace, AgentCompactTrace, AgentFailureTrace,
@@ -62,6 +62,7 @@ pub struct AgentSession {
     pub(crate) adapter: Arc<Box<dyn AiAdapter>>,
     pub(crate) messages: Arc<Mutex<Vec<ChatMessage>>>,
     pub(crate) running: Arc<AtomicBool>,
+    pub(crate) turn_inflight: Arc<AtomicBool>,
     pub(crate) harness: Arc<Harness>,
     pub(crate) system_prompt: Mutex<String>,
     pub(crate) summary: Mutex<Option<String>>,
@@ -101,6 +102,7 @@ impl AgentSession {
             adapter,
             messages: Arc::new(Mutex::new(Vec::new())),
             running: Arc::new(AtomicBool::new(true)),
+            turn_inflight: Arc::new(AtomicBool::new(false)),
             harness,
             system_prompt: Mutex::new(system_prompt),
             summary: Mutex::new(None),
@@ -214,10 +216,38 @@ impl AgentSession {
         turn_metadata: Option<AgentTurnMetadata>,
         activation_text: Option<&str>,
     ) -> Result<(), String> {
+        let turn_guard = self.reserve_turn()?;
+        self.send_message_with_reserved_turn(
+            text,
+            app_handle,
+            hidden_contexts,
+            turn_metadata,
+            activation_text,
+            turn_guard,
+        )
+        .await
+    }
+
+    pub(crate) fn reserve_turn(&self) -> Result<TurnInflightGuard, String> {
         if !self.running.load(Ordering::SeqCst) {
             return Err("Session is not running".to_string());
         }
+        try_begin_turn(self.turn_inflight.clone())
+    }
 
+    /// Continue a send after the IPC layer has reserved the turn.
+    pub(crate) async fn send_message_with_reserved_turn(
+        &self,
+        text: &str,
+        app_handle: &tauri::AppHandle,
+        hidden_contexts: Vec<HiddenContextPart>,
+        turn_metadata: Option<AgentTurnMetadata>,
+        activation_text: Option<&str>,
+        _turn_guard: TurnInflightGuard,
+    ) -> Result<(), String> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err("Session is not running".to_string());
+        }
         let previous_turn = self.latest_turn.lock().unwrap().clone();
         let mut hidden_contexts = hidden_contexts;
         if let Some(context) = build_recovery_context(previous_turn.as_ref(), text) {
@@ -263,6 +293,7 @@ impl AgentSession {
         // Fresh cancel token for this request
         let cancel = Arc::new(Notify::new());
         *self.cancel.lock().unwrap() = Some(cancel.clone());
+        let _cancel_guard = ActiveCancelGuard::new(&self.cancel, cancel.clone());
 
         let mut overflow_retry_used = false;
 
@@ -733,12 +764,21 @@ impl AgentSession {
         }
 
         crate::app_log!("INFO", "Agent loop complete");
-        let final_reason = final_turn_transition_reason_for_run(
+        let current_turn_status = self
+            .latest_turn
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|turn| turn.status.clone())
+            .unwrap_or(AgentTurnStatus::Started);
+        let final_reason = final_turn_transition_reason_for_current_turn(
+            current_turn_status.clone(),
             self.running.load(Ordering::SeqCst),
             verification_trace.as_ref(),
         );
         self.mark_latest_turn_status_with_reason(
-            final_turn_status_for_run(
+            final_turn_status_for_current_turn(
+                current_turn_status,
                 self.running.load(Ordering::SeqCst),
                 verification_trace.as_ref(),
             ),
@@ -972,7 +1012,8 @@ impl AgentSession {
             },
             app_handle,
         );
-        let trace = verification::run_verification(plan).await;
+        let cancel = self.cancel.lock().unwrap().clone();
+        let trace = verification::run_verification_with_cancel(plan, cancel).await;
         self.record_latest_verification(trace.clone(), app_handle);
         if verification_has_failed(&trace) {
             self.record_latest_turn_failure(verification_failure_trace(&trace), app_handle);
@@ -1057,20 +1098,94 @@ fn build_context_bundle(
         .build()
 }
 
-fn is_read_only_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "read_file"
-            | "read"
-            | "list_directory"
-            | "ls"
-            | "list"
-            | "search_files"
-            | "glob"
-            | "search_content"
-            | "grep"
-            | "web_search"
-            | "web_fetch"
-            | "git_diff"
-    )
+#[derive(Debug)]
+pub(crate) struct TurnInflightGuard {
+    active: Arc<AtomicBool>,
+}
+
+impl Drop for TurnInflightGuard {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::SeqCst);
+    }
+}
+
+fn try_begin_turn(active: Arc<AtomicBool>) -> Result<TurnInflightGuard, String> {
+    active
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .map(|_| TurnInflightGuard { active })
+        .map_err(|_| "当前会话仍在处理上一条请求，请等待完成，或先停止后再继续。".to_string())
+}
+
+#[derive(Debug)]
+struct ActiveCancelGuard<'a> {
+    slot: &'a Mutex<Option<Arc<Notify>>>,
+    token: Arc<Notify>,
+}
+
+impl<'a> ActiveCancelGuard<'a> {
+    fn new(slot: &'a Mutex<Option<Arc<Notify>>>, token: Arc<Notify>) -> Self {
+        Self { slot, token }
+    }
+}
+
+impl Drop for ActiveCancelGuard<'_> {
+    fn drop(&mut self) {
+        let mut current = self.slot.lock().unwrap();
+        if current
+            .as_ref()
+            .is_some_and(|token| Arc::ptr_eq(token, &self.token))
+        {
+            *current = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{try_begin_turn, ActiveCancelGuard};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+    use tokio::sync::Notify;
+
+    #[test]
+    fn turn_inflight_guard_rejects_concurrent_turn_and_releases_on_drop() {
+        let flag = Arc::new(AtomicBool::new(false));
+
+        let first_turn = try_begin_turn(flag.clone()).expect("first turn should start");
+        assert!(flag.load(Ordering::SeqCst));
+
+        let error = try_begin_turn(flag.clone()).expect_err("second turn should be rejected");
+        assert!(error.contains("上一条请求"));
+
+        drop(first_turn);
+        assert!(!flag.load(Ordering::SeqCst));
+
+        let second_turn = try_begin_turn(flag.clone()).expect("guard should release on drop");
+        drop(second_turn);
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn active_cancel_guard_clears_only_current_token() {
+        let slot = Mutex::new(None);
+        let first = Arc::new(Notify::new());
+        let second = Arc::new(Notify::new());
+
+        *slot.lock().unwrap() = Some(first.clone());
+        let first_guard = ActiveCancelGuard::new(&slot, first);
+        *slot.lock().unwrap() = Some(second.clone());
+        drop(first_guard);
+
+        assert!(slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &second)));
+
+        let second_guard = ActiveCancelGuard::new(&slot, second);
+        drop(second_guard);
+        assert!(slot.lock().unwrap().is_none());
+    }
 }

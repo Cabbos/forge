@@ -27,6 +27,24 @@ pub(crate) fn repair_tool_use_adjacency(messages: Vec<ChatMessage>) -> Vec<ChatM
     repair_tool_result_adjacency(&messages)
 }
 
+pub(crate) fn is_read_only_tool(name: &str) -> bool {
+    const READ_ONLY_TOOLS: &[&str] = &[
+        "read_file",
+        "read",
+        "list_directory",
+        "ls",
+        "list",
+        "search_files",
+        "glob",
+        "search_content",
+        "grep",
+        "web_search",
+        "web_fetch",
+        "git_diff",
+    ];
+    READ_ONLY_TOOLS.contains(&name)
+}
+
 pub(crate) fn push_assistant_result_with_synthetic_tool_results(
     messages: &mut Vec<ChatMessage>,
     assistant_content: Vec<serde_json::Value>,

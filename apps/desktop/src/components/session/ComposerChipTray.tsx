@@ -27,7 +27,7 @@ export function ComposerChipTray({ chips, onRemove }: ComposerChipTrayProps) {
               type="button"
               aria-label={`移除 ${chip.value}`}
               onClick={() => onRemove(chip.id)}
-              className="ml-0.5 opacity-45 transition-opacity hover:opacity-100"
+              className="forge-composer-chip-remove"
             >
               <X className="size-2.5" />
             </button>

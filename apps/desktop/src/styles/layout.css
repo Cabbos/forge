@@ -9,8 +9,8 @@ html, body, #root {
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.24); border-radius: 2px; }
-::selection { background: rgba(212, 168, 83, 0.2); color: #fff; }
+::-webkit-scrollbar-thumb { background: var(--forge-border-muted); border-radius: 2px; }
+::selection { background: rgba(184, 138, 86, 0.2); color: var(--forge-text-primary); }
 
 @layer base {
   * { @apply border-border; }

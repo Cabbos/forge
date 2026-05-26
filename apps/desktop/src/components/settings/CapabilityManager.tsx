@@ -35,44 +35,41 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
   }, []);
 
   return (
-    <div className={cn("flex min-h-[420px] flex-col overflow-hidden rounded-md border border-border bg-background", className)}>
-      <div role="tablist" aria-label="能力类型" className="flex border-b border-border">
+    <div data-testid="capability-manager" className={cn("forge-capability-manager", className)}>
+      <div role="tablist" aria-label="能力类型" className="forge-capability-tabs">
         {(["skills", "mcp", "hooks"] as CapabilityTab[]).map((item) => (
           <button
             key={item}
+            type="button"
             role="tab"
             aria-selected={tab === item}
+            data-state={tab === item ? "active" : "idle"}
             onClick={() => setTab(item)}
-            className={cn(
-              "flex-1 border-b-2 py-3 text-center text-xs font-medium transition-colors",
-              tab === item
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground/60 hover:text-muted-foreground",
-            )}
+            className="forge-capability-tab"
           >
-            {tabLabel(item)}
-            <span className="ml-1 text-[10px] text-muted-foreground/60">
+            <span>{tabLabel(item)}</span>
+            <span className="forge-capability-tab-count">
               {item === "skills" ? counts.skills : item === "mcp" ? counts.mcp : counts.hooks}
             </span>
           </button>
         ))}
       </div>
 
-      <div className="border-b border-border p-3">
-        <div className="forge-control-surface flex items-center gap-2 px-3 py-2 text-xs">
-          <Search className="size-3.5 shrink-0 text-muted-foreground" />
+      <div className="forge-capability-search-wrap">
+        <label className="forge-capability-search">
+          <Search className="forge-capability-search-icon" />
           <input
             type="text"
             aria-label={`搜索${tabLabel(tab)}`}
             placeholder={`搜索${tabLabel(tab)}...`}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="flex-1 border-none bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+            className="forge-capability-search-input"
           />
-        </div>
+        </label>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="forge-capability-body">
         {tab === "skills" && <SkillsContent search={search} />}
         {tab === "mcp" && <MCPContent search={search} />}
         {tab === "hooks" && <HooksContent search={search} />}
@@ -120,48 +117,37 @@ function SkillsContent({ search }: { search: string }) {
       : list;
 
   return (
-    <div className="flex flex-col gap-5">
-      <section>
-        <div className="mb-2.5 flex items-center justify-between">
-          <h5 className="text-[10px] uppercase tracking-widest text-muted-foreground/60">已安装</h5>
-          <span className="text-[10px] text-muted-foreground/50">{skills.length} 个</span>
-        </div>
-        <div className="flex flex-col gap-1.5">
+    <div className="forge-capability-sections">
+      <section className="forge-capability-section">
+        <CapabilitySectionHeader label="已安装" count={skills.length} />
+        <div className="forge-capability-list">
           {filterFn(skills).map((s) => {
             const meta = capabilityIconMeta(s.kind);
             return (
-              <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
+              <div key={s.id} className="forge-capability-row" data-state={s.enabled === false ? "disabled" : "enabled"}>
                 <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={s.enabled === false} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-medium text-foreground">{s.name}</div>
-                  <div className="truncate text-[10px] text-muted-foreground">{s.description}</div>
+                <div className="forge-capability-copy">
+                  <div className="forge-capability-name">{s.name}</div>
+                  <div className="forge-capability-description">{s.description}</div>
                 </div>
-                <button
+                <CapabilityStatusButton
+                  enabled={s.enabled !== false}
                   onClick={() => handleToggle(s.id, s.enabled === false)}
-                  aria-pressed={s.enabled !== false}
-                  className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                    s.enabled !== false
-                      ? "bg-emerald-500/10 text-emerald-400"
-                      : "bg-muted/20 text-muted-foreground",
-                  )}
-                >
-                  {s.enabled !== false ? "已启用" : "已停用"}
-                </button>
+                />
               </div>
             );
           })}
           {filterFn(skills).length === 0 && (
-            <div className="forge-empty px-2.5 py-3 text-[11px]">
+            <div className="forge-capability-empty">
               没有匹配的已安装插件
             </div>
           )}
         </div>
       </section>
 
-      <section>
-        <h5 className="mb-2.5 text-[10px] uppercase tracking-widest text-muted-foreground/60">可安装</h5>
-        <div className="forge-empty px-2.5 py-3 text-[11px]">
+      <section className="forge-capability-section">
+        <CapabilitySectionHeader label="可安装" />
+        <div className="forge-capability-empty">
           暂无内置推荐插件
         </div>
       </section>
@@ -196,29 +182,26 @@ function MCPContent({ search }: { search: string }) {
     : servers;
 
   return (
-    <section className="flex flex-col gap-0.5">
+    <section className="forge-capability-list">
       {filtered.map((s) => {
         const meta = capabilityIconMeta(s.kind);
         return (
-          <div key={s.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
+          <div key={s.id} className="forge-capability-row" data-state={s.enabled === false ? "disabled" : "enabled"}>
             <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={s.enabled === false} />
-            <span className="flex-1 font-mono text-xs text-foreground">{s.name}</span>
-            <button
-              aria-pressed={s.enabled !== false}
-              className="relative h-4 w-7 flex-shrink-0 rounded-full transition-colors"
-              style={{ background: s.enabled !== false ? "#D4A853" : "var(--secondary)" }}
+            <div className="forge-capability-copy">
+              <div className="forge-capability-name forge-capability-name-mono">{s.name}</div>
+              <div className="forge-capability-description">{s.source || s.id}</div>
+            </div>
+            <CapabilitySwitch
+              enabled={s.enabled !== false}
+              label={`${s.name}${s.enabled !== false ? "已启用" : "已停用"}`}
               onClick={() => handleToggle(s.id, s.enabled === false)}
-            >
-              <div
-                className="absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all"
-                style={{ left: s.enabled !== false ? "14px" : "2px" }}
-              />
-            </button>
+            />
           </div>
         );
       })}
       {filtered.length === 0 && (
-        <div className="forge-empty px-2.5 py-3 text-[11px]">
+        <div className="forge-capability-empty">
           没有匹配的连接
         </div>
       )}
@@ -253,36 +236,66 @@ function HooksContent({ search }: { search: string }) {
     : hooks;
 
   return (
-    <section className="flex flex-col gap-1.5">
+    <section className="forge-capability-list">
       {filtered.map((h) => {
         const meta = capabilityIconMeta(h.kind);
         return (
-          <div key={h.id} className="forge-list-row flex items-center gap-2.5 px-2.5 py-2">
+          <div key={h.id} className="forge-capability-row" data-state={h.enabled === false ? "disabled" : "enabled"}>
             <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={h.enabled === false} />
-            <div className="flex-1">
-              <div className="text-xs font-medium text-foreground">{h.name}</div>
-              <div className="font-mono text-[10px] text-muted-foreground">{h.version || h.source}</div>
+            <div className="forge-capability-copy">
+              <div className="forge-capability-name">{h.name}</div>
+              <div className="forge-capability-description forge-capability-description-mono">{h.version || h.source}</div>
             </div>
-            <button
+            <CapabilityStatusButton
+              enabled={h.enabled !== false}
               onClick={() => handleToggle(h.id, h.enabled === false)}
-              aria-pressed={h.enabled !== false}
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                h.enabled !== false
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : "bg-muted/20 text-muted-foreground",
-              )}
-            >
-              {h.enabled !== false ? "已启用" : "已停用"}
-            </button>
+            />
           </div>
         );
       })}
       {filtered.length === 0 && (
-        <div className="forge-empty px-2.5 py-3 text-[11px]">
+        <div className="forge-capability-empty">
           没有匹配的自动化
         </div>
       )}
     </section>
+  );
+}
+
+function CapabilitySectionHeader({ label, count }: { label: string; count?: number }) {
+  return (
+    <div className="forge-capability-section-header">
+      <h5>{label}</h5>
+      {typeof count === "number" && <span className="forge-capability-count">{count} 个</span>}
+    </div>
+  );
+}
+
+function CapabilityStatusButton({ enabled, onClick }: { enabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={enabled}
+      data-state={enabled ? "enabled" : "disabled"}
+      className="forge-capability-toggle"
+      onClick={onClick}
+    >
+      {enabled ? "已启用" : "已停用"}
+    </button>
+  );
+}
+
+function CapabilitySwitch({ enabled, label, onClick }: { enabled: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={enabled}
+      data-state={enabled ? "enabled" : "disabled"}
+      className="forge-capability-switch"
+      onClick={onClick}
+    >
+      <span className="forge-capability-switch-thumb" />
+    </button>
   );
 }

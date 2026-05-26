@@ -359,9 +359,9 @@ export async function restoreProjectCheckpoint(sessionId?: string, workingDir?: 
   return invoke("restore_project_checkpoint", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 
-export async function listMemories(scope?: MemoryScope, projectPath?: string): Promise<WikiMemory[]> {
+export async function listMemories(scope?: MemoryScope, projectPath?: string, sessionId?: string | null): Promise<WikiMemory[]> {
   if (!hasTauriRuntime()) return [];
-  return invoke("list_memories", { scope: scope ?? null, projectPath: projectPath ?? null });
+  return invoke("list_memories", { scope: scope ?? null, projectPath: projectPath ?? null, sessionId: sessionId ?? null });
 }
 
 export async function updateMemory(
@@ -383,9 +383,10 @@ export async function pinMemory(memoryId: string, sessionId?: string): Promise<W
 export async function selectContextMemories(
   message: string,
   projectPath?: string,
+  sessionId?: string | null,
 ): Promise<SelectedContextMemory[]> {
   if (!hasTauriRuntime()) return [];
-  return invoke("select_context_memories", { message, projectPath: projectPath ?? null });
+  return invoke("select_context_memories", { message, projectPath: projectPath ?? null, sessionId: sessionId ?? null });
 }
 
 export async function getWorkflowState(sessionId: string): Promise<WorkflowState | null> {
@@ -400,32 +401,33 @@ export async function overrideWorkflowRoute(
   return invoke("override_workflow_route", { sessionId, action });
 }
 
-export async function getForgeWikiState(projectPath: string): Promise<ForgeWikiState> {
+export async function getForgeWikiState(projectPath: string, sessionId?: string | null): Promise<ForgeWikiState> {
   if (!hasTauriRuntime()) return fallbackForgeWikiState(projectPath);
-  return invoke("get_forge_wiki_state", { projectPath });
+  return invoke("get_forge_wiki_state", { projectPath, sessionId: sessionId ?? null });
 }
 
-export async function initForgeWiki(projectPath: string): Promise<ForgeWikiState> {
+export async function initForgeWiki(projectPath: string, sessionId?: string | null): Promise<ForgeWikiState> {
   if (!hasTauriRuntime()) return fallbackForgeWikiState(projectPath);
-  return invoke("init_forge_wiki", { projectPath });
+  return invoke("init_forge_wiki", { projectPath, sessionId: sessionId ?? null });
 }
 
-export async function listForgeWikiPages(projectPath: string): Promise<ForgeWikiPage[]> {
+export async function listForgeWikiPages(projectPath: string, sessionId?: string | null): Promise<ForgeWikiPage[]> {
   if (!hasTauriRuntime()) return [];
-  return invoke("list_forge_wiki_pages", { projectPath });
+  return invoke("list_forge_wiki_pages", { projectPath, sessionId: sessionId ?? null });
 }
 
-export async function readForgeWikiPage(projectPath: string, pagePath: string): Promise<string> {
+export async function readForgeWikiPage(projectPath: string, pagePath: string, sessionId?: string | null): Promise<string> {
   if (!hasTauriRuntime()) return "";
-  return invoke("read_forge_wiki_page", { projectPath, pagePath });
+  return invoke("read_forge_wiki_page", { projectPath, pagePath, sessionId: sessionId ?? null });
 }
 
 export async function selectForgeWikiContext(
   projectPath: string,
   message: string,
+  sessionId?: string | null,
 ): Promise<SelectedForgeWikiPage[]> {
   if (!hasTauriRuntime()) return [];
-  return invoke("select_forge_wiki_context", { projectPath, message });
+  return invoke("select_forge_wiki_context", { projectPath, message, sessionId: sessionId ?? null });
 }
 
 export async function createForgeWikiUpdateProposal(
@@ -447,17 +449,17 @@ export async function createForgeWikiUpdateProposal(
 export async function acceptForgeWikiUpdateProposal(
   projectPath: string,
   proposalId: string,
-  _sessionId?: string | null,
+  sessionId?: string | null,
 ): Promise<ForgeWikiUpdateProposal> {
-  return invoke("accept_forge_wiki_update_proposal", { projectPath, proposalId });
+  return invoke("accept_forge_wiki_update_proposal", { projectPath, proposalId, sessionId: sessionId ?? null });
 }
 
 export async function discardForgeWikiUpdateProposal(
   projectPath: string,
   proposalId: string,
-  _sessionId?: string | null,
+  sessionId?: string | null,
 ): Promise<ForgeWikiUpdateProposal> {
-  return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId });
+  return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId, sessionId: sessionId ?? null });
 }
 
 export function hasTauriRuntime(): boolean {

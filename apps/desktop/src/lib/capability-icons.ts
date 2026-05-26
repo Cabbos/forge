@@ -9,13 +9,14 @@ import {
   Database,
   FileText,
   ListChecks,
+  Puzzle,
   Search,
   SearchCode,
   Settings,
   ShieldCheck,
   Terminal,
-  WandSparkles,
   Workflow,
+  Wrench,
   Zap,
 } from "lucide-react";
 
@@ -48,7 +49,7 @@ export function commandIconMeta(command: string): ForgeIconMeta {
     return { icon: ListChecks, tone: "reasoning", label: "整理" };
   }
   if (command.includes("fix")) {
-    return { icon: WandSparkles, tone: "action", label: "修复" };
+    return { icon: Wrench, tone: "action", label: "修复" };
   }
   return { icon: Zap, tone: "action", label: "命令" };
 }
@@ -63,7 +64,7 @@ export function fileReferenceIconMeta(path: string): ForgeIconMeta {
 export function capabilityIconMeta(kind: string): ForgeIconMeta {
   switch (kind) {
     case "skill":
-      return { icon: WandSparkles, tone: "action", label: "插件" };
+      return { icon: Puzzle, tone: "action", label: "插件" };
     case "tool":
       return { icon: SearchCode, tone: "action", label: "工具" };
     case "mcp_server":

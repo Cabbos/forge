@@ -5,7 +5,7 @@ type MessagePanelTone = "default" | "warning" | "danger";
 
 const toneStyles: Record<MessagePanelTone, { border: string; background: string }> = {
   default: { border: "var(--forge-border-subtle)", background: "rgba(255, 255, 255, 0.008)" },
-  warning: { border: "rgba(212, 168, 83, 0.22)", background: "rgba(212, 168, 83, 0.035)" },
+  warning: { border: "rgba(184, 138, 86, 0.22)", background: "rgba(184, 138, 86, 0.035)" },
   danger: { border: "rgba(212, 119, 119, 0.3)", background: "rgba(212, 119, 119, 0.055)" },
 };
 

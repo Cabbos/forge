@@ -21,6 +21,8 @@ Right-side and Project Archive areas are included only for visual consistency: m
 
 Long-term frontend maintenance and refactor slices are tracked in `docs/product/forge-frontend-maintainability-plan.md`.
 
+The shared V1 visual language is tracked in `docs/product/forge-design-language.md`.
+
 ## Experience Principles
 
 ## Competitor Reference Scorecard
@@ -75,6 +77,14 @@ If a polish issue requires a new data field, event type, command, panel, workflo
 
 ## Current Slice
 
+The current design-language slice establishes Forge's Warm Precision baseline:
+
+- warm near-black surface ladder instead of cold graphite
+- copper-gold accent restrained to focus, ready action, running, and warning-adjacent states
+- titlebar, sidebar, composer, popover, process detail, and archive materials mapped to the same token system
+- product-register guardrails from Impeccable and UI Design references captured in the design language doc
+- Playwright coverage verifies the token ladder and material baseline
+
 The current implementation slice establishes the shared material baseline:
 
 - tokenized material border, surface, raised, popover, overlay, and shadow values
@@ -96,11 +106,38 @@ The follow-up composer slice keeps dense references inside the input surface:
 - toolbar and send controls remain reachable under dense context
 - Playwright coverage verifies dense long references, long prompts, and a short-width composer together
 
+The composer control-rail slice makes the input area feel more like a desktop editor surface:
+
+- the toolbar gains a subtle rail divider and warm quiet surface
+- chip remove actions become stable 18px icon buttons with hover and focus states
+- model menu selected state uses a lightweight current badge instead of ad hoc inline styling
+- suggestion and model active rows rely on shared menu state styling
+- narrow desktop wrapping keeps the composer within the existing height budget
+
+The composer defattening slice corrects the heavy card feel:
+
+- default composer height drops back under a compact editor baseline
+- textarea rhythm moves to 22px lines with tighter internal vertical padding
+- toolbar becomes a quiet control rail instead of a separate bottom band
+- tool, model, and send controls return to 30px desktop affordances
+- surface shadow and highlight are reduced so the input does not dominate the transcript
+
+The Claude-style conversation composer supersedes the tighter command dock direction:
+
+- the toolbar divider stays removed, but the whole input breathes like one soft conversation container
+- textarea rhythm returns to 24px lines with a 44-46px default writing well
+- `@`, `/`, model, and send settle into 30px calm controls, with send still carrying the primary action
+- the model selector has a faint warm material again, closer to a status chip than a command button
+- composer keeps dedicated border/surface/shadow tokens, tuned warmer and more present than the command dock
+- the outer composer frame becomes transparent, removing the bottom-bar feeling and giving the input bottom breathing room
+
 The process feedback slice keeps dense evidence summaries quiet:
 
 - consecutive tool and shell activity remains one compact process group
 - dense summary labels stay on one line inside the message lane
 - summary items use ellipsis instead of wrapping into a heavy block
+- long tool inputs, shell commands, durations, and status icons share one anchored evidence row
+- process row metadata is styled through shared `process.css` classes instead of ad hoc inline color
 - expanded details, failures, running states, thinking, and pending rows keep their existing behavior
 - Playwright coverage verifies narrow-width dense process evidence
 
@@ -167,6 +204,14 @@ The failed shell evidence slice makes failed checks more inspectable without mak
 - stderr sections become bounded evidence blocks with light error material, preserving copy and scroll behavior
 - process grouping, failed delivery repair prompts, and first-loop recovery behavior stay unchanged
 - Playwright coverage verifies failed shell evidence styling plus adjacent process, delivery, and first-loop regressions
+
+The delegate trace material slice brings sub-agent evidence into the same process surface system:
+
+- delegate-task traces use the shared raised process material instead of inline cold debug styling
+- round rows, nested tool rows, and final results keep the same warm text, border, hover, and focus vocabulary as routine process feedback
+- long delegate results remain bounded with internal scroll and `overflow-wrap` containment
+- no protocol, tool payload, event schema, or visible product concept changes are introduced
+- Playwright coverage verifies shared material tokens, bounded output, and absence of inline trace styles
 
 The compact Markdown table slice keeps small reference tables from feeling like heavy panels:
 

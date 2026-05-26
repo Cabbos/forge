@@ -29,7 +29,7 @@
   }
 
   .forge-conversation-turn[data-turn-shape="with-evidence"] {
-    border-left: 1px solid rgba(148, 163, 184, 0.12);
+    border-left: 1px solid var(--forge-border-subtle);
     padding-left: 0.75rem;
   }
 
@@ -78,7 +78,7 @@
   .forge-user-message {
     max-width: 80%;
     position: relative;
-    border: 1px solid rgba(188, 198, 214, 0.1);
+    border: 1px solid var(--forge-border-subtle);
     border-radius: var(--radius);
     background: rgba(255, 255, 255, 0.042);
     box-shadow: none;
@@ -130,8 +130,8 @@
   }
 
   .forge-message-copy-action:hover {
-    border-color: rgba(255, 255, 255, 0.18);
-    background: rgba(27, 30, 37, 0.96);
+    border-color: var(--forge-material-border-hover);
+    background: var(--forge-glass-popover);
     color: var(--forge-text-primary);
   }
 

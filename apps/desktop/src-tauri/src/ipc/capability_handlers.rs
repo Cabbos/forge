@@ -2,6 +2,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::harness::capability::CapabilityKind;
+use crate::harness::registry::CapabilityEntry;
+use crate::harness::skills::SkillLoader;
 use crate::state::AppState;
 use serde::Serialize;
 
@@ -20,31 +22,14 @@ pub struct CapabilityInfo {
 pub async fn list_capabilities(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<Vec<CapabilityInfo>, String> {
-    // Always refresh skills before listing
-    let _ = state.harness.skill_loader.scan_all().await;
-
     // 1. Get registry capabilities (tools, hooks, mcp)
-    let mut result: Vec<CapabilityInfo> = state
-        .harness
-        .capability_registry
-        .all_entries()
-        .iter()
-        .map(|entry| {
-            let m = &entry.metadata;
-            CapabilityInfo {
-                id: m.id.clone(),
-                name: m.name.clone(),
-                description: m.description.clone(),
-                kind: capability_kind_label(&m.kind).to_string(),
-                source: m.source.clone(),
-                version: m.version.clone(),
-                enabled: entry.enabled,
-            }
-        })
-        .collect();
+    let mut result: Vec<CapabilityInfo> =
+        global_registry_capability_infos(state.harness.capability_registry.all_entries());
 
-    // 2. Get discovered skills from SkillLoader
-    let skills = state.harness.skill_loader.all_skills().await;
+    // 2. Get user-level skills. Project-level skills are session context, not global settings.
+    let skill_loader = SkillLoader::new();
+    skill_loader.attach_database(state.harness.database.clone());
+    let skills = skill_loader.scan_all().await;
     for s in skills {
         if !result.iter().any(|c| c.id == s.id) {
             result.push(CapabilityInfo {
@@ -70,6 +55,42 @@ fn capability_kind_label(kind: &CapabilityKind) -> &'static str {
     }
 }
 
+fn global_registry_capability_infos(entries: Vec<CapabilityEntry>) -> Vec<CapabilityInfo> {
+    entries
+        .into_iter()
+        .filter(|entry| !is_hidden_global_capability(entry))
+        .map(|entry| {
+            let m = entry.metadata;
+            CapabilityInfo {
+                id: m.id,
+                name: m.name,
+                description: m.description,
+                kind: capability_kind_label(&m.kind).to_string(),
+                source: m.source,
+                version: m.version,
+                enabled: entry.enabled,
+            }
+        })
+        .collect()
+}
+
+fn is_hidden_global_capability(entry: &CapabilityEntry) -> bool {
+    is_internal_infrastructure_capability(entry) || is_workspace_scoped_capability(entry)
+}
+
+fn is_internal_infrastructure_capability(entry: &CapabilityEntry) -> bool {
+    entry.metadata.id == "skill-loader"
+}
+
+fn is_workspace_scoped_capability(entry: &CapabilityEntry) -> bool {
+    if !matches!(entry.metadata.kind, CapabilityKind::McpServer) {
+        return false;
+    }
+
+    let source = entry.metadata.source.replace('\\', "/");
+    source == ".forge/mcp.json" || source.ends_with("/.forge/mcp.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +104,78 @@ mod tests {
             "mcp_server"
         );
         assert_eq!(capability_kind_label(&CapabilityKind::Tool), "tool");
+    }
+
+    #[test]
+    fn global_capability_list_omits_workspace_scoped_mcp_servers() {
+        let entries = vec![
+            capability_entry(
+                "read_file",
+                "File Reader",
+                CapabilityKind::Tool,
+                "builtin",
+                true,
+            ),
+            capability_entry(
+                "mcp:obsidian",
+                "Obsidian",
+                CapabilityKind::McpServer,
+                "/tmp/demo/.forge/mcp.json",
+                true,
+            ),
+        ];
+
+        let infos = global_registry_capability_infos(entries);
+
+        assert!(infos.iter().any(|info| info.id == "read_file"));
+        assert!(!infos.iter().any(|info| info.id == "mcp:obsidian"));
+    }
+
+    #[test]
+    fn global_capability_list_omits_internal_infrastructure_capabilities() {
+        let entries = vec![
+            capability_entry(
+                "skill-loader",
+                "Skill Loader",
+                CapabilityKind::Skill,
+                "builtin",
+                true,
+            ),
+            capability_entry(
+                "hook:workspace-boundary",
+                "Workspace Boundary Guard",
+                CapabilityKind::Hook,
+                "builtin",
+                true,
+            ),
+        ];
+
+        let infos = global_registry_capability_infos(entries);
+
+        assert!(!infos.iter().any(|info| info.id == "skill-loader"));
+        assert!(infos
+            .iter()
+            .any(|info| info.id == "hook:workspace-boundary"));
+    }
+
+    fn capability_entry(
+        id: &str,
+        name: &str,
+        kind: CapabilityKind,
+        source: &str,
+        enabled: bool,
+    ) -> crate::harness::registry::CapabilityEntry {
+        crate::harness::registry::CapabilityEntry {
+            metadata: crate::harness::capability::CapabilityMetadata {
+                id: id.to_string(),
+                name: name.to_string(),
+                description: format!("{name} description"),
+                version: "1.0.0".to_string(),
+                source: source.to_string(),
+                kind,
+            },
+            enabled,
+        }
     }
 }
 
@@ -117,13 +210,11 @@ pub async fn toggle_capability(
             Ok(())
         }
         Err(reg_err) => {
-            state
-                .harness
-                .skill_loader
-                .toggle(&capability_id, enabled)
-                .await;
-            // Verify the toggle actually found the skill
-            let skills = state.harness.skill_loader.all_skills().await;
+            let skill_loader = SkillLoader::new();
+            skill_loader.attach_database(state.harness.database.clone());
+            let _ = skill_loader.scan_all().await;
+            skill_loader.toggle(&capability_id, enabled).await;
+            let skills = skill_loader.all_skills().await;
             if skills.iter().any(|s| s.id == capability_id) {
                 let sessions = state
                     .sessions
@@ -133,6 +224,7 @@ pub async fn toggle_capability(
                     .cloned()
                     .collect::<Vec<_>>();
                 for session in sessions {
+                    let _ = session.harness.skill_loader.scan_all().await;
                     session
                         .harness
                         .skill_loader
