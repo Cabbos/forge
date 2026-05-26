@@ -64,7 +64,7 @@ export function useComposerSubmit({
 
     await createProjectCheckpoint(sessionId, workingDir).catch(() => {});
     useStore.getState().addUserMessage(sessionId, message);
-    send(sessionId, buildFirstLoopAgentPrompt(message), selectedMcpContext, capabilities);
+    await send(sessionId, buildFirstLoopAgentPrompt(message), selectedMcpContext, capabilities);
     onResetDraft();
     onClearChips();
   }, [

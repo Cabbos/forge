@@ -41,12 +41,16 @@ export interface MockIPCHandlers {
   discard_forge_wiki_update_proposal?: (args: Record<string, unknown>) => unknown;
 }
 
+const DEFAULT_MOCK_WORKING_DIR = "/tmp/forge-e2e-workspace";
+
 export function createMockIPC(handlers: MockIPCHandlers = {}) {
   let forgeWikiExists = false;
   const forgeWikiProposals = new Map<string, ForgeWikiUpdateProposal>();
 
   return async (cmd: string, args: Record<string, unknown>) => {
-    const workingDir = "/Users/cabbos/project/forge";
+    const workingDir = typeof args.workingDir === "string" && args.workingDir.trim()
+      ? args.workingDir
+      : DEFAULT_MOCK_WORKING_DIR;
     const projectPath = String(args.projectPath ?? workingDir);
     switch (cmd) {
       case "create_session":

@@ -383,7 +383,12 @@ async fn close_stdio_session(mut session: StdioMcpSession) {
     kill_child_process_group(&mut session.child).await;
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), session.child.wait()).await;
     if let Some(pid) = pid {
-        kill_process_group(pid);
+        if let Err(error) = kill_process_group(pid) {
+            crate::app_log!(
+                "WARN",
+                "[mcp] failed to force-kill stdio process group: {error}"
+            );
+        }
     }
 }
 

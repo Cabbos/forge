@@ -1769,10 +1769,9 @@ pub async fn confirm_response(
 ) -> Result<(), String> {
     let sender = { state.pending_confirms.write().await.remove(&block_id) };
     match sender {
-        Some(tx) => {
-            let _ = tx.send(approved);
-            Ok(())
-        }
+        Some(tx) => tx
+            .send(approved)
+            .map_err(|_| format!("Confirm receiver already closed for: {block_id}")),
         None => Err(format!("No pending confirm for: {block_id}")),
     }
 }

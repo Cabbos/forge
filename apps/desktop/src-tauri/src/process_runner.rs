@@ -135,13 +135,17 @@ where
                 break;
             }
             _ = &mut timeout => {
-                kill_process_group(pid);
+                if let Err(error) = kill_process_group(pid) {
+                    crate::app_log!("WARN", "[process_runner] timeout kill failed: {error}");
+                }
                 output.timed_out = true;
                 finish_after_kill(wait_task).await;
                 break;
             }
             _ = notified(options.cancel.as_ref()), if options.cancel.is_some() => {
-                kill_process_group(pid);
+                if let Err(error) = kill_process_group(pid) {
+                    crate::app_log!("WARN", "[process_runner] cancel kill failed: {error}");
+                }
                 output.cancelled = true;
                 finish_after_kill(wait_task).await;
                 break;
@@ -163,7 +167,9 @@ pub(crate) fn configure_command_process_group(command: &mut Command) {
     #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
-            libc::setsid();
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
             Ok(())
         });
     }
@@ -171,22 +177,47 @@ pub(crate) fn configure_command_process_group(command: &mut Command) {
 
 pub(crate) async fn kill_child_process_group(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
-        kill_process_group(pid);
+        if let Err(error) = kill_process_group(pid) {
+            crate::app_log!(
+                "WARN",
+                "[process_runner] failed to kill process group: {error}"
+            );
+        }
     } else {
         let _ = child.kill().await;
     }
 }
 
-pub(crate) fn kill_process_group(pid: u32) {
+pub(crate) fn kill_process_group(pid: u32) -> Result<(), String> {
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
+    {
+        let pid_i32 = i32::try_from(pid).map_err(|_| format!("PID out of range: {pid}"))?;
+        let rc = unsafe { libc::kill(-pid_i32, libc::SIGKILL) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        Err(format!("failed to kill process group {pid}: {error}"))
     }
     #[cfg(not(unix))]
     {
-        let _ = std::process::Command::new("taskkill")
+        let output = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .output();
+            .output()
+            .map_err(|error| format!("failed to run taskkill for {pid}: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if stderr.is_empty() {
+                format!("taskkill failed for process {pid}")
+            } else {
+                stderr
+            })
+        }
     }
 }
 
@@ -342,6 +373,14 @@ mod tests {
         assert!(!marker.exists());
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn kill_process_group_rejects_out_of_range_pid() {
+        let error = kill_process_group(u32::MAX).expect_err("oversized pid should be rejected");
+
+        assert!(error.contains("PID out of range"));
     }
 
     fn temp_workspace(name: &str) -> std::path::PathBuf {

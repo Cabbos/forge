@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "@/components/messages/CodeBlock";
@@ -33,18 +33,14 @@ interface MarkdownHeading {
 
 function extractMarkdownHeadings(content: string): MarkdownHeading[] {
   const headings: MarkdownHeading[] = [];
-  const seen = new Map<string, number>();
 
   content.split("\n").forEach((line) => {
     const match = line.match(/^(#{2,3})\s+(.+?)\s*#*\s*$/);
     if (!match) return;
     const title = match[2].replace(/\[[^\]]+\]\([^)]+\)/g, "").replace(/[`*_~]/g, "").trim();
     if (!title) return;
-    const base = stableHeadingId(title);
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
     headings.push({
-      id: count ? `${base}-${count + 1}` : base,
+      id: stableHeadingId(title),
       level: match[1].length as 2 | 3,
       title,
     });
@@ -59,6 +55,21 @@ function stableHeadingId(title: string) {
     hash = (Math.imul(31, hash) + title.charCodeAt(i)) | 0;
   }
   return `forge-section-${Math.abs(hash).toString(36)}`;
+}
+
+function textFromReactNode(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textFromReactNode).join("");
+  if (node && typeof node === "object" && "props" in node) {
+    const props = node.props as { children?: ReactNode };
+    return textFromReactNode(props.children);
+  }
+  return "";
+}
+
+function headingIdFromChildren(children: ReactNode): string | undefined {
+  const title = textFromReactNode(children).trim();
+  return title ? stableHeadingId(title) : undefined;
 }
 
 export function MarkdownRenderer({
@@ -91,7 +102,6 @@ export function MarkdownRenderer({
     !streaming &&
     stableContent.length >= LONG_REPLY_SECTION_INDEX_MIN_CHARS &&
     headings.length >= LONG_REPLY_SECTION_INDEX_MIN_HEADINGS;
-  let headingRenderIndex = 0;
 
   return (
     <div onClick={handleFileClick}>
@@ -111,14 +121,10 @@ export function MarkdownRenderer({
         remarkPlugins={[remarkGfm]}
         components={{
           h2({ children }) {
-            const heading = headings[headingRenderIndex];
-            headingRenderIndex += 1;
-            return <h2 id={heading?.id}>{children}</h2>;
+            return <h2 id={headingIdFromChildren(children)}>{children}</h2>;
           },
           h3({ children }) {
-            const heading = headings[headingRenderIndex];
-            headingRenderIndex += 1;
-            return <h3 id={heading?.id}>{children}</h3>;
+            return <h3 id={headingIdFromChildren(children)}>{children}</h3>;
           },
           code({ className, children }) {
             const match = /language-(\w+)/.exec(className || "");
@@ -156,7 +162,7 @@ export function MarkdownRenderer({
                 </FileRefLink>
               );
             }
-            return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+            return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
           },
         }}
       >

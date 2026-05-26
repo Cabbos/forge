@@ -1,4 +1,4 @@
-use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex};
+use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc, Mutex, MutexGuard};
 
 use tokio::sync::Notify;
 
@@ -51,6 +51,12 @@ impl SessionStatus {
             SessionStatus::Error(_) => "error",
         }
     }
+}
+
+fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub struct AgentSession {
@@ -112,12 +118,12 @@ impl AgentSession {
             cancel: Mutex::new(None),
         };
 
-        *session.status.lock().unwrap() = SessionStatus::Running;
+        *lock_unpoisoned(&session.status) = SessionStatus::Running;
         session
     }
 
     pub fn set_system_prompt(&self, prompt: String) {
-        *self.system_prompt.lock().unwrap() = prompt;
+        *lock_unpoisoned(&self.system_prompt) = prompt;
     }
 
     pub fn is_waiting_for_api_key(&self) -> bool {
@@ -130,9 +136,9 @@ impl AgentSession {
         summary: Option<String>,
         latest_turn: Option<AgentTurnState>,
     ) {
-        *self.messages.lock().unwrap() = repair_tool_use_adjacency(messages);
-        *self.summary.lock().unwrap() = summary;
-        *self.latest_turn.lock().unwrap() = latest_turn.map(|mut turn| {
+        *lock_unpoisoned(&self.messages) = repair_tool_use_adjacency(messages);
+        *lock_unpoisoned(&self.summary) = summary;
+        *lock_unpoisoned(&self.latest_turn) = latest_turn.map(|mut turn| {
             turn.normalize_for_session_resume();
             turn
         });
@@ -144,11 +150,11 @@ impl AgentSession {
             self.agent_type.clone(),
             self.model_id.clone(),
             self.harness.working_dir.to_string_lossy().to_string(),
-            self.messages.lock().unwrap().clone(),
-            self.summary.lock().unwrap().clone(),
+            lock_unpoisoned(&self.messages).clone(),
+            lock_unpoisoned(&self.summary).clone(),
             self.context_window_tokens,
         );
-        if let Some(latest_turn) = self.latest_turn.lock().unwrap().clone() {
+        if let Some(latest_turn) = lock_unpoisoned(&self.latest_turn).clone() {
             snapshot.with_latest_turn(latest_turn)
         } else {
             snapshot
@@ -248,7 +254,7 @@ impl AgentSession {
         if !self.running.load(Ordering::SeqCst) {
             return Err("Session is not running".to_string());
         }
-        let previous_turn = self.latest_turn.lock().unwrap().clone();
+        let previous_turn = lock_unpoisoned(&self.latest_turn).clone();
         let mut hidden_contexts = hidden_contexts;
         if let Some(context) = build_recovery_context(previous_turn.as_ref(), text) {
             hidden_contexts.push(HiddenContextPart::new(
@@ -262,7 +268,7 @@ impl AgentSession {
         crate::app_log!(
             "INFO",
             "Agent received user message, history size: {}",
-            self.messages.lock().unwrap().len()
+            lock_unpoisoned(&self.messages).len()
         );
         let turn_system_prompt = self
             .harness
@@ -272,12 +278,12 @@ impl AgentSession {
                 Some(activation_text.unwrap_or(text)),
             )
             .await;
-        *self.system_prompt.lock().unwrap() = turn_system_prompt;
+        *lock_unpoisoned(&self.system_prompt) = turn_system_prompt;
         self.adapter
             .set_external_tools(self.harness.external_mcp_tool_definitions().await);
 
         // Add user message to history
-        self.messages.lock().unwrap().push(ChatMessage::user(text));
+        lock_unpoisoned(&self.messages).push(ChatMessage::user(text));
         self.repair_message_history("before_model_call");
         let hidden_contexts = hidden_contexts
             .into_iter()
@@ -292,7 +298,7 @@ impl AgentSession {
 
         // Fresh cancel token for this request
         let cancel = Arc::new(Notify::new());
-        *self.cancel.lock().unwrap() = Some(cancel.clone());
+        *lock_unpoisoned(&self.cancel) = Some(cancel.clone());
         let _cancel_guard = ActiveCancelGuard::new(&self.cancel, cancel.clone());
 
         let mut overflow_retry_used = false;
@@ -303,8 +309,8 @@ impl AgentSession {
                 break;
             }
 
-            let all_messages = self.messages.lock().unwrap().clone();
-            let existing_summary = self.summary.lock().unwrap().clone();
+            let all_messages = lock_unpoisoned(&self.messages).clone();
+            let existing_summary = lock_unpoisoned(&self.summary).clone();
             let compacted = if self
                 .auto_compact_guard
                 .lock()
@@ -332,7 +338,7 @@ impl AgentSession {
                 self.apply_compaction(&compacted, stats, "auto_compact", app_handle);
             }
 
-            let sp = self.system_prompt.lock().unwrap().clone();
+            let sp = lock_unpoisoned(&self.system_prompt).clone();
             crate::app_log!(
                 "INFO",
                 "[send_message] system_prompt length: {} chars, has 'Active Skills': {}",
@@ -367,8 +373,8 @@ impl AgentSession {
                         let msg = e.to_string();
                         if !overflow_retry_used && is_context_overflow_error(&self.agent_type, &msg)
                         {
-                            let all_messages = self.messages.lock().unwrap().clone();
-                            let existing_summary = self.summary.lock().unwrap().clone();
+                            let all_messages = lock_unpoisoned(&self.messages).clone();
+                            let existing_summary = lock_unpoisoned(&self.summary).clone();
                             let compacted =
                                 compact_messages_for_overflow_retry(all_messages, existing_summary);
                             self.auto_compact_guard
@@ -450,7 +456,7 @@ impl AgentSession {
 
             // Save assistant response (DeepSeek Anthropic API requires thinking blocks in history)
             if !result.assistant_content.is_empty() {
-                self.messages.lock().unwrap().push(ChatMessage::assistant(
+                lock_unpoisoned(&self.messages).push(ChatMessage::assistant(
                     serde_json::Value::Array(result.assistant_content.clone()),
                 ));
             }
@@ -710,7 +716,7 @@ impl AgentSession {
                     "content": exec_result,
                 }));
             }
-            self.messages.lock().unwrap().push(ChatMessage {
+            lock_unpoisoned(&self.messages).push(ChatMessage {
                 role: "user".to_string(),
                 content: serde_json::Value::Array(tool_results),
             });
@@ -727,9 +733,9 @@ impl AgentSession {
 
         // Ensure final text response: append instruction, call API one more time if needed
         if self.running.load(Ordering::SeqCst) {
-            let messages = self.messages.lock().unwrap().clone();
-            let summary = self.summary.lock().unwrap().clone();
-            let sp = self.system_prompt.lock().unwrap().clone();
+            let messages = lock_unpoisoned(&self.messages).clone();
+            let summary = lock_unpoisoned(&self.summary).clone();
+            let sp = lock_unpoisoned(&self.system_prompt).clone();
             let context_bundle = build_context_bundle(
                 messages,
                 summary,
@@ -751,7 +757,7 @@ impl AgentSession {
                     .await
                 {
                     if !result.assistant_content.is_empty() {
-                        let mut messages = self.messages.lock().unwrap();
+                        let mut messages = lock_unpoisoned(&self.messages);
                         push_assistant_result_with_synthetic_tool_results(
                             &mut messages,
                             result.assistant_content,
@@ -791,7 +797,7 @@ impl AgentSession {
 
     pub fn kill(&self, app_handle: &tauri::AppHandle) {
         self.running.store(false, Ordering::SeqCst);
-        *self.status.lock().unwrap() = SessionStatus::Stopped;
+        *lock_unpoisoned(&self.status) = SessionStatus::Stopped;
         self.mark_latest_turn_status_with_reason(
             AgentTurnStatus::Cancelled,
             "user_cancelled",
@@ -799,7 +805,7 @@ impl AgentSession {
             app_handle,
         );
         // Cancel in-flight HTTP stream
-        if let Some(cancel) = self.cancel.lock().unwrap().take() {
+        if let Some(cancel) = lock_unpoisoned(&self.cancel).take() {
             cancel.notify_waiters();
         }
         crate::transcript::emit_stream_event(
@@ -813,8 +819,8 @@ impl AgentSession {
 
     pub fn resume(&self, app_handle: &tauri::AppHandle) {
         self.running.store(true, Ordering::SeqCst);
-        *self.status.lock().unwrap() = SessionStatus::Running;
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        *lock_unpoisoned(&self.status) = SessionStatus::Running;
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.normalize_for_session_resume();
         }
         self.emit_latest_turn_projection(app_handle);
@@ -844,12 +850,12 @@ impl AgentSession {
                 "验证并交付结果".to_string(),
             ],
         );
-        *self.latest_turn.lock().unwrap() = Some(turn);
+        *lock_unpoisoned(&self.latest_turn) = Some(turn);
         self.emit_latest_turn_projection(app_handle);
     }
 
     fn repair_message_history(&self, reason: &str) {
-        let mut messages = self.messages.lock().unwrap();
+        let mut messages = lock_unpoisoned(&self.messages);
         let before_len = messages.len();
         let repaired = repair_tool_use_adjacency(std::mem::take(&mut *messages));
         let after_len = repaired.len();
@@ -876,14 +882,14 @@ impl AgentSession {
         detail: Option<&str>,
         app_handle: &tauri::AppHandle,
     ) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.mark_status_with_reason(status, reason, detail);
         }
         self.emit_latest_turn_projection(app_handle);
     }
 
     fn record_latest_turn_failure(&self, trace: AgentFailureTrace, app_handle: &tauri::AppHandle) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.record_failure(trace);
         }
         self.emit_latest_turn_projection(app_handle);
@@ -894,14 +900,14 @@ impl AgentSession {
         trace: crate::agent::turn_state::AgentToolTrace,
         app_handle: &tauri::AppHandle,
     ) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.record_tool(trace);
         }
         self.emit_latest_turn_projection(app_handle);
     }
 
     fn record_latest_compact(&self, trace: AgentCompactTrace, app_handle: &tauri::AppHandle) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.record_compact(trace);
         }
         self.emit_latest_turn_projection(app_handle);
@@ -912,7 +918,7 @@ impl AgentSession {
         trace: AgentVerificationTrace,
         app_handle: &tauri::AppHandle,
     ) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.set_verification(trace);
         }
         self.emit_latest_turn_projection(app_handle);
@@ -923,7 +929,7 @@ impl AgentSession {
         summary: &crate::protocol::events::DeliverySummary,
         app_handle: &tauri::AppHandle,
     ) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.record_delivery_summary(summary);
         }
         self.emit_latest_turn_projection(app_handle);
@@ -934,7 +940,7 @@ impl AgentSession {
         update: AgentPreviewStatusUpdate<'_>,
         app_handle: &tauri::AppHandle,
     ) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.record_preview_status(
                 update.project_path,
                 update.running,
@@ -955,7 +961,7 @@ impl AgentSession {
         label: &str,
         app_handle: &tauri::AppHandle,
     ) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.record_checkpoint_status(is_git_repo, dirty, has_checkpoint, label);
         }
         self.emit_latest_turn_projection(app_handle);
@@ -965,7 +971,7 @@ impl AgentSession {
         &self,
         app_handle: &tauri::AppHandle,
     ) -> Option<AgentVerificationTrace> {
-        let turn = self.latest_turn.lock().unwrap().clone()?;
+        let turn = lock_unpoisoned(&self.latest_turn).clone()?;
 
         if !verification::needs_verification(&turn) {
             let trace = AgentVerificationTrace::default();
@@ -1012,7 +1018,7 @@ impl AgentSession {
             },
             app_handle,
         );
-        let cancel = self.cancel.lock().unwrap().clone();
+        let cancel = lock_unpoisoned(&self.cancel).clone();
         let trace = verification::run_verification_with_cancel(plan, cancel).await;
         self.record_latest_verification(trace.clone(), app_handle);
         if verification_has_failed(&trace) {
@@ -1028,8 +1034,8 @@ impl AgentSession {
         reason: &str,
         app_handle: &tauri::AppHandle,
     ) {
-        *self.summary.lock().unwrap() = compacted.summary.clone();
-        *self.messages.lock().unwrap() = compacted.messages.clone();
+        *lock_unpoisoned(&self.summary) = compacted.summary.clone();
+        *lock_unpoisoned(&self.messages) = compacted.messages.clone();
         crate::transcript::emit_stream_event(
             app_handle,
             StreamEvent::ContextCompacted {
@@ -1056,7 +1062,7 @@ impl AgentSession {
     }
 
     fn record_latest_context(&self, bundle: &ContextBundle, app_handle: &tauri::AppHandle) {
-        if let Some(turn) = self.latest_turn.lock().unwrap().as_mut() {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.set_context(bundle.to_turn_context_snapshot());
         }
         self.emit_latest_turn_projection(app_handle);
@@ -1130,7 +1136,7 @@ impl<'a> ActiveCancelGuard<'a> {
 
 impl Drop for ActiveCancelGuard<'_> {
     fn drop(&mut self) {
-        let mut current = self.slot.lock().unwrap();
+        let mut current = lock_unpoisoned(self.slot);
         if current
             .as_ref()
             .is_some_and(|token| Arc::ptr_eq(token, &self.token))
@@ -1142,7 +1148,7 @@ impl Drop for ActiveCancelGuard<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{try_begin_turn, ActiveCancelGuard};
+    use super::{lock_unpoisoned, try_begin_turn, ActiveCancelGuard};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -1173,19 +1179,17 @@ mod tests {
         let first = Arc::new(Notify::new());
         let second = Arc::new(Notify::new());
 
-        *slot.lock().unwrap() = Some(first.clone());
+        *lock_unpoisoned(&slot) = Some(first.clone());
         let first_guard = ActiveCancelGuard::new(&slot, first);
-        *slot.lock().unwrap() = Some(second.clone());
+        *lock_unpoisoned(&slot) = Some(second.clone());
         drop(first_guard);
 
-        assert!(slot
-            .lock()
-            .unwrap()
+        assert!(lock_unpoisoned(&slot)
             .as_ref()
             .is_some_and(|current| Arc::ptr_eq(current, &second)));
 
         let second_guard = ActiveCancelGuard::new(&slot, second);
         drop(second_guard);
-        assert!(slot.lock().unwrap().is_none());
+        assert!(lock_unpoisoned(&slot).is_none());
     }
 }

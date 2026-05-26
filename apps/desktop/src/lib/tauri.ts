@@ -159,7 +159,12 @@ export async function createSession(
   model: string,
   apiKey = "",
 ): Promise<SessionCreated> {
-  if (!hasTauriRuntime()) rememberWorkingDir(workingDir);
+  if (!hasTauriRuntime()) {
+    rememberWorkingDir(workingDir);
+    return {
+      session_id: `browser-${crypto.randomUUID()}`,
+    };
+  }
 
   try {
     return await invoke<SessionCreated>("create_session", {
@@ -304,6 +309,7 @@ export async function toggleCapability(id: string, enabled: boolean): Promise<vo
 
 /** Search workspace files for @ autocomplete */
 export async function searchWorkspaceFiles(query: string, sessionId?: string, workingDir?: string | null): Promise<string[]> {
+  if (!hasTauriRuntime()) return [];
   return invoke("search_workspace_files", { query, sessionId: sessionId ?? null, workingDir: workingDir ?? null });
 }
 

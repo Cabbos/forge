@@ -122,10 +122,7 @@ pub async fn restore_project_checkpoint(
     let checkpoint =
         load_checkpoint(&working_dir)?.ok_or_else(|| "还没有可回退的检查点".to_string())?;
 
-    run_git(&working_dir, &["reset", "--hard", "HEAD"])?;
-    if !checkpoint.diff_patch.trim().is_empty() {
-        apply_patch(&working_dir, &checkpoint.diff_patch)?;
-    }
+    restore_checkpoint(&working_dir, &checkpoint)?;
 
     checkpoint_status(&working_dir)
 }
@@ -191,6 +188,27 @@ fn run_git(working_dir: &std::path::Path, args: &[&str]) -> Result<String, Strin
             stderr
         })
     }
+}
+
+fn restore_checkpoint(
+    working_dir: &std::path::Path,
+    checkpoint: &StoredProjectCheckpoint,
+) -> Result<(), String> {
+    let rollback_patch = run_git(working_dir, &["diff", "--binary"]).unwrap_or_default();
+    run_git(working_dir, &["reset", "--hard", "HEAD"])?;
+    if checkpoint.diff_patch.trim().is_empty() {
+        return Ok(());
+    }
+
+    if let Err(apply_error) = apply_patch(working_dir, &checkpoint.diff_patch) {
+        if !rollback_patch.trim().is_empty() {
+            let _ = apply_patch(working_dir, &rollback_patch);
+        }
+        return Err(format!(
+            "回退检查点失败，已尝试恢复回退前的改动: {apply_error}"
+        ));
+    }
+    Ok(())
 }
 
 fn apply_patch(working_dir: &std::path::Path, patch: &str) -> Result<(), String> {
@@ -441,6 +459,32 @@ mod tests {
         let _ = fs::remove_dir_all(workspace);
     }
 
+    #[test]
+    fn restore_checkpoint_restores_previous_diff_when_checkpoint_apply_fails() {
+        let project = temp_project("checkpoint-restore-rollback");
+        init_git_repo(&project);
+        let file = project.join("app.txt");
+        fs::write(&file, "base\n").expect("write base");
+        run_git(&project, &["add", "app.txt"]).expect("git add");
+        run_git(&project, &["commit", "-m", "base"]).expect("git commit");
+        fs::write(&file, "current\n").expect("write current diff");
+
+        let checkpoint = StoredProjectCheckpoint {
+            diff_patch: "this is not a git patch".to_string(),
+            ..sample_checkpoint()
+        };
+        let error = restore_checkpoint(&project, &checkpoint)
+            .expect_err("invalid checkpoint patch should fail");
+
+        assert!(error.contains("已尝试恢复回退前的改动"));
+        assert_eq!(
+            fs::read_to_string(&file).expect("read restored file"),
+            "current\n"
+        );
+
+        let _ = fs::remove_dir_all(project);
+    }
+
     fn sample_checkpoint() -> StoredProjectCheckpoint {
         StoredProjectCheckpoint {
             id: "checkpoint-1".to_string(),
@@ -456,5 +500,15 @@ mod tests {
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("create temp project");
         path
+    }
+
+    fn init_git_repo(path: &std::path::Path) {
+        Command::new("git")
+            .args(["init"])
+            .current_dir(path)
+            .output()
+            .expect("git init");
+        run_git(path, &["config", "user.email", "forge@example.test"]).expect("git config email");
+        run_git(path, &["config", "user.name", "Forge Test"]).expect("git config name");
     }
 }

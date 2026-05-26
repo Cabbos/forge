@@ -11,6 +11,15 @@ interface CodeBlockProps {
 }
 
 const highlightedCodeCache = new Map<string, string>();
+const MAX_HIGHLIGHT_CACHE_ENTRIES = 200;
+
+function setHighlightedCodeCache(key: string, html: string) {
+  if (!highlightedCodeCache.has(key) && highlightedCodeCache.size >= MAX_HIGHLIGHT_CACHE_ENTRIES) {
+    const oldestKey = highlightedCodeCache.keys().next().value;
+    if (oldestKey) highlightedCodeCache.delete(oldestKey);
+  }
+  highlightedCodeCache.set(key, html);
+}
 
 export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
   const theme = useStore((s) => s.theme);
@@ -38,7 +47,7 @@ export function CodeBlock({ code, lang, streaming = false }: CodeBlockProps) {
       await getHighlighter();
       if (cancelled) return;
       const result = highlightCode(code, lang, theme);
-      highlightedCodeCache.set(cacheKey, result);
+      setHighlightedCodeCache(cacheKey, result);
       setHtmlState({ key: cacheKey, html: result });
     })();
     return () => {

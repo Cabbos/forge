@@ -1,9 +1,9 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{collections::HashMap, sync::MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -20,7 +20,7 @@ const TRANSCRIPT_MAX_BYTES: u64 = 5_000_000;
 const TRANSCRIPT_RETAIN_EVENTS: usize = 2_000;
 const TRANSCRIPT_COMPACT_MARKER: &str = "_forge_transcript_compacted";
 
-static TRANSCRIPT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
+static TRANSCRIPT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
 
 #[tauri::command]
 pub async fn load_session_transcript(session_id: String) -> Result<Vec<serde_json::Value>, String> {
@@ -76,21 +76,22 @@ fn append_transcript_event_at_with_limits(
             .map_err(|error| format!("Failed to create transcript dir: {error}"))?;
     }
 
-    let _guard = lock_transcript_path(&path);
-    let record = TranscriptRecord {
-        recorded_at_ms: now_ms(),
-        event,
-    };
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|error| format!("Failed to open transcript: {error}"))?;
-    let line = serde_json::to_string(&record)
-        .map_err(|error| format!("Failed to serialize transcript event: {error}"))?;
-    writeln!(file, "{line}").map_err(|error| format!("Failed to write transcript: {error}"))?;
-    compact_transcript_if_needed(&path, &session_id, max_bytes, retain_events)?;
-    Ok(())
+    with_transcript_path_lock(&path, || {
+        let record = TranscriptRecord {
+            recorded_at_ms: now_ms(),
+            event,
+        };
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|error| format!("Failed to open transcript: {error}"))?;
+        let line = serde_json::to_string(&record)
+            .map_err(|error| format!("Failed to serialize transcript event: {error}"))?;
+        writeln!(file, "{line}").map_err(|error| format!("Failed to write transcript: {error}"))?;
+        compact_transcript_if_needed(&path, &session_id, max_bytes, retain_events)?;
+        Ok(())
+    })
 }
 
 fn append_stream_event_at(root: &Path, event: &StreamEvent) -> Result<(), String> {
@@ -108,14 +109,15 @@ fn load_transcript_events_at(
         return Ok(Vec::new());
     }
 
-    let _guard = lock_transcript_path(&path);
-    let records = load_transcript_records_from_path(&path)?;
-    let events = records
-        .into_iter()
-        .filter(|record| !is_compact_marker(&record.event))
-        .map(|record| record.event)
-        .collect();
-    Ok(close_unfinished_renderable_events(events, session_id))
+    with_transcript_path_lock(&path, || {
+        let records = load_transcript_records_from_path(&path)?;
+        let events = records
+            .into_iter()
+            .filter(|record| !is_compact_marker(&record.event))
+            .map(|record| record.event)
+            .collect();
+        Ok(close_unfinished_renderable_events(events, session_id))
+    })
 }
 
 fn load_transcript_records_from_path(path: &Path) -> Result<Vec<TranscriptRecord>, String> {
@@ -308,24 +310,36 @@ fn remove_pending(
     pending.retain(|item| !(item.block_id == block_id && item.kind == kind));
 }
 
-fn lock_transcript_path(path: &Path) -> MutexGuard<'static, ()> {
+fn with_transcript_path_lock<T>(
+    path: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
     let locks = TRANSCRIPT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
     let lock = {
-        let mut guard = locks.lock().unwrap();
-        *guard
+        let mut guard = locks
+            .lock()
+            .map_err(|_| "Transcript lock registry is poisoned".to_string())?;
+        guard
             .entry(path.to_path_buf())
-            .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     };
-    lock.lock().unwrap()
+    let _guard = lock
+        .lock()
+        .map_err(|_| "Transcript path lock is poisoned".to_string())?;
+    operation()
 }
 
 fn delete_transcript_at(root: &Path, session_id: &str) -> Result<(), String> {
     let path = transcript_path(root, session_id)?;
-    if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|error| format!("Failed to delete transcript '{}': {error}", session_id))?;
-    }
-    Ok(())
+    with_transcript_path_lock(&path, || {
+        if path.exists() {
+            fs::remove_file(&path).map_err(|error| {
+                format!("Failed to delete transcript '{}': {error}", session_id)
+            })?;
+        }
+        Ok(())
+    })
 }
 
 fn transcript_path(root: &Path, session_id: &str) -> Result<PathBuf, String> {
