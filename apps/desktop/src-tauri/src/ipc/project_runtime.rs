@@ -1,7 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
 
 use regex::Regex;
 use tauri::State;
@@ -9,6 +8,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
+use crate::consts::{
+    DEV_SERVER_PORT_CONNECT_TIMEOUT, DEV_SERVER_STARTUP_GRACE, DEV_SERVER_STOP_GRACE,
+    PROCESS_SHUTDOWN_GRACE,
+};
 use crate::ipc::workspace::resolve_bound_working_dir;
 use crate::process_runner::{configure_command_process_group, kill_child_process_group};
 use crate::state::{AppState, ManagedDevServer};
@@ -158,7 +161,7 @@ pub async fn start_project_dev_server(
         *guard = Some(managed);
     }
 
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    tokio::time::sleep(DEV_SERVER_STARTUP_GRACE).await;
     project_runtime_status_for_path(&state, config.working_dir.clone()).await
 }
 
@@ -177,7 +180,7 @@ pub async fn stop_project_dev_server(
         stop_managed_server(server).await;
     }
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(DEV_SERVER_STOP_GRACE).await;
     project_runtime_status_for_path(&state, working_dir).await
 }
 
@@ -326,7 +329,7 @@ async fn stop_managed_server_if_replacing_workspace(
 
 async fn stop_managed_server(server: &mut ManagedDevServer) {
     kill_child_process_group(&mut server.child).await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), server.child.wait()).await;
+    let _ = tokio::time::timeout(PROCESS_SHUTDOWN_GRACE, server.child.wait()).await;
 }
 
 fn status_from_config(
@@ -523,7 +526,7 @@ fn extract_config_port(content: &str) -> Option<u16> {
 
 fn port_is_open(port: u16) -> bool {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    TcpStream::connect_timeout(&addr, Duration::from_millis(180)).is_ok()
+    TcpStream::connect_timeout(&addr, DEV_SERVER_PORT_CONNECT_TIMEOUT).is_ok()
 }
 
 fn inspect_port_occupancy(port: u16) -> PortOccupancy {

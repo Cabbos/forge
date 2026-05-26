@@ -1,21 +1,19 @@
 pub mod files;
-pub mod permission;
 pub mod shell;
 
 pub use files::FileExecutor;
-pub use permission::PermissionGate;
 pub use shell::ShellExecutor;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::sync::{Notify, RwLock};
 
+use crate::consts::{ASK_USER_TIMEOUT, SEARCH_TIMEOUT, WEB_FETCH_TIMEOUT, WEB_SEARCH_TIMEOUT};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
 const SEARCH_RESULT_LIMIT: usize = 200;
-const SEARCH_TIMEOUT_SECS: u64 = 8;
 const GIT_DIFF_TEXT_LIMIT: usize = 120_000;
 const SHELL_CAPTURE_LIMIT: usize = 120_000;
 const SHELL_STREAM_LIMIT: usize = 120_000;
@@ -25,7 +23,6 @@ const WEB_BODY_LIMIT: usize = 1_500_000;
 pub struct ToolExecutor {
     pub file: FileExecutor,
     pub shell: ShellExecutor,
-    pub permission: Arc<Mutex<PermissionGate>>,
     pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
 }
 
@@ -37,7 +34,6 @@ impl ToolExecutor {
         Self {
             file: FileExecutor::new(working_dir.clone()),
             shell: ShellExecutor::new(working_dir.clone()),
-            permission: Arc::new(Mutex::new(PermissionGate::new(working_dir))),
             pending_confirms,
         }
     }
@@ -398,7 +394,7 @@ impl ToolExecutor {
                         boundary: None,
                     },
                 );
-                match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+                match tokio::time::timeout(ASK_USER_TIMEOUT, rx).await {
                     Ok(Ok(true)) => {
                         self.pending_confirms.write().await.remove(&block_id);
                         "User approved".to_string()
@@ -638,7 +634,7 @@ async fn try_search(url: &str, engine: &str) -> String {
     match client
         .get(url)
         .headers(browser_headers())
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(WEB_SEARCH_TIMEOUT)
         .send()
         .await
     {
@@ -693,7 +689,7 @@ async fn web_fetch(url_str: &str) -> String {
     match client
         .get(&url)
         .headers(browser_headers())
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(WEB_FETCH_TIMEOUT)
         .send()
         .await
     {
@@ -901,7 +897,7 @@ fn is_too_broad_search_root(path: &std::path::Path) -> bool {
 
 async fn search_files_with_rg(base: &std::path::Path, pattern: &str) -> Option<Vec<String>> {
     let output = tokio::time::timeout(
-        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECS),
+        SEARCH_TIMEOUT,
         tokio::process::Command::new("rg")
             .arg("--files")
             .arg("-g")
@@ -949,7 +945,7 @@ async fn search_content_with_rg(base: &std::path::Path, pattern: &str) -> Option
     }
 
     let output = match tokio::time::timeout(
-        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECS),
+        SEARCH_TIMEOUT,
         tokio::process::Command::new("rg")
             .arg("--line-number")
             .arg("--no-heading")
@@ -986,7 +982,7 @@ async fn search_content_with_rg(base: &std::path::Path, pattern: &str) -> Option
         Err(_) => {
             return Some(format!(
                 "Search timed out after {}s in {}. Try a narrower path or pattern.",
-                SEARCH_TIMEOUT_SECS,
+                SEARCH_TIMEOUT.as_secs(),
                 base.display()
             ));
         }

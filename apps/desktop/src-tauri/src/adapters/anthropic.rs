@@ -1,5 +1,4 @@
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -10,6 +9,7 @@ use super::base::{
     repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
     ToolDef,
 };
+use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -61,8 +61,8 @@ impl AnthropicAdapter {
             return Err(AdapterError::MissingApiKey);
         }
         let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(600))
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .timeout(AGENT_API_TIMEOUT)
             .build()
             .map_err(|e| AdapterError::Http(e.to_string()))?;
         Ok(Self {

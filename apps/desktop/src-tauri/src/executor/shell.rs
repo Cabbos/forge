@@ -1,12 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Notify;
 
+use crate::consts::{SHELL_COMMAND_TIMEOUT, SHELL_OUTPUT_LIMIT};
 use crate::process_runner::{run_captured, run_streaming, ProcessRunOptions, ProcessSpec};
-
-const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
-const SHELL_OUTPUT_LIMIT: usize = 100 * 1024;
 
 /// Result of running a shell command.
 #[derive(Debug, Clone)]
@@ -34,7 +31,7 @@ impl ShellExecutor {
         let output = run_captured(
             ProcessSpec::shell(command, self.working_dir.clone()),
             ProcessRunOptions {
-                timeout: SHELL_TIMEOUT,
+                timeout: SHELL_COMMAND_TIMEOUT,
                 cancel: None,
                 output_limit: SHELL_OUTPUT_LIMIT,
             },
@@ -94,7 +91,7 @@ impl ShellExecutor {
         let output = run_streaming(
             ProcessSpec::shell(command, self.working_dir.clone()),
             ProcessRunOptions {
-                timeout: SHELL_TIMEOUT,
+                timeout: SHELL_COMMAND_TIMEOUT,
                 cancel,
                 output_limit: SHELL_OUTPUT_LIMIT,
             },

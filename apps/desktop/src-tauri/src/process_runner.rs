@@ -7,6 +7,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Notify};
 
+use crate::consts::{PROCESS_LINE_DRAIN_INTERVAL, PROCESS_SHUTDOWN_GRACE};
+
 #[derive(Debug, Clone)]
 pub(crate) struct ProcessSpec {
     pub program: String,
@@ -230,7 +232,7 @@ async fn notified(cancel: Option<&Arc<Notify>>) {
 }
 
 async fn finish_after_kill(wait_task: tokio::task::JoinHandle<Result<i32, String>>) {
-    let _ = tokio::time::timeout(Duration::from_secs(2), wait_task).await;
+    let _ = tokio::time::timeout(PROCESS_SHUTDOWN_GRACE, wait_task).await;
 }
 
 async fn drain_lines<F>(
@@ -242,7 +244,7 @@ async fn drain_lines<F>(
     F: FnMut(String, bool),
 {
     while let Ok(Some((line, is_stderr))) =
-        tokio::time::timeout(Duration::from_millis(50), line_rx.recv()).await
+        tokio::time::timeout(PROCESS_LINE_DRAIN_INTERVAL, line_rx.recv()).await
     {
         append_line_capped(
             if is_stderr {

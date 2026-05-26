@@ -7,6 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Notify;
 
+use crate::consts::{MCP_DISCOVERY_TIMEOUT, PROCESS_SHUTDOWN_GRACE};
 use crate::process_runner::{
     configure_command_process_group, kill_child_process_group, kill_process_group,
 };
@@ -381,7 +382,7 @@ async fn initialize_stdio_session(session: &mut StdioMcpSession) -> Result<(), S
 async fn close_stdio_session(mut session: StdioMcpSession) {
     let pid = session.child.id();
     kill_child_process_group(&mut session.child).await;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), session.child.wait()).await;
+    let _ = tokio::time::timeout(PROCESS_SHUTDOWN_GRACE, session.child.wait()).await;
     if let Some(pid) = pid {
         if let Err(error) = kill_process_group(pid) {
             crate::app_log!(
@@ -410,7 +411,7 @@ async fn read_response(
     reader: &mut McpStdoutLines,
     expected_id: u64,
 ) -> Result<serde_json::Value, String> {
-    let deadline = std::time::Duration::from_secs(5);
+    let deadline = MCP_DISCOVERY_TIMEOUT;
     loop {
         let line = tokio::time::timeout(deadline, reader.next_line())
             .await

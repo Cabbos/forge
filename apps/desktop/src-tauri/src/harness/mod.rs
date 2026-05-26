@@ -18,6 +18,7 @@ use tauri::AppHandle;
 use tokio::sync::{Notify, RwLock};
 
 use crate::adapters::base::ToolDef;
+use crate::consts::CONFIRM_TIMEOUT;
 use crate::executor::ToolExecutor;
 use crate::harness::capabilities::hooks::BuiltinHookCap;
 use crate::harness::capabilities::mcp::McpServerCap;
@@ -679,7 +680,7 @@ impl Harness {
                         let approved = if let Some(cancel) = cancel.clone() {
                             tokio::select! {
                                 biased;
-                                response = tokio::time::timeout(std::time::Duration::from_secs(120), rx) => {
+                                response = tokio::time::timeout(CONFIRM_TIMEOUT, rx) => {
                                     match response {
                                         Ok(Ok(true)) => {
                                             if let Some(key) = remember_key {
@@ -698,9 +699,7 @@ impl Harness {
                                 }
                             }
                         } else {
-                            match tokio::time::timeout(std::time::Duration::from_secs(120), rx)
-                                .await
-                            {
+                            match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
                                 Ok(Ok(true)) => {
                                     if let Some(key) = remember_key {
                                         self.permission_gate

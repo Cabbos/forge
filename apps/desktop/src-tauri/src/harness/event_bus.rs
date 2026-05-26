@@ -21,8 +21,23 @@ impl EventBus {
     }
 
     fn emit(&self, event: StreamEvent) {
-        if let Some(ref h) = *self.app_handle.lock().unwrap() {
-            crate::transcript::emit_stream_event(h, event);
+        let handle = self.app_handle.lock().unwrap().clone();
+        if let Some(handle) = handle {
+            crate::transcript::emit_stream_event(&handle, event);
+        } else {
+            let event_type = serde_json::to_value(&event)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("event_type")
+                        .and_then(|event_type| event_type.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            crate::app_log!(
+                "WARN",
+                "[event_bus] skipped {event_type} event: app handle is not set"
+            );
         }
     }
 

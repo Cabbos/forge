@@ -9,6 +9,7 @@ use super::base::{
     repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
     ToolDef,
 };
+use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -50,8 +51,8 @@ impl OpenAiCompatibleAdapter {
             max_tokens: 8192,
             external_tools: RwLock::new(Vec::new()),
             client: reqwest::Client::builder()
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(600))
+                .connect_timeout(HTTP_CONNECT_TIMEOUT)
+                .timeout(AGENT_API_TIMEOUT)
                 .build()
                 .map_err(|e| AdapterError::Http(e.to_string()))?,
         })
@@ -158,13 +159,71 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
     async fn call(
         &self,
-        _messages: &[ChatMessage],
-        _cancel: Arc<Notify>,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        // Not used for sub-agents — AnthropicAdapter::call handles it
-        Err(AdapterError::Stream(
-            "OpenAI adapter does not support call()".into(),
-        ))
+        let repaired_messages = repair_tool_result_adjacency(messages);
+        let openai_msgs = convert_messages(&repaired_messages);
+        let tools: Vec<OpenAiTool> = self
+            .tool_definitions_for_request()
+            .into_iter()
+            .map(|td| OpenAiTool {
+                type_: "function".to_string(),
+                function: OpenAiFunctionDef {
+                    name: td.name,
+                    description: td.description,
+                    parameters: td.input_schema,
+                },
+            })
+            .collect();
+
+        let request = OpenAiRequest {
+            model: self.model.clone(),
+            messages: openai_msgs,
+            stream: false,
+            max_tokens: Some(self.max_tokens),
+            tools: if tools.is_empty() { None } else { Some(tools) },
+        };
+
+        let response = tokio::select! {
+            response = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send() => response,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text: String = tokio::select! {
+                text = response.text() => text,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            }
+            .unwrap_or_default();
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = tokio::select! {
+            json = response.json() => json,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Stream(e.to_string()))?;
+
+        if parsed["error"].is_object() {
+            let message = parsed["error"]["message"]
+                .as_str()
+                .unwrap_or("Unknown OpenAI-compatible API error");
+            return Err(AdapterError::Api {
+                code: "api_error".to_string(),
+                message: message.to_string(),
+            });
+        }
+
+        Ok(parse_openai_chat_completion(&parsed))
     }
 
     async fn stream_message(
@@ -459,6 +518,94 @@ impl AiAdapter for OpenAiCompatibleAdapter {
     }
 }
 
+fn parse_openai_chat_completion(parsed: &serde_json::Value) -> StreamResult {
+    let mut assistant_content: Vec<serde_json::Value> = Vec::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    let mut stop_reason: Option<String> = None;
+
+    let Some(choice) = parsed
+        .get("choices")
+        .and_then(|value| value.as_array())
+        .and_then(|choices| choices.first())
+    else {
+        return StreamResult {
+            assistant_content,
+            tool_calls,
+            stop_reason,
+        };
+    };
+
+    stop_reason = choice
+        .get("finish_reason")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let message = choice
+        .get("message")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    if let Some(content) = message.get("content").and_then(|value| value.as_str()) {
+        if !content.is_empty() {
+            assistant_content.push(serde_json::json!({"type": "text", "text": content}));
+        }
+    }
+
+    if let Some(reasoning) = message
+        .get("reasoning_content")
+        .and_then(|value| value.as_str())
+    {
+        if !reasoning.is_empty() {
+            assistant_content
+                .push(serde_json::json!({"type": "reasoning", "reasoning_content": reasoning}));
+        }
+    }
+
+    for tool_call in message
+        .get("tool_calls")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let id = tool_call
+            .get("id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let function = tool_call
+            .get("function")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let name = function
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if id.is_empty() || name.is_empty() {
+            continue;
+        }
+
+        let input = match function.get("arguments") {
+            Some(serde_json::Value::String(arguments)) => serde_json::from_str(arguments)
+                .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
+            Some(value) => value.clone(),
+            None => serde_json::Value::Object(Default::default()),
+        };
+        assistant_content.push(serde_json::json!({
+            "type": "tool_use",
+            "id": id.clone(),
+            "name": name.clone(),
+            "input": input.clone(),
+        }));
+        tool_calls.push(ToolCall { id, name, input });
+    }
+
+    StreamResult {
+        assistant_content,
+        tool_calls,
+        stop_reason,
+    }
+}
+
 fn convert_messages(messages: &[ChatMessage]) -> Vec<OpenAiMessage> {
     let mut result = Vec::new();
     // Use the first ChatMessage as system prompt if it has role "system", otherwise use default
@@ -710,5 +857,74 @@ mod tests {
 
         assert!(names.contains(&"mcp__new__tool".to_string()));
         assert!(!names.contains(&"mcp__old__tool".to_string()));
+    }
+
+    #[test]
+    fn parses_non_streaming_text_and_tool_calls() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": "先检查文件。",
+                    "reasoning_content": "Need file context",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"src/App.tsx\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({"type": "text", "text": "先检查文件。"}),
+                serde_json::json!({"type": "reasoning", "reasoning_content": "Need file context"}),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
+    #[test]
+    fn parses_non_streaming_invalid_tool_arguments_as_empty_object() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{not-json"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].input, serde_json::json!({}));
     }
 }

@@ -30,6 +30,7 @@ use crate::agent::turn_state::{
     AgentVerificationTrace,
 };
 use crate::agent::verification;
+use crate::consts::{AGENT_LOOP_SETTLE_DELAY, AGENT_OVERFLOW_RETRY_DELAY};
 use crate::harness::Harness;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -408,7 +409,7 @@ impl AgentSession {
                                 || msg.contains("timed out"))
                         {
                             retries += 1;
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            tokio::time::sleep(AGENT_OVERFLOW_RETRY_DELAY).await;
                             continue;
                         }
                         let err_msg = format!("API error: {}", msg);
@@ -715,7 +716,7 @@ impl AgentSession {
             });
 
             // Yield briefly so frontend receives & renders events before next API call
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            tokio::time::sleep(AGENT_LOOP_SETTLE_DELAY).await;
         }
 
         let verification_trace = if self.running.load(Ordering::SeqCst) {

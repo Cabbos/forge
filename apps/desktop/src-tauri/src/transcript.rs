@@ -12,10 +12,13 @@ use crate::protocol::events::StreamEvent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TranscriptRecord {
+    #[serde(default = "default_transcript_protocol_version")]
+    protocol_version: u32,
     recorded_at_ms: u64,
     event: serde_json::Value,
 }
 
+const TRANSCRIPT_PROTOCOL_VERSION: u32 = 1;
 const TRANSCRIPT_MAX_BYTES: u64 = 5_000_000;
 const TRANSCRIPT_RETAIN_EVENTS: usize = 2_000;
 const TRANSCRIPT_COMPACT_MARKER: &str = "_forge_transcript_compacted";
@@ -39,7 +42,12 @@ pub fn emit_stream_event(app_handle: &tauri::AppHandle, event: StreamEvent) {
     if let Err(error) = append_stream_event(&event) {
         crate::app_log!("WARN", "[transcript] {}", error);
     }
-    let _ = app_handle.emit("session-output", event);
+    if let Err(error) = app_handle.emit("session-output", event) {
+        crate::app_log!(
+            "WARN",
+            "[event_bus] failed to emit session-output event: {error}"
+        );
+    }
 }
 
 pub fn load_transcript_events(session_id: &str) -> Result<Vec<serde_json::Value>, String> {
@@ -78,6 +86,7 @@ fn append_transcript_event_at_with_limits(
 
     with_transcript_path_lock(&path, || {
         let record = TranscriptRecord {
+            protocol_version: TRANSCRIPT_PROTOCOL_VERSION,
             recorded_at_ms: now_ms(),
             event,
         };
@@ -176,6 +185,7 @@ fn compact_transcript_if_needed(
     retained.reverse();
     let omitted = total_renderable.saturating_sub(retained.len());
     let mut compacted = vec![TranscriptRecord {
+        protocol_version: TRANSCRIPT_PROTOCOL_VERSION,
         recorded_at_ms: now_ms(),
         event: serde_json::json!({
             "event_type": TRANSCRIPT_COMPACT_MARKER,
@@ -205,6 +215,10 @@ fn rewrite_transcript_records(path: &Path, records: &[TranscriptRecord]) -> Resu
 
 fn is_compact_marker(event: &serde_json::Value) -> bool {
     event.get("event_type").and_then(|value| value.as_str()) == Some(TRANSCRIPT_COMPACT_MARKER)
+}
+
+fn default_transcript_protocol_version() -> u32 {
+    TRANSCRIPT_PROTOCOL_VERSION
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,6 +479,57 @@ mod tests {
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
 
         assert_eq!(loaded, vec![event_one, event_two]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_records_include_protocol_version_and_load_legacy_records() {
+        let root = test_root("protocol-version");
+        let event_one = json!({
+            "event_type": "text_chunk",
+            "session_id": "session-1",
+            "block_id": "text-1",
+            "content": "new"
+        });
+        append_transcript_event_at(&root, event_one.clone()).expect("append versioned event");
+        let path = transcript_path(&root, "session-1").expect("transcript path");
+        let first_line = fs::read_to_string(&path)
+            .expect("read transcript")
+            .lines()
+            .next()
+            .expect("first transcript line")
+            .to_string();
+        let record = serde_json::from_str::<serde_json::Value>(&first_line)
+            .expect("parse transcript record");
+        assert_eq!(record.get("protocol_version"), Some(&json!(1)));
+
+        let legacy_event = json!({
+            "event_type": "text_chunk",
+            "session_id": "session-1",
+            "block_id": "text-legacy",
+            "content": "legacy"
+        });
+        let legacy_line = serde_json::to_string(&json!({
+            "recorded_at_ms": 1,
+            "event": legacy_event
+        }))
+        .expect("encode legacy record");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open transcript")
+            .write_all(format!("{legacy_line}\n").as_bytes())
+            .expect("write legacy line");
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+
+        assert_eq!(
+            loaded
+                .iter()
+                .filter_map(|event| event.get("content").and_then(|value| value.as_str()))
+                .collect::<Vec<_>>(),
+            vec!["new", "legacy"]
+        );
         let _ = fs::remove_dir_all(root);
     }
 
