@@ -678,6 +678,7 @@ impl Harness {
                         let mut cancelled = false;
                         let approved = if let Some(cancel) = cancel.clone() {
                             tokio::select! {
+                                biased;
                                 response = tokio::time::timeout(std::time::Duration::from_secs(120), rx) => {
                                     match response {
                                         Ok(Ok(true)) => {

@@ -145,13 +145,15 @@ impl AgentSession {
     }
 
     pub fn snapshot(&self) -> AgentSessionSnapshot {
+        let messages = lock_unpoisoned(&self.messages).clone();
+        let summary = lock_unpoisoned(&self.summary).clone();
         let snapshot = AgentSessionSnapshot::new(
             self.id.clone(),
             self.agent_type.clone(),
             self.model_id.clone(),
             self.harness.working_dir.to_string_lossy().to_string(),
-            lock_unpoisoned(&self.messages).clone(),
-            lock_unpoisoned(&self.summary).clone(),
+            messages,
+            summary,
             self.context_window_tokens,
         );
         if let Some(latest_turn) = lock_unpoisoned(&self.latest_turn).clone() {
@@ -311,16 +313,16 @@ impl AgentSession {
 
             let all_messages = lock_unpoisoned(&self.messages).clone();
             let existing_summary = lock_unpoisoned(&self.summary).clone();
-            let compacted = if self
-                .auto_compact_guard
-                .lock()
-                .unwrap()
-                .should_skip_proactive_compaction()
-            {
-                self.auto_compact_guard
-                    .lock()
-                    .unwrap()
-                    .record_proactive_skip();
+            let skip_proactive_compaction = {
+                let mut guard = lock_unpoisoned(&self.auto_compact_guard);
+                if guard.should_skip_proactive_compaction() {
+                    guard.record_proactive_skip();
+                    true
+                } else {
+                    false
+                }
+            };
+            let compacted = if skip_proactive_compaction {
                 CompactResult::unchanged(all_messages, existing_summary)
             } else {
                 compact_messages_if_needed(
@@ -329,10 +331,7 @@ impl AgentSession {
                     self.context_window_tokens,
                 )
             };
-            self.auto_compact_guard
-                .lock()
-                .unwrap()
-                .record_result(&compacted);
+            lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
 
             if let Some(stats) = compacted.stats.as_ref() {
                 self.apply_compaction(&compacted, stats, "auto_compact", app_handle);
@@ -377,10 +376,7 @@ impl AgentSession {
                             let existing_summary = lock_unpoisoned(&self.summary).clone();
                             let compacted =
                                 compact_messages_for_overflow_retry(all_messages, existing_summary);
-                            self.auto_compact_guard
-                                .lock()
-                                .unwrap()
-                                .record_result(&compacted);
+                            lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
 
                             if let Some(stats) = compacted.stats.as_ref() {
                                 overflow_retry_used = true;
@@ -516,10 +512,7 @@ impl AgentSession {
                     let adapter = self.adapter.clone();
                     let harness = self.harness.clone();
                     let app = app_handle.clone();
-                    let cancel = self
-                        .cancel
-                        .lock()
-                        .unwrap()
+                    let cancel = lock_unpoisoned(&self.cancel)
                         .clone()
                         .unwrap_or_else(|| Arc::new(Notify::new()));
                     let idx = result
@@ -770,10 +763,7 @@ impl AgentSession {
         }
 
         crate::app_log!("INFO", "Agent loop complete");
-        let current_turn_status = self
-            .latest_turn
-            .lock()
-            .unwrap()
+        let current_turn_status = lock_unpoisoned(&self.latest_turn)
             .as_ref()
             .map(|turn| turn.status.clone())
             .unwrap_or(AgentTurnStatus::Started);
@@ -1069,10 +1059,7 @@ impl AgentSession {
     }
 
     pub fn emit_latest_turn_projection(&self, app_handle: &tauri::AppHandle) {
-        let projection = self
-            .latest_turn
-            .lock()
-            .unwrap()
+        let projection = lock_unpoisoned(&self.latest_turn)
             .as_ref()
             .map(AgentTurnState::to_projection);
 

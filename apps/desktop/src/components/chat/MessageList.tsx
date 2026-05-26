@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { WheelEvent } from "react";
 import { ArrowDown } from "lucide-react";
 import type { BlockState } from "@/lib/protocol";
@@ -15,6 +15,7 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const scrollRafRef = useRef<number | null>(null);
+  const autoScrollRafRef = useRef<number | null>(null);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
   const lastBlock = blocks[blocks.length - 1];
   const messageItems = groupProcessBlocks(blocks);
@@ -33,18 +34,33 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
     setScrolledUpIfChanged(!isAtBottom);
   }, [setScrolledUpIfChanged]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!stickToBottomRef.current) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-    setScrolledUpIfChanged(false);
+    if (autoScrollRafRef.current !== null) {
+      cancelAnimationFrame(autoScrollRafRef.current);
+    }
+    autoScrollRafRef.current = requestAnimationFrame(() => {
+      autoScrollRafRef.current = null;
+      const el = scrollRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+      setScrolledUpIfChanged(false);
+    });
+    return () => {
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
+    };
   }, [blocks.length, lastBlock?.content, lastBlock?.isComplete, setScrolledUpIfChanged]);
 
   useEffect(() => {
     return () => {
       if (scrollRafRef.current !== null) {
         cancelAnimationFrame(scrollRafRef.current);
+      }
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
       }
     };
   }, []);

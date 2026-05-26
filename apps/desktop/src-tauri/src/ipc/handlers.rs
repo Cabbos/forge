@@ -1726,7 +1726,10 @@ pub async fn list_sessions(
     let workflow_states = state.workflow_states.read().await;
     let delivery_states = state.delivery_states.read().await;
     for (id, session) in sessions.iter() {
-        let status = session.status.lock().unwrap();
+        let status = session
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let snapshot = session.snapshot();
         by_id.insert(
             id.clone(),
