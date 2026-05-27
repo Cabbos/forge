@@ -290,7 +290,7 @@
     flex-shrink: 0;
     border: 1px solid var(--forge-border-subtle);
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(255, 252, 246, 0.42);
     transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   }
 
