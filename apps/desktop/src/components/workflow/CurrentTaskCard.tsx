@@ -42,7 +42,7 @@ export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }
         </div>
 
         {gateCopy && (
-          <div className="mt-2 rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-200/90">
+          <div className="mt-2 rounded border border-[rgba(184,138,86,0.22)] bg-[rgba(184,138,86,0.06)] px-2 py-1.5 text-[11px] text-[var(--forge-warning-strong)]">
             {gateCopy}
           </div>
         )}
