@@ -328,4 +328,27 @@
     background-size: 20% 100%;
     pointer-events: none;
   }
+
+  /* §3c ErrorNote — crumpled paper with red corner */
+  .error-note {
+    position: relative;
+    max-width: min(640px, 100%);
+    background: var(--forge-object-paper);
+    border: 1px solid rgba(184, 92, 75, 0.24);
+    border-radius: 6px;
+    padding: 12px 18px;
+    box-shadow: 0 2px 8px rgba(184, 92, 75, 0.08);
+  }
+
+  .error-note::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(225deg, rgba(184, 92, 75, 0.12) 50%, transparent 50%);
+    border-radius: 0 6px 0 0;
+    pointer-events: none;
+  }
 }
