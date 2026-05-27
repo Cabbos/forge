@@ -351,4 +351,120 @@
     border-radius: 0 6px 0 0;
     pointer-events: none;
   }
+
+  /* §4a ToolMachine — metal plate with LED + meter */
+  .tool-machine {
+    position: relative;
+    margin: 6px 0;
+  }
+
+  .tool-machine-plate {
+    background: var(--forge-object-metal);
+    border: 1px solid var(--forge-object-metal-border);
+    border-radius: 6px 6px 0 0;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.68) inset;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+  }
+
+  .tool-machine-plate:hover {
+    background: rgba(232, 221, 207, 0.95);
+  }
+
+  .tool-machine-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tool-machine-led[data-status="running"] {
+    background: var(--forge-led-running);
+    box-shadow: var(--forge-led-glow-running);
+    animation: led-pulse 1.2s ease-in-out infinite;
+  }
+
+  .tool-machine-led[data-status="done"] {
+    background: var(--forge-led-done);
+    box-shadow: var(--forge-led-glow-done);
+  }
+
+  .tool-machine-led[data-status="error"] {
+    background: var(--forge-led-error);
+    box-shadow: var(--forge-led-glow-error);
+  }
+
+  .tool-machine-led[data-status="idle"] {
+    background: var(--forge-led-idle);
+  }
+
+  .tool-machine-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--forge-text-primary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool-machine-status {
+    margin-left: auto;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .tool-machine-status[data-status="done"] {
+    background: rgba(93, 128, 90, 0.1);
+    color: var(--forge-led-done);
+  }
+
+  .tool-machine-status[data-status="error"] {
+    background: rgba(184, 92, 75, 0.1);
+    color: var(--forge-led-error);
+  }
+
+  .tool-machine-status[data-status="running"] {
+    background: rgba(196, 138, 58, 0.1);
+    color: var(--forge-led-running);
+  }
+
+  .tool-machine-meter {
+    display: flex;
+    gap: 2px;
+    padding: 4px 12px 6px;
+    background: rgba(232, 221, 207, 0.4);
+    border: 1px solid var(--forge-object-metal-border);
+    border-top: 0;
+    border-radius: 0 0 6px 6px;
+  }
+
+  .tool-machine-segment {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--forge-meter-empty);
+  }
+
+  .tool-machine-segment[data-filled="true"] {
+    background: var(--forge-meter-filled);
+  }
+
+  @keyframes led-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tool-machine-led[data-status="running"] {
+      animation: none;
+    }
+  }
 }
