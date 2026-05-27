@@ -262,7 +262,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                     setWorkspacePathError(null);
                   }}
                   placeholder="/Users/you/project/app"
-                  className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/55 focus:border-primary"
+                  className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-primary"
                 />
                 {workspacePathError && (
                   <p className="mt-1 text-[10px] leading-snug text-destructive">{workspacePathError}</p>

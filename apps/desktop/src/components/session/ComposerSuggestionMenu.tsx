@@ -55,7 +55,7 @@ export function ComposerSuggestionMenu({
       {mode === "@" && (
         <>
           <div className="forge-menu-heading">引用文件</div>
-          {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/65">输入文件名搜索</div>}
+          {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/80">输入文件名搜索</div>}
           {atResults.map((file, index) => {
             const meta = fileReferenceIconMeta(file);
             return (

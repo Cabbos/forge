@@ -537,7 +537,7 @@ function ContextPromptRow({
                   [argument.name]: event.target.value,
                 }))}
                 placeholder={argument.description || argument.name}
-                className="h-7 w-full rounded-md border border-border bg-muted/20 px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/45"
+                className="h-7 w-full rounded-md border border-border bg-muted/20 px-2 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/65 focus:border-primary/45"
               />
             </label>
           ))}
