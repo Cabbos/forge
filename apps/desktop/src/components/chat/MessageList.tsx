@@ -119,7 +119,7 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
   if (blocks.length === 0) {
     return (
       <div data-testid="conversation-scroll" className="forge-conversation-scroll flex-1 min-h-0 overflow-y-auto">
-        <div data-testid="message-lane" ref={laneRef} className="forge-conversation-lane">
+        <div data-testid="message-lane" data-surface="conversation" ref={laneRef} className="forge-conversation-lane forge-operating-lane">
           <StartReadinessCard sessionId={sessionId} />
         </div>
       </div>
@@ -139,7 +139,7 @@ export function MessageList({ blocks, sessionId }: MessageListProps) {
           overflowAnchor: userScrolledUp ? "auto" : "none",
         }}
       >
-        <div data-testid="message-lane" ref={laneRef} className="forge-conversation-lane forge-message-lane flex flex-col">
+        <div data-testid="message-lane" data-surface="conversation" ref={laneRef} className="forge-conversation-lane forge-operating-lane forge-message-lane flex flex-col">
           {conversationTurns.map((turn) => (
             <section
               key={turn.key}

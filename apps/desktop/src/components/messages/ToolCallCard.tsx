@@ -1,18 +1,9 @@
 import { useState, useEffect } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, CheckCircle2, Copy, Loader2, Wrench, XCircle } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
 import { deriveToolCallView } from "./processToolPresentation";
-
-function meterSegments(status: string): number {
-  switch (status) {
-    case "running": return 3;
-    case "done": return 5;
-    case "error": return 2;
-    default: return 0;
-  }
-}
 
 export function ToolCallCard({ block }: { block: BlockState }) {
   const toolView = deriveToolCallView(block);
@@ -29,7 +20,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
     window.setTimeout(() => setCopied(false), 1200);
   };
 
-  const segments = meterSegments(toolView.status);
+  const statusLabel = toolView.status === "running" ? "运行中" : toolView.status === "error" ? "失败" : "完成";
+  const StatusIcon = toolView.status === "running" ? Loader2 : toolView.status === "error" ? XCircle : CheckCircle2;
 
   return (
     <div className="tool-machine">
@@ -37,28 +29,29 @@ export function ToolCallCard({ block }: { block: BlockState }) {
         <CollapsibleTrigger
           data-testid="tool-card-trigger"
           data-state={toolView.status}
-          className="tool-machine-plate"
+          className="forge-log-line forge-evidence-row tool-machine-plate"
           data-tone={toolView.isError ? "error" : "default"}
         >
-          <div className="tool-machine-led" data-status={toolView.status} />
-          <span className="tool-machine-name">
-            {toolView.actionText}
-            {toolView.inputSummary ? `: ${toolView.inputSummary}` : ""}
-          </span>
+          <Wrench className="forge-log-line-icon size-3" data-status={toolView.status} />
+          <span className="forge-log-line-command tool-machine-name">{toolView.actionText}</span>
+          {toolView.inputSummary && (
+            <span className="forge-log-line-input tool-machine-input">{toolView.inputSummary}</span>
+          )}
           {toolView.durationLabel && (
-            <span style={{ fontSize: 10, color: "var(--forge-text-faint)", flexShrink: 0 }}>
+            <span className="forge-log-line-meta tool-machine-duration">
               {toolView.durationLabel}
             </span>
           )}
-          <span className="tool-machine-status" data-status={toolView.status}>
-            {toolView.status === "running" ? "running" : toolView.status === "error" ? "error" : "done"}
+          <span
+            className="forge-log-status forge-log-line-status tool-machine-status"
+            data-tone={toolView.status === "error" ? "error" : toolView.status === "running" ? "running" : "success"}
+            data-status={toolView.status}
+            title={statusLabel}
+            aria-label={statusLabel}
+          >
+            <StatusIcon className={`size-3 ${toolView.status === "running" ? "animate-spin" : ""}`} />
           </span>
         </CollapsibleTrigger>
-        <div className="tool-machine-meter">
-          {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="tool-machine-segment" data-filled={i < segments ? "true" : "false"} />
-          ))}
-        </div>
         <CollapsibleContent>
           {toolView.toolName === "delegate_task" ? (
             <SubAgentTrace content={block.content} />

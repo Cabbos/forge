@@ -5,7 +5,7 @@ import { ForgeIcon } from "@/components/ui/ForgeIcon";
 
 export function DeliverySummaryItemView({ item }: { item: DeliverySummaryItem }) {
   return (
-    <div data-testid="delivery-summary-item" className="forge-delivery-item">
+    <div data-testid="delivery-summary-item" className="forge-delivery-item" data-delivery-kind={item.kind}>
       <div className="forge-delivery-item-icon">{itemIcon(item)}</div>
       <div className="min-w-0">
         <div className="forge-delivery-label">{item.label}</div>

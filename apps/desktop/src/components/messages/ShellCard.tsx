@@ -38,7 +38,6 @@ export function ShellCard({ block }: { block: BlockState }) {
     <div ref={rootRef} className="shell-reel">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <div className="shell-reel-header">
-          <div className="shell-reel-cap" />
           <div className="shell-reel-body">
             <ShellCardHeader
               command={shellView.command}
@@ -50,7 +49,6 @@ export function ShellCard({ block }: { block: BlockState }) {
               tone={shellView.tone}
             />
           </div>
-          <div className="shell-reel-cap" />
         </div>
         <CollapsibleContent data-forge-motion="shell-detail">
           <ShellCardDetail

@@ -22,7 +22,7 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
           <ForgeIcon icon={Archive} tone="context" contained={false} className="size-3.5" />
           <span className="shrink-0 font-medium">上下文已自动整理</span>
-          <span className="min-w-0 truncate" style={{ color: "var(--muted-foreground)" }}>
+          <span className="compact-spool-meta min-w-0 truncate">
             {compacted} 条历史 · 保留 {retained} 条 · {formatTokens(before)} {"->"} {formatTokens(after)}
           </span>
         </CollapsibleTrigger>

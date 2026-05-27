@@ -4,20 +4,13 @@ import type { BlockState } from "@/lib/protocol";
 import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import { FilePreviewSheet } from "@/components/messages/FilePreviewSheet";
 import type { FileRef } from "@/components/messages/filePreviewTypes";
+import { MessagePanel } from "@/components/messages/MessagePanel";
 import { useStore } from "@/store";
 import { deriveDiffView } from "@/components/messages/diffPresentation";
 import { DiffBody } from "@/components/messages/DiffBody";
 import { DiffHeaderActions } from "@/components/messages/DiffHeaderActions";
 import { cn } from "@/lib/utils";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
-
-function PerfRow() {
-  return (
-    <div className="diff-filmstrip-perf">
-      {Array.from({ length: 8 }, (_, i) => <span key={i} />)}
-    </div>
-  );
-}
 
 export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: string }) {
   const selectWorkingDir = useCallback(
@@ -62,56 +55,56 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
 
   return (
     <div ref={rootRef} data-testid="diff-card" className="diff-filmstrip">
-      <PerfRow />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px" }}>
-        <ForgeIcon icon={FileDiff} tone="context" contained={false} className="size-3.5" />
-        <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(247, 241, 232, 0.9)" }}>文件改动</span>
-        <span data-testid="diff-file-path" className="truncate font-mono" style={{ fontSize: 11, color: "rgba(247, 241, 232, 0.5)" }}>
-          {filePath || "未命名文件"}
-        </span>
-        <span data-testid="diff-stat" className="shrink-0 font-mono" style={{ fontSize: 11 }}>
-          <span className="forge-diff-stat-add">+{view.additions}</span>
-          <span className="mx-1" style={{ color: "rgba(247, 241, 232, 0.3)" }}>/</span>
-          <span className="forge-diff-stat-remove">-{view.deletions}</span>
-        </span>
-        <div style={{ marginLeft: "auto" }}>
-          <DiffHeaderActions
-            diff={diff}
-            filePath={filePath}
-            firstChangedLine={view.firstChangedLine}
-            sessionId={sessionId}
-            workingDir={workingDir}
-            onPreviewFile={setPreviewFileRef}
-          />
+      <MessagePanel className="forge-diff-card" data-diff-open={bodyOpen ? "true" : "false"}>
+        <div className="diff-filmstrip-header">
+          <ForgeIcon icon={FileDiff} tone="context" contained={false} className="size-3.5" />
+          <span className="diff-filmstrip-title">文件改动</span>
+          <span data-testid="diff-file-path" className="diff-filmstrip-file truncate font-mono">
+            {filePath || "未命名文件"}
+          </span>
+          <span data-testid="diff-stat" className="diff-filmstrip-stat shrink-0 font-mono">
+            <span className="forge-diff-stat-add">+{view.additions}</span>
+            <span className="diff-filmstrip-separator">/</span>
+            <span className="forge-diff-stat-remove">-{view.deletions}</span>
+          </span>
+          <div className="diff-filmstrip-actions">
+            <DiffHeaderActions
+              diff={diff}
+              filePath={filePath}
+              firstChangedLine={view.firstChangedLine}
+              sessionId={sessionId}
+              workingDir={workingDir}
+              onPreviewFile={setPreviewFileRef}
+            />
+          </div>
         </div>
-      </div>
-      <div data-testid="diff-summary" className="forge-diff-summary">
-        <span>{view.hunkCount} 个变更块</span>
-        {view.firstChangedLine ? <span>首处第 {view.firstChangedLine} 行</span> : null}
-        <span>{view.lines.length} 行</span>
-        <button
-          type="button"
-          data-testid="diff-body-toggle"
-          aria-expanded={bodyOpen}
-          onClick={toggleBody}
-          className="forge-diff-toggle"
-        >
-          <ChevronRight className={cn("size-3 transition-transform", bodyOpen && "rotate-90")} />
-          {bodyOpen ? "隐藏改动" : "查看改动"}
-        </button>
-      </div>
-      {bodyOpen && (
-        <div data-forge-motion="diff-body">
-          <DiffBody
-            visibleLines={view.visibleLines}
-            isLongDiff={view.isLongDiff}
-            expanded={expanded}
-            hiddenLineCount={view.hiddenLineCount}
-            onToggleExpanded={() => setExpanded((current) => !current)}
-          />
+        <div data-testid="diff-summary" className="forge-diff-summary">
+          <span>{view.hunkCount} 个变更块</span>
+          {view.firstChangedLine ? <span>首处第 {view.firstChangedLine} 行</span> : null}
+          <span>{view.lines.length} 行</span>
+          <button
+            type="button"
+            data-testid="diff-body-toggle"
+            aria-expanded={bodyOpen}
+            onClick={toggleBody}
+            className="forge-diff-toggle"
+          >
+            <ChevronRight className={cn("size-3 transition-transform", bodyOpen && "rotate-90")} />
+            {bodyOpen ? "隐藏改动" : "查看改动"}
+          </button>
         </div>
-      )}
-      <PerfRow />
+        {bodyOpen && (
+          <div data-forge-motion="diff-body">
+            <DiffBody
+              visibleLines={view.visibleLines}
+              isLongDiff={view.isLongDiff}
+              expanded={expanded}
+              hiddenLineCount={view.hiddenLineCount}
+              onToggleExpanded={() => setExpanded((current) => !current)}
+            />
+          </div>
+        )}
+      </MessagePanel>
       <FilePreviewSheet fileRef={previewFileRef} sessionId={sessionId} onClose={() => setPreviewFileRef(null)} />
     </div>
   );

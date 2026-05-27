@@ -42,7 +42,6 @@ export function lineTone(line: FilePreviewLine): {
 } {
   return {
     row: {
-      borderLeftColor: line.is_target ? "var(--forge-accent)" : "transparent",
       background: line.is_target ? "rgba(var(--forge-accent-rgb), 0.12)" : "transparent",
     },
     number: {

@@ -14,7 +14,7 @@ export function FirstLoopCard({ draft }: { draft: FirstLoopDraft | null }) {
       <div className="forge-surface px-3 py-3">
         {!draft ? (
           <div className="space-y-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2 text-foreground/85">
+            <div className="flex items-center gap-2 text-foreground">
               <Target className="size-3.5 text-primary" />
               描述一个小工具后，这里会收拢目标、第一版范围和下一步。
             </div>
@@ -62,8 +62,8 @@ function FirstLoopRow({
 }) {
   return (
     <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-2 text-[11px] leading-relaxed">
-      <span className="text-muted-foreground/60">{label}</span>
-      <span className="flex min-w-0 items-start gap-1.5 break-words text-foreground/85">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="flex min-w-0 items-start gap-1.5 break-words text-foreground">
         {icon && <span className="mt-0.5 shrink-0 text-primary">{icon}</span>}
         {value}
       </span>

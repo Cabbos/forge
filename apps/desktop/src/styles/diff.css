@@ -5,11 +5,11 @@
   }
 
   .forge-diff-card {
-    max-width: 760px;
+    max-width: 720px;
   }
 
   .forge-diff-card[data-diff-open="false"] {
-    background: rgba(255, 255, 255, 0.006) !important;
+    background: transparent !important;
   }
 
   .forge-diff-stat-add {
@@ -46,7 +46,7 @@
 
   .forge-diff-card[data-diff-open="true"] .forge-diff-summary {
     border-bottom: 1px solid var(--forge-border-subtle);
-    background: rgba(255, 255, 255, 0.008);
+    background: rgba(232, 221, 207, 0.32);
   }
 
   .forge-diff-summary span {
@@ -133,7 +133,7 @@
 
   .forge-diff-footer {
     border-top: 1px solid var(--forge-border-subtle);
-    background: rgba(255, 255, 255, 0.008);
+    background: rgba(232, 221, 207, 0.32);
     padding: 0.375rem 0.5rem;
   }
 

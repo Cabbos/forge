@@ -498,8 +498,8 @@ function ForgeWikiProposalRow({
             {proposal.summary}
           </div>
           {proposal.patch_preview ? (
-            <div className="mt-2 border-l border-border pl-2">
-              <div className="text-[10px] font-medium leading-none text-muted-foreground/65">
+            <div className="mt-2 rounded-md border border-border bg-background/50 px-2 py-2">
+              <div className="text-[10px] font-medium leading-none text-muted-foreground">
                 写入预览
               </div>
               <div className="mt-1 max-h-20 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-muted-foreground">
@@ -633,7 +633,7 @@ function RecordMetaGrid({ rows }: { rows: Array<[string, string]> }) {
     <dl className="mt-2 space-y-1 text-[10px] leading-relaxed text-muted-foreground/75">
       {rows.map(([label, value]) => (
         <div key={label} className="grid grid-cols-[64px_minmax(0,1fr)] gap-2">
-          <dt className="text-muted-foreground/55">{label}</dt>
+          <dt className="text-muted-foreground">{label}</dt>
           <dd className="min-w-0 break-words">{value}</dd>
         </div>
       ))}

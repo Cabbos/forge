@@ -4,7 +4,6 @@ import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 import { HubPanelHost } from "./HubPanelHost";
-import { Inspector } from "./Inspector";
 import { useOutputStream } from "@/hooks/useOutputStream";
 import { useSession } from "@/hooks/useSession";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
@@ -403,7 +402,6 @@ export function AppShell() {
           </div>
         )}
       </main>
-      <Inspector sessionId={visibleSessionId} />
       {activeSidebarPanel !== null && (
         <Suspense fallback={null}>
           <LazyCapabilityDrawer

@@ -17,17 +17,6 @@
     position: relative;
   }
 
-  .forge-operating-lane::before {
-    content: "";
-    position: absolute;
-    left: -1.125rem;
-    top: 0.375rem;
-    bottom: 0.375rem;
-    width: 1px;
-    background: linear-gradient(180deg, transparent, rgba(36, 42, 36, 0.16) 14%, rgba(36, 42, 36, 0.08) 86%, transparent);
-    pointer-events: none;
-  }
-
   .forge-message-lane {
     row-gap: var(--forge-message-gap);
   }
@@ -44,8 +33,8 @@
   }
 
   .forge-conversation-turn[data-turn-shape="with-evidence"] {
-    border-left: 1px solid rgba(36, 42, 36, 0.14);
-    padding-left: 12px;
+    border-left: 0;
+    padding-left: 0;
   }
 
   .forge-conversation-turn + .forge-conversation-turn {
@@ -153,7 +142,7 @@
     opacity: 0;
     pointer-events: none;
     transform: translateY(-2px) scale(0.96);
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18), 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+    box-shadow: 0 8px 22px rgba(36, 42, 36, 0.1), 0 1px 0 rgba(255, 252, 246, 0.58) inset;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     transition: opacity 120ms ease, transform 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
@@ -218,7 +207,7 @@
     }
   }
 
-  /* §2 UserCommandNote — sticky note */
+  /* §2 UserCommandNote — quiet user note */
   .user-command-note {
     position: relative;
     max-width: 80%;
@@ -226,34 +215,8 @@
     border: 1px solid var(--forge-object-paper-border);
     border-radius: 6px;
     padding: 10px 14px;
-    box-shadow: 0 2px 8px rgba(36, 42, 36, 0.06);
-    transform: rotate(-0.8deg);
-  }
-
-  .user-command-note::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    right: 0;
-    width: 18px;
-    height: 18px;
-    background: linear-gradient(135deg, transparent 50%, rgba(36, 42, 36, 0.06) 50%);
-    border-radius: 0 0 6px 0;
-    pointer-events: none;
-  }
-
-  .user-command-note::before {
-    content: "";
-    position: absolute;
-    top: -4px;
-    left: 12px;
-    width: 48px;
-    height: 12px;
-    background: rgba(196, 138, 58, 0.12);
-    border: 1px solid rgba(196, 138, 58, 0.18);
-    border-radius: 2px;
-    transform: rotate(-3deg);
-    pointer-events: none;
+    box-shadow: none;
+    transform: none;
   }
 
   @media (min-width: 640px) {
@@ -262,13 +225,7 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .user-command-note {
-      transform: none;
-    }
-  }
-
-  /* §3a AssistantPaper — legal notepad */
+  /* §3a AssistantPaper — quiet prose with an author mark */
   .assistant-paper {
     position: relative;
     max-width: min(760px, 100%);
@@ -285,54 +242,48 @@
     overflow-wrap: anywhere;
   }
 
-  .assistant-paper::before {
-    content: "";
-    position: absolute;
-    left: 20px;
-    top: 8px;
-    bottom: 8px;
-    width: 1px;
-    background: rgba(184, 92, 75, 0.18);
-    pointer-events: none;
-  }
-
-  /* §3b CompactSpool — thermal receipt tape */
+  /* §3b CompactSpool — quiet context status */
   .compact-spool {
     position: relative;
-    max-width: 260px;
-    background: var(--forge-object-receipt);
-    border-radius: 3px 3px 0 0;
-    padding: 8px 12px;
-    font-family: "Geist Mono", monospace;
+    max-width: min(520px, 100%);
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    font-family: inherit;
     font-size: 11px;
     line-height: 1.5;
-    color: var(--forge-code-text);
-    border: 1px solid rgba(36, 42, 36, 0.4);
+    color: var(--forge-text-muted);
   }
 
-  .compact-spool::after {
-    content: "";
-    position: absolute;
-    bottom: -4px;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: linear-gradient(90deg,
-      transparent 0%, var(--forge-object-receipt) 2%,
-      transparent 4%, var(--forge-object-receipt) 6%,
-      transparent 8%, var(--forge-object-receipt) 10%,
-      transparent 12%, var(--forge-object-receipt) 14%,
-      transparent 16%, var(--forge-object-receipt) 18%,
-      transparent 20%
-    );
-    background-size: 20% 100%;
-    pointer-events: none;
+  .compact-spool .forge-context-compact-trigger {
+    width: 100%;
+    border: 1px solid var(--forge-border-subtle);
+    background: rgba(255, 252, 246, 0.72);
+    padding: 0 0.625rem;
+    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.62) inset;
+    color: var(--forge-text-muted);
   }
 
-  /* §3c ErrorNote — crumpled paper with red corner */
-  .error-note {
+  .compact-spool .forge-context-compact-trigger:hover {
+    border-color: var(--forge-material-border-hover);
+    background: var(--forge-hover);
+    color: var(--forge-text-primary);
+  }
+
+  .compact-spool .forge-log-detail {
+    margin-top: 0.375rem;
+  }
+
+  .compact-spool-meta {
+    color: var(--forge-text-muted);
+  }
+
+  /* §3c ErrorNote — quiet failure notice */
+  .forge-message-panel.error-note {
     position: relative;
-    max-width: min(640px, 100%);
+    max-width: min(620px, 100%);
     background: var(--forge-object-paper);
     border: 1px solid rgba(184, 92, 75, 0.24);
     border-radius: 6px;
@@ -340,338 +291,178 @@
     box-shadow: 0 2px 8px rgba(184, 92, 75, 0.08);
   }
 
-  .error-note::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 24px;
-    height: 24px;
-    background: linear-gradient(225deg, rgba(184, 92, 75, 0.12) 50%, transparent 50%);
-    border-radius: 0 6px 0 0;
-    pointer-events: none;
-  }
-
-  /* §4a ToolMachine — metal plate with LED + meter */
+  /* §4a ToolMachine — quiet tool record */
   .tool-machine {
     position: relative;
-    margin: 6px 0;
+    max-width: 720px;
+    margin: 0;
   }
 
   .tool-machine-plate {
-    background: var(--forge-object-metal);
-    border: 1px solid var(--forge-object-metal-border);
-    border-radius: 6px 6px 0 0;
-    padding: 8px 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.68) inset;
-    cursor: pointer;
     width: 100%;
     text-align: left;
+    border-color: var(--forge-border-subtle);
+    background: rgba(255, 252, 246, 0.78);
+    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.62) inset;
+    cursor: pointer;
   }
 
   .tool-machine-plate:hover {
-    background: rgba(232, 221, 207, 0.95);
-  }
-
-  .tool-machine-led {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .tool-machine-led[data-status="running"] {
-    background: var(--forge-led-running);
-    box-shadow: var(--forge-led-glow-running);
-    animation: led-pulse 1.2s ease-in-out infinite;
-  }
-
-  .tool-machine-led[data-status="done"] {
-    background: var(--forge-led-done);
-    box-shadow: var(--forge-led-glow-done);
-  }
-
-  .tool-machine-led[data-status="error"] {
-    background: var(--forge-led-error);
-    box-shadow: var(--forge-led-glow-error);
-  }
-
-  .tool-machine-led[data-status="idle"] {
-    background: var(--forge-led-idle);
+    border-color: var(--forge-material-border-hover);
+    background: var(--forge-hover);
   }
 
   .tool-machine-name {
-    font-size: 12px;
-    font-weight: 600;
+    flex: 0 0 auto;
     color: var(--forge-text-primary);
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
   }
 
-  .tool-machine-status {
+  .tool-machine-input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .tool-machine-duration {
     margin-left: auto;
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 4px;
     flex-shrink: 0;
   }
 
-  .tool-machine-status[data-status="done"] {
-    background: rgba(93, 128, 90, 0.1);
-    color: var(--forge-led-done);
-  }
-
-  .tool-machine-status[data-status="error"] {
-    background: rgba(184, 92, 75, 0.1);
-    color: var(--forge-led-error);
-  }
-
-  .tool-machine-status[data-status="running"] {
-    background: rgba(196, 138, 58, 0.1);
-    color: var(--forge-led-running);
-  }
-
-  .tool-machine-meter {
-    display: flex;
-    gap: 2px;
-    padding: 4px 12px 6px;
-    background: rgba(232, 221, 207, 0.4);
-    border: 1px solid var(--forge-object-metal-border);
-    border-top: 0;
-    border-radius: 0 0 6px 6px;
-  }
-
-  .tool-machine-segment {
-    flex: 1;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--forge-meter-empty);
-  }
-
-  .tool-machine-segment[data-filled="true"] {
-    background: var(--forge-meter-filled);
-  }
-
-  @keyframes led-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+  .tool-machine-status {
+    margin-left: 0;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .tool-machine-led[data-status="running"] {
+    .tool-machine-status[data-status="running"] svg {
       animation: none;
     }
   }
 
-  /* §4b ShellReel — film reel with terminal body */
+  /* §4b ShellReel — quiet terminal record */
   .shell-reel {
     position: relative;
-    margin: 6px 0;
+    max-width: 720px;
+    margin: 0;
   }
 
   .shell-reel-header {
-    display: flex;
-    align-items: stretch;
-  }
-
-  .shell-reel-cap {
-    width: 16px;
-    flex-shrink: 0;
-    background: #D8CBB8;
-    border: 2px solid #B8AA96;
-    border-radius: 50%;
-    align-self: center;
+    display: block;
   }
 
   .shell-reel-body {
-    flex: 1;
-    background: var(--forge-object-receipt);
-    border: 1px solid rgba(36, 42, 36, 0.4);
-    border-radius: 4px;
+    background: rgba(255, 252, 246, 0.78);
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: 8px;
     overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.62) inset;
   }
 
   .shell-reel-header .forge-log-line {
+    width: 100%;
     background: transparent;
     border: 0;
     border-radius: 0;
   }
 
-  /* §4c PermissionTicket — punched ticket stub */
-  .permission-ticket {
-    position: relative;
-    background: var(--forge-object-ticket);
-    border: 1px solid var(--forge-object-ticket-border);
-    border-radius: 6px;
-    padding: 12px 18px;
-    box-shadow: 0 2px 8px rgba(36, 42, 36, 0.06);
-  }
-
-  .permission-ticket::before {
-    content: "";
-    position: absolute;
-    left: -6px;
-    top: 50%;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--forge-bg-base);
-    border: 1px solid var(--forge-object-ticket-border);
-    transform: translateY(-50%);
-    z-index: 1;
-  }
-
-  .permission-ticket::after {
-    content: "";
-    position: absolute;
-    right: -6px;
-    top: 50%;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--forge-bg-base);
-    border: 1px solid var(--forge-object-ticket-border);
-    transform: translateY(-50%);
-    z-index: 1;
-  }
-
-  .permission-ticket-tag {
-    position: absolute;
-    top: -8px;
-    left: 12px;
-    font-size: 9px;
-    background: rgba(196, 138, 58, 0.1);
-    border: 1px solid rgba(196, 138, 58, 0.2);
-    padding: 1px 6px;
-    border-radius: 3px;
-    color: var(--forge-accent);
-    z-index: 2;
-  }
-
-  /* §4d DiffFilmstrip — film strip with perforations */
+  /* §4d DiffFilmstrip — quiet patch surface */
   .diff-filmstrip {
+    max-width: 720px;
     background: var(--forge-film-bg);
+    border: 1px solid var(--forge-border-subtle);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 12px rgba(36, 42, 36, 0.1);
   }
 
-  .diff-filmstrip-perf {
-    height: 14px;
-    background: var(--forge-film-header);
+  .diff-filmstrip > .forge-message-panel {
+    border: 0;
+    background: transparent !important;
+  }
+
+  .diff-filmstrip-header {
     display: flex;
     align-items: center;
-    padding: 0 6px;
-    gap: 3px;
-    border-bottom: 1px solid rgba(247, 241, 232, 0.04);
+    gap: 8px;
+    min-height: 34px;
+    padding: 6px 14px;
+    background: var(--forge-film-header);
+    border-bottom: 1px solid var(--forge-border-subtle);
   }
 
-  .diff-filmstrip-perf span {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 1px;
-    background: var(--forge-film-perf);
+  .diff-filmstrip-title {
+    color: var(--forge-text-primary);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .diff-filmstrip-file {
+    min-width: 0;
+    color: var(--forge-text-muted);
+    font-size: 11px;
+  }
+
+  .diff-filmstrip-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+  }
+
+  .diff-filmstrip-separator {
+    color: var(--forge-text-ghost);
+  }
+
+  .diff-filmstrip-actions {
+    margin-left: auto;
   }
 
   .diff-filmstrip .forge-diff-body {
-    background: transparent;
+    background: var(--forge-code-bg);
     padding: 8px 14px;
   }
 
   .diff-filmstrip .forge-diff-line {
-    border-left: 3px solid transparent;
+    border-left: 0;
   }
 
   .diff-filmstrip .forge-diff-line-added {
     background: rgba(155, 185, 135, 0.1);
-    border-left-color: #9BB987;
   }
 
   .diff-filmstrip .forge-diff-line-removed {
     background: rgba(212, 119, 119, 0.1);
-    border-left-color: #D47777;
   }
 
   .diff-filmstrip .forge-diff-summary {
-    color: rgba(247, 241, 232, 0.6);
+    color: var(--forge-text-muted);
   }
 
   .diff-filmstrip .forge-diff-toggle {
-    color: rgba(247, 241, 232, 0.5);
+    color: var(--forge-text-muted);
   }
 
   .diff-filmstrip .forge-diff-toggle:hover {
-    color: rgba(247, 241, 232, 0.8);
-    background: rgba(247, 241, 232, 0.08);
+    color: var(--forge-text-primary);
+    background: var(--forge-hover);
   }
 
   .diff-filmstrip .forge-diff-footer {
-    background: rgba(27, 26, 23, 0.5);
-    border-top: 1px solid rgba(247, 241, 232, 0.04);
+    background: rgba(232, 221, 207, 0.52);
+    border-top: 1px solid var(--forge-border-subtle);
   }
 
   .diff-filmstrip .forge-diff-expand {
-    color: rgba(247, 241, 232, 0.5);
+    color: var(--forge-text-muted);
   }
 
   .diff-filmstrip .forge-diff-expand:hover {
-    color: rgba(247, 241, 232, 0.8);
-    background: rgba(247, 241, 232, 0.08);
+    color: var(--forge-text-primary);
+    background: var(--forge-hover);
   }
 
-  /* §6a Cord Beads — one per conversation turn */
   .forge-conversation-turn {
     position: relative;
-  }
-
-  .forge-conversation-turn::after {
-    content: "";
-    position: absolute;
-    left: -1.125rem;
-    top: 12px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #D8CBB8;
-    border: 1px solid #B8AA96;
-    transform: translateX(-4px);
-    pointer-events: none;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .forge-conversation-turn::after {
-      /* Static dot, no animation needed */
-    }
-  }
-
-  /* §6b Desk Specks — subtle paper grain texture */
-  .forge-conversation-scroll {
-    position: relative;
-  }
-
-  .forge-conversation-scroll::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 0;
-    background-image:
-      radial-gradient(circle at 15% 20%, rgba(36,42,36,0.05) 1px, transparent 1px),
-      radial-gradient(circle at 45% 60%, rgba(36,42,36,0.04) 1px, transparent 1px),
-      radial-gradient(circle at 75% 30%, rgba(36,42,36,0.06) 1px, transparent 1px),
-      radial-gradient(circle at 30% 80%, rgba(36,42,36,0.04) 1px, transparent 1px),
-      radial-gradient(circle at 85% 70%, rgba(36,42,36,0.05) 1px, transparent 1px),
-      radial-gradient(circle at 55% 15%, rgba(36,42,36,0.03) 1px, transparent 1px),
-      radial-gradient(circle at 20% 50%, rgba(36,42,36,0.04) 1px, transparent 1px),
-      radial-gradient(circle at 65% 45%, rgba(36,42,36,0.05) 1px, transparent 1px),
-      radial-gradient(circle at 90% 85%, rgba(36,42,36,0.03) 1px, transparent 1px),
-      radial-gradient(circle at 10% 90%, rgba(36,42,36,0.04) 1px, transparent 1px);
-    background-size: 200px 200px;
   }
 }

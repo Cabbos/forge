@@ -13,15 +13,15 @@
     --forge-bg-raised: #FFFCF6;
     --forge-bg-raised-hover: #F2E8D9;
     --forge-bg-overlay: #FBF4EA;
-    --forge-bg-composer: #242A24;
+    --forge-bg-composer: #FFFCF6;
     --forge-border-subtle: #D8CBB8;
     --forge-border-muted: rgba(36, 42, 36, 0.2);
     --forge-border-strong: #B8AA96;
     --forge-text-primary: #242A24;
     --forge-text-secondary: #4B5147;
-    --forge-text-muted: #737066;
-    --forge-text-faint: #9A9284;
-    --forge-text-ghost: #C6B9A7;
+    --forge-text-muted: #5F5D55;
+    --forge-text-faint: #675F54;
+    --forge-text-ghost: #7A7267;
     --forge-icon-context: #4E7389;
     --forge-icon-action: #C48A3A;
     --forge-icon-reasoning: #8E7548;
@@ -63,18 +63,18 @@
     --forge-material-danger: rgba(184, 92, 75, 0.08);
     --forge-material-shadow: 0 16px 38px rgba(36, 42, 36, 0.1), 0 1px 0 rgba(255, 252, 246, 0.66) inset;
     --forge-material-shadow-strong: 0 22px 52px rgba(36, 42, 36, 0.14), 0 0 0 1px rgba(36, 42, 36, 0.03), 0 1px 0 rgba(255, 252, 246, 0.78) inset;
-    --forge-code-bg: rgba(36, 42, 36, 0.88);
-    --forge-code-text: #F6EEDF;
-    --forge-code-grid-line: rgba(247, 241, 232, 0.04);
-    --forge-code-header: #D8A45D;
-    --forge-composer-text: #F7F1E8;
-    --forge-composer-muted: #BDB7A8;
-    --forge-composer-faint: #7F8373;
-    --forge-composer-surface: rgba(36, 42, 36, 0.96);
-    --forge-composer-surface-focus: rgba(31, 37, 31, 0.98);
-    --forge-composer-border: rgba(247, 241, 232, 0.18);
-    --forge-composer-shadow: 0 18px 40px rgba(36, 42, 36, 0.2), 0 1px 0 rgba(247, 241, 232, 0.06) inset;
-    --forge-composer-shadow-focus: 0 22px 48px rgba(36, 42, 36, 0.24), 0 0 0 1px rgba(196, 138, 58, 0.08), 0 1px 0 rgba(247, 241, 232, 0.09) inset;
+    --forge-code-bg: rgba(255, 252, 246, 0.9);
+    --forge-code-text: #242A24;
+    --forge-code-grid-line: rgba(36, 42, 36, 0.06);
+    --forge-code-header: #8E7548;
+    --forge-composer-text: #242A24;
+    --forge-composer-muted: #5F5D55;
+    --forge-composer-faint: #675F54;
+    --forge-composer-surface: rgba(255, 252, 246, 0.96);
+    --forge-composer-surface-focus: rgba(255, 252, 246, 0.99);
+    --forge-composer-border: #D8CBB8;
+    --forge-composer-shadow: 0 18px 40px rgba(36, 42, 36, 0.1), 0 1px 0 rgba(255, 252, 246, 0.68) inset;
+    --forge-composer-shadow-focus: 0 22px 48px rgba(36, 42, 36, 0.14), 0 0 0 1px rgba(196, 138, 58, 0.08), 0 1px 0 rgba(255, 252, 246, 0.82) inset;
     --background: var(--forge-bg-base);
     --foreground: var(--forge-text-primary);
     --card: var(--forge-bg-surface);
@@ -143,14 +143,14 @@
     --forge-led-running: #C48A3A;
     --forge-led-done: #5D805A;
     --forge-led-error: #B85C4B;
-    --forge-led-idle: #9A9284;
+    --forge-led-idle: #675F54;
 
     /* Object materials */
     --forge-object-paper: rgba(255, 252, 246, 0.94);
     --forge-object-paper-border: #D8CBB8;
     --forge-object-metal: rgba(232, 221, 207, 0.88);
     --forge-object-metal-border: #D8CBB8;
-    --forge-object-receipt: rgba(36, 42, 36, 0.88);
+    --forge-object-receipt: rgba(255, 252, 246, 0.94);
     --forge-object-ticket: rgba(255, 252, 246, 0.96);
     --forge-object-ticket-border: #D8CBB8;
 
@@ -164,8 +164,8 @@
     --forge-meter-empty: #D8CBB8;
 
     /* Film strip */
-    --forge-film-bg: rgba(36, 42, 36, 0.92);
-    --forge-film-perf: rgba(247, 241, 232, 0.1);
-    --forge-film-header: rgba(27, 26, 23, 0.8);
+    --forge-film-bg: rgba(255, 252, 246, 0.92);
+    --forge-film-perf: rgba(36, 42, 36, 0.09);
+    --forge-film-header: rgba(232, 221, 207, 0.82);
   }
 }

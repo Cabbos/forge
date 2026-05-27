@@ -41,6 +41,13 @@ export function HubPanelHost() {
     };
   }, [openPanel]);
 
+  useEffect(() => {
+    document.documentElement.dataset.projectArchiveOpen = open ? "true" : "false";
+    return () => {
+      delete document.documentElement.dataset.projectArchiveOpen;
+    };
+  }, [open]);
+
   if (!loaded) return null;
 
   return (

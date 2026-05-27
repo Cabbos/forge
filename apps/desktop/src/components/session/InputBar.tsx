@@ -152,7 +152,7 @@ export function InputBar({ sessionId }: InputBarProps) {
   });
 
   return (
-    <div data-testid="composer-frame" className="forge-composer-frame relative flex-shrink-0">
+    <div data-testid="composer-frame" data-surface="composer" className="forge-composer-frame relative flex-shrink-0">
       <div ref={composerRootRef} data-testid="composer-lane" className="forge-conversation-lane relative">
       {!isRunning && resumeError && (
         <div data-testid="composer-error" role="status" aria-live="polite" className="forge-composer-error">

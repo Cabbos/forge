@@ -162,11 +162,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   overflow: auto;
   overscroll-behavior: contain;
   padding: 16px 18px 22px;
-  background:
-    linear-gradient(var(--forge-code-grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--forge-code-grid-line) 1px, transparent 1px),
-    var(--forge-code-bg);
-  background-size: 24px 24px;
+  background: var(--forge-code-bg);
   scrollbar-width: thin;
   scrollbar-color: var(--forge-border-muted) transparent;
 }
@@ -270,8 +266,10 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 }
 .markdown-content blockquote {
   margin: var(--forge-markdown-block-gap) 0;
-  border-left: 2px solid var(--forge-border-muted);
-  padding: 2px 0 2px 12px;
+  border: 1px solid var(--forge-border-subtle);
+  border-radius: calc(var(--radius) - 2px);
+  background: rgba(255, 252, 246, 0.58);
+  padding: 8px 12px;
   color: var(--forge-text-muted);
   text-align: left;
 }

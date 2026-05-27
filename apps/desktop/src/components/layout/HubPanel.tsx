@@ -357,10 +357,10 @@ function ArchiveDisclosure({
         className="forge-disclosure-row"
       >
         <span className="flex min-w-0 items-center gap-2">
-          <Icon className="size-3.5 shrink-0 text-muted-foreground/75" />
-          <span className="truncate text-[11px] font-medium text-muted-foreground">{title}</span>
+          <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate text-[11px] font-medium text-foreground">{title}</span>
         </span>
-        {meta && <span className="shrink-0 text-[10px] text-muted-foreground/65">{meta}</span>}
+        {meta && <span className="shrink-0 text-[10px] text-muted-foreground">{meta}</span>}
       </button>
       {open && <div className="mt-2 space-y-3">{children}</div>}
     </section>
@@ -369,9 +369,9 @@ function ArchiveDisclosure({
 
 function ProductLayerHeader({ title, meta }: { title: string; meta?: string | null }) {
   return (
-    <div className="flex items-center justify-between border-t border-border pt-3 first:border-t-0 first:pt-0">
+    <div className="flex items-center justify-between pt-1">
       <h3 className="text-[11px] font-semibold text-foreground">{title}</h3>
-      {meta && <span className="text-[10px] text-muted-foreground/70">{meta}</span>}
+      {meta && <span className="text-[10px] text-muted-foreground">{meta}</span>}
     </div>
   );
 }
@@ -398,7 +398,7 @@ function ContextFilesSection({
       </div>
 
       <div className="forge-surface overflow-hidden">
-        <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+        <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
           <span>文件名</span>
           <span>类型</span>
           <span>解析状态</span>
@@ -407,7 +407,7 @@ function ContextFilesSection({
 
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 px-3 py-8 text-center">
-            <FileText className="size-5 text-muted-foreground/60" />
+            <FileText className="size-5 text-muted-foreground" />
             <div className="text-xs text-muted-foreground">还没有添加资料</div>
           </div>
         ) : (
@@ -433,7 +433,7 @@ function ContextFileRow({
     <>
       <div className="min-w-0">
         <div className="truncate text-foreground">{file.name}</div>
-        <div className="mt-0.5 truncate text-[10px] text-muted-foreground/75">
+        <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
           {[file.sourceLabel, file.statusMessage].filter(Boolean).join(" · ")}
         </div>
       </div>

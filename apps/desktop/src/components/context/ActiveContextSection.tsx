@@ -44,7 +44,7 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
             <span className="truncate text-xs font-medium text-foreground">{item.title}</span>
           </div>
           <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{item.summary}</p>
-          <div className="mt-1 truncate text-[10px] text-muted-foreground/60">
+          <div className="mt-1 truncate text-[10px] text-muted-foreground">
             {item.sourceLabel}{item.sourcePath ? ` · ${item.sourcePath}` : ""}
           </div>
         </div>

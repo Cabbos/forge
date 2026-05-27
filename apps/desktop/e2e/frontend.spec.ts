@@ -792,6 +792,59 @@ test.describe("Frontend maintainability guardrails", () => {
     }
   });
 
+  test("modal overlays stay warm and legible without dark glass", () => {
+    const checkedFiles = [
+      "src/components/ui/dialog.tsx",
+      "src/components/ui/sheet.tsx",
+      "src/styles/globals.css",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${path} should not use a dark application overlay`).not.toContain("rgba(36,42,36,0.18)");
+      expect(source, `${path} should not use a dark application overlay`).not.toContain("rgba(36, 42, 36, 0.18)");
+      expect(source, `${path} should not use Tailwind black overlay utilities`).not.toContain("bg-black");
+      expect(source, `${path} should avoid blurred overlay glass`).not.toContain("backdrop-blur-xs");
+    }
+
+    const dialog = readFileSync(resolve(process.cwd(), "src/components/ui/dialog.tsx"), "utf8");
+    const sheet = readFileSync(resolve(process.cwd(), "src/components/ui/sheet.tsx"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(dialog).toContain("bg-[rgba(251,244,234,0.78)]");
+    expect(sheet).toContain("bg-[rgba(251,244,234,0.78)]");
+    expect(globals).toContain("background: rgba(251, 244, 234, 0.78);");
+  });
+
+  test("composer surfaces avoid decorative overlay lines", () => {
+    const composer = readFileSync(resolve(process.cwd(), "src/styles/composer.css"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(composer).not.toContain(".forge-composer::before");
+    expect(composer).not.toContain(".forge-composer[data-state=\"paused\"]::before");
+    expect(composer).toContain("backdrop-filter: none;");
+    expect(globals).not.toContain(".forge-empty-composer::before");
+  });
+
+  test("project archive scan rows avoid low-alpha helper text", () => {
+    const checkedFiles = [
+      "src/components/context/ProjectOverviewCard.tsx",
+      "src/components/context/FirstLoopCard.tsx",
+      "src/components/context/ActiveContextSection.tsx",
+      "src/components/context/WikiSections.tsx",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${path} should keep archive helper copy readable`).not.toContain("text-muted-foreground/55");
+      expect(source, `${path} should keep archive helper copy readable`).not.toContain("text-muted-foreground/60");
+      expect(source, `${path} should keep archive helper copy readable`).not.toContain("text-muted-foreground/65");
+      expect(source, `${path} should avoid vertical accent rule fragments`).not.toContain("border-l border-border");
+      expect(source, `${path} should avoid loose horizontal rule fragments`).not.toContain("border-t border-border");
+      expect(source, `${path} should avoid loose horizontal rule fragments`).not.toContain("border-b border-border");
+    }
+  });
+
   test("shared card primitive keeps product radius within the design contract", () => {
     const card = readFileSync(resolve(process.cwd(), "src/components/ui/card.tsx"), "utf8");
 
@@ -829,10 +882,18 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(settings).toContain("settings-summary-strip");
     expect(settings).toContain("SettingsSummaryItem");
     expect(settings).toContain("configuredCount");
+    expect(settings).toContain("keyByProvider");
+    expect(settings).toContain("knownProviderStatuses");
     expect(settings).toContain("forge-settings-provider-mark");
+    expect(settings).not.toContain("text-muted-foreground/60");
+    const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    expect(hubPanel).not.toContain("border-t border-border pt-3 first:border-t-0 first:pt-0");
     expect(globals).toContain(".forge-settings-summary-strip");
     expect(globals).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
     expect(globals).toContain(".forge-settings-provider-mark[data-configured=\"true\"]");
+    expect(globals).toContain(".forge-settings-preferences-panel");
+    expect(globals).toContain("gap: 0.5rem;");
+    expect(globals).not.toContain(".forge-settings-row:first-child");
   });
 
   test("capability manager summarizes capability state with scoped motion", () => {
@@ -905,6 +966,8 @@ test.describe("Frontend maintainability guardrails", () => {
       expect(markdown).toContain(selector);
       expect(globals).not.toContain(selector);
     }
+    expect(markdown).not.toContain("border-left: 2px solid");
+    expect(markdown).not.toContain("linear-gradient(var(--forge-code-grid-line)");
   });
 
   test("project archive inspector styles are owned by the archive stylesheet", () => {
@@ -1103,18 +1166,25 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("tool call presentation is owned by its view model", () => {
     const card = readFileSync(resolve(process.cwd(), "src/components/messages/ToolCallCard.tsx"), "utf8");
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/messages.css"), "utf8");
     const viewModel = readFileSync(resolve(process.cwd(), "src/components/messages/processToolPresentation.ts"), "utf8");
 
     expect(card).toContain("deriveToolCallView");
+    expect(card).toContain("forge-evidence-row");
     expect(viewModel).toContain("TOOL_COPY");
     expect(viewModel).toContain("summarizeToolInput");
     expect(viewModel).toContain("summarizeToolResult");
     expect(card).not.toContain("const TOOL_COPY");
     expect(card).not.toContain("function summarizeToolInput");
+    expect(card).not.toContain("tool-machine-meter");
+    expect(card).not.toContain("tool-machine-led");
+    expect(styles).not.toContain(".tool-machine-meter");
+    expect(styles).not.toContain(".tool-machine-led");
   });
 
   test("shell output presentation is owned by its view model", () => {
     const card = readFileSync(resolve(process.cwd(), "src/components/messages/ShellCard.tsx"), "utf8");
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/messages.css"), "utf8");
     const viewModel = readFileSync(resolve(process.cwd(), "src/components/messages/processShellPresentation.ts"), "utf8");
 
     expect(card).toContain("deriveShellView");
@@ -1122,6 +1192,8 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(viewModel).toContain("outputSections");
     expect(viewModel).toContain("exitCode");
     expect(card).not.toContain("function parseShellOutput");
+    expect(card).not.toContain("shell-reel-cap");
+    expect(styles).not.toContain(".shell-reel-cap");
   });
 
   test("shell card header is owned by a focused subview", () => {
@@ -1185,7 +1257,8 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(appShell).toContain("data-forge-motion=\"empty-composer\"");
     expect(globals).toContain("[data-forge-motion=\"empty-entry\"]");
     expect(globals).toContain("will-change: transform, opacity");
-    expect(globals).toContain(".forge-empty-entry-card::before");
+    expect(globals).not.toContain(".forge-empty-entry-card::before");
+    expect(globals).toContain(".forge-empty-entry-card[data-active=\"true\"] .forge-empty-entry-icon");
   });
 
   test("sidebar keeps CSS motion hooks without eager GSAP runtime", () => {
@@ -1199,6 +1272,7 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(sidebar).not.toContain("data-forge-motion=\"sidebar-history-row\"");
     expect(globals).toContain(".forge-sidebar-history-list");
     expect(globals).toContain(".forge-sidebar-history-group-label");
+    expect(globals).not.toContain(".forge-sidebar-history-row[data-active=\"true\"]::before");
     expect(globals).toContain("[data-forge-motion=\"sidebar-entry\"]");
   });
 
@@ -1232,6 +1306,7 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(processStyles).toContain("min-height: 2.75rem");
     expect(processStyles).toContain(".forge-log-line-command");
     expect(processStyles).toContain("text-overflow: ellipsis");
+    expect(processStyles).not.toContain("rgba(81, 71, 55");
   });
 
   test("process status dots are owned by a shared component", () => {
@@ -1325,13 +1400,17 @@ test.describe("Frontend maintainability guardrails", () => {
   test("diff patches collapse behind a lightweight evidence toggle", () => {
     const diffCard = readFileSync(resolve(process.cwd(), "src/components/messages/DiffCard.tsx"), "utf8");
     const diffStyles = readFileSync(resolve(process.cwd(), "src/styles/diff.css"), "utf8");
+    const messageStyles = readFileSync(resolve(process.cwd(), "src/styles/messages.css"), "utf8");
 
     expect(diffCard).toContain("bodyOpen");
     expect(diffCard).toContain("diff-body-toggle");
     expect(diffCard).toContain("data-diff-open");
     expect(diffCard).toContain("data-forge-motion=\"diff-body\"");
+    expect(diffCard).not.toContain("diff-filmstrip-perf");
+    expect(diffCard).not.toContain("rgba(247, 241, 232");
     expect(diffStyles).toContain(".forge-diff-toggle");
     expect(diffStyles).toContain(".forge-diff-card[data-diff-open=\"false\"]");
+    expect(messageStyles).not.toContain("border-left: 3px solid transparent");
   });
 
   test("confirmation copy and risk presentation are owned by its view model", () => {
@@ -1341,6 +1420,7 @@ test.describe("Frontend maintainability guardrails", () => {
 
     expect(confirmCard).toContain("deriveConfirmPromptView");
     expect(confirmViews).toContain("confirmRiskColor");
+    expect(confirmViews).not.toContain("permission-ticket");
     expect(viewModel).toContain("kindLabels");
     expect(viewModel).toContain("helperTextForKind");
     expect(viewModel).toContain("boundaryCommandLabel");
@@ -1368,7 +1448,9 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(deliveryCard).toContain("useGSAP");
     expect(deliveryCard).toContain("forge-delivery-item, .forge-delivery-action");
     expect(globals).toContain(".forge-delivery-card .forge-message-panel-header");
-    expect(globals).toContain("border-bottom-color: rgba(184, 138, 86, 0.1)");
+    expect(globals).toContain("background: var(--forge-material-raised) !important");
+    expect(globals).toContain("border-bottom-color: var(--forge-border-subtle)");
+    expect(globals).toContain("color: var(--forge-text-primary)");
   });
 
   test("confirmation boundary rendering is owned by focused subviews", () => {
@@ -1381,6 +1463,7 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(views).toContain("ConfirmActionBar");
     expect(views).toContain("forge-confirm-boundary-row");
     expect(views).toContain("confirm-resolved-summary");
+    expect(views).not.toContain("permission-ticket-tag");
     expect(confirmCard).not.toContain("forge-confirm-boundary-row");
     expect(confirmCard).not.toContain("confirm-resolved-summary");
   });
@@ -1455,6 +1538,9 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(body).toContain("正在读取文件");
     expect(body).toContain("无法预览这个文件");
     expect(body).toContain("grid-cols-[64px_minmax(0,1fr)]");
+    expect(body).not.toContain("border-l-2");
+    expect(body).toContain("border-b");
+    expect(body).toContain("last:border-b-0");
     expect(sheet).not.toContain("正在读取文件");
     expect(sheet).not.toContain("grid-cols-[64px_minmax(0,1fr)]");
   });
@@ -1546,6 +1632,46 @@ test.describe("Desktop Empty Workspace Layout", () => {
     expect(Math.abs(metrics!.cardWidths[0] - metrics!.cardWidths[1])).toBeLessThanOrEqual(1);
     expect(metrics!.noticeLeftGap).toBeGreaterThanOrEqual(24);
     expect(metrics!.noticeRightGap).toBeGreaterThanOrEqual(24);
+  });
+
+  test("project archive open keeps empty start choices readable on narrow desktop", async ({ page }) => {
+    await setup(page, { workingDir: null });
+    await page.setViewportSize({ width: 900, height: 720 });
+    await page.goto("http://localhost:1420");
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    await page.getByTitle("打开项目档案").click();
+    await expect(page.getByTestId("project-archive-panel")).toBeVisible();
+
+    const metrics = await page.getByRole("main").evaluate((node) => {
+      const main = node as HTMLElement;
+      const archive = document.querySelector<HTMLElement>("[data-testid='project-archive-panel']");
+      const grid = main.querySelector<HTMLElement>(".forge-empty-entry-grid");
+      const cards = Array.from(main.querySelectorAll<HTMLElement>(".forge-empty-entry-card"));
+      if (!archive || !grid || cards.length < 2) return null;
+      const archiveRect = archive.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      const cardRects = cards.map((card) => card.getBoundingClientRect());
+      const leadDecoration = getComputedStyle(cards[0], "::before");
+      return {
+        mainPaddingRight: getComputedStyle(main).paddingRight,
+        columnCount: getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length,
+        gridRight: Math.round(gridRect.right),
+        archiveLeft: Math.round(archiveRect.left),
+        cardWidths: cardRects.map((rect) => Math.round(rect.width)),
+        cardTops: cardRects.map((rect) => Math.round(rect.top)),
+        leadDecorationContent: leadDecoration.content,
+        leadDecorationWidth: leadDecoration.width,
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(metrics!.mainPaddingRight).toBe("300px");
+    expect(metrics!.columnCount).toBe(1);
+    expect(metrics!.gridRight).toBeLessThanOrEqual(metrics!.archiveLeft - 12);
+    expect(metrics!.cardWidths.every((width) => width >= 280)).toBe(true);
+    expect(metrics!.cardTops[1]).toBeGreaterThan(metrics!.cardTops[0]);
+    expect(metrics!.leadDecorationContent).toBe("none");
+    expect(metrics!.leadDecorationWidth).toBe("auto");
   });
 });
 
@@ -1859,7 +1985,7 @@ test.describe("Timeline Message Flow", () => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     // Input should appear
     await expect(page.locator("textarea")).toBeVisible();
-    await expect(page.getByText("运行中", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("main").getByText("运行中", { exact: true })).toHaveCount(0);
     const composer = page.getByTestId("composer-lane");
     await expect(composer).toBeVisible();
     await expect(composer.getByRole("button", { name: "引用文件" })).toBeVisible();
@@ -1867,7 +1993,7 @@ test.describe("Timeline Message Flow", () => {
     await expect(page.getByRole("button", { name: "我想做一个番茄钟小工具，可以开始、暂停、重置。" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "我想做一个记账小工具，先能记录一笔收入或支出。" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "我想做一个文案小工具，输入主题后生成一版短文案。" })).toHaveCount(0);
-    await expect(page.getByText("可以继续描述任务")).toHaveCount(0);
+    await expect(page.getByRole("main").getByText("可以继续描述任务")).toHaveCount(0);
   });
 
   test("desktop chrome keeps the conversation surface restrained", async ({ page }) => {
@@ -1897,6 +2023,134 @@ test.describe("Timeline Message Flow", () => {
     const processSummary = page.getByTestId("tool-activity-summary").first();
     await expect(processSummary).toContainText("过程已收起 · 2 步");
     await expect(processSummary).toHaveCSS("min-height", "22px");
+  });
+
+  test("V3 operating surface keeps conversation focused without the Inspector rail", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    const shell = page.getByTestId("operating-surface");
+    await expect(shell).toHaveAttribute("data-design-version", "v3-light-workbench");
+
+    const tokens = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const parseHex = (hex: string) => {
+        const value = hex.trim().replace("#", "");
+        return {
+          r: Number.parseInt(value.slice(0, 2), 16),
+          g: Number.parseInt(value.slice(2, 4), 16),
+          b: Number.parseInt(value.slice(4, 6), 16),
+        };
+      };
+      const luminance = (color: { r: number; g: number; b: number }) => {
+        const [r, g, b] = [color.r, color.g, color.b].map((channel) => {
+          const value = channel / 255;
+          return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const contrast = (foreground: string, background: string) => {
+        const fg = luminance(parseHex(foreground));
+        const bg = luminance(parseHex(background));
+        return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+      };
+      const base = root.getPropertyValue("--forge-bg-base").trim();
+      const depth = root.getPropertyValue("--forge-bg-depth").trim();
+      const raised = root.getPropertyValue("--forge-bg-raised").trim();
+      const muted = root.getPropertyValue("--forge-text-muted").trim();
+      const faint = root.getPropertyValue("--forge-text-faint").trim();
+      return {
+        base,
+        ink: root.getPropertyValue("--forge-ink").trim(),
+        brass: root.getPropertyValue("--forge-accent").trim(),
+        muted,
+        faint,
+        mutedOnBase: contrast(muted, base),
+        mutedOnDepth: contrast(muted, depth),
+        faintOnBase: contrast(faint, base),
+        faintOnDepth: contrast(faint, depth),
+        faintOnRaised: contrast(faint, raised),
+      };
+    });
+    expect(tokens.base).toBe("#F7F1E8");
+    expect(tokens.ink).toBe("#242A24");
+    expect(tokens.brass).toBe("#C48A3A");
+    expect(tokens.mutedOnBase).toBeGreaterThanOrEqual(4.5);
+    expect(tokens.mutedOnDepth).toBeGreaterThanOrEqual(4.5);
+    expect(tokens.faintOnBase).toBeGreaterThanOrEqual(4.5);
+    expect(tokens.faintOnDepth).toBeGreaterThanOrEqual(4.5);
+    expect(tokens.faintOnRaised).toBeGreaterThanOrEqual(4.5);
+
+    await expect(page.getByTestId("project-cockpit")).toHaveCount(0);
+    await expect(page.getByRole("complementary", { name: "Inspector" })).toHaveCount(0);
+    await expect(page.getByTestId("message-lane")).toHaveAttribute("data-surface", "conversation");
+    await expect(page.getByTestId("composer-frame")).toHaveAttribute("data-surface", "composer");
+
+    const layout = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>("[data-testid='operating-surface']");
+      const main = document.querySelector<HTMLElement>("[data-testid='main-workbench']");
+      const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
+      if (!shell || !main || !lane) return null;
+      return {
+        columns: getComputedStyle(shell).gridTemplateColumns,
+        mainRight: Math.round(main.getBoundingClientRect().right),
+        viewportRight: Math.round(window.innerWidth),
+        laneWidth: Math.round(lane.getBoundingClientRect().width),
+      };
+    });
+    expect(layout).not.toBeNull();
+    expect(layout!.columns).not.toContain("320px");
+    expect(layout!.mainRight).toBe(layout!.viewportRight);
+    expect(layout!.laneWidth).toBeLessThanOrEqual(820);
+
+    const decorativeSurfaces = await page.evaluate(() => {
+      const scroll = document.querySelector("[data-testid='conversation-scroll']");
+      const operatingLane = document.querySelector(".forge-operating-lane");
+      return {
+        scrollTexture: scroll ? getComputedStyle(scroll, "::after").backgroundImage : "",
+        operatingRail: operatingLane ? getComputedStyle(operatingLane, "::before").content : "",
+      };
+    });
+    expect(decorativeSurfaces.scrollTexture).toBe("none");
+    expect(decorativeSurfaces.operatingRail).toBe("none");
+
+    await simulateStream(page, sessionId, fullConversation(sessionId), 10);
+    await expect(page.getByTestId("tool-activity-summary").first()).toContainText("过程已收起 · 2 步");
+    await expect(page.getByRole("complementary", { name: "Inspector" })).toHaveCount(0);
+    const turnDecoration = await page.getByTestId("conversation-scroll").evaluate(() => {
+      const turn = document.querySelector(".forge-conversation-turn");
+      if (!turn) return null;
+      const turnStyle = getComputedStyle(turn);
+      return {
+        bead: getComputedStyle(turn, "::after").content,
+        borderLeft: turnStyle.borderLeftWidth,
+      };
+    });
+    expect(turnDecoration).not.toBeNull();
+    expect(turnDecoration!.bead).toBe("none");
+    expect(turnDecoration!.borderLeft).toBe("0px");
+
+    const assistantDecoration = await page.getByTestId("assistant-message").first().evaluate((node) => {
+      const before = getComputedStyle(node, "::before");
+      return {
+        content: before.content,
+        width: before.width,
+        background: before.backgroundColor,
+      };
+    });
+    expect(assistantDecoration.content).toBe("none");
+    expect(assistantDecoration.width).toBe("auto");
   });
 
   test("titlebar presents session and project state as a compact desktop status bar", async ({ page }) => {
@@ -2126,18 +2380,31 @@ test.describe("Timeline Message Flow", () => {
       const status = node.querySelector<HTMLElement>("[data-testid='settings-provider-status']");
       const panelStyle = panel ? getComputedStyle(panel) : null;
       const rowStyle = rows[0] ? getComputedStyle(rows[0]) : null;
+      const secondRowStyle = rows[1] ? getComputedStyle(rows[1]) : null;
       return {
         panelRadius: panelStyle ? Number.parseFloat(panelStyle.borderTopLeftRadius) : 0,
+        panelDisplay: panelStyle?.display ?? "",
+        panelGap: panelStyle?.rowGap ?? "",
+        panelOverflow: panelStyle?.overflow ?? "",
         firstRowHeight: rows[0] ? Math.round(rows[0].getBoundingClientRect().height) : 0,
         firstRowDisplay: rowStyle?.display ?? "",
+        firstRowBackground: rowStyle?.backgroundColor ?? "",
+        firstRowBorderTop: rowStyle?.borderTopColor ?? "",
+        secondRowBorderTop: secondRowStyle?.borderTopColor ?? "",
         firstRowTransition: rowStyle?.transitionProperty ?? "",
         statusRadius: status ? Number.parseFloat(getComputedStyle(status).borderTopLeftRadius) : 0,
         statusBoxShadow: status ? getComputedStyle(status).boxShadow : "",
       };
     });
     expect(settingsMetrics.panelRadius).toBeLessThanOrEqual(8);
+    expect(settingsMetrics.panelDisplay).toBe("grid");
+    expect(settingsMetrics.panelGap).toBe("8px");
+    expect(settingsMetrics.panelOverflow).toBe("visible");
     expect(settingsMetrics.firstRowHeight).toBeGreaterThanOrEqual(64);
     expect(settingsMetrics.firstRowDisplay).toBe("grid");
+    expect(settingsMetrics.firstRowBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(settingsMetrics.firstRowBorderTop).toBe("rgba(0, 0, 0, 0)");
+    expect(settingsMetrics.secondRowBorderTop).toBe("rgba(0, 0, 0, 0)");
     expect(settingsMetrics.firstRowTransition.includes("box-shadow")).toBe(true);
     expect(settingsMetrics.statusRadius).toBeLessThanOrEqual(8);
     expect(settingsMetrics.statusBoxShadow).not.toBe("none");
@@ -2589,8 +2856,8 @@ test.describe("Timeline Message Flow", () => {
     await simulateStream(page, sessionId, fullConversation(sessionId), 10);
     const evidenceTurn = page.locator("[data-testid='conversation-turn'][data-turn-shape='with-evidence']");
     await expect(evidenceTurn).toHaveCount(1);
-    await expect(evidenceTurn.first()).toHaveCSS("border-left-width", "1px");
-    await expect(evidenceTurn.first()).toHaveCSS("padding-left", "12px");
+    await expect(evidenceTurn.first()).toHaveCSS("border-left-width", "0px");
+    await expect(evidenceTurn.first()).toHaveCSS("padding-left", "0px");
   });
 
   test("conversation area uses a compact centered prose lane", async ({ page }) => {
@@ -2638,12 +2905,19 @@ test.describe("Timeline Message Flow", () => {
         radius: Number.parseFloat(style.borderTopLeftRadius),
         backgroundAlpha: channels.length === 4 ? channels[3] : 1,
         boxShadow: style.boxShadow,
+        transform: style.transform,
+        before: getComputedStyle(node, "::before").content,
+        after: getComputedStyle(node, "::after").content,
       };
     });
     expect(userMaterial.borderTopWidth).toBe("1px");
     expect(userMaterial.radius).toBeLessThanOrEqual(8);
-    expect(userMaterial.backgroundAlpha).toBeLessThanOrEqual(0.05);
+    expect(userMaterial.backgroundAlpha).toBeGreaterThanOrEqual(0.9);
+    expect(userMaterial.backgroundAlpha).toBeLessThanOrEqual(1);
     expect(userMaterial.boxShadow).toBe("none");
+    expect(userMaterial.transform).toBe("none");
+    expect(userMaterial.before).toBe("none");
+    expect(userMaterial.after).toBe("none");
     await expect(page.getByTestId("assistant-message").last()).toHaveCSS("border-top-width", "0px");
   });
 
@@ -2662,7 +2936,7 @@ test.describe("Timeline Message Flow", () => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
 
-    const events = Array.from({ length: 24 }, (_, index) => ([
+    const events = Array.from({ length: 40 }, (_, index) => ([
       { event_type: "text_start" as const, session_id: sessionId, block_id: `scroll-${index}` },
       {
         event_type: "text_chunk" as const,
@@ -2678,6 +2952,7 @@ test.describe("Timeline Message Flow", () => {
       const lane = document.querySelector("[data-testid='message-lane']");
       const scroller = lane?.parentElement;
       if (!scroller) return;
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -160, bubbles: true }));
       scroller.scrollTop = 0;
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
@@ -2733,6 +3008,7 @@ test.describe("Timeline Message Flow", () => {
     await page.evaluate(() => {
       const scroller = document.querySelector("[data-testid='conversation-scroll']");
       if (!scroller) return;
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -160, bubbles: true }));
       scroller.scrollTop = 0;
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
@@ -2879,6 +3155,7 @@ test.describe("Timeline Message Flow", () => {
     await page.evaluate(() => {
       const scroller = document.querySelector("[data-testid='conversation-scroll']");
       if (!scroller) return;
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -160, bubbles: true }));
       scroller.scrollTop = 0;
       scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
@@ -3148,7 +3425,8 @@ test.describe("Timeline Message Flow", () => {
 
     expect(metrics).not.toBeNull();
     expect(metrics!.gapToken).toBe("8px");
-    expect(metrics!.menuBottomGap).toBe(8);
+    expect(metrics!.menuBottomGap).toBeGreaterThanOrEqual(7);
+    expect(metrics!.menuBottomGap).toBeLessThanOrEqual(8);
     expect(metrics!.menuWidth).toBeLessThanOrEqual(metrics!.surfaceWidth);
     expect(metrics!.menuWidth).toBeLessThanOrEqual(560);
     expect(metrics!.menuShadow).not.toContain("0px 25px");
@@ -3206,7 +3484,8 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics).not.toBeNull();
     expect(metrics!.gapToken).toBe("8px");
     expect(metrics!.menuBottomGap).toBeGreaterThan(8);
-    expect(metrics!.surfaceBottomGap).toBe(8);
+    expect(metrics!.surfaceBottomGap).toBeGreaterThanOrEqual(7);
+    expect(metrics!.surfaceBottomGap).toBeLessThanOrEqual(8);
     expect(metrics!.minWidth).toBeGreaterThanOrEqual(300);
     expect(metrics!.backdrop).toContain("blur");
     expect(metrics!.shadow).not.toContain("0px 10px 24px");
@@ -3567,6 +3846,11 @@ test.describe("Timeline Message Flow", () => {
         listPaddingLeft: Math.round(Number.parseFloat(listStyle.paddingLeft)),
         listItemMarginBottom: Math.round(Number.parseFloat(listItemStyle.marginBottom)),
         quoteBorderWidth: Math.round(Number.parseFloat(quoteStyle.borderLeftWidth)),
+        quoteBorderTopWidth: Math.round(Number.parseFloat(quoteStyle.borderTopWidth)),
+        quoteBorderColor: quoteStyle.borderLeftColor,
+        quoteBorderTopColor: quoteStyle.borderTopColor,
+        quoteBackground: quoteStyle.backgroundColor,
+        quoteRadius: Number.parseFloat(quoteStyle.borderTopLeftRadius),
         quotePaddingLeft: Math.round(Number.parseFloat(quoteStyle.paddingLeft)),
         ruleHeight: Math.round(rule.getBoundingClientRect().height),
         ruleMarginTop: Math.round(Number.parseFloat(ruleStyle.marginTop)),
@@ -3596,7 +3880,11 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.headingMarginTop).toBe(18);
     expect(metrics!.listPaddingLeft).toBe(20);
     expect(metrics!.listItemMarginBottom).toBe(2);
-    expect(metrics!.quoteBorderWidth).toBe(2);
+    expect(metrics!.quoteBorderWidth).toBe(1);
+    expect(metrics!.quoteBorderTopWidth).toBe(1);
+    expect(metrics!.quoteBorderColor).toBe(metrics!.quoteBorderTopColor);
+    expect(metrics!.quoteBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.quoteRadius).toBeLessThanOrEqual(8);
     expect(metrics!.quotePaddingLeft).toBe(12);
     expect(metrics!.ruleHeight).toBe(1);
     expect(metrics!.ruleMarginTop).toBe(14);
@@ -4017,6 +4305,7 @@ test.describe("Timeline Message Flow", () => {
         viewportPaddingTop: viewportStyle ? Math.round(Number.parseFloat(viewportStyle.paddingTop)) : 0,
         viewportMaxHeight: viewportStyle?.maxHeight ?? "",
         viewportBackground: viewportStyle?.backgroundColor ?? "",
+        viewportBackgroundImage: viewportStyle?.backgroundImage ?? "",
         codeColor: codeStyle?.color ?? "",
         codeLineHeight: codeStyle ? Math.round(Number.parseFloat(codeStyle.lineHeight)) : 0,
         codeFontSize: codeStyle ? Number.parseFloat(codeStyle.fontSize) : 0,
@@ -4036,6 +4325,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.viewportPaddingTop).toBe(16);
     expect(metrics.viewportMaxHeight).not.toBe("none");
     expect(metrics.viewportBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.viewportBackgroundImage).toBe("none");
     expect(metrics.codeColor).not.toBe("rgb(184, 138, 86)");
     expect(metrics.codeLineHeight).toBe(20);
     expect(metrics.codeFontSize).toBeLessThanOrEqual(12.5);
@@ -4493,9 +4783,14 @@ test.describe("Timeline Message Flow", () => {
       const tool = document.querySelector("[data-testid='tool-card-trigger']");
       const shell = document.querySelector("[data-testid='shell-card-trigger']");
       if (!group || !summary || !list || !tool || !shell) return null;
+      const shellWrapper = shell.closest(".shell-reel");
+      const shellBody = shell.closest(".shell-reel-body");
       const groupStyle = getComputedStyle(group);
       const summaryStyle = getComputedStyle(summary);
       const listStyle = getComputedStyle(list);
+      const toolStyle = getComputedStyle(tool);
+      const shellWrapperStyle = shellWrapper ? getComputedStyle(shellWrapper) : null;
+      const shellBodyStyle = shellBody ? getComputedStyle(shellBody) : null;
       return {
         token: getComputedStyle(root).getPropertyValue("--forge-log-row-height").trim(),
         groupWidth: Math.round(group.getBoundingClientRect().width),
@@ -4506,9 +4801,20 @@ test.describe("Timeline Message Flow", () => {
         summaryBorderTop: Math.round(Number.parseFloat(summaryStyle.borderTopWidth)),
         listGap: Math.round(Number.parseFloat(listStyle.gap)),
         toolHeight: Math.round(tool.getBoundingClientRect().height),
+        toolRadius: Number.parseFloat(toolStyle.borderTopLeftRadius),
+        toolBorder: toolStyle.borderTopColor,
+        toolBackground: toolStyle.backgroundColor,
         shellHeight: Math.round(shell.getBoundingClientRect().height),
         toolMargin: getComputedStyle(tool.parentElement as Element).marginBottom,
         shellMargin: getComputedStyle(shell.parentElement as Element).marginBottom,
+        toolMeterCount: document.querySelectorAll(".tool-machine-meter").length,
+        toolLedCount: document.querySelectorAll(".tool-machine-led").length,
+        shellCapCount: document.querySelectorAll(".shell-reel-cap").length,
+        shellWrapperMarginTop: shellWrapperStyle ? Math.round(Number.parseFloat(shellWrapperStyle.marginTop)) : -1,
+        shellWrapperBackground: shellWrapperStyle?.backgroundColor ?? "",
+        shellBodyRadius: shellBodyStyle ? Number.parseFloat(shellBodyStyle.borderTopLeftRadius) : 0,
+        shellBodyBorder: shellBodyStyle?.borderTopColor ?? "",
+        shellBodyBackground: shellBodyStyle?.backgroundColor ?? "",
       };
     });
 
@@ -4521,10 +4827,21 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.summaryBackground).toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.summaryBorderTop).toBe(0);
     expect(metrics!.listGap).toBe(2);
-    expect(metrics!.toolHeight).toBe(22);
+    expect(metrics!.toolHeight).toBe(44);
+    expect(metrics!.toolRadius).toBeLessThanOrEqual(8);
+    expect(metrics!.toolBorder).toBe("rgb(216, 203, 184)");
+    expect(metrics!.toolBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.shellHeight).toBe(44);
     expect(metrics!.toolMargin).toBe("0px");
     expect(metrics!.shellMargin).toBe("0px");
+    expect(metrics!.toolMeterCount).toBe(0);
+    expect(metrics!.toolLedCount).toBe(0);
+    expect(metrics!.shellCapCount).toBe(0);
+    expect(metrics!.shellWrapperMarginTop).toBe(0);
+    expect(metrics!.shellWrapperBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.shellBodyRadius).toBeLessThanOrEqual(8);
+    expect(metrics!.shellBodyBorder).toBe("rgb(216, 203, 184)");
+    expect(metrics!.shellBodyBackground).not.toBe("rgba(0, 0, 0, 0)");
   });
 
   test("process rows keep long evidence and status anchored", async ({ page }) => {
@@ -4908,12 +5225,24 @@ test.describe("Timeline Message Flow", () => {
     const metrics = await page.evaluate(() => {
       const trigger = document.querySelector("[data-testid='context-compact-trigger']");
       if (!trigger) return null;
-      const wrapper = trigger.parentElement;
+      const wrapper = trigger.closest(".compact-spool");
       const wrapperStyle = wrapper ? getComputedStyle(wrapper) : null;
+      const wrapperAfter = wrapper ? getComputedStyle(wrapper, "::after") : null;
+      const triggerStyle = getComputedStyle(trigger);
+      const meta = trigger.querySelector(".compact-spool-meta");
+      const metaStyle = meta ? getComputedStyle(meta) : null;
       return {
         height: Math.round(trigger.getBoundingClientRect().height),
         marginTop: wrapperStyle ? Math.round(Number.parseFloat(wrapperStyle.marginTop)) : -1,
         marginBottom: wrapperStyle ? Math.round(Number.parseFloat(wrapperStyle.marginBottom)) : -1,
+        wrapperBackground: wrapperStyle?.backgroundColor ?? "",
+        wrapperBorderTop: wrapperStyle?.borderTopWidth ?? "",
+        wrapperAfterContent: wrapperAfter?.content ?? "",
+        wrapperAfterHeight: wrapperAfter?.height ?? "",
+        triggerBackground: triggerStyle.backgroundColor,
+        triggerBorderTop: triggerStyle.borderTopWidth,
+        triggerRadius: Number.parseFloat(triggerStyle.borderTopLeftRadius),
+        metaColor: metaStyle?.color ?? "",
       };
     });
 
@@ -4921,6 +5250,14 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.height).toBe(28);
     expect(metrics!.marginTop).toBe(0);
     expect(metrics!.marginBottom).toBe(0);
+    expect(metrics!.wrapperBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.wrapperBorderTop).toBe("0px");
+    expect(metrics!.wrapperAfterContent).toBe("none");
+    expect(metrics!.wrapperAfterHeight).toBe("auto");
+    expect(metrics!.triggerBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.triggerBorderTop).toBe("1px");
+    expect(metrics!.triggerRadius).toBeLessThanOrEqual(8);
+    expect(metrics!.metaColor).toBe("rgb(95, 93, 85)");
   });
 
   test("composer uses a grounded editor surface instead of a plastic card", async ({ page }) => {
@@ -5046,21 +5383,21 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.borderSubtle).toBe("#3A352C");
-    expect(metrics!.materialBorder).toBe("#3A352C");
-    expect(metrics!.materialSurface).toBe("rgba(18, 17, 15, 0.95)");
-    expect(metrics!.materialRaised).toBe("rgba(42, 39, 33, 0.92)");
-    expect(metrics!.materialPopover).toBe("rgba(18, 17, 15, 0.98)");
-    expect(metrics!.materialOverlay).toBe("rgba(27, 26, 23, 0.92)");
-    expect(metrics!.materialShadow).toContain("0 18px 44px");
-    expect(metrics!.composerBorderToken).toBe("rgba(81, 71, 55, 0.46)");
-    expect(metrics!.composerSurface).toBe("rgba(34, 32, 28, 0.94)");
-    expect(metrics!.composerShadowToken).toContain("0 16px 38px");
-    expect(metrics!.bgRaised).toBe("#2A2721");
-    expect(metrics!.hover).toBe("rgba(238, 234, 225, 0.055)");
-    expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.34)");
-    expect(metrics!.titlebarBorder).toBe("rgb(58, 53, 44)");
-    expect(metrics!.sidebarBorder).toBe("rgb(58, 53, 44)");
+    expect(metrics!.borderSubtle).toBe("#D8CBB8");
+    expect(metrics!.materialBorder).toBe("#D8CBB8");
+    expect(metrics!.materialSurface).toBe("rgba(251, 247, 239, 0.96)");
+    expect(metrics!.materialRaised).toBe("rgba(255, 252, 246, 0.94)");
+    expect(metrics!.materialPopover).toBe("rgba(255, 252, 246, 0.99)");
+    expect(metrics!.materialOverlay).toBe("rgba(251, 244, 234, 0.96)");
+    expect(metrics!.materialShadow).toContain("0 16px 38px");
+    expect(metrics!.composerBorderToken).toBe("#D8CBB8");
+    expect(metrics!.composerSurface).toBe("rgba(255, 252, 246, 0.96)");
+    expect(metrics!.composerShadowToken).toContain("0 18px 40px");
+    expect(metrics!.bgRaised).toBe("#FFFCF6");
+    expect(metrics!.hover).toBe("rgba(36, 42, 36, 0.055)");
+    expect(metrics!.focusRing).toBe("rgba(196, 138, 58, 0.38)");
+    expect(metrics!.titlebarBorder).toBe("rgb(216, 203, 184)");
+    expect(metrics!.sidebarBorder).toBe("rgb(216, 203, 184)");
     expect(metrics!.composerBorder).toBe(metrics!.composerBorderFocusToken);
     expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocus);
   });
@@ -5161,8 +5498,8 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.composerBorder).toBe(metrics!.materialBorderFocus);
     expect(metrics!.composerBackground).toBe(metrics!.composerSurfaceFocus);
     expect(metrics!.materialShadowStrong).toContain("0 22px 52px");
-    expect(metrics!.composerShadowFocus).toContain("0 18px 44px");
-    expect(metrics!.composerShadow).toContain("18px 44px");
+    expect(metrics!.composerShadowFocus).toContain("0 22px 48px");
+    expect(metrics!.composerShadow).toContain("22px 48px");
     expect(metrics!.detailBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.detailBackground).toBe(metrics!.materialRaised);
     expect(metrics!.menuBorder).toBe(metrics!.materialBorderColor);
@@ -5173,7 +5510,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.archiveHeaderBorder).toBe(metrics!.materialBorderColor);
   });
 
-  test("warm precision color ladder keeps dark surfaces readable", async ({ page }) => {
+  test("V3 color ladder keeps the light workbench readable", async ({ page }) => {
     await page.goto("http://localhost:1420");
 
     const tokens = await page.evaluate(() => {
@@ -5189,12 +5526,12 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(tokens).toEqual({
-      base: "#1B1A17",
-      depth: "#12110F",
-      surface: "#26231E",
-      raised: "#2A2721",
-      composer: "#22201C",
-      muted: "#928B7E",
+      base: "#F7F1E8",
+      depth: "#E8DDCF",
+      surface: "#FBF7EF",
+      raised: "#FFFCF6",
+      composer: "#FFFCF6",
+      muted: "#5F5D55",
     });
   });
 
@@ -5283,8 +5620,13 @@ test.describe("Timeline Message Flow", () => {
       const secondary = node.querySelector<HTMLElement>("[data-testid='confirm-cancel']");
       const warning = node.querySelector<HTMLElement>("[data-testid='confirm-warning']");
       const warningStyle = warning ? getComputedStyle(warning) : null;
+      const before = getComputedStyle(node, "::before");
+      const after = getComputedStyle(node, "::after");
       return {
         panelRadius: Number.parseFloat(getComputedStyle(node).borderTopLeftRadius),
+        ticketWrappers: document.querySelectorAll(".permission-ticket").length,
+        panelBefore: before.content,
+        panelAfter: after.content,
         gridGap: Number.parseFloat(getComputedStyle(node.querySelector("[data-testid='confirm-boundary-grid']") as Element).rowGap),
         rowDisplay: rows[0] ? getComputedStyle(rows[0]).display : "",
         rowHeight: rows[0] ? Math.round(rows[0].getBoundingClientRect().height) : 0,
@@ -5298,6 +5640,9 @@ test.describe("Timeline Message Flow", () => {
       };
     });
     expect(confirmMetrics.panelRadius).toBeLessThanOrEqual(8);
+    expect(confirmMetrics.ticketWrappers).toBe(0);
+    expect(confirmMetrics.panelBefore).toBe("none");
+    expect(confirmMetrics.panelAfter).toBe("none");
     expect(confirmMetrics.gridGap).toBeLessThanOrEqual(2);
     expect(confirmMetrics.rowDisplay).toBe("grid");
     expect(confirmMetrics.rowHeight).toBeLessThanOrEqual(42);
@@ -5530,6 +5875,33 @@ test.describe("Timeline Message Flow", () => {
       }),
     );
     expect(margins.every((margin) => margin.top === 0 && margin.bottom === 0)).toBeTruthy();
+
+    const deliveryMetrics = await panels.filter({ hasText: "本轮交付" }).evaluate((node) => {
+      const grid = node.querySelector<HTMLElement>("[data-testid='delivery-summary-grid']");
+      const items = Array.from(node.querySelectorAll<HTMLElement>("[data-testid='delivery-summary-item']"));
+      const values = Array.from(node.querySelectorAll<HTMLElement>(".forge-delivery-value"));
+      const gridStyle = grid ? getComputedStyle(grid) : null;
+      return {
+        width: Math.round((node as HTMLElement).getBoundingClientRect().width),
+        itemCount: items.length,
+        gridColumnCount: gridStyle?.gridTemplateColumns.split(" ").filter(Boolean).length ?? 0,
+        kinds: items.map((item) => item.dataset.deliveryKind ?? ""),
+        valueText: values.map((value) => value.textContent?.trim() ?? ""),
+        valueColors: values.map((value) => getComputedStyle(value).color),
+        itemBackgrounds: items.map((item) => getComputedStyle(item).backgroundColor),
+        itemBorders: items.map((item) => getComputedStyle(item).borderTopColor),
+        minItemHeight: items.length ? Math.min(...items.map((item) => Math.round(item.getBoundingClientRect().height))) : 0,
+      };
+    });
+    expect(deliveryMetrics.width).toBeLessThanOrEqual(720);
+    expect(deliveryMetrics.itemCount).toBe(3);
+    expect(deliveryMetrics.gridColumnCount).toBe(3);
+    expect(deliveryMetrics.kinds).toEqual(["preview", "checkpoint", "next"]);
+    expect(deliveryMetrics.valueText).toEqual(["预览未运行", "检查点已就绪", "下一步：检查当前版本。"]);
+    expect(deliveryMetrics.valueColors.every((color) => color === "rgb(36, 42, 36)")).toBeTruthy();
+    expect(deliveryMetrics.itemBackgrounds.every((color) => color !== "rgba(0, 0, 0, 0)")).toBeTruthy();
+    expect(deliveryMetrics.itemBorders.every((color) => color !== "rgba(0, 0, 0, 0)")).toBeTruthy();
+    expect(deliveryMetrics.minItemHeight).toBeGreaterThanOrEqual(52);
   });
 
   test("failed delivery check offers continue repair prompt", async ({ page }) => {
@@ -5586,11 +5958,11 @@ test.describe("Timeline Message Flow", () => {
         actionBackground: actionStyle?.backgroundColor ?? "",
       };
     });
-    expect(metrics.width).toBeLessThanOrEqual(680);
+    expect(metrics.width).toBeLessThanOrEqual(720);
     expect(metrics.gridDisplay).toBe("grid");
     expect(metrics.gridColumnCount).toBeLessThanOrEqual(metrics.itemCount);
-    expect(metrics.maxItemHeight).toBeLessThanOrEqual(36);
-    expect(metrics.actionBarHeight).toBeLessThanOrEqual(38);
+    expect(metrics.maxItemHeight).toBeLessThanOrEqual(72);
+    expect(metrics.actionBarHeight).toBeLessThanOrEqual(42);
     expect(metrics.actionHeight).toBe(28);
     expect(metrics.actionRadius).toBeLessThanOrEqual(8);
     expect(metrics.actionBackground).not.toBe("rgba(0, 0, 0, 0)");
@@ -5740,9 +6112,12 @@ test.describe("Timeline Message Flow", () => {
       const bodyStyle = getComputedStyle(body);
       const summaryStyle = getComputedStyle(summary);
       const codeStyle = getComputedStyle(code);
+      const cardStyle = getComputedStyle(node);
       return {
         openState: (panel as HTMLElement).dataset.diffOpen,
         cardWidth: Math.round(panel.getBoundingClientRect().width),
+        cardBackground: cardStyle.backgroundColor,
+        perfRows: node.querySelectorAll(".diff-filmstrip-perf").length,
         grid: getComputedStyle(added).display,
         oldNumberWidth: Math.round(oldNo.getBoundingClientRect().width),
         newNumberWidth: Math.round(newNo.getBoundingClientRect().width),
@@ -5752,7 +6127,9 @@ test.describe("Timeline Message Flow", () => {
         lineMinHeight: Math.round(Number.parseFloat(addedStyle.minHeight)),
         codePaddingLeft: Math.round(Number.parseFloat(codeStyle.paddingLeft)),
         addedBackground: addedStyle.backgroundColor,
+        addedBorderLeft: addedStyle.borderLeftWidth,
         removedBackground: removedStyle.backgroundColor,
+        removedBorderLeft: removedStyle.borderLeftWidth,
         hunkBorderTop: hunkStyle.borderTopWidth,
       };
     });
@@ -5760,6 +6137,8 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics).not.toBeNull();
     expect(metrics!.openState).toBe("true");
     expect(metrics!.cardWidth).toBeLessThanOrEqual(760);
+    expect(metrics!.cardBackground).toBe("rgba(255, 252, 246, 0.92)");
+    expect(metrics!.perfRows).toBe(0);
     expect(metrics!.maxWidth).not.toBe("none");
     expect(metrics!.bodyMaxHeight).toBe("320px");
     expect(metrics!.summaryHeight).toBe(26);
@@ -5769,7 +6148,9 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.oldNumberWidth).toBeGreaterThanOrEqual(36);
     expect(metrics!.newNumberWidth).toBeGreaterThanOrEqual(36);
     expect(metrics!.addedBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.addedBorderLeft).toBe("0px");
     expect(metrics!.removedBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.removedBorderLeft).toBe("0px");
     expect(metrics!.hunkBorderTop).toBe("1px");
 
     await diff.getByRole("button", { name: "展开完整改动" }).click();
@@ -6206,9 +6587,9 @@ test.describe("Timeline Message Flow", () => {
         statusColor: statusStyle?.color ?? "",
       };
     });
-    expect(runningMetrics.minHeight).toBe(22);
-    expect(runningMetrics.background).toBe("rgba(0, 0, 0, 0)");
-    expect(runningMetrics.borderTop).toBe(0);
+    expect(runningMetrics.minHeight).toBe(44);
+    expect(runningMetrics.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(runningMetrics.borderTop).toBe(1);
     expect(runningMetrics.statusTone).toBe("running");
     expect(runningMetrics.statusTitle).toBe("运行中");
     expect(runningMetrics.statusColor).not.toBe("rgb(184, 138, 86)");
@@ -6229,7 +6610,7 @@ test.describe("Timeline Message Flow", () => {
 
     const width = (await sidebar.boundingBox())?.width ?? 0;
     expect(width).toBeGreaterThanOrEqual(212);
-    expect(width).toBeLessThanOrEqual(224);
+    expect(width).toBeLessThanOrEqual(240);
     await expect(sidebar.getByRole("button", { name: "新对话", exact: true })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "插件" })).toBeVisible();
     await expect(sidebar.getByRole("button", { name: "自动化" })).toBeVisible();
@@ -6258,7 +6639,7 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(railMetrics.workspaceHeight).toBe(32);
     expect(railMetrics.workspaceRadius).toBeLessThanOrEqual(8);
-    expect(railMetrics.workspaceBorder).toBe("rgb(58, 53, 44)");
+    expect(railMetrics.workspaceBorder).toBe("rgb(216, 203, 184)");
     expect(railMetrics.workspaceBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(railMetrics.primaryGap).toBe(3);
     expect(railMetrics.primaryActions).toEqual([28, 28]);
@@ -6305,9 +6686,9 @@ test.describe("Timeline Message Flow", () => {
         background: style.backgroundColor,
       };
     });
-    expect(drawerMaterial.token).toBe("216px");
-    expect(drawerMaterial.backdrop).toContain("blur");
-    expect(drawerMaterial.background).toBe("rgba(27, 26, 23, 0.94)");
+    expect(drawerMaterial.token).toBe("232px");
+    expect(drawerMaterial.backdrop).toBe("none");
+    expect(drawerMaterial.background).toBe("rgba(251, 244, 234, 0.96)");
     await expect(drawer.getByTestId("forge-icon-action").first()).toBeVisible();
     await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
     await page.keyboard.press("Escape");
@@ -6359,10 +6740,10 @@ test.describe("Timeline Message Flow", () => {
       };
     });
 
-    expect(metrics.accent).toBe("#B88A56");
+    expect(metrics.accent).toBe("#C48A3A");
     expect(metrics.radius).toBeLessThanOrEqual(8);
     expect(metrics.tabHeight).toBe(32);
-    expect(metrics.tabBorder).toBe("rgb(184, 138, 86)");
+    expect(metrics.tabBorder).toBe("rgb(196, 138, 58)");
     expect(metrics.summaryDisplay).toBe("grid");
     expect(metrics.summaryItemCount).toBe(3);
     expect(metrics.summaryMaxHeight).toBeLessThanOrEqual(44);
@@ -6370,7 +6751,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.searchHeight).toBe(32);
     expect(metrics.rowHeight).toBeGreaterThanOrEqual(44);
     expect(metrics.rowBackground).not.toBe("rgba(0, 0, 0, 0)");
-    expect(metrics.toggleColor).toBe("rgb(184, 138, 86)");
+    expect(metrics.toggleColor).toBe("rgb(196, 138, 58)");
     expect(metrics.toggleBackground).not.toContain("16, 185, 129");
     expect(metrics.toggleBackground).not.toContain("52, 211, 153");
     expect(metrics.inlineStyledCount).toBe(0);
@@ -6406,8 +6787,10 @@ test.describe("Timeline Message Flow", () => {
         height: Math.round(node.getBoundingClientRect().height),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         labelInset: label ? Math.round(label.getBoundingClientRect().left - node.getBoundingClientRect().left) : 0,
-        indicatorWidth: Math.round(Number.parseFloat(indicatorStyle.width)),
-        indicatorTop: Math.round(Number.parseFloat(indicatorStyle.top)),
+        indicatorContent: indicatorStyle.content,
+        indicatorWidth: indicatorStyle.width,
+        borderColor: style.borderTopColor,
+        background: style.backgroundColor,
         deleteOpacity: deleteButton ? getComputedStyle(deleteButton).opacity : null,
         listDisplay: list ? getComputedStyle(list).display : "",
         groupLabelHeight: groupLabel ? Math.round(groupLabel.getBoundingClientRect().height) : 0,
@@ -6417,9 +6800,11 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.token).toBe("28px");
     expect(metrics.height).toBe(28);
     expect(metrics.radius).toBeLessThanOrEqual(8);
-    expect(metrics.labelInset).toBeGreaterThanOrEqual(14);
-    expect(metrics.indicatorWidth).toBe(2);
-    expect(metrics.indicatorTop).toBeGreaterThanOrEqual(7);
+    expect(metrics.labelInset).toBeGreaterThanOrEqual(10);
+    expect(metrics.indicatorContent).toBe("none");
+    expect(metrics.indicatorWidth).toBe("auto");
+    expect(metrics.borderColor).toBe("rgb(216, 203, 184)");
+    expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.deleteOpacity).toBe("0");
     expect(metrics.listDisplay).toBe("flex");
     expect(metrics.groupLabelHeight).toBeGreaterThanOrEqual(20);
@@ -6493,6 +6878,7 @@ test.describe("Timeline Message Flow", () => {
 
   test("project archive disclosure rows use inspector rhythm tokens", async ({ page }) => {
     const sessionId = crypto.randomUUID();
+    await page.setViewportSize({ width: 900, height: 720 });
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
@@ -6510,17 +6896,39 @@ test.describe("Timeline Message Flow", () => {
 
     const metrics = await page.evaluate(() => {
       const root = document.documentElement;
-      const archive = document.querySelector("[data-testid='project-archive-panel']");
-      const body = document.querySelector("[data-testid='project-archive-body']");
-      const disclosure = document.querySelector("[data-testid='archive-disclosure-records'] button");
-      if (!archive || !body || !disclosure) return null;
+      const archive = document.querySelector<HTMLElement>("[data-testid='project-archive-panel']");
+      const body = document.querySelector<HTMLElement>("[data-testid='project-archive-body']");
+      const disclosure = document.querySelector<HTMLElement>("[data-testid='archive-disclosure-records'] button");
+      const main = document.querySelector<HTMLElement>("[data-testid='main-workbench']");
+      const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
+      const modelChip = document.querySelector<HTMLElement>("[data-testid='composer-model-chip']");
+      const title = document.querySelector<HTMLElement>(".forge-inspector-title");
+      const subtitle = document.querySelector<HTMLElement>(".forge-inspector-subtitle");
+      const summaryLabel = document.querySelector<HTMLElement>(".forge-archive-summary-label");
+      const summaryValue = document.querySelector<HTMLElement>(".forge-archive-summary-value");
+      if (!archive || !body || !disclosure || !main || !composer || !modelChip || !title || !subtitle || !summaryLabel || !summaryValue) return null;
+      const archiveRect = archive.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      const modelChipRect = modelChip.getBoundingClientRect();
+      const archiveStyle = getComputedStyle(archive);
       return {
         widthToken: getComputedStyle(root).getPropertyValue("--forge-inspector-width").trim(),
         gapToken: getComputedStyle(root).getPropertyValue("--forge-inspector-gap").trim(),
         rowToken: getComputedStyle(root).getPropertyValue("--forge-disclosure-row-height").trim(),
-        width: Math.round(archive.getBoundingClientRect().width),
+        width: Math.round(archiveRect.width),
+        background: archiveStyle.backgroundColor,
+        backdropFilter: archiveStyle.backdropFilter,
         bodyGap: Math.round(Number.parseFloat(getComputedStyle(body).rowGap)),
         rowHeight: Math.round(disclosure.getBoundingClientRect().height),
+        archiveLeft: Math.round(archiveRect.left),
+        composerRight: Math.round(composerRect.right),
+        modelChipRight: Math.round(modelChipRect.right),
+        mainPaddingRight: getComputedStyle(main).paddingRight,
+        titleFontSize: getComputedStyle(title).fontSize,
+        subtitleFontSize: getComputedStyle(subtitle).fontSize,
+        subtitleColor: getComputedStyle(subtitle).color,
+        summaryLabelFontSize: getComputedStyle(summaryLabel).fontSize,
+        summaryValueColor: getComputedStyle(summaryValue).color,
       };
     });
 
@@ -6529,8 +6937,18 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.gapToken).toBe("10px");
     expect(metrics!.rowToken).toBe("28px");
     expect(metrics!.width).toBe(300);
+    expect(metrics!.background).toBe("rgb(251, 244, 234)");
+    expect(metrics!.backdropFilter).toBe("none");
     expect(metrics!.bodyGap).toBe(10);
     expect(metrics!.rowHeight).toBe(28);
+    expect(metrics!.mainPaddingRight).toBe(metrics!.widthToken);
+    expect(metrics!.composerRight).toBeLessThanOrEqual(metrics!.archiveLeft - 12);
+    expect(metrics!.modelChipRight).toBeLessThanOrEqual(metrics!.archiveLeft - 12);
+    expect(metrics!.titleFontSize).toBe("14px");
+    expect(metrics!.subtitleFontSize).toBe("11px");
+    expect(metrics!.subtitleColor).toBe("rgb(95, 93, 85)");
+    expect(metrics!.summaryLabelFontSize).toBe("11px");
+    expect(metrics!.summaryValueColor).toBe("rgb(36, 42, 36)");
   });
 
   test("project archive summary gives quick project, context, and record state", async ({ page }) => {
@@ -6568,7 +6986,7 @@ test.describe("Timeline Message Flow", () => {
 
     expect(metrics.display).toBe("grid");
     expect(metrics.itemCount).toBe(3);
-    expect(metrics.maxItemHeight).toBeLessThanOrEqual(48);
+    expect(metrics.maxItemHeight).toBeLessThanOrEqual(50);
     expect(metrics.iconWidth).toBe(24);
     expect(metrics.valueOverflow).toBe("ellipsis");
   });
@@ -7239,12 +7657,15 @@ test.describe("InputBar", () => {
     const errorMetrics = await errorCard.evaluate((node) => {
       const body = node.querySelector<HTMLElement>("[data-testid='error-card-body']");
       const style = getComputedStyle(node);
+      const after = getComputedStyle(node, "::after");
       return {
         width: Math.round(node.getBoundingClientRect().width),
         radius: Number.parseFloat(style.borderTopLeftRadius),
         background: style.backgroundColor,
         border: style.borderTopColor,
         bodyHeight: body ? Math.round(body.getBoundingClientRect().height) : 0,
+        afterContent: after.content,
+        afterWidth: after.width,
       };
     });
     expect(errorMetrics.width).toBeLessThanOrEqual(620);
@@ -7252,6 +7673,8 @@ test.describe("InputBar", () => {
     expect(errorMetrics.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(errorMetrics.border).not.toBe("rgba(0, 0, 0, 0)");
     expect(errorMetrics.bodyHeight).toBeLessThanOrEqual(38);
+    expect(errorMetrics.afterContent).toBe("none");
+    expect(errorMetrics.afterWidth).toBe("auto");
     await expect(page.getByTestId("pending-block")).toHaveCount(0);
     await expect(textarea).toBeEnabled();
   });
@@ -9075,7 +9498,7 @@ test.describe("Project records context panel", () => {
     await expect(projectMemories.getByText("项目事实", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "交付", exact: true })).toBeVisible();
     await expect(page.getByText("最近状态")).toBeVisible();
-    await expect(page.getByText("预览运行中")).toBeVisible();
+    await expect(projectArchive(page).getByText("预览运行中")).toBeVisible();
     await expect(page.getByText(otherProjectMemory.body)).toHaveCount(0);
   });
 

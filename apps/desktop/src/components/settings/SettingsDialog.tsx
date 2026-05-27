@@ -146,7 +146,12 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
     setSaving(false);
   };
 
-  const sortedKeys = [...keys].sort((a, b) => {
+  const keyByProvider = new Map(keys.map((key) => [key.provider, key]));
+  const knownProviderStatuses: KeyStatus[] = PROVIDERS.map((provider) =>
+    keyByProvider.get(provider.id) ?? { provider: provider.id, set: false, preview: "" },
+  );
+  const unknownProviderStatuses = keys.filter((key) => !PROVIDERS.some((provider) => provider.id === key.provider));
+  const sortedKeys = [...knownProviderStatuses, ...unknownProviderStatuses].sort((a, b) => {
     const aIndex = PROVIDERS.findIndex((provider) => provider.id === a.provider);
     const bIndex = PROVIDERS.findIndex((provider) => provider.id === b.provider);
     return (aIndex < 0 ? 99 : aIndex) - (bIndex < 0 ? 99 : bIndex);
@@ -230,7 +235,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
                         <div className="mt-1 truncate text-[11px] text-muted-foreground/85">
                           {defaultModel.name}
                         </div>
-                        <div className="mt-0.5 text-[10px] text-muted-foreground/60">
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
                           {["默认模型", defaultContext && `上下文 ${defaultContext}`].filter(Boolean).join(" · ")}
                         </div>
                       </>
