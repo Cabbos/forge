@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
-import { useActiveWorkspace, useStore } from "@/store";
-import { getProjectDisplay, getSessionTitle } from "@/lib/session-display";
+import { useStore } from "@/store";
 
 interface InspectorProps {
   sessionId: string | null;
 }
 
 export function Inspector({ sessionId }: InspectorProps) {
-  const activeWorkspace = useActiveWorkspace();
   const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
   const blocks = session?.blocks ?? [];
   const eventCount = blocks.length;

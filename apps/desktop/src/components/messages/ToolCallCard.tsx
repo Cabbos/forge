@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
-import { Check, ChevronRight, Copy, Loader2, CheckCircle2, XCircle, Wrench } from "lucide-react";
+import { Check, Copy } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
-import { cn } from "@/lib/utils";
 import { deriveToolCallView } from "./processToolPresentation";
 
 function meterSegments(status: string): number {
