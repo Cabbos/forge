@@ -4,6 +4,7 @@ import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 import { HubPanelHost } from "./HubPanelHost";
+import { Inspector } from "./Inspector";
 import { useOutputStream } from "@/hooks/useOutputStream";
 import { useSession } from "@/hooks/useSession";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
@@ -204,7 +205,11 @@ export function AppShell() {
   }, [startConversation]);
 
   return (
-    <div className="forge-app-shell h-screen grid bg-background" style={{ gridTemplateColumns: "var(--forge-sidebar-width) minmax(0, 1fr)" }}>
+    <div
+      data-testid="operating-surface"
+      data-design-version="v3-light-workbench"
+      className="forge-app-shell h-screen grid bg-background"
+    >
       <Sidebar
         activePanel={activeSidebarPanel}
         onOpenPanel={toggleSidebarPanel}
@@ -213,7 +218,7 @@ export function AppShell() {
           setSearchOpen(true);
         }}
       />
-      <main className="flex flex-col h-full min-w-0 overflow-hidden border-r border-border">
+      <main data-testid="main-workbench" className="forge-main-workbench flex flex-col h-full min-w-0 overflow-hidden">
         <div
           data-testid="app-titlebar"
           data-tauri-drag-region="true"
@@ -231,8 +236,8 @@ export function AppShell() {
                   className="forge-titlebar-status-pill"
                   style={{
                     color: titlebarStatus.color,
-                    borderColor: `${titlebarStatus.color}38`,
-                    backgroundColor: `${titlebarStatus.color}14`,
+                    borderColor: `color-mix(in srgb, ${titlebarStatus.color} 28%, transparent)`,
+                    backgroundColor: `color-mix(in srgb, ${titlebarStatus.color} 10%, transparent)`,
                   }}
                 >
                   <span className="forge-titlebar-status-dot" style={{ background: titlebarStatus.color }} />
@@ -398,6 +403,7 @@ export function AppShell() {
           </div>
         )}
       </main>
+      <Inspector sessionId={visibleSessionId} />
       {activeSidebarPanel !== null && (
         <Suspense fallback={null}>
           <LazyCapabilityDrawer
