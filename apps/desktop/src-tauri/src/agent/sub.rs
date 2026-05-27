@@ -39,7 +39,7 @@ pub struct SubAgent;
 impl SubAgent {
     pub async fn run(
         task: &str,
-        adapter: Arc<Box<dyn AiAdapter>>,
+        adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
         app_handle: &tauri::AppHandle,
         cancel: Arc<Notify>,

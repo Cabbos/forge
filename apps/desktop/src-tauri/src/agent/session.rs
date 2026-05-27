@@ -66,7 +66,7 @@ pub struct AgentSession {
     pub model: String,
     pub model_id: String,
     pub status: Arc<Mutex<SessionStatus>>,
-    pub(crate) adapter: Arc<Box<dyn AiAdapter>>,
+    pub(crate) adapter: Arc<dyn AiAdapter>,
     pub(crate) messages: Arc<Mutex<Vec<ChatMessage>>>,
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) turn_inflight: Arc<AtomicBool>,
@@ -78,6 +78,12 @@ pub struct AgentSession {
     pub(crate) context_window_tokens: Option<u32>,
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
 }
+
+// Lock discipline for AgentSession:
+// - Prefer taking one mutex per statement and cloning the small value needed.
+// - If multiple locks are unavoidable, acquire them in this order:
+//   status -> system_prompt -> messages -> summary -> latest_turn -> auto_compact_guard -> cancel.
+// This keeps resume/snapshot/turn setup from growing accidental lock-order cycles.
 
 pub(crate) struct AgentPreviewStatusUpdate<'a> {
     pub project_path: Option<&'a str>,
@@ -92,7 +98,7 @@ impl AgentSession {
     pub fn new(
         id: String,
         agent_type: String,
-        adapter: Arc<Box<dyn AiAdapter>>,
+        adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
         system_prompt: String,
         context_window_tokens: Option<u32>,

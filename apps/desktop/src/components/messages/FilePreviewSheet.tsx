@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FileText } from "lucide-react";
 import {
   Dialog,
@@ -21,7 +21,11 @@ interface FilePreviewSheetProps {
 }
 
 export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewSheetProps) {
-  const workingDir = useStore((s) => sessionId ? s.sessions.get(sessionId)?.workingDir ?? null : null);
+  const selectWorkingDir = useCallback(
+    (s: ReturnType<typeof useStore.getState>) => sessionId ? s.sessions.get(sessionId)?.workingDir ?? null : null,
+    [sessionId],
+  );
+  const workingDir = useStore(selectWorkingDir);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

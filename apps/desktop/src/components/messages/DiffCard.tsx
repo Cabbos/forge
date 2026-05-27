@@ -1,5 +1,5 @@
 import { ChevronRight, FileDiff } from "lucide-react";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { BlockState } from "@/lib/protocol";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
 import { ForgeIcon } from "@/components/ui/ForgeIcon";
@@ -13,7 +13,11 @@ import { cn } from "@/lib/utils";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: string }) {
-  const workingDir = useStore((s) => sessionId ? s.sessions.get(sessionId)?.workingDir ?? null : null);
+  const selectWorkingDir = useCallback(
+    (s: ReturnType<typeof useStore.getState>) => sessionId ? s.sessions.get(sessionId)?.workingDir ?? null : null,
+    [sessionId],
+  );
+  const workingDir = useStore(selectWorkingDir);
   const rootRef = useRef<HTMLDivElement>(null);
   const [bodyOpen, setBodyOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);

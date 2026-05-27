@@ -137,7 +137,7 @@
     width: 0.375rem;
     height: 0.375rem;
     flex-shrink: 0;
-    border-radius: 999px;
+    border-radius: 50%;
   }
 
   .forge-titlebar-status-pill[data-state="running"] .forge-titlebar-status-dot {
@@ -498,7 +498,7 @@
     top: 0.75rem;
     bottom: 0.75rem;
     width: 2px;
-    border-radius: 999px;
+    border-radius: 50%;
     background: transparent;
     transition: background-color 120ms ease;
   }
@@ -860,7 +860,7 @@
     border: 1px solid rgba(184, 138, 86, 0.28);
     border-radius: calc(var(--radius) - 2px);
     background: rgba(184, 138, 86, 0.08);
-    color: #B88A56;
+    color: var(--forge-accent);
     box-shadow: 0 0 0 4px rgba(184, 138, 86, 0.035);
   }
 
@@ -892,7 +892,7 @@
     border: 1px solid rgba(184, 138, 86, 0.26);
     border-radius: calc(var(--radius) - 2px);
     background: rgba(184, 138, 86, 0.08);
-    color: #B88A56;
+    color: var(--forge-accent);
   }
 
   .forge-readiness-grid {
@@ -925,11 +925,11 @@
   }
 
   .forge-readiness-row[data-tone="blocked"] {
-    color: #B88A56;
+    color: var(--forge-accent);
   }
 
   .forge-readiness-row[data-tone="warning"] {
-    color: #D7B46D;
+    color: var(--forge-warning);
   }
 
   .forge-readiness-row-label {
@@ -1191,7 +1191,7 @@
   }
 
   .forge-missing-api-key-icon {
-    color: #B88A56;
+    color: var(--forge-accent);
   }
 
   .forge-missing-api-key-body {
@@ -1211,7 +1211,7 @@
     border-radius: calc(var(--radius) - 2px);
     background: rgba(184, 138, 86, 0.09);
     padding: 0 0.625rem;
-    color: #E7C972;
+    color: var(--forge-warning-strong);
     font-size: 11px;
     font-weight: 500;
     line-height: 1;
@@ -1222,7 +1222,7 @@
   .forge-missing-api-key-action:hover {
     border-color: rgba(184, 138, 86, 0.44);
     background: rgba(184, 138, 86, 0.14);
-    color: #F1D891;
+    color: var(--forge-warning-bright);
   }
 
   .forge-missing-api-key-action:focus-visible {
@@ -1235,12 +1235,12 @@
   }
 
   .forge-error-card-icon {
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-error-card-body {
     padding: 0.5rem 0.625rem 0.625rem 2.15rem;
-    color: #E0A2A2;
+    color: var(--forge-danger-soft);
     font-size: 12px;
     line-height: 18px;
   }
@@ -1323,7 +1323,7 @@
     border-radius: calc(var(--radius) - 2px);
     background: rgba(248, 113, 113, 0.06);
     padding: 0.375rem 0.5rem;
-    color: #FCA5A5;
+    color: var(--forge-danger-bright);
     font-size: 11px;
     line-height: 1.125rem;
   }
@@ -1356,24 +1356,24 @@
 
   .forge-confirm-button[data-variant="approve"] {
     border-color: rgba(184, 138, 86, 0.5);
-    background: #B88A56;
-    color: #111216;
+    background: var(--forge-accent);
+    color: var(--forge-accent-foreground-strong);
   }
 
   .forge-confirm-button[data-variant="approve"]:hover {
-    background: #DEB866;
+    background: var(--forge-accent-hover-strong);
   }
 
   .forge-confirm-button[data-variant="cancel"] {
     border-color: rgba(212, 119, 119, 0.32);
     background: rgba(212, 119, 119, 0.045);
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-confirm-button[data-variant="cancel"]:hover {
     border-color: rgba(212, 119, 119, 0.45);
     background: rgba(212, 119, 119, 0.08);
-    color: #E29A9A;
+    color: var(--forge-danger-hover);
   }
 
   .forge-confirm-button:focus-visible {
@@ -1445,7 +1445,7 @@
   .forge-confirm-resolved[data-state="cancelled"] {
     border-color: rgba(212, 119, 119, 0.2);
     background: rgba(212, 119, 119, 0.055);
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-delivery-card {
@@ -1539,7 +1539,7 @@
   .forge-delivery-action[data-loaded="true"] {
     border-color: rgba(184, 138, 86, 0.38);
     background: rgba(184, 138, 86, 0.1);
-    color: #B88A56;
+    color: var(--forge-accent);
   }
 
   .forge-delivery-action:focus-visible {
@@ -1792,7 +1792,7 @@
     top: 0.4375rem;
     bottom: 0.4375rem;
     width: 2px;
-    border-radius: 999px;
+    border-radius: 50%;
     background: rgba(184, 138, 86, 0.72);
   }
 
@@ -1821,7 +1821,7 @@
 
   .forge-sidebar-history-delete:hover {
     background: rgba(212, 119, 119, 0.1);
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-settings-dialog {

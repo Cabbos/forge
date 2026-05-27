@@ -23,7 +23,7 @@
   .forge-log-line[data-tone="error"] {
     border-color: rgba(212, 119, 119, 0.34);
     background: rgba(212, 119, 119, 0.045);
-    color: #D98A8A;
+    color: var(--forge-danger-muted);
   }
 
   .forge-log-line[data-state="running"] {
@@ -62,7 +62,7 @@
   .forge-evidence-row[data-tone="error"] {
     border-color: rgba(212, 119, 119, 0.28);
     background: rgba(212, 119, 119, 0.055);
-    color: #D98A8A;
+    color: var(--forge-danger-muted);
   }
 
   .forge-log-line:focus-visible {
@@ -91,7 +91,7 @@
   }
 
   .forge-log-status[data-tone="error"] {
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-log-line-icon,
@@ -109,7 +109,7 @@
 
   .forge-log-line-icon[data-status="error"],
   .forge-log-line-status[data-status="error"] {
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-log-line-command,
@@ -215,7 +215,7 @@
   }
 
   .forge-tool-activity-group[data-tone="error"] .forge-tool-activity-summary {
-    color: #D47777;
+    color: var(--forge-danger);
     border-color: rgba(212, 119, 119, 0.34);
     background: rgba(212, 119, 119, 0.07);
   }
@@ -270,7 +270,7 @@
     display: inline-block;
     width: 0.1875rem;
     height: 0.1875rem;
-    border-radius: 999px;
+    border-radius: 50%;
     background: currentColor;
     animation: pulse-dot 1.15s infinite;
   }
@@ -502,7 +502,7 @@
   }
 
   .forge-shell-output-section[data-tone="error"] .forge-shell-output-label {
-    color: #D47777;
+    color: var(--forge-danger);
   }
 
   .forge-shell-output-label {

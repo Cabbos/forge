@@ -1386,8 +1386,13 @@ function deliverySummariesEqual(left: DeliverySummary | null, right: DeliverySum
     (left.verification_command ?? null) === (right.verification_command ?? null) &&
     (left.record_label ?? null) === (right.record_label ?? null) &&
     (left.record_status ?? null) === (right.record_status ?? null) &&
-    JSON.stringify(left.record_target_pages ?? []) === JSON.stringify(right.record_target_pages ?? [])
+    stringArraysEqual(left.record_target_pages ?? [], right.record_target_pages ?? [])
   );
+}
+
+function stringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
 }
 
 // Selector hooks

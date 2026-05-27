@@ -44,7 +44,7 @@ export function AppShell() {
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
   const status = getSessionStatus(activeSession);
   const hasPendingOutput = activeSession?.blocks.some((block) => block.event_type === "pending") ?? false;
-  const titlebarStatus = hasPendingOutput ? { label: "响应中", color: "#B88A56" } : status;
+  const titlebarStatus = hasPendingOutput ? { label: "响应中", color: "var(--forge-accent)" } : status;
   const showSessionStatus = hasPendingOutput || activeSession?.streaming || activeSession?.status === "error";
   const titlebarStatusState = activeSession?.status === "error"
     ? "error"

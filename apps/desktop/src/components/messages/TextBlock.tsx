@@ -26,7 +26,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       return;
     }
     // During streaming, throttle to every STREAM_THROTTLE_MS
-    const now = Date.now();
+    const now = performance.now();
     const elapsed = now - lastUpdateRef.current;
     if (elapsed >= STREAM_THROTTLE_MS) {
       lastUpdateRef.current = now;
@@ -34,7 +34,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
     } else {
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
-        lastUpdateRef.current = Date.now();
+        lastUpdateRef.current = performance.now();
         setDisplayContent(block.content);
       }, STREAM_THROTTLE_MS - elapsed);
     }

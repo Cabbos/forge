@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+const ORPHAN_TOOL_RESULT_PREVIEW_LIMIT: usize = 4000;
+
 /// A chat message in the format expected by AI APIs.
 /// Content can be a plain string (for simple text) or a JSON value
 /// (for structured content like tool_use and tool_result blocks).
@@ -166,9 +168,19 @@ fn orphan_tool_result_message_as_text(message: &ChatMessage) -> ChatMessage {
     } else {
         format!(" Tool result ids: {}.", ids.join(", "))
     };
+    let payload = compact_json_preview(&message.content, ORPHAN_TOOL_RESULT_PREVIEW_LIMIT);
     ChatMessage::user(&format!(
-        "Discarded orphan tool result while repairing chat history.{suffix} Re-check the current workspace state before relying on previous tool output."
+        "Discarded orphan tool result while repairing chat history.{suffix} Original tool result payload: {payload}. Re-check the current workspace state before relying on previous tool output."
     ))
+}
+
+fn compact_json_preview(value: &serde_json::Value, limit: usize) -> String {
+    let text = serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string());
+    if text.chars().count() <= limit {
+        return text;
+    }
+    let preview: String = text.chars().take(limit).collect();
+    format!("{preview}...<truncated>")
 }
 
 fn tool_result_ids(message: &ChatMessage) -> Vec<String> {
@@ -653,6 +665,11 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("Discarded orphan tool result"));
+        assert!(repaired[0]
+            .content
+            .as_str()
+            .unwrap_or_default()
+            .contains("ok"));
         assert_eq!(
             repaired[1].content,
             serde_json::Value::String("继续".to_string())

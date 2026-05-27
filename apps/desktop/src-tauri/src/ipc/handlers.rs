@@ -246,7 +246,7 @@ fn build_adapter(
     model: &str,
     api_base: Option<&str>,
     external_tools: Vec<ToolDef>,
-) -> Result<Arc<Box<dyn AiAdapter>>, String> {
+) -> Result<Arc<dyn AiAdapter>, String> {
     match provider {
         "deepseek" => {
             let adapter = AnthropicAdapter::new(api_key.to_string())
@@ -256,7 +256,7 @@ fn build_adapter(
                 .with_external_tools(external_tools)
                 .with_max_tokens(384_000)
                 .with_thinking_budget_tokens(16_000);
-            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+            Ok(Arc::new(adapter))
         }
         "anthropic" => {
             let adapter = AnthropicAdapter::new(api_key.to_string())
@@ -264,7 +264,7 @@ fn build_adapter(
                 .with_base_url(api_base.unwrap_or("https://api.anthropic.com"))
                 .with_model(model)
                 .with_external_tools(external_tools);
-            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+            Ok(Arc::new(adapter))
         }
         "openai" => {
             let adapter = OpenAiCompatibleAdapter::new(api_key.to_string())
@@ -272,7 +272,7 @@ fn build_adapter(
                 .with_base_url(api_base.unwrap_or(OPENAI_BASE_URL))
                 .with_model(model)
                 .with_external_tools(external_tools);
-            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+            Ok(Arc::new(adapter))
         }
         "openrouter" => {
             let adapter = OpenAiCompatibleAdapter::new(api_key.to_string())
@@ -280,7 +280,7 @@ fn build_adapter(
                 .with_base_url(api_base.unwrap_or(OPENROUTER_BASE_URL))
                 .with_model(model)
                 .with_external_tools(external_tools);
-            Ok(Arc::new(Box::new(adapter) as Box<dyn AiAdapter>))
+            Ok(Arc::new(adapter))
         }
         other => Err(format!("Unsupported provider: {other}")),
     }
@@ -321,10 +321,10 @@ pub async fn create_session(
         harness.external_mcp_tool_definitions().await
     };
     let adapter = if missing_api_key {
-        Arc::new(Box::new(MissingKeyAdapter::new(
+        Arc::new(MissingKeyAdapter::new(
             provider_label(&provider),
             &model_str,
-        )) as Box<dyn AiAdapter>)
+        )) as Arc<dyn AiAdapter>
     } else {
         build_adapter(
             &provider,
@@ -502,10 +502,10 @@ pub async fn resume_session(
         harness.external_mcp_tool_definitions().await
     };
     let adapter = if missing_api_key {
-        Arc::new(Box::new(MissingKeyAdapter::new(
+        Arc::new(MissingKeyAdapter::new(
             provider_label(&provider),
             &model_str,
-        )) as Box<dyn AiAdapter>)
+        )) as Arc<dyn AiAdapter>
     } else {
         build_adapter(
             &provider,
@@ -2449,9 +2449,8 @@ mod tests {
         let nonce = uuid::Uuid::now_v7();
         let workspace = std::env::temp_dir().join(format!("forge-busy-turn-{nonce}"));
         std::fs::create_dir_all(&workspace).expect("workspace");
-        let adapter = Arc::new(
-            Box::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Box<dyn AiAdapter>,
-        );
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
         let session = AgentSession::new(
             "session-1".to_string(),
             "deepseek".to_string(),
@@ -2480,9 +2479,8 @@ mod tests {
         let nonce = uuid::Uuid::now_v7();
         let workspace = std::env::temp_dir().join(format!("forge-stopped-turn-{nonce}"));
         std::fs::create_dir_all(&workspace).expect("workspace");
-        let adapter = Arc::new(
-            Box::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Box<dyn AiAdapter>,
-        );
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
         let session = AgentSession::new(
             "session-1".to_string(),
             "deepseek".to_string(),
