@@ -624,4 +624,54 @@
     color: rgba(247, 241, 232, 0.8);
     background: rgba(247, 241, 232, 0.08);
   }
+
+  /* §6a Cord Beads — one per conversation turn */
+  .forge-conversation-turn {
+    position: relative;
+  }
+
+  .forge-conversation-turn::after {
+    content: "";
+    position: absolute;
+    left: -1.125rem;
+    top: 12px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #D8CBB8;
+    border: 1px solid #B8AA96;
+    transform: translateX(-4px);
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .forge-conversation-turn::after {
+      /* Static dot, no animation needed */
+    }
+  }
+
+  /* §6b Desk Specks — subtle paper grain texture */
+  .forge-conversation-scroll {
+    position: relative;
+  }
+
+  .forge-conversation-scroll::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      radial-gradient(circle at 15% 20%, rgba(36,42,36,0.05) 1px, transparent 1px),
+      radial-gradient(circle at 45% 60%, rgba(36,42,36,0.04) 1px, transparent 1px),
+      radial-gradient(circle at 75% 30%, rgba(36,42,36,0.06) 1px, transparent 1px),
+      radial-gradient(circle at 30% 80%, rgba(36,42,36,0.04) 1px, transparent 1px),
+      radial-gradient(circle at 85% 70%, rgba(36,42,36,0.05) 1px, transparent 1px),
+      radial-gradient(circle at 55% 15%, rgba(36,42,36,0.03) 1px, transparent 1px),
+      radial-gradient(circle at 20% 50%, rgba(36,42,36,0.04) 1px, transparent 1px),
+      radial-gradient(circle at 65% 45%, rgba(36,42,36,0.05) 1px, transparent 1px),
+      radial-gradient(circle at 90% 85%, rgba(36,42,36,0.03) 1px, transparent 1px),
+      radial-gradient(circle at 10% 90%, rgba(36,42,36,0.04) 1px, transparent 1px);
+    background-size: 200px 200px;
+  }
 }
