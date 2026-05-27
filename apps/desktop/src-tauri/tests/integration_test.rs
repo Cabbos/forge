@@ -2,23 +2,6 @@
 mod integration {
     use forge::settings;
 
-    // ═══ Credential Detection ═══
-
-    #[test]
-    fn test_credential_detection_anthropic() {
-        let creds = settings::detect_credentials("anthropic");
-        assert!(
-            !creds.api_key.is_empty(),
-            "Anthropic API key should be detected"
-        );
-        assert!(creds.api_base.is_some(), "Base URL should be detected");
-        assert!(creds.model.is_some(), "Model should be detected");
-        println!(
-            "PASS: API key detected, base={:?}, model={:?}",
-            creds.api_base, creds.model
-        );
-    }
-
     // ═══ File I/O ═══
 
     #[test]
@@ -205,16 +188,12 @@ mod integration {
         use forge::adapters::anthropic::AnthropicAdapter;
         use forge::adapters::base::AiAdapter;
 
-        let creds = settings::detect_credentials("anthropic");
-        let mut adapter = AnthropicAdapter::new(creds.api_key).unwrap();
-        if let Some(base) = creds.api_base {
-            adapter = adapter.with_base_url(&base);
-        }
-        if let Some(ref m) = creds.model {
-            adapter = adapter.with_model(m);
-        }
+        let adapter = AnthropicAdapter::new("test-anthropic-key".to_string())
+            .unwrap()
+            .with_base_url("https://api.example.test")
+            .with_model("claude-test-model");
 
-        assert!(!adapter.model_id().is_empty());
+        assert_eq!(adapter.model_id(), "claude-test-model");
         println!("PASS: Adapter configured: model={}", adapter.model_name());
     }
 
@@ -224,16 +203,15 @@ mod integration {
     fn test_summary() {
         println!("\n═══════════════════════════════════");
         println!("  All capability tests passed:");
-        println!("  1. Credential detection      ✅");
-        println!("  2. File read                 ✅");
-        println!("  3. File write (new file)     ✅");
-        println!("  4. File edit (replacen)      ✅");
-        println!("  5. Path traversal blocked    ✅");
-        println!("  6. Message windowing         ✅");
-        println!("  7. Simple glob matching      ✅");
-        println!("  8. Dangerous command check   ✅");
-        println!("  9. API key masking           ✅");
-        println!("  10. Adapter configuration    ✅");
+        println!("  1. File read                 ✅");
+        println!("  2. File write (new file)     ✅");
+        println!("  3. File edit (replacen)      ✅");
+        println!("  4. Path traversal blocked    ✅");
+        println!("  5. Message windowing         ✅");
+        println!("  6. Simple glob matching      ✅");
+        println!("  7. Dangerous command check   ✅");
+        println!("  8. API key masking           ✅");
+        println!("  9. Adapter configuration     ✅");
         println!("═══════════════════════════════════\n");
     }
 }

@@ -386,6 +386,42 @@ mod tests {
             .collect()
     }
 
+    fn tool_use_ids(message: &ChatMessage) -> Vec<String> {
+        message
+            .content
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|block| block.get("type").and_then(|value| value.as_str()) == Some("tool_use"))
+            .filter_map(|block| block.get("id").and_then(|value| value.as_str()))
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    fn assert_provider_tool_result_contract(messages: &[ChatMessage]) {
+        for (index, message) in messages.iter().enumerate() {
+            let tool_use_ids = tool_use_ids(message);
+            if tool_use_ids.is_empty() {
+                continue;
+            }
+
+            let next = messages.get(index + 1).unwrap_or_else(|| {
+                panic!("assistant tool_use at {index} has no following message")
+            });
+            assert_eq!(
+                next.role, "user",
+                "assistant tool_use at {index} must be followed by a user tool_result message"
+            );
+            let result_ids = tool_result_ids(next);
+            for tool_use_id in &tool_use_ids {
+                assert!(
+                    result_ids.contains(tool_use_id),
+                    "assistant tool_use {tool_use_id} at {index} is missing an immediate tool_result; got {result_ids:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn repair_tool_result_adjacency_inserts_missing_result_before_follow_up() {
         let messages = vec![
@@ -402,6 +438,7 @@ mod tests {
 
         assert_eq!(repaired.len(), 3);
         assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1"]);
+        assert_provider_tool_result_contract(&repaired);
         assert_eq!(
             repaired[2].content,
             serde_json::Value::String("继续".to_string())
@@ -439,6 +476,7 @@ mod tests {
 
         assert_eq!(repaired.len(), 2);
         assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1", "call_2"]);
+        assert_provider_tool_result_contract(&repaired);
     }
 
     #[test]
@@ -472,6 +510,7 @@ mod tests {
         assert_eq!(repaired.len(), 2);
         assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1"]);
         assert!(!repaired[1].content.to_string().contains("old_call"));
+        assert_provider_tool_result_contract(&repaired);
     }
 
     #[test]
@@ -491,6 +530,7 @@ mod tests {
 
         assert_eq!(repaired.len(), 3);
         assert_eq!(repaired[1].content, messages[1].content);
+        assert_provider_tool_result_contract(&repaired);
     }
 
     #[test]
@@ -511,6 +551,7 @@ mod tests {
         assert_eq!(repaired.len(), 3);
         assert_eq!(repaired[1].role, "user");
         assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1"]);
+        assert_provider_tool_result_contract(&repaired);
         assert_eq!(
             repaired[2].content,
             serde_json::Value::String("继续".to_string())
@@ -544,9 +585,54 @@ mod tests {
         assert_eq!(repaired.len(), 3);
         assert_eq!(repaired[1].role, "user");
         assert_eq!(tool_result_ids(&repaired[1]), vec!["call_1", "call_2"]);
+        assert_provider_tool_result_contract(&repaired);
         assert_eq!(
             repaired[2].content,
             serde_json::Value::String("继续".to_string())
+        );
+    }
+
+    #[test]
+    fn repair_tool_result_adjacency_recovers_multiple_broken_turns_before_provider_call() {
+        let messages = vec![
+            ChatMessage::system("system rules"),
+            ChatMessage::user("先检查项目"),
+            ChatMessage::assistant(serde_json::json!([
+                {
+                    "type": "tool_use",
+                    "id": "call_a",
+                    "name": "read_file",
+                    "input": {"path": "src/App.tsx"}
+                },
+                {
+                    "type": "tool_use",
+                    "id": "call_b",
+                    "name": "bash",
+                    "input": {"command": "npm install"}
+                }
+            ])),
+            ChatMessage::tool("call_a", "app content"),
+            ChatMessage::user("中断了，继续"),
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_c",
+                "name": "bash",
+                "input": {"command": "npm run build"}
+            }])),
+        ];
+
+        let repaired = repair_tool_result_adjacency(&messages);
+
+        assert_provider_tool_result_contract(&repaired);
+        assert_eq!(tool_result_ids(&repaired[3]), vec!["call_a", "call_b"]);
+        assert_eq!(
+            tool_result_ids(repaired.last().expect("synthetic result")),
+            vec!["call_c"]
+        );
+        assert!(
+            repaired[3].content.to_string().contains("interrupted")
+                || repaired[3].content.to_string().contains("missing")
+                || repaired[3].content.to_string().contains("unavailable")
         );
     }
 

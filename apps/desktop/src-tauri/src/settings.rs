@@ -72,22 +72,37 @@ impl ClaudeSettings {
 pub fn detect_credentials(provider: &str) -> Credentials {
     // 1. Check our own stored keys
     let settings = Settings::load();
-    let stored_key = settings.get_api_key(provider).map(|s| s.to_string());
 
     // 2. Try Claude Code config
     let claude_config = read_claude_settings();
 
+    detect_credentials_from_sources(provider, &settings, &claude_config, |key| {
+        std::env::var(key).ok()
+    })
+}
+
+fn detect_credentials_from_sources<F>(
+    provider: &str,
+    settings: &Settings,
+    claude_config: &ClaudeSettings,
+    env: F,
+) -> Credentials
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let stored_key = settings.get_api_key(provider).map(|s| s.to_string());
+
     // 3. Check process env vars (may be empty in Tauri GUI)
-    let env_auth_token = std::env::var("ANTHROPIC_AUTH_TOKEN").ok();
-    let env_anthropic_key = std::env::var("ANTHROPIC_API_KEY").ok();
-    let env_deepseek_key = std::env::var("DEEPSEEK_API_KEY").ok();
-    let env_openai_key = std::env::var("OPENAI_API_KEY").ok();
-    let env_openrouter_key = std::env::var("OPENROUTER_API_KEY").ok();
-    let env_anthropic_base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
-    let env_deepseek_base_url = std::env::var("DEEPSEEK_BASE_URL").ok();
-    let env_openai_base_url = std::env::var("OPENAI_BASE_URL").ok();
-    let env_openrouter_base_url = std::env::var("OPENROUTER_BASE_URL").ok();
-    let env_model = std::env::var("ANTHROPIC_MODEL").ok();
+    let env_auth_token = env("ANTHROPIC_AUTH_TOKEN");
+    let env_anthropic_key = env("ANTHROPIC_API_KEY");
+    let env_deepseek_key = env("DEEPSEEK_API_KEY");
+    let env_openai_key = env("OPENAI_API_KEY");
+    let env_openrouter_key = env("OPENROUTER_API_KEY");
+    let env_anthropic_base_url = env("ANTHROPIC_BASE_URL");
+    let env_deepseek_base_url = env("DEEPSEEK_BASE_URL");
+    let env_openai_base_url = env("OPENAI_BASE_URL");
+    let env_openrouter_base_url = env("OPENROUTER_BASE_URL");
+    let env_model = env("ANTHROPIC_MODEL");
 
     let api_key = match provider {
         "anthropic" | "claude" | "hermes" => stored_key
@@ -226,4 +241,114 @@ fn home_dir() -> PathBuf {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{detect_credentials_from_sources, mask_key, ClaudeSettings, Settings};
+
+    #[test]
+    fn detect_credentials_prefers_stored_provider_key_over_claude_and_env() {
+        let settings = Settings {
+            api_keys: HashMap::from([("anthropic".to_string(), "stored-key".to_string())]),
+        };
+        let claude = ClaudeSettings {
+            api_key: Some("claude-key".to_string()),
+            api_base: Some("https://claude.example".to_string()),
+            model: Some("claude-model".to_string()),
+            ..Default::default()
+        };
+
+        let credentials =
+            detect_credentials_from_sources("anthropic", &settings, &claude, |key| match key {
+                "ANTHROPIC_API_KEY" => Some("env-key".to_string()),
+                "ANTHROPIC_BASE_URL" => Some("https://env.example".to_string()),
+                "ANTHROPIC_MODEL" => Some("env-model".to_string()),
+                _ => None,
+            });
+
+        assert_eq!(credentials.api_key, "stored-key");
+        assert_eq!(
+            credentials.api_base.as_deref(),
+            Some("https://claude.example")
+        );
+        assert_eq!(credentials.model.as_deref(), Some("claude-model"));
+    }
+
+    #[test]
+    fn detect_credentials_uses_claude_nested_env_before_top_level_fields() {
+        let settings = Settings::default();
+        let claude = ClaudeSettings {
+            api_key: Some("top-level-key".to_string()),
+            api_base: Some("https://top-level.example".to_string()),
+            model: Some("top-level-model".to_string()),
+            env: Some(HashMap::from([
+                (
+                    "ANTHROPIC_AUTH_TOKEN".to_string(),
+                    "nested-token".to_string(),
+                ),
+                (
+                    "ANTHROPIC_BASE_URL".to_string(),
+                    "https://nested.example".to_string(),
+                ),
+                ("ANTHROPIC_MODEL".to_string(), "nested-model".to_string()),
+            ])),
+            ..Default::default()
+        };
+
+        let credentials =
+            detect_credentials_from_sources("anthropic", &settings, &claude, |key| match key {
+                "ANTHROPIC_AUTH_TOKEN" => Some("process-token".to_string()),
+                "ANTHROPIC_BASE_URL" => Some("https://process.example".to_string()),
+                "ANTHROPIC_MODEL" => Some("process-model".to_string()),
+                _ => None,
+            });
+
+        assert_eq!(credentials.api_key, "nested-token");
+        assert_eq!(
+            credentials.api_base.as_deref(),
+            Some("https://nested.example")
+        );
+        assert_eq!(credentials.model.as_deref(), Some("nested-model"));
+    }
+
+    #[test]
+    fn detect_credentials_keeps_provider_envs_isolated() {
+        let settings = Settings::default();
+        let claude = ClaudeSettings::default();
+
+        let deepseek =
+            detect_credentials_from_sources("deepseek", &settings, &claude, |key| match key {
+                "ANTHROPIC_API_KEY" => Some("wrong-provider-key".to_string()),
+                "DEEPSEEK_API_KEY" => Some("deepseek-key".to_string()),
+                "DEEPSEEK_BASE_URL" => Some("https://deepseek.example".to_string()),
+                _ => None,
+            });
+        let openai =
+            detect_credentials_from_sources("openai", &settings, &claude, |key| match key {
+                "DEEPSEEK_API_KEY" => Some("wrong-provider-key".to_string()),
+                "OPENAI_API_KEY" => Some("openai-key".to_string()),
+                "OPENAI_BASE_URL" => Some("https://openai.example".to_string()),
+                _ => None,
+            });
+
+        assert_eq!(deepseek.api_key, "deepseek-key");
+        assert_eq!(
+            deepseek.api_base.as_deref(),
+            Some("https://deepseek.example")
+        );
+        assert_eq!(openai.api_key, "openai-key");
+        assert_eq!(openai.api_base.as_deref(), Some("https://openai.example"));
+    }
+
+    #[test]
+    fn mask_key_preserves_only_prefix_and_suffix() {
+        assert_eq!(mask_key("short"), "••••");
+        assert_eq!(
+            mask_key("sk-1394f8913a224de4b8ee29f73d1d8ef5"),
+            "sk-1••••8ef5"
+        );
+    }
 }

@@ -342,6 +342,33 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
+    async fn captured_timeout_kills_background_child_processes() {
+        let root = temp_workspace("captured-timeout-background");
+        let marker = root.join("marker");
+
+        let output = run_captured(
+            ProcessSpec::shell("(sleep 1; echo leaked-child > marker) & wait", root.clone()),
+            ProcessRunOptions {
+                timeout: Duration::from_millis(150),
+                cancel: None,
+                output_limit: 1024,
+            },
+        )
+        .await
+        .expect("process should start");
+
+        assert!(output.timed_out);
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert!(
+            !marker.exists(),
+            "timeout must kill the whole process group, not just the shell parent"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
     async fn streaming_cancel_kills_process_group() {
         let root = temp_workspace("streaming-cancel");
         let marker = root.join("marker");
@@ -377,6 +404,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn streaming_cancel_kills_background_child_processes_after_they_spawn() {
+        let root = temp_workspace("streaming-cancel-background");
+        let marker = root.join("marker");
+        let spawned = root.join("spawned");
+        let cancel = Arc::new(Notify::new());
+        let cancel_for_task = cancel.clone();
+
+        let task = tokio::spawn(async move {
+            run_streaming(
+                ProcessSpec::shell(
+                    "(echo spawned > spawned; sleep 1; echo leaked-child > marker) & wait",
+                    root.clone(),
+                ),
+                ProcessRunOptions {
+                    timeout: Duration::from_secs(10),
+                    cancel: Some(cancel_for_task),
+                    output_limit: 1024,
+                },
+                |_line, _is_stderr| {},
+            )
+            .await
+            .map(|output| (output, root))
+        });
+
+        wait_for_path(&spawned, Duration::from_secs(2)).await;
+        cancel.notify_waiters();
+
+        let (output, root) = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("cancel should complete quickly")
+            .expect("join task")
+            .expect("process should start");
+
+        assert!(output.cancelled);
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert!(
+            !marker.exists(),
+            "cancel must kill the background child, not only the shell parent"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     #[cfg(unix)]
     fn kill_process_group_rejects_out_of_range_pid() {
@@ -392,5 +464,16 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).expect("temp workspace");
         path
+    }
+
+    async fn wait_for_path(path: &std::path::Path, timeout: Duration) {
+        let started = std::time::Instant::now();
+        while started.elapsed() < timeout {
+            if path.exists() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("timed out waiting for {}", path.display());
     }
 }
