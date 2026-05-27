@@ -51,7 +51,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
         <div
           data-testid="assistant-message"
           data-message-role="assistant"
-          className="forge-message-with-actions forge-assistant-message"
+          className="forge-message-with-actions assistant-paper"
         >
           <span aria-hidden="true" className="forge-assistant-avatar">F</span>
           <MessageCopyAction text={block.content} label="回复" />

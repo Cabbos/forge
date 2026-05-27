@@ -267,4 +267,32 @@
       transform: none;
     }
   }
+
+  /* §3a AssistantPaper — legal notepad */
+  .assistant-paper {
+    position: relative;
+    max-width: min(760px, 100%);
+    min-width: 0;
+    padding-block: 0.125rem;
+    padding-left: 2.25rem;
+    padding-right: 2.25rem;
+    background: transparent;
+    color: var(--forge-text-primary);
+    font-size: 14px;
+    line-height: var(--forge-assistant-line-height);
+    font-weight: 400;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .assistant-paper::before {
+    content: "";
+    position: absolute;
+    left: 20px;
+    top: 8px;
+    bottom: 8px;
+    width: 1px;
+    background: rgba(184, 92, 75, 0.18);
+    pointer-events: none;
+  }
 }
