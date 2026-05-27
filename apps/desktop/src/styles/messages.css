@@ -1,7 +1,7 @@
 @layer components {
   .forge-conversation-scroll {
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 5rem),
+      linear-gradient(180deg, rgba(255, 252, 246, 0.34), transparent 7rem),
       var(--forge-bg-base);
     padding: var(--forge-conversation-gutter-y) var(--forge-conversation-gutter-x);
     scroll-padding-block: var(--forge-conversation-gutter-y);
@@ -11,6 +11,21 @@
     width: 100%;
     max-width: var(--forge-conversation-lane-max);
     margin-inline: auto;
+  }
+
+  .forge-operating-lane {
+    position: relative;
+  }
+
+  .forge-operating-lane::before {
+    content: "";
+    position: absolute;
+    left: -1.125rem;
+    top: 0.375rem;
+    bottom: 0.375rem;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, rgba(36, 42, 36, 0.16) 14%, rgba(36, 42, 36, 0.08) 86%, transparent);
+    pointer-events: none;
   }
 
   .forge-message-lane {
@@ -29,8 +44,8 @@
   }
 
   .forge-conversation-turn[data-turn-shape="with-evidence"] {
-    border-left: 0;
-    padding-left: 0;
+    border-left: 1px solid rgba(36, 42, 36, 0.14);
+    padding-left: 12px;
   }
 
   .forge-conversation-turn + .forge-conversation-turn {
@@ -44,9 +59,9 @@
 
   .forge-scroll-to-bottom {
     bottom: var(--forge-conversation-gutter-y);
-    right: var(--forge-conversation-gutter-x);
+    right: max(12px, calc((100% - var(--forge-conversation-lane-max)) / 2 - 44px));
     background: var(--forge-glass-raised);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), 0 1px 0 rgba(255, 255, 255, 0.026) inset;
+    box-shadow: 0 12px 28px rgba(36, 42, 36, 0.14), 0 1px 0 rgba(255, 252, 246, 0.7) inset;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
@@ -57,7 +72,7 @@
     }
 
     .forge-scroll-to-bottom {
-      right: var(--forge-conversation-gutter-x-wide);
+      right: max(12px, calc((100% - var(--forge-conversation-lane-max)) / 2 - 44px));
     }
   }
 
@@ -102,7 +117,7 @@
     position: relative;
     border: 1px solid var(--forge-border-subtle);
     border-radius: var(--radius);
-    background: rgba(255, 255, 255, 0.042);
+    background: rgba(196, 138, 58, 0.08);
     box-shadow: none;
     color: var(--forge-text-primary);
     font-size: 14px;
@@ -199,6 +214,56 @@
 
   @media (prefers-reduced-motion: reduce) {
     .forge-message-copy-action {
+      transform: none;
+    }
+  }
+
+  /* §2 UserCommandNote — sticky note */
+  .user-command-note {
+    position: relative;
+    max-width: 80%;
+    background: var(--forge-object-paper);
+    border: 1px solid var(--forge-object-paper-border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    box-shadow: 0 2px 8px rgba(36, 42, 36, 0.06);
+    transform: rotate(-0.8deg);
+  }
+
+  .user-command-note::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 18px;
+    height: 18px;
+    background: linear-gradient(135deg, transparent 50%, rgba(36, 42, 36, 0.06) 50%);
+    border-radius: 0 0 6px 0;
+    pointer-events: none;
+  }
+
+  .user-command-note::before {
+    content: "";
+    position: absolute;
+    top: -4px;
+    left: 12px;
+    width: 48px;
+    height: 12px;
+    background: rgba(196, 138, 58, 0.12);
+    border: 1px solid rgba(196, 138, 58, 0.18);
+    border-radius: 2px;
+    transform: rotate(-3deg);
+    pointer-events: none;
+  }
+
+  @media (min-width: 640px) {
+    .user-command-note {
+      max-width: 68%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .user-command-note {
       transform: none;
     }
   }
