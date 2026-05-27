@@ -13,7 +13,7 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
   const after = numberMeta(block, "estimated_tokens_after");
 
   return (
-    <div>
+    <div className="compact-spool">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger
           data-testid="context-compact-trigger"

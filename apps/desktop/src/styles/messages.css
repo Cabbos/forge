@@ -295,4 +295,37 @@
     background: rgba(184, 92, 75, 0.18);
     pointer-events: none;
   }
+
+  /* §3b CompactSpool — thermal receipt tape */
+  .compact-spool {
+    position: relative;
+    max-width: 260px;
+    background: var(--forge-object-receipt);
+    border-radius: 3px 3px 0 0;
+    padding: 8px 12px;
+    font-family: "Geist Mono", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--forge-code-text);
+    border: 1px solid rgba(36, 42, 36, 0.4);
+  }
+
+  .compact-spool::after {
+    content: "";
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg,
+      transparent 0%, var(--forge-object-receipt) 2%,
+      transparent 4%, var(--forge-object-receipt) 6%,
+      transparent 8%, var(--forge-object-receipt) 10%,
+      transparent 12%, var(--forge-object-receipt) 14%,
+      transparent 16%, var(--forge-object-receipt) 18%,
+      transparent 20%
+    );
+    background-size: 20% 100%;
+    pointer-events: none;
+  }
 }
