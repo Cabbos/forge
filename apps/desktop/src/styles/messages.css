@@ -467,4 +467,38 @@
       animation: none;
     }
   }
+
+  /* §4b ShellReel — film reel with terminal body */
+  .shell-reel {
+    position: relative;
+    margin: 6px 0;
+  }
+
+  .shell-reel-header {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .shell-reel-cap {
+    width: 16px;
+    flex-shrink: 0;
+    background: #D8CBB8;
+    border: 2px solid #B8AA96;
+    border-radius: 50%;
+    align-self: center;
+  }
+
+  .shell-reel-body {
+    flex: 1;
+    background: var(--forge-object-receipt);
+    border: 1px solid rgba(36, 42, 36, 0.4);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .shell-reel-header .forge-log-line {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
 }

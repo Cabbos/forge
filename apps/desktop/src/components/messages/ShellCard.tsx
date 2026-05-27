@@ -35,17 +35,23 @@ export function ShellCard({ block }: { block: BlockState }) {
   }, { scope: rootRef, dependencies: [expanded] });
 
   return (
-    <div ref={rootRef}>
+    <div ref={rootRef} className="shell-reel">
       <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <ShellCardHeader
-          command={shellView.command}
-          expanded={expanded}
-          exitCode={shellView.exitCode}
-          isError={shellView.isError}
-          isRunning={shellView.isRunning}
-          state={shellView.state}
-          tone={shellView.tone}
-        />
+        <div className="shell-reel-header">
+          <div className="shell-reel-cap" />
+          <div className="shell-reel-body">
+            <ShellCardHeader
+              command={shellView.command}
+              expanded={expanded}
+              exitCode={shellView.exitCode}
+              isError={shellView.isError}
+              isRunning={shellView.isRunning}
+              state={shellView.state}
+              tone={shellView.tone}
+            />
+          </div>
+          <div className="shell-reel-cap" />
+        </div>
         <CollapsibleContent data-forge-motion="shell-detail">
           <ShellCardDetail
             command={shellView.command}
