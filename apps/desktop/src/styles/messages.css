@@ -501,4 +501,55 @@
     border: 0;
     border-radius: 0;
   }
+
+  /* §4c PermissionTicket — punched ticket stub */
+  .permission-ticket {
+    position: relative;
+    background: var(--forge-object-ticket);
+    border: 1px solid var(--forge-object-ticket-border);
+    border-radius: 6px;
+    padding: 12px 18px;
+    box-shadow: 0 2px 8px rgba(36, 42, 36, 0.06);
+  }
+
+  .permission-ticket::before {
+    content: "";
+    position: absolute;
+    left: -6px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--forge-bg-base);
+    border: 1px solid var(--forge-object-ticket-border);
+    transform: translateY(-50%);
+    z-index: 1;
+  }
+
+  .permission-ticket::after {
+    content: "";
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--forge-bg-base);
+    border: 1px solid var(--forge-object-ticket-border);
+    transform: translateY(-50%);
+    z-index: 1;
+  }
+
+  .permission-ticket-tag {
+    position: absolute;
+    top: -8px;
+    left: 12px;
+    font-size: 9px;
+    background: rgba(196, 138, 58, 0.1);
+    border: 1px solid rgba(196, 138, 58, 0.2);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--forge-accent);
+    z-index: 2;
+  }
 }

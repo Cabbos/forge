@@ -105,11 +105,13 @@ export function ConfirmBoundaryPendingView({
   const iconTone = confirmIconTone(boundary.riskTone);
 
   return (
-    <MessagePanel
-      tone={boundary.riskTone === "high" ? "danger" : "warning"}
-      className="forge-confirm-card"
-      data-confirm-state="pending"
-    >
+    <div className="permission-ticket">
+      <span className="permission-ticket-tag">{boundary.title}</span>
+      <MessagePanel
+        tone={boundary.riskTone === "high" ? "danger" : "warning"}
+        className="forge-confirm-card"
+        data-confirm-state="pending"
+      >
       <MessagePanelHeader
         icon={<ForgeIcon icon={ShieldAlert} tone={iconTone} />}
         title={boundary.title}
@@ -154,6 +156,7 @@ export function ConfirmBoundaryPendingView({
 
       <ConfirmActionBar responded={false} answer={null} onResponse={onResponse} />
     </MessagePanel>
+    </div>
   );
 }
 
@@ -169,19 +172,22 @@ export function ConfirmPromptView({
   onResponse: (approved: boolean) => void;
 }) {
   return (
-    <MessagePanel tone="warning">
-      <MessagePanelHeader
-        icon={<ForgeIcon icon={ShieldAlert} tone="safety" />}
-        title={prompt.kindLabel}
-        meta="继续前需要你确认"
-      />
-      <div className="px-3 py-2.5">
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{prompt.question}</p>
-        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{prompt.helperText}</p>
-      </div>
+    <div className="permission-ticket">
+      <span className="permission-ticket-tag">{prompt.kindLabel}</span>
+      <MessagePanel tone="warning">
+        <MessagePanelHeader
+          icon={<ForgeIcon icon={ShieldAlert} tone="safety" />}
+          title={prompt.kindLabel}
+          meta="继续前需要你确认"
+        />
+        <div className="px-3 py-2.5">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{prompt.question}</p>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{prompt.helperText}</p>
+        </div>
 
-      <ConfirmActionBar responded={responded} answer={answer} onResponse={onResponse} />
-    </MessagePanel>
+        <ConfirmActionBar responded={responded} answer={answer} onResponse={onResponse} />
+      </MessagePanel>
+    </div>
   );
 }
 
