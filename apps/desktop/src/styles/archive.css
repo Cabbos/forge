@@ -107,7 +107,7 @@
   .forge-project-status {
     overflow: hidden;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 64%),
+      linear-gradient(180deg, rgba(255, 252, 246, 0.42), transparent 64%),
       var(--forge-material-raised);
   }
 
@@ -175,7 +175,7 @@
     gap: 0.5rem;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(255, 255, 255, 0.014);
+    background: rgba(255, 252, 246, 0.32);
     padding: 0.375rem 0.5rem;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.016) inset;
   }
@@ -204,7 +204,7 @@
   .forge-project-status-next {
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(255, 255, 255, 0.012);
+    background: rgba(255, 252, 246, 0.28);
     padding: 0.5rem 0.625rem;
     color: var(--forge-text-muted);
     font-size: 11px;
@@ -255,7 +255,7 @@
   }
 
   .forge-project-status-disclosure:hover {
-    background: rgba(255, 255, 255, 0.016);
+    background: rgba(255, 252, 246, 0.32);
     color: var(--forge-text-secondary);
   }
 
@@ -299,7 +299,7 @@
     gap: 0.5rem;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(255, 255, 255, 0.012);
+    background: rgba(255, 252, 246, 0.28);
     padding: 0.375rem 0.5rem;
     color: var(--forge-text-muted);
     font-family: var(--font-mono);

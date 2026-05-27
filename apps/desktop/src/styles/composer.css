@@ -350,7 +350,7 @@
     padding: 0.125rem 0.5rem;
     font-family: "Geist Mono", "SF Mono", monospace;
     font-size: 11px;
-    color: rgba(241, 242, 244, 0.86);
+    color: var(--forge-text-secondary);
     user-select: none;
   }
 
