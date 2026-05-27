@@ -24,8 +24,9 @@ export function ShellCardHeader({
   return (
     <CollapsibleTrigger
       data-testid="shell-card-trigger"
+      data-forge-motion="evidence-row"
       data-state={state}
-      className="forge-log-line"
+      className="forge-log-line forge-evidence-row"
       data-tone={tone}
     >
       <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />

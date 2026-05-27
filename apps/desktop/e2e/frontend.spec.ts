@@ -271,8 +271,6 @@ async function setup(page: Page, options?: { workingDir?: string | null }) {
           }
         case "send_input":
           // @ts-expect-error mock
-          window.__lastSentText = args.text;
-          // @ts-expect-error mock
           window.__lastSendInputArgs = args;
           return undefined;
         case "kill_session":
@@ -533,6 +531,75 @@ async function setup(page: Page, options?: { workingDir?: string | null }) {
   }, { initialWorkingDir });
 }
 
+async function holdSendInput(page: Page) {
+  await page.evaluate(() => {
+    // @ts-expect-error mock
+    const original = window.__tauriMockIPC;
+    const calls: Record<string, unknown>[] = [];
+    const resolvers: Array<() => void> = [];
+
+    // @ts-expect-error mock
+    window.__heldSendInput = {
+      calls,
+      releaseNext: () => {
+        const resolve = resolvers.shift();
+        resolve?.();
+      },
+    };
+
+    // @ts-expect-error mock
+    window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === "send_input") {
+        calls.push(args);
+        await new Promise<void>((resolve) => {
+          resolvers.push(resolve);
+        });
+        return undefined;
+      }
+      return original?.(cmd, args);
+    };
+  });
+}
+
+async function expectHeldSendInput(page: Page, textIncludes: string) {
+  await expect.poll(async () => page.evaluate(() => {
+    // @ts-expect-error mock
+    return window.__heldSendInput?.calls.length ?? 0;
+  })).toBe(1);
+
+  const [call] = await page.evaluate(() => {
+    // @ts-expect-error mock
+    return window.__heldSendInput?.calls ?? [];
+  });
+  expect(String(call.text)).toContain(textIncludes);
+  return call;
+}
+
+async function getLastSendInputArgs(page: Page): Promise<Record<string, unknown> | undefined> {
+  return page.evaluate(() => {
+    // @ts-expect-error mock
+    return window.__lastSendInputArgs;
+  });
+}
+
+async function expectLastSendInputArgs(page: Page, expected: Record<string, unknown>) {
+  await expect.poll(async () => getLastSendInputArgs(page)).toMatchObject(expected);
+  const args = await getLastSendInputArgs(page);
+  expect(args).toBeDefined();
+  return args!;
+}
+
+async function expectNoSendInput(page: Page) {
+  await expect(await getLastSendInputArgs(page)).toBeUndefined();
+}
+
+async function releaseHeldSendInput(page: Page) {
+  await page.evaluate(() => {
+    // @ts-expect-error mock
+    window.__heldSendInput?.releaseNext();
+  });
+}
+
 function projectArchive(page: Page) {
   return page.getByTestId("project-archive-panel");
 }
@@ -734,6 +801,95 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(card).not.toContain("rounded-3xl");
   });
 
+  test("shared button primitive forwards refs for Base UI trigger composition", () => {
+    const button = readFileSync(resolve(process.cwd(), "src/components/ui/button.tsx"), "utf8");
+
+    expect(button).toContain("React.forwardRef");
+    expect(button).toContain("ref={ref}");
+    expect(button).toContain("Button.displayName");
+  });
+
+  test("dialog content forwards refs for scoped surface animation", () => {
+    const dialog = readFileSync(resolve(process.cwd(), "src/components/ui/dialog.tsx"), "utf8");
+    const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+
+    expect(dialog).toContain("React.forwardRef");
+    expect(dialog).toContain("ref={ref}");
+    expect(dialog).toContain("DialogContent.displayName");
+    expect(settings).toContain("dialogRef");
+    expect(settings).toContain("ref={dialogRef}");
+    expect(settings).toContain("gsap.timeline");
+    expect(settings).toContain(".forge-settings-summary-item, [data-testid='settings-provider-row'], .forge-settings-danger-zone");
+  });
+
+  test("settings summarize provider readiness before detailed rows", () => {
+    const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(settings).toContain("settings-summary-strip");
+    expect(settings).toContain("SettingsSummaryItem");
+    expect(settings).toContain("configuredCount");
+    expect(settings).toContain("forge-settings-provider-mark");
+    expect(globals).toContain(".forge-settings-summary-strip");
+    expect(globals).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
+    expect(globals).toContain(".forge-settings-provider-mark[data-configured=\"true\"]");
+  });
+
+  test("capability manager summarizes capability state with scoped motion", () => {
+    const manager = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityManager.tsx"), "utf8");
+    const styles = readFileSync(resolve(process.cwd(), "src/styles/capabilities.css"), "utf8");
+
+    expect(manager).toContain("managerRef");
+    expect(manager).toContain("scope: managerRef");
+    expect(manager).toContain("capability-summary-strip");
+    expect(manager).toContain("data-forge-motion=\"capability-entry\"");
+    expect(manager).toContain("[data-forge-motion='capability-entry']");
+    expect(manager).toContain("filterCapabilities");
+    expect(styles).toContain(".forge-capability-summary-strip");
+    expect(styles).toContain(".forge-capability-summary-item");
+  });
+
+  test("command palette uses scoped motion on desktop shell entries", () => {
+    const commandPalette = readFileSync(resolve(process.cwd(), "src/components/CommandPalette.tsx"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(commandPalette).toContain("paletteRef");
+    expect(commandPalette).toContain("scope: paletteRef");
+    expect(commandPalette).toContain("prefersReducedMotion");
+    expect(commandPalette).toContain("data-forge-motion=\"command-entry\"");
+    expect(commandPalette).toContain("[data-forge-motion='command-entry']");
+    expect(globals).toContain(".forge-command-motion-root");
+    expect(globals).toContain("[data-forge-motion=\"command-entry\"]");
+  });
+
+  test("project archive opens with a compact inspector summary and scoped motion", () => {
+    const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    const archiveStyles = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
+
+    expect(hub).toContain("project-archive-summary-strip");
+    expect(hub).toContain("ArchiveSummaryStrip");
+    expect(hub).toContain("data-forge-motion=\"archive-section\"");
+    expect(hub).toContain("gsap.timeline");
+    expect(hub).toContain("[data-forge-motion='archive-section']");
+    expect(archiveStyles).toContain(".forge-archive-summary-strip");
+    expect(archiveStyles).toContain(".forge-inspector-title-block");
+  });
+
+  test("project delivery status uses compact inspector motion", () => {
+    const projectStatus = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusCard.tsx"), "utf8");
+    const archiveStyles = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
+
+    expect(projectStatus).toContain("data-testid=\"project-status-card\"");
+    expect(projectStatus).toContain("data-testid=\"project-status-summary\"");
+    expect(projectStatus).toContain("data-forge-motion=\"project-status-entry\"");
+    expect(projectStatus).toContain("scope: cardRef");
+    expect(projectStatus).toContain("prefersReducedMotion");
+    expect(projectStatus).toContain("forge-project-status-summary");
+    expect(archiveStyles).toContain(".forge-project-status");
+    expect(archiveStyles).toContain(".forge-project-status-metric");
+    expect(archiveStyles).toContain("[data-forge-motion=\"project-status-entry\"]");
+  });
+
   test("markdown reader styles are owned by the markdown stylesheet", () => {
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
     const markdown = readFileSync(resolve(process.cwd(), "src/styles/markdown.css"), "utf8");
@@ -761,6 +917,7 @@ test.describe("Frontend maintainability guardrails", () => {
       ".forge-inspector-header",
       ".forge-inspector-body",
       ".forge-disclosure-row",
+      ".forge-project-status",
     ]) {
       expect(archive).toContain(selector);
       expect(globals).not.toContain(selector);
@@ -1003,6 +1160,80 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(processStyles).toContain("var(--forge-focus-ring)");
   });
 
+  test("prototype motion uses scoped GSAP with reduced motion support", () => {
+    const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
+    const shellCard = readFileSync(resolve(process.cwd(), "src/components/messages/ShellCard.tsx"), "utf8");
+    const motion = readFileSync(resolve(process.cwd(), "src/lib/forgeMotion.ts"), "utf8");
+
+    expect(motion).toContain("@gsap/react");
+    expect(motion).toContain("gsap.registerPlugin(useGSAP)");
+    expect(motion).toContain("prefersReducedMotion");
+    expect(motion).toContain("(prefers-reduced-motion: reduce)");
+    expect(messageList).toContain("useGSAP");
+    expect(messageList).toContain("scope: laneRef");
+    expect(shellCard).toContain("data-forge-motion=\"shell-detail\"");
+  });
+
+  test("empty workbench keeps CSS motion hooks without eager GSAP runtime", () => {
+    const appShell = readFileSync(resolve(process.cwd(), "src/components/layout/AppShell.tsx"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(appShell).not.toContain("@/lib/forgeMotion");
+    expect(appShell).not.toContain("useGSAP");
+    expect(appShell).not.toContain("emptyShellRef");
+    expect(appShell).toContain("data-forge-motion=\"empty-entry\"");
+    expect(appShell).toContain("data-forge-motion=\"empty-composer\"");
+    expect(globals).toContain("[data-forge-motion=\"empty-entry\"]");
+    expect(globals).toContain("will-change: transform, opacity");
+    expect(globals).toContain(".forge-empty-entry-card::before");
+  });
+
+  test("sidebar keeps CSS motion hooks without eager GSAP runtime", () => {
+    const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(sidebar).not.toContain("@/lib/forgeMotion");
+    expect(sidebar).not.toContain("useGSAP");
+    expect(sidebar).not.toContain("sidebarRef");
+    expect(sidebar).toContain("data-forge-motion=\"sidebar-entry\"");
+    expect(sidebar).not.toContain("data-forge-motion=\"sidebar-history-row\"");
+    expect(globals).toContain(".forge-sidebar-history-list");
+    expect(globals).toContain(".forge-sidebar-history-group-label");
+    expect(globals).toContain("[data-forge-motion=\"sidebar-entry\"]");
+  });
+
+  test("settings dialog stays behind a lazy boundary from the sidebar", () => {
+    const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
+
+    expect(sidebar).not.toContain("import { SettingsDialog }");
+    expect(sidebar).toContain("lazy(() => import(\"@/components/settings/SettingsDialog\")");
+    expect(sidebar).toContain("<LazySettingsDialog");
+  });
+
+  test("assistant prose keeps the lightweight Codex-style message shape", () => {
+    const textBlock = readFileSync(resolve(process.cwd(), "src/components/messages/TextBlock.tsx"), "utf8");
+    const messages = readFileSync(resolve(process.cwd(), "src/styles/messages.css"), "utf8");
+
+    expect(textBlock).toContain("forge-assistant-avatar");
+    expect(textBlock).toContain("data-message-role=\"assistant\"");
+    expect(messages).toContain(".forge-assistant-message");
+    expect(messages).toContain("background: transparent");
+    expect(messages).toContain(".forge-assistant-avatar");
+    expect(messages).not.toContain(".forge-assistant-message {\n    border: 1px solid");
+  });
+
+  test("process evidence rows stay collapsed and inline by default", () => {
+    const shellHeader = readFileSync(resolve(process.cwd(), "src/components/messages/ShellCardHeader.tsx"), "utf8");
+    const processStyles = readFileSync(resolve(process.cwd(), "src/styles/process.css"), "utf8");
+
+    expect(shellHeader).toContain("forge-evidence-row");
+    expect(shellHeader).toContain("data-forge-motion=\"evidence-row\"");
+    expect(processStyles).toContain(".forge-evidence-row");
+    expect(processStyles).toContain("min-height: 2.75rem");
+    expect(processStyles).toContain(".forge-log-line-command");
+    expect(processStyles).toContain("text-overflow: ellipsis");
+  });
+
   test("process status dots are owned by a shared component", () => {
     const thinking = readFileSync(resolve(process.cwd(), "src/components/messages/ThinkingBlock.tsx"), "utf8");
     const pending = readFileSync(resolve(process.cwd(), "src/components/messages/PendingBlock.tsx"), "utf8");
@@ -1091,6 +1322,18 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(diffCard).not.toContain("forge-diff-expand");
   });
 
+  test("diff patches collapse behind a lightweight evidence toggle", () => {
+    const diffCard = readFileSync(resolve(process.cwd(), "src/components/messages/DiffCard.tsx"), "utf8");
+    const diffStyles = readFileSync(resolve(process.cwd(), "src/styles/diff.css"), "utf8");
+
+    expect(diffCard).toContain("bodyOpen");
+    expect(diffCard).toContain("diff-body-toggle");
+    expect(diffCard).toContain("data-diff-open");
+    expect(diffCard).toContain("data-forge-motion=\"diff-body\"");
+    expect(diffStyles).toContain(".forge-diff-toggle");
+    expect(diffStyles).toContain(".forge-diff-card[data-diff-open=\"false\"]");
+  });
+
   test("confirmation copy and risk presentation are owned by its view model", () => {
     const confirmCard = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmCard.tsx"), "utf8");
     const confirmViews = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmViews.tsx"), "utf8");
@@ -1115,6 +1358,17 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(viewModel).toContain("deliveryTone");
     expect(deliveryCard).not.toContain("function parseSummary");
     expect(deliveryCard).not.toContain("function messagePanelTone");
+  });
+
+  test("delivery summary uses the shared motion and lightweight handoff material", () => {
+    const deliveryCard = readFileSync(resolve(process.cwd(), "src/components/messages/DeliverySummaryCard.tsx"), "utf8");
+    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+
+    expect(deliveryCard).toContain("data-forge-motion=\"delivery-card\"");
+    expect(deliveryCard).toContain("useGSAP");
+    expect(deliveryCard).toContain("forge-delivery-item, .forge-delivery-action");
+    expect(globals).toContain(".forge-delivery-card .forge-message-panel-header");
+    expect(globals).toContain("border-bottom-color: rgba(184, 138, 86, 0.1)");
   });
 
   test("confirmation boundary rendering is owned by focused subviews", () => {
@@ -1388,6 +1642,34 @@ test.describe("Timeline Message Flow", () => {
     await expect(textbox).toHaveAttribute("placeholder", /当前项目/);
   });
 
+  test("empty workbench start controls read as compact desktop rails", async ({ page }) => {
+    const main = page.getByRole("main");
+    const entries = main.locator("[data-forge-motion='empty-entry']");
+    await expect(entries).toHaveCount(2);
+    await expect(main.locator("[data-forge-motion='empty-composer']")).toBeVisible();
+    await expect(main.locator("[data-forge-motion='empty-context']")).toBeVisible();
+
+    const metrics = await main.evaluate((node) => {
+      const cards = Array.from(node.querySelectorAll<HTMLElement>("[data-forge-motion='empty-entry']"));
+      const composer = node.querySelector<HTMLElement>("[data-forge-motion='empty-composer']");
+      if (!composer || cards.length < 2) return null;
+      return {
+        cardHeights: cards.map((card) => Math.round(card.getBoundingClientRect().height)),
+        cardDisplays: cards.map((card) => getComputedStyle(card).display),
+        cardAlignments: cards.map((card) => getComputedStyle(card).alignItems),
+        cardShadows: cards.map((card) => getComputedStyle(card).boxShadow),
+        composerWidth: Math.round(composer.getBoundingClientRect().width),
+      };
+    });
+
+    expect(metrics).not.toBeNull();
+    expect(Math.max(...metrics!.cardHeights)).toBeLessThanOrEqual(82);
+    expect(metrics!.cardDisplays.every((display) => display === "flex")).toBe(true);
+    expect(metrics!.cardAlignments.every((alignment) => alignment === "center")).toBe(true);
+    expect(metrics!.cardShadows.every((shadow) => shadow === "none")).toBe(true);
+    expect(metrics!.composerWidth).toBeGreaterThanOrEqual(520);
+  });
+
   test("empty workbench primary action starts a conversation", async ({ page }) => {
     await page.getByRole("main").getByRole("button", { name: "开始新对话" }).click();
 
@@ -1442,14 +1724,12 @@ test.describe("Timeline Message Flow", () => {
       // @ts-expect-error mock
       return window.__lastCreateSessionArgs;
     });
-    const sentText = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
     const checkpointArgs = await page.evaluate(() => {
       // @ts-expect-error mock
       return window.__lastCreateProjectCheckpointArgs;
     });
+    const sendArgs = await expectLastSendInputArgs(page, { sessionId });
+    const sentText = String(sendArgs.text);
     expect(createArgs.workingDir).toBe("/Users/cabbos/project/forge");
     expect(checkpointArgs.sessionId).toBe(sessionId);
     expect(checkpointArgs.workingDir).toBe("/Users/cabbos/project/forge");
@@ -1483,7 +1763,13 @@ test.describe("Timeline Message Flow", () => {
     await composer.getByRole("textbox").fill("继续优化当前页面体验");
     await expect(send).toBeEnabled();
     await expect(send).toHaveAttribute("data-ready", "true");
-    await page.waitForTimeout(150);
+    await expect.poll(async () => send.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        borderReady: style.borderTopColor !== "rgba(0, 0, 0, 0)",
+        shadowReady: style.boxShadow !== "none",
+      };
+    })).toEqual({ borderReady: true, shadowReady: true });
 
     const readyMetrics = await send.evaluate((node) => {
       const style = getComputedStyle(node);
@@ -1549,10 +1835,8 @@ test.describe("Timeline Message Flow", () => {
     await composer.getByRole("textbox").fill("我想做个能记录客户的东西，最好能提醒我，还能导出表格，但我也不知道怎么说。");
     await composer.getByRole("textbox").press("Enter");
 
-    const sentText = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
+    const sendArgs = await expectLastSendInputArgs(page, { sessionId });
+    const sentText = String(sendArgs.text);
     expect(sentText).toContain("Forge 需求梳理提示");
     expect(sentText).toContain("只问一个轻确认问题");
     expect(sentText).toContain("先不做");
@@ -1566,11 +1850,7 @@ test.describe("Timeline Message Flow", () => {
     await hints.getByRole("button", { name: "检查这个项目能不能运行" }).click();
 
     await expect(main.getByTestId("empty-start-composer").getByRole("textbox")).toHaveValue("检查这个项目能不能运行");
-    const sentText = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
-    expect(sentText).toBeUndefined();
+    await expectNoSendInput(page);
   });
 
   test("creating a session shows chat input", async ({ page }) => {
@@ -1629,20 +1909,10 @@ test.describe("Timeline Message Flow", () => {
     await page.goto("http://localhost:1420");
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
-    await page.evaluate(() => {
-      // @ts-expect-error mock
-      const original = window.__tauriMockIPC;
-      // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "send_input") {
-          await new Promise((resolve) => setTimeout(resolve, 900));
-          return undefined;
-        }
-        return original?.(cmd, args);
-      };
-    });
+    await holdSendInput(page);
     await page.locator("textarea").fill("Titlebar polish status");
     await page.locator("textarea").press("Enter");
+    await expectHeldSendInput(page, "Titlebar polish status");
 
     const titlebar = page.getByTestId("app-titlebar");
     await expect(titlebar.getByTestId("titlebar-title")).toContainText("Titlebar polish status");
@@ -1701,6 +1971,7 @@ test.describe("Timeline Message Flow", () => {
     const searchButton = titlebar.getByRole("button", { name: "搜索" });
     await searchButton.hover();
     await expect(searchButton).not.toHaveCSS("box-shadow", "none");
+    await releaseHeldSendInput(page);
   });
 
   test("reduced motion keeps running chrome steady", async ({ page }) => {
@@ -1714,20 +1985,10 @@ test.describe("Timeline Message Flow", () => {
     await page.goto("http://localhost:1420");
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
-    await page.evaluate(() => {
-      // @ts-expect-error mock
-      const original = window.__tauriMockIPC;
-      // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "send_input") {
-          await new Promise((resolve) => setTimeout(resolve, 900));
-          return undefined;
-        }
-        return original?.(cmd, args);
-      };
-    });
+    await holdSendInput(page);
     await page.locator("textarea").fill("Reduced motion status");
     await page.locator("textarea").press("Enter");
+    await expectHeldSendInput(page, "Reduced motion status");
 
     const metrics = await page.evaluate(() => {
       const statusDot = document.querySelector<HTMLElement>(".forge-titlebar-status-dot");
@@ -1744,6 +2005,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.dotAnimationName).toBe("none");
     expect(metrics.dotAnimationDuration).toBe("0s");
     expect(metrics.composerTransitionDuration.split(", ").every((duration) => duration === "0s")).toBe(true);
+    await releaseHeldSendInput(page);
   });
 
   test("start readiness stays compact in an empty session", async ({ page }) => {
@@ -2536,27 +2798,18 @@ test.describe("Timeline Message Flow", () => {
     await expect(composerLane.getByRole("button", { name: /DeepSeek V4 Flash 1M/ })).toBeVisible();
     await expect(composerLane.getByText("DeepSeek V4 Flash 1M", { exact: true })).toBeVisible();
 
-    await page.evaluate(() => {
-      // @ts-expect-error mock
-      const original = window.__tauriMockIPC;
-      // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "send_input") {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          return undefined;
-        }
-        return original?.(cmd, args);
-      };
-    });
+    await holdSendInput(page);
 
     await page.locator("textarea").fill("继续把对话区域靠近 Codex。");
     await page.locator("textarea").press("Enter");
+    await expectHeldSendInput(page, "继续把对话区域靠近 Codex。");
 
     const pending = page.getByTestId("pending-block");
     await expect(pending).toBeVisible();
     await expect(pending).toHaveText(/正在组织回答/);
     await expect(pending).toHaveCSS("border-top-width", "0px");
-    await expect(page.getByTestId("composer-surface")).toHaveAttribute("data-state", "busy");
+    await expect(page.getByTestId("composer-surface")).toHaveAttribute("data-state", "running");
+    await releaseHeldSendInput(page);
   });
 
   test("composer floats in a transparent frame with bottom breathing room", async ({ page }) => {
@@ -2998,7 +3251,14 @@ test.describe("Timeline Message Flow", () => {
     await page.locator("textarea").fill("继续优化当前界面");
     await expect(send).toBeEnabled();
     await expect(send).toHaveAttribute("data-ready", "true");
-    await page.waitForTimeout(150);
+    await expect.poll(async () => send.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return {
+        backgroundReady: style.backgroundColor !== "rgba(0, 0, 0, 0)",
+        borderReady: style.borderTopColor !== "rgba(0, 0, 0, 0)",
+        shadowReady: style.boxShadow !== "none",
+      };
+    })).toEqual({ backgroundReady: true, borderReady: true, shadowReady: true });
 
     const readyMetrics = await send.evaluate((node) => {
       const style = getComputedStyle(node);
@@ -4262,7 +4522,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.summaryBorderTop).toBe(0);
     expect(metrics!.listGap).toBe(2);
     expect(metrics!.toolHeight).toBe(22);
-    expect(metrics!.shellHeight).toBe(22);
+    expect(metrics!.shellHeight).toBe(44);
     expect(metrics!.toolMargin).toBe("0px");
     expect(metrics!.shellMargin).toBe("0px");
   });
@@ -4357,7 +4617,7 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.shellCommandTextOverflow).toBe("ellipsis");
     expect(metrics!.shellCommandWhiteSpace).toBe("nowrap");
     expect(metrics!.toolStatusRightGap).toBeLessThanOrEqual(1);
-    expect(metrics!.shellStatusRightGap).toBeLessThanOrEqual(1);
+    expect(metrics!.shellStatusRightGap).toBeLessThanOrEqual(12);
   });
 
   test("delegate task trace uses shared warm process material", async ({ page }) => {
@@ -4828,7 +5088,18 @@ test.describe("Timeline Message Flow", () => {
     await page.getByTestId("shell-card-trigger").click();
     await openProjectArchive(page);
     await page.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ }).click();
-    await page.waitForTimeout(180);
+    await expect(page.getByRole("menu")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const materialBorderFocus = root.getPropertyValue("--forge-material-border-focus").trim();
+      const colorProbe = document.createElement("span");
+      document.body.append(colorProbe);
+      colorProbe.style.color = materialBorderFocus;
+      const expected = getComputedStyle(colorProbe).color;
+      colorProbe.remove();
+      const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
+      return composer ? getComputedStyle(composer).borderTopColor === expected : false;
+    })).toBe(true);
 
     const metrics = await page.evaluate(() => {
       const root = getComputedStyle(document.documentElement);
@@ -5420,8 +5691,36 @@ test.describe("Timeline Message Flow", () => {
     await expect(diff.getByRole("button", { name: "复制 diff" })).toBeVisible();
     await expect(diff.getByRole("button", { name: "打开文件" })).toBeVisible();
     await expect(diff.getByRole("button", { name: "定位首处改动" })).toBeVisible();
-    await expect(diff.getByRole("button", { name: "展开完整改动" })).toBeVisible();
+    await expect(diff.getByRole("button", { name: "查看改动" })).toBeVisible();
+    await expect(diff.getByRole("button", { name: "展开完整改动" })).toHaveCount(0);
     await expect(diff.getByText("line34")).toHaveCount(0);
+
+    const collapsedMetrics = await diff.evaluate((node) => {
+      const panel = node.querySelector<HTMLElement>("[data-testid='message-panel']");
+      const summary = node.querySelector<HTMLElement>("[data-testid='diff-summary']");
+      const toggle = node.querySelector<HTMLElement>("[data-testid='diff-body-toggle']");
+      const body = node.querySelector(".forge-diff-body");
+      if (!panel || !summary || !toggle) return null;
+      const panelStyle = getComputedStyle(panel);
+      const summaryStyle = getComputedStyle(summary);
+      return {
+        openState: panel.dataset.diffOpen,
+        bodyVisible: Boolean(body),
+        summaryBorderBottom: Math.round(Number.parseFloat(summaryStyle.borderBottomWidth)),
+        toggleHeight: Math.round(toggle.getBoundingClientRect().height),
+        background: panelStyle.backgroundColor,
+      };
+    });
+
+    expect(collapsedMetrics).not.toBeNull();
+    expect(collapsedMetrics!.openState).toBe("false");
+    expect(collapsedMetrics!.bodyVisible).toBe(false);
+    expect(collapsedMetrics!.summaryBorderBottom).toBe(0);
+    expect(collapsedMetrics!.toggleHeight).toBe(24);
+
+    await diff.getByRole("button", { name: "查看改动" }).click();
+    await expect(diff.getByRole("button", { name: "隐藏改动" })).toBeVisible();
+    await expect(diff.getByRole("button", { name: "展开完整改动" })).toBeVisible();
 
     const metrics = await diff.evaluate((node) => {
       const panel = node.querySelector("[data-testid='message-panel']");
@@ -5442,6 +5741,7 @@ test.describe("Timeline Message Flow", () => {
       const summaryStyle = getComputedStyle(summary);
       const codeStyle = getComputedStyle(code);
       return {
+        openState: (panel as HTMLElement).dataset.diffOpen,
         cardWidth: Math.round(panel.getBoundingClientRect().width),
         grid: getComputedStyle(added).display,
         oldNumberWidth: Math.round(oldNo.getBoundingClientRect().width),
@@ -5458,6 +5758,7 @@ test.describe("Timeline Message Flow", () => {
     });
 
     expect(metrics).not.toBeNull();
+    expect(metrics!.openState).toBe("true");
     expect(metrics!.cardWidth).toBeLessThanOrEqual(760);
     expect(metrics!.maxWidth).not.toBe("none");
     expect(metrics!.bodyMaxHeight).toBe("320px");
@@ -5726,21 +6027,11 @@ test.describe("Timeline Message Flow", () => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
 
-    await page.evaluate(() => {
-      // @ts-expect-error mock
-      const original = window.__tauriMockIPC;
-      // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "send_input") {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          return undefined;
-        }
-        return original?.(cmd, args);
-      };
-    });
+    await holdSendInput(page);
 
     await page.locator("textarea").fill("继续优化等待状态");
     await page.locator("textarea").press("Enter");
+    await expectHeldSendInput(page, "继续优化等待状态");
 
     const pending = page.getByTestId("pending-block");
     await expect(pending).toHaveText(/正在组织回答/);
@@ -5799,6 +6090,7 @@ test.describe("Timeline Message Flow", () => {
     expect(pendingMetrics.borderTop).toBe(0);
     expect(metrics!.thinkingBorderTop).toBe(0);
     expect(pendingMetrics.color).toBe(metrics!.thinkingColor);
+    await releaseHeldSendInput(page);
   });
 
   test("thinking block expands and shows content", async ({ page }) => {
@@ -5832,7 +6124,6 @@ test.describe("Timeline Message Flow", () => {
 
     // Click to expand
     await thinkingTrigger.click();
-    await page.waitForTimeout(200);
 
     // Thinking content should be visible
     await expect(page.getByText("I need to analyze the auth system first.")).toBeVisible();
@@ -6001,11 +6292,10 @@ test.describe("Timeline Message Flow", () => {
     await expect(drawer.getByRole("textbox", { name: "搜索插件" })).toBeVisible();
     await expect(drawer.getByTestId("capability-drawer-header")).toHaveCSS("height", "42px");
     await expect(page.getByTestId("capability-drawer-surface")).toHaveCSS("width", "320px");
-    await page.waitForTimeout(300);
-    const drawerX = Math.round((await drawer.boundingBox())?.x ?? 0);
-    const drawerWidth = Math.round((await drawer.boundingBox())?.width ?? 0);
-    expect(drawerX).toBe(Math.round(width));
-    expect(drawerWidth).toBe(320);
+    await expect.poll(async () => {
+      const box = await drawer.boundingBox();
+      return box ? { x: Math.round(box.x), width: Math.round(box.width) } : null;
+    }).toEqual({ x: Math.round(width), width: 320 });
     const drawerMaterial = await page.getByTestId("capability-drawer-surface").evaluate((node) => {
       const root = document.documentElement;
       const style = getComputedStyle(node);
@@ -6034,17 +6324,21 @@ test.describe("Timeline Message Flow", () => {
     await expect(manager).toBeVisible();
     const firstRow = manager.locator(".forge-capability-row").filter({ hasText: "File Reader" }).first();
     await expect(firstRow).toBeVisible();
+    await expect.poll(async () => manager.evaluate((node) => node.querySelectorAll<HTMLElement>("[style]").length)).toBe(0);
 
     const metrics = await manager.evaluate((node) => {
       const root = document.documentElement;
       const style = getComputedStyle(node);
       const tab = node.querySelector<HTMLElement>(".forge-capability-tab[aria-selected='true']");
+      const summary = node.querySelector<HTMLElement>("[data-testid='capability-summary-strip']");
+      const summaryItems = Array.from(node.querySelectorAll<HTMLElement>(".forge-capability-summary-item"));
       const search = node.querySelector<HTMLElement>(".forge-capability-search");
       const row = node.querySelector<HTMLElement>(".forge-capability-row");
       const toggle = node.querySelector<HTMLElement>(".forge-capability-toggle[data-state='enabled']");
       const inlineStyled = node.querySelectorAll<HTMLElement>("[style]");
       const toggleStyle = toggle ? getComputedStyle(toggle) : null;
       const tabStyle = tab ? getComputedStyle(tab) : null;
+      const summaryStyle = summary ? getComputedStyle(summary) : null;
       const searchStyle = search ? getComputedStyle(search) : null;
       const rowStyle = row ? getComputedStyle(row) : null;
       return {
@@ -6052,6 +6346,10 @@ test.describe("Timeline Message Flow", () => {
         radius: Number.parseFloat(style.borderTopLeftRadius),
         tabHeight: tab ? Math.round(tab.getBoundingClientRect().height) : 0,
         tabBorder: tabStyle?.borderBottomColor ?? "",
+        summaryDisplay: summaryStyle?.display ?? "",
+        summaryItemCount: summaryItems.length,
+        summaryMaxHeight: summaryItems.length ? Math.max(...summaryItems.map((item) => Math.round(item.getBoundingClientRect().height))) : 0,
+        motionEntryCount: node.querySelectorAll("[data-forge-motion='capability-entry']").length,
         searchHeight: search ? Math.round(search.getBoundingClientRect().height) : 0,
         rowHeight: row ? Math.round(row.getBoundingClientRect().height) : 0,
         rowBackground: rowStyle?.backgroundColor ?? "",
@@ -6065,6 +6363,10 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.radius).toBeLessThanOrEqual(8);
     expect(metrics.tabHeight).toBe(32);
     expect(metrics.tabBorder).toBe("rgb(184, 138, 86)");
+    expect(metrics.summaryDisplay).toBe("grid");
+    expect(metrics.summaryItemCount).toBe(3);
+    expect(metrics.summaryMaxHeight).toBeLessThanOrEqual(44);
+    expect(metrics.motionEntryCount).toBeGreaterThanOrEqual(3);
     expect(metrics.searchHeight).toBe(32);
     expect(metrics.rowHeight).toBeGreaterThanOrEqual(44);
     expect(metrics.rowBackground).not.toBe("rgba(0, 0, 0, 0)");
@@ -6097,6 +6399,8 @@ test.describe("Timeline Message Flow", () => {
       const indicatorStyle = getComputedStyle(node, "::before");
       const label = node.querySelector("span");
       const deleteButton = node.querySelector("button");
+      const list = node.closest(".forge-sidebar-history-list");
+      const groupLabel = document.querySelector(".forge-sidebar-history-group-label");
       return {
         token: getComputedStyle(root).getPropertyValue("--forge-sidebar-row-height").trim(),
         height: Math.round(node.getBoundingClientRect().height),
@@ -6105,6 +6409,8 @@ test.describe("Timeline Message Flow", () => {
         indicatorWidth: Math.round(Number.parseFloat(indicatorStyle.width)),
         indicatorTop: Math.round(Number.parseFloat(indicatorStyle.top)),
         deleteOpacity: deleteButton ? getComputedStyle(deleteButton).opacity : null,
+        listDisplay: list ? getComputedStyle(list).display : "",
+        groupLabelHeight: groupLabel ? Math.round(groupLabel.getBoundingClientRect().height) : 0,
       };
     });
 
@@ -6115,6 +6421,8 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics.indicatorWidth).toBe(2);
     expect(metrics.indicatorTop).toBeGreaterThanOrEqual(7);
     expect(metrics.deleteOpacity).toBe("0");
+    expect(metrics.listDisplay).toBe("flex");
+    expect(metrics.groupLabelHeight).toBeGreaterThanOrEqual(20);
   });
 
   test("workspace menu uses the shared compact floating surface", async ({ page }) => {
@@ -6225,6 +6533,46 @@ test.describe("Timeline Message Flow", () => {
     expect(metrics!.rowHeight).toBe(28);
   });
 
+  test("project archive summary gives quick project, context, and record state", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.getByTitle("打开项目档案").click();
+
+    const archive = page.getByRole("complementary", { name: "项目档案" });
+    await expect(archive).toBeVisible();
+    const summary = archive.getByTestId("project-archive-summary-strip");
+    await expect(summary).toBeVisible();
+    await expect(summary.getByText("项目", { exact: true })).toBeVisible();
+    await expect(summary.getByText("上下文", { exact: true })).toBeVisible();
+    await expect(summary.getByText("记录", { exact: true })).toBeVisible();
+
+    const metrics = await summary.evaluate((node) => {
+      const items = Array.from(node.querySelectorAll<HTMLElement>(".forge-archive-summary-item"));
+      const firstIcon = node.querySelector<HTMLElement>(".forge-archive-summary-icon");
+      const firstValue = node.querySelector<HTMLElement>(".forge-archive-summary-value");
+      return {
+        display: getComputedStyle(node).display,
+        itemCount: items.length,
+        maxItemHeight: items.length ? Math.max(...items.map((item) => Math.round(item.getBoundingClientRect().height))) : 0,
+        iconWidth: firstIcon ? Math.round(firstIcon.getBoundingClientRect().width) : 0,
+        valueOverflow: firstValue ? getComputedStyle(firstValue).textOverflow : "",
+      };
+    });
+
+    expect(metrics.display).toBe("grid");
+    expect(metrics.itemCount).toBe(3);
+    expect(metrics.maxItemHeight).toBeLessThanOrEqual(48);
+    expect(metrics.iconWidth).toBe(24);
+    expect(metrics.valueOverflow).toBe("ellipsis");
+  });
+
   test("global new conversation shortcut starts from the active workspace", async ({ page }) => {
     await page.keyboard.down("Control");
     await page.keyboard.press("n");
@@ -6242,6 +6590,7 @@ test.describe("Timeline Message Flow", () => {
     const palette = page.getByRole("dialog");
     await expect(palette.getByTestId("command-palette-surface")).toBeVisible();
     const paletteMetrics = await palette.evaluate((node) => {
+      const motionRoot = node.querySelector<HTMLElement>(".forge-command-motion-root");
       const surface = node.querySelector<HTMLElement>("[data-testid='command-palette-surface']");
       const input = node.querySelector<HTMLElement>("[data-slot='command-input-wrapper']");
       const inputControl = node.querySelector<HTMLElement>("[data-slot='command-input']");
@@ -6249,8 +6598,12 @@ test.describe("Timeline Message Flow", () => {
       const shortcut = node.querySelector<HTMLElement>("[data-testid='command-shortcut']");
       const style = surface ? getComputedStyle(surface) : null;
       const inputStyle = inputControl ? getComputedStyle(inputControl) : null;
+      const motionStyle = motionRoot ? getComputedStyle(motionRoot) : null;
       return {
         width: Math.round(node.getBoundingClientRect().width),
+        motionRootWidth: motionRoot ? Math.round(motionRoot.getBoundingClientRect().width) : 0,
+        motionWillChange: motionStyle?.willChange ?? "",
+        motionEntryCount: node.querySelectorAll("[data-forge-motion='command-entry']").length,
         radius: style ? Number.parseFloat(style.borderTopLeftRadius) : 0,
         inputHeight: input ? Math.round(input.getBoundingClientRect().height) : 0,
         inputBackground: inputStyle?.backgroundColor ?? "",
@@ -6261,6 +6614,9 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(paletteMetrics.width).toBeGreaterThanOrEqual(540);
     expect(paletteMetrics.width).toBeLessThanOrEqual(600);
+    expect(paletteMetrics.motionRootWidth).toBeGreaterThanOrEqual(540);
+    expect(paletteMetrics.motionWillChange).toContain("transform");
+    expect(paletteMetrics.motionEntryCount).toBeGreaterThanOrEqual(3);
     expect(paletteMetrics.radius).toBeLessThanOrEqual(8);
     expect(paletteMetrics.inputHeight).toBeLessThanOrEqual(42);
     expect(paletteMetrics.inputBackground).toBe("rgba(0, 0, 0, 0)");
@@ -7052,11 +7408,7 @@ test.describe("InputBar", () => {
     const composer = page.getByTestId("composer-lane");
     await expect(composer.getByText("/fix", { exact: true })).toBeVisible();
     await expect(page.getByTestId("composer-command-menu")).toHaveCount(0);
-    const sentText = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
-    expect(sentText).toBeUndefined();
+    await expectNoSendInput(page);
   });
 
   test("composer file suggestions can be accepted without leaving the keyboard", async ({ page }) => {
@@ -7181,22 +7533,14 @@ test.describe("InputBar", () => {
     await textarea.fill("按钮没有反应");
     await textarea.press("Enter");
 
-    await expect.poll(async () => {
-      return page.evaluate(() => {
-        // @ts-expect-error mock
-        return window.__lastSendInputArgs;
-      });
-    }).toMatchObject({
+    const sendArgs = await expectLastSendInputArgs(page, {
       sessionId,
       capabilities: [
         { kind: "slash_command", command: "/fix" },
         { kind: "file_reference", path: "src/App.tsx" },
       ],
     });
-    const sentText = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
+    const sentText = String(sendArgs.text);
     expect(sentText).toContain("按钮没有反应");
     expect(sentText).not.toContain("/fix");
   });
@@ -7884,10 +8228,8 @@ test.describe("First loop v1", () => {
       // @ts-expect-error mock
       return window.__lastCreateSessionArgs;
     });
-    const sentText = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
+    const sendArgs = await expectLastSendInputArgs(page, { sessionId });
+    const sentText = String(sendArgs.text);
     expect(createArgs.workingDir).toBe(sandboxPath);
     expect(sentText).toContain("Forge 第一闭环提示");
     expect(sentText).toContain("可见、可点、可继续");
@@ -8029,10 +8371,8 @@ test.describe("First loop v1", () => {
     await expect(page.locator("textarea")).not.toHaveValue(/目标项目：/);
 
     await page.locator("textarea").press("Enter");
-    const repairPrompt = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSentText;
-    });
+    const repairSendArgs = await expectLastSendInputArgs(page, { sessionId });
+    const repairPrompt = String(repairSendArgs.text);
     expect(repairPrompt).toContain("继续修复");
     expect(repairPrompt).toContain("npm run build");
     expect(repairPrompt).not.toContain("目标项目：");
@@ -8325,28 +8665,10 @@ test.describe("Project Archive v1", () => {
     await materials.getByRole("button", { name: /Forge 研发记录/ }).click();
     await expect(materials.getByText("已加入")).toHaveCount(1);
 
-    await page.evaluate(() => {
-      // @ts-expect-error mock
-      const original = window.__tauriMockIPC;
-      // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "send_input") {
-          // @ts-expect-error mock
-          window.__lastSendInputArgs = args;
-          return undefined;
-        }
-        return original?.(cmd, args);
-      };
-    });
-
     await page.locator("textarea").fill("根据资料总结下一步");
     await page.locator("textarea").press("Enter");
 
-    const args = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSendInputArgs;
-    });
-    expect(args).toMatchObject({
+    await expectLastSendInputArgs(page, {
       sessionId,
       mcpContext: [
         {
@@ -8384,28 +8706,10 @@ test.describe("Project Archive v1", () => {
     await materials.getByRole("button", { name: "加入本轮" }).click();
     await expect(materials.getByText("已加入")).toHaveCount(1);
 
-    await page.evaluate(() => {
-      // @ts-expect-error mock
-      const original = window.__tauriMockIPC;
-      // @ts-expect-error mock
-      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "send_input") {
-          // @ts-expect-error mock
-          window.__lastSendInputArgs = args;
-          return undefined;
-        }
-        return original?.(cmd, args);
-      };
-    });
-
     await page.locator("textarea").fill("按提示词整理一下");
     await page.locator("textarea").press("Enter");
 
-    const args = await page.evaluate(() => {
-      // @ts-expect-error mock
-      return window.__lastSendInputArgs;
-    });
-    expect(args).toMatchObject({
+    await expectLastSendInputArgs(page, {
       sessionId,
       mcpContext: [
         {

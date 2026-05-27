@@ -29,8 +29,8 @@
   }
 
   .forge-conversation-turn[data-turn-shape="with-evidence"] {
-    border-left: 1px solid var(--forge-border-subtle);
-    padding-left: 0.75rem;
+    border-left: 0;
+    padding-left: 0;
   }
 
   .forge-conversation-turn + .forge-conversation-turn {
@@ -66,13 +66,35 @@
     min-width: 0;
     position: relative;
     padding-block: 0.125rem;
+    padding-left: 2.25rem;
     padding-right: 2.25rem;
+    background: transparent;
     color: var(--forge-text-primary);
     font-size: 14px;
     line-height: var(--forge-assistant-line-height);
     font-weight: 400;
     text-align: left;
     overflow-wrap: anywhere;
+  }
+
+  .forge-assistant-avatar {
+    position: absolute;
+    left: 0;
+    top: 0.0625rem;
+    display: inline-flex;
+    width: 1.5rem;
+    height: 1.5rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(184, 138, 86, 0.24);
+    border-radius: calc(var(--radius) - 2px);
+    background: rgba(184, 138, 86, 0.08);
+    color: var(--forge-accent);
+    font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset;
   }
 
   .forge-user-message {

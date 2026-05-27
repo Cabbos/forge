@@ -1,20 +1,41 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { ShellCardDetail } from "@/components/messages/ShellCardDetail";
 import { ShellCardHeader } from "@/components/messages/ShellCardHeader";
 import { deriveShellView } from "./processShellPresentation";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 export function ShellCard({ block }: { block: BlockState }) {
   const shellView = deriveShellView(block);
   const [expanded, setExpanded] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (block.isComplete && shellView.isError) setExpanded(true);
   }, [block.isComplete, shellView.isError]);
 
+  useGSAP(() => {
+    if (!expanded || prefersReducedMotion()) return;
+
+    const detail = rootRef.current?.querySelector<HTMLElement>("[data-forge-motion='shell-detail']");
+    if (!detail) return;
+
+    gsap.fromTo(
+      detail,
+      { autoAlpha: 0, y: -4 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        duration: forgeMotion.evidence.duration,
+        ease: forgeMotion.evidence.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: rootRef, dependencies: [expanded] });
+
   return (
-    <div>
+    <div ref={rootRef}>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <ShellCardHeader
           command={shellView.command}
@@ -25,7 +46,7 @@ export function ShellCard({ block }: { block: BlockState }) {
           state={shellView.state}
           tone={shellView.tone}
         />
-        <CollapsibleContent>
+        <CollapsibleContent data-forge-motion="shell-detail">
           <ShellCardDetail
             command={shellView.command}
             output={shellView.output}

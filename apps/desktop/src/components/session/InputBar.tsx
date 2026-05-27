@@ -3,6 +3,7 @@ import { AlertCircle } from "lucide-react";
 import { useSession } from "@/hooks/useSession";
 import { useStore } from "@/store";
 import { modeAwarePlaceholder } from "@/lib/task-mode";
+import type { AgentTurnStatus } from "@/lib/protocol";
 import { ComposerChipTray } from "./ComposerChipTray";
 import { ComposerModelMenu } from "./ComposerModelMenu";
 import { ComposerSuggestionMenu } from "./ComposerSuggestionMenu";
@@ -27,6 +28,7 @@ export function InputBar({ sessionId }: InputBarProps) {
 
   const { send, stop, resume } = useSession();
   const session = useStore((s) => s.sessions.get(sessionId));
+  const agentTurn = useStore((s) => s.agentTurnBySession.get(sessionId) ?? null);
   const {
     adjustHeight,
     composingRef,
@@ -77,7 +79,14 @@ export function InputBar({ sessionId }: InputBarProps) {
   });
   const isRunning = session?.status === "running";
   const isStreaming = session?.streaming ?? false;
-  const composerState = isStreaming ? "running" : isRunning ? "busy" : "paused";
+  const hasPendingOutput = session?.blocks.some((block) => block.event_type === "pending") ?? false;
+  const agentTurnStatus = agentTurn?.status;
+  const isTurnInFlight = isRunning && (
+    isActiveAgentTurn(agentTurnStatus) ||
+    hasPendingOutput ||
+    (!isTerminalAgentTurn(agentTurnStatus) && isStreaming)
+  );
+  const composerState = isTurnInFlight ? "running" : isRunning ? "busy" : "paused";
   const {
     handleResume,
     isResuming,
@@ -88,7 +97,7 @@ export function InputBar({ sessionId }: InputBarProps) {
     resume,
     sessionId,
   });
-  const canSend = isRunning && (value.trim().length > 0 || chips.length > 0);
+  const canSend = isRunning && !isTurnInFlight && (value.trim().length > 0 || chips.length > 0);
 
   useEffect(() => { if (isRunning) focusTextarea(); }, [focusTextarea, sessionId, isRunning]);
   useEffect(() => {
@@ -175,7 +184,7 @@ export function InputBar({ sessionId }: InputBarProps) {
       <div
         data-testid="composer-surface"
         data-menu-open={showSuggestions || showModelMenu ? "true" : "false"}
-        data-streaming={isStreaming ? "true" : "false"}
+        data-streaming={isTurnInFlight ? "true" : "false"}
         data-state={composerState}
         className="forge-composer"
       >
@@ -207,7 +216,7 @@ export function InputBar({ sessionId }: InputBarProps) {
           canSend={canSend}
           isResuming={isResuming}
           isRunning={isRunning}
-          isStreaming={isStreaming}
+          isStreaming={isTurnInFlight}
           modelMenuId={modelMenuId}
           selectedContextWindow={selectedContextWindow}
           selectedModelLabel={selectedModelLabel}
@@ -225,4 +234,16 @@ export function InputBar({ sessionId }: InputBarProps) {
       </div>
     </div>
   );
+}
+
+function isActiveAgentTurn(status: AgentTurnStatus | undefined) {
+  return status === "started" ||
+    status === "gathering_context" ||
+    status === "calling_model" ||
+    status === "running_tools" ||
+    status === "verifying";
+}
+
+function isTerminalAgentTurn(status: AgentTurnStatus | undefined) {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }

@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { CapabilityManager, type CapabilityTab } from "@/components/settings/CapabilityManager";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface CapabilityDrawerProps {
   open: boolean;
@@ -10,6 +11,8 @@ interface CapabilityDrawerProps {
 }
 
 export function CapabilityDrawer({ open, initialTab, title, onClose }: CapabilityDrawerProps) {
+  const drawerRef = useRef<HTMLElement>(null);
+
   useEffect(() => {
     if (!open) return;
 
@@ -21,14 +24,34 @@ export function CapabilityDrawer({ open, initialTab, title, onClose }: Capabilit
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, open]);
 
+  useGSAP(() => {
+    if (!open || prefersReducedMotion()) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+
+    gsap.fromTo(
+      drawer,
+      { autoAlpha: 0, x: -14 },
+      {
+        autoAlpha: 1,
+        x: 0,
+        duration: forgeMotion.surface.duration,
+        ease: forgeMotion.surface.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: drawerRef, dependencies: [open] });
+
   if (!open) return null;
 
   return (
     <>
       <div className="forge-capability-overlay" onClick={onClose} />
       <aside
+        ref={drawerRef}
         aria-label={title}
         data-testid="capability-drawer-surface"
+        data-forge-motion="capability-drawer"
         className="forge-capability-drawer"
       >
         <div data-testid="capability-drawer-header" className="forge-titlebar forge-capability-drawer-header">

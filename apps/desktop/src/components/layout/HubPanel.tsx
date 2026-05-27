@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, FilePlus2, FileText, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, ClipboardCheck, FilePlus2, FileText, FolderOpen, Layers3, X } from "lucide-react";
 import { useActiveBlocks, useActiveWorkspace, useStore } from "@/store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ActiveContextSection } from "@/components/context/ActiveContextSection";
@@ -13,7 +13,8 @@ import { getActiveContextItems } from "@/lib/context-activation";
 import { deriveProjectArchiveOverview } from "@/lib/project-archive-overview";
 import { getProjectRuntimeStatus, listMcpContextSources, type McpContextSources } from "@/lib/tauri";
 import type { McpContextPromptArgument, McpContextSelection } from "@/lib/tauri";
-import type { McpContextStatus } from "@/lib/protocol";
+import type { DeliverySummary, McpContextStatus } from "@/lib/protocol";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 type ParseStatus = "pending" | "parsed" | "failed" | "available" | "read_failed";
 
@@ -32,9 +33,16 @@ interface ContextFile {
 
 const contextFiles: ContextFile[] = [];
 const emptyMcpContextSources: McpContextSources = { resources: [], prompts: [] };
+type HubPanelSection = "records";
 
-export function HubPanel() {
-  const [open, setOpen] = useState(false);
+interface HubPanelProps {
+  open: boolean;
+  initialSection?: HubPanelSection | null;
+  onOpenChange: (open: boolean) => void;
+}
+
+export function HubPanel({ open, initialSection, onOpenChange }: HubPanelProps) {
+  const panelRef = useRef<HTMLElement>(null);
   const [recordsRequestedOpen, setRecordsRequestedOpen] = useState(false);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [mcpContextSources, setMcpContextSources] = useState<McpContextSources>(emptyMcpContextSources);
@@ -64,39 +72,55 @@ export function HubPanel() {
     deliverySummary,
   }), [activeWorkspace, blocks, deliverySummary, firstLoopDraft, session]);
 
+  useGSAP(() => {
+    if (!open || prefersReducedMotion()) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const sections = gsap.utils.toArray<HTMLElement>("[data-forge-motion='archive-section']", panel);
+    const timeline = gsap.timeline();
+    timeline.fromTo(
+      panel,
+      { autoAlpha: 0, x: 18 },
+      {
+        autoAlpha: 1,
+        x: 0,
+        duration: forgeMotion.surface.duration,
+        ease: forgeMotion.surface.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+    if (sections.length > 0) {
+      timeline.fromTo(
+        sections,
+        { autoAlpha: 0, y: 5 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: forgeMotion.evidence.duration,
+          ease: forgeMotion.evidence.ease,
+          stagger: 0.025,
+          clearProps: "transform,opacity,visibility",
+        },
+        "-=0.08",
+      );
+    }
+  }, { scope: panelRef, dependencies: [open] });
+
   useEffect(() => {
-    const toggleHandler = () => setOpen((value) => !value);
-    const openHandler = (event: Event) => {
-      setOpen(true);
-      if ((event as CustomEvent<{ section?: string }>).detail?.section === "records") {
-        setRecordsRequestedOpen(true);
-      }
-    };
-    const shortcutHandler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "i") return;
-      event.preventDefault();
-      setOpen((value) => !value);
-    };
-    window.addEventListener("toggle-hub", toggleHandler);
-    window.addEventListener("open-hub", openHandler);
-    window.addEventListener("keydown", shortcutHandler);
-    return () => {
-      window.removeEventListener("toggle-hub", toggleHandler);
-      window.removeEventListener("open-hub", openHandler);
-      window.removeEventListener("keydown", shortcutHandler);
-    };
-  }, []);
+    if (open && initialSection === "records") setRecordsRequestedOpen(true);
+  }, [initialSection, open]);
 
   useEffect(() => {
     if (!open) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") onOpenChange(false);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open]);
+  }, [onOpenChange, open]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,16 +167,21 @@ export function HubPanel() {
   return (
     <>
       <aside
+        ref={panelRef}
         data-testid="project-archive-panel"
         aria-label="项目档案"
-        className="forge-inspector fixed right-0 top-0 z-50 flex h-full flex-col overflow-hidden animate-[slide-in-right_0.25s_ease-out]"
+        data-forge-motion="archive-panel"
+        className="forge-inspector fixed right-0 top-0 z-50 flex h-full flex-col overflow-hidden"
       >
         <div className="forge-inspector-header">
-          <span className="text-xs font-semibold text-foreground">项目档案</span>
+          <div className="forge-inspector-title-block">
+            <span className="forge-inspector-title">项目档案</span>
+            <span className="forge-inspector-subtitle">状态、上下文与交付</span>
+          </div>
           <button
             type="button"
             aria-label="关闭项目档案"
-            onClick={() => setOpen(false)}
+            onClick={() => onOpenChange(false)}
             className="forge-icon-button"
             title="关闭项目档案"
           >
@@ -162,49 +191,140 @@ export function HubPanel() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div data-testid="project-archive-body" className="forge-inspector-body">
-            <ProjectOverviewCard overview={projectOverview} />
-
-            <CurrentTaskCard workflow={workflow} />
-
-            {firstLoopDraft && <FirstLoopCard draft={firstLoopDraft} />}
-
-            {activeContextItems.length > 0 && <ActiveContextSection items={activeContextItems} />}
-
-            <ArchiveDisclosure
-              testId="archive-disclosure-records"
-              title="项目记录"
-              meta="记录与建议"
-              defaultOpen={recordsRequestedOpen || deliverySummary?.record_status === "pending"}
-            >
-              <WikiSections sessionId={activeId} projectPath={projectPath} />
-            </ArchiveDisclosure>
-
-            <ArchiveDisclosure
-              testId="archive-disclosure-files"
-              title="资料"
-              meta={contextMaterials.length > 0 ? `${contextMaterials.length} 个资料` : "未添加"}
-            >
-              <ContextFilesSection
-                files={contextMaterials}
-                onToggle={(selection) => {
-                  if (activeId) toggleMcpContext(activeId, selection);
-                }}
+            <div data-forge-motion="archive-section">
+              <ArchiveSummaryStrip
+                contextCount={activeContextItems.length}
+                deliverySummary={deliverySummary}
+                overview={projectOverview}
               />
-            </ArchiveDisclosure>
+            </div>
 
-            <ProductLayerHeader title="交付" meta="最近状态" />
+            <div data-forge-motion="archive-section">
+              <ProjectOverviewCard overview={projectOverview} />
+            </div>
 
-            {activeId ? (
-              <ProjectStatusCard sessionId={activeId} />
-            ) : (
-              <div className="forge-empty">
-                选择一个任务后查看预览和检查点。
+            <div data-forge-motion="archive-section">
+              <CurrentTaskCard workflow={workflow} />
+            </div>
+
+            {firstLoopDraft && (
+              <div data-forge-motion="archive-section">
+                <FirstLoopCard draft={firstLoopDraft} />
               </div>
             )}
+
+            {activeContextItems.length > 0 && (
+              <div data-forge-motion="archive-section">
+                <ActiveContextSection items={activeContextItems} />
+              </div>
+            )}
+
+            <div data-forge-motion="archive-section">
+              <ArchiveDisclosure
+                testId="archive-disclosure-records"
+                title="项目记录"
+                meta="记录与建议"
+                defaultOpen={recordsRequestedOpen || deliverySummary?.record_status === "pending"}
+              >
+                <WikiSections sessionId={activeId} projectPath={projectPath} />
+              </ArchiveDisclosure>
+            </div>
+
+            <div data-forge-motion="archive-section">
+              <ArchiveDisclosure
+                testId="archive-disclosure-files"
+                title="资料"
+                meta={contextMaterials.length > 0 ? `${contextMaterials.length} 个资料` : "未添加"}
+              >
+                <ContextFilesSection
+                  files={contextMaterials}
+                  onToggle={(selection) => {
+                    if (activeId) toggleMcpContext(activeId, selection);
+                  }}
+                />
+              </ArchiveDisclosure>
+            </div>
+
+            <div data-forge-motion="archive-section">
+              <ProductLayerHeader title="交付" meta="最近状态" />
+            </div>
+
+            <div data-forge-motion="archive-section">
+              {activeId ? (
+                <ProjectStatusCard sessionId={activeId} />
+              ) : (
+                <div className="forge-empty">
+                  选择一个任务后查看预览和检查点。
+                </div>
+              )}
+            </div>
           </div>
         </ScrollArea>
       </aside>
     </>
+  );
+}
+
+function ArchiveSummaryStrip({
+  contextCount,
+  deliverySummary,
+  overview,
+}: {
+  contextCount: number;
+  deliverySummary: DeliverySummary | null | undefined;
+  overview: ReturnType<typeof deriveProjectArchiveOverview>;
+}) {
+  const recordValue = deliverySummary?.record_status === "pending"
+    ? "待确认"
+    : deliverySummary?.record_status === "accepted"
+      ? "已记录"
+      : "未请求";
+
+  return (
+    <section data-testid="project-archive-summary-strip" className="forge-archive-summary-strip" aria-label="项目档案摘要">
+      <ArchiveSummaryItem
+        icon={<FolderOpen className="size-3.5" />}
+        label="项目"
+        value={overview.projectName}
+        title={overview.projectPath}
+      />
+      <ArchiveSummaryItem
+        icon={<Layers3 className="size-3.5" />}
+        label="上下文"
+        value={contextCount > 0 ? `${contextCount} 个已加入` : "未加入"}
+      />
+      <ArchiveSummaryItem
+        icon={<ClipboardCheck className="size-3.5" />}
+        label="记录"
+        value={recordValue}
+        title={deliverySummary?.checkpoint_label}
+      />
+    </section>
+  );
+}
+
+function ArchiveSummaryItem({
+  detail,
+  icon,
+  label,
+  title,
+  value,
+}: {
+  detail?: string;
+  icon: ReactNode;
+  label: string;
+  title?: string;
+  value: string;
+}) {
+  return (
+    <div className="forge-archive-summary-item" title={title}>
+      <span className="forge-archive-summary-icon">{icon}</span>
+      <span className="forge-archive-summary-copy">
+        <span className="forge-archive-summary-label">{label}</span>
+        <span className="forge-archive-summary-value">{value}</span>
+        {detail ? <span className="forge-archive-summary-detail">{detail}</span> : null}
+      </span>
+    </div>
   );
 }
 

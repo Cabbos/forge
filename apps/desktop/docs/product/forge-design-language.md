@@ -1,12 +1,38 @@
 # Forge Design Language
 
-Updated: 2026-05-23
+Updated: 2026-05-27
 
 ## Positioning
 
 Forge V1 should feel like a local agent workbench with desktop-product craft: calm like Claude Desktop, precise like Linear, action-ready like Raycast, and dense enough for developer work like Warp and Zed.
 
 The design language is **Warm Precision**. It is not a new product concept and should not create new navigation, panels, terms, or user-visible abilities. It is a visual and interaction contract for existing Forge surfaces.
+
+## Design Alignment Contract
+
+Forge should align to the Figma workbench prototypes at the system level, not at the pixel-perfect layer. The prototypes define the product language, hierarchy, density, state vocabulary, and material ladder. The implementation should still adapt to real stream content, platform constraints, component behavior, and accessibility.
+
+Pixel matching is not the goal. A screen is aligned when a developer can move between Figma and the running app without relearning the interface: the same surfaces carry the same roles, risky moments have the same weight, and routine evidence stays quiet until it matters.
+
+### Must Match
+
+- Token roles: base, depth, surface, raised, composer, border, text, muted text, accent, success, warning, and danger.
+- Information architecture: sidebar, titlebar, message lane, composer, process feedback, confirmation, delivery summary, archive, settings, and command surfaces.
+- State semantics: pending, running, confirmed, resolved, success, failed, interrupted, compacted, and needs permission.
+- Density and rhythm: compact desktop controls, bounded message lane, quiet rows, stable gutters, and no marketing-page spacing.
+- Risk hierarchy: confirmation, destructive shell/file writes, failed checks, and recovery prompts must be more structured than routine output.
+
+### May Adapt
+
+- Exact x/y positions, heights, and row wrapping may change for real content and responsive behavior.
+- shadcn/Tauri component primitives may replace bespoke Figma layers when they preserve the same role and density.
+- Long Markdown, shell output, diffs, file paths, and tool traces may introduce scroll, wrapping, or expansion behavior not shown in static frames.
+- Copy may change when real product data is clearer than prototype placeholder language.
+- Motion may be simpler than the prototype if reduced motion, performance, or focus management benefits.
+
+### Product Can Correct Design
+
+The running product is allowed to correct the prototype when real behavior exposes a better rule. Examples include long session histories, multiline composer input, stalled confirmations, failed shell recovery, missing API keys, and large Markdown tables. When this happens, update the shared token/component rule instead of making a one-off visual exception.
 
 ## Brand Image Contract
 
@@ -37,6 +63,8 @@ Avoid purple AI glow, blue SaaS dashboards, orange fire decoration, gold luxury 
 
 Forge is used by a developer or operator working in a local project for long stretches, often in a dim desktop environment, while delegating real file and shell work to an agent. The UI should lower cognitive noise, preserve evidence, and make risky moments feel deliberate.
 
+The light theme scene is the same user in a brighter daytime desk environment. Light mode should feel like a warm local workbench, not a generic white SaaS dashboard. It exists for comfort, readability, and OS/theme fit while preserving the same evidence-first behavior.
+
 ## Visual Principles
 
 ### Warm Dark, Not Cold Graphite
@@ -50,6 +78,22 @@ The base surface should be a tinted near-black, leaning warm olive-charcoal rath
 - Primary text: `#EEEAE1`
 - Secondary text: `#CFC7B8`
 - Muted text: `#928B7E`
+
+### Warm Light, Not White SaaS
+
+The light theme should invert the material logic without becoming stark white. It uses warm paper and stone neutrals, with the same copper accent and restrained state colors.
+
+- Base: `#F7F2E9`
+- Depth: `#ECE2D4`
+- Surface: `#FBF7EF`
+- Raised: `#F3EADC`
+- Control: `#E8DCCD`
+- Border: `#D8C9B8`
+- Primary text: `#2D2923`
+- Secondary text: `#51483D`
+- Muted text: `#7E7368`
+
+Light mode should preserve density and evidence hierarchy. Do not add pure white cards, blue SaaS accents, or larger spacing to make the interface feel "lighter." The same workbench should simply be usable under brighter ambient light.
 
 ### One Accent With Restraint
 

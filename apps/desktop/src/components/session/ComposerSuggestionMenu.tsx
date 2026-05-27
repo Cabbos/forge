@@ -1,7 +1,9 @@
+import { useRef } from "react";
 import { commandIconMeta, fileReferenceIconMeta } from "@/lib/capability-icons";
 import { ForgeIcon } from "@/components/ui/ForgeIcon";
 import { COMPOSER_COMMANDS } from "./composerCommands";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface ComposerSuggestionMenuProps {
   activeIndex: number;
@@ -20,8 +22,30 @@ export function ComposerSuggestionMenu({
   onActiveIndexChange,
   onAddChip,
 }: ComposerSuggestionMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    const menu = menuRef.current;
+    if (!menu) return;
+
+    gsap.fromTo(
+      menu,
+      { autoAlpha: 0, y: 6, scale: 0.99 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        scale: 1,
+        duration: forgeMotion.evidence.duration,
+        ease: forgeMotion.evidence.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: menuRef });
+
   return (
     <div
+      ref={menuRef}
       id={id}
       data-testid="composer-command-menu"
       role="listbox"

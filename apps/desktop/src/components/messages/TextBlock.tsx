@@ -50,8 +50,10 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       {hasContent ? (
         <div
           data-testid="assistant-message"
+          data-message-role="assistant"
           className="forge-message-with-actions forge-assistant-message"
         >
+          <span aria-hidden="true" className="forge-assistant-avatar">F</span>
           <MessageCopyAction text={block.content} label="回复" />
           <div className="markdown-content">
             <MarkdownRenderer

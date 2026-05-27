@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUp, FolderOpen, PanelRightOpen, Search, SquarePen } from "lucide-react";
 import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
-import { SessionView } from "@/components/session/SessionView";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
-import { HubPanel } from "./HubPanel";
-import { CapabilityDrawer } from "./CapabilityDrawer";
+import { HubPanelHost } from "./HubPanelHost";
 import { useOutputStream } from "@/hooks/useOutputStream";
 import { useSession } from "@/hooks/useSession";
-import { CommandPalette } from "@/components/CommandPalette";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
 import { getProjectDisplay, getSessionStatus, getSessionTitle } from "@/lib/session-display";
 import { buildFirstLoopAgentPrompt, deriveFirstLoopDraft } from "@/lib/first-loop";
@@ -22,6 +19,10 @@ const EMPTY_START_HINTS = [
 ];
 
 type EmptyStartMode = "new-tool" | "existing-project";
+
+const LazySessionView = lazy(() => import("@/components/session/SessionView").then((module) => ({ default: module.SessionView })));
+const LazyCapabilityDrawer = lazy(() => import("./CapabilityDrawer").then((module) => ({ default: module.CapabilityDrawer })));
+const LazyCommandPalette = lazy(() => import("@/components/CommandPalette").then((module) => ({ default: module.CommandPalette })));
 
 export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -51,6 +52,7 @@ export function AppShell() {
       ? "running"
       : "idle";
   const project = getProjectDisplay(activeSession?.workingDir || activeWorkspace?.path);
+  const visibleSessionId = activeSessionId && sessions.has(activeSessionId) ? activeSessionId : null;
   useOutputStream(activeSessionId);
   const capabilityTab: CapabilityTab = activeSidebarPanel === "automation" ? "hooks" : "skills";
 
@@ -180,11 +182,21 @@ export function AppShell() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "n") return;
-      if (isEditableTarget(event.target)) return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
 
-      event.preventDefault();
-      startConversation();
+      if (key === "k") {
+        event.preventDefault();
+        setActiveSidebarPanel(null);
+        setSearchOpen(true);
+        return;
+      }
+
+      if (key === "n") {
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault();
+        startConversation();
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -260,10 +272,14 @@ export function AppShell() {
           </div>
         </div>
 
-        {activeSessionId && sessions.has(activeSessionId) ? (
-          <SessionView sessionId={activeSessionId} />
+        {visibleSessionId ? (
+          <Suspense fallback={<div className="flex-1 bg-background" />}>
+            <LazySessionView sessionId={visibleSessionId} />
+          </Suspense>
         ) : (
-          <div className={activeWorkspace ? "forge-empty-shell forge-empty-shell-codex" : "forge-empty-shell forge-empty-shell-centered"}>
+          <div
+            className={activeWorkspace ? "forge-empty-shell forge-empty-shell-codex" : "forge-empty-shell forge-empty-shell-centered"}
+          >
             <div data-testid="empty-workbench" className="forge-empty-workbench">
               <div data-testid="empty-middle-hints" className="forge-empty-hints">
                 <div className="forge-empty-hints-inner">
@@ -272,6 +288,7 @@ export function AppShell() {
                       type="button"
                       data-testid="empty-entry-new-tool"
                       data-active={emptyStartMode === "new-tool"}
+                      data-forge-motion="empty-entry"
                       onClick={selectNewToolEntry}
                       className="forge-empty-entry-card"
                     >
@@ -289,6 +306,7 @@ export function AppShell() {
                       type="button"
                       data-testid="empty-entry-existing-project"
                       data-active={emptyStartMode === "existing-project"}
+                      data-forge-motion="empty-entry"
                       onClick={selectExistingProjectEntry}
                       className="forge-empty-entry-card"
                     >
@@ -311,6 +329,7 @@ export function AppShell() {
                         <button
                           key={hint}
                           type="button"
+                          data-forge-motion="empty-hint"
                           onClick={() => useEmptyHint(hint)}
                           className="forge-empty-hint"
                         >
@@ -330,7 +349,7 @@ export function AppShell() {
             {activeWorkspace && (
               <div className="forge-empty-composer-frame">
                 <div className="forge-conversation-lane">
-                  <div className="forge-empty-context-row">
+                  <div data-forge-motion="empty-context" className="forge-empty-context-row">
                     <div data-testid="empty-workbench-project" className="forge-empty-project">
                       <FolderOpen className="forge-empty-project-icon" />
                       <span className="forge-empty-project-name">{project.name}</span>
@@ -345,7 +364,7 @@ export function AppShell() {
                       开始新对话
                     </button>
                   </div>
-                  <div data-testid="empty-start-composer" className="forge-empty-composer">
+                  <div data-testid="empty-start-composer" data-forge-motion="empty-composer" className="forge-empty-composer">
                     <textarea
                       ref={emptyPromptRef}
                       value={emptyPrompt}
@@ -370,21 +389,31 @@ export function AppShell() {
                       </button>
                     </div>
                   </div>
-                  <StartReadinessCard variant="setup-strip" />
+                  <div data-forge-motion="empty-readiness">
+                    <StartReadinessCard variant="setup-strip" />
+                  </div>
                 </div>
               </div>
             )}
           </div>
         )}
       </main>
-      <CapabilityDrawer
-        open={activeSidebarPanel !== null}
-        initialTab={capabilityTab}
-        title={activeSidebarPanel === "automation" ? "自动化" : "插件"}
-        onClose={() => setActiveSidebarPanel(null)}
-      />
-      <HubPanel />
-      <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
+      {activeSidebarPanel !== null && (
+        <Suspense fallback={null}>
+          <LazyCapabilityDrawer
+            open
+            initialTab={capabilityTab}
+            title={activeSidebarPanel === "automation" ? "自动化" : "插件"}
+            onClose={() => setActiveSidebarPanel(null)}
+          />
+        </Suspense>
+      )}
+      <HubPanelHost />
+      {searchOpen && (
+        <Suspense fallback={null}>
+          <LazyCommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
+        </Suspense>
+      )}
     </div>
   );
 }

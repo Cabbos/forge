@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import { formatContextWindow, PROVIDERS } from "@/lib/providers";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface ComposerModelMenuProps {
   id: string;
@@ -15,8 +17,30 @@ export function ComposerModelMenu({
   selectedProvider,
   onSelect,
 }: ComposerModelMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    const menu = menuRef.current;
+    if (!menu) return;
+
+    gsap.fromTo(
+      menu,
+      { autoAlpha: 0, y: 6, scale: 0.99 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        scale: 1,
+        duration: forgeMotion.evidence.duration,
+        ease: forgeMotion.evidence.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: menuRef });
+
   return (
     <div
+      ref={menuRef}
       id={id}
       role="menu"
       aria-labelledby={labelledBy}
