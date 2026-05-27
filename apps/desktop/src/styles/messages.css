@@ -552,4 +552,76 @@
     color: var(--forge-accent);
     z-index: 2;
   }
+
+  /* §4d DiffFilmstrip — film strip with perforations */
+  .diff-filmstrip {
+    background: var(--forge-film-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .diff-filmstrip-perf {
+    height: 14px;
+    background: var(--forge-film-header);
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+    gap: 3px;
+    border-bottom: 1px solid rgba(247, 241, 232, 0.04);
+  }
+
+  .diff-filmstrip-perf span {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: var(--forge-film-perf);
+  }
+
+  .diff-filmstrip .forge-diff-body {
+    background: transparent;
+    padding: 8px 14px;
+  }
+
+  .diff-filmstrip .forge-diff-line {
+    border-left: 3px solid transparent;
+  }
+
+  .diff-filmstrip .forge-diff-line-added {
+    background: rgba(155, 185, 135, 0.1);
+    border-left-color: #9BB987;
+  }
+
+  .diff-filmstrip .forge-diff-line-removed {
+    background: rgba(212, 119, 119, 0.1);
+    border-left-color: #D47777;
+  }
+
+  .diff-filmstrip .forge-diff-summary {
+    color: rgba(247, 241, 232, 0.6);
+  }
+
+  .diff-filmstrip .forge-diff-toggle {
+    color: rgba(247, 241, 232, 0.5);
+  }
+
+  .diff-filmstrip .forge-diff-toggle:hover {
+    color: rgba(247, 241, 232, 0.8);
+    background: rgba(247, 241, 232, 0.08);
+  }
+
+  .diff-filmstrip .forge-diff-footer {
+    background: rgba(27, 26, 23, 0.5);
+    border-top: 1px solid rgba(247, 241, 232, 0.04);
+  }
+
+  .diff-filmstrip .forge-diff-expand {
+    color: rgba(247, 241, 232, 0.5);
+  }
+
+  .diff-filmstrip .forge-diff-expand:hover {
+    color: rgba(247, 241, 232, 0.8);
+    background: rgba(247, 241, 232, 0.08);
+  }
 }
