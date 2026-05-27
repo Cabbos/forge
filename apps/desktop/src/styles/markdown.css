@@ -28,7 +28,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   justify-content: space-between;
   gap: 0.75rem;
   border-bottom: 1px solid var(--forge-material-border);
-  background: rgba(255, 255, 255, 0.018);
+  background: rgba(255, 252, 246, 0.36);
   padding: 0 0.75rem;
 }
 .code-caption-dot {
@@ -48,7 +48,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   justify-content: center;
   border: 1px solid var(--forge-border-subtle);
   border-radius: calc(var(--radius) - 3px);
-  background: rgba(255, 255, 255, 0.018);
+  background: rgba(255, 252, 246, 0.36);
   color: var(--forge-text-muted);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.014) inset;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
@@ -134,7 +134,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   justify-content: space-between;
   gap: 0.625rem;
   border-bottom: 1px solid var(--forge-material-border);
-  background: rgba(255, 255, 255, 0.018);
+  background: rgba(255, 252, 246, 0.36);
   padding: 0 0.75rem;
 }
 .diagram-caption-title {
@@ -360,7 +360,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   white-space: nowrap;
 }
 .markdown-content th {
-  background: rgba(255, 255, 255, 0.024);
+  background: rgba(255, 252, 246, 0.38);
   color: var(--forge-text-secondary);
   font-weight: 500;
 }
