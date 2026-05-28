@@ -459,6 +459,51 @@ mod tests {
         let _ = fs::remove_dir_all(workspace);
     }
 
+    #[tokio::test]
+    async fn checkpoint_request_uses_session_workspace_over_explicit_workspace() {
+        let session_workspace = temp_project("checkpoint-session-workspace");
+        let explicit_workspace = temp_project("checkpoint-explicit-workspace");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(explicit_workspace.clone()),
+        )));
+        let session = std::sync::Arc::new(crate::agent::session::AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            std::sync::Arc::new(crate::adapters::missing_key::MissingKeyAdapter::new(
+                "DeepSeek",
+                "deepseek-chat",
+            )),
+            std::sync::Arc::new(crate::harness::Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let resolved = checkpoint_working_dir_or_explicit(
+            &state,
+            Some("session-1"),
+            Some(explicit_workspace.to_str().expect("utf8")),
+        )
+        .await
+        .expect("checkpoint workspace should resolve");
+
+        assert_eq!(
+            resolved.canonicalize().expect("resolved workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_ne!(
+            resolved.canonicalize().expect("resolved workspace"),
+            explicit_workspace
+                .canonicalize()
+                .expect("explicit workspace")
+        );
+
+        let _ = fs::remove_dir_all(session_workspace);
+        let _ = fs::remove_dir_all(explicit_workspace);
+    }
+
     #[test]
     fn restore_checkpoint_restores_previous_diff_when_checkpoint_apply_fails() {
         let project = temp_project("checkpoint-restore-rollback");

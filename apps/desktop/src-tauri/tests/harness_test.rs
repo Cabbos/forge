@@ -221,6 +221,75 @@ mod harness {
     }
 
     #[tokio::test]
+    async fn test_shell_readonly_policy_blocks_write_like_read_commands() {
+        let db_path = std::env::temp_dir().join("test-perm-shell-readonly-policy.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = Arc::new(Database::open(&db_path).unwrap());
+        let gate = PermissionGate::new(db);
+        let working_dir = std::env::temp_dir();
+
+        for command in [
+            "find . -delete",
+            "git diff --output=changes.patch",
+            "npm run build -- --watch",
+            "npm run build -- --outDir custom-dist",
+            "npm run build -- --outputFile build-report.json",
+            "npm run build -- --cache-location .cache/vite",
+            "npm run build -- --coverage",
+            "cargo test -- --watch",
+        ] {
+            let decision = gate
+                .check(
+                    "s1",
+                    "run_shell",
+                    &serde_json::json!({ "command": command }),
+                    &working_dir,
+                )
+                .await;
+
+            assert!(
+                matches!(decision, PermissionDecision::Ask { .. }),
+                "{command} should require confirmation"
+            );
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
+    async fn test_shell_readonly_policy_allows_safe_read_options() {
+        let db_path = std::env::temp_dir().join("test-perm-shell-readonly-options.db");
+        let _ = std::fs::remove_file(&db_path);
+        let db = Arc::new(Database::open(&db_path).unwrap());
+        let gate = PermissionGate::new(db);
+        let working_dir = std::env::temp_dir();
+
+        for command in [
+            "rg --fixed-strings Forge src-tauri/src",
+            "git diff -- src-tauri/src/harness/permissions.rs",
+            "cargo test --manifest-path src-tauri/Cargo.toml --test harness_test shell_",
+            "npm run build -- --mode production",
+            "npm run build -- --reporter compact",
+        ] {
+            let decision = gate
+                .check(
+                    "s1",
+                    "run_shell",
+                    &serde_json::json!({ "command": command }),
+                    &working_dir,
+                )
+                .await;
+
+            assert!(
+                matches!(decision, PermissionDecision::Allow),
+                "{command} should stay preapproved"
+            );
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
     async fn test_mcp_tools_require_connector_confirm() {
         let db_path = std::env::temp_dir().join("test-perm-mcp.db");
         let _ = std::fs::remove_file(&db_path);

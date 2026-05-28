@@ -23,9 +23,12 @@ use crate::agent::provider_capabilities::{
 use crate::agent::session::{AgentPreviewStatusUpdate, AgentSession, TurnInflightGuard};
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
+    AgentSessionSnapshot,
 };
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
-use crate::forge_wiki::model::ForgeWikiProposalStatus;
+use crate::forge_wiki::model::{
+    ForgeWikiProposalStatus, ForgeWikiUpdateProposal, SelectedForgeWikiPage,
+};
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::forge_wiki::writeback::build_project_archive_writeback;
 use crate::harness::capability::CapabilityKind;
@@ -34,8 +37,10 @@ use crate::harness::Harness;
 use crate::ipc::project_checkpoint::project_checkpoint_status_for_session;
 use crate::ipc::project_runtime::project_runtime_status_for_session;
 use crate::ipc::workspace::resolve_bound_working_dir;
-use crate::memory::{extract_candidates_from_user_message, format_selected_memory_context};
-use crate::protocol::commands::SessionCreated;
+use crate::memory::{
+    extract_candidates_from_user_message, format_selected_memory_context, SelectedContextMemory,
+};
+use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::{DeliverySummary, StreamEvent};
 use crate::protocol::BlockId;
 use crate::settings;
@@ -132,6 +137,12 @@ struct DeliveryPreviewEvidence {
     url: Option<String>,
 }
 
+struct BuiltDeliverySummary {
+    summary: DeliverySummary,
+    preview_evidence: Option<DeliveryPreviewEvidence>,
+    checkpoint_evidence: Option<(bool, bool, bool)>,
+}
+
 fn emit_missing_api_key_notice(app_handle: &tauri::AppHandle, session_id: &str, provider: &str) {
     crate::transcript::emit_stream_event(
         app_handle,
@@ -204,10 +215,8 @@ async fn upgrade_missing_key_session_if_possible(
     upgraded.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let upgraded = Arc::new(upgraded);
     state
-        .sessions
-        .write()
-        .await
-        .insert(snapshot.session_id.clone(), upgraded.clone());
+        .register_session(snapshot.session_id.clone(), upgraded.clone())
+        .await;
     let _ = upgraded
         .harness
         .dispatch_session_start_event(&snapshot.session_id)
@@ -228,6 +237,14 @@ async fn save_session_snapshot_with_workflow(
     state: &Arc<AppState>,
     session: &AgentSession,
 ) -> Result<(), String> {
+    let snapshot = session_snapshot_with_workflow_state(state, session).await;
+    save_session_snapshot(&snapshot)
+}
+
+async fn session_snapshot_with_workflow_state(
+    state: &Arc<AppState>,
+    session: &AgentSession,
+) -> AgentSessionSnapshot {
     let latest_workflow = state.workflow_states.read().await.get(&session.id).cloned();
     let latest_delivery = state.delivery_states.read().await.get(&session.id).cloned();
     let mut snapshot = session.snapshot();
@@ -237,7 +254,7 @@ async fn save_session_snapshot_with_workflow(
     if let Some(delivery) = latest_delivery {
         snapshot = snapshot.with_latest_delivery(delivery);
     }
-    save_session_snapshot(&snapshot)
+    snapshot
 }
 
 fn build_adapter(
@@ -364,11 +381,7 @@ pub async fn create_session(
     if let Err(error) = save_session_snapshot(&session.snapshot()) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }
-    state
-        .sessions
-        .write()
-        .await
-        .insert(session_id.clone(), session);
+    state.register_session(session_id.clone(), session).await;
     let _ = harness.dispatch_session_start_event(&session_id).await;
     Ok(SessionCreated {
         session_id,
@@ -528,10 +541,8 @@ pub async fn resume_session(
     session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let session = Arc::new(session);
     state
-        .sessions
-        .write()
-        .await
-        .insert(snapshot.session_id.clone(), session.clone());
+        .register_session(snapshot.session_id.clone(), session.clone())
+        .await;
     let _ = session
         .harness
         .dispatch_session_start_event(&snapshot.session_id)
@@ -1280,13 +1291,12 @@ fn emit_delivery_summary(
     );
 }
 
-async fn build_store_emit_delivery_summary(
+async fn build_delivery_summary_for_session(
     state: &Arc<AppState>,
-    app_handle: &tauri::AppHandle,
     session_id: &str,
     latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
     record: Option<DeliveryRecordInput>,
-) {
+) -> BuiltDeliverySummary {
     let mut preview_evidence: Option<DeliveryPreviewEvidence> = None;
     let runtime = match project_runtime_status_for_session(state, Some(session_id)).await {
         Ok(status) => {
@@ -1337,8 +1347,24 @@ async fn build_store_emit_delivery_summary(
         latest_turn.map(|turn| &turn.verification),
         record,
     );
+    BuiltDeliverySummary {
+        summary,
+        preview_evidence,
+        checkpoint_evidence,
+    }
+}
+
+async fn build_store_emit_delivery_summary(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
+    record: Option<DeliveryRecordInput>,
+) {
+    let built = build_delivery_summary_for_session(state, session_id, latest_turn, record).await;
+    let summary = built.summary;
     if let Some(session) = state.sessions.read().await.get(session_id).cloned() {
-        if let Some(preview) = preview_evidence.as_ref() {
+        if let Some(preview) = built.preview_evidence.as_ref() {
             let label = if preview.label.trim().is_empty() {
                 summary.preview_label.as_str()
             } else {
@@ -1356,7 +1382,7 @@ async fn build_store_emit_delivery_summary(
                 app_handle,
             );
         }
-        if let Some((is_git_repo, dirty, has_checkpoint)) = checkpoint_evidence {
+        if let Some((is_git_repo, dirty, has_checkpoint)) = built.checkpoint_evidence {
             session.record_latest_checkpoint_status(
                 is_git_repo,
                 dirty,
@@ -1373,6 +1399,259 @@ async fn build_store_emit_delivery_summary(
         .await
         .insert(session_id.to_string(), summary.clone());
     emit_delivery_summary(app_handle, session_id, summary);
+}
+
+struct PreparedSendInputTurnContext {
+    hidden_contexts: Vec<HiddenContextPart>,
+    turn_metadata: AgentTurnMetadata,
+    activation_text: String,
+}
+
+struct SendInputMemorySelection {
+    selected: Vec<SelectedContextMemory>,
+    context: Option<String>,
+}
+
+async fn select_send_input_memory_context(
+    state: &Arc<AppState>,
+    text: &str,
+    project_path: &str,
+) -> SendInputMemorySelection {
+    let selected = state.wiki_memory.select(text, Some(project_path), 8).await;
+    let context = format_selected_memory_context(&selected);
+    SendInputMemorySelection { selected, context }
+}
+
+struct SendInputProjectRecordsSelection {
+    selected: Vec<SelectedForgeWikiPage>,
+    context: Option<String>,
+}
+
+async fn select_send_input_project_records_context(
+    state: &Arc<AppState>,
+    text: &str,
+    project_path: &str,
+) -> SendInputProjectRecordsSelection {
+    if !should_select_project_records_for_request(text) {
+        return SendInputProjectRecordsSelection {
+            selected: Vec::new(),
+            context: None,
+        };
+    }
+
+    match state.forge_wiki.select_context(project_path, text, 4).await {
+        Ok(selected) => {
+            let context = match state
+                .forge_wiki
+                .format_selected_context_with_content(project_path, &selected)
+            {
+                Ok(context) => context,
+                Err(error) => {
+                    crate::app_log!("WARN", "[forge_wiki] context formatting failed: {}", error);
+                    ForgeWikiStore::format_selected_context(&selected)
+                }
+            };
+            SendInputProjectRecordsSelection { selected, context }
+        }
+        Err(error) => {
+            crate::app_log!("WARN", "[forge_wiki] context selection failed: {}", error);
+            SendInputProjectRecordsSelection {
+                selected: Vec::new(),
+                context: None,
+            }
+        }
+    }
+}
+
+struct SendInputProjectRecordWriteback {
+    proposal: Option<ForgeWikiUpdateProposal>,
+    record_evidence: Option<DeliveryRecordInput>,
+}
+
+async fn propose_send_input_project_record_update(
+    state: &Arc<AppState>,
+    session_id: &str,
+    text: &str,
+    project_path: &str,
+    workflow: &crate::workflow::WorkflowState,
+    latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
+) -> SendInputProjectRecordWriteback {
+    if workflow.route == WorkflowRoute::Direct {
+        return SendInputProjectRecordWriteback {
+            proposal: None,
+            record_evidence: None,
+        };
+    }
+
+    match state.forge_wiki.get_state(project_path).await {
+        Ok(wiki_state) if wiki_state.exists => {
+            let Some(writeback) = build_project_archive_writeback(workflow, text, latest_turn)
+            else {
+                return SendInputProjectRecordWriteback {
+                    proposal: None,
+                    record_evidence: None,
+                };
+            };
+            match state
+                .forge_wiki
+                .create_update_proposal(
+                    project_path,
+                    Some(session_id),
+                    writeback.target_pages,
+                    writeback.title,
+                    writeback.summary,
+                )
+                .await
+            {
+                Ok(proposal) => {
+                    let record_evidence = if proposal.status == ForgeWikiProposalStatus::Pending {
+                        Some(DeliveryRecordInput {
+                            status: "pending".to_string(),
+                            target_pages: proposal.target_pages.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                    SendInputProjectRecordWriteback {
+                        proposal: Some(proposal),
+                        record_evidence,
+                    }
+                }
+                Err(error) => {
+                    crate::app_log!("WARN", "[forge_wiki] proposal creation failed: {}", error);
+                    SendInputProjectRecordWriteback {
+                        proposal: None,
+                        record_evidence: None,
+                    }
+                }
+            }
+        }
+        Ok(_) => SendInputProjectRecordWriteback {
+            proposal: None,
+            record_evidence: None,
+        },
+        Err(error) => {
+            crate::app_log!("WARN", "[forge_wiki] state check failed: {}", error);
+            SendInputProjectRecordWriteback {
+                proposal: None,
+                record_evidence: None,
+            }
+        }
+    }
+}
+
+struct PrepareSendInputTurnRequest<'a> {
+    session_id: &'a str,
+    session: &'a AgentSession,
+    text: &'a str,
+    input_intent: TurnInputIntent,
+    workflow: &'a crate::workflow::WorkflowState,
+    ready_connector_labels: Vec<String>,
+    memory_context: Option<String>,
+    wiki_context: Option<String>,
+    connector_context: Option<String>,
+}
+
+async fn prepare_send_input_turn_context(
+    request: PrepareSendInputTurnRequest<'_>,
+) -> PreparedSendInputTurnContext {
+    let PrepareSendInputTurnRequest {
+        session_id,
+        session,
+        text,
+        mut input_intent,
+        workflow,
+        ready_connector_labels,
+        memory_context,
+        wiki_context,
+        connector_context,
+    } = request;
+    let project_path = session.harness.working_dir.to_string_lossy().to_string();
+    let resolved_file_references = resolved_file_reference_paths_for_turn(
+        &session.harness.working_dir,
+        text,
+        &input_intent.file_references,
+    );
+    input_intent.file_references = resolved_file_references.clone();
+    input_intent.selected_connectors = ready_connector_labels.clone();
+    let capability_snapshot =
+        collect_turn_capability_snapshot(&session.harness, &input_intent).await;
+    let activation_text = input_intent.activation_text.clone();
+    let mut hidden_contexts = Vec::new();
+    if let Some(context) = format_turn_capability_snapshot(&capability_snapshot) {
+        hidden_contexts.push(HiddenContextPart::new(
+            ContextSourceKind::CapabilitySnapshot,
+            "本轮能力",
+            "本轮自动整理出的动作、资料、技能和安全规则",
+            context,
+        ));
+    }
+    if let Some(context) = build_file_reference_context_with_paths(
+        &session.harness.working_dir,
+        "",
+        &resolved_file_references,
+    ) {
+        hidden_contexts.push(HiddenContextPart::new(
+            ContextSourceKind::SelectedFiles,
+            "选中文件",
+            "用户选中的本轮参考文件",
+            context,
+        ));
+    }
+    if let Some(context) = memory_context {
+        hidden_contexts.push(HiddenContextPart::new(
+            ContextSourceKind::MemoryContext,
+            "已保存背景",
+            "自动匹配到的用户和项目背景",
+            context,
+        ));
+    }
+    if let Some(context) = wiki_context {
+        hidden_contexts.push(HiddenContextPart::new(
+            ContextSourceKind::ProjectRecords,
+            "项目记录",
+            "自动匹配到的项目记录",
+            context,
+        ));
+    }
+    if let Some(context) = connector_context {
+        hidden_contexts.push(HiddenContextPart::new(
+            ContextSourceKind::ConnectorContext,
+            "连接资料",
+            "用户选中的连接资料",
+            context,
+        ));
+    }
+    let turn_metadata = AgentTurnMetadata {
+        session_id: session_id.to_string(),
+        workspace_path: project_path,
+        provider: session.agent_type.clone(),
+        model: session.model_id.clone(),
+        route: serde_json::to_value(&workflow.route)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| workflow.developer_label.clone()),
+        phase: serde_json::to_value(&workflow.phase)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| workflow.developer_label.clone()),
+        user_goal: text.to_string(),
+        input_intent: AgentTurnInputIntent {
+            slash_command: input_intent.slash_command.clone(),
+            file_references: resolved_file_references,
+            selected_connectors: ready_connector_labels,
+            matched_skills: capability_snapshot.matched_skills.clone(),
+            active_hooks: capability_snapshot.active_hooks.clone(),
+            enabled_mcp_servers: capability_snapshot.enabled_mcp_servers.clone(),
+            available_mcp_tools: capability_snapshot.available_mcp_tools.clone(),
+        },
+    };
+
+    PreparedSendInputTurnContext {
+        hidden_contexts,
+        turn_metadata,
+        activation_text,
+    }
 }
 
 #[tauri::command]
@@ -1398,11 +1677,6 @@ pub async fn send_input(
             let capabilities = capabilities.unwrap_or_default();
             let mcp_context_selections = mcp_context.unwrap_or_default();
             let input_intent = build_turn_input_intent(&text, &capabilities, Vec::new());
-            let resolved_file_references = resolved_file_reference_paths_for_turn(
-                &s.harness.working_dir,
-                &text,
-                &input_intent.file_references,
-            );
             let workflow = classify_workflow_with_command(
                 &session_id,
                 &text,
@@ -1421,55 +1695,26 @@ pub async fn send_input(
                     state: workflow.clone(),
                 },
             );
-            let wiki_context = if should_select_project_records_for_request(&text) {
-                match state
-                    .forge_wiki
-                    .select_context(&project_path, &text, 4)
-                    .await
-                {
-                    Ok(selected_wiki) => {
-                        crate::transcript::emit_stream_event(
-                            &app_handle,
-                            StreamEvent::ForgeWikiContextSelected {
-                                session_id: session_id.clone(),
-                                selected: selected_wiki.clone(),
-                            },
-                        );
-                        match state
-                            .forge_wiki
-                            .format_selected_context_with_content(&project_path, &selected_wiki)
-                        {
-                            Ok(context) => context,
-                            Err(error) => {
-                                crate::app_log!(
-                                    "WARN",
-                                    "[forge_wiki] context formatting failed: {}",
-                                    error
-                                );
-                                ForgeWikiStore::format_selected_context(&selected_wiki)
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        crate::app_log!("WARN", "[forge_wiki] context selection failed: {}", error);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            let selected = state
-                .wiki_memory
-                .select(&text, Some(&project_path), 8)
-                .await;
+            let project_records =
+                select_send_input_project_records_context(&state, &text, &project_path).await;
+            if !project_records.selected.is_empty() {
+                crate::transcript::emit_stream_event(
+                    &app_handle,
+                    StreamEvent::ForgeWikiContextSelected {
+                        session_id: session_id.clone(),
+                        selected: project_records.selected.clone(),
+                    },
+                );
+            }
+            let memory_selection =
+                select_send_input_memory_context(&state, &text, &project_path).await;
             crate::transcript::emit_stream_event(
                 &app_handle,
                 StreamEvent::MemorySelection {
                     session_id: session_id.clone(),
-                    selected: selected.clone(),
+                    selected: memory_selection.selected.clone(),
                 },
             );
-            let memory_context = format_selected_memory_context(&selected);
             let mcp_context_result = build_mcp_context(
                 &s.harness,
                 &mcp_context_selections,
@@ -1478,88 +1723,25 @@ pub async fn send_input(
             )
             .await;
             let ready_connector_labels = mcp_context_result.ready_labels.clone();
-            let mut input_intent_for_snapshot = input_intent.clone();
-            input_intent_for_snapshot.file_references = resolved_file_references.clone();
-            input_intent_for_snapshot.selected_connectors = ready_connector_labels.clone();
-            let capability_snapshot =
-                collect_turn_capability_snapshot(&s.harness, &input_intent_for_snapshot).await;
-            let activation_text = input_intent.activation_text.clone();
-            let mut hidden_contexts = Vec::new();
-            if let Some(context) = format_turn_capability_snapshot(&capability_snapshot) {
-                hidden_contexts.push(HiddenContextPart::new(
-                    ContextSourceKind::CapabilitySnapshot,
-                    "本轮能力",
-                    "本轮自动整理出的动作、资料、技能和安全规则",
-                    context,
-                ));
-            }
-            if let Some(context) = build_file_reference_context_with_paths(
-                &s.harness.working_dir,
-                "",
-                &resolved_file_references,
-            ) {
-                hidden_contexts.push(HiddenContextPart::new(
-                    ContextSourceKind::SelectedFiles,
-                    "选中文件",
-                    "用户选中的本轮参考文件",
-                    context,
-                ));
-            }
-            if let Some(context) = memory_context {
-                hidden_contexts.push(HiddenContextPart::new(
-                    ContextSourceKind::MemoryContext,
-                    "已保存背景",
-                    "自动匹配到的用户和项目背景",
-                    context,
-                ));
-            }
-            if let Some(context) = wiki_context {
-                hidden_contexts.push(HiddenContextPart::new(
-                    ContextSourceKind::ProjectRecords,
-                    "项目记录",
-                    "自动匹配到的项目记录",
-                    context,
-                ));
-            }
-            if let Some(context) = mcp_context_result.context {
-                hidden_contexts.push(HiddenContextPart::new(
-                    ContextSourceKind::ConnectorContext,
-                    "连接资料",
-                    "用户选中的连接资料",
-                    context,
-                ));
-            }
-            let turn_metadata = AgentTurnMetadata {
-                session_id: session_id.clone(),
-                workspace_path: project_path.clone(),
-                provider: s.agent_type.clone(),
-                model: s.model_id.clone(),
-                route: serde_json::to_value(&workflow.route)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_string))
-                    .unwrap_or_else(|| workflow.developer_label.clone()),
-                phase: serde_json::to_value(&workflow.phase)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_string))
-                    .unwrap_or_else(|| workflow.developer_label.clone()),
-                user_goal: text.clone(),
-                input_intent: AgentTurnInputIntent {
-                    slash_command: input_intent.slash_command.clone(),
-                    file_references: resolved_file_references.clone(),
-                    selected_connectors: ready_connector_labels.clone(),
-                    matched_skills: capability_snapshot.matched_skills.clone(),
-                    active_hooks: capability_snapshot.active_hooks.clone(),
-                    enabled_mcp_servers: capability_snapshot.enabled_mcp_servers.clone(),
-                    available_mcp_tools: capability_snapshot.available_mcp_tools.clone(),
-                },
-            };
+            let prepared = prepare_send_input_turn_context(PrepareSendInputTurnRequest {
+                session_id: &session_id,
+                session: &s,
+                text: &text,
+                input_intent,
+                workflow: &workflow,
+                ready_connector_labels,
+                memory_context: memory_selection.context,
+                wiki_context: project_records.context,
+                connector_context: mcp_context_result.context,
+            })
+            .await;
             let result = s
                 .send_message_with_reserved_turn(
                     &text,
                     &app_handle,
-                    hidden_contexts,
-                    Some(turn_metadata),
-                    Some(&activation_text),
+                    prepared.hidden_contexts,
+                    Some(prepared.turn_metadata),
+                    Some(&prepared.activation_text),
                     turn_guard,
                 )
                 .await;
@@ -1591,63 +1773,30 @@ pub async fn send_input(
                     }
                 }
                 let latest_turn_for_delivery = s.snapshot().latest_turn;
-                let mut record_evidence = None;
-                if workflow.route != WorkflowRoute::Direct {
-                    match state.forge_wiki.get_state(&project_path).await {
-                        Ok(wiki_state) if wiki_state.exists => {
-                            if let Some(writeback) = build_project_archive_writeback(
-                                &workflow,
-                                &text,
-                                latest_turn_for_delivery.as_ref(),
-                            ) {
-                                match state
-                                    .forge_wiki
-                                    .create_update_proposal(
-                                        &project_path,
-                                        Some(&session_id),
-                                        writeback.target_pages,
-                                        writeback.title,
-                                        writeback.summary,
-                                    )
-                                    .await
-                                {
-                                    Ok(proposal) => {
-                                        if proposal.status == ForgeWikiProposalStatus::Pending {
-                                            record_evidence = Some(DeliveryRecordInput {
-                                                status: "pending".to_string(),
-                                                target_pages: proposal.target_pages.clone(),
-                                            });
-                                        }
-                                        crate::transcript::emit_stream_event(
-                                            &app_handle,
-                                            StreamEvent::ForgeWikiUpdateProposed {
-                                                session_id: session_id.clone(),
-                                                proposal,
-                                            },
-                                        );
-                                    }
-                                    Err(error) => {
-                                        crate::app_log!(
-                                            "WARN",
-                                            "[forge_wiki] proposal creation failed: {}",
-                                            error
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(error) => {
-                            crate::app_log!("WARN", "[forge_wiki] state check failed: {}", error);
-                        }
-                    }
+                let writeback = propose_send_input_project_record_update(
+                    &state,
+                    &session_id,
+                    &text,
+                    &project_path,
+                    &workflow,
+                    latest_turn_for_delivery.as_ref(),
+                )
+                .await;
+                if let Some(proposal) = writeback.proposal {
+                    crate::transcript::emit_stream_event(
+                        &app_handle,
+                        StreamEvent::ForgeWikiUpdateProposed {
+                            session_id: session_id.clone(),
+                            proposal,
+                        },
+                    );
                 }
                 build_store_emit_delivery_summary(
                     &state,
                     &app_handle,
                     &session_id,
                     latest_turn_for_delivery.as_ref(),
-                    record_evidence,
+                    writeback.record_evidence,
                 )
                 .await;
                 if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
@@ -1686,7 +1835,7 @@ pub async fn delete_session(
         s.kill(&app_handle);
         let _ = s.harness.dispatch_session_stop_event(&session_id).await;
     }
-    state.sessions.write().await.remove(&session_id);
+    state.unregister_session(&session_id).await;
     state.workflow_states.write().await.remove(&session_id);
     state.delivery_states.write().await.remove(&session_id);
     if let Err(error) = delete_session_snapshot(&session_id) {
@@ -1701,12 +1850,20 @@ pub async fn delete_session(
 #[tauri::command]
 pub async fn list_sessions(
     state: tauri::State<'_, Arc<AppState>>,
-) -> Result<Vec<crate::protocol::commands::SessionInfo>, String> {
+) -> Result<Vec<SessionInfo>, String> {
+    let snapshots = list_session_snapshots()?;
+    Ok(list_session_infos_for_state(&state, snapshots).await)
+}
+
+async fn list_session_infos_for_state(
+    state: &Arc<AppState>,
+    snapshots: Vec<AgentSessionSnapshot>,
+) -> Vec<SessionInfo> {
     let mut by_id = std::collections::HashMap::new();
-    for snapshot in list_session_snapshots()? {
+    for snapshot in snapshots {
         by_id.insert(
             snapshot.session_id.clone(),
-            crate::protocol::commands::SessionInfo {
+            SessionInfo {
                 id: snapshot.session_id,
                 provider: snapshot.provider,
                 model: snapshot.model,
@@ -1726,14 +1883,11 @@ pub async fn list_sessions(
     let workflow_states = state.workflow_states.read().await;
     let delivery_states = state.delivery_states.read().await;
     for (id, session) in sessions.iter() {
-        let status = session
-            .status
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let status = session.status.lock();
         let snapshot = session.snapshot();
         by_id.insert(
             id.clone(),
-            crate::protocol::commands::SessionInfo {
+            SessionInfo {
                 id: id.clone(),
                 provider: session.agent_type.clone(),
                 model: session.model_id.clone(),
@@ -1761,7 +1915,7 @@ pub async fn list_sessions(
             .unwrap_or(0)
             .cmp(&a.updated_at_ms.unwrap_or(0))
     });
-    Ok(result)
+    result
 }
 
 #[tauri::command]
@@ -1786,10 +1940,23 @@ pub async fn search_workspace_files(
     session_id: Option<String>,
     working_dir: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let working_dir =
-        working_dir_for_request_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
-            .await?;
-    let results = find_files(&working_dir, &query, 20);
+    search_workspace_files_for_request(
+        &state,
+        &query,
+        session_id.as_deref(),
+        working_dir.as_deref(),
+    )
+    .await
+}
+
+async fn search_workspace_files_for_request(
+    state: &Arc<AppState>,
+    query: &str,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
+    let results = find_files(&working_dir, query, 20);
     Ok(results)
 }
 
@@ -1810,10 +1977,27 @@ pub async fn preview_file(
     session_id: Option<String>,
     working_dir: Option<String>,
 ) -> Result<FilePreview, String> {
-    let working_dir =
-        working_dir_for_request_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
-            .await?;
-    let full_path = resolve_workspace_file_path(&working_dir, &path)?;
+    preview_file_for_request(
+        &state,
+        &path,
+        line,
+        context,
+        session_id.as_deref(),
+        working_dir.as_deref(),
+    )
+    .await
+}
+
+async fn preview_file_for_request(
+    state: &Arc<AppState>,
+    path: &str,
+    line: Option<u32>,
+    context: Option<u32>,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+) -> Result<FilePreview, String> {
+    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
+    let full_path = resolve_workspace_file_path(&working_dir, path)?;
 
     crate::app_log!(
         "INFO",
@@ -1887,10 +2071,9 @@ pub async fn open_file(
     session_id: Option<String>,
     working_dir: Option<String>,
 ) -> Result<(), String> {
-    let working_dir =
-        working_dir_for_request_or_explicit(&state, session_id.as_deref(), working_dir.as_deref())
+    let full_path =
+        open_file_target_for_request(&state, &path, session_id.as_deref(), working_dir.as_deref())
             .await?;
-    let full_path = resolve_workspace_file_path(&working_dir, &path)?;
 
     crate::app_log!(
         "INFO",
@@ -1899,12 +2082,6 @@ pub async fn open_file(
         line,
         full_path.display()
     );
-
-    if !full_path.exists() {
-        let message = format!("File not found: {}", full_path.display());
-        crate::app_log!("WARN", "[open_file] {}", message);
-        return Err(message);
-    }
 
     let path_str = full_path.to_string_lossy().to_string();
 
@@ -1919,6 +2096,22 @@ pub async fn open_file(
     }
 
     Ok(())
+}
+
+async fn open_file_target_for_request(
+    state: &Arc<AppState>,
+    path: &str,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+) -> Result<PathBuf, String> {
+    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
+    let full_path = resolve_workspace_file_path(&working_dir, path)?;
+    if !full_path.exists() {
+        let message = format!("File not found: {}", full_path.display());
+        crate::app_log!("WARN", "[open_file] {}", message);
+        return Err(message);
+    }
+    Ok(full_path)
 }
 
 async fn working_dir_for_request_or_explicit(
@@ -1946,7 +2139,7 @@ fn resolve_workspace_file_path(working_dir: &Path, path: &str) -> Result<PathBuf
     let workspace_root = canonical_or_lexical_path(working_dir);
     let resolved = canonical_or_lexical_path(&candidate);
     if !resolved.starts_with(&workspace_root) {
-        return Err(format!("路径不在当前项目内：{}", requested_path));
+        return Err("路径不在当前项目内，请选择当前项目里的文件。".to_string());
     }
 
     Ok(resolved)
@@ -2174,8 +2367,31 @@ mod tests {
     use crate::adapters::base::AiAdapter;
     use crate::adapters::missing_key::MissingKeyAdapter;
     use crate::harness::mcp::McpResourceContent;
+    use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
+    use crate::memory::storage::now_string as memory_now_string;
     use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
     use std::sync::atomic::Ordering;
+
+    fn test_project_memory(id: &str, title: &str, body: &str, project_path: &str) -> WikiMemory {
+        let now = memory_now_string();
+        WikiMemory {
+            id: id.to_string(),
+            category: MemoryCategory::TaskState,
+            scope: MemoryScope::Project,
+            status: MemoryStatus::Pinned,
+            title: title.to_string(),
+            body: body.to_string(),
+            project_path: Some(project_path.to_string()),
+            source_session_id: Some("session-1".to_string()),
+            source_message_ids: vec!["message-1".to_string()],
+            confidence: 1.0,
+            created_at: now.clone(),
+            updated_at: now,
+            last_used_at: None,
+            use_count: 0,
+            tags: vec!["进度".to_string()],
+        }
+    }
 
     #[test]
     fn mcp_resource_context_formats_source_and_text() {
@@ -2411,6 +2627,645 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_bound_request_uses_session_workspace_over_explicit_working_dir() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-request-session-workspace-{nonce}"));
+        let explicit_workspace =
+            std::env::temp_dir().join(format!("forge-request-explicit-workspace-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&explicit_workspace).expect("explicit workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            explicit_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let resolved = working_dir_for_request_or_explicit(
+            &state,
+            Some("session-1"),
+            Some(explicit_workspace.to_str().expect("utf8")),
+        )
+        .await
+        .expect("session workspace should resolve");
+
+        assert_eq!(
+            resolved.canonicalize().expect("resolved workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_ne!(
+            resolved.canonicalize().expect("resolved workspace"),
+            explicit_workspace
+                .canonicalize()
+                .expect("explicit workspace")
+        );
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(explicit_workspace);
+    }
+
+    #[tokio::test]
+    async fn search_workspace_files_uses_session_workspace_over_explicit_working_dir() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-search-session-workspace-{nonce}"));
+        let explicit_workspace =
+            std::env::temp_dir().join(format!("forge-search-explicit-workspace-{nonce}"));
+        std::fs::create_dir_all(session_workspace.join("src")).expect("session workspace");
+        std::fs::create_dir_all(explicit_workspace.join("src")).expect("explicit workspace");
+        std::fs::write(session_workspace.join("src/session-owned.ts"), "session")
+            .expect("session file");
+        std::fs::write(explicit_workspace.join("src/explicit-owned.ts"), "explicit")
+            .expect("explicit file");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            explicit_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let results = search_workspace_files_for_request(
+            &state,
+            "owned",
+            Some("session-1"),
+            Some(explicit_workspace.to_str().expect("utf8")),
+        )
+        .await
+        .expect("search should use session workspace");
+
+        assert!(results.iter().any(|path| path == "src/session-owned.ts"));
+        assert!(!results.iter().any(|path| path == "src/explicit-owned.ts"));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(explicit_workspace);
+    }
+
+    #[tokio::test]
+    async fn preview_file_uses_session_workspace_over_explicit_working_dir() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-preview-session-workspace-{nonce}"));
+        let explicit_workspace =
+            std::env::temp_dir().join(format!("forge-preview-explicit-workspace-{nonce}"));
+        std::fs::create_dir_all(session_workspace.join("src")).expect("session workspace");
+        std::fs::create_dir_all(explicit_workspace.join("src")).expect("explicit workspace");
+        std::fs::write(
+            session_workspace.join("src/app.ts"),
+            "export const source = 'session workspace';",
+        )
+        .expect("session file");
+        std::fs::write(
+            explicit_workspace.join("src/app.ts"),
+            "export const source = 'explicit workspace';",
+        )
+        .expect("explicit file");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            explicit_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let preview = preview_file_for_request(
+            &state,
+            "src/app.ts",
+            None,
+            Some(10),
+            Some("session-1"),
+            Some(explicit_workspace.to_str().expect("utf8")),
+        )
+        .await
+        .expect("preview should use session workspace");
+
+        assert!(preview
+            .lines
+            .iter()
+            .any(|line| line.content.contains("session workspace")));
+        assert!(!preview
+            .lines
+            .iter()
+            .any(|line| line.content.contains("explicit workspace")));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(explicit_workspace);
+    }
+
+    #[tokio::test]
+    async fn open_file_target_uses_session_workspace_over_explicit_working_dir() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-open-session-workspace-{nonce}"));
+        let explicit_workspace =
+            std::env::temp_dir().join(format!("forge-open-explicit-workspace-{nonce}"));
+        std::fs::create_dir_all(session_workspace.join("src")).expect("session workspace");
+        std::fs::create_dir_all(explicit_workspace.join("src")).expect("explicit workspace");
+        std::fs::write(session_workspace.join("src/app.ts"), "session").expect("session file");
+        std::fs::write(explicit_workspace.join("src/app.ts"), "explicit").expect("explicit file");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            explicit_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let target = open_file_target_for_request(
+            &state,
+            "src/app.ts",
+            Some("session-1"),
+            Some(explicit_workspace.to_str().expect("utf8")),
+        )
+        .await
+        .expect("open target should use session workspace");
+
+        assert!(target.starts_with(session_workspace.canonicalize().expect("session workspace")));
+        assert!(!target.starts_with(
+            explicit_workspace
+                .canonicalize()
+                .expect("explicit workspace")
+        ));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(explicit_workspace);
+    }
+
+    #[tokio::test]
+    async fn send_input_turn_context_uses_session_workspace_for_metadata_and_file_references() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-send-session-workspace-{nonce}"));
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-send-default-workspace-{nonce}"));
+        std::fs::create_dir_all(session_workspace.join("src")).expect("session workspace");
+        std::fs::create_dir_all(default_workspace.join("src")).expect("default workspace");
+        std::fs::write(
+            session_workspace.join("src/app.ts"),
+            "export const source = 'session workspace';",
+        )
+        .expect("session file");
+        std::fs::write(
+            default_workspace.join("src/app.ts"),
+            "export const source = 'default workspace';",
+        )
+        .expect("default file");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session.clone())
+            .await;
+        let input_intent = build_turn_input_intent("请检查 @src/app.ts", &[], Vec::new());
+        let workflow = classify_workflow_with_command("session-1", "请检查 @src/app.ts", None, 1);
+
+        let prepared = prepare_send_input_turn_context(PrepareSendInputTurnRequest {
+            session_id: "session-1",
+            session: &session,
+            text: "请检查 @src/app.ts",
+            input_intent,
+            workflow: &workflow,
+            ready_connector_labels: Vec::new(),
+            memory_context: None,
+            wiki_context: None,
+            connector_context: None,
+        })
+        .await;
+
+        assert_eq!(
+            std::path::PathBuf::from(&prepared.turn_metadata.workspace_path)
+                .canonicalize()
+                .expect("prepared workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_eq!(
+            prepared.turn_metadata.input_intent.file_references,
+            vec!["src/app.ts"]
+        );
+        let selected_files = prepared
+            .hidden_contexts
+            .iter()
+            .find(|context| context.kind == ContextSourceKind::SelectedFiles)
+            .expect("selected file context");
+        assert!(selected_files.content.contains("session workspace"));
+        assert!(!selected_files.content.contains("default workspace"));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(default_workspace);
+    }
+
+    #[tokio::test]
+    async fn send_input_memory_selection_uses_session_workspace_over_default_harness() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-send-memory-session-{nonce}"));
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-send-memory-default-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        let memory_path = std::env::temp_dir().join(format!("forge-send-memory-{nonce}.json"));
+        let mut app_state = AppState::new(Arc::new(Harness::new(default_workspace.clone())));
+        app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+        let state = Arc::new(app_state);
+        state
+            .wiki_memory
+            .upsert_candidate(test_project_memory(
+                "session-memory",
+                "session workspace progress",
+                "只属于当前 session 项目的进度",
+                session_workspace.to_str().expect("utf8"),
+            ))
+            .await
+            .expect("insert session memory");
+        state
+            .wiki_memory
+            .upsert_candidate(test_project_memory(
+                "default-memory",
+                "default workspace progress",
+                "不应该被当前会话带入",
+                default_workspace.to_str().expect("utf8"),
+            ))
+            .await
+            .expect("insert default memory");
+
+        let selected = select_send_input_memory_context(
+            &state,
+            "继续处理当前项目进度",
+            session_workspace.to_str().expect("utf8"),
+        )
+        .await;
+
+        assert!(selected
+            .context
+            .as_deref()
+            .is_some_and(|context| context.contains("session workspace progress")));
+        assert!(!selected
+            .context
+            .as_deref()
+            .unwrap_or("")
+            .contains("default workspace"));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(default_workspace);
+        let _ = std::fs::remove_file(memory_path);
+    }
+
+    #[tokio::test]
+    async fn send_input_project_records_selection_uses_session_workspace_over_default_harness() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-send-wiki-session-{nonce}"));
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-send-wiki-default-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        state
+            .forge_wiki
+            .init(session_workspace.to_str().expect("utf8"))
+            .await
+            .expect("init session project records");
+        state
+            .forge_wiki
+            .init(default_workspace.to_str().expect("utf8"))
+            .await
+            .expect("init default project records");
+        std::fs::write(
+            session_workspace.join(".forge/wiki/tasks.md"),
+            "# 当前任务\n\nsession workspace project records",
+        )
+        .expect("write session records");
+        std::fs::write(
+            default_workspace.join(".forge/wiki/tasks.md"),
+            "# 当前任务\n\ndefault workspace project records",
+        )
+        .expect("write default records");
+
+        let selected = select_send_input_project_records_context(
+            &state,
+            "继续当前项目",
+            session_workspace.to_str().expect("utf8"),
+        )
+        .await;
+
+        assert!(selected
+            .context
+            .as_deref()
+            .is_some_and(|context| context.contains("session workspace project records")));
+        assert!(!selected
+            .context
+            .as_deref()
+            .unwrap_or("")
+            .contains("default workspace"));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(default_workspace);
+    }
+
+    #[tokio::test]
+    async fn send_input_project_record_writeback_uses_session_workspace_over_default_harness() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-send-writeback-session-{nonce}"));
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-send-writeback-default-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        state
+            .forge_wiki
+            .init(session_workspace.to_str().expect("utf8"))
+            .await
+            .expect("init session project records");
+        state
+            .forge_wiki
+            .init(default_workspace.to_str().expect("utf8"))
+            .await
+            .expect("init default project records");
+        let user_text = "新增下一步计划：session workspace writeback marker";
+        let workflow = classify_workflow_with_command("session-1", user_text, None, 1);
+
+        let writeback = propose_send_input_project_record_update(
+            &state,
+            "session-1",
+            user_text,
+            session_workspace.to_str().expect("utf8"),
+            &workflow,
+            None,
+        )
+        .await;
+
+        assert!(writeback.record_evidence.is_some());
+        assert!(writeback.proposal.is_some());
+        let session_proposals =
+            std::fs::read_to_string(session_workspace.join(".forge/wiki/.proposals.json"))
+                .expect("session proposals");
+        let default_proposals =
+            std::fs::read_to_string(default_workspace.join(".forge/wiki/.proposals.json"))
+                .unwrap_or_default();
+        assert!(session_proposals.contains("session workspace writeback marker"));
+        assert!(!default_proposals.contains("session workspace writeback marker"));
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(default_workspace);
+    }
+
+    #[tokio::test]
+    async fn delivery_summary_uses_session_workspace_over_default_harness() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-delivery-session-{nonce}"));
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-delivery-default-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        std::fs::write(
+            session_workspace.join("package.json"),
+            r#"{"scripts":{"dev":"vite --host 127.0.0.1 --port 59731"}}"#,
+        )
+        .expect("session package");
+        std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&session_workspace)
+            .output()
+            .expect("git init session workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let built = build_delivery_summary_for_session(&state, "session-1", None, None).await;
+
+        assert_eq!(
+            std::path::PathBuf::from(
+                built
+                    .summary
+                    .project_path
+                    .as_deref()
+                    .expect("summary project path")
+            )
+            .canonicalize()
+            .expect("summary workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_eq!(built.summary.checkpoint_label, "还没有检查点");
+        assert_ne!(
+            std::path::PathBuf::from(built.summary.project_path.unwrap())
+                .canonicalize()
+                .expect("summary workspace"),
+            default_workspace.canonicalize().expect("default workspace")
+        );
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(default_workspace);
+    }
+
+    #[tokio::test]
+    async fn session_snapshot_with_workflow_state_uses_session_workspace_and_latest_delivery() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-snapshot-session-{nonce}"));
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-snapshot-default-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        );
+        state.delivery_states.write().await.insert(
+            "session-1".to_string(),
+            DeliverySummary {
+                project_path: Some(session_workspace.to_string_lossy().to_string()),
+                preview_label: "预览未运行".to_string(),
+                checkpoint_label: "还没有检查点".to_string(),
+                next_action: "下一步：启动预览。".to_string(),
+                verification_label: None,
+                verification_status: None,
+                verification_command: None,
+                record_label: None,
+                record_status: None,
+                record_target_pages: Vec::new(),
+            },
+        );
+
+        let snapshot = session_snapshot_with_workflow_state(&state, &session).await;
+
+        assert_eq!(
+            std::path::PathBuf::from(snapshot.working_dir)
+                .canonicalize()
+                .expect("snapshot workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_eq!(
+            snapshot
+                .latest_delivery
+                .and_then(|delivery| delivery.project_path),
+            Some(session_workspace.to_string_lossy().to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(default_workspace);
+    }
+
+    #[tokio::test]
+    async fn list_session_infos_prefers_live_session_state_over_stale_snapshot() {
+        let nonce = uuid::Uuid::now_v7();
+        let session_workspace = std::env::temp_dir().join(format!("forge-list-session-{nonce}"));
+        let stale_workspace = std::env::temp_dir().join(format!("forge-list-stale-{nonce}"));
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        std::fs::create_dir_all(&stale_workspace).expect("stale workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            stale_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+        state.delivery_states.write().await.insert(
+            "session-1".to_string(),
+            DeliverySummary {
+                project_path: Some(session_workspace.to_string_lossy().to_string()),
+                preview_label: "预览运行中".to_string(),
+                checkpoint_label: "检查点已就绪".to_string(),
+                next_action: "下一步：交付状态可以继续验收。".to_string(),
+                verification_label: Some("检查已通过".to_string()),
+                verification_status: Some("passed".to_string()),
+                verification_command: Some("npm run build".to_string()),
+                record_label: None,
+                record_status: None,
+                record_target_pages: Vec::new(),
+            },
+        );
+        let snapshot = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            "stale-model".to_string(),
+            stale_workspace.to_string_lossy().to_string(),
+            Vec::new(),
+            None,
+            Some(128_000),
+        )
+        .with_latest_delivery(DeliverySummary {
+            project_path: Some(stale_workspace.to_string_lossy().to_string()),
+            preview_label: "预览未运行".to_string(),
+            checkpoint_label: "当前不是 Git 项目".to_string(),
+            next_action: "下一步：启动预览。".to_string(),
+            verification_label: None,
+            verification_status: None,
+            verification_command: None,
+            record_label: None,
+            record_status: None,
+            record_target_pages: Vec::new(),
+        });
+
+        let infos = list_session_infos_for_state(&state, vec![snapshot]).await;
+
+        assert_eq!(infos.len(), 1);
+        let info = &infos[0];
+        assert_eq!(info.id, "session-1");
+        assert_eq!(info.status, "running");
+        assert_eq!(info.model, "deepseek-chat");
+        assert_eq!(
+            std::path::PathBuf::from(info.working_dir.as_deref().expect("working dir"))
+                .canonicalize()
+                .expect("info workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_eq!(
+            info.latest_delivery
+                .as_ref()
+                .and_then(|delivery| delivery.project_path.clone()),
+            Some(session_workspace.to_string_lossy().to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(stale_workspace);
+    }
+
+    #[tokio::test]
     async fn mcp_context_sources_reject_unknown_session_instead_of_default_harness() {
         let nonce = uuid::Uuid::now_v7();
         let workspace = std::env::temp_dir().join(format!("forge-mcp-default-{nonce}"));
@@ -2427,6 +3282,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(workspace);
     }
 
+    #[tokio::test]
+    async fn mcp_context_sources_use_session_workspace_over_default_harness() {
+        let nonce = uuid::Uuid::now_v7();
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-mcp-default-workspace-{nonce}"));
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-mcp-session-workspace-{nonce}"));
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        let adapter =
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+        let session = Arc::new(AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let harness = mcp_context_harness_for_session(&state, Some("session-1"))
+            .await
+            .expect("session harness lookup")
+            .expect("session harness");
+
+        assert_eq!(
+            harness.working_dir.canonicalize().expect("session harness"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_ne!(
+            harness.working_dir.canonicalize().expect("session harness"),
+            default_workspace.canonicalize().expect("default workspace")
+        );
+
+        let _ = std::fs::remove_dir_all(default_workspace);
+        let _ = std::fs::remove_dir_all(session_workspace);
+    }
+
     #[test]
     fn workspace_file_path_rejects_absolute_path_outside_workspace() {
         let nonce = uuid::Uuid::now_v7();
@@ -2439,6 +3338,10 @@ mod tests {
             .expect_err("absolute path outside workspace should be rejected");
 
         assert!(error.contains("当前项目"));
+        assert!(
+            !error.contains(outside.to_str().expect("utf8")),
+            "outside absolute path should not be echoed to the UI"
+        );
 
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_file(&outside);

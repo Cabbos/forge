@@ -113,20 +113,70 @@ fn load_transcript_events_at(
     root: &Path,
     session_id: &str,
 ) -> Result<Vec<serde_json::Value>, String> {
+    load_transcript_events_at_with_limits(
+        root,
+        session_id,
+        TRANSCRIPT_MAX_BYTES,
+        TRANSCRIPT_RETAIN_EVENTS,
+    )
+}
+
+fn load_transcript_events_at_with_limits(
+    root: &Path,
+    session_id: &str,
+    max_bytes: u64,
+    retain_events: usize,
+) -> Result<Vec<serde_json::Value>, String> {
     let path = transcript_path(root, session_id)?;
     if !path.exists() {
         return Ok(Vec::new());
     }
 
     with_transcript_path_lock(&path, || {
+        let should_throttle = max_bytes > 0
+            && retain_events > 0
+            && fs::metadata(&path)
+                .map(|metadata| metadata.len() > max_bytes)
+                .unwrap_or(false);
         let records = load_transcript_records_from_path(&path)?;
-        let events = records
-            .into_iter()
-            .filter(|record| !is_compact_marker(&record.event))
-            .map(|record| record.event)
-            .collect();
+        let events =
+            renderable_events_for_load(records, session_id, should_throttle, retain_events);
         Ok(close_unfinished_renderable_events(events, session_id))
     })
+}
+
+fn renderable_events_for_load(
+    records: Vec<TranscriptRecord>,
+    session_id: &str,
+    should_throttle: bool,
+    retain_events: usize,
+) -> Vec<serde_json::Value> {
+    let total_renderable = records
+        .iter()
+        .filter(|record| !is_compact_marker(&record.event))
+        .count();
+    let skip_count = if should_throttle && total_renderable > retain_events {
+        total_renderable - retain_events
+    } else {
+        0
+    };
+
+    if skip_count > 0 {
+        crate::app_log!(
+            "WARN",
+            "[transcript] session {} has {} persisted events; retaining latest {} for load",
+            session_id,
+            total_renderable,
+            retain_events
+        );
+    }
+
+    records
+        .into_iter()
+        .filter(|record| !is_compact_marker(&record.event))
+        .skip(skip_count)
+        .map(|record| record.event)
+        .collect()
 }
 
 fn load_transcript_records_from_path(path: &Path) -> Result<Vec<TranscriptRecord>, String> {
@@ -172,6 +222,10 @@ fn compact_transcript_if_needed(
     }
 
     let records = load_transcript_records_from_path(path)?;
+    let previous_omitted = records
+        .iter()
+        .map(|record| compact_marker_omitted_events(&record.event))
+        .sum::<usize>();
     let total_renderable = records
         .iter()
         .filter(|record| !is_compact_marker(&record.event))
@@ -183,7 +237,7 @@ fn compact_transcript_if_needed(
         .take(retain_events)
         .collect::<Vec<_>>();
     retained.reverse();
-    let omitted = total_renderable.saturating_sub(retained.len());
+    let omitted = previous_omitted.saturating_add(total_renderable.saturating_sub(retained.len()));
     let mut compacted = vec![TranscriptRecord {
         protocol_version: TRANSCRIPT_PROTOCOL_VERSION,
         recorded_at_ms: now_ms(),
@@ -217,6 +271,17 @@ fn is_compact_marker(event: &serde_json::Value) -> bool {
     event.get("event_type").and_then(|value| value.as_str()) == Some(TRANSCRIPT_COMPACT_MARKER)
 }
 
+fn compact_marker_omitted_events(event: &serde_json::Value) -> usize {
+    if !is_compact_marker(event) {
+        return 0;
+    }
+    event
+        .get("omitted_events")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.min(usize::MAX as u64) as usize)
+        .unwrap_or(0)
+}
+
 fn default_transcript_protocol_version() -> u32 {
     TRANSCRIPT_PROTOCOL_VERSION
 }
@@ -231,6 +296,7 @@ enum PendingRenderableKind {
 struct PendingRenderable {
     block_id: String,
     kind: PendingRenderableKind,
+    tool_result_seen: bool,
 }
 
 fn close_unfinished_renderable_events(
@@ -255,6 +321,7 @@ fn close_unfinished_renderable_events(
                 PendingRenderable {
                     block_id,
                     kind: PendingRenderableKind::Shell,
+                    tool_result_seen: false,
                 },
             ),
             Some("shell_end") => {
@@ -265,9 +332,11 @@ fn close_unfinished_renderable_events(
                 PendingRenderable {
                     block_id,
                     kind: PendingRenderableKind::ToolCall,
+                    tool_result_seen: false,
                 },
             ),
-            Some("tool_call_result") => {
+            Some("tool_call_result") => mark_tool_result_seen(&mut pending, &block_id),
+            Some("tool_call_end") => {
                 remove_pending(&mut pending, &block_id, PendingRenderableKind::ToolCall)
             }
             _ => {}
@@ -291,14 +360,16 @@ fn close_unfinished_renderable_events(
                 }));
             }
             PendingRenderableKind::ToolCall => {
-                events.push(serde_json::json!({
-                    "event_type": "tool_call_result",
-                    "session_id": session_id,
-                    "block_id": item.block_id,
-                    "result": "工具调用已中断：会话恢复时没有收到结果，请重新检查当前项目状态后继续。",
-                    "is_error": true,
-                    "duration_ms": 0,
-                }));
+                if !item.tool_result_seen {
+                    events.push(serde_json::json!({
+                        "event_type": "tool_call_result",
+                        "session_id": session_id,
+                        "block_id": item.block_id,
+                        "result": "工具调用已中断：会话恢复时没有收到结果，请重新检查当前项目状态后继续。",
+                        "is_error": true,
+                        "duration_ms": 0,
+                    }));
+                }
                 events.push(serde_json::json!({
                     "event_type": "tool_call_end",
                     "session_id": session_id,
@@ -322,6 +393,15 @@ fn remove_pending(
     kind: PendingRenderableKind,
 ) {
     pending.retain(|item| !(item.block_id == block_id && item.kind == kind));
+}
+
+fn mark_tool_result_seen(pending: &mut [PendingRenderable], block_id: &str) {
+    if let Some(item) = pending
+        .iter_mut()
+        .find(|item| item.block_id == block_id && item.kind == PendingRenderableKind::ToolCall)
+    {
+        item.tool_result_seen = true;
+    }
 }
 
 fn with_transcript_path_lock<T>(
@@ -420,6 +500,128 @@ mod tests {
 
         assert_eq!(loaded, vec![event_one, event_two]);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_concurrent_appends_preserve_all_records_without_corrupt_lines() {
+        let root = std::sync::Arc::new(test_root("concurrent-append"));
+        let session_id = "session-1";
+        let writers = 8;
+        let events_per_writer = 25;
+        let handles = (0..writers)
+            .map(|writer| {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    for index in 0..events_per_writer {
+                        append_transcript_event_at(
+                            &root,
+                            json!({
+                                "event_type": "text_chunk",
+                                "session_id": session_id,
+                                "block_id": format!("writer-{writer}-event-{index}"),
+                                "content": format!("writer {writer} event {index}")
+                            }),
+                        )
+                        .expect("append event");
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("writer thread");
+        }
+
+        let path = transcript_path(&root, session_id).expect("transcript path");
+        let persisted = fs::read_to_string(&path).expect("read transcript");
+        let persisted_records = persisted
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid jsonl"))
+            .collect::<Vec<_>>();
+        let loaded = load_transcript_events_at(&root, session_id).expect("load transcript");
+        let block_ids = loaded
+            .iter()
+            .filter_map(|event| event.get("block_id").and_then(|value| value.as_str()))
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(persisted_records.len(), writers * events_per_writer);
+        assert!(persisted_records
+            .iter()
+            .all(|record| record.get("protocol_version") == Some(&json!(1))));
+        assert_eq!(loaded.len(), writers * events_per_writer);
+        assert_eq!(block_ids.len(), writers * events_per_writer);
+
+        let _ = fs::remove_dir_all(root.as_ref());
+    }
+
+    #[test]
+    fn transcript_concurrent_appends_with_compaction_preserve_recent_events_and_marker() {
+        let root = std::sync::Arc::new(test_root("concurrent-append-compact"));
+        let session_id = "session-1";
+        let writers = 6;
+        let events_per_writer = 20;
+        let retain_events = 10;
+        let handles = (0..writers)
+            .map(|writer| {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    for index in 0..events_per_writer {
+                        append_transcript_event_at_with_limits(
+                            &root,
+                            json!({
+                                "event_type": "text_chunk",
+                                "session_id": session_id,
+                                "block_id": format!("writer-{writer}-event-{index}"),
+                                "content": format!("writer {writer} event {index}")
+                            }),
+                            1,
+                            retain_events,
+                        )
+                        .expect("append compacting event");
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("writer thread");
+        }
+
+        let path = transcript_path(&root, session_id).expect("transcript path");
+        let persisted = fs::read_to_string(&path).expect("read transcript");
+        let records = persisted
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("valid jsonl"))
+            .collect::<Vec<_>>();
+        let first_event = records
+            .first()
+            .and_then(|record| record.get("event"))
+            .expect("compact marker event");
+        let loaded = load_transcript_events_at(&root, session_id).expect("load transcript");
+        let loaded_ids = loaded
+            .iter()
+            .filter_map(|event| event.get("block_id").and_then(|value| value.as_str()))
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(records.len(), retain_events + 1);
+        assert!(records
+            .iter()
+            .all(|record| record.get("protocol_version") == Some(&json!(1))));
+        assert_eq!(
+            first_event
+                .get("event_type")
+                .and_then(|value| value.as_str()),
+            Some(TRANSCRIPT_COMPACT_MARKER)
+        );
+        assert_eq!(
+            first_event.get("omitted_events"),
+            Some(&json!(writers * events_per_writer - retain_events))
+        );
+        assert_eq!(loaded.len(), retain_events);
+        assert_eq!(loaded_ids.len(), retain_events);
+        assert!(loaded.iter().all(|event| !is_compact_marker(event)));
+
+        let _ = fs::remove_dir_all(root.as_ref());
     }
 
     #[test]
@@ -562,6 +764,99 @@ mod tests {
     }
 
     #[test]
+    fn transcript_load_throttles_legacy_uncompacted_large_files() {
+        let root = test_root("load-throttle");
+        for index in 0..8 {
+            append_transcript_event_at(
+                &root,
+                json!({
+                    "event_type": "text_chunk",
+                    "session_id": "session-1",
+                    "block_id": format!("text-{index}"),
+                    "content": format!("event-{index}")
+                }),
+            )
+            .expect("append legacy-sized event");
+        }
+
+        let path = transcript_path(&root, "session-1").expect("transcript path");
+        let persisted = fs::read_to_string(&path).expect("read transcript");
+        let persisted_records = persisted
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record json"))
+            .collect::<Vec<_>>();
+        assert_eq!(persisted_records.len(), 8);
+        assert!(persisted_records.iter().all(|record| {
+            record
+                .get("event")
+                .is_some_and(|event| !is_compact_marker(event))
+        }));
+
+        let loaded = load_transcript_events_at_with_limits(&root, "session-1", 1, 3)
+            .expect("load transcript");
+        let contents = loaded
+            .iter()
+            .filter_map(|event| event.get("content").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(contents, vec!["event-5", "event-6", "event-7"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_compaction_keeps_internal_marker_off_loaded_events() {
+        let root = test_root("compact-marker");
+        for index in 0..5 {
+            append_transcript_event_at_with_limits(
+                &root,
+                json!({
+                    "event_type": "text_chunk",
+                    "session_id": "session-1",
+                    "block_id": format!("text-{index}"),
+                    "content": format!("event-{index}")
+                }),
+                1,
+                2,
+            )
+            .expect("append compacting event");
+        }
+
+        let path = transcript_path(&root, "session-1").expect("transcript path");
+        let persisted = fs::read_to_string(&path).expect("read compacted transcript");
+        let records = persisted
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("record json"))
+            .collect::<Vec<_>>();
+        let first_event = records
+            .first()
+            .and_then(|record| record.get("event"))
+            .expect("compact marker event");
+
+        assert!(records
+            .iter()
+            .all(|record| record.get("protocol_version") == Some(&json!(1))));
+        assert_eq!(
+            first_event
+                .get("event_type")
+                .and_then(|value| value.as_str()),
+            Some(TRANSCRIPT_COMPACT_MARKER)
+        );
+        assert_eq!(first_event.get("omitted_events"), Some(&json!(3)));
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+        assert!(loaded.iter().all(|event| !is_compact_marker(event)));
+        assert_eq!(
+            loaded
+                .iter()
+                .filter_map(|event| event.get("content").and_then(|value| value.as_str()))
+                .collect::<Vec<_>>(),
+            vec!["event-3", "event-4"]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn transcript_load_closes_unfinished_shell_blocks_as_cancelled() {
         let root = test_root("unfinished-shell");
         let start = json!({
@@ -626,6 +921,109 @@ mod tests {
             Some(&json!({
                 "event_type": "tool_call_end",
                 "session_id": "session-1",
+                "block_id": "tool-1"
+            }))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_load_closes_tool_calls_that_have_result_but_missing_end() {
+        let root = test_root("unfinished-tool-end");
+        let start = json!({
+            "event_type": "tool_call_start",
+            "session_id": "session-1",
+            "block_id": "tool-1",
+            "tool_name": "read_file",
+            "tool_input": { "path": "src/App.tsx" }
+        });
+        let result = json!({
+            "event_type": "tool_call_result",
+            "session_id": "session-1",
+            "block_id": "tool-1",
+            "result": "ok",
+            "is_error": false,
+            "duration_ms": 12
+        });
+        append_transcript_event_at(&root, start.clone()).expect("append tool start");
+        append_transcript_event_at(&root, result.clone()).expect("append tool result");
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+
+        assert_eq!(loaded.first(), Some(&start));
+        assert_eq!(loaded.get(1), Some(&result));
+        assert_eq!(
+            loaded.last(),
+            Some(&json!({
+                "event_type": "tool_call_end",
+                "session_id": "session-1",
+                "block_id": "tool-1"
+            }))
+        );
+        assert_eq!(
+            loaded
+                .iter()
+                .filter(|event| {
+                    event.get("event_type").and_then(|value| value.as_str())
+                        == Some("tool_call_result")
+                })
+                .count(),
+            1,
+            "existing result should not be duplicated during recovery"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn compacted_transcript_load_closes_tool_calls_with_result_but_missing_end() {
+        let root = test_root("compact-unfinished-tool-end");
+        let session_id = "session-1";
+        for index in 0..4 {
+            append_transcript_event_at_with_limits(
+                &root,
+                json!({
+                    "event_type": "text_chunk",
+                    "session_id": session_id,
+                    "block_id": format!("old-{index}"),
+                    "content": format!("old event {index}")
+                }),
+                1,
+                2,
+            )
+            .expect("append compacting old event");
+        }
+        let start = json!({
+            "event_type": "tool_call_start",
+            "session_id": session_id,
+            "block_id": "tool-1",
+            "tool_name": "read_file",
+            "tool_input": { "path": "src/App.tsx" }
+        });
+        let result = json!({
+            "event_type": "tool_call_result",
+            "session_id": session_id,
+            "block_id": "tool-1",
+            "result": "ok",
+            "is_error": false,
+            "duration_ms": 12
+        });
+        append_transcript_event_at_with_limits(&root, start.clone(), 1, 2)
+            .expect("append compacting tool start");
+        append_transcript_event_at_with_limits(&root, result.clone(), 1, 2)
+            .expect("append compacting tool result");
+
+        let loaded = load_transcript_events_at(&root, session_id).expect("load transcript");
+
+        assert!(loaded.iter().all(|event| !is_compact_marker(event)));
+        assert_eq!(loaded.first(), Some(&start));
+        assert_eq!(loaded.get(1), Some(&result));
+        assert_eq!(
+            loaded.last(),
+            Some(&json!({
+                "event_type": "tool_call_end",
+                "session_id": session_id,
                 "block_id": "tool-1"
             }))
         );

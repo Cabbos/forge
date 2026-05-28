@@ -146,7 +146,7 @@ pub async fn discover_stdio_tools(
 ) -> Result<Vec<McpToolDefinition>, String> {
     let mut session = start_stdio_session(server).await?;
     let result = async {
-        initialize_stdio_session(&mut session).await?;
+        initialize_stdio_session(&mut session, None).await?;
         write_json_line(
             &mut session.stdin,
             serde_json::json!({
@@ -157,7 +157,7 @@ pub async fn discover_stdio_tools(
             }),
         )
         .await?;
-        let response = read_response(&mut session.reader, 2).await?;
+        let response = read_response(&mut session.reader, 2, "tools/list").await?;
         Ok(parse_tools_response(&server.id, &response))
     }
     .await;
@@ -170,7 +170,7 @@ pub async fn discover_stdio_resources(
 ) -> Result<Vec<McpResourceDefinition>, String> {
     let mut session = start_stdio_session(server).await?;
     let result = async {
-        initialize_stdio_session(&mut session).await?;
+        initialize_stdio_session(&mut session, None).await?;
         write_json_line(
             &mut session.stdin,
             serde_json::json!({
@@ -181,7 +181,7 @@ pub async fn discover_stdio_resources(
             }),
         )
         .await?;
-        let response = read_response(&mut session.reader, 2).await?;
+        let response = read_response(&mut session.reader, 2, "resources/list").await?;
         Ok(parse_resources_response(&server.id, &response))
     }
     .await;
@@ -194,7 +194,7 @@ pub async fn discover_stdio_prompts(
 ) -> Result<Vec<McpPromptDefinition>, String> {
     let mut session = start_stdio_session(server).await?;
     let result = async {
-        initialize_stdio_session(&mut session).await?;
+        initialize_stdio_session(&mut session, None).await?;
         write_json_line(
             &mut session.stdin,
             serde_json::json!({
@@ -205,7 +205,7 @@ pub async fn discover_stdio_prompts(
             }),
         )
         .await?;
-        let response = read_response(&mut session.reader, 2).await?;
+        let response = read_response(&mut session.reader, 2, "prompts/list").await?;
         Ok(parse_prompts_response(&server.id, &response))
     }
     .await;
@@ -219,7 +219,7 @@ pub async fn read_stdio_resource(
 ) -> Result<Vec<McpResourceContent>, String> {
     let mut session = start_stdio_session(server).await?;
     let result = async {
-        initialize_stdio_session(&mut session).await?;
+        initialize_stdio_session(&mut session, None).await?;
         write_json_line(
             &mut session.stdin,
             serde_json::json!({
@@ -232,7 +232,7 @@ pub async fn read_stdio_resource(
             }),
         )
         .await?;
-        let response = read_response(&mut session.reader, 2).await?;
+        let response = read_response(&mut session.reader, 2, "resources/read").await?;
         Ok(parse_resource_read_response(&response))
     }
     .await;
@@ -247,7 +247,7 @@ pub async fn get_stdio_prompt(
 ) -> Result<Vec<McpPromptMessage>, String> {
     let mut session = start_stdio_session(server).await?;
     let result = async {
-        initialize_stdio_session(&mut session).await?;
+        initialize_stdio_session(&mut session, None).await?;
         write_json_line(
             &mut session.stdin,
             serde_json::json!({
@@ -261,7 +261,7 @@ pub async fn get_stdio_prompt(
             }),
         )
         .await?;
-        let response = read_response(&mut session.reader, 2).await?;
+        let response = read_response(&mut session.reader, 2, "prompts/get").await?;
         Ok(parse_prompt_get_response(&response))
     }
     .await;
@@ -295,7 +295,7 @@ async fn call_stdio_tool_in_session(
     arguments: serde_json::Value,
     cancel: Option<Arc<Notify>>,
 ) -> Result<String, String> {
-    initialize_stdio_session(session).await?;
+    initialize_stdio_session(session, cancel.clone()).await?;
     write_json_line(
         &mut session.stdin,
         serde_json::json!({
@@ -309,7 +309,7 @@ async fn call_stdio_tool_in_session(
         }),
     )
     .await?;
-    let response = read_response_with_cancel(&mut session.reader, 2, cancel).await?;
+    let response = read_response_with_cancel(&mut session.reader, 2, "tools/call", cancel).await?;
     Ok(parse_tool_call_response(&response))
 }
 
@@ -348,7 +348,10 @@ async fn start_stdio_session(server: &McpServerDefinition) -> Result<StdioMcpSes
     })
 }
 
-async fn initialize_stdio_session(session: &mut StdioMcpSession) -> Result<(), String> {
+async fn initialize_stdio_session(
+    session: &mut StdioMcpSession,
+    cancel: Option<Arc<Notify>>,
+) -> Result<(), String> {
     write_json_line(
         &mut session.stdin,
         serde_json::json!({
@@ -366,7 +369,7 @@ async fn initialize_stdio_session(session: &mut StdioMcpSession) -> Result<(), S
         }),
     )
     .await?;
-    let _ = read_response(&mut session.reader, 1).await?;
+    let _ = read_response_with_cancel(&mut session.reader, 1, "initialize", cancel).await?;
 
     write_json_line(
         &mut session.stdin,
@@ -410,14 +413,21 @@ async fn write_json_line(stdin: &mut ChildStdin, value: serde_json::Value) -> Re
 async fn read_response(
     reader: &mut McpStdoutLines,
     expected_id: u64,
+    operation: &str,
 ) -> Result<serde_json::Value, String> {
-    let deadline = MCP_DISCOVERY_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + MCP_DISCOVERY_TIMEOUT;
     loop {
-        let line = tokio::time::timeout(deadline, reader.next_line())
+        let line = tokio::time::timeout_at(deadline, reader.next_line())
             .await
-            .map_err(|_| format!("Timed out waiting for MCP response id {expected_id}"))?
+            .map_err(|_| {
+                format!("Timed out waiting for MCP response id {expected_id} during {operation}")
+            })?
             .map_err(|err| format!("Failed to read MCP response: {err}"))?
-            .ok_or_else(|| format!("MCP server closed stdout before response id {expected_id}"))?;
+            .ok_or_else(|| {
+                format!(
+                    "MCP server closed stdout before response id {expected_id} during {operation}"
+                )
+            })?;
         let value = serde_json::from_str::<serde_json::Value>(&line)
             .map_err(|err| format!("Invalid MCP response JSON: {err}"))?;
         if value.get("id").and_then(|id| id.as_u64()) != Some(expected_id) {
@@ -433,15 +443,16 @@ async fn read_response(
 async fn read_response_with_cancel(
     reader: &mut McpStdoutLines,
     expected_id: u64,
+    operation: &str,
     cancel: Option<Arc<Notify>>,
 ) -> Result<serde_json::Value, String> {
     if let Some(cancel) = cancel {
         tokio::select! {
-            result = read_response(reader, expected_id) => result,
+            result = read_response(reader, expected_id, operation) => result,
             _ = cancel.notified() => Err("MCP tool call cancelled".to_string()),
         }
     } else {
-        read_response(reader, expected_id).await
+        read_response(reader, expected_id, operation).await
     }
 }
 
@@ -764,6 +775,223 @@ wait
 
         assert_eq!(result, Err("MCP tool call cancelled".to_string()));
         tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stdio_tool_cancel_during_initialize_kills_process_group() {
+        let root = temp_workspace("stdio-cancel-initialize");
+        let marker = root.join("marker");
+        let script = root.join("server.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+marker="$1"
+trap '' HUP
+IFS= read -r _initialize
+( trap '' HUP; sleep 1; printf should-not-run > "$marker" ) &
+wait
+"#,
+        )
+        .expect("write fake MCP server");
+
+        let server = McpServerDefinition {
+            id: "fake".to_string(),
+            name: "Fake".to_string(),
+            description: String::new(),
+            source: script.to_string_lossy().to_string(),
+            enabled: true,
+            command: Some("/bin/sh".to_string()),
+            args: vec![
+                script.to_string_lossy().to_string(),
+                marker.to_string_lossy().to_string(),
+            ],
+        };
+        let cancel = Arc::new(Notify::new());
+        let cancel_for_task = cancel.clone();
+
+        let task = tokio::spawn(async move {
+            call_stdio_tool_with_cancel(
+                &server,
+                "slow_tool",
+                serde_json::json!({}),
+                Some(cancel_for_task),
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        cancel.notify_waiters();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("cancel during initialize should finish quickly")
+            .expect("join task");
+
+        assert_eq!(result, Err("MCP tool call cancelled".to_string()));
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stdio_resource_read_times_out_on_overall_expected_response_deadline() {
+        let root = temp_workspace("stdio-resource-overall-timeout");
+        let marker = root.join("marker");
+        let script = root.join("server.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+marker="$1"
+trap '' HUP
+IFS= read -r _initialize
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+IFS= read -r _initialized
+IFS= read -r _resource_read
+( trap '' HUP; sleep 7; printf should-not-run > "$marker" ) &
+while :; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":999,"result":{}}'
+  sleep 0.2
+done
+"#,
+        )
+        .expect("write fake MCP server");
+
+        let server = McpServerDefinition {
+            id: "fake".to_string(),
+            name: "Fake".to_string(),
+            description: String::new(),
+            source: script.to_string_lossy().to_string(),
+            enabled: true,
+            command: Some("/bin/sh".to_string()),
+            args: vec![
+                script.to_string_lossy().to_string(),
+                marker.to_string_lossy().to_string(),
+            ],
+        };
+
+        let result = tokio::time::timeout(
+            MCP_DISCOVERY_TIMEOUT + Duration::from_millis(1500),
+            read_stdio_resource(&server, "file:///slow.md"),
+        )
+        .await
+        .expect("resource read should stop at the overall MCP response deadline");
+
+        let error = result.expect_err("wrong response ids should time out");
+        assert!(error.contains("resources/read"));
+        assert!(error.contains("Timed out waiting for MCP response id 2"));
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stdio_tool_call_timeout_names_operation_and_kills_process_group() {
+        let root = temp_workspace("stdio-tool-overall-timeout");
+        let marker = root.join("marker");
+        let script = root.join("server.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+marker="$1"
+trap '' HUP
+IFS= read -r _initialize
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+IFS= read -r _initialized
+IFS= read -r _tool_call
+( trap '' HUP; sleep 7; printf should-not-run > "$marker" ) &
+while :; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":999,"result":{}}'
+  sleep 0.2
+done
+"#,
+        )
+        .expect("write fake MCP server");
+
+        let server = McpServerDefinition {
+            id: "fake".to_string(),
+            name: "Fake".to_string(),
+            description: String::new(),
+            source: script.to_string_lossy().to_string(),
+            enabled: true,
+            command: Some("/bin/sh".to_string()),
+            args: vec![
+                script.to_string_lossy().to_string(),
+                marker.to_string_lossy().to_string(),
+            ],
+        };
+
+        let result = tokio::time::timeout(
+            MCP_DISCOVERY_TIMEOUT + Duration::from_millis(1500),
+            call_stdio_tool(&server, "slow_tool", serde_json::json!({})),
+        )
+        .await
+        .expect("tool call should stop at the overall MCP response deadline");
+        let error = result.expect_err("wrong response ids should time out");
+
+        assert!(error.contains("tools/call"));
+        assert!(error.contains("Timed out waiting for MCP response id 2"));
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stdio_prompt_get_timeout_names_operation_and_kills_process_group() {
+        let root = temp_workspace("stdio-prompt-overall-timeout");
+        let marker = root.join("marker");
+        let script = root.join("server.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+marker="$1"
+trap '' HUP
+IFS= read -r _initialize
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
+IFS= read -r _initialized
+IFS= read -r _prompt_get
+( trap '' HUP; sleep 7; printf should-not-run > "$marker" ) &
+while :; do
+  printf '%s\n' '{"jsonrpc":"2.0","id":999,"result":{}}'
+  sleep 0.2
+done
+"#,
+        )
+        .expect("write fake MCP server");
+
+        let server = McpServerDefinition {
+            id: "fake".to_string(),
+            name: "Fake".to_string(),
+            description: String::new(),
+            source: script.to_string_lossy().to_string(),
+            enabled: true,
+            command: Some("/bin/sh".to_string()),
+            args: vec![
+                script.to_string_lossy().to_string(),
+                marker.to_string_lossy().to_string(),
+            ],
+        };
+
+        let result = tokio::time::timeout(
+            MCP_DISCOVERY_TIMEOUT + Duration::from_millis(1500),
+            get_stdio_prompt(&server, "slow_prompt", serde_json::json!({})),
+        )
+        .await
+        .expect("prompt get should stop at the overall MCP response deadline");
+        let error = result.expect_err("wrong response ids should time out");
+
+        assert!(error.contains("prompts/get"));
+        assert!(error.contains("Timed out waiting for MCP response id 2"));
+        tokio::time::sleep(Duration::from_millis(2500)).await;
         assert!(!marker.exists());
 
         let _ = std::fs::remove_dir_all(root);

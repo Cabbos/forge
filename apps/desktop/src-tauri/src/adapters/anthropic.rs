@@ -106,14 +106,68 @@ impl AnthropicAdapter {
         self.disable_thinking = true;
         self
     }
+
+    fn request_for_messages(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        use_sub_agent_tools: bool,
+    ) -> AnthropicRequest {
+        let mut system_parts: Vec<String> = vec![SYSTEM_PROMPT.to_string()];
+        let filtered: Vec<ChatMessage> = messages
+            .iter()
+            .filter(|m| {
+                if m.role == "system" {
+                    if let serde_json::Value::String(ref s) = m.content {
+                        if !s.is_empty() {
+                            system_parts.push(s.clone());
+                        }
+                    }
+                    false
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect();
+        let filtered = repair_tool_result_adjacency(&filtered);
+        let thinking = if use_sub_agent_tools {
+            Some(ThinkingConfig {
+                type_: "enabled".to_string(),
+                budget_tokens: 2000,
+            })
+        } else if self.disable_thinking {
+            None
+        } else {
+            Some(ThinkingConfig {
+                type_: "enabled".to_string(),
+                budget_tokens: self.thinking_budget_tokens,
+            })
+        };
+        let tools = if use_sub_agent_tools {
+            self.sub_agent_tools()
+        } else {
+            self.tool_definitions()
+        };
+
+        AnthropicRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            stream,
+            messages: filtered,
+            thinking,
+            system: Some(system_parts.join("\n\n")),
+            tools: Some(tools),
+        }
+    }
 }
 
 #[derive(Serialize)]
-struct AnthropicRequest<'a> {
-    model: &'a str,
+struct AnthropicRequest {
+    model: String,
     max_tokens: u32,
     stream: bool,
-    messages: &'a [ChatMessage],
+    messages: Vec<ChatMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<ThinkingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,38 +307,7 @@ impl AiAdapter for AnthropicAdapter {
         messages: &[ChatMessage],
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        let mut system_parts: Vec<String> = vec![SYSTEM_PROMPT.to_string()];
-        let filtered: Vec<ChatMessage> = messages
-            .iter()
-            .filter(|m| {
-                if m.role == "system" {
-                    if let serde_json::Value::String(ref s) = m.content {
-                        if !s.is_empty() {
-                            system_parts.push(s.clone());
-                        }
-                    }
-                    false
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .collect();
-
-        let filtered = repair_tool_result_adjacency(&filtered);
-
-        let body = AnthropicRequest {
-            model: &self.model,
-            max_tokens: self.max_tokens,
-            stream: false,
-            messages: &filtered,
-            thinking: Some(ThinkingConfig {
-                type_: "enabled".to_string(),
-                budget_tokens: 2000,
-            }),
-            system: Some(system_parts.join("\n\n")),
-            tools: Some(self.sub_agent_tools()),
-        };
+        let body = self.request_for_messages(messages, false, true);
 
         // Race HTTP call against cancel token
         let url = format!("{}/v1/messages", self.base_url);
@@ -348,44 +371,7 @@ impl AiAdapter for AnthropicAdapter {
         app_handle: &tauri::AppHandle,
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        // Extract system messages and build the combined system prompt
-        let mut system_parts: Vec<String> = vec![SYSTEM_PROMPT.to_string()];
-        let filtered: Vec<ChatMessage> = messages
-            .iter()
-            .filter(|m| {
-                if m.role == "system" {
-                    if let serde_json::Value::String(ref s) = m.content {
-                        if !s.is_empty() {
-                            system_parts.push(s.clone());
-                        }
-                    }
-                    false // remove from messages list
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .collect();
-
-        let filtered = repair_tool_result_adjacency(&filtered);
-        let system = system_parts.join("\n\n");
-
-        let body = AnthropicRequest {
-            model: &self.model,
-            max_tokens: self.max_tokens,
-            stream: true,
-            messages: &filtered,
-            thinking: if self.disable_thinking {
-                None
-            } else {
-                Some(ThinkingConfig {
-                    type_: "enabled".to_string(),
-                    budget_tokens: self.thinking_budget_tokens,
-                })
-            },
-            system: Some(system),
-            tools: Some(self.tool_definitions()),
-        };
+        let body = self.request_for_messages(messages, true, false);
 
         let response = self
             .client
@@ -406,23 +392,8 @@ impl AiAdapter for AnthropicAdapter {
 
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
-
-        // SSE state
-        let mut block_type: Option<String> = None;
         let mut active_block_id: Option<String> = None;
-
-        // Tool call accumulation
-        let mut current_tool_id: Option<String> = None;
-        let mut current_tool_name: Option<String> = None;
-        let mut current_tool_input_json = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut assistant_content: Vec<serde_json::Value> = Vec::new();
-        let mut stop_reason: Option<String> = None;
-
-        // Per-block text/thinking content accumulation (for assistant_content)
-        let mut current_text = String::new();
-        let mut current_thinking = String::new();
-        let mut total_input_tokens: u32 = 0;
+        let mut parser = AnthropicStreamParser::default();
 
         loop {
             let chunk = tokio::select! {
@@ -438,282 +409,142 @@ impl AiAdapter for AnthropicAdapter {
             };
             let chunk = chunk.map_err(|e| AdapterError::Stream(e.to_string()))?;
             let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text.replace("\r\n", "\n"));
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_data = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
-
-                let mut data: Option<String> = None;
-                for line in event_data.lines() {
-                    if let Some(d) = line.strip_prefix("data: ") {
-                        data = Some(d.trim().to_string());
-                    }
-                }
-
-                let data = match data {
-                    Some(d) if !d.is_empty() => d,
-                    _ => continue,
-                };
-
+            for data in drain_anthropic_sse_data(&mut buffer, &text) {
+                let session = session_id.to_string();
                 match serde_json::from_str::<serde_json::Value>(&data) {
                     Ok(parsed) => {
-                        let sse_type = parsed["type"].as_str().unwrap_or("");
-                        let session = session_id.to_string();
+                        let update = parser.apply_event(&parsed);
 
-                        match sse_type {
-                            "message_start" => {
-                                // Capture input tokens for cost tracking
-                                if let Some(usage) = parsed["message"].get("usage") {
-                                    total_input_tokens = usage
-                                        .get("input_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0)
-                                        as u32;
-                                }
-                                crate::transcript::emit_stream_event(
-                                    app_handle,
-                                    StreamEvent::SessionStatus {
-                                        session_id: session.clone(),
-                                        status: "working".to_string(),
-                                    },
-                                );
-                            }
+                        if let Some(status) = update.session_status {
+                            crate::transcript::emit_stream_event(
+                                app_handle,
+                                StreamEvent::SessionStatus {
+                                    session_id: session.clone(),
+                                    status,
+                                },
+                            );
+                        }
 
-                            "content_block_start" => {
-                                let cb = &parsed["content_block"];
-                                let cb_type = cb["type"].as_str().unwrap_or("");
-                                let cb_id = BlockId::new();
-                                let bid = cb_id.to_string();
-
-                                current_text.clear();
-                                current_thinking.clear();
-
-                                match cb_type {
-                                    "thinking" => {
-                                        block_type = Some("thinking".to_string());
-                                        active_block_id = Some(bid.clone());
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::ThinkingStart {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                            },
-                                        );
-                                    }
-                                    "text" => {
-                                        block_type = Some("text".to_string());
-                                        active_block_id = Some(bid.clone());
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::TextStart {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                            },
-                                        );
-                                    }
-                                    "tool_use" => {
-                                        block_type = Some("tool_use".to_string());
-                                        current_tool_id =
-                                            Some(cb["id"].as_str().unwrap_or("").to_string());
-                                        current_tool_name = Some(
-                                            cb["name"].as_str().unwrap_or("unknown").to_string(),
-                                        );
-                                        let tool_block_id = current_tool_id
-                                            .clone()
-                                            .filter(|id| !id.is_empty())
-                                            .unwrap_or(bid);
-                                        active_block_id = Some(tool_block_id.clone());
-                                        current_tool_input_json = String::new();
-
-                                        let tool_input = cb["input"].clone();
-                                        // If input is already fully populated (non-streaming or edge case),
-                                        // start with that
-                                        if tool_input.is_object()
-                                            && !tool_input.as_object().unwrap().is_empty()
-                                        {
-                                            current_tool_input_json =
-                                                serde_json::to_string(&tool_input)
-                                                    .unwrap_or_default();
-                                        }
-
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::ToolCallStart {
-                                                session_id: session.clone(),
-                                                block_id: tool_block_id,
-                                                tool_name: current_tool_name.clone().unwrap(),
-                                                tool_input: cb["input"].clone(),
-                                            },
-                                        );
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            "content_block_delta" => {
-                                let delta = &parsed["delta"];
-                                let delta_type = delta["type"].as_str().unwrap_or("");
-                                let bid = active_block_id.clone().unwrap_or_default();
-
-                                match delta_type {
-                                    "thinking_delta" => {
-                                        let content = delta["thinking"].as_str().unwrap_or("");
-                                        current_thinking.push_str(content);
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::ThinkingChunk {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                                content: content.to_string(),
-                                            },
-                                        );
-                                    }
-                                    "text_delta" => {
-                                        let content = delta["text"].as_str().unwrap_or("");
-                                        current_text.push_str(content);
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::TextChunk {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                                content: content.to_string(),
-                                            },
-                                        );
-                                    }
-                                    "input_json_delta" => {
-                                        let partial = delta["partial_json"].as_str().unwrap_or("");
-                                        current_tool_input_json.push_str(partial);
-                                    }
-                                    _ => {}
-                                }
-                            }
-
-                            "content_block_stop" => {
-                                let bid = active_block_id.clone().unwrap_or_default();
-
-                                match block_type.as_deref() {
-                                    Some("thinking") => {
-                                        // Save thinking to conversation history
-                                        if !current_thinking.is_empty() {
-                                            assistant_content.push(serde_json::json!({"type":"thinking","thinking":current_thinking}));
-                                        }
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::ThinkingEnd {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                            },
-                                        );
-                                    }
-                                    Some("text") => {
-                                        // Save text to conversation history
-                                        if !current_text.is_empty() {
-                                            assistant_content.push(serde_json::json!({"type":"text","text":current_text}));
-                                        }
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::TextEnd {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                            },
-                                        );
-                                    }
-                                    Some("tool_use") => {
-                                        // Parse accumulated tool input JSON
-                                        let input: serde_json::Value =
-                                            serde_json::from_str(&current_tool_input_json)
-                                                .unwrap_or(serde_json::Value::Object(
-                                                    serde_json::Map::new(),
-                                                ));
-
-                                        let tool_id = current_tool_id.clone().unwrap_or_default();
-                                        let tool_name =
-                                            current_tool_name.clone().unwrap_or_default();
-
-                                        tool_calls.push(ToolCall {
-                                            id: tool_id.clone(),
-                                            name: tool_name.clone(),
-                                            input: input.clone(),
-                                        });
-
-                                        // Add tool_use block to assistant content
-                                        assistant_content.push(serde_json::json!({
-                                            "type": "tool_use",
-                                            "id": tool_id,
-                                            "name": tool_name,
-                                            "input": input,
-                                        }));
-
-                                        crate::transcript::emit_stream_event(
-                                            app_handle,
-                                            StreamEvent::ToolCallEnd {
-                                                session_id: session.clone(),
-                                                block_id: bid,
-                                            },
-                                        );
-
-                                        current_tool_id = None;
-                                        current_tool_name = None;
-                                        current_tool_input_json.clear();
-                                    }
-                                    _ => {}
-                                }
-                                block_type = None;
-                                active_block_id = None;
-                            }
-
-                            "message_delta" => {
-                                stop_reason = parsed["delta"]["stop_reason"]
-                                    .as_str()
-                                    .map(|s| s.to_string());
-                                // Capture usage data and emit cost event
-                                if let Some(usage) = parsed["usage"].as_object() {
-                                    let output = usage
-                                        .get("output_tokens")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0)
-                                        as u32;
-                                    let cost =
-                                        estimate_cost(&self.model, total_input_tokens, output);
+                        if let Some(block_start) = update.block_start {
+                            let bid = BlockId::new().to_string();
+                            match block_start {
+                                AnthropicBlockStart::Thinking => {
+                                    active_block_id = Some(bid.clone());
                                     crate::transcript::emit_stream_event(
                                         app_handle,
-                                        StreamEvent::Usage {
-                                            session_id: session.to_string(),
-                                            input_tokens: total_input_tokens,
-                                            output_tokens: output,
-                                            estimated_cost_usd: cost,
+                                        StreamEvent::ThinkingStart {
+                                            session_id: session.clone(),
+                                            block_id: bid,
+                                        },
+                                    );
+                                }
+                                AnthropicBlockStart::Text => {
+                                    active_block_id = Some(bid.clone());
+                                    crate::transcript::emit_stream_event(
+                                        app_handle,
+                                        StreamEvent::TextStart {
+                                            session_id: session.clone(),
+                                            block_id: bid,
+                                        },
+                                    );
+                                }
+                                AnthropicBlockStart::ToolUse { id, name, input } => {
+                                    let tool_block_id =
+                                        if id.is_empty() { bid } else { id.clone() };
+                                    active_block_id = Some(tool_block_id.clone());
+                                    crate::transcript::emit_stream_event(
+                                        app_handle,
+                                        StreamEvent::ToolCallStart {
+                                            session_id: session.clone(),
+                                            block_id: tool_block_id,
+                                            tool_name: name,
+                                            tool_input: input,
                                         },
                                     );
                                 }
                             }
+                        }
 
-                            "message_stop" => {
-                                crate::transcript::emit_stream_event(
-                                    app_handle,
-                                    StreamEvent::SessionStatus {
-                                        session_id: session.clone(),
-                                        status: "idle".to_string(),
-                                    },
-                                );
+                        if let Some(content) = update.thinking_chunk {
+                            crate::transcript::emit_stream_event(
+                                app_handle,
+                                StreamEvent::ThinkingChunk {
+                                    session_id: session.clone(),
+                                    block_id: active_block_id.clone().unwrap_or_default(),
+                                    content,
+                                },
+                            );
+                        }
+
+                        if let Some(content) = update.text_chunk {
+                            crate::transcript::emit_stream_event(
+                                app_handle,
+                                StreamEvent::TextChunk {
+                                    session_id: session.clone(),
+                                    block_id: active_block_id.clone().unwrap_or_default(),
+                                    content,
+                                },
+                            );
+                        }
+
+                        if let Some(block_end) = update.block_end {
+                            let bid = active_block_id.clone().unwrap_or_default();
+                            match block_end {
+                                AnthropicBlockEnd::Thinking => {
+                                    crate::transcript::emit_stream_event(
+                                        app_handle,
+                                        StreamEvent::ThinkingEnd {
+                                            session_id: session.clone(),
+                                            block_id: bid,
+                                        },
+                                    );
+                                }
+                                AnthropicBlockEnd::Text => {
+                                    crate::transcript::emit_stream_event(
+                                        app_handle,
+                                        StreamEvent::TextEnd {
+                                            session_id: session.clone(),
+                                            block_id: bid,
+                                        },
+                                    );
+                                }
+                                AnthropicBlockEnd::ToolUse => {
+                                    crate::transcript::emit_stream_event(
+                                        app_handle,
+                                        StreamEvent::ToolCallEnd {
+                                            session_id: session.clone(),
+                                            block_id: bid,
+                                        },
+                                    );
+                                }
                             }
+                            active_block_id = None;
+                        }
 
-                            "error" => {
-                                let msg = parsed["error"]["message"]
-                                    .as_str()
-                                    .unwrap_or("Unknown error");
-                                crate::transcript::emit_stream_event(
-                                    app_handle,
-                                    StreamEvent::Error {
-                                        session_id: session.clone(),
-                                        block_id: BlockId::new().to_string(),
-                                        message: msg.to_string(),
-                                        code: "api_error".to_string(),
-                                    },
-                                );
-                            }
+                        if let Some((input_tokens, output_tokens)) = update.usage {
+                            let cost = estimate_cost(&self.model, input_tokens, output_tokens);
+                            crate::transcript::emit_stream_event(
+                                app_handle,
+                                StreamEvent::Usage {
+                                    session_id: session.to_string(),
+                                    input_tokens,
+                                    output_tokens,
+                                    estimated_cost_usd: cost,
+                                },
+                            );
+                        }
 
-                            _ => {}
+                        if let Some(msg) = update.error {
+                            crate::transcript::emit_stream_event(
+                                app_handle,
+                                StreamEvent::Error {
+                                    session_id: session.clone(),
+                                    block_id: BlockId::new().to_string(),
+                                    message: msg,
+                                    code: "api_error".to_string(),
+                                },
+                            );
                         }
                     }
                     Err(_) => {
@@ -723,12 +554,229 @@ impl AiAdapter for AnthropicAdapter {
             }
         }
 
-        Ok(StreamResult {
-            assistant_content,
-            tool_calls,
-            stop_reason,
-        })
+        Ok(parser.finish())
     }
+}
+
+#[derive(Default)]
+struct AnthropicStreamParser {
+    block_type: Option<String>,
+    current_tool_id: Option<String>,
+    current_tool_name: Option<String>,
+    current_tool_input_json: String,
+    tool_calls: Vec<ToolCall>,
+    assistant_content: Vec<serde_json::Value>,
+    stop_reason: Option<String>,
+    current_text: String,
+    current_thinking: String,
+    total_input_tokens: u32,
+}
+
+#[derive(Default)]
+struct AnthropicStreamUpdate {
+    session_status: Option<String>,
+    block_start: Option<AnthropicBlockStart>,
+    thinking_chunk: Option<String>,
+    text_chunk: Option<String>,
+    block_end: Option<AnthropicBlockEnd>,
+    usage: Option<(u32, u32)>,
+    error: Option<String>,
+}
+
+enum AnthropicBlockStart {
+    Thinking,
+    Text,
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+}
+
+enum AnthropicBlockEnd {
+    Thinking,
+    Text,
+    ToolUse,
+}
+
+impl AnthropicStreamParser {
+    fn apply_event(&mut self, parsed: &serde_json::Value) -> AnthropicStreamUpdate {
+        let mut update = AnthropicStreamUpdate::default();
+        let sse_type = parsed["type"].as_str().unwrap_or("");
+
+        match sse_type {
+            "message_start" => {
+                if let Some(usage) = parsed["message"].get("usage") {
+                    self.total_input_tokens = usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                }
+                update.session_status = Some("working".to_string());
+            }
+            "content_block_start" => {
+                let cb = &parsed["content_block"];
+                let cb_type = cb["type"].as_str().unwrap_or("");
+                self.current_text.clear();
+                self.current_thinking.clear();
+
+                match cb_type {
+                    "thinking" => {
+                        self.block_type = Some("thinking".to_string());
+                        update.block_start = Some(AnthropicBlockStart::Thinking);
+                    }
+                    "text" => {
+                        self.block_type = Some("text".to_string());
+                        update.block_start = Some(AnthropicBlockStart::Text);
+                    }
+                    "tool_use" => {
+                        self.block_type = Some("tool_use".to_string());
+                        self.current_tool_id = Some(cb["id"].as_str().unwrap_or("").to_string());
+                        self.current_tool_name =
+                            Some(cb["name"].as_str().unwrap_or("unknown").to_string());
+                        self.current_tool_input_json.clear();
+
+                        let tool_input = cb["input"].clone();
+                        if tool_input.is_object() && !tool_input.as_object().unwrap().is_empty() {
+                            self.current_tool_input_json =
+                                serde_json::to_string(&tool_input).unwrap_or_default();
+                        }
+
+                        update.block_start = Some(AnthropicBlockStart::ToolUse {
+                            id: self.current_tool_id.clone().unwrap_or_default(),
+                            name: self.current_tool_name.clone().unwrap_or_default(),
+                            input: cb["input"].clone(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            "content_block_delta" => {
+                let delta = &parsed["delta"];
+                let delta_type = delta["type"].as_str().unwrap_or("");
+
+                match delta_type {
+                    "thinking_delta" => {
+                        let content = delta["thinking"].as_str().unwrap_or("");
+                        self.current_thinking.push_str(content);
+                        update.thinking_chunk = Some(content.to_string());
+                    }
+                    "text_delta" => {
+                        let content = delta["text"].as_str().unwrap_or("");
+                        self.current_text.push_str(content);
+                        update.text_chunk = Some(content.to_string());
+                    }
+                    "input_json_delta" => {
+                        let partial = delta["partial_json"].as_str().unwrap_or("");
+                        self.current_tool_input_json.push_str(partial);
+                    }
+                    _ => {}
+                }
+            }
+            "content_block_stop" => {
+                match self.block_type.as_deref() {
+                    Some("thinking") => {
+                        flush_content(
+                            Some("thinking"),
+                            &self.current_thinking,
+                            &mut self.assistant_content,
+                        );
+                        update.block_end = Some(AnthropicBlockEnd::Thinking);
+                    }
+                    Some("text") => {
+                        flush_content(
+                            Some("text"),
+                            &self.current_text,
+                            &mut self.assistant_content,
+                        );
+                        update.block_end = Some(AnthropicBlockEnd::Text);
+                    }
+                    Some("tool_use") => {
+                        let input: serde_json::Value =
+                            serde_json::from_str(&self.current_tool_input_json)
+                                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                        let tool_id = self.current_tool_id.clone().unwrap_or_default();
+                        let tool_name = self.current_tool_name.clone().unwrap_or_default();
+
+                        self.tool_calls.push(ToolCall {
+                            id: tool_id.clone(),
+                            name: tool_name.clone(),
+                            input: input.clone(),
+                        });
+                        self.assistant_content.push(serde_json::json!({
+                            "type": "tool_use",
+                            "id": tool_id,
+                            "name": tool_name,
+                            "input": input,
+                        }));
+
+                        self.current_tool_id = None;
+                        self.current_tool_name = None;
+                        self.current_tool_input_json.clear();
+                        update.block_end = Some(AnthropicBlockEnd::ToolUse);
+                    }
+                    _ => {}
+                }
+                self.block_type = None;
+            }
+            "message_delta" => {
+                self.stop_reason = parsed["delta"]["stop_reason"].as_str().map(str::to_string);
+                if let Some(usage) = parsed["usage"].as_object() {
+                    let output_tokens = usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+                    update.usage = Some((self.total_input_tokens, output_tokens));
+                }
+            }
+            "message_stop" => {
+                update.session_status = Some("idle".to_string());
+            }
+            "error" => {
+                update.error = Some(
+                    parsed["error"]["message"]
+                        .as_str()
+                        .unwrap_or("Unknown error")
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+
+        update
+    }
+
+    fn finish(self) -> StreamResult {
+        StreamResult {
+            assistant_content: self.assistant_content,
+            tool_calls: self.tool_calls,
+            stop_reason: self.stop_reason,
+        }
+    }
+}
+
+fn drain_anthropic_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
+    buffer.push_str(&chunk.replace("\r\n", "\n"));
+    let mut events = Vec::new();
+
+    while let Some(event_end) = buffer.find("\n\n") {
+        let event_data = buffer[..event_end].to_string();
+        buffer.replace_range(..event_end + 2, "");
+
+        let data = event_data
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .next_back()
+            .map(str::trim)
+            .filter(|data| !data.is_empty())
+            .map(str::to_string);
+
+        if let Some(data) = data {
+            events.push(data);
+        }
+    }
+
+    events
 }
 
 /// Estimate cost based on model pricing (per 1M tokens).
@@ -760,6 +808,9 @@ fn flush_content(block_type: Option<&str>, text: &str, content: &mut Vec<serde_j
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     #[test]
     fn external_tools_can_be_replaced_after_session_creation() {
@@ -785,5 +836,245 @@ mod tests {
 
         assert!(names.contains(&"mcp__new__tool".to_string()));
         assert!(!names.contains(&"mcp__old__tool".to_string()));
+    }
+
+    #[tokio::test]
+    async fn call_repairs_tool_history_before_serializing_request() {
+        let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn"
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": { "path": "src/App.tsx" }
+            }])),
+            ChatMessage::user("继续处理"),
+        ];
+
+        let result = adapter
+            .call(&messages, Arc::new(Notify::new()))
+            .await
+            .expect("adapter call");
+        let request_body = received_body
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured request body");
+        let request_messages = request_body["messages"]
+            .as_array()
+            .expect("request messages");
+
+        assert_eq!(
+            result.assistant_content,
+            vec![serde_json::json!({"type": "text", "text": "ok"})]
+        );
+        assert_anthropic_tool_result_contract(request_messages);
+        assert!(request_messages
+            .iter()
+            .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[test]
+    fn stream_request_repairs_tool_history_before_serializing_request() {
+        let adapter = AnthropicAdapter::new("test-key".to_string()).unwrap();
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": { "path": "src/App.tsx" }
+            }])),
+            ChatMessage::user("继续处理"),
+        ];
+
+        let request = adapter.request_for_messages(&messages, true, false);
+        let request_body = serde_json::to_value(&request).expect("serialize request");
+        let request_messages = request_body["messages"]
+            .as_array()
+            .expect("request messages");
+
+        assert_eq!(request_body["stream"], true);
+        assert_anthropic_tool_result_contract(request_messages);
+    }
+
+    #[test]
+    fn parses_streaming_tool_call_split_across_sse_and_network_chunks() {
+        let text_start = serde_json::json!({
+            "type": "content_block_start",
+            "content_block": { "type": "text", "text": "" }
+        });
+        let text_delta = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "text_delta", "text": "先看文件。" }
+        });
+        let text_stop = serde_json::json!({ "type": "content_block_stop" });
+        let tool_start = serde_json::json!({
+            "type": "content_block_start",
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_1",
+                "name": "read_file",
+                "input": {}
+            }
+        });
+        let tool_delta_1 = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "input_json_delta", "partial_json": "{\"path\"" }
+        });
+        let tool_delta_2 = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": { "type": "input_json_delta", "partial_json": ":\"src/App.tsx\"}" }
+        });
+        let tool_stop = serde_json::json!({ "type": "content_block_stop" });
+        let message_delta = serde_json::json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "tool_use" }
+        });
+
+        let first_event = format!("data: {text_start}\n\ndata: {text_delta}\n\n");
+        let rest = format!(
+            "data: {text_stop}\n\ndata: {{not-json}}\n\ndata: {tool_start}\n\ndata: {tool_delta_1}\n\ndata: {tool_delta_2}\n\ndata: {tool_stop}\n\ndata: {message_delta}\n\n"
+        );
+        let result = parse_anthropic_stream_chunks(&[
+            &first_event[..first_event.len() - 2],
+            &first_event[first_event.len() - 2..],
+            &rest,
+        ]);
+
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({"type": "text", "text": "先看文件。"}),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_use"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "toolu_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
+    fn assert_anthropic_tool_result_contract(messages: &[serde_json::Value]) {
+        for (index, message) in messages.iter().enumerate() {
+            let Some(content) = message.get("content").and_then(|value| value.as_array()) else {
+                continue;
+            };
+            let ids = content
+                .iter()
+                .filter(|block| {
+                    block.get("type").and_then(|value| value.as_str()) == Some("tool_use")
+                })
+                .filter_map(|block| block.get("id").and_then(|value| value.as_str()))
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                continue;
+            }
+            let next = messages.get(index + 1).unwrap_or_else(|| {
+                panic!("assistant tool_use at {index} is missing an immediate tool_result message")
+            });
+            assert_eq!(next["role"], "user");
+            let result_ids = next["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|block| {
+                    block.get("type").and_then(|value| value.as_str()) == Some("tool_result")
+                })
+                .filter_map(|block| block.get("tool_use_id").and_then(|value| value.as_str()))
+                .collect::<Vec<_>>();
+            for id in ids {
+                assert!(result_ids.contains(&id), "missing tool_result for {id}");
+            }
+        }
+    }
+
+    fn parse_anthropic_stream_chunks(chunks: &[&str]) -> StreamResult {
+        let mut buffer = String::new();
+        let mut parser = AnthropicStreamParser::default();
+
+        for chunk in chunks {
+            for data in drain_anthropic_sse_data(&mut buffer, chunk) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data) {
+                    parser.apply_event(&parsed);
+                }
+            }
+        }
+
+        parser.finish()
+    }
+
+    fn spawn_json_capture_server(
+        response_body: serde_json::Value,
+    ) -> (String, mpsc::Receiver<serde_json::Value>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request_body = read_http_json_body(&mut stream);
+            tx.send(request_body).expect("send request body");
+
+            let response = response_body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("write response");
+        });
+
+        (base_url, rx)
+    }
+
+    fn read_http_json_body(stream: &mut std::net::TcpStream) -> serde_json::Value {
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let header_end = loop {
+            let read = stream.read(&mut chunk).expect("read request");
+            assert!(read > 0, "connection closed before headers");
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(index) = find_subslice(&buffer, b"\r\n\r\n") {
+                break index + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buffer[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+            })
+            .expect("content-length header");
+        while buffer.len() < header_end + content_length {
+            let read = stream.read(&mut chunk).expect("read request body");
+            assert!(read > 0, "connection closed before body");
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+        serde_json::from_slice(&buffer[header_end..header_end + content_length])
+            .expect("request body json")
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
     }
 }

@@ -722,13 +722,15 @@ mod tests {
     async fn verification_timeout_kills_process_group() {
         let dir = temp_dir("timeout-process-group");
         let marker = dir.join("marker");
+        let spawned = dir.join("spawned");
         let trace = run_verification_step(VerificationStep {
             display_command: "timeout marker script".to_string(),
             cwd: dir.clone(),
             program: "/bin/sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "(sleep 2; echo should-not-run > marker) & wait".to_string(),
+                "(echo child-started > spawned; sleep 2; echo should-not-run > marker) & wait"
+                    .to_string(),
             ],
             timeout_secs: 1,
         })
@@ -742,6 +744,7 @@ mod tests {
             .contains("verification timed out"));
 
         tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(spawned.exists(), "background child should have started");
         assert!(!marker.exists());
 
         let _ = fs::remove_dir_all(dir);
@@ -752,6 +755,7 @@ mod tests {
     async fn verification_cancel_kills_process_group() {
         let dir = temp_dir("cancel-process-group");
         let marker = dir.join("marker");
+        let spawned = dir.join("spawned");
         let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
         let cancel_for_task = cancel.clone();
         let step = VerificationStep {
@@ -760,7 +764,8 @@ mod tests {
             program: "/bin/sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "(sleep 2; echo should-not-run > marker) & wait".to_string(),
+                "(echo child-started > spawned; sleep 2; echo should-not-run > marker) & wait"
+                    .to_string(),
             ],
             timeout_secs: 30,
         };
@@ -783,6 +788,7 @@ mod tests {
             .contains("verification cancelled"));
 
         tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(spawned.exists(), "background child should have started");
         assert!(!marker.exists());
 
         let _ = fs::remove_dir_all(dir);

@@ -365,6 +365,18 @@ pub trait AiAdapter: Send + Sync {
         cancel: std::sync::Arc<Notify>,
     ) -> Result<StreamResult, AdapterError>;
 
+    /// Call the AI API using an abstract event emitter instead of `AppHandle`.
+    /// Default implementation delegates to `call()` (ignoring the emitter).
+    async fn call_with_emitter(
+        &self,
+        _session_id: &str,
+        messages: &[ChatMessage],
+        _emitter: &dyn crate::agent::event_sink::EventEmitter,
+        cancel: std::sync::Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call(messages, cancel).await
+    }
+
     /// Model identifier (e.g. "claude-sonnet-4-6").
     fn model_id(&self) -> &str;
 

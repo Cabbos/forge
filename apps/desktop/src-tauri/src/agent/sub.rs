@@ -213,6 +213,100 @@ impl SubAgent {
             Err(e) => build_error_json(&format!("Final error: {e}"), &traces),
         }
     }
+
+    /// Run a sub-agent using an abstract event emitter.
+    /// Currently delegates to `run` — the emitter path is only used when the
+    /// parent session itself runs with an emitter (tests), and delegate_task
+    /// calls are not produced by test adapters.
+    pub async fn run_with_emitter(
+        task: &str,
+        adapter: Arc<dyn AiAdapter>,
+        harness: Arc<Harness>,
+        _emitter: &dyn crate::agent::event_sink::EventEmitter,
+        cancel: Arc<Notify>,
+        working_dir: &std::path::Path,
+    ) -> String {
+        // Sub-agents only use adapter.call() (no AppHandle needed) and
+        // harness.execute_tool_with_emitter for tools.
+        // For now, use adapter.call() directly and build a minimal loop.
+        let project_ctx = crate::harness::read_project_context(working_dir).unwrap_or_default();
+        let context_section = if project_ctx.is_empty() {
+            format!("Working directory: {}\n", working_dir.display())
+        } else {
+            format!(
+                "Working directory: {}\n\nProject context:\n{}\n",
+                working_dir.display(),
+                project_ctx
+            )
+        };
+
+        let system = ChatMessage::system(&format!(
+            "You are a focused research sub-agent. Your task is to investigate a specific \
+            question and return a concise answer.\n\
+            You have read-only tools: read_file, search_content, search_files, list_directory, \
+            web_search, web_fetch, git_diff.\n\
+            Do NOT use write_to_file, edit_file, run_shell, or delegate_task.\n\
+            Be thorough but concise. Return your findings as plain text.\n\n\
+            {context_section}"
+        ));
+
+        let task_msg = ChatMessage::user(task);
+        let mut messages: Vec<ChatMessage> = vec![system, task_msg];
+
+        for _round in 0..MAX_ROUNDS {
+            let stream_result = match adapter.call(&messages, cancel.clone()).await {
+                Ok(r) => r,
+                Err(e) => {
+                    return build_error_json(&format!("API error: {e}"), &[]);
+                }
+            };
+
+            if !stream_result.assistant_content.is_empty() {
+                messages.push(ChatMessage::assistant(serde_json::Value::Array(
+                    stream_result.assistant_content.clone(),
+                )));
+            }
+
+            if stream_result.tool_calls.is_empty() {
+                let text = extract_by_type(&stream_result.assistant_content, "text");
+                return build_result_json(&text, &[]);
+            }
+
+            let emitter_arc: Arc<dyn crate::agent::event_sink::EventEmitter> =
+                Arc::new(crate::agent::event_sink::NoopEventEmitter);
+            let mut result_map = std::collections::HashMap::new();
+            for tc in &stream_result.tool_calls {
+                let is_blocked = matches!(
+                    tc.name.as_str(),
+                    "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task"
+                );
+                let result = if is_blocked {
+                    format!("Tool '{}' is blocked for sub-agents", tc.name)
+                } else {
+                    harness
+                        .execute_tool_with_emitter(
+                            "sub",
+                            &tc.name,
+                            &tc.input,
+                            emitter_arc.clone(),
+                            Some(&tc.id),
+                            Some(cancel.clone()),
+                        )
+                        .await
+                };
+                result_map.insert(tc.id.clone(), result);
+            }
+
+            let model_tool_results =
+                crate::agent::tool_results::build_tool_result_message_for_model(
+                    &result_map,
+                    &stream_result.tool_calls,
+                );
+            messages.push(model_tool_results.message);
+        }
+
+        build_error_json("Max rounds reached", &[])
+    }
 }
 
 fn extract_by_type(content: &[serde_json::Value], target_type: &str) -> String {

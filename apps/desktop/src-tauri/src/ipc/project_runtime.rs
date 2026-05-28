@@ -668,6 +668,16 @@ mod tests {
         }
     }
 
+    async fn wait_for_path(path: &std::path::Path) {
+        for _ in 0..50 {
+            if path.exists() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("expected path to be created: {}", path.display());
+    }
+
     #[test]
     fn runtime_does_not_treat_other_project_port_as_current_preview() {
         let project = temp_workspace("project");
@@ -779,6 +789,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_request_uses_session_workspace_over_explicit_workspace() {
+        let session_workspace = temp_workspace("session-workspace");
+        let explicit_workspace = temp_workspace("explicit-workspace");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(explicit_workspace.clone()),
+        )));
+        let session = std::sync::Arc::new(crate::agent::session::AgentSession::new(
+            "session-1".to_string(),
+            "deepseek".to_string(),
+            std::sync::Arc::new(crate::adapters::missing_key::MissingKeyAdapter::new(
+                "DeepSeek",
+                "deepseek-chat",
+            )),
+            std::sync::Arc::new(crate::harness::Harness::new(session_workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-1".to_string(), session)
+            .await;
+
+        let resolved = runtime_working_dir_or_explicit(
+            &state,
+            Some("session-1"),
+            Some(explicit_workspace.to_str().expect("utf8")),
+        )
+        .await
+        .expect("runtime workspace should resolve");
+
+        assert_eq!(
+            resolved.canonicalize().expect("resolved workspace"),
+            session_workspace.canonicalize().expect("session workspace")
+        );
+        assert_ne!(
+            resolved.canonicalize().expect("resolved workspace"),
+            explicit_workspace
+                .canonicalize()
+                .expect("explicit workspace")
+        );
+
+        let _ = std::fs::remove_dir_all(session_workspace);
+        let _ = std::fs::remove_dir_all(explicit_workspace);
+    }
+
+    #[tokio::test]
     #[cfg(unix)]
     async fn stop_runtime_does_not_take_managed_server_from_other_workspace() {
         let project = temp_workspace("stop-project");
@@ -852,6 +907,51 @@ mod tests {
         assert!(state.dev_server.read().await.is_none());
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         assert!(!marker.exists());
+
+        let _ = std::fs::remove_dir_all(project);
+        let _ = std::fs::remove_dir_all(other);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn replacing_runtime_kills_previous_background_child_processes() {
+        let project = temp_workspace("replace-background-project");
+        let other = temp_workspace("replace-background-other");
+        let spawned = other.join("spawned");
+        let marker = other.join("marker");
+        let state = std::sync::Arc::new(crate::state::AppState::new(std::sync::Arc::new(
+            crate::harness::Harness::new(project.clone()),
+        )));
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "(echo spawned > spawned; sleep 1; echo leaked-child > marker) & wait",
+            ])
+            .current_dir(&other)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        configure_command_process_group(&mut command);
+        let child = command.spawn().expect("spawn previous managed server");
+        *state.dev_server.write().await = Some(crate::state::ManagedDevServer {
+            child,
+            working_dir: other.clone(),
+            port: 5173,
+            url: "http://localhost:5173".to_string(),
+            command: "npm run dev".to_string(),
+            logs: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        });
+
+        wait_for_path(&spawned).await;
+        stop_managed_server_if_replacing_workspace(&state, &project).await;
+
+        assert!(state.dev_server.read().await.is_none());
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        assert!(
+            !marker.exists(),
+            "dev server stop must kill background child processes, not only the shell parent"
+        );
 
         let _ = std::fs::remove_dir_all(project);
         let _ = std::fs::remove_dir_all(other);

@@ -1,11 +1,13 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adapters::base::ChatMessage;
 use crate::agent::turn_state::AgentTurnState;
 use crate::protocol::events::DeliverySummary;
 use crate::workflow::WorkflowState;
+
+const MAX_LISTED_SESSION_SNAPSHOTS: usize = 200;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentSessionSnapshot {
@@ -89,7 +91,9 @@ fn save_session_snapshot_at(
     let mut snapshot = snapshot.clone();
     if let Ok(existing_json) = fs::read_to_string(&path) {
         if let Ok(existing) = serde_json::from_str::<AgentSessionSnapshot>(&existing_json) {
-            snapshot.created_at_ms = existing.created_at_ms;
+            if existing.session_id == snapshot.session_id {
+                snapshot.created_at_ms = existing.created_at_ms;
+            }
         }
     }
     let json = serde_json::to_string_pretty(&snapshot)
@@ -99,11 +103,25 @@ fn save_session_snapshot_at(
 }
 
 pub fn load_session_snapshot(session_id: &str) -> Result<AgentSessionSnapshot, String> {
-    let path = snapshot_path(session_id)?;
+    load_session_snapshot_at(&app_data_dir(), session_id)
+}
+
+fn load_session_snapshot_at(
+    root: &std::path::Path,
+    session_id: &str,
+) -> Result<AgentSessionSnapshot, String> {
+    let path = snapshot_path_at(root, session_id)?;
     let json = fs::read_to_string(&path)
         .map_err(|e| format!("Cannot read saved session '{}': {e}", session_id))?;
-    serde_json::from_str(&json)
-        .map_err(|e| format!("Saved session '{}' is corrupted: {e}", session_id))
+    let snapshot: AgentSessionSnapshot = serde_json::from_str(&json)
+        .map_err(|e| format!("Saved session '{}' is corrupted: {e}", session_id))?;
+    if snapshot.session_id != session_id {
+        return Err(format!(
+            "Saved session '{}' has mismatched session id",
+            session_id
+        ));
+    }
+    Ok(snapshot)
 }
 
 pub fn delete_session_snapshot(session_id: &str) -> Result<(), String> {
@@ -138,16 +156,58 @@ fn list_session_snapshots_from_dir(
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        let Ok(json) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(snapshot) = serde_json::from_str::<AgentSessionSnapshot>(&json) else {
-            continue;
-        };
-        snapshots.push(snapshot);
+        match load_listable_session_snapshot(&path) {
+            Ok(snapshot) => snapshots.push(snapshot),
+            Err(reason) => crate::app_log!(
+                "WARN",
+                "[session_snapshot] skipped {}: {}",
+                path.display(),
+                reason.as_str()
+            ),
+        }
     }
     snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.updated_at_ms));
+    snapshots.truncate(MAX_LISTED_SESSION_SNAPSHOTS);
     Ok(snapshots)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SnapshotListSkipReason {
+    Unreadable,
+    Corrupted,
+    UnsafeOrMismatchedSessionId,
+}
+
+impl SnapshotListSkipReason {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unreadable => "snapshot file is not readable",
+            Self::Corrupted => "snapshot JSON is corrupted",
+            Self::UnsafeOrMismatchedSessionId => {
+                "snapshot file name and session id do not match safely"
+            }
+        }
+    }
+}
+
+fn load_listable_session_snapshot(
+    path: &Path,
+) -> Result<AgentSessionSnapshot, SnapshotListSkipReason> {
+    let json = fs::read_to_string(path).map_err(|_| SnapshotListSkipReason::Unreadable)?;
+    let snapshot = serde_json::from_str::<AgentSessionSnapshot>(&json)
+        .map_err(|_| SnapshotListSkipReason::Corrupted)?;
+    if !snapshot_file_matches_session_id(path, &snapshot.session_id) {
+        return Err(SnapshotListSkipReason::UnsafeOrMismatchedSessionId);
+    }
+    Ok(snapshot)
+}
+
+fn snapshot_file_matches_session_id(path: &Path, session_id: &str) -> bool {
+    is_safe_session_id(session_id)
+        && path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem == session_id)
 }
 
 fn snapshot_path(session_id: &str) -> Result<PathBuf, String> {
@@ -155,11 +215,15 @@ fn snapshot_path(session_id: &str) -> Result<PathBuf, String> {
 }
 
 fn snapshot_path_at(root: &std::path::Path, session_id: &str) -> Result<PathBuf, String> {
-    let id = safe_session_id(session_id);
-    if id.is_empty() {
+    if !is_safe_session_id(session_id) {
         return Err("Invalid session id".to_string());
     }
-    Ok(root.join("sessions").join(format!("{id}.json")))
+    Ok(root.join("sessions").join(format!("{session_id}.json")))
+}
+
+fn is_safe_session_id(session_id: &str) -> bool {
+    let id = safe_session_id(session_id);
+    !id.is_empty() && id == session_id
 }
 
 fn safe_session_id(session_id: &str) -> String {
@@ -288,6 +352,183 @@ mod tests {
     }
 
     #[test]
+    fn list_session_snapshots_caps_to_most_recent_entries() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-list-cap-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        for index in 0..205 {
+            let mut snapshot = snapshot();
+            snapshot.session_id = format!("session-{index:03}");
+            snapshot.updated_at_ms = index;
+            fs::write(
+                sessions_dir.join(format!("session-{index:03}.json")),
+                serde_json::to_string(&snapshot).expect("snapshot json"),
+            )
+            .expect("write snapshot");
+        }
+
+        let listed = list_session_snapshots_from_dir(&root).expect("list snapshots");
+
+        assert_eq!(listed.len(), 200);
+        assert_eq!(
+            listed.first().map(|snapshot| snapshot.updated_at_ms),
+            Some(204)
+        );
+        assert_eq!(
+            listed.last().map(|snapshot| snapshot.updated_at_ms),
+            Some(5)
+        );
+        assert!(!listed
+            .iter()
+            .any(|snapshot| snapshot.session_id == "session-004"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_session_snapshots_skips_unsafe_or_mismatched_session_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-list-safety-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut valid = snapshot();
+        valid.session_id = "session-1".to_string();
+        fs::write(
+            sessions_dir.join("session-1.json"),
+            serde_json::to_string(&valid).expect("valid json"),
+        )
+        .expect("write valid");
+
+        let mut unsafe_id = snapshot();
+        unsafe_id.session_id = "../session-1".to_string();
+        fs::write(
+            sessions_dir.join("unsafe.json"),
+            serde_json::to_string(&unsafe_id).expect("unsafe json"),
+        )
+        .expect("write unsafe");
+
+        let mut mismatched = snapshot();
+        mismatched.session_id = "other-session".to_string();
+        fs::write(
+            sessions_dir.join("mismatched.json"),
+            serde_json::to_string(&mismatched).expect("mismatched json"),
+        )
+        .expect("write mismatched");
+
+        let listed = list_session_snapshots_from_dir(&root).expect("list snapshots");
+
+        assert_eq!(
+            listed
+                .iter()
+                .map(|snapshot| snapshot.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["session-1"]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn listable_snapshot_reports_skip_reasons_for_bad_files() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-list-reasons-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let corrupted_path = sessions_dir.join("corrupted.json");
+        fs::write(&corrupted_path, "{").expect("write corrupted");
+        assert_eq!(
+            load_listable_session_snapshot(&corrupted_path).expect_err("corrupted snapshot"),
+            SnapshotListSkipReason::Corrupted
+        );
+
+        let mut unsafe_id = snapshot();
+        unsafe_id.session_id = "../session-1".to_string();
+        let unsafe_path = sessions_dir.join("unsafe.json");
+        fs::write(
+            &unsafe_path,
+            serde_json::to_string(&unsafe_id).expect("unsafe json"),
+        )
+        .expect("write unsafe");
+        assert_eq!(
+            load_listable_session_snapshot(&unsafe_path).expect_err("unsafe snapshot"),
+            SnapshotListSkipReason::UnsafeOrMismatchedSessionId
+        );
+
+        let mut mismatched = snapshot();
+        mismatched.session_id = "other-session".to_string();
+        let mismatched_path = sessions_dir.join("mismatched.json");
+        fs::write(
+            &mismatched_path,
+            serde_json::to_string(&mismatched).expect("mismatched json"),
+        )
+        .expect("write mismatched");
+        assert_eq!(
+            load_listable_session_snapshot(&mismatched_path).expect_err("mismatched snapshot"),
+            SnapshotListSkipReason::UnsafeOrMismatchedSessionId
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_path_rejects_session_ids_that_would_be_sanitized() {
+        let root = std::env::temp_dir();
+
+        assert!(snapshot_path_at(&root, "session-1").is_ok());
+        assert!(snapshot_path_at(&root, "../session-1").is_err());
+        assert!(snapshot_path_at(&root, "session/1").is_err());
+        assert!(snapshot_path_at(&root, "session 1").is_err());
+        assert!(snapshot_path_at(&root, "").is_err());
+    }
+
+    #[test]
+    fn load_session_snapshot_rejects_mismatched_snapshot_session_id() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-load-safety-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut mismatched = snapshot();
+        mismatched.session_id = "other-session".to_string();
+        fs::write(
+            sessions_dir.join("session-1.json"),
+            serde_json::to_string(&mismatched).expect("mismatched json"),
+        )
+        .expect("write mismatched");
+
+        let error = load_session_snapshot_at(&root, "session-1")
+            .expect_err("mismatched snapshot should be rejected");
+
+        assert!(error.contains("session id"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn save_session_snapshot_preserves_original_created_timestamp() {
         let root = std::env::temp_dir().join(format!(
             "forge-snapshot-created-{}",
@@ -315,6 +556,41 @@ mod tests {
 
         assert_eq!(restored.created_at_ms, 11);
         assert_eq!(restored.updated_at_ms, 100);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_session_snapshot_ignores_mismatched_existing_created_timestamp() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-created-safety-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut existing = snapshot();
+        existing.session_id = "other-session".to_string();
+        existing.created_at_ms = 11;
+        existing.updated_at_ms = 12;
+        fs::write(
+            sessions_dir.join("session-1.json"),
+            serde_json::to_string(&existing).expect("existing json"),
+        )
+        .expect("write existing");
+
+        let mut replacement = snapshot();
+        replacement.session_id = "session-1".to_string();
+        replacement.created_at_ms = 99;
+        replacement.updated_at_ms = 100;
+        save_session_snapshot_at(&root, &replacement).expect("save replacement");
+
+        let restored = load_session_snapshot_at(&root, "session-1").expect("load replacement");
+
+        assert_eq!(restored.created_at_ms, 99);
 
         let _ = fs::remove_dir_all(root);
     }

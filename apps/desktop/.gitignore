@@ -31,3 +31,6 @@ Thumbs.db
 .superpowers/
 skills-lock.json
 docs/superpowers/
+
+# Local MCP config (contains API keys)
+.mcp.json

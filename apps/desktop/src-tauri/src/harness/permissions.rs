@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::harness::db::Database;
 use crate::harness::mcp;
+use crate::harness::shell_policy::{classify_shell_command, ShellPolicyDecision, ShellSafetyLevel};
 
 #[derive(Debug, Clone)]
 pub enum PermissionDecision {
@@ -77,17 +78,18 @@ impl PermissionGate {
             }
             "run_shell" => {
                 let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                if is_readonly_shell_command(command) {
-                    return PermissionDecision::Allow;
-                }
-                PermissionDecision::Ask {
-                    question: format_shell_question(command),
-                    kind: if is_dangerous_shell_command(command) {
-                        "dangerous_cmd".to_string()
-                    } else {
-                        "shell_cmd".to_string()
+                match classify_shell_command(command) {
+                    ShellPolicyDecision::AllowReadonly => PermissionDecision::Allow,
+                    ShellPolicyDecision::Blocked { reason } => PermissionDecision::Deny { reason },
+                    ShellPolicyDecision::NeedsConfirmation { safety } => PermissionDecision::Ask {
+                        question: format_shell_question(command),
+                        kind: if safety == ShellSafetyLevel::Dangerous {
+                            "dangerous_cmd".to_string()
+                        } else {
+                            "shell_cmd".to_string()
+                        },
+                        remember_key: None,
                     },
-                    remember_key: None,
                 }
             }
             "ask_user" => PermissionDecision::Allow,
@@ -327,93 +329,4 @@ fn truncate_inline(value: &str, max_chars: usize) -> String {
     let mut truncated = value.chars().take(max_chars).collect::<String>();
     truncated.push('…');
     truncated
-}
-
-fn is_readonly_shell_command(command: &str) -> bool {
-    let lower = command.trim().to_lowercase();
-    if lower.is_empty()
-        || contains_shell_control(&lower)
-        || references_external_path(&lower)
-        || is_dangerous_shell_command(&lower)
-    {
-        return false;
-    }
-
-    let allowed_prefixes = [
-        "pwd",
-        "ls",
-        "git status",
-        "git diff",
-        "git log",
-        "git show",
-        "rg ",
-        "grep ",
-        "find ",
-        "cat ",
-        "sed -n",
-        "wc ",
-        "npm run build",
-        "cargo test",
-        "cargo check",
-        "cargo fmt --check",
-    ];
-    allowed_prefixes.iter().any(|prefix| {
-        let prefix = *prefix;
-        lower == prefix.trim_end()
-            || lower.starts_with(prefix)
-            || lower
-                .strip_prefix(prefix.trim_end())
-                .map(|rest| rest.starts_with(' '))
-                .unwrap_or(false)
-    })
-}
-
-fn is_dangerous_shell_command(command: &str) -> bool {
-    let lower = command.trim().to_lowercase();
-    let dangerous = [
-        "rm ",
-        "rmdir ",
-        "sudo ",
-        "su ",
-        "chmod ",
-        "chown ",
-        "git push",
-        "git reset",
-        "git checkout --",
-        "npm publish",
-        "cargo publish",
-        "curl ",
-        "wget ",
-        "dd ",
-        "mkfs",
-        "mv ",
-        "cp ",
-        "python -c",
-        "node -e",
-        "perl -e",
-        "ruby -e",
-    ];
-    dangerous.iter().any(|pattern| {
-        lower.starts_with(pattern)
-            || lower.contains(&format!("&& {}", pattern))
-            || lower.contains(&format!("|| {}", pattern))
-            || lower.contains(&format!("; {}", pattern))
-            || lower.contains(&format!("| {}", pattern))
-    })
-}
-
-fn contains_shell_control(command: &str) -> bool {
-    ["&&", "||", ";", "|", "`", "$(", ">", "<"]
-        .iter()
-        .any(|token| command.contains(token))
-}
-
-fn references_external_path(command: &str) -> bool {
-    command.contains("~/")
-        || command.contains("$home")
-        || command.contains("../")
-        || command.contains("..\\")
-        || command.contains(" /")
-        || command.starts_with('/')
-        || command.contains(" file://")
 }

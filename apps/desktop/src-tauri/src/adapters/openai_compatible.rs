@@ -82,6 +82,31 @@ impl OpenAiCompatibleAdapter {
         );
         tools
     }
+
+    fn request_for_messages(&self, messages: &[ChatMessage], stream: bool) -> OpenAiRequest {
+        let repaired_messages = repair_tool_result_adjacency(messages);
+        let openai_msgs = convert_messages(&repaired_messages);
+        let tools: Vec<OpenAiTool> = self
+            .tool_definitions_for_request()
+            .into_iter()
+            .map(|td| OpenAiTool {
+                type_: "function".to_string(),
+                function: OpenAiFunctionDef {
+                    name: td.name,
+                    description: td.description,
+                    parameters: td.input_schema,
+                },
+            })
+            .collect();
+
+        OpenAiRequest {
+            model: self.model.clone(),
+            messages: openai_msgs,
+            stream,
+            max_tokens: Some(self.max_tokens),
+            tools: if tools.is_empty() { None } else { Some(tools) },
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -162,28 +187,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         messages: &[ChatMessage],
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        let repaired_messages = repair_tool_result_adjacency(messages);
-        let openai_msgs = convert_messages(&repaired_messages);
-        let tools: Vec<OpenAiTool> = self
-            .tool_definitions_for_request()
-            .into_iter()
-            .map(|td| OpenAiTool {
-                type_: "function".to_string(),
-                function: OpenAiFunctionDef {
-                    name: td.name,
-                    description: td.description,
-                    parameters: td.input_schema,
-                },
-            })
-            .collect();
-
-        let request = OpenAiRequest {
-            model: self.model.clone(),
-            messages: openai_msgs,
-            stream: false,
-            max_tokens: Some(self.max_tokens),
-            tools: if tools.is_empty() { None } else { Some(tools) },
-        };
+        let request = self.request_for_messages(messages, false);
 
         let response = tokio::select! {
             response = self
@@ -239,30 +243,12 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             messages.len(),
             self.model
         );
-        let repaired_messages = repair_tool_result_adjacency(messages);
-        let openai_msgs = convert_messages(&repaired_messages);
-        crate::app_log!("INFO", "Converted to {} OpenAI messages", openai_msgs.len());
-
-        let tools: Vec<OpenAiTool> = self
-            .tool_definitions_for_request()
-            .into_iter()
-            .map(|td| OpenAiTool {
-                type_: "function".to_string(),
-                function: OpenAiFunctionDef {
-                    name: td.name,
-                    description: td.description,
-                    parameters: td.input_schema,
-                },
-            })
-            .collect();
-
-        let request = OpenAiRequest {
-            model: self.model.clone(),
-            messages: openai_msgs,
-            stream: true,
-            max_tokens: Some(self.max_tokens),
-            tools: if tools.is_empty() { None } else { Some(tools) },
-        };
+        let request = self.request_for_messages(messages, true);
+        crate::app_log!(
+            "INFO",
+            "Converted to {} OpenAI messages",
+            request.messages.len()
+        );
 
         // Debug: log request body for troubleshooting tool message issues
         let body_json = serde_json::to_string_pretty(&request).unwrap_or_default();
@@ -292,13 +278,8 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
 
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut assistant_content: Vec<serde_json::Value> = Vec::new();
-        let mut stop_reason: Option<String> = None;
-        let mut current_text = String::new();
-        let mut current_reasoning = String::new();
         let mut active_text_block_id: Option<String> = None;
-        let mut tool_call_buffers: Vec<(usize, String, String, String)> = Vec::new(); // (idx, id, name, args_json)
+        let mut parser = OpenAiStreamParser::default();
 
         loop {
             let chunk = tokio::select! {
@@ -314,111 +295,37 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             };
             let chunk = chunk.map_err(|e| AdapterError::Stream(e.to_string()))?;
             let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
-
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_data = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
-
-                let data: String = event_data
-                    .lines()
-                    .filter_map(|l| l.strip_prefix("data: "))
-                    .collect::<Vec<_>>()
-                    .join("");
-
-                if data.is_empty() || data == "[DONE]" {
-                    continue;
-                }
-
+            for data in drain_openai_sse_data(&mut buffer, &text) {
                 let parsed: serde_json::Value = match serde_json::from_str(&data) {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
 
                 let session = session_id.to_string();
+                let update = parser.apply_event(&parsed);
 
-                if let Some(choices) = parsed["choices"].as_array() {
-                    for choice in choices {
-                        let finish = choice["finish_reason"].as_str().unwrap_or("");
-                        if !finish.is_empty() {
-                            stop_reason = Some(finish.to_string());
-                        }
-
-                        let delta = &choice["delta"];
-
-                        // Capture reasoning_content for thinking mode echo-back
-                        if let Some(rc) = delta["reasoning_content"].as_str() {
-                            current_reasoning.push_str(rc);
-                        }
-
-                        // Text content — reuse same block_id for streaming continuity
-                        if let Some(content) = delta["content"].as_str() {
-                            if current_text.is_empty() {
-                                active_text_block_id = Some(BlockId::new().to_string());
-                                crate::transcript::emit_stream_event(
-                                    app_handle,
-                                    StreamEvent::TextStart {
-                                        session_id: session.clone(),
-                                        block_id: active_text_block_id.clone().unwrap(),
-                                    },
-                                );
-                            }
-                            current_text.push_str(content);
-                            crate::transcript::emit_stream_event(
-                                app_handle,
-                                StreamEvent::TextChunk {
-                                    session_id: session.clone(),
-                                    block_id: active_text_block_id.clone().unwrap_or_default(),
-                                    content: content.to_string(),
-                                },
-                            );
-                        }
-
-                        // Tool calls
-                        if let Some(tcs) = delta["tool_calls"].as_array() {
-                            for tc in tcs {
-                                let idx = tc["index"].as_u64().unwrap_or(0) as usize;
-
-                                // Find or create buffer slot
-                                while tool_call_buffers.len() <= idx {
-                                    tool_call_buffers.push((
-                                        tool_call_buffers.len(),
-                                        String::new(),
-                                        String::new(),
-                                        String::new(),
-                                    ));
-                                }
-
-                                if let Some(id) = tc["id"].as_str() {
-                                    tool_call_buffers[idx].1 = id.to_string();
-                                }
-                                if let Some(func) = tc["function"].as_object() {
-                                    if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
-                                        if !name.is_empty() {
-                                            tool_call_buffers[idx].2 = name.to_string();
-                                        }
-                                    }
-                                    if let Some(args) =
-                                        func.get("arguments").and_then(|v| v.as_str())
-                                    {
-                                        tool_call_buffers[idx].3.push_str(args);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if update.text_started {
+                    active_text_block_id = Some(BlockId::new().to_string());
+                    crate::transcript::emit_stream_event(
+                        app_handle,
+                        StreamEvent::TextStart {
+                            session_id: session.clone(),
+                            block_id: active_text_block_id.clone().unwrap(),
+                        },
+                    );
+                }
+                for content in update.text_chunks {
+                    crate::transcript::emit_stream_event(
+                        app_handle,
+                        StreamEvent::TextChunk {
+                            session_id: session.clone(),
+                            block_id: active_text_block_id.clone().unwrap_or_default(),
+                            content,
+                        },
+                    );
                 }
 
-                // Usage
-                if let Some(usage) = parsed["usage"].as_object() {
-                    let input_toks = usage
-                        .get("prompt_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    let output_toks = usage
-                        .get("completion_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
+                if let Some((input_toks, output_toks)) = update.usage {
                     let cost = crate::adapters::anthropic::estimate_cost(
                         &self.model,
                         input_toks,
@@ -435,17 +342,13 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     );
                 }
 
-                // Error
-                if parsed["error"].is_object() {
-                    let msg = parsed["error"]["message"]
-                        .as_str()
-                        .unwrap_or("Unknown error");
+                if let Some(msg) = update.error {
                     crate::transcript::emit_stream_event(
                         app_handle,
                         StreamEvent::Error {
                             session_id: session.clone(),
                             block_id: BlockId::new().to_string(),
-                            message: msg.to_string(),
+                            message: msg,
                             code: "api_error".to_string(),
                         },
                     );
@@ -454,8 +357,9 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         }
 
         // Flush remaining text — reuse the active block_id for continuity
-        if !current_text.is_empty() {
-            assistant_content.push(serde_json::json!({"type":"text","text":current_text}));
+        let has_text = parser.has_text();
+        let result = parser.finish();
+        if has_text {
             let bid = active_text_block_id.unwrap_or_else(|| BlockId::new().to_string());
             crate::transcript::emit_stream_event(
                 app_handle,
@@ -466,56 +370,189 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             );
         }
 
-        // Store reasoning_content in assistant_content for DeepSeek think mode echo-back
-        if !current_reasoning.is_empty() {
-            assistant_content.push(
-                serde_json::json!({"type":"reasoning","reasoning_content":current_reasoning}),
+        for tool_call in &result.tool_calls {
+            let bid = tool_call.id.clone();
+            crate::transcript::emit_stream_event(
+                app_handle,
+                StreamEvent::ToolCallStart {
+                    session_id: session_id.to_string(),
+                    block_id: bid.clone(),
+                    tool_name: tool_call.name.clone(),
+                    tool_input: tool_call.input.clone(),
+                },
+            );
+            crate::transcript::emit_stream_event(
+                app_handle,
+                StreamEvent::ToolCallEnd {
+                    session_id: session_id.to_string(),
+                    block_id: bid,
+                },
             );
         }
 
-        // Convert completed tool call buffers and add to assistant_content
-        for (_idx, id, name, args_json) in &tool_call_buffers {
-            if !id.is_empty() && !name.is_empty() {
-                let input: serde_json::Value = serde_json::from_str(args_json)
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
-                // Add tool_use block to assistant content (critical for message format)
-                assistant_content.push(serde_json::json!({
-                    "type": "tool_use",
-                    "id": id,
-                    "name": name,
-                    "input": input,
-                }));
-                tool_calls.push(ToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: input.clone(),
-                });
-                let bid = id.clone();
-                crate::transcript::emit_stream_event(
-                    app_handle,
-                    StreamEvent::ToolCallStart {
-                        session_id: session_id.to_string(),
-                        block_id: bid.clone(),
-                        tool_name: name.clone(),
-                        tool_input: input.clone(),
-                    },
-                );
-                crate::transcript::emit_stream_event(
-                    app_handle,
-                    StreamEvent::ToolCallEnd {
-                        session_id: session_id.to_string(),
-                        block_id: bid,
-                    },
-                );
+        Ok(result)
+    }
+}
+
+#[derive(Default)]
+struct OpenAiStreamParser {
+    current_text: String,
+    current_reasoning: String,
+    tool_call_buffers: Vec<OpenAiToolCallBuffer>,
+    stop_reason: Option<String>,
+}
+
+#[derive(Default)]
+struct OpenAiToolCallBuffer {
+    id: String,
+    name: String,
+    arguments_json: String,
+}
+
+#[derive(Default)]
+struct OpenAiStreamUpdate {
+    text_started: bool,
+    text_chunks: Vec<String>,
+    usage: Option<(u32, u32)>,
+    error: Option<String>,
+}
+
+impl OpenAiStreamParser {
+    fn apply_event(&mut self, parsed: &serde_json::Value) -> OpenAiStreamUpdate {
+        let mut update = OpenAiStreamUpdate::default();
+
+        if let Some(choices) = parsed["choices"].as_array() {
+            for choice in choices {
+                let finish = choice["finish_reason"].as_str().unwrap_or("");
+                if !finish.is_empty() {
+                    self.stop_reason = Some(finish.to_string());
+                }
+
+                let delta = &choice["delta"];
+
+                if let Some(rc) = delta["reasoning_content"].as_str() {
+                    self.current_reasoning.push_str(rc);
+                }
+
+                if let Some(content) = delta["content"].as_str() {
+                    if self.current_text.is_empty() {
+                        update.text_started = true;
+                    }
+                    self.current_text.push_str(content);
+                    update.text_chunks.push(content.to_string());
+                }
+
+                if let Some(tcs) = delta["tool_calls"].as_array() {
+                    for tc in tcs {
+                        let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                        while self.tool_call_buffers.len() <= idx {
+                            self.tool_call_buffers.push(OpenAiToolCallBuffer::default());
+                        }
+
+                        if let Some(id) = tc["id"].as_str() {
+                            self.tool_call_buffers[idx].id = id.to_string();
+                        }
+                        if let Some(func) = tc["function"].as_object() {
+                            if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                                if !name.is_empty() {
+                                    self.tool_call_buffers[idx].name = name.to_string();
+                                }
+                            }
+                            if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                self.tool_call_buffers[idx].arguments_json.push_str(args);
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        Ok(StreamResult {
+        if let Some(usage) = parsed["usage"].as_object() {
+            let input_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let output_tokens = usage
+                .get("completion_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            update.usage = Some((input_tokens, output_tokens));
+        }
+
+        if parsed["error"].is_object() {
+            update.error = Some(
+                parsed["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+                    .to_string(),
+            );
+        }
+
+        update
+    }
+
+    fn has_text(&self) -> bool {
+        !self.current_text.is_empty()
+    }
+
+    fn finish(self) -> StreamResult {
+        let mut assistant_content = Vec::new();
+        let mut tool_calls = Vec::new();
+
+        if !self.current_text.is_empty() {
+            assistant_content.push(serde_json::json!({"type":"text","text":self.current_text}));
+        }
+        if !self.current_reasoning.is_empty() {
+            assistant_content.push(
+                serde_json::json!({"type":"reasoning","reasoning_content":self.current_reasoning}),
+            );
+        }
+
+        for buffer in self.tool_call_buffers {
+            if buffer.id.is_empty() || buffer.name.is_empty() {
+                continue;
+            }
+            let id = buffer.id;
+            let name = buffer.name;
+            let input: serde_json::Value = serde_json::from_str(&buffer.arguments_json)
+                .unwrap_or(serde_json::Value::Object(Default::default()));
+            assistant_content.push(serde_json::json!({
+                "type": "tool_use",
+                "id": id.clone(),
+                "name": name.clone(),
+                "input": input.clone(),
+            }));
+            tool_calls.push(ToolCall { id, name, input });
+        }
+
+        StreamResult {
             assistant_content,
             tool_calls,
-            stop_reason,
-        })
+            stop_reason: self.stop_reason,
+        }
     }
+}
+
+fn drain_openai_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
+    buffer.push_str(chunk);
+    let mut events = Vec::new();
+
+    while let Some(event_end) = buffer.find("\n\n") {
+        let event_data = buffer[..event_end].to_string();
+        buffer.replace_range(..event_end + 2, "");
+
+        let data = event_data
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .collect::<Vec<_>>()
+            .join("");
+
+        if !data.is_empty() && data != "[DONE]" {
+            events.push(data);
+        }
+    }
+
+    events
 }
 
 fn parse_openai_chat_completion(parsed: &serde_json::Value) -> StreamResult {
@@ -812,6 +849,9 @@ pub fn tool_definitions() -> Vec<ToolDef> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     #[test]
     fn external_tools_are_included_in_openai_compatible_definitions() {
@@ -926,5 +966,232 @@ mod tests {
 
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].input, serde_json::json!({}));
+    }
+
+    #[test]
+    fn parses_streaming_tool_call_split_across_sse_and_network_chunks() {
+        let first_delta = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "先看文件。",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\""
+                        }
+                    }]
+                }
+            }]
+        });
+        let second_delta = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "arguments": ":\"src/App.tsx\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let first_event = format!("data: {first_delta}\n\n");
+        let second_event = format!("data: {second_delta}\n\ndata: [DONE]\n\n");
+        let result = parse_openai_stream_chunks(&[
+            &first_event[..first_event.len() - 1],
+            &first_event[first_event.len() - 1..],
+            &second_event,
+        ]);
+
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({"type": "text", "text": "先看文件。"}),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
+    #[tokio::test]
+    async fn call_repairs_tool_history_before_serializing_request() {
+        let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }]
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": { "path": "src/App.tsx" }
+            }])),
+            ChatMessage::user("继续处理"),
+        ];
+
+        let result = adapter
+            .call(&messages, Arc::new(Notify::new()))
+            .await
+            .expect("adapter call");
+        let request_body = received_body
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured request body");
+        let request_messages = request_body["messages"]
+            .as_array()
+            .expect("request messages");
+
+        assert_eq!(
+            result.assistant_content,
+            vec![serde_json::json!({"type": "text", "text": "ok"})]
+        );
+        assert_openai_tool_result_contract(request_messages);
+        assert!(request_messages
+            .iter()
+            .any(|message| { message["role"] == "tool" && message["tool_call_id"] == "call_1" }));
+        assert!(request_messages
+            .iter()
+            .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[test]
+    fn stream_request_repairs_tool_history_before_serializing_request() {
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string()).unwrap();
+        let messages = vec![
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "read_file",
+                "input": { "path": "src/App.tsx" }
+            }])),
+            ChatMessage::user("继续处理"),
+        ];
+
+        let request = adapter.request_for_messages(&messages, true);
+        let request_body = serde_json::to_value(&request).expect("serialize request");
+        let request_messages = request_body["messages"]
+            .as_array()
+            .expect("request messages");
+
+        assert_eq!(request_body["stream"], true);
+        assert_openai_tool_result_contract(request_messages);
+    }
+
+    fn assert_openai_tool_result_contract(messages: &[serde_json::Value]) {
+        for (index, message) in messages.iter().enumerate() {
+            let Some(tool_calls) = message.get("tool_calls").and_then(|value| value.as_array())
+            else {
+                continue;
+            };
+            let ids = tool_calls
+                .iter()
+                .filter_map(|tool_call| tool_call.get("id").and_then(|value| value.as_str()))
+                .collect::<Vec<_>>();
+            for (offset, id) in ids.iter().enumerate() {
+                let next = messages.get(index + 1 + offset).unwrap_or_else(|| {
+                    panic!("assistant tool_call {id} is missing an immediate tool message")
+                });
+                assert_eq!(next["role"], "tool");
+                assert_eq!(next["tool_call_id"], *id);
+            }
+        }
+    }
+
+    fn parse_openai_stream_chunks(chunks: &[&str]) -> StreamResult {
+        let mut buffer = String::new();
+        let mut parser = OpenAiStreamParser::default();
+
+        for chunk in chunks {
+            for data in drain_openai_sse_data(&mut buffer, chunk) {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&data).expect("stream data json");
+                parser.apply_event(&parsed);
+            }
+        }
+
+        parser.finish()
+    }
+
+    fn spawn_json_capture_server(
+        response_body: serde_json::Value,
+    ) -> (String, mpsc::Receiver<serde_json::Value>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let request_body = read_http_json_body(&mut stream);
+            tx.send(request_body).expect("send request body");
+
+            let response = response_body.to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .expect("write response");
+        });
+
+        (base_url, rx)
+    }
+
+    fn read_http_json_body(stream: &mut std::net::TcpStream) -> serde_json::Value {
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let header_end = loop {
+            let read = stream.read(&mut chunk).expect("read request");
+            assert!(read > 0, "connection closed before headers");
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(index) = find_subslice(&buffer, b"\r\n\r\n") {
+                break index + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buffer[..header_end]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+            })
+            .expect("content-length header");
+        while buffer.len() < header_end + content_length {
+            let read = stream.read(&mut chunk).expect("read request body");
+            assert!(read > 0, "connection closed before body");
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+        serde_json::from_slice(&buffer[header_end..header_end + content_length])
+            .expect("request body json")
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
     }
 }
