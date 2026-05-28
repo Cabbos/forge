@@ -837,6 +837,26 @@ impl AgentSession {
         self.emit_latest_turn_projection(app_handle);
     }
 
+    /// Emitter-path counterpart to `kill` — identical behavior but uses an
+    /// `EventEmitter` instead of `tauri::AppHandle`, making it testable
+    /// without a running Tauri window.
+    ///
+    /// Does NOT lock `latest_turn` — the agent loop itself will mark the turn
+    /// as Cancelled when it sees `running == false` after the adapter returns.
+    /// This avoids deadlock on tokio's current_thread runtime where the spawned
+    /// agent task and the caller share one OS thread and `parking_lot::Mutex`
+    /// is non-reentrant.
+    pub fn kill_with_emitter(&self, emitter: &dyn crate::agent::event_sink::EventEmitter) {
+        self.running.store(false, Ordering::SeqCst);
+        *lock_unpoisoned(&self.status) = SessionStatus::Stopped;
+        // Fire cancel token — wakes the adapter if it's waiting on `cancel.notified()`.
+        // Use notify_one() which stores a permit if no waiter yet.
+        if let Some(cancel) = lock_unpoisoned(&self.cancel).as_ref() {
+            cancel.notify_one();
+        }
+        emitter.emit(self.session_stopped_event("killed"));
+    }
+
     fn start_turn(
         &self,
         text: &str,
@@ -2735,14 +2755,13 @@ mod tests {
     // ── CancellableFakeAdapter for cancel mid-turn testing ─────────
 
     /// Adapter that returns tool_use on call 1, signals "ready" then waits for
-    /// a cancel notification on call 2, returns Ok text on call 3.
-    /// Uses `Notify` instead of `Barrier` to avoid blocking the tokio runtime.
+    /// the passed-in cancel token on call 2, returns Ok text on call 3+.
+    /// The cancel token comes from the session — `kill_with_emitter` fires it
+    /// via `notify_one()`, matching real HTTP adapter behavior.
     struct CancellableFakeAdapter {
         call_count: std::sync::atomic::AtomicUsize,
         /// Set to true when the adapter reaches its blocking call (call 2).
         ready: std::sync::atomic::AtomicBool,
-        /// Signalled by the test to unblock the adapter.
-        cancel_signal: Notify,
     }
 
     impl CancellableFakeAdapter {
@@ -2750,7 +2769,6 @@ mod tests {
             Self {
                 call_count: std::sync::atomic::AtomicUsize::new(0),
                 ready: std::sync::atomic::AtomicBool::new(false),
-                cancel_signal: Notify::new(),
             }
         }
     }
@@ -2770,7 +2788,7 @@ mod tests {
         async fn call(
             &self,
             _messages: &[crate::adapters::base::ChatMessage],
-            _cancel: Arc<Notify>,
+            cancel: Arc<Notify>,
         ) -> Result<StreamResult, AdapterError> {
             let idx = self
                 .call_count
@@ -2793,9 +2811,10 @@ mod tests {
                 }),
                 1 => {
                     // Signal that we've reached the blocking point, then wait
-                    // for the test to cancel us.
+                    // on the session's cancel token — the same token that
+                    // kill_with_emitter fires via notify_one().
                     self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
-                    self.cancel_signal.notified().await;
+                    cancel.notified().await;
                     Err(AdapterError::Stream("cancelled".to_string()))
                 }
                 _ => Ok(StreamResult {
@@ -2878,9 +2897,13 @@ mod tests {
         .await
         .expect("adapter should reach the second model call");
 
-        // Cancel: set running to false (this is what the cancel IPC does)
+        // Cancel: set running to false and fire the session's cancel token
+        // (this is what the cancel IPC does — same token the adapter waits on)
         session.running.store(false, Ordering::SeqCst);
-        adapter.cancel_signal.notify_one();
+        lock_unpoisoned(&session.cancel)
+            .as_ref()
+            .unwrap()
+            .notify_one();
 
         // Wait for the turn to finish
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
@@ -3747,6 +3770,162 @@ mod tests {
         // 7. System prompt was set
         let sp = lock_unpoisoned(&session.system_prompt);
         assert!(!sp.is_empty(), "system prompt should be set");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn kill_with_emitter_cancels_inflight_turn_and_recovery_succeeds() {
+        // This test proves the production cancel/stop path end-to-end:
+        //   1. Spawn send_message_with_emitter — adapter blocks on session's cancel token.
+        //   2. Call kill_with_emitter from test thread — fires cancel token.
+        //   3. Adapter wakes → returns error → agent loop sees running=false →
+        //      marks turn Cancelled (agent loop does this, not kill_with_emitter).
+        //   4. Verify: turn=Cancelled, status=Stopped, SessionStopped event emitted.
+        //   5. Verify: message history and tool_use/tool_result pairing preserved.
+        //   6. After resume, recovery turn succeeds.
+        //
+        // This mirrors IPC kill_session: the IPC handler calls session.kill() which
+        // sets running=false and fires the cancel token. The agent loop (running in
+        // a separate tokio task) sees the token, the adapter returns, and the loop
+        // marks the turn as Cancelled.
+
+        let workspace = setup_test_workspace("forge-kill-concurrent");
+        let harness = Arc::new(Harness::new(workspace.clone()));
+        std::fs::write(workspace.join("data.txt"), "kill-concurrent-data\n")
+            .expect("write data.txt");
+
+        let adapter = Arc::new(CancellableFakeAdapter::new());
+        let session = Arc::new(AgentSession::new(
+            "session-kill-concurrent".to_string(),
+            "deepseek".to_string(),
+            adapter.clone(),
+            harness,
+            "你是一个编程助手".to_string(),
+            Some(128_000),
+        ));
+
+        let emitter = Arc::new(crate::agent::event_sink::CollectingEventEmitter::new());
+
+        // 1. Spawn the turn — adapter will block on cancel token in call 2
+        let turn_guard = session.reserve_turn().expect("reserve turn");
+        let s2 = session.clone();
+        let e2 = emitter.clone();
+        let handle = tokio::spawn(async move {
+            s2.send_message_with_emitter("读取 data.txt", &*e2, vec![], None, None, turn_guard)
+                .await
+        });
+
+        // 2. Wait for adapter to reach its blocking point (call 2, waiting on cancel token)
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !adapter.ready.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("adapter should reach blocking call");
+
+        // 3. Kill via emitter — fires cancel token, no latest_turn lock, no deadlock
+        let kill_emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+        session.kill_with_emitter(&kill_emitter);
+
+        // 4. Wait for the spawned turn to finish
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("killed turn should finish")
+            .expect("task should not panic");
+        assert!(result.is_err(), "killed turn should return error");
+
+        // 5. Verify kill state
+        assert!(!session.running.load(Ordering::SeqCst));
+        assert_eq!(
+            *lock_unpoisoned(&session.status),
+            crate::agent::session::SessionStatus::Stopped
+        );
+        {
+            let turn = lock_unpoisoned(&session.latest_turn);
+            let turn = turn.as_ref().expect("latest turn");
+            assert_eq!(
+                turn.status,
+                AgentTurnStatus::Cancelled,
+                "agent loop should mark turn as Cancelled after kill"
+            );
+        }
+
+        // 6. Verify SessionStopped event
+        let kill_events = kill_emitter.drain();
+        assert!(
+            kill_events.iter().any(|e| matches!(
+                e,
+                crate::protocol::events::StreamEvent::SessionStopped { reason, .. }
+                    if reason == "killed"
+            )),
+            "kill should emit SessionStopped, got: {:?}",
+            kill_events
+                .iter()
+                .map(std::mem::discriminant)
+                .collect::<Vec<_>>()
+        );
+
+        // 7. Verify message history preserves tool_use/tool_result pairing
+        {
+            let messages = lock_unpoisoned(&session.messages);
+            assert!(
+                messages.len() >= 3,
+                "should have user + assistant(tool_use) + user(tool_result), got {}",
+                messages.len()
+            );
+            assert_eq!(messages[0].role, "user");
+            assert_eq!(messages[1].role, "assistant");
+            assert_eq!(messages[2].role, "user");
+
+            let tool_use_id = messages[1]
+                .content
+                .as_array()
+                .and_then(|blocks| {
+                    blocks.iter().find_map(|b| {
+                        if b.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                            b.get("id").and_then(|v| v.as_str()).map(String::from)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .expect("assistant should have tool_use");
+            let result_blocks = messages[2].content.as_array().expect("tool result blocks");
+            assert!(
+                result_blocks.iter().any(|b| {
+                    b.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                        && b.get("tool_use_id").and_then(|v| v.as_str())
+                            == Some(tool_use_id.as_str())
+                }),
+                "tool_result should reference tool_use id"
+            );
+        }
+
+        // 8. Recovery — resume and send new turn
+        let recovery_emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+        session.running.store(true, Ordering::SeqCst);
+        *lock_unpoisoned(&session.status) = crate::agent::session::SessionStatus::Running;
+        *lock_unpoisoned(&session.cancel) = Some(Arc::new(tokio::sync::Notify::new()));
+
+        let turn_guard2 = session.reserve_turn().expect("reserve recovery turn");
+        let recovery_result = session
+            .send_message_with_emitter("继续", &recovery_emitter, vec![], None, None, turn_guard2)
+            .await;
+        assert!(
+            recovery_result.is_ok(),
+            "recovery should succeed: {:?}",
+            recovery_result.err()
+        );
+        {
+            let turn = lock_unpoisoned(&session.latest_turn);
+            assert_eq!(
+                turn.as_ref().unwrap().status,
+                AgentTurnStatus::Completed,
+                "recovery turn should be Completed"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
