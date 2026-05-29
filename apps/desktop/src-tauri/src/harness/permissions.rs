@@ -330,3 +330,158 @@ fn truncate_inline(value: &str, max_chars: usize) -> String {
     truncated.push('…');
     truncated
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── canonical_tool ────────────────────────────────────────────
+
+    #[test]
+    fn canonical_tool_normalizes_aliases() {
+        assert_eq!(canonical_tool("read"), "read_file");
+        assert_eq!(canonical_tool("write"), "write_to_file");
+        assert_eq!(canonical_tool("write_file"), "write_to_file");
+        assert_eq!(canonical_tool("edit"), "edit_file");
+        assert_eq!(canonical_tool("ls"), "list_directory");
+        assert_eq!(canonical_tool("list"), "list_directory");
+        assert_eq!(canonical_tool("glob"), "search_files");
+        assert_eq!(canonical_tool("grep"), "search_content");
+        assert_eq!(canonical_tool("bash"), "run_shell");
+        assert_eq!(canonical_tool("execute_command"), "run_shell");
+        assert_eq!(canonical_tool("shell"), "run_shell");
+    }
+
+    #[test]
+    fn canonical_tool_passes_through_unknown() {
+        assert_eq!(canonical_tool("read_file"), "read_file");
+        assert_eq!(canonical_tool("run_shell"), "run_shell");
+        assert_eq!(canonical_tool("custom_tool"), "custom_tool");
+    }
+
+    // ── needs_confirmation ────────────────────────────────────────
+
+    #[test]
+    fn needs_confirmation_returns_for_write_tools() {
+        assert!(PermissionGate::needs_confirmation("write_to_file").is_some());
+        assert!(PermissionGate::needs_confirmation("edit_file").is_some());
+        assert!(PermissionGate::needs_confirmation("run_shell").is_some());
+        assert!(PermissionGate::needs_confirmation("mcp_read_resource").is_some());
+        assert!(PermissionGate::needs_confirmation("mcp_get_prompt").is_some());
+    }
+
+    #[test]
+    fn needs_confirmation_none_for_read_tools() {
+        assert!(PermissionGate::needs_confirmation("read_file").is_none());
+        assert!(PermissionGate::needs_confirmation("search_files").is_none());
+        assert!(PermissionGate::needs_confirmation("list_directory").is_none());
+        assert!(PermissionGate::needs_confirmation("unknown_tool").is_none());
+    }
+
+    // ── ensure_path_in_workspace ──────────────────────────────────
+
+    #[test]
+    fn path_in_workspace_is_allowed() {
+        let workspace =
+            std::env::temp_dir().join(format!("forge-perm-test-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(workspace.join("src")).unwrap();
+        std::fs::write(workspace.join("src/main.rs"), "fn main() {}").unwrap();
+
+        assert!(ensure_path_in_workspace(&workspace, "src/main.rs").is_ok());
+        assert!(ensure_path_in_workspace(&workspace, "src/../src/main.rs").is_ok());
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn path_outside_workspace_is_rejected() {
+        let workspace =
+            std::env::temp_dir().join(format!("forge-perm-test-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let result = ensure_path_in_workspace(&workspace, "/etc/passwd");
+        assert!(
+            result.is_err(),
+            "absolute path outside workspace should be rejected"
+        );
+
+        let result = ensure_path_in_workspace(&workspace, "../../etc/passwd");
+        assert!(result.is_err(), "traversal path should be rejected");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn path_nonexistent_file_in_workspace_is_allowed() {
+        let workspace =
+            std::env::temp_dir().join(format!("forge-perm-test-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        // File doesn't exist yet, but path resolves within workspace
+        assert!(ensure_path_in_workspace(&workspace, "new_file.txt").is_ok());
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    // ── format_file_question ──────────────────────────────────────
+
+    #[test]
+    fn format_file_question_includes_path_and_chinese() {
+        let input = serde_json::json!({"path": "src/main.rs"});
+        let q = format_file_question("write_to_file", &input);
+        assert!(q.contains("src/main.rs"), "should include path");
+        assert!(q.contains("写入文件"), "should describe write action");
+        assert!(q.contains("确认"), "should ask for confirmation");
+    }
+
+    #[test]
+    fn format_file_question_edit_file_action() {
+        let input = serde_json::json!({"path": "README.md"});
+        let q = format_file_question("edit_file", &input);
+        assert!(q.contains("修改文件"), "edit_file should use modify action");
+        assert!(q.contains("README.md"));
+    }
+
+    #[test]
+    fn format_file_question_missing_path() {
+        let input = serde_json::json!({});
+        let q = format_file_question("write_to_file", &input);
+        assert!(
+            q.contains("未提供路径"),
+            "missing path should show placeholder"
+        );
+    }
+
+    // ── format_shell_question ─────────────────────────────────────
+
+    #[test]
+    fn format_shell_question_includes_command() {
+        let q = format_shell_question("npm run build");
+        assert!(q.contains("npm run build"));
+        assert!(q.contains("命令"), "should mention command");
+    }
+
+    // ── truncate_inline ───────────────────────────────────────────
+
+    #[test]
+    fn truncate_inline_short_string_unchanged() {
+        assert_eq!(truncate_inline("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_inline_exact_boundary() {
+        assert_eq!(truncate_inline("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_inline_long_string_truncated() {
+        let result = truncate_inline("hello world", 5);
+        assert_eq!(result, "hello…");
+    }
+
+    #[test]
+    fn truncate_inline_unicode_chars() {
+        let result = truncate_inline("你好世界测试", 3);
+        assert_eq!(result, "你好世…");
+    }
+}

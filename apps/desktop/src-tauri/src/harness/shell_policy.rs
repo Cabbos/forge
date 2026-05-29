@@ -459,4 +459,86 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn shell_control_chars_prevent_readonly() {
+        for command in [
+            "cat file.txt > output.txt",
+            "cat file.txt >> log.txt",
+            "echo hello > /dev/null",
+            "cat file.txt | wc -l",
+            "git status && echo done",
+            "true || echo fail",
+            "echo `whoami`",
+            "echo $(date)",
+            "cat < input.txt",
+        ] {
+            let result = classify_shell_command(command);
+            assert!(
+                !matches!(result, ShellPolicyDecision::AllowReadonly),
+                "shell control should prevent readonly: {command} -> {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn env_assignment_with_command_is_not_readonly() {
+        for command in [
+            "NODE_ENV=production npm run build",
+            "RUST_LOG=debug cargo test",
+        ] {
+            let result = classify_shell_command(command);
+            assert!(
+                !matches!(result, ShellPolicyDecision::AllowReadonly),
+                "env assignment should prevent readonly: {command} -> {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sudo_variants_are_dangerous() {
+        for command in [
+            "sudo rm -rf /tmp/test",
+            "sudo apt-get install vim",
+            "sudo systemctl restart nginx",
+        ] {
+            assert!(
+                matches!(
+                    classify_shell_command(command),
+                    ShellPolicyDecision::NeedsConfirmation {
+                        safety: ShellSafetyLevel::Dangerous
+                    }
+                ),
+                "sudo should be dangerous: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_checkout_discard_is_dangerous() {
+        assert!(matches!(
+            classify_shell_command("git checkout -- ."),
+            ShellPolicyDecision::NeedsConfirmation {
+                safety: ShellSafetyLevel::Dangerous
+            }
+        ));
+    }
+
+    #[test]
+    fn xargs_with_rm_is_at_least_confirm() {
+        for command in [
+            "find . -name '*.log' | xargs rm",
+            "find /tmp -type f -mtime +7 | xargs rm -f",
+        ] {
+            let result = classify_shell_command(command);
+            assert!(
+                matches!(
+                    result,
+                    ShellPolicyDecision::NeedsConfirmation { .. }
+                        | ShellPolicyDecision::Blocked { .. }
+                ),
+                "xargs rm should not be readonly: {command} -> {result:?}"
+            );
+        }
+    }
 }
