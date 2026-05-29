@@ -248,14 +248,6 @@
     outline-offset: 2px;
   }
 
-  .forge-sidebar {
-    border-right: 1px solid var(--forge-border-subtle);
-    background:
-      linear-gradient(180deg, rgba(255, 252, 246, 0.34), transparent 10rem),
-      var(--sidebar);
-    padding-inline: 0.75rem;
-  }
-
   .forge-capability-overlay {
     position: fixed;
     inset-block: 0;
