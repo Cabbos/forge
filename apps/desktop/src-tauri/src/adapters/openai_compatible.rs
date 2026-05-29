@@ -969,6 +969,173 @@ mod tests {
     }
 
     #[test]
+    fn parses_non_streaming_empty_string_arguments_as_empty_object() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": ""
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].input, serde_json::json!({}));
+    }
+
+    #[test]
+    fn parses_non_streaming_null_arguments_as_empty_object() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": null
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        assert_eq!(result.tool_calls.len(), 1);
+        // null arguments: parser keeps the null value as-is
+        assert_eq!(result.tool_calls[0].input, serde_json::json!(null));
+    }
+
+    #[test]
+    fn parses_non_streaming_array_arguments_fallback() {
+        // Some providers return arguments as a JSON array instead of object
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "[1, 2, 3]"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        assert_eq!(result.tool_calls.len(), 1);
+        // Array is valid JSON but not an object — should still parse
+        assert_eq!(result.tool_calls[0].input, serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn parses_non_streaming_missing_tool_id() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [{
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\":\"src/main.rs\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        // Missing id causes parser to skip the tool call entirely
+        assert_eq!(result.tool_calls.len(), 0);
+    }
+
+    #[test]
+    fn parses_non_streaming_missing_tool_name() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "arguments": "{\"path\":\"src/main.rs\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        // Missing name causes parser to skip the tool call entirely
+        assert_eq!(result.tool_calls.len(), 0);
+    }
+
+    #[test]
+    fn parses_non_streaming_multiple_tool_calls_order_preserved() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "call_a",
+                            "type": "function",
+                            "function": { "name": "read_file", "arguments": "{\"path\":\"a.rs\"}" }
+                        },
+                        {
+                            "id": "call_b",
+                            "type": "function",
+                            "function": { "name": "run_shell", "arguments": "{\"command\":\"ls\"}" }
+                        },
+                        {
+                            "id": "call_c",
+                            "type": "function",
+                            "function": { "name": "write_to_file", "arguments": "{\"path\":\"c.rs\",\"content\":\"x\"}" }
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        assert_eq!(result.tool_calls.len(), 3);
+        assert_eq!(result.tool_calls[0].id, "call_a");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(result.tool_calls[1].id, "call_b");
+        assert_eq!(result.tool_calls[1].name, "run_shell");
+        assert_eq!(result.tool_calls[2].id, "call_c");
+        assert_eq!(result.tool_calls[2].name, "write_to_file");
+    }
+
+    #[test]
+    fn parses_non_streaming_no_content_no_tool_calls() {
+        let parsed = serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {}
+            }]
+        });
+
+        let result = parse_openai_chat_completion(&parsed);
+        assert!(result.tool_calls.is_empty());
+        assert!(result.assistant_content.is_empty());
+    }
+
+    #[test]
     fn parses_streaming_tool_call_split_across_sse_and_network_chunks() {
         let first_delta = serde_json::json!({
             "choices": [{
