@@ -357,6 +357,69 @@ mod tests {
             uuid::Uuid::now_v7()
         ));
         std::fs::create_dir_all(&workspace).expect("workspace");
+
+        // Create src subdir for tests that need it
+        std::fs::create_dir_all(workspace.join("src")).expect("src dir");
+        std::fs::write(workspace.join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
+
         workspace
+    }
+
+    #[test]
+    fn write_file_rejects_absolute_path_outside_workspace() {
+        let workspace = temp_workspace("abs-path");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .write_file("/tmp/evil.txt", "nope")
+            .expect_err("absolute path outside workspace should be blocked");
+
+        assert!(
+            error.contains("outside") || error.contains("denied") || error.contains("Access"),
+            "should mention access denial: {error}"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn read_file_rejects_absolute_path_outside_workspace() {
+        let workspace = temp_workspace("read-abs");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .read_file("/etc/hosts")
+            .expect_err("absolute path outside workspace should be blocked");
+
+        assert!(
+            error.contains("outside") || error.contains("denied") || error.contains("Access"),
+            "should mention access denial: {error}"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn read_file_works_inside_workspace() {
+        let workspace = temp_workspace("read-inside");
+        let executor = FileExecutor::new(workspace.clone());
+        let result = executor
+            .read_file("src/main.rs")
+            .expect("should read file inside workspace");
+
+        assert!(result.content.contains("fn main()"));
+        assert_eq!(result.line_count, 1);
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn edit_file_rejects_outside_workspace() {
+        let workspace = temp_workspace("edit-outside");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .edit_file("/tmp/target.txt", "old", "new")
+            .expect_err("edit outside workspace should be blocked");
+
+        assert!(
+            error.contains("outside") || error.contains("denied") || error.contains("Access"),
+            "should mention access denial: {error}"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
     }
 }
