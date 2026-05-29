@@ -121,6 +121,7 @@ The service listens on `http://localhost:8000`.
 ```bash
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
 ```
 
 ## Portfolio Value
@@ -141,3 +142,36 @@ This project maps directly to real agent-platform work:
 - Execute verification commands in an isolated container.
 - Compare multiple models/providers across the same task set.
 - Export run reports as JSON, Markdown, or HTML.
+
+## Portfolio Demo Assets
+
+项目包含可截图、可展示的作品集素材：
+
+| 文件 | 说明 |
+|---|---|
+| `docs/api-examples.md` | API 用法和 curl 示例，适合截图 |
+| `docs/portfolio-demo-guide.md` | 2 分钟演示脚本和面试讲解路径 |
+| `docs/architecture.md` | Mermaid 架构图（系统、trace、metrics、Forge 关系） |
+| `examples/sample-run-request.json` | 创建 run 的请求体示例 |
+| `examples/sample-run-response.json` | 完整 run 响应（含 traces + metrics） |
+| `examples/sample-trace-response.json` | trace 响应示例 |
+| `examples/sample-metrics-response.json` | metrics 响应示例 |
+| `scripts/capture_demo_assets.sh` | 一键刷新所有示例 JSON |
+
+### How to Refresh Sample Assets
+
+```bash
+# 1. 启动服务
+uv run uvicorn app.main:app --port 8000
+
+# 2. 运行采集脚本
+bash scripts/capture_demo_assets.sh
+```
+
+### 截图顺序建议
+
+1. 浏览器访问 `http://localhost:8000/docs` — OpenAPI 文档页
+2. 终端 `curl http://localhost:8000/tasks` — 任务列表
+3. 终端 `curl -X POST http://localhost:8000/runs ...` — 创建 run
+4. 终端 `curl http://localhost:8000/runs/{id}/metrics` — metrics 汇总
+5. 终端 `curl http://localhost:8000/runs/{id}/trace | python3 -m json.tool` — trace 详情
