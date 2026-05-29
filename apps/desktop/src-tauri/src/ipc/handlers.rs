@@ -3444,4 +3444,95 @@ mod tests {
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_dir_all(&outside);
     }
+
+    #[tokio::test]
+    async fn pending_confirms_multiple_resolved_independently() {
+        let pending: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let (tx_a, rx_a) = tokio::sync::oneshot::channel();
+        let (tx_b, rx_b) = tokio::sync::oneshot::channel();
+        let (tx_c, rx_c) = tokio::sync::oneshot::channel();
+        pending.write().await.insert("block-a".to_string(), tx_a);
+        pending.write().await.insert("block-b".to_string(), tx_b);
+        pending.write().await.insert("block-c".to_string(), tx_c);
+        {
+            pending
+                .write()
+                .await
+                .remove("block-a")
+                .unwrap()
+                .send(true)
+                .unwrap();
+        }
+        assert!(rx_a.await.unwrap());
+        {
+            pending
+                .write()
+                .await
+                .remove("block-b")
+                .unwrap()
+                .send(false)
+                .unwrap();
+        }
+        assert!(!rx_b.await.unwrap());
+        assert!(pending.read().await.contains_key("block-c"));
+        {
+            pending
+                .write()
+                .await
+                .remove("block-c")
+                .unwrap()
+                .send(true)
+                .unwrap();
+        }
+        assert!(rx_c.await.unwrap());
+        assert!(pending.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_confirms_wrong_block_id_returns_none() {
+        let pending: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        pending.write().await.insert("block-real".to_string(), tx);
+        let result = pending.write().await.remove("block-fake");
+        assert!(result.is_none(), "wrong block_id should return None");
+        assert!(pending.read().await.contains_key("block-real"));
+    }
+
+    #[tokio::test]
+    async fn pending_confirms_double_response_fails() {
+        let pending: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        pending.write().await.insert("block-1".to_string(), tx);
+        let sender = pending.write().await.remove("block-1").unwrap();
+        assert!(sender.send(true).is_ok());
+        assert!(rx.await.unwrap());
+        let result = pending.write().await.remove("block-1");
+        assert!(result.is_none(), "already resolved confirm should be gone");
+    }
+
+    #[tokio::test]
+    async fn pending_confirms_cancel_drops_sender_without_response() {
+        let pending: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        pending.write().await.insert("block-kill".to_string(), tx);
+        pending.write().await.remove("block-kill");
+        let result = rx.await;
+        assert!(result.is_err(), "dropped sender should close the channel");
+    }
 }
