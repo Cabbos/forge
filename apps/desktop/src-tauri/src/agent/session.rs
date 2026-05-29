@@ -1928,6 +1928,202 @@ mod tests {
     }
 
     #[test]
+    fn restore_state_preserves_completed_turn_unchanged() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-session-restore-completed-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+        let session = AgentSession::new(
+            "session-restore-completed".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        );
+
+        let messages = vec![
+            ChatMessage::user("hello"),
+            ChatMessage::assistant(serde_json::json!([{"type": "text", "text": "hi"}])),
+        ];
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-restore-completed".to_string(),
+            workspace.to_string_lossy().to_string(),
+            "deepseek".to_string(),
+            "deepseek-chat".to_string(),
+            "workflow".to_string(),
+            "direct".to_string(),
+            "hello".to_string(),
+        );
+        turn.mark_status_with_reason(AgentTurnStatus::Completed, "final_answer", None);
+
+        session.restore_state(messages, None, Some(turn));
+
+        let restored_turn = lock_unpoisoned(&session.latest_turn);
+        assert_eq!(
+            restored_turn.as_ref().unwrap().status,
+            AgentTurnStatus::Completed,
+            "completed turn should stay completed after restore"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn restore_state_preserves_cancelled_turn_unchanged() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-session-restore-cancelled-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+        let session = AgentSession::new(
+            "session-restore-cancelled".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        );
+
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-restore-cancelled".to_string(),
+            workspace.to_string_lossy().to_string(),
+            "deepseek".to_string(),
+            "deepseek-chat".to_string(),
+            "workflow".to_string(),
+            "direct".to_string(),
+            "test".to_string(),
+        );
+        turn.mark_status_with_reason(AgentTurnStatus::Cancelled, "user_cancelled", Some("killed"));
+
+        session.restore_state(vec![ChatMessage::user("test")], None, Some(turn));
+
+        let restored_turn = lock_unpoisoned(&session.latest_turn);
+        assert_eq!(
+            restored_turn.as_ref().unwrap().status,
+            AgentTurnStatus::Cancelled,
+            "cancelled turn should stay cancelled after restore"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn restore_state_with_no_latest_turn_preserves_none() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-session-restore-none-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+        let session = AgentSession::new(
+            "session-restore-none".to_string(),
+            "deepseek".to_string(),
+            adapter,
+            Arc::new(Harness::new(workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        );
+
+        session.restore_state(
+            vec![ChatMessage::user("hello")],
+            Some("summary".to_string()),
+            None,
+        );
+
+        assert!(lock_unpoisoned(&session.latest_turn).is_none());
+        assert_eq!(
+            *lock_unpoisoned(&session.summary),
+            Some("summary".to_string())
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn restore_state_normalizes_only_active_turn_statuses() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-session-restore-active-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+
+        for (input_status, expected_status, label) in [
+            (
+                AgentTurnStatus::Started,
+                AgentTurnStatus::Cancelled,
+                "Started",
+            ),
+            (
+                AgentTurnStatus::GatheringContext,
+                AgentTurnStatus::Cancelled,
+                "GatheringContext",
+            ),
+            (
+                AgentTurnStatus::CallingModel,
+                AgentTurnStatus::Cancelled,
+                "CallingModel",
+            ),
+            (
+                AgentTurnStatus::RunningTools,
+                AgentTurnStatus::Cancelled,
+                "RunningTools",
+            ),
+            (
+                AgentTurnStatus::Verifying,
+                AgentTurnStatus::Cancelled,
+                "Verifying",
+            ),
+            (
+                AgentTurnStatus::Completed,
+                AgentTurnStatus::Completed,
+                "Completed",
+            ),
+            (
+                AgentTurnStatus::Cancelled,
+                AgentTurnStatus::Cancelled,
+                "Cancelled",
+            ),
+            (AgentTurnStatus::Failed, AgentTurnStatus::Failed, "Failed"),
+        ] {
+            let session = AgentSession::new(
+                format!("session-restore-{label}"),
+                "deepseek".to_string(),
+                adapter.clone(),
+                Arc::new(Harness::new(workspace.clone())),
+                "system".to_string(),
+                Some(128_000),
+            );
+
+            let mut turn = AgentTurnState::new(
+                "turn-1".to_string(),
+                format!("session-restore-{label}"),
+                workspace.to_string_lossy().to_string(),
+                "deepseek".to_string(),
+                "deepseek-chat".to_string(),
+                "workflow".to_string(),
+                "direct".to_string(),
+                "test".to_string(),
+            );
+            turn.mark_status_with_reason(input_status.clone(), "test_reason", None);
+
+            session.restore_state(vec![ChatMessage::user("x")], None, Some(turn));
+
+            let restored = lock_unpoisoned(&session.latest_turn);
+            assert_eq!(
+                restored.as_ref().unwrap().status,
+                expected_status,
+                "{label}: {input_status:?} should become {expected_status:?}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
     fn latest_turn_updated_event_can_be_built_without_app_handle() {
         let workspace =
             std::env::temp_dir().join(format!("forge-session-turn-event-{}", uuid::Uuid::now_v7()));
