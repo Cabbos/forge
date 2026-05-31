@@ -25,8 +25,11 @@ use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
     AgentSessionSnapshot,
 };
-use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
-use crate::continuity::{ContinuityEvent, ReflectionEvent, ReflectionOutcome};
+use crate::agent::turn_state::{
+    AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnInputIntent, AgentTurnMetadata,
+    AgentTurnState,
+};
+use crate::continuity::{ContinuityEvent, FileOperation, ReflectionEvent, ReflectionOutcome};
 use crate::forge_wiki::model::{
     ForgeWikiProposalStatus, ForgeWikiUpdateProposal, SelectedForgeWikiPage,
 };
@@ -1685,6 +1688,141 @@ fn form_continuity_experiences_safely(
     }
 }
 
+fn record_turn_continuity_events_safely(
+    state: &Arc<AppState>,
+    project_path: &str,
+    turn: Option<&AgentTurnState>,
+) {
+    let Some(turn) = turn else {
+        return;
+    };
+    for event in continuity_events_from_turn(turn) {
+        record_continuity_event_safely(state, project_path, event);
+    }
+}
+
+fn continuity_events_from_turn(turn: &AgentTurnState) -> Vec<ContinuityEvent> {
+    let mut events = Vec::new();
+    for tool in &turn.tools {
+        events.push(ContinuityEvent::ToolExecution {
+            session_id: turn.session_id.clone(),
+            tool_name: tool.name.clone(),
+            input_summary: continuity_tool_input_summary(tool),
+            output_summary: continuity_tool_output_summary(tool),
+            is_error: continuity_tool_is_error(tool),
+            timestamp_ms: tool.ended_at_ms.unwrap_or(tool.started_at_ms),
+        });
+
+        if continuity_tool_can_change_files(tool) {
+            for path in &tool.affected_files {
+                events.push(ContinuityEvent::FileChange {
+                    session_id: turn.session_id.clone(),
+                    path: path.clone(),
+                    operation: FileOperation::Modified,
+                    diff_summary: continuity_file_change_summary(tool),
+                    timestamp_ms: tool.ended_at_ms.unwrap_or(tool.started_at_ms),
+                });
+            }
+        }
+    }
+
+    events.push(ContinuityEvent::AssistantResponse {
+        session_id: turn.session_id.clone(),
+        content_summary: continuity_assistant_response_summary(turn),
+        timestamp_ms: turn.updated_at_ms,
+    });
+    events
+}
+
+fn continuity_tool_input_summary(tool: &AgentToolTrace) -> String {
+    if let Some(command) = tool
+        .command
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return format!("command={}", normalize_inline_text(command, 240));
+    }
+    if !tool.affected_files.is_empty() {
+        return format!(
+            "files={}",
+            tool.affected_files
+                .iter()
+                .map(|path| normalize_inline_text(path, 120))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    format!("tool_call_id={}", tool.tool_call_id)
+}
+
+fn continuity_tool_output_summary(tool: &AgentToolTrace) -> String {
+    tool.result_summary
+        .as_deref()
+        .map(|summary| normalize_inline_text(summary, 320))
+        .filter(|summary| !summary.is_empty())
+        .unwrap_or_else(|| format!("status={}", continuity_tool_status_label(&tool.status)))
+}
+
+fn continuity_file_change_summary(tool: &AgentToolTrace) -> String {
+    let output = continuity_tool_output_summary(tool);
+    format!("tool={}; {}", tool.name, output)
+}
+
+fn continuity_assistant_response_summary(turn: &AgentTurnState) -> String {
+    let failed_tools = turn
+        .tools
+        .iter()
+        .filter(|tool| continuity_tool_is_error(tool))
+        .count();
+    let mut parts = vec![format!(
+        "turn_status={}; tools={}; failed_tools={}",
+        serde_json::to_value(&turn.status)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string()),
+        turn.tools.len(),
+        failed_tools
+    )];
+    if let Some(failure) = &turn.failure {
+        parts.push(format!(
+            "failure={}",
+            normalize_inline_text(&failure.message, 240)
+        ));
+    }
+    parts.join("; ")
+}
+
+fn continuity_tool_can_change_files(tool: &AgentToolTrace) -> bool {
+    !tool.affected_files.is_empty()
+        && matches!(
+            tool.category,
+            AgentToolCategory::Write | AgentToolCategory::Shell
+        )
+}
+
+fn continuity_tool_is_error(tool: &AgentToolTrace) -> bool {
+    tool.is_error
+        || matches!(
+            tool.status,
+            AgentToolStatus::Failed | AgentToolStatus::Cancelled
+        )
+}
+
+fn continuity_tool_status_label(status: &AgentToolStatus) -> &'static str {
+    match status {
+        AgentToolStatus::Pending => "pending",
+        AgentToolStatus::Running => "running",
+        AgentToolStatus::Completed => "completed",
+        AgentToolStatus::Failed => "failed",
+        AgentToolStatus::Cancelled => "cancelled",
+    }
+}
+
+fn normalize_inline_text(value: &str, limit: usize) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalized.chars().take(limit).collect()
+}
+
 fn build_send_input_reflection_event(
     session_id: &str,
     user_goal: &str,
@@ -1863,8 +2001,13 @@ pub async fn send_input(
                         now_ms(),
                     ),
                 );
-                form_continuity_experiences_safely(&state, &project_path, &session_id, now_ms());
                 let latest_turn_for_delivery = s.snapshot().latest_turn;
+                record_turn_continuity_events_safely(
+                    &state,
+                    &project_path,
+                    latest_turn_for_delivery.as_ref(),
+                );
+                form_continuity_experiences_safely(&state, &project_path, &session_id, now_ms());
                 let writeback = propose_send_input_project_record_update(
                     &state,
                     &session_id,
@@ -2470,6 +2613,7 @@ mod tests {
     use super::*;
     use crate::adapters::base::AiAdapter;
     use crate::adapters::missing_key::MissingKeyAdapter;
+    use crate::agent::turn_state::AgentTurnStatus;
     use crate::harness::mcp::McpResourceContent;
     use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
     use crate::memory::storage::now_string as memory_now_string;
@@ -2530,6 +2674,90 @@ mod tests {
                 lessons,
                 timestamp_ms: 42,
             })
+        );
+    }
+
+    #[test]
+    fn continuity_events_from_turn_include_tools_file_changes_and_assistant_summary() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/repo/forge".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Add continuity events".to_string(),
+        );
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "edit_file".to_string(),
+            category: AgentToolCategory::Write,
+            status: AgentToolStatus::Completed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("Edited continuity store".to_string()),
+            is_error: false,
+            affected_files: vec!["src-tauri/src/continuity/store.rs".to_string()],
+            command: None,
+        });
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-2".to_string(),
+            name: "bash".to_string(),
+            category: AgentToolCategory::Shell,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 30,
+            ended_at_ms: Some(35),
+            result_summary: Some("cargo test failed".to_string()),
+            is_error: true,
+            affected_files: Vec::new(),
+            command: Some("cargo test continuity".to_string()),
+        });
+        turn.mark_status(AgentTurnStatus::Completed);
+        turn.updated_at_ms = 50;
+
+        let events = continuity_events_from_turn(&turn);
+
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events[0],
+            ContinuityEvent::ToolExecution {
+                session_id: "session-1".to_string(),
+                tool_name: "edit_file".to_string(),
+                input_summary: "files=src-tauri/src/continuity/store.rs".to_string(),
+                output_summary: "Edited continuity store".to_string(),
+                is_error: false,
+                timestamp_ms: 20,
+            }
+        );
+        assert_eq!(
+            events[1],
+            ContinuityEvent::FileChange {
+                session_id: "session-1".to_string(),
+                path: "src-tauri/src/continuity/store.rs".to_string(),
+                operation: FileOperation::Modified,
+                diff_summary: "tool=edit_file; Edited continuity store".to_string(),
+                timestamp_ms: 20,
+            }
+        );
+        assert_eq!(
+            events[2],
+            ContinuityEvent::ToolExecution {
+                session_id: "session-1".to_string(),
+                tool_name: "bash".to_string(),
+                input_summary: "command=cargo test continuity".to_string(),
+                output_summary: "cargo test failed".to_string(),
+                is_error: true,
+                timestamp_ms: 35,
+            }
+        );
+        assert_eq!(
+            events[3],
+            ContinuityEvent::AssistantResponse {
+                session_id: "session-1".to_string(),
+                content_summary: "turn_status=completed; tools=2; failed_tools=1".to_string(),
+                timestamp_ms: 50,
+            }
         );
     }
 
