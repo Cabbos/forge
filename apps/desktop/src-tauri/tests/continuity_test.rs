@@ -1,8 +1,9 @@
 use forge::continuity::{
     form_experiences_from_reflection, ContinuityEvent, ContinuityService, ContinuityStore,
-    ExperienceKind, ExperienceStatus, ReflectionEvent, ReflectionOutcome,
+    ExperienceKind, ExperienceMemory, ExperienceStatus, ReflectionEvent, ReflectionOutcome,
 };
-use std::path::PathBuf;
+use rusqlite::{params, Connection};
+use std::path::{Path, PathBuf};
 
 fn reflection_with_lessons(lessons: Vec<&str>) -> ReflectionEvent {
     ReflectionEvent {
@@ -209,6 +210,25 @@ fn store_upserts_candidate_experiences_idempotently() {
 }
 
 #[test]
+fn store_migration_indexes_existing_experiences_for_search() {
+    let db_path = temp_db_path("legacy-experience-search");
+    let reflection = reflection_with_lessons(vec!["Use Reflection before memory injection."]);
+    let experience =
+        form_experiences_from_reflection(&reflection, Some("/repo/forge"), 42).remove(0);
+    seed_legacy_experience_db(&db_path, &experience);
+
+    let store = ContinuityStore::open(&db_path).expect("open store");
+    let results = store
+        .search_experiences_for_project("/repo/forge", "reflection memory", 5)
+        .expect("search experiences");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0], experience);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
 fn service_forms_and_persists_experiences_from_recorded_reflections() {
     let db_path = temp_db_path("service-formation");
     let service = ContinuityService::open(&db_path).expect("open service");
@@ -271,6 +291,35 @@ fn service_searches_project_experiences_by_query_terms() {
 }
 
 #[test]
+fn service_search_ranks_denser_term_matches_first() {
+    let db_path = temp_db_path("service-search-ranking");
+    let service = ContinuityService::open(&db_path).expect("open service");
+    let reflection = reflection_with_lessons(vec![
+        "Reflection belongs in continuity recall.",
+        "Reflection reflection reflection recall should rank above a single mention.",
+    ]);
+
+    service
+        .record_event("/repo/forge", &ContinuityEvent::Reflection(reflection))
+        .expect("record reflection");
+    service
+        .form_experiences_for_session("/repo/forge", "session-1", 100)
+        .expect("form experiences");
+
+    let results = service
+        .search_experiences_for_project("/repo/forge", "reflection", 5)
+        .expect("search experiences");
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        results[0].body,
+        "Reflection reflection reflection recall should rank above a single mention."
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
 fn service_search_keeps_project_boundaries() {
     let db_path = temp_db_path("service-search-boundaries");
     let service = ContinuityService::open(&db_path).expect("open service");
@@ -308,4 +357,64 @@ fn temp_db_path(label: &str) -> PathBuf {
         std::process::id(),
         uuid::Uuid::now_v7()
     ))
+}
+
+fn seed_legacy_experience_db(db_path: &Path, experience: &ExperienceMemory) {
+    let conn = Connection::open(db_path).expect("open legacy db");
+    conn.execute_batch(
+        "
+        CREATE TABLE continuity_experiences (
+            id TEXT PRIMARY KEY,
+            project_path TEXT,
+            source_session_id TEXT,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            tags_json TEXT NOT NULL,
+            experience_json TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        ",
+    )
+    .expect("create legacy experiences table");
+
+    let tags_json = serde_json::to_string(&experience.tags).expect("serialize tags");
+    let experience_json = serde_json::to_string(experience).expect("serialize experience");
+    conn.execute(
+        "INSERT INTO continuity_experiences
+            (
+                id,
+                project_path,
+                source_session_id,
+                kind,
+                status,
+                title,
+                body,
+                confidence,
+                created_at_ms,
+                updated_at_ms,
+                tags_json,
+                experience_json
+            )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            experience.id,
+            experience.project_path.as_deref(),
+            experience.source_session_id.as_deref(),
+            "lesson",
+            "candidate",
+            experience.title,
+            experience.body,
+            experience.confidence,
+            experience.created_at_ms as i64,
+            experience.updated_at_ms as i64,
+            tags_json,
+            experience_json,
+        ],
+    )
+    .expect("insert legacy experience");
 }

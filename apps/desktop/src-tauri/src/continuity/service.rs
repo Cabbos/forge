@@ -52,75 +52,7 @@ impl ContinuityService {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ExperienceMemory>, String> {
-        let experiences = self.store.list_experiences_for_project(project_path)?;
-        Ok(search_experiences(experiences, query, limit))
+        self.store
+            .search_experiences_for_project(project_path, query, limit)
     }
-}
-
-fn search_experiences(
-    experiences: Vec<ExperienceMemory>,
-    query: &str,
-    limit: usize,
-) -> Vec<ExperienceMemory> {
-    if limit == 0 {
-        return Vec::new();
-    }
-
-    let terms = query_terms(query);
-    if terms.is_empty() {
-        return Vec::new();
-    }
-
-    let mut scored = experiences
-        .into_iter()
-        .filter_map(|experience| {
-            let score = relevance_score(&experience, &terms);
-            (score > 0).then_some((experience, score))
-        })
-        .collect::<Vec<_>>();
-
-    scored.sort_by(|(left, left_score), (right, right_score)| {
-        right_score
-            .cmp(left_score)
-            .then_with(|| {
-                right
-                    .confidence
-                    .partial_cmp(&left.confidence)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| right.updated_at_ms.cmp(&left.updated_at_ms))
-            .then_with(|| left.id.cmp(&right.id))
-    });
-
-    scored
-        .into_iter()
-        .take(limit)
-        .map(|(experience, _)| experience)
-        .collect()
-}
-
-fn query_terms(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
-        .map(|term| {
-            term.trim_matches(|ch: char| !ch.is_alphanumeric())
-                .to_lowercase()
-        })
-        .filter(|term| !term.is_empty())
-        .collect()
-}
-
-fn relevance_score(experience: &ExperienceMemory, terms: &[String]) -> u32 {
-    let title = experience.title.to_lowercase();
-    let body = experience.body.to_lowercase();
-    let mut score = 0;
-    for term in terms {
-        if title.contains(term) {
-            score += 3;
-        }
-        if body.contains(term) {
-            score += 1;
-        }
-    }
-    score
 }

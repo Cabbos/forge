@@ -70,6 +70,8 @@ pub fn run() {
             app_metadata::load_app_metadata,
             app_metadata::save_app_metadata,
             ipc::handlers::confirm_response,
+            ipc::handlers::list_continuity_experiences,
+            ipc::handlers::search_continuity_experiences,
             ipc::handlers::search_workspace_files,
             ipc::handlers::get_default_working_dir,
             ipc::handlers::get_api_key_status,

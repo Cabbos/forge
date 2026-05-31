@@ -88,6 +88,7 @@ impl ContinuityStore {
                 .map_err(|err| format!("Failed to serialize continuity experience: {err}"))?;
             let tags_json = serde_json::to_string(&experience.tags)
                 .map_err(|err| format!("Failed to serialize continuity experience tags: {err}"))?;
+            let tags_text = experience.tags.join(" ");
 
             let changed = conn
                 .execute(
@@ -124,6 +125,19 @@ impl ContinuityStore {
                 )
                 .map_err(|err| format!("Failed to upsert continuity experience: {err}"))?;
             if changed > 0 {
+                conn.execute(
+                    "INSERT OR IGNORE INTO continuity_experiences_fts
+                        (id, project_path, title, body, tags)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        experience.id,
+                        experience.project_path.as_deref(),
+                        experience.title,
+                        experience.body,
+                        tags_text,
+                    ],
+                )
+                .map_err(|err| format!("Failed to index continuity experience: {err}"))?;
                 inserted.push(experience.clone());
             }
         }
@@ -154,6 +168,58 @@ impl ContinuityStore {
                 row.map_err(|err| format!("Failed to read continuity experience row: {err}"))?;
             let experience = serde_json::from_str(&experience_json)
                 .map_err(|err| format!("Failed to deserialize continuity experience: {err}"))?;
+            experiences.push(experience);
+        }
+        Ok(experiences)
+    }
+
+    pub fn search_experiences_for_project(
+        &self,
+        project_path: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ExperienceMemory>, String> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(query) = fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let limit = i64::try_from(limit)
+            .map_err(|_| format!("Continuity search limit is too large: {limit}"))?;
+
+        let conn = self.conn.lock().unwrap_or_else(|err| err.into_inner());
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.experience_json
+                 FROM continuity_experiences_fts
+                 JOIN continuity_experiences e
+                    ON e.id = continuity_experiences_fts.id
+                 WHERE continuity_experiences_fts.project_path = ?1
+                    AND continuity_experiences_fts MATCH ?2
+                    AND e.status NOT IN ('forgotten', 'archived')
+                 ORDER BY
+                    bm25(continuity_experiences_fts),
+                    e.confidence DESC,
+                    e.updated_at_ms DESC,
+                    e.id ASC
+                 LIMIT ?3",
+            )
+            .map_err(|err| format!("Failed to prepare continuity experience search: {err}"))?;
+
+        let rows = stmt
+            .query_map(params![project_path, query, limit], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|err| format!("Failed to search continuity experiences: {err}"))?;
+
+        let mut experiences = Vec::new();
+        for row in rows {
+            let experience_json =
+                row.map_err(|err| format!("Failed to read continuity search row: {err}"))?;
+            let experience = serde_json::from_str(&experience_json).map_err(|err| {
+                format!("Failed to deserialize continuity search experience: {err}")
+            })?;
             experiences.push(experience);
         }
         Ok(experiences)
@@ -196,6 +262,22 @@ impl ContinuityStore {
                 ON continuity_experiences(project_path, status, kind, updated_at_ms);
             CREATE INDEX IF NOT EXISTS idx_continuity_experiences_session
                 ON continuity_experiences(source_session_id, created_at_ms);
+            CREATE VIRTUAL TABLE IF NOT EXISTS continuity_experiences_fts
+                USING fts5(
+                    id UNINDEXED,
+                    project_path UNINDEXED,
+                    title,
+                    body,
+                    tags,
+                    tokenize = 'unicode61'
+                );
+            INSERT INTO continuity_experiences_fts
+                (id, project_path, title, body, tags)
+            SELECT id, project_path, title, body, tags_json
+            FROM continuity_experiences
+            WHERE id NOT IN (
+                SELECT id FROM continuity_experiences_fts
+            );
             ",
         )
         .map_err(|err| format!("Failed to migrate continuity database: {err}"))?;
@@ -239,4 +321,19 @@ fn experience_status_key(status: &ExperienceStatus) -> &'static str {
         ExperienceStatus::Forgotten => "forgotten",
         ExperienceStatus::Archived => "archived",
     }
+}
+
+fn fts_query(query: &str) -> Option<String> {
+    let terms = query
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|ch: char| !ch.is_alphanumeric())
+                .replace('"', "\"\"")
+                .to_lowercase()
+        })
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{term}\""))
+        .collect::<Vec<_>>();
+
+    (!terms.is_empty()).then(|| terms.join(" "))
 }

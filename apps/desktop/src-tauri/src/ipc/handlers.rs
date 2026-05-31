@@ -29,7 +29,9 @@ use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnInputIntent, AgentTurnMetadata,
     AgentTurnState,
 };
-use crate::continuity::{ContinuityEvent, FileOperation, ReflectionEvent, ReflectionOutcome};
+use crate::continuity::{
+    ContinuityEvent, ExperienceMemory, FileOperation, ReflectionEvent, ReflectionOutcome,
+};
 use crate::forge_wiki::model::{
     ForgeWikiProposalStatus, ForgeWikiUpdateProposal, SelectedForgeWikiPage,
 };
@@ -127,6 +129,8 @@ const MCP_CONTEXT_ITEM_CHAR_LIMIT: usize = 12_000;
 const FILE_REFERENCE_MAX_FILES: usize = 6;
 const FILE_REFERENCE_MAX_BYTES: u64 = 80_000;
 const FILE_REFERENCE_TOTAL_CHAR_LIMIT: usize = 120_000;
+const CONTINUITY_RECALL_DEFAULT_LIMIT: usize = 8;
+const CONTINUITY_RECALL_MAX_LIMIT: usize = 20;
 
 /// DeepSeek Anthropic-compatible API (recommended by DeepSeek docs)
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/anthropic";
@@ -2181,6 +2185,61 @@ pub async fn confirm_response(
 }
 
 #[tauri::command]
+pub async fn list_continuity_experiences(
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+) -> Result<Vec<ExperienceMemory>, String> {
+    list_continuity_experiences_for_request(&state, session_id.as_deref(), working_dir.as_deref())
+        .await
+}
+
+async fn list_continuity_experiences_for_request(
+    state: &Arc<AppState>,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+) -> Result<Vec<ExperienceMemory>, String> {
+    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
+    let project_path = working_dir.to_string_lossy().to_string();
+    state.continuity.list_experiences_for_project(&project_path)
+}
+
+#[tauri::command]
+pub async fn search_continuity_experiences(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: String,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<ExperienceMemory>, String> {
+    search_continuity_experiences_for_request(
+        &state,
+        session_id.as_deref(),
+        working_dir.as_deref(),
+        &query,
+        limit,
+    )
+    .await
+}
+
+async fn search_continuity_experiences_for_request(
+    state: &Arc<AppState>,
+    session_id: Option<&str>,
+    working_dir: Option<&str>,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<Vec<ExperienceMemory>, String> {
+    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
+    let project_path = working_dir.to_string_lossy().to_string();
+    let limit = limit
+        .unwrap_or(CONTINUITY_RECALL_DEFAULT_LIMIT)
+        .min(CONTINUITY_RECALL_MAX_LIMIT);
+    state
+        .continuity
+        .search_experiences_for_project(&project_path, query, limit)
+}
+
+#[tauri::command]
 pub async fn search_workspace_files(
     state: tauri::State<'_, Arc<AppState>>,
     query: String,
@@ -2620,6 +2679,17 @@ mod tests {
     use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
     use std::sync::atomic::Ordering;
 
+    fn test_agent_session(id: &str, workspace: &std::path::Path) -> Arc<AgentSession> {
+        Arc::new(AgentSession::new(
+            id.to_string(),
+            "deepseek".to_string(),
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")),
+            Arc::new(Harness::new(workspace.to_path_buf())),
+            "system".to_string(),
+            Some(128_000),
+        ))
+    }
+
     fn test_project_memory(id: &str, title: &str, body: &str, project_path: &str) -> WikiMemory {
         let now = memory_now_string();
         WikiMemory {
@@ -2639,6 +2709,141 @@ mod tests {
             use_count: 0,
             tags: vec!["进度".to_string()],
         }
+    }
+
+    fn record_test_continuity_lesson(
+        state: &Arc<AppState>,
+        project_path: &std::path::Path,
+        session_id: &str,
+        lesson: &str,
+        timestamp_ms: u64,
+    ) {
+        let project_path = project_path.to_string_lossy().to_string();
+        let reflection = ContinuityEvent::Reflection(ReflectionEvent {
+            session_id: session_id.to_string(),
+            user_goal: "continue continuity".to_string(),
+            execution_summary: "test reflection".to_string(),
+            outcome: ReflectionOutcome::Completed,
+            verification_summary: Some("test passed".to_string()),
+            lessons: vec![lesson.to_string()],
+            timestamp_ms,
+        });
+        state
+            .continuity
+            .record_event(&project_path, &reflection)
+            .expect("record continuity event");
+        state
+            .continuity
+            .form_experiences_for_session(&project_path, session_id, timestamp_ms + 1)
+            .expect("form continuity experiences");
+    }
+
+    #[tokio::test]
+    async fn list_continuity_experiences_uses_session_workspace() {
+        let nonce = uuid::Uuid::now_v7();
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-continuity-default-{nonce}"));
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-continuity-session-{nonce}"));
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        state
+            .register_session(
+                "session-1".to_string(),
+                test_agent_session("session-1", &session_workspace),
+            )
+            .await;
+        record_test_continuity_lesson(
+            &state,
+            &default_workspace,
+            "default-session",
+            "Default workspace reflection should stay isolated.",
+            10,
+        );
+        record_test_continuity_lesson(
+            &state,
+            &session_workspace,
+            "session-1",
+            "Session workspace reflection should be listed.",
+            20,
+        );
+
+        let experiences = list_continuity_experiences_for_request(&state, Some("session-1"), None)
+            .await
+            .expect("list continuity experiences");
+
+        assert_eq!(experiences.len(), 1);
+        assert_eq!(
+            experiences[0].project_path.as_deref(),
+            Some(session_workspace.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            experiences[0].body,
+            "Session workspace reflection should be listed."
+        );
+
+        let _ = std::fs::remove_dir_all(default_workspace);
+        let _ = std::fs::remove_dir_all(session_workspace);
+    }
+
+    #[tokio::test]
+    async fn search_continuity_experiences_uses_session_workspace() {
+        let nonce = uuid::Uuid::now_v7();
+        let default_workspace =
+            std::env::temp_dir().join(format!("forge-continuity-search-default-{nonce}"));
+        let session_workspace =
+            std::env::temp_dir().join(format!("forge-continuity-search-session-{nonce}"));
+        std::fs::create_dir_all(&default_workspace).expect("default workspace");
+        std::fs::create_dir_all(&session_workspace).expect("session workspace");
+        let state = Arc::new(AppState::new(Arc::new(Harness::new(
+            default_workspace.clone(),
+        ))));
+        state
+            .register_session(
+                "session-1".to_string(),
+                test_agent_session("session-1", &session_workspace),
+            )
+            .await;
+        record_test_continuity_lesson(
+            &state,
+            &default_workspace,
+            "default-session",
+            "Reflection in the default workspace must not leak.",
+            10,
+        );
+        record_test_continuity_lesson(
+            &state,
+            &session_workspace,
+            "session-1",
+            "Reflection in the session workspace should be searchable.",
+            20,
+        );
+
+        let experiences = search_continuity_experiences_for_request(
+            &state,
+            Some("session-1"),
+            None,
+            "reflection searchable",
+            Some(5),
+        )
+        .await
+        .expect("search continuity experiences");
+
+        assert_eq!(experiences.len(), 1);
+        assert_eq!(
+            experiences[0].project_path.as_deref(),
+            Some(session_workspace.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            experiences[0].body,
+            "Reflection in the session workspace should be searchable."
+        );
+
+        let _ = std::fs::remove_dir_all(default_workspace);
+        let _ = std::fs::remove_dir_all(session_workspace);
     }
 
     #[test]
