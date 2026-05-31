@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { FilePlus2, FileText } from "lucide-react";
+import { ForgeActionButton } from "@/components/primitives/action";
+import { ForgeSurface } from "@/components/primitives/surface";
 import { cn } from "@/lib/utils";
 import type { McpContextSelection } from "@/lib/tauri";
 import { statusClass, statusLabel, type ContextFile } from "./contextMaterialMapper";
@@ -14,18 +16,17 @@ export function ContextFilesSection({
   return (
     <section>
       <div className="mb-2 flex items-center justify-end">
-        <button
-          type="button"
+        <ForgeActionButton
           disabled
-          className="forge-action text-muted-foreground disabled:cursor-default disabled:opacity-70"
+          className="text-muted-foreground disabled:cursor-default disabled:opacity-70"
           title="添加文件"
         >
           <FilePlus2 className="size-3" />
           添加文件
-        </button>
+        </ForgeActionButton>
       </div>
 
-      <div className="forge-surface overflow-hidden">
+      <ForgeSurface className="overflow-hidden">
         <div className="grid grid-cols-[minmax(0,1fr)_42px_58px_52px] gap-2 border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
           <span>文件名</span>
           <span>类型</span>
@@ -45,7 +46,7 @@ export function ContextFilesSection({
             ))}
           </div>
         )}
-      </div>
+      </ForgeSurface>
     </section>
   );
 }
@@ -170,13 +171,11 @@ function ContextPromptRow({
             </label>
           ))}
           <div className="flex justify-end">
-            <button
-              type="button"
+            <ForgeActionButton
               onClick={addPrompt}
-              className="forge-action"
             >
               加入本轮
-            </button>
+            </ForgeActionButton>
           </div>
         </div>
       ) : null}

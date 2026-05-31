@@ -9,7 +9,7 @@ import {
   confirmRiskColor,
   type ConfirmPromptViewModel,
 } from "@/components/messages/confirmPresentation";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 
 export function ConfirmActionBar({
   responded,

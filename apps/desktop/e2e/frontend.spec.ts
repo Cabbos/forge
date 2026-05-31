@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   setup,
@@ -20,14 +20,27 @@ import type { WorkflowState } from "../src/lib/protocol";
 test.describe("Frontend maintainability guardrails", () => {
   test("brand theme styles avoid pre-brand warm gray literals", () => {
     const styleFiles = [
+      "src/styles/answer-index.css",
+      "src/styles/archive.css",
       "src/styles/capabilities.css",
+      "src/styles/command.css",
       "src/styles/composer.css",
+      "src/styles/confirm.css",
+      "src/styles/delivery.css",
       "src/styles/diff.css",
+      "src/styles/empty-workbench.css",
       "src/styles/globals.css",
+      "src/styles/icons.css",
       "src/styles/layout.css",
       "src/styles/markdown.css",
+      "src/styles/menu.css",
+      "src/styles/message-panel.css",
       "src/styles/messages.css",
+      "src/styles/primitives.css",
       "src/styles/process.css",
+      "src/styles/settings.css",
+      "src/styles/sidebar.css",
+      "src/styles/titlebar.css",
     ];
     const deprecatedBrandLiterals = [
       "rgba(194, 187, 174",
@@ -156,11 +169,27 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("brand surfaces avoid decorative radial glows", () => {
     const checkedFiles = [
+      "src/styles/answer-index.css",
+      "src/styles/archive.css",
       "src/styles/capabilities.css",
+      "src/styles/command.css",
       "src/styles/composer.css",
+      "src/styles/confirm.css",
+      "src/styles/delivery.css",
+      "src/styles/diff.css",
+      "src/styles/empty-workbench.css",
       "src/styles/globals.css",
+      "src/styles/icons.css",
       "src/styles/layout.css",
+      "src/styles/markdown.css",
+      "src/styles/menu.css",
+      "src/styles/message-panel.css",
       "src/styles/messages.css",
+      "src/styles/primitives.css",
+      "src/styles/process.css",
+      "src/styles/settings.css",
+      "src/styles/sidebar.css",
+      "src/styles/titlebar.css",
     ];
 
     for (const path of checkedFiles) {
@@ -186,11 +215,11 @@ test.describe("Frontend maintainability guardrails", () => {
 
     const dialog = readFileSync(resolve(process.cwd(), "src/components/ui/dialog.tsx"), "utf8");
     const sheet = readFileSync(resolve(process.cwd(), "src/components/ui/sheet.tsx"), "utf8");
-    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+    const capabilities = readFileSync(resolve(process.cwd(), "src/styles/capabilities.css"), "utf8");
 
     expect(dialog).toContain("bg-[rgba(251,244,234,0.78)]");
     expect(sheet).toContain("bg-[rgba(251,244,234,0.78)]");
-    expect(globals).toContain("background: rgba(251, 244, 234, 0.78);");
+    expect(capabilities).toContain("background: rgba(251, 244, 234, 0.78);");
   });
 
   test("composer surfaces avoid decorative overlay lines", () => {
@@ -239,6 +268,229 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(button).toContain("Button.displayName");
   });
 
+  test("forge button primitives compose Base UI button behavior", () => {
+    const primitiveSpecs = [
+      ["src/components/primitives/action.tsx", "ForgeActionButton", "forge-action"],
+      ["src/components/primitives/icon-button.tsx", "ForgeIconButton", "forge-icon-button"],
+      ["src/components/primitives/control-button.tsx", "ForgeControlButton", "forge-control-surface"],
+    ];
+
+    for (const [path, exportName, className] of primitiveSpecs) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+
+      expect(source, `${exportName} should compose Base UI Button`).toContain("@base-ui/react/button");
+      expect(source, `${exportName} should use the shared Base UI Button primitive`).toContain("ButtonPrimitive");
+      expect(source, `${exportName} should keep its product class`).toContain(className);
+      expect(source, `${exportName} should keep native button defaults`).toContain("type = \"button\"");
+      expect(source, `${exportName} should not render a raw button`).not.toContain("<button");
+    }
+  });
+
+  test("forge semantic primitives own shared surface and action classes", () => {
+    const primitiveSpecs = [
+      ["src/components/primitives/surface.tsx", "ForgeSurface", "forge-surface"],
+      ["src/components/primitives/action.tsx", "ForgeActionButton", "forge-action"],
+      ["src/components/primitives/icon-button.tsx", "ForgeIconButton", "forge-icon-button"],
+      ["src/components/primitives/control-button.tsx", "ForgeControlButton", "forge-control-surface"],
+      ["src/components/primitives/pill.tsx", "ForgePill", "forge-pill"],
+    ];
+
+    for (const [path, exportName, className] of primitiveSpecs) {
+      expect(existsSync(resolve(process.cwd(), path)), `${path} should exist`).toBe(true);
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source).toContain(exportName);
+      expect(source).toContain(className);
+    }
+
+    const projectStatus = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusCard.tsx"), "utf8");
+    const currentTask = readFileSync(resolve(process.cwd(), "src/components/workflow/CurrentTaskCard.tsx"), "utf8");
+    const diffActions = readFileSync(resolve(process.cwd(), "src/components/messages/DiffHeaderActions.tsx"), "utf8");
+    const projectOverview = readFileSync(resolve(process.cwd(), "src/components/context/ProjectOverviewCard.tsx"), "utf8");
+    const activeContext = readFileSync(resolve(process.cwd(), "src/components/context/ActiveContextSection.tsx"), "utf8");
+    const firstLoop = readFileSync(resolve(process.cwd(), "src/components/context/FirstLoopCard.tsx"), "utf8");
+    const archiveMaterials = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterials.tsx"), "utf8");
+    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessCard.tsx"), "utf8");
+    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
+    const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
+
+    expect(projectStatus).toContain("@/components/primitives/surface");
+    expect(projectStatus).toContain("@/components/primitives/action");
+    expect(projectStatus).toContain("@/components/primitives/icon-button");
+    expect(projectStatus).toContain("ForgeSurface");
+    expect(projectStatus).toContain("ForgeActionButton");
+    expect(projectStatus).toContain("ForgeIconButton");
+    expect(projectStatus).not.toContain("className=\"forge-surface forge-project-status\"");
+
+    expect(currentTask).toContain("@/components/primitives/surface");
+    expect(currentTask).toContain("@/components/primitives/pill");
+    expect(currentTask).toContain("ForgeSurface");
+    expect(currentTask).toContain("ForgePill");
+    expect(currentTask).not.toContain("className=\"forge-surface px-3 py-3\"");
+
+    expect(diffActions).toContain("@/components/primitives/icon-button");
+    expect(diffActions).toContain("ForgeIconButton");
+    expect(diffActions).not.toContain("className=\"forge-icon-button size-6\"");
+
+    expect(projectOverview).toContain("@/components/primitives/surface");
+    expect(projectOverview).toContain("@/components/primitives/action");
+    expect(projectOverview).toContain("ForgeSurface");
+    expect(projectOverview).toContain("ForgeActionButton");
+    expect(projectOverview).not.toContain("className=\"forge-surface space-y-3 px-3 py-3\"");
+    expect(projectOverview).not.toContain("className=\"forge-action\"");
+
+    expect(activeContext).toContain("@/components/primitives/surface");
+    expect(activeContext).toContain("@/components/primitives/pill");
+    expect(activeContext).toContain("ForgeSurface");
+    expect(activeContext).toContain("ForgePill");
+    expect(activeContext).not.toContain("className=\"forge-surface px-3 py-2.5\"");
+
+    expect(firstLoop).toContain("@/components/primitives/surface");
+    expect(firstLoop).toContain("ForgeSurface");
+    expect(firstLoop).not.toContain("className=\"forge-surface px-3 py-3\"");
+
+    expect(archiveMaterials).toContain("@/components/primitives/surface");
+    expect(archiveMaterials).toContain("@/components/primitives/action");
+    expect(archiveMaterials).toContain("ForgeSurface");
+    expect(archiveMaterials).toContain("ForgeActionButton");
+    expect(archiveMaterials).not.toContain("className=\"forge-surface overflow-hidden\"");
+    expect(archiveMaterials).not.toContain("className=\"forge-action\"");
+
+    expect(startReadiness).toContain("@/components/primitives/action");
+    expect(startReadiness).toContain("@/components/primitives/icon-button");
+    expect(startReadiness).toContain("ForgeActionButton");
+    expect(startReadiness).toContain("ForgeIconButton");
+    expect(startReadiness).not.toContain("className=\"forge-action justify-center disabled:cursor-default disabled:opacity-70\"");
+    expect(startReadiness).not.toContain("className=\"forge-icon-button\"");
+
+    expect(wikiSections).toContain("@/components/primitives/surface");
+    expect(wikiSections).toContain("@/components/primitives/action");
+    expect(wikiSections).toContain("@/components/primitives/icon-button");
+    expect(wikiSections).toContain("ForgeSurface");
+    expect(wikiSections).toContain("ForgeActionButton");
+    expect(wikiSections).toContain("ForgeIconButton");
+    expect(wikiSections).not.toContain("className=\"forge-surface overflow-hidden\"");
+    expect(wikiSections).not.toContain("className=\"forge-action h-8");
+    expect(wikiSections).not.toContain("className=\"forge-icon-button focus-visible:outline-none");
+
+    expect(hubPanel).toContain("@/components/primitives/icon-button");
+    expect(hubPanel).toContain("ForgeIconButton");
+    expect(hubPanel).not.toContain("className=\"forge-icon-button\"");
+
+    expect(messageList).toContain("@/components/primitives/control-button");
+    expect(messageList).toContain("ForgeControlButton");
+    expect(messageList).not.toContain("forge-control-surface");
+  });
+
+  test("start readiness row actions compose Base UI button behavior", () => {
+    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessCard.tsx"), "utf8");
+
+    expect(startReadiness).toContain("ButtonPrimitive");
+    expect(startReadiness).toContain("forge-readiness-row-action");
+    expect(startReadiness).not.toContain("<button");
+  });
+
+  test("forge icon primitive owns semantic tone presentation", () => {
+    const primitiveIcon = readFileSync(resolve(process.cwd(), "src/components/primitives/icon.ts"), "utf8");
+    const legacyIcon = readFileSync(resolve(process.cwd(), "src/components/ui/ForgeIcon.tsx"), "utf8");
+    const componentFiles = [
+      "src/components/CommandPalette.tsx",
+      "src/components/session/ComposerSuggestionMenu.tsx",
+      "src/components/session/StartReadinessCard.tsx",
+      "src/components/layout/ProjectStatusCard.tsx",
+      "src/components/messages/ConfirmViews.tsx",
+      "src/components/settings/CapabilityManager.tsx",
+    ];
+
+    expect(primitiveIcon).not.toContain("@/components/ui/ForgeIcon");
+    expect(primitiveIcon).toContain("LucideIcon");
+    expect(primitiveIcon).toContain("ForgeIconTone");
+    expect(primitiveIcon).toContain("React.forwardRef");
+    expect(primitiveIcon).toContain("data-tone");
+    expect(primitiveIcon).toContain("forge-icon");
+
+    expect(legacyIcon).toContain("@/components/primitives/icon");
+    expect(legacyIcon).not.toContain("data-tone");
+
+    for (const path of componentFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${path} should use the primitive icon entrypoint`).toContain("@/components/primitives/icon");
+      expect(source, `${path} should not import legacy ui ForgeIcon`).not.toContain("@/components/ui/ForgeIcon");
+    }
+  });
+
+  test("forge form and dialog primitives expose product semantic wrappers", () => {
+    const primitiveSpecs = [
+      ["src/components/primitives/button.ts", "ForgeButton", "@/components/ui/button"],
+      ["src/components/primitives/input.ts", "ForgeTextInput", "@/components/ui/input"],
+      ["src/components/primitives/dialog.ts", "ForgeDialogContent", "@/components/ui/dialog"],
+      ["src/components/primitives/scroll-area.ts", "ForgeScrollArea", "@/components/ui/scroll-area"],
+    ];
+
+    for (const [path, exportName, baseImport] of primitiveSpecs) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source).toContain(baseImport);
+      expect(source).toContain(exportName);
+      expect(source).toContain("React.forwardRef");
+    }
+
+    const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const filePreviewSheet = readFileSync(resolve(process.cwd(), "src/components/messages/FilePreviewSheet.tsx"), "utf8");
+    const filePreviewActions = readFileSync(resolve(process.cwd(), "src/components/messages/FilePreviewActions.tsx"), "utf8");
+    const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+
+    expect(settings).toContain("ForgeDialog");
+    expect(settings).toContain("ForgeDialogContent");
+    expect(settings).toContain("ForgeButton");
+    expect(settings).toContain("ForgeTextInput");
+    expect(settings).not.toContain("import { Button } from \"@/components/primitives/button\"");
+    expect(settings).not.toContain("import { Input } from \"@/components/primitives/input\"");
+
+    expect(filePreviewSheet).toContain("ForgeDialog");
+    expect(filePreviewSheet).toContain("ForgeDialogContent");
+    expect(filePreviewActions).toContain("ForgeButton");
+    expect(filePreviewActions).not.toContain("import { Button } from \"@/components/primitives/button\"");
+
+    expect(hubPanel).toContain("ForgeScrollArea");
+    expect(hubPanel).not.toContain("import { ScrollArea } from \"@/components/primitives/scroll-area\"");
+  });
+
+  test("forge command and collapsible primitives expose product semantic wrappers", () => {
+    const commandPrimitive = readFileSync(resolve(process.cwd(), "src/components/primitives/command.ts"), "utf8");
+    const collapsiblePrimitive = readFileSync(resolve(process.cwd(), "src/components/primitives/collapsible.ts"), "utf8");
+    const commandPalette = readFileSync(resolve(process.cwd(), "src/components/CommandPalette.tsx"), "utf8");
+    const processFiles = [
+      "src/components/messages/ContextCompactCard.tsx",
+      "src/components/messages/ShellCard.tsx",
+      "src/components/messages/ShellCardHeader.tsx",
+      "src/components/messages/ToolActivityGroup.tsx",
+      "src/components/messages/ToolActivitySummary.tsx",
+      "src/components/messages/ToolCallCard.tsx",
+    ];
+
+    expect(commandPrimitive).toContain("@/components/ui/command");
+    expect(commandPrimitive).toContain("ForgeCommand");
+    expect(commandPrimitive).toContain("ForgeCommandDialog");
+    expect(commandPrimitive).toContain("React.forwardRef");
+
+    expect(collapsiblePrimitive).toContain("@/components/ui/collapsible");
+    expect(collapsiblePrimitive).toContain("ForgeCollapsible");
+    expect(collapsiblePrimitive).toContain("ForgeCollapsibleTrigger");
+    expect(collapsiblePrimitive).toContain("ForgeCollapsibleContent");
+    expect(collapsiblePrimitive).toContain("React.forwardRef");
+
+    expect(commandPalette).toContain("ForgeCommandDialog");
+    expect(commandPalette).toContain("ForgeCommandInput");
+    expect(commandPalette).toContain("ForgeCommandItem");
+    expect(commandPalette).not.toContain("import {\n  Command,");
+
+    for (const path of processFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${path} should use Forge collapsible wrappers`).toContain("ForgeCollapsible");
+      expect(source, `${path} should use Forge collapsible wrappers`).not.toContain("import { Collapsible");
+    }
+  });
+
   test("dialog content forwards refs for scoped surface animation", () => {
     const dialog = readFileSync(resolve(process.cwd(), "src/components/ui/dialog.tsx"), "utf8");
     const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
@@ -255,6 +507,7 @@ test.describe("Frontend maintainability guardrails", () => {
   test("settings summarize provider readiness before detailed rows", () => {
     const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+    const settingsCss = readFileSync(resolve(process.cwd(), "src/styles/settings.css"), "utf8");
 
     expect(settings).toContain("settings-summary-strip");
     expect(settings).toContain("SettingsSummaryItem");
@@ -265,11 +518,11 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(settings).not.toContain("text-muted-foreground/60");
     const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
     expect(hubPanel).not.toContain("border-t border-border pt-3 first:border-t-0 first:pt-0");
-    expect(globals).toContain(".forge-settings-summary-strip");
-    expect(globals).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
-    expect(globals).toContain(".forge-settings-provider-mark[data-configured=\"true\"]");
-    expect(globals).toContain(".forge-settings-preferences-panel");
-    expect(globals).toContain("gap: 0.5rem;");
+    expect(settingsCss).toContain(".forge-settings-summary-strip");
+    expect(settingsCss).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
+    expect(settingsCss).toContain(".forge-settings-provider-mark[data-configured=\"true\"]");
+    expect(settingsCss).toContain(".forge-settings-preferences-panel");
+    expect(settingsCss).toContain("gap: 0.5rem;");
     expect(globals).not.toContain(".forge-settings-row:first-child");
   });
 
@@ -289,15 +542,15 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("command palette uses scoped motion on desktop shell entries", () => {
     const commandPalette = readFileSync(resolve(process.cwd(), "src/components/CommandPalette.tsx"), "utf8");
-    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+    const commandCss = readFileSync(resolve(process.cwd(), "src/styles/command.css"), "utf8");
 
     expect(commandPalette).toContain("paletteRef");
     expect(commandPalette).toContain("scope: paletteRef");
     expect(commandPalette).toContain("prefersReducedMotion");
     expect(commandPalette).toContain("data-forge-motion=\"command-entry\"");
     expect(commandPalette).toContain("[data-forge-motion='command-entry']");
-    expect(globals).toContain(".forge-command-motion-root");
-    expect(globals).toContain("[data-forge-motion=\"command-entry\"]");
+    expect(commandCss).toContain(".forge-command-motion-root");
+    expect(commandCss).toContain("[data-forge-motion=\"command-entry\"]");
   });
 
   test("project archive opens with a compact inspector summary and scoped motion", () => {
@@ -381,125 +634,443 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("composer chip tray rendering is owned by its subcomponent", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const surface = readFileSync(resolve(process.cwd(), "src/components/session/ComposerSurface.tsx"), "utf8");
     const chipTray = readFileSync(resolve(process.cwd(), "src/components/session/ComposerChipTray.tsx"), "utf8");
 
-    expect(inputBar).toContain("ComposerChipTray");
+    expect(inputBar).toContain("ComposerSurface");
+    expect(surface).toContain("ComposerChipTray");
     expect(chipTray).toContain("forge-composer-chips");
     expect(chipTray).toContain("forge-composer-chip-label");
+    expect(inputBar).not.toContain("ComposerChipTray");
     expect(inputBar).not.toContain("forge-composer-chip-label");
   });
 
   test("composer suggestion menu rendering is owned by its subcomponent", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const menuLayer = readFileSync(resolve(process.cwd(), "src/components/session/ComposerMenuLayer.tsx"), "utf8");
     const suggestionMenu = readFileSync(resolve(process.cwd(), "src/components/session/ComposerSuggestionMenu.tsx"), "utf8");
 
-    expect(inputBar).toContain("ComposerSuggestionMenu");
+    expect(inputBar).toContain("ComposerMenuLayer");
+    expect(menuLayer).toContain("ComposerSuggestionMenu");
     expect(suggestionMenu).toContain("forge-composer-suggestion-menu");
     expect(suggestionMenu).toContain("引用文件");
     expect(suggestionMenu).toContain("常用请求");
+    expect(inputBar).not.toContain("<ComposerSuggestionMenu");
     expect(inputBar).not.toContain("forge-composer-suggestion-menu");
   });
 
   test("composer model menu rendering is owned by its subcomponent", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const menuLayer = readFileSync(resolve(process.cwd(), "src/components/session/ComposerMenuLayer.tsx"), "utf8");
     const modelMenu = readFileSync(resolve(process.cwd(), "src/components/session/ComposerModelMenu.tsx"), "utf8");
 
-    expect(inputBar).toContain("ComposerModelMenu");
+    expect(inputBar).toContain("ComposerMenuLayer");
+    expect(menuLayer).toContain("ComposerModelMenu");
     expect(modelMenu).toContain("forge-composer-model-menu");
     expect(modelMenu).toContain("role=\"menu\"");
     expect(modelMenu).toContain("menuitemradio");
+    expect(inputBar).not.toContain("<ComposerModelMenu");
     expect(inputBar).not.toContain("forge-composer-model-menu");
+  });
+
+  test("composer floating menu layer owns menu composition", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const menuLayerPath = resolve(process.cwd(), "src/components/session/ComposerMenuLayer.tsx");
+
+    expect(existsSync(menuLayerPath), "ComposerMenuLayer component should exist").toBe(true);
+
+    const menuLayer = readFileSync(menuLayerPath, "utf8");
+
+    expect(inputBar).toContain("ComposerMenuLayer");
+    expect(menuLayer).toContain("ComposerSuggestionMenu");
+    expect(menuLayer).toContain("ComposerModelMenu");
+    expect(menuLayer).toContain("showSuggestions");
+    expect(menuLayer).toContain("showModelMenu");
+    expect(inputBar).not.toContain("import { ComposerSuggestionMenu }");
+    expect(inputBar).not.toContain("import { ComposerModelMenu }");
+    expect(inputBar).not.toContain("<ComposerSuggestionMenu");
+    expect(inputBar).not.toContain("<ComposerModelMenu");
+  });
+
+  test("composer menu dismissal behavior is owned by its hook", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const presentation = readFileSync(resolve(process.cwd(), "src/components/session/useComposerPresentation.ts"), "utf8");
+    const dismissHookPath = resolve(process.cwd(), "src/components/session/useComposerMenuDismissal.ts");
+
+    expect(existsSync(dismissHookPath), "useComposerMenuDismissal hook should exist").toBe(true);
+
+    const dismissHook = readFileSync(dismissHookPath, "utf8");
+
+    expect(presentation).toContain("useComposerMenuDismissal");
+    expect(controller).not.toContain("useComposerMenuDismissal");
+    expect(dismissHook).toContain("document.addEventListener(\"pointerdown\"");
+    expect(dismissHook).toContain("document.removeEventListener(\"pointerdown\"");
+    expect(dismissHook).toContain("rootRef.current?.contains(target)");
+    expect(inputBar).not.toContain("useComposerMenuDismissal");
+    expect(inputBar).not.toContain("document.addEventListener(\"pointerdown\"");
+    expect(inputBar).not.toContain("document.removeEventListener(\"pointerdown\"");
+  });
+
+  test("composer controller orchestration is owned by its hook", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controllerPath = resolve(process.cwd(), "src/components/session/useComposerController.ts");
+
+    expect(existsSync(controllerPath), "useComposerController hook should exist").toBe(true);
+
+    const controller = readFileSync(controllerPath, "utf8");
+
+    expect(inputBar).toContain("useComposerController");
+    expect(controller).toContain("useComposerSessionState");
+    expect(controller).toContain("useComposerDraft");
+    expect(controller).toContain("useComposerActions");
+    expect(controller).toContain("useComposerPresentation");
+    expect(inputBar).not.toContain("useComposerDraft");
+    expect(inputBar).not.toContain("useComposerSubmit");
+    expect(inputBar).not.toContain("useComposerKeyboard");
+    expect(inputBar).not.toContain("useComposerMenuDismissal");
+    expect(inputBar).not.toContain("useSession");
+    expect(inputBar).not.toContain("useStore");
+    expect(inputBar).not.toContain("modeAwarePlaceholder");
+    expect(inputBar).not.toContain("deriveComposerTurnState");
+    expect(inputBar.split("\n").length).toBeLessThanOrEqual(80);
+  });
+
+  test("composer presentation shell is owned by a focused hook", () => {
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const presentationPath = resolve(process.cwd(), "src/components/session/useComposerPresentation.ts");
+
+    expect(existsSync(presentationPath), "useComposerPresentation hook should exist").toBe(true);
+
+    const presentation = readFileSync(presentationPath, "utf8");
+
+    expect(controller).toContain("useComposerPresentation");
+    expect(presentation).toContain("useComposerMenuDismissal");
+    expect(presentation).toContain("buildComposerMenuLayerProps");
+    expect(presentation).toContain("buildComposerSurfaceProps");
+    expect(presentation).toContain("suggestionListId");
+    expect(presentation).toContain("modelMenuId");
+    expect(presentation).toContain("resumeErrorMessage");
+    expect(controller).not.toContain("useComposerMenuDismissal");
+    expect(controller).not.toContain("buildComposerMenuLayerProps");
+    expect(controller).not.toContain("buildComposerSurfaceProps");
+    expect(controller).not.toContain("suggestionListId");
+    expect(controller).not.toContain("modelMenuId");
+    expect(controller).not.toContain("resumeErrorMessage: isRunning ? \"\" : resumeError");
+  });
+
+  test("composer session state selectors are owned by a focused hook", () => {
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const draft = readFileSync(resolve(process.cwd(), "src/components/session/useComposerDraft.ts"), "utf8");
+    const sessionStatePath = resolve(process.cwd(), "src/components/session/useComposerSessionState.ts");
+
+    expect(existsSync(sessionStatePath), "useComposerSessionState hook should exist").toBe(true);
+
+    const sessionState = readFileSync(sessionStatePath, "utf8");
+
+    expect(controller).toContain("useComposerSessionState");
+    expect(sessionState).toContain("workflowBySession");
+    expect(sessionState).toContain("sessions.get(sessionId)");
+    expect(sessionState).toContain("agentTurnBySession");
+    expect(sessionState).toContain("deriveComposerTurnState");
+    expect(draft).toContain("pendingInput");
+    expect(draft).toContain("setPendingInput");
+    expect(controller).not.toContain("useStore");
+    expect(controller).not.toContain("workflowBySession");
+    expect(controller).not.toContain("sessions.get(sessionId)");
+    expect(controller).not.toContain("agentTurnBySession");
+    expect(controller).not.toContain("deriveComposerTurnState");
+    expect(controller).not.toContain("const pendingInput =");
+    expect(controller).not.toContain("const setPendingInput =");
+  });
+
+  test("composer action bindings are owned by a focused hook", () => {
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const actionsPath = resolve(process.cwd(), "src/components/session/useComposerActions.ts");
+
+    expect(existsSync(actionsPath), "useComposerActions hook should exist").toBe(true);
+
+    const actions = readFileSync(actionsPath, "utf8");
+
+    expect(controller).toContain("useComposerActions");
+    expect(actions).toContain("useSession");
+    expect(actions).toContain("useComposerInputHandlers");
+    expect(actions).toContain("useComposerSubmit");
+    expect(actions).toContain("useComposerKeyboard");
+    expect(actions).toContain("useComposerResume");
+    expect(actions).toContain("handleKeyDown");
+    expect(actions).toContain("handleSend");
+    expect(actions).toContain("handleResume");
+    expect(actions).toContain("resumeError");
+    expect(controller).not.toContain("useSession");
+    expect(controller).not.toContain("useComposerInputHandlers");
+    expect(controller).not.toContain("useComposerSubmit");
+    expect(controller).not.toContain("useComposerKeyboard");
+    expect(controller).not.toContain("useComposerResume");
+  });
+
+  test("composer text input handlers are owned by a focused hook", () => {
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/session/useComposerActions.ts"), "utf8");
+    const handlersPath = resolve(process.cwd(), "src/components/session/useComposerInputHandlers.ts");
+
+    expect(existsSync(handlersPath), "useComposerInputHandlers hook should exist").toBe(true);
+
+    const handlers = readFileSync(handlersPath, "utf8");
+
+    expect(actions).toContain("useComposerInputHandlers");
+    expect(handlers).toContain("handleChange");
+    expect(handlers).toContain("syncSuggestionsForInput");
+    expect(handlers).toContain("handleToggleModelMenu");
+    expect(handlers).toContain("handleCompositionStart");
+    expect(handlers).toContain("handleCompositionEnd");
+    expect(handlers).toContain("handleStop");
+    expect(controller).not.toContain("useComposerInputHandlers");
+    expect(controller).not.toContain("const handleChange = useCallback");
+    expect(controller).not.toContain("const handleToggleModelMenu = useCallback");
+    expect(controller).not.toContain("const handleCompositionStart = useCallback");
+    expect(controller).not.toContain("const handleCompositionEnd = useCallback");
+    expect(controller).not.toContain("const handleStop = useCallback");
+  });
+
+  test("composer controller view props are built by a pure adapter", () => {
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const presentation = readFileSync(resolve(process.cwd(), "src/components/session/useComposerPresentation.ts"), "utf8");
+    const viewPath = resolve(process.cwd(), "src/components/session/composerControllerView.ts");
+
+    expect(existsSync(viewPath), "composerControllerView module should exist").toBe(true);
+
+    const view = readFileSync(viewPath, "utf8");
+
+    expect(presentation).toContain("buildComposerMenuLayerProps");
+    expect(presentation).toContain("buildComposerSurfaceProps");
+    expect(view).toContain("buildComposerMenuLayerProps");
+    expect(view).toContain("buildComposerSurfaceProps");
+    expect(view).toContain("ComposerMenuLayerProps");
+    expect(view).toContain("ComposerSurfaceProps");
+    expect(view).toContain("modeAwarePlaceholder");
+    expect(controller).not.toContain("buildComposerMenuLayerProps");
+    expect(controller).not.toContain("buildComposerSurfaceProps");
+    expect(controller).not.toContain("const menuLayerProps: ComposerMenuLayerProps = {");
+    expect(controller).not.toContain("const surfaceProps: ComposerSurfaceProps = {");
+    expect(controller).not.toContain("modeAwarePlaceholder");
   });
 
   test("composer toolbar rendering is owned by its subcomponent", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const surface = readFileSync(resolve(process.cwd(), "src/components/session/ComposerSurface.tsx"), "utf8");
     const toolbar = readFileSync(resolve(process.cwd(), "src/components/session/ComposerToolbar.tsx"), "utf8");
 
-    expect(inputBar).toContain("ComposerToolbar");
+    expect(inputBar).toContain("ComposerSurface");
+    expect(surface).toContain("ComposerToolbar");
     expect(toolbar).toContain("forge-composer-toolbar");
     expect(toolbar).toContain("composer-model-chip");
     expect(toolbar).toContain("composer-send");
+    expect(inputBar).not.toContain("ComposerToolbar");
     expect(inputBar).not.toContain("forge-composer-toolbar");
+  });
+
+  test("composer toolbar buttons compose Base UI button behavior", () => {
+    const toolbar = readFileSync(resolve(process.cwd(), "src/components/session/ComposerToolbar.tsx"), "utf8");
+
+    expect(toolbar).toContain("ButtonPrimitive");
+    expect(toolbar).not.toContain("<button");
+  });
+
+  test("composer chip tray remove button composes Base UI button behavior", () => {
+    const chipTray = readFileSync(resolve(process.cwd(), "src/components/session/ComposerChipTray.tsx"), "utf8");
+
+    expect(chipTray).toContain("ButtonPrimitive");
+    expect(chipTray).not.toContain("<button");
+  });
+
+  test("composer suggestion menu options compose Base UI button behavior", () => {
+    const suggestionMenu = readFileSync(resolve(process.cwd(), "src/components/session/ComposerSuggestionMenu.tsx"), "utf8");
+
+    expect(suggestionMenu).toContain("ButtonPrimitive");
+    expect(suggestionMenu).not.toContain("<button");
+  });
+
+  test("composer model menu options compose Base UI button behavior", () => {
+    const modelMenu = readFileSync(resolve(process.cwd(), "src/components/session/ComposerModelMenu.tsx"), "utf8");
+
+    expect(modelMenu).toContain("ButtonPrimitive");
+    expect(modelMenu).not.toContain("<button");
+  });
+
+  test("composer surface rendering is owned by its subcomponent", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const surfacePath = resolve(process.cwd(), "src/components/session/ComposerSurface.tsx");
+
+    expect(existsSync(surfacePath), "ComposerSurface component should exist").toBe(true);
+
+    const surface = readFileSync(surfacePath, "utf8");
+
+    expect(inputBar).toContain("ComposerSurface");
+    expect(surface).toContain("data-testid=\"composer-surface\"");
+    expect(surface).toContain("data-menu-open");
+    expect(surface).toContain("data-streaming");
+    expect(surface).toContain("ComposerChipTray");
+    expect(surface).toContain("ComposerTextarea");
+    expect(surface).toContain("ComposerToolbar");
+    expect(inputBar).not.toContain("data-testid=\"composer-surface\"");
+    expect(inputBar).not.toContain("className=\"forge-composer\"");
+  });
+
+  test("composer resume error rendering is owned by its subcomponent", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const errorPath = resolve(process.cwd(), "src/components/session/ComposerResumeError.tsx");
+
+    expect(existsSync(errorPath), "ComposerResumeError component should exist").toBe(true);
+
+    const error = readFileSync(errorPath, "utf8");
+
+    expect(inputBar).toContain("ComposerResumeError");
+    expect(error).toContain("AlertCircle");
+    expect(error).toContain("role=\"status\"");
+    expect(error).toContain("aria-live=\"polite\"");
+    expect(error).toContain("forge-composer-error");
+    expect(inputBar).not.toContain("AlertCircle");
+    expect(inputBar).not.toContain("forge-composer-error");
+  });
+
+  test("composer textarea rendering is owned by its subcomponent", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const surface = readFileSync(resolve(process.cwd(), "src/components/session/ComposerSurface.tsx"), "utf8");
+    const textareaPath = resolve(process.cwd(), "src/components/session/ComposerTextarea.tsx");
+
+    expect(existsSync(textareaPath), "ComposerTextarea component should exist").toBe(true);
+
+    const textarea = readFileSync(textareaPath, "utf8");
+
+    expect(inputBar).toContain("ComposerSurface");
+    expect(surface).toContain("ComposerTextarea");
+    expect(textarea).toContain("React.forwardRef");
+    expect(textarea).toContain("forge-composer-textarea-wrap");
+    expect(textarea).toContain("forge-composer-textarea");
+    expect(inputBar).not.toContain("ComposerTextarea");
+    expect(inputBar).not.toContain("<textarea");
+    expect(inputBar).not.toContain("forge-composer-textarea");
   });
 
   test("composer suggestion state is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
     const suggestionsHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerSuggestions.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerSuggestions");
+    expect(controller).toContain("useComposerSuggestions");
     expect(suggestionsHook).toContain("searchWorkspaceFiles");
     expect(suggestionsHook).toContain("syncSuggestionsForInput");
     expect(suggestionsHook).toContain("toggleSuggestion");
+    expect(inputBar).not.toContain("useComposerSuggestions");
     expect(inputBar).not.toContain("searchWorkspaceFiles");
     expect(inputBar).not.toContain("setAtResults");
   });
 
   test("composer draft text behavior is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
     const draftHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerDraft.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerDraft");
+    expect(controller).toContain("useComposerDraft");
     expect(draftHook).toContain("COMPOSER_MAX_INPUT_HEIGHT");
     expect(draftHook).toContain("pendingInput");
     expect(draftHook).toContain("valueRef");
+    expect(inputBar).not.toContain("useComposerDraft");
     expect(inputBar).not.toContain("COMPOSER_MAX_INPUT_HEIGHT");
     expect(inputBar).not.toContain("setPendingInput(\"\")");
   });
 
   test("composer submit flow is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/session/useComposerActions.ts"), "utf8");
     const submitHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerSubmit.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerSubmit");
+    expect(actions).toContain("useComposerSubmit");
     expect(submitHook).toContain("createProjectCheckpoint");
     expect(submitHook).toContain("buildFirstLoopAgentPrompt");
     expect(submitHook).toContain("ComposerCapabilitySelection");
+    expect(controller).not.toContain("useComposerSubmit");
+    expect(inputBar).not.toContain("useComposerSubmit");
     expect(inputBar).not.toContain("createProjectCheckpoint");
     expect(inputBar).not.toContain("buildFirstLoopAgentPrompt");
   });
 
+  test("composer turn state derivation is owned by a pure logic module", () => {
+    const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const sessionState = readFileSync(resolve(process.cwd(), "src/components/session/useComposerSessionState.ts"), "utf8");
+    const turnStatePath = resolve(process.cwd(), "src/components/session/composerTurnState.ts");
+
+    expect(existsSync(turnStatePath), "composerTurnState module should exist").toBe(true);
+
+    const turnState = readFileSync(turnStatePath, "utf8");
+
+    expect(sessionState).toContain("deriveComposerTurnState");
+    expect(controller).not.toContain("deriveComposerTurnState");
+    expect(turnState).toContain("deriveComposerTurnState");
+    expect(turnState).toContain("isActiveAgentTurn");
+    expect(turnState).toContain("isTerminalAgentTurn");
+    expect(inputBar).not.toContain("deriveComposerTurnState");
+    expect(inputBar).not.toContain("function isActiveAgentTurn");
+    expect(inputBar).not.toContain("function isTerminalAgentTurn");
+  });
+
   test("composer model selection state is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
     const modelHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerModelMenu.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerModelMenu");
+    expect(controller).toContain("useComposerModelMenu");
     expect(modelHook).toContain("getModelContextWindow");
     expect(modelHook).toContain("setSelectedModel");
     expect(modelHook).toContain("toggleModelMenu");
+    expect(inputBar).not.toContain("useComposerModelMenu");
     expect(inputBar).not.toContain("setSelectedModel");
     expect(inputBar).not.toContain("getModelLabel");
   });
 
   test("composer resume state is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/session/useComposerActions.ts"), "utf8");
     const resumeHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerResume.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerResume");
+    expect(actions).toContain("useComposerResume");
     expect(resumeHook).toContain("setIsResuming");
     expect(resumeHook).toContain("resumeError");
     expect(resumeHook).toContain("handleResume");
+    expect(controller).not.toContain("useComposerResume");
+    expect(inputBar).not.toContain("useComposerResume");
     expect(inputBar).not.toContain("setIsResuming");
   });
 
   test("composer chip state is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
     const chipHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerChips.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerChips");
+    expect(controller).toContain("useComposerChips");
     expect(chipHook).toContain("crypto.randomUUID");
     expect(chipHook).toContain("removeTriggerTextForChip");
     expect(chipHook).toContain("clearChips");
+    expect(inputBar).not.toContain("useComposerChips");
     expect(inputBar).not.toContain("setChips");
   });
 
   test("composer keyboard behavior is owned by its hook", () => {
     const inputBar = readFileSync(resolve(process.cwd(), "src/components/session/InputBar.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/session/useComposerActions.ts"), "utf8");
     const keyboardHook = readFileSync(resolve(process.cwd(), "src/components/session/useComposerKeyboard.ts"), "utf8");
 
-    expect(inputBar).toContain("useComposerKeyboard");
+    expect(actions).toContain("useComposerKeyboard");
     expect(keyboardHook).toContain("COMPOSER_COMMANDS");
     expect(keyboardHook).toContain("commitActiveSuggestion");
     expect(keyboardHook).toContain("removeLastChip");
+    expect(controller).not.toContain("useComposerKeyboard");
+    expect(inputBar).not.toContain("useComposerKeyboard");
     expect(inputBar).not.toContain("ArrowDown");
     expect(inputBar).not.toContain("COMPOSER_COMMANDS");
   });
@@ -643,16 +1214,17 @@ test.describe("Frontend maintainability guardrails", () => {
   test("sidebar keeps CSS motion hooks without eager GSAP runtime", () => {
     const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+    const sidebarCss = readFileSync(resolve(process.cwd(), "src/styles/sidebar.css"), "utf8");
 
     expect(sidebar).not.toContain("@/lib/forgeMotion");
     expect(sidebar).not.toContain("useGSAP");
     expect(sidebar).not.toContain("sidebarRef");
     expect(sidebar).toContain("data-forge-motion=\"sidebar-entry\"");
     expect(sidebar).not.toContain("data-forge-motion=\"sidebar-history-row\"");
-    expect(globals).toContain(".forge-sidebar-history-list");
-    expect(globals).toContain(".forge-sidebar-history-group-label");
+    expect(sidebarCss).toContain(".forge-sidebar-history-list");
+    expect(sidebarCss).toContain(".forge-sidebar-history-group-label");
     expect(globals).not.toContain(".forge-sidebar-history-row[data-active=\"true\"]::before");
-    expect(globals).toContain("[data-forge-motion=\"sidebar-entry\"]");
+    expect(sidebarCss).toContain("[data-forge-motion=\"sidebar-entry\"]");
   });
 
   test("settings dialog stays behind a lazy boundary from the sidebar", () => {
@@ -821,15 +1393,15 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("delivery summary uses the shared motion and lightweight handoff material", () => {
     const deliveryCard = readFileSync(resolve(process.cwd(), "src/components/messages/DeliverySummaryCard.tsx"), "utf8");
-    const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+    const deliveryCss = readFileSync(resolve(process.cwd(), "src/styles/delivery.css"), "utf8");
 
     expect(deliveryCard).toContain("data-forge-motion=\"delivery-card\"");
     expect(deliveryCard).toContain("useGSAP");
     expect(deliveryCard).toContain("forge-delivery-item, .forge-delivery-action");
-    expect(globals).toContain(".forge-delivery-card .forge-message-panel-header");
-    expect(globals).toContain("background: var(--forge-material-raised) !important");
-    expect(globals).toContain("border-bottom-color: var(--forge-border-subtle)");
-    expect(globals).toContain("color: var(--forge-text-primary)");
+    expect(deliveryCss).toContain(".forge-delivery-card .forge-message-panel-header");
+    expect(deliveryCss).toContain("background: var(--forge-material-raised) !important");
+    expect(deliveryCss).toContain("border-bottom-color: var(--forge-border-subtle)");
+    expect(deliveryCss).toContain("color: var(--forge-text-primary)");
   });
 
   test("confirmation boundary rendering is owned by focused subviews", () => {

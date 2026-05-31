@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronRight, Loader2, XCircle } from "lucide-react";
-import { CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ForgeCollapsibleTrigger } from "@/components/primitives/collapsible";
 import { cn } from "@/lib/utils";
 import type { ProcessActivityState } from "@/components/messages/processActivity";
 
@@ -21,7 +21,7 @@ export function ToolActivitySummary({
   const StatusIcon = state === "error" ? XCircle : state === "running" ? Loader2 : CheckCircle2;
 
   return (
-    <CollapsibleTrigger
+    <ForgeCollapsibleTrigger
       data-testid="tool-activity-summary"
       data-state={state}
       className="forge-tool-activity-summary"
@@ -35,6 +35,6 @@ export function ToolActivitySummary({
       {summaryItems.map((item) => (
         <span key={item} className="forge-tool-activity-summary-item">{item}</span>
       ))}
-    </CollapsibleTrigger>
+    </ForgeCollapsibleTrigger>
   );
 }

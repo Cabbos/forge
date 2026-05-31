@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronRight, Loader2, Terminal } from "lucide-react";
-import { CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ForgeCollapsibleTrigger } from "@/components/primitives/collapsible";
 import { cn } from "@/lib/utils";
 
 interface ShellCardHeaderProps {
@@ -22,7 +22,7 @@ export function ShellCardHeader({
   tone,
 }: ShellCardHeaderProps) {
   return (
-    <CollapsibleTrigger
+    <ForgeCollapsibleTrigger
       data-testid="shell-card-trigger"
       data-forge-motion="evidence-row"
       data-state={state}
@@ -52,6 +52,6 @@ export function ShellCardHeader({
           {isError ? `exit ${exitCode}` : <CheckCircle2 className="size-3" />}
         </span>
       )}
-    </CollapsibleTrigger>
+    </ForgeCollapsibleTrigger>
   );
 }

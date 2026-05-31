@@ -3535,4 +3535,139 @@ mod tests {
         let result = rx.await;
         assert!(result.is_err(), "dropped sender should close the channel");
     }
+
+    // ── Cross-project memory pollution regression ────────────────────
+
+    #[tokio::test]
+    async fn tomato_clock_global_preference_not_injected_in_different_project_context() {
+        // Simulates the original incident: a UserProfile preference with task-like
+        // content ("番茄钟") exists in memory. User is now in a different project
+        // (forge-backend) and says "继续". The memory must NOT be injected.
+        let nonce = uuid::Uuid::now_v7();
+        let forge_workspace = std::env::temp_dir().join(format!("forge-regression-{nonce}"));
+        std::fs::create_dir_all(&forge_workspace).expect("workspace");
+        let memory_path = std::env::temp_dir().join(format!("forge-regression-{nonce}.json"));
+        let mut app_state = AppState::new(Arc::new(Harness::new(forge_workspace.clone())));
+        app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+
+        // Insert the pollution: task-like content stored as UserProfile
+        let now = memory_now_string();
+        let pollution = WikiMemory {
+            id: "tomato-clock-pollution".to_string(),
+            category: MemoryCategory::Preference,
+            scope: MemoryScope::UserProfile,
+            status: MemoryStatus::Accepted,
+            title: "用户偏好：我想做一个番茄钟小工具".to_string(),
+            body: "我想做一个番茄钟小工具，可以开始、暂停、重置。请优先推进到一个可预览的第一版。"
+                .to_string(),
+            project_path: None,
+            source_session_id: Some("old-session".to_string()),
+            source_message_ids: vec![],
+            confidence: 0.8,
+            created_at: now.clone(),
+            updated_at: now,
+            last_used_at: Some("old-time".to_string()),
+            use_count: 12,
+            tags: vec!["preference".to_string()],
+        };
+        app_state
+            .wiki_memory
+            .upsert_candidate(pollution)
+            .await
+            .expect("insert pollution");
+
+        let state = Arc::new(app_state);
+
+        // User says "继续" in the forge-backend project context
+        let selected = select_send_input_memory_context(
+            &state,
+            "继续",
+            forge_workspace.to_str().expect("utf8"),
+        )
+        .await;
+
+        let context_text = selected.context.unwrap_or_default();
+        assert!(
+            !context_text.contains("番茄钟"),
+            "番茄钟 must not appear in context for different project, got: {context_text}"
+        );
+
+        let _ = std::fs::remove_dir_all(forge_workspace);
+        let _ = std::fs::remove_file(memory_path);
+    }
+
+    #[tokio::test]
+    async fn forgotten_memory_not_injected_via_select_context() {
+        let nonce = uuid::Uuid::now_v7();
+        let workspace = std::env::temp_dir().join(format!("forge-forget-select-{nonce}"));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let memory_path = std::env::temp_dir().join(format!("forge-forget-select-{nonce}.json"));
+        let mut app_state = AppState::new(Arc::new(Harness::new(workspace.clone())));
+        app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+
+        let now = memory_now_string();
+        let memory = WikiMemory {
+            id: "will-forget".to_string(),
+            category: MemoryCategory::Preference,
+            scope: MemoryScope::UserProfile,
+            status: MemoryStatus::Accepted,
+            title: "用户偏好".to_string(),
+            body: "以后都用中文回复。".to_string(),
+            project_path: None,
+            source_session_id: Some("s1".to_string()),
+            source_message_ids: vec![],
+            confidence: 0.8,
+            created_at: now.clone(),
+            updated_at: now,
+            last_used_at: None,
+            use_count: 0,
+            tags: vec!["preference".to_string()],
+        };
+        let state = Arc::new(app_state);
+        state
+            .wiki_memory
+            .upsert_candidate(memory)
+            .await
+            .expect("insert");
+
+        // Verify it IS injected before forgetting
+        let selected_before = select_send_input_memory_context(
+            &state,
+            "以后回复用中文",
+            workspace.to_str().expect("utf8"),
+        )
+        .await;
+        assert!(
+            selected_before
+                .selected
+                .iter()
+                .any(|m| m.memory_id == "will-forget"),
+            "memory should be injected before forgetting"
+        );
+
+        // Forget it
+        state
+            .wiki_memory
+            .forget("will-forget")
+            .await
+            .expect("forget");
+
+        // Verify it is NOT injected after forgetting
+        let selected_after = select_send_input_memory_context(
+            &state,
+            "以后回复用中文",
+            workspace.to_str().expect("utf8"),
+        )
+        .await;
+        assert!(
+            !selected_after
+                .selected
+                .iter()
+                .any(|m| m.memory_id == "will-forget"),
+            "forgotten memory must not be injected"
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+        let _ = std::fs::remove_file(memory_path);
+    }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+import { ForgeCollapsible, ForgeCollapsibleContent } from "@/components/primitives/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { ShellCardDetail } from "@/components/messages/ShellCardDetail";
 import { ShellCardHeader } from "@/components/messages/ShellCardHeader";
@@ -36,7 +36,7 @@ export function ShellCard({ block }: { block: BlockState }) {
 
   return (
     <div ref={rootRef} className="shell-reel">
-      <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <ForgeCollapsible open={expanded} onOpenChange={setExpanded}>
         <div className="shell-reel-header">
           <div className="shell-reel-body">
             <ShellCardHeader
@@ -50,15 +50,15 @@ export function ShellCard({ block }: { block: BlockState }) {
             />
           </div>
         </div>
-        <CollapsibleContent data-forge-motion="shell-detail">
+        <ForgeCollapsibleContent data-forge-motion="shell-detail">
           <ShellCardDetail
             command={shellView.command}
             output={shellView.output}
             outputSections={shellView.outputSections}
             tone={shellView.tone}
           />
-        </CollapsibleContent>
-      </Collapsible>
+        </ForgeCollapsibleContent>
+      </ForgeCollapsible>
     </div>
   );
 }

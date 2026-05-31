@@ -17,6 +17,9 @@ import type {
   MemoryStatus,
   WikiMemory,
 } from "@/lib/protocol";
+import { ForgeActionButton } from "@/components/primitives/action";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
+import { ForgeSurface } from "@/components/primitives/surface";
 import { cn } from "@/lib/utils";
 import { useStore } from "@/store";
 
@@ -318,20 +321,19 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
           onRefresh={refresh}
           refreshDisabled={loading}
         />
-        <div className="forge-surface overflow-hidden">
+        <ForgeSurface className="overflow-hidden">
           {!currentProjectPath ? (
             <EmptyState label="打开项目后可以建立项目记录" />
           ) : !forgeWikiState?.exists ? (
             <div className="space-y-3 px-3 py-5 text-center">
               <EmptyState label="还没有项目记录" compact />
-              <button
-                type="button"
+              <ForgeActionButton
                 onClick={handleInitForgeWiki}
                 disabled={busyId === "forge-wiki:init"}
-                className="forge-action h-8 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+                className="h-8 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
               >
                 建立项目记录
-              </button>
+              </ForgeActionButton>
             </div>
           ) : forgeWikiState.pages.length === 0 ? (
             <EmptyState label="还没有项目记录" />
@@ -342,7 +344,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
               ))}
             </div>
           )}
-        </div>
+        </ForgeSurface>
       </section>
 
       <section>
@@ -357,7 +359,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
         <p className="-mt-1 mb-2 text-[10px] leading-relaxed text-muted-foreground/70">
           确认后会进入项目记录或已保存背景
         </p>
-        <div className="forge-surface overflow-hidden">
+        <ForgeSurface className="overflow-hidden">
           {visibleForgeWikiProposals.length === 0 && candidateMemories.length === 0 ? (
             <EmptyState label="没有待确认的记录更新" />
           ) : (
@@ -389,12 +391,12 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
               ))}
             </div>
           )}
-        </div>
+        </ForgeSurface>
       </section>
 
       <section>
         <SectionHeader title="已保存背景" meta={projectMemories.length > 0 ? `${projectMemories.length} 条` : null} />
-        <div className="forge-surface overflow-hidden">
+        <ForgeSurface className="overflow-hidden">
           {projectMemories.length === 0 ? (
             <EmptyState label="还没有已保存背景" />
           ) : (
@@ -415,7 +417,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
               ))}
             </div>
           )}
-        </div>
+        </ForgeSurface>
       </section>
 
       {error && (
@@ -446,15 +448,14 @@ function SectionHeader({
       <div className="flex items-center gap-1.5">
         {meta && <span className="forge-section-meta">{meta}</span>}
         {onRefresh && (
-          <button
-            type="button"
+          <ForgeIconButton
             onClick={onRefresh}
             disabled={refreshDisabled}
-            className="forge-icon-button focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+            className="focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
             title="刷新"
           >
             <RefreshCw className={cn("size-3", loading && "animate-spin")} />
-          </button>
+          </ForgeIconButton>
         )}
       </div>
     </div>
@@ -673,15 +674,14 @@ function IconButton({
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <ForgeIconButton
       title={title}
       onClick={onClick}
       disabled={disabled || !onClick}
-      className="forge-icon-button focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
+      className="focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 disabled:cursor-default disabled:opacity-50"
     >
       {children}
-    </button>
+    </ForgeIconButton>
   );
 }
 

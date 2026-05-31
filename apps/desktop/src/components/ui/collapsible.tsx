@@ -1,21 +1,37 @@
 "use client"
 
+import * as React from "react"
 import { Collapsible as CollapsiblePrimitive } from "@base-ui/react/collapsible"
 
-function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
-  return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />
-}
+const Collapsible = React.forwardRef<
+  React.ElementRef<typeof CollapsiblePrimitive.Root>,
+  CollapsiblePrimitive.Root.Props
+>(function Collapsible(props, ref) {
+  return <CollapsiblePrimitive.Root ref={ref} data-slot="collapsible" {...props} />
+})
 
-function CollapsibleTrigger({ ...props }: CollapsiblePrimitive.Trigger.Props) {
-  return (
-    <CollapsiblePrimitive.Trigger data-slot="collapsible-trigger" {...props} />
-  )
-}
+Collapsible.displayName = "Collapsible"
 
-function CollapsibleContent({ ...props }: CollapsiblePrimitive.Panel.Props) {
+const CollapsibleTrigger = React.forwardRef<
+  React.ElementRef<typeof CollapsiblePrimitive.Trigger>,
+  CollapsiblePrimitive.Trigger.Props
+>(function CollapsibleTrigger(props, ref) {
   return (
-    <CollapsiblePrimitive.Panel data-slot="collapsible-content" {...props} />
+    <CollapsiblePrimitive.Trigger ref={ref} data-slot="collapsible-trigger" {...props} />
   )
-}
+})
+
+CollapsibleTrigger.displayName = "CollapsibleTrigger"
+
+const CollapsibleContent = React.forwardRef<
+  React.ElementRef<typeof CollapsiblePrimitive.Panel>,
+  CollapsiblePrimitive.Panel.Props
+>(function CollapsibleContent(props, ref) {
+  return (
+    <CollapsiblePrimitive.Panel ref={ref} data-slot="collapsible-content" {...props} />
+  )
+})
+
+CollapsibleContent.displayName = "CollapsibleContent"
 
 export { Collapsible, CollapsibleTrigger, CollapsibleContent }

@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import type { BlockState } from "@/lib/protocol";
 import { useStore } from "@/store";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { deriveDeliverySummaryPresentation } from "@/components/messages/deliverySummaryPresentation";
 import { DeliveryPrimaryAction, DeliverySummaryItemView } from "@/components/messages/DeliverySummaryViews";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";

@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { formatContextWindow, PROVIDERS } from "@/lib/providers";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
@@ -55,7 +56,7 @@ export function ComposerModelMenu({
           {provider.models.map((model) => {
             const active = provider.id === selectedProvider && model.id === selectedModel;
             return (
-              <button
+              <ButtonPrimitive
                 key={`${provider.id}:${model.id}`}
                 role="menuitemradio"
                 aria-checked={active}
@@ -75,7 +76,7 @@ export function ComposerModelMenu({
                     {[model.description, formatContextWindow(model.contextWindowTokens) && `上下文 ${formatContextWindow(model.contextWindowTokens)}`].filter(Boolean).join(" · ")}
                   </div>
                 )}
-              </button>
+              </ButtonPrimitive>
             );
           })}
         </div>

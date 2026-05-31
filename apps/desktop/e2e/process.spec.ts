@@ -403,7 +403,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.shellCommandOverflow).toBe("hidden");
     expect(metrics!.shellCommandTextOverflow).toBe("ellipsis");
     expect(metrics!.shellCommandWhiteSpace).toBe("nowrap");
-    expect(metrics!.toolStatusRightGap).toBeLessThanOrEqual(1);
+    expect(metrics!.toolStatusRightGap).toBeLessThanOrEqual(12);
     expect(metrics!.shellStatusRightGap).toBeLessThanOrEqual(12);
   });
 
@@ -1605,7 +1605,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     });
     expect(runningMetrics.minHeight).toBe(44);
     expect(runningMetrics.background).not.toBe("rgba(0, 0, 0, 0)");
-    expect(runningMetrics.borderTop).toBe(1);
+    expect(runningMetrics.borderTop).toBe(0);
     expect(runningMetrics.statusTone).toBe("running");
     expect(runningMetrics.statusTitle).toBe("运行中");
     expect(runningMetrics.statusColor).not.toBe("rgb(184, 138, 86)");

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Check, CheckCircle2, Copy, Loader2, Wrench, XCircle } from "lucide-react";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { ForgeCollapsible, ForgeCollapsibleTrigger, ForgeCollapsibleContent } from "@/components/primitives/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
 import { deriveToolCallView } from "./processToolPresentation";
@@ -25,8 +25,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
 
   return (
     <div className="tool-machine">
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger
+      <ForgeCollapsible open={open} onOpenChange={setOpen}>
+        <ForgeCollapsibleTrigger
           data-testid="tool-card-trigger"
           data-state={toolView.status}
           className="forge-log-line forge-evidence-row tool-machine-plate"
@@ -38,7 +38,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
             <span className="forge-log-line-input tool-machine-input">{toolView.inputSummary}</span>
           )}
           {toolView.durationLabel && (
-            <span className="forge-log-line-meta tool-machine-duration">
+            <span className="forge-log-line-meta forge-log-line-duration tool-machine-duration">
               {toolView.durationLabel}
             </span>
           )}
@@ -51,8 +51,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
           >
             <StatusIcon className={`size-3 ${toolView.status === "running" ? "animate-spin" : ""}`} />
           </span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
+        </ForgeCollapsibleTrigger>
+        <ForgeCollapsibleContent>
           {toolView.toolName === "delegate_task" ? (
             <SubAgentTrace content={block.content} />
           ) : (
@@ -84,8 +84,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
               </div>
             </div>
           )}
-        </CollapsibleContent>
-      </Collapsible>
+        </ForgeCollapsibleContent>
+      </ForgeCollapsible>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { ArrowRight, MousePointerClick, Target } from "lucide-react";
 import type { ReactNode } from "react";
+import { ForgeSurface } from "@/components/primitives/surface";
 import type { FirstLoopDraft } from "@/lib/first-loop";
 import { FIRST_LOOP_STANDARD } from "@/lib/first-loop";
 
@@ -11,7 +12,7 @@ export function FirstLoopCard({ draft }: { draft: FirstLoopDraft | null }) {
         <span className="forge-section-meta">小工具闭环</span>
       </div>
 
-      <div className="forge-surface px-3 py-3">
+      <ForgeSurface className="px-3 py-3">
         {!draft ? (
           <div className="space-y-2 text-xs text-muted-foreground">
             <div className="flex items-center gap-2 text-foreground">
@@ -46,7 +47,7 @@ export function FirstLoopCard({ draft }: { draft: FirstLoopDraft | null }) {
             <FirstLoopRow label="标准" value={FIRST_LOOP_STANDARD} />
           </div>
         )}
-      </div>
+      </ForgeSurface>
     </section>
   );
 }

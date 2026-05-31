@@ -33,22 +33,31 @@ pub fn extract_candidates_from_user_message(
             "prefer",
         ],
     ) {
-        let project_scoped = is_project_specific_preference(&body) && project_path.is_some();
-        candidates.push(candidate(
-            session_id,
-            if project_scoped { project_path } else { None },
-            MemoryCategory::Preference,
-            if project_scoped {
-                MemoryScope::Project
-            } else {
-                MemoryScope::UserProfile
-            },
-            &candidate_title("用户偏好", &body),
-            &body,
-            0.72,
-            "preference",
-            &now,
-        ));
+        let is_task_like = is_task_like_instruction(&body);
+        let is_project_pref = is_project_specific_preference(&body);
+        let project_scoped = (is_project_pref || is_task_like) && project_path.is_some();
+
+        // Task-like instructions must never enter global UserProfile.
+        // If no project_path is available, suppress rather than pollute global scope.
+        if is_task_like && !project_scoped && project_path.is_none() {
+            // skip: task instruction without project context → do not create UserProfile
+        } else {
+            candidates.push(candidate(
+                session_id,
+                if project_scoped { project_path } else { None },
+                MemoryCategory::Preference,
+                if project_scoped {
+                    MemoryScope::Project
+                } else {
+                    MemoryScope::UserProfile
+                },
+                &candidate_title("用户偏好", &body),
+                &body,
+                0.72,
+                "preference",
+                &now,
+            ));
+        }
     }
 
     if project_path.is_some()
@@ -200,6 +209,43 @@ fn is_project_specific_preference(text: &str) -> bool {
     )
 }
 
+fn is_task_like_instruction(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "我想做",
+            "请先做",
+            "请优先",
+            "优先推进",
+            "优先做",
+            "先把",
+            "第一版",
+            "可预览",
+            "预览",
+            "验收",
+            "下一步",
+            "做到哪",
+            "小工具",
+            "页面",
+            "功能",
+            "修复",
+            "bug",
+            "demo",
+            "帮我实现",
+            "帮我做",
+            "帮我写",
+            "i want to make",
+            "i want to build",
+            "please implement",
+            "please build",
+            "prioritize",
+            "first version",
+            "mvp",
+        ],
+    )
+}
+
 fn should_suppress_persistent_memory(text: &str) -> bool {
     contains_any(
         text,
@@ -330,6 +376,24 @@ mod tests {
         assert_eq!(memory.category, MemoryCategory::Preference);
         assert_eq!(memory.scope, MemoryScope::Project);
         assert_eq!(memory.project_path.as_deref(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn task_like_priority_instruction_stays_project_scoped() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/pomodoro"),
+            "我想做一个番茄钟小工具，可以开始、暂停、重置。请优先推进到一个可预览的第一版。",
+        );
+
+        assert!(candidates.iter().any(|memory| {
+            memory.category == MemoryCategory::Preference
+                && memory.scope == MemoryScope::Project
+                && memory.project_path.as_deref() == Some("/tmp/pomodoro")
+        }));
+        assert!(candidates
+            .iter()
+            .all(|memory| memory.scope != MemoryScope::UserProfile));
     }
 
     #[test]
@@ -476,5 +540,124 @@ mod tests {
         let candidates = extract_candidates_from_user_message("session-1", None, " 默认 ");
 
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn task_like_instruction_without_project_does_not_create_user_profile() {
+        // "我想做一个番茄钟小工具…请优先推进第一版" — the original pollution incident
+        // Without project_path, this must NOT create a UserProfile preference.
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            None,
+            "我想做一个番茄钟小工具，可以开始、暂停、重置。请优先推进到一个可预览的第一版。",
+        );
+
+        assert!(
+            candidates
+                .iter()
+                .all(|c| c.scope != MemoryScope::UserProfile),
+            "task-like instruction without project_path must not enter UserProfile, got: {:?}",
+            candidates.iter().map(|c| &c.scope).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn task_like_instruction_with_project_stays_project_scoped() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/pomodoro"),
+            "我想做一个番茄钟小工具，请优先推进到第一版。",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].scope, MemoryScope::Project);
+        assert_eq!(candidates[0].project_path.as_deref(), Some("/tmp/pomodoro"));
+    }
+
+    #[test]
+    fn pure_long_preference_without_project_stays_user_profile() {
+        // "以后所有项目都用中文回复" — a genuine long-term preference
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            None,
+            "以后所有项目都默认用中文回复我。",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].scope, MemoryScope::UserProfile);
+        assert_eq!(candidates[0].project_path, None);
+    }
+
+    #[test]
+    fn prioritize_keyword_triggers_task_like_suppression_without_project() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            None,
+            "请优先推进第一版的小工具功能。",
+        );
+
+        assert!(
+            candidates.is_empty(),
+            "prioritize without project should not create UserProfile"
+        );
+    }
+
+    #[test]
+    fn english_i_want_to_build_without_project_is_suppressed() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            None,
+            "I want to build a timer widget, please implement the first version.",
+        );
+
+        assert!(
+            candidates.is_empty(),
+            "English task instruction without project should not create UserProfile"
+        );
+    }
+
+    #[test]
+    fn english_i_want_to_build_with_project_stays_project_scoped() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/timer"),
+            "I prefer to build a timer widget first, please implement the first version.",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].scope, MemoryScope::Project);
+        assert_eq!(candidates[0].project_path.as_deref(), Some("/tmp/timer"));
+    }
+
+    #[test]
+    fn mixed_preference_and_task_without_project_is_suppressed() {
+        // "默认优先推进" hits both preference keywords AND task-like
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            None,
+            "默认优先推进番茄钟的重置功能。",
+        );
+
+        assert!(
+            candidates
+                .iter()
+                .all(|c| c.scope != MemoryScope::UserProfile),
+            "mixed signal with task-like should not create UserProfile"
+        );
+    }
+
+    #[test]
+    fn decision_extraction_requires_project_path() {
+        // Decision without project_path should still create (it's always Project scope)
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            None,
+            "产品方向定了，就用兼容旧方案。",
+        );
+
+        // Decision always creates with project_path (None here is ok, scope is Project)
+        assert!(candidates
+            .iter()
+            .any(|c| c.category == MemoryCategory::Decision));
     }
 }

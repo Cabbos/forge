@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, GitBranch, Link2, Search } from "lucide-react";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { capabilityIconMeta } from "@/lib/capability-icons";
 import { cn } from "@/lib/utils";
 import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";

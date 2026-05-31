@@ -4,6 +4,8 @@ import {
   taskGateCopy,
   taskGateLabel,
 } from "@/lib/task-mode";
+import { ForgePill } from "@/components/primitives/pill";
+import { ForgeSurface } from "@/components/primitives/surface";
 
 export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }) {
   const mode = deriveTaskModeView(workflow);
@@ -29,16 +31,16 @@ export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }
         <h3 className="forge-section-title">当前任务</h3>
         <span className="forge-section-meta">自动判断</span>
       </div>
-      <div className="forge-surface px-3 py-3">
+      <ForgeSurface className="px-3 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="truncate text-xs font-medium text-foreground">{mode.label}</div>
             <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{mode.title}</div>
             <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">{workflow.reason || mode.description}</div>
           </div>
-          <span className="forge-pill">
+          <ForgePill>
             {taskGateLabel(workflow.gate)}
-          </span>
+          </ForgePill>
         </div>
 
         {gateCopy && (
@@ -47,7 +49,7 @@ export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }
           </div>
         )}
 
-      </div>
+      </ForgeSurface>
     </section>
   );
 }

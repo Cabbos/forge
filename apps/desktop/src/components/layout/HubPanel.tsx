@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useActiveBlocks, useActiveWorkspace, useStore } from "@/store";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
+import { ForgeScrollArea } from "@/components/primitives/scroll-area";
 import { ActiveContextSection } from "@/components/context/ActiveContextSection";
 import { FirstLoopCard } from "@/components/context/FirstLoopCard";
 import { ProjectOverviewCard } from "@/components/context/ProjectOverviewCard";
@@ -168,18 +169,16 @@ export function HubPanel({ open, initialSection, onOpenChange }: HubPanelProps) 
             <span className="forge-inspector-title">项目档案</span>
             <span className="forge-inspector-subtitle">状态、上下文与交付</span>
           </div>
-          <button
-            type="button"
+          <ForgeIconButton
             aria-label="关闭项目档案"
             onClick={() => onOpenChange(false)}
-            className="forge-icon-button"
             title="关闭项目档案"
           >
             <X className="size-4" />
-          </button>
+          </ForgeIconButton>
         </div>
 
-        <ScrollArea className="min-h-0 flex-1">
+        <ForgeScrollArea className="min-h-0 flex-1">
           <div data-testid="project-archive-body" className="forge-inspector-body">
             <div data-forge-motion="archive-section">
               <ArchiveSummaryStrip
@@ -249,7 +248,7 @@ export function HubPanel({ open, initialSection, onOpenChange }: HubPanelProps) 
               )}
             </div>
           </div>
-        </ScrollArea>
+        </ForgeScrollArea>
       </aside>
     </>
   );

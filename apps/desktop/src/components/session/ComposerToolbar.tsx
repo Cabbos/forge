@@ -1,6 +1,7 @@
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ArrowUp, ChevronDown, RotateCcw, X } from "lucide-react";
 import { composerToolbarIcons } from "@/lib/capability-icons";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { cn } from "@/lib/utils";
 import type { ComposerMenuMode } from "./composerTypes";
 
@@ -45,7 +46,7 @@ export function ComposerToolbar({
     <div data-testid="composer-toolbar" className="forge-composer-toolbar">
       <div data-testid="composer-tool-cluster" className="forge-composer-tool-cluster">
         <div className="forge-composer-tool-buttons">
-          <button
+          <ButtonPrimitive
             type="button"
             data-testid="composer-tool-button"
             aria-label="引用文件"
@@ -58,8 +59,8 @@ export function ComposerToolbar({
             className="forge-composer-tool"
           >
             <ForgeIcon icon={composerToolbarIcons.file.icon} tone={composerToolbarIcons.file.tone} contained={false} />
-          </button>
-          <button
+          </ButtonPrimitive>
+          <ButtonPrimitive
             type="button"
             data-testid="composer-tool-button"
             aria-label="常用请求"
@@ -72,7 +73,7 @@ export function ComposerToolbar({
             className="forge-composer-tool"
           >
             <ForgeIcon icon={composerToolbarIcons.command.icon} tone={composerToolbarIcons.command.tone} contained={false} />
-          </button>
+          </ButtonPrimitive>
         </div>
         <span className="forge-composer-hint hidden truncate sm:inline">
           Enter 发送 · Shift↵ 换行
@@ -81,7 +82,7 @@ export function ComposerToolbar({
 
       <div data-testid="composer-control-cluster" className="forge-composer-control-cluster">
         <div className="relative">
-          <button
+          <ButtonPrimitive
             type="button"
             data-testid="composer-model-chip"
             id={`${modelMenuId}-button`}
@@ -97,11 +98,11 @@ export function ComposerToolbar({
             <span data-testid="composer-model-indicator" className="forge-composer-model-indicator" aria-hidden="true" />
             <span className="truncate">{selectedModelLabel}</span>
             <ChevronDown className="size-3" style={{ color: "var(--muted-foreground)" }} />
-          </button>
+          </ButtonPrimitive>
         </div>
 
         {!isRunning ? (
-          <button
+          <ButtonPrimitive
             type="button"
             aria-label="继续会话"
             onClick={onResume}
@@ -110,9 +111,9 @@ export function ComposerToolbar({
           >
             <RotateCcw className={isResuming ? "size-3 animate-spin" : "size-3"} />
             {isResuming ? "恢复中" : "继续会话"}
-          </button>
+          </ButtonPrimitive>
         ) : isStreaming ? (
-          <button
+          <ButtonPrimitive
             type="button"
             data-testid="composer-stop"
             aria-label="停止生成"
@@ -120,9 +121,9 @@ export function ComposerToolbar({
             className="forge-composer-send text-destructive hover:border-destructive/35 hover:bg-destructive/10"
           >
             <X className="size-4" />
-          </button>
+          </ButtonPrimitive>
         ) : (
-          <button
+          <ButtonPrimitive
             type="button"
             data-testid="composer-send"
             aria-label="发送"
@@ -132,7 +133,7 @@ export function ComposerToolbar({
             className={cn("forge-composer-send", canSend && "text-primary")}
           >
             <ArrowUp className="size-4" />
-          </button>
+          </ButtonPrimitive>
         )}
       </div>
     </div>

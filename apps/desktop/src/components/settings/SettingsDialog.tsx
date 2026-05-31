@@ -1,14 +1,14 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+  ForgeDialog,
+  ForgeDialogContent,
+  ForgeDialogDescription,
+  ForgeDialogHeader,
+  ForgeDialogTitle,
+  ForgeDialogTrigger,
+} from "@/components/primitives/dialog";
+import { ForgeButton } from "@/components/primitives/button";
+import { ForgeTextInput } from "@/components/primitives/input";
 import { Settings, Key, Eye, EyeOff, Check, AlertCircle, Trash2, Database, ShieldCheck, Sparkles } from "lucide-react";
 import { deleteSession, getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
 import { useStore } from "@/store";
@@ -160,24 +160,24 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
   const providerTotal = sortedKeys.length || PROVIDERS.length;
 
   return (
-    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+    <ForgeDialog open={dialogOpen} onOpenChange={setDialogOpen}>
       {!hideTrigger && (
-        <DialogTrigger
-          render={<Button variant="ghost" size="icon-sm" aria-label="设置" title="设置" className={triggerClassName} />}
+        <ForgeDialogTrigger
+          render={<ForgeButton variant="ghost" size="icon-sm" aria-label="设置" title="设置" className={triggerClassName} />}
         >
           <Settings className="size-4" />
-        </DialogTrigger>
+        </ForgeDialogTrigger>
       )}
-      <DialogContent ref={dialogRef} data-forge-motion="settings-dialog" className="forge-settings-dialog sm:max-w-[590px]">
-        <DialogHeader>
-          <DialogTitle className="forge-settings-title">
+      <ForgeDialogContent ref={dialogRef} data-forge-motion="settings-dialog" className="forge-settings-dialog sm:max-w-[590px]">
+        <ForgeDialogHeader>
+          <ForgeDialogTitle className="forge-settings-title">
             <Settings className="size-4" />
             设置
-          </DialogTitle>
-          <DialogDescription>
+          </ForgeDialogTitle>
+          <ForgeDialogDescription>
             管理模型服务和本机对话。密钥只保存在这台电脑。
-          </DialogDescription>
-        </DialogHeader>
+          </ForgeDialogDescription>
+        </ForgeDialogHeader>
 
         <div data-testid="settings-summary-strip" className="forge-settings-summary-strip" aria-label="设置摘要">
           <SettingsSummaryItem
@@ -253,7 +253,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
                     </span>
                     {editing !== k.provider && (
                       <div className="flex items-center justify-end gap-2">
-                        <Button
+                        <ForgeButton
                           size="xs"
                           variant="outline"
                           onClick={() => {
@@ -263,16 +263,16 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
                           }}
                         >
                           {k.set ? "更新" : "添加"}
-                        </Button>
+                        </ForgeButton>
                         {k.set && (
-                          <Button
+                          <ForgeButton
                             size="xs"
                             variant="ghost"
                             onClick={() => handleRemove(k.provider)}
                             className="text-destructive hover:text-destructive"
                           >
                             移除
-                          </Button>
+                          </ForgeButton>
                         )}
                       </div>
                     )}
@@ -281,7 +281,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
                   {editing === k.provider && (
                     <div className="forge-settings-edit-row">
                       <div className="relative">
-                        <Input
+                        <ForgeTextInput
                           type={visible ? "text" : "password"}
                           value={value}
                           onChange={(e) => setValue(e.target.value)}
@@ -299,11 +299,11 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
                         </button>
                       </div>
                       <div className="flex gap-1.5">
-                        <Button size="xs" onClick={handleSave} disabled={saving}>
+                        <ForgeButton size="xs" onClick={handleSave} disabled={saving}>
                           <Check className="size-3" />
                           保存
-                        </Button>
-                        <Button
+                        </ForgeButton>
+                        <ForgeButton
                           size="xs"
                           variant="ghost"
                           onClick={() => {
@@ -313,7 +313,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
                           }}
                         >
                           取消
-                        </Button>
+                        </ForgeButton>
                       </div>
                     </div>
                   )}
@@ -332,7 +332,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
             <p className="text-xs leading-relaxed text-muted-foreground">
               清除这台电脑保存的对话列表，不会删除项目文件。
             </p>
-            <Button
+            <ForgeButton
               size="sm"
               variant="destructive"
               onClick={handleClearAll}
@@ -340,7 +340,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
             >
               <Trash2 className="size-3.5" />
               {cleared ? "已清除" : `清除本机对话（${sessions.size}）`}
-            </Button>
+            </ForgeButton>
           </div>
         </section>
 
@@ -350,8 +350,8 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
             {error}
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </ForgeDialogContent>
+    </ForgeDialog>
   );
 }
 

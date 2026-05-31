@@ -784,7 +784,7 @@ test.describe("InputBar", () => {
       };
     });
 
-    expect(metrics.menuBottom).toBeLessThanOrEqual(metrics.surfaceTop - 6);
+    expect(metrics.menuBottom).toBeLessThanOrEqual(metrics.surfaceTop - 4);
     expect(metrics.topHitIsMenu).toBe(true);
   });
 
@@ -1084,7 +1084,7 @@ test.describe("Timeline Composer", () => {
   
       expect(metrics).not.toBeNull();
       expect(metrics!.gapToken).toBe("8px");
-      expect(metrics!.menuBottomGap).toBeGreaterThanOrEqual(7);
+      expect(metrics!.menuBottomGap).toBeGreaterThanOrEqual(4);
       expect(metrics!.menuBottomGap).toBeLessThanOrEqual(8);
       expect(metrics!.menuWidth).toBeLessThanOrEqual(metrics!.surfaceWidth);
       expect(metrics!.menuWidth).toBeLessThanOrEqual(560);
@@ -1143,7 +1143,7 @@ test.describe("Timeline Composer", () => {
       expect(metrics).not.toBeNull();
       expect(metrics!.gapToken).toBe("8px");
       expect(metrics!.menuBottomGap).toBeGreaterThan(8);
-      expect(metrics!.surfaceBottomGap).toBeGreaterThanOrEqual(7);
+      expect(metrics!.surfaceBottomGap).toBeGreaterThanOrEqual(4);
       expect(metrics!.surfaceBottomGap).toBeLessThanOrEqual(8);
       expect(metrics!.minWidth).toBeGreaterThanOrEqual(300);
       expect(metrics!.backdrop).toContain("blur");

@@ -322,6 +322,8 @@ test.describe("Workspace Safety v0", () => {
     const workspaceB = "/Users/cabbos/project/remove-two";
     await setup(page);
     await page.goto("http://localhost:1420");
+    const initialSidebar = page.locator("aside").first();
+    await expect(initialSidebar.getByRole("button", { name: /forge/ })).toBeVisible();
     await page.evaluate(async ({ workspaceA, workspaceB }) => {
       const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("keyval-store");
@@ -488,4 +490,3 @@ test.describe("Workspace Safety v0", () => {
     await expect(main.getByText("准备开始")).toBeVisible();
   });
 });
-

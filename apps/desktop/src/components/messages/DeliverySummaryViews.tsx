@@ -1,7 +1,7 @@
 import { ArrowUpRight, ClipboardCheck, ExternalLink, FileText, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DeliveryPrimaryActionView, DeliverySummaryItem } from "@/lib/turn-closure";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 
 export function DeliverySummaryItemView({ item }: { item: DeliverySummaryItem }) {
   return (

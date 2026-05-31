@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { CheckCircle2, Circle, FolderOpen, GitBranch, KeyRound, Play, RefreshCw } from "lucide-react";
 import { useActiveWorkspace, useStore } from "@/store";
 import {
@@ -14,7 +15,9 @@ import {
 import { getProviderLabel } from "@/lib/providers";
 import { deriveStartReadiness, type ReadinessAction } from "@/lib/start-readiness";
 import { cn } from "@/lib/utils";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeActionButton } from "@/components/primitives/action";
+import { ForgeIcon } from "@/components/primitives/icon";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
 import type { ForgeIconTone } from "@/lib/capability-icons";
 
 interface StartReadinessCardProps {
@@ -104,14 +107,13 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
             <div className="truncate text-sm font-medium text-foreground">{readiness.title}</div>
             <div className="mt-0.5 truncate text-xs text-muted-foreground">{setupAction.value}</div>
           </div>
-          <button
-            type="button"
+          <ForgeActionButton
             disabled={busyAction === setupAction.action}
             onClick={() => runAction(setupAction.action)}
-            className="forge-action justify-center disabled:cursor-default disabled:opacity-70"
+            className="justify-center disabled:cursor-default disabled:opacity-70"
           >
             {busyAction === setupAction.action ? "处理中" : setupAction.actionLabel}
-          </button>
+          </ForgeActionButton>
         </div>
       </div>
     );
@@ -139,24 +141,21 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {primaryAction?.action && primaryAction.actionLabel && (
-              <button
-                type="button"
+              <ForgeActionButton
                 disabled={busyAction === primaryAction.action}
                 onClick={() => runAction(primaryAction.action)}
-                className="forge-action justify-center disabled:cursor-default disabled:opacity-70"
+                className="justify-center disabled:cursor-default disabled:opacity-70"
               >
                 {busyAction === primaryAction.action ? "处理中" : primaryAction.actionLabel}
-              </button>
+              </ForgeActionButton>
             )}
-            <button
-              type="button"
+            <ForgeIconButton
               onClick={refresh}
-              className="forge-icon-button"
               title="刷新准备状态"
               aria-label="刷新准备状态"
             >
               <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-            </button>
+            </ForgeIconButton>
           </div>
         </div>
 
@@ -172,14 +171,14 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
                     <div className="forge-readiness-row-value">{row.value}</div>
                   </div>
                   {row.action && row.actionLabel ? (
-                    <button
+                    <ButtonPrimitive
                       type="button"
                       disabled={busyAction === row.action}
                       onClick={() => runAction(row.action)}
                       className="forge-readiness-row-action disabled:cursor-default disabled:opacity-70"
                     >
                       {busyAction === row.action ? "处理中" : row.actionLabel}
-                    </button>
+                    </ButtonPrimitive>
                   ) : (
                     <span className="forge-readiness-row-state">
                       {row.tone === "ready" ? "就绪" : row.tone === "blocked" ? "待处理" : "可选"}

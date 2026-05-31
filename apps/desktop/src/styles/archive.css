@@ -8,6 +8,10 @@
     box-shadow: -8px 0 18px rgba(36, 42, 36, 0.055);
   }
 
+  :root:has(.forge-composer-model-menu) .forge-inspector {
+    background: var(--forge-material-overlay);
+  }
+
   .forge-inspector-header {
     display: flex;
     min-height: var(--forge-titlebar-height);

@@ -11,7 +11,10 @@ import {
 } from "@/lib/tauri";
 import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confidence";
 import { cn } from "@/lib/utils";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeActionButton } from "@/components/primitives/action";
+import { ForgeIcon } from "@/components/primitives/icon";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
+import { ForgeSurface } from "@/components/primitives/surface";
 import type { ForgeIconTone } from "@/lib/capability-icons";
 import { useActiveWorkspace, useStore } from "@/store";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
@@ -120,7 +123,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   });
 
   return (
-    <section ref={cardRef} data-testid="project-status-card" className="forge-surface forge-project-status">
+    <ForgeSurface as="section" ref={cardRef} data-testid="project-status-card" className="forge-project-status">
       <div data-forge-motion="project-status-entry" className="forge-project-status-header">
         <div className="forge-project-status-title-group">
           <ForgeIcon icon={Folder} tone="context" contained={false} className="size-3.5" />
@@ -129,15 +132,14 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
             <div className="forge-project-status-path">{projectPathLabel}</div>
           </div>
         </div>
-        <button
-          type="button"
+        <ForgeIconButton
           onClick={refresh}
-          className="forge-icon-button size-7"
+          className="size-7"
           title="刷新交付状态"
           aria-label="刷新交付状态"
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-        </button>
+        </ForgeIconButton>
       </div>
 
       <div className="forge-project-status-body">
@@ -204,7 +206,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
           )}
         </div>
       )}
-    </section>
+    </ForgeSurface>
   );
 }
 
@@ -248,16 +250,15 @@ function DeliveryButton({
   const tone: ForgeIconTone = action === "create_checkpoint" ? "safety" : "action";
 
   return (
-    <button
-      type="button"
+    <ForgeActionButton
       data-testid="project-status-action"
       disabled={busy}
       onClick={() => onClick(action)}
-      className="forge-action forge-project-status-action disabled:cursor-default disabled:opacity-70"
+      className="forge-project-status-action disabled:cursor-default disabled:opacity-70"
     >
       <ForgeIcon icon={Icon} tone={tone} contained={false} className={cn("size-3.5", busy && "animate-pulse")} />
       {label}
-    </button>
+    </ForgeActionButton>
   );
 }
 

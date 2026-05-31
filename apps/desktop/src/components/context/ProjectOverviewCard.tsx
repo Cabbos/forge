@@ -1,5 +1,7 @@
 import { ArrowUpRight, FileText, FolderOpen, ListChecks, Target } from "lucide-react";
 import type { ReactNode } from "react";
+import { ForgeActionButton } from "@/components/primitives/action";
+import { ForgeSurface } from "@/components/primitives/surface";
 import { useStore } from "@/store";
 import type { ProjectArchiveOverview } from "@/lib/project-archive-overview";
 
@@ -16,7 +18,7 @@ export function ProjectOverviewCard({ overview }: { overview: ProjectArchiveOver
         <span className="forge-section-meta">回来继续</span>
       </div>
 
-      <div className="forge-surface space-y-3 px-3 py-3">
+      <ForgeSurface className="space-y-3 px-3 py-3">
         <div className="flex min-w-0 items-start gap-2 rounded-md border border-border bg-background/45 px-2.5 py-2">
           <FolderOpen className="mt-0.5 size-3.5 shrink-0 text-primary" />
           <div className="min-w-0" title={overview.projectPath}>
@@ -41,10 +43,10 @@ export function ProjectOverviewCard({ overview }: { overview: ProjectArchiveOver
                     {overview.recordReview.targetPages.join(", ")}
                   </div>
                 ) : null}
-                <button type="button" onClick={openRecords} className="forge-action">
+                <ForgeActionButton onClick={openRecords}>
                   <FileText className="size-3" />
                   查看记录
-                </button>
+                </ForgeActionButton>
               </div>
             </div>
           ) : null}
@@ -52,18 +54,16 @@ export function ProjectOverviewCard({ overview }: { overview: ProjectArchiveOver
 
         <div className="flex flex-wrap gap-1.5">
           {overview.actions.map((action) => (
-            <button
+            <ForgeActionButton
               key={action.id}
-              type="button"
               onClick={() => setPendingInput(action.prompt)}
-              className="forge-action"
             >
               {action.id === "continue_polish" ? <ListChecks className="size-3" /> : <ArrowUpRight className="size-3" />}
               {action.label}
-            </button>
+            </ForgeActionButton>
           ))}
         </div>
-      </div>
+      </ForgeSurface>
     </section>
   );
 }

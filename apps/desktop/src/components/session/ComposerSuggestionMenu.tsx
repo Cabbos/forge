@@ -1,6 +1,7 @@
 import { useRef } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { commandIconMeta, fileReferenceIconMeta } from "@/lib/capability-icons";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { COMPOSER_COMMANDS } from "./composerCommands";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
@@ -59,7 +60,7 @@ export function ComposerSuggestionMenu({
           {atResults.map((file, index) => {
             const meta = fileReferenceIconMeta(file);
             return (
-              <button
+              <ButtonPrimitive
                 key={file}
                 role="option"
                 aria-selected={index === activeIndex}
@@ -70,7 +71,7 @@ export function ComposerSuggestionMenu({
               >
                 <ForgeIcon icon={meta.icon} tone={meta.tone} />
                 <span className="forge-menu-option-label">{file}</span>
-              </button>
+              </ButtonPrimitive>
             );
           })}
         </>
@@ -81,7 +82,7 @@ export function ComposerSuggestionMenu({
           {COMPOSER_COMMANDS.map((command, index) => {
             const meta = commandIconMeta(command.text);
             return (
-              <button
+              <ButtonPrimitive
                 key={command.prefix}
                 role="option"
                 aria-selected={index === activeIndex}
@@ -92,7 +93,7 @@ export function ComposerSuggestionMenu({
                 <ForgeIcon icon={meta.icon} tone={meta.tone} />
                 <span className="forge-menu-option-label font-mono">{command.text}</span>
                 <span className="forge-menu-option-meta">{command.desc}</span>
-              </button>
+              </ButtonPrimitive>
             );
           })}
         </>

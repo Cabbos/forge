@@ -1,7 +1,7 @@
 import { ChevronRight, FileDiff } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import type { BlockState } from "@/lib/protocol";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { FilePreviewSheet } from "@/components/messages/FilePreviewSheet";
 import type { FileRef } from "@/components/messages/filePreviewTypes";
 import { MessagePanel } from "@/components/messages/MessagePanel";

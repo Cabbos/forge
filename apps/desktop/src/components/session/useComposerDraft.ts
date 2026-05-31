@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useStore } from "@/store";
 
 const COMPOSER_MAX_INPUT_HEIGHT = 128;
 
 type ComposerDraftValue = string | ((current: string) => string);
 
-interface UseComposerDraftOptions {
-  pendingInput: string;
-  setPendingInput: (input: string) => void;
-}
-
-export function useComposerDraft({ pendingInput, setPendingInput }: UseComposerDraftOptions) {
+export function useComposerDraft() {
+  const pendingInput = useStore((s) => s.pendingInput);
+  const setPendingInput = useStore((s) => s.setPendingInput);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const valueRef = useRef("");

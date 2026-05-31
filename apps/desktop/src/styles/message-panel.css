@@ -1,0 +1,22 @@
+@layer components {
+  .forge-message-panel {
+    max-width: 720px;
+    overflow: hidden;
+    border: 1px solid var(--forge-material-border);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-material-quiet);
+    margin: 0;
+  }
+
+  .forge-message-panel-header {
+    display: flex;
+    min-width: 0;
+    min-height: 34px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--forge-border-subtle);
+    background: rgba(255, 252, 246, 0.36);
+    padding: 0.375rem 0.625rem;
+  }
+}
