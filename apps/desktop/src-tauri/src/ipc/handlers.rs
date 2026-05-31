@@ -27,7 +27,7 @@ use crate::agent::snapshot::{
 };
 use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnInputIntent, AgentTurnMetadata,
-    AgentTurnState,
+    AgentTurnState, AgentVerificationStatus, AgentVerificationTrace,
 };
 use crate::continuity::{
     ContinuityEvent, ExperienceMemory, FileOperation, ReflectionEvent, ReflectionOutcome,
@@ -1738,6 +1738,79 @@ fn continuity_events_from_turn(turn: &AgentTurnState) -> Vec<ContinuityEvent> {
     events
 }
 
+fn continuity_lessons_from_turn(turn: &AgentTurnState) -> Vec<String> {
+    let goal = normalize_inline_text(&turn.user_goal, 120);
+    let mut lessons = Vec::new();
+
+    for tool in turn
+        .tools
+        .iter()
+        .filter(|tool| continuity_tool_is_error(tool))
+        .take(3)
+    {
+        lessons.push(format!(
+            "Tool `{}` failed during `{}` ({}): {}",
+            normalize_inline_text(&tool.name, 80),
+            goal,
+            continuity_tool_input_summary(tool),
+            continuity_tool_output_summary(tool)
+        ));
+    }
+
+    if matches!(
+        turn.verification.status,
+        AgentVerificationStatus::Failed | AgentVerificationStatus::Error
+    ) {
+        if let Some(summary) = continuity_verification_failure_summary(&turn.verification) {
+            let command = turn
+                .verification
+                .command
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("verification");
+            lessons.push(format!(
+                "Verification `{}` failed during `{}`: {}",
+                normalize_inline_text(command, 120),
+                goal,
+                summary
+            ));
+        }
+    }
+
+    dedupe_lessons(lessons)
+}
+
+fn continuity_verification_failure_summary(trace: &AgentVerificationTrace) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(exit_code) = trace.exit_code {
+        parts.push(format!("exit_code={exit_code}"));
+    }
+    if let Some(stderr) = trace
+        .stderr_preview
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        parts.push(format!("stderr={}", normalize_inline_text(stderr, 180)));
+    } else if let Some(stdout) = trace
+        .stdout_preview
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        parts.push(format!("stdout={}", normalize_inline_text(stdout, 180)));
+    }
+
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+fn dedupe_lessons(lessons: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    lessons
+        .into_iter()
+        .filter(|lesson| !lesson.trim().is_empty())
+        .filter(|lesson| seen.insert(lesson.to_lowercase()))
+        .collect()
+}
+
 fn continuity_tool_input_summary(tool: &AgentToolTrace) -> String {
     if let Some(command) = tool
         .command
@@ -1968,11 +2041,16 @@ pub async fn send_input(
             if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
                 crate::app_log!("WARN", "[session_snapshot] {}", error);
             }
+            let latest_turn_for_delivery = s.snapshot().latest_turn;
             if result.is_ok() {
                 let memory_candidates =
                     extract_candidates_from_user_message(&session_id, Some(&project_path), &text);
-                let continuity_lessons =
+                let mut continuity_lessons =
                     continuity_lessons_from_memory_candidates(&memory_candidates);
+                if let Some(turn) = latest_turn_for_delivery.as_ref() {
+                    continuity_lessons.extend(continuity_lessons_from_turn(turn));
+                    continuity_lessons = dedupe_lessons(continuity_lessons);
+                }
                 for candidate in memory_candidates {
                     match state.wiki_memory.upsert_candidate(candidate).await {
                         Ok(Some(memory)) => {
@@ -2005,7 +2083,6 @@ pub async fn send_input(
                         now_ms(),
                     ),
                 );
-                let latest_turn_for_delivery = s.snapshot().latest_turn;
                 record_turn_continuity_events_safely(
                     &state,
                     &project_path,
@@ -2042,6 +2119,10 @@ pub async fn send_input(
                     crate::app_log!("WARN", "[session_snapshot] {}", error);
                 }
             } else {
+                let continuity_lessons = latest_turn_for_delivery
+                    .as_ref()
+                    .map(continuity_lessons_from_turn)
+                    .unwrap_or_default();
                 record_continuity_event_safely(
                     &state,
                     &project_path,
@@ -2049,10 +2130,16 @@ pub async fn send_input(
                         &session_id,
                         &text,
                         ReflectionOutcome::Failed,
-                        Vec::new(),
+                        continuity_lessons,
                         now_ms(),
                     ),
                 );
+                record_turn_continuity_events_safely(
+                    &state,
+                    &project_path,
+                    latest_turn_for_delivery.as_ref(),
+                );
+                form_continuity_experiences_safely(&state, &project_path, &session_id, now_ms());
             }
             result
         }
@@ -2963,6 +3050,51 @@ mod tests {
                 content_summary: "turn_status=completed; tools=2; failed_tools=1".to_string(),
                 timestamp_ms: 50,
             }
+        );
+    }
+
+    #[test]
+    fn continuity_lessons_from_turn_capture_failures_conservatively() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/repo/forge".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Add continuity FTS recall".to_string(),
+        );
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "bash".to_string(),
+            category: AgentToolCategory::Shell,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("sqlite error: no such module fts5".to_string()),
+            is_error: true,
+            affected_files: Vec::new(),
+            command: Some("cargo test continuity".to_string()),
+        });
+        turn.set_verification(crate::agent::turn_state::AgentVerificationTrace {
+            status: crate::agent::turn_state::AgentVerificationStatus::Failed,
+            command: Some("cargo test continuity".to_string()),
+            exit_code: Some(101),
+            stdout_preview: None,
+            stderr_preview: Some("no such module fts5".to_string()),
+            duration_ms: Some(1200),
+            completed_at_ms: Some(30),
+        });
+
+        let lessons = continuity_lessons_from_turn(&turn);
+
+        assert_eq!(
+            lessons,
+            vec![
+                "Tool `bash` failed during `Add continuity FTS recall` (command=cargo test continuity): sqlite error: no such module fts5",
+                "Verification `cargo test continuity` failed during `Add continuity FTS recall`: exit_code=101; stderr=no such module fts5",
+            ]
         );
     }
 
