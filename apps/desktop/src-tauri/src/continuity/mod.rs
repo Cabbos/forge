@@ -3,6 +3,10 @@ use std::collections::HashSet;
 
 use crate::memory::risk::should_reject_persistent_memory;
 
+mod store;
+
+pub use store::ContinuityStore;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContinuityEvent {
@@ -32,6 +36,38 @@ pub enum ContinuityEvent {
         timestamp_ms: u64,
     },
     Reflection(ReflectionEvent),
+}
+
+impl ContinuityEvent {
+    fn session_id(&self) -> &str {
+        match self {
+            ContinuityEvent::UserMessage { session_id, .. }
+            | ContinuityEvent::AssistantResponse { session_id, .. }
+            | ContinuityEvent::ToolExecution { session_id, .. }
+            | ContinuityEvent::FileChange { session_id, .. } => session_id,
+            ContinuityEvent::Reflection(reflection) => &reflection.session_id,
+        }
+    }
+
+    fn timestamp_ms(&self) -> u64 {
+        match self {
+            ContinuityEvent::UserMessage { timestamp_ms, .. }
+            | ContinuityEvent::AssistantResponse { timestamp_ms, .. }
+            | ContinuityEvent::ToolExecution { timestamp_ms, .. }
+            | ContinuityEvent::FileChange { timestamp_ms, .. } => *timestamp_ms,
+            ContinuityEvent::Reflection(reflection) => reflection.timestamp_ms,
+        }
+    }
+
+    fn event_type(&self) -> &'static str {
+        match self {
+            ContinuityEvent::UserMessage { .. } => "user_message",
+            ContinuityEvent::AssistantResponse { .. } => "assistant_response",
+            ContinuityEvent::ToolExecution { .. } => "tool_execution",
+            ContinuityEvent::FileChange { .. } => "file_change",
+            ContinuityEvent::Reflection(_) => "reflection",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

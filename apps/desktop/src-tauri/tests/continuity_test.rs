@@ -1,7 +1,8 @@
 use forge::continuity::{
-    form_experiences_from_reflection, ExperienceKind, ExperienceStatus, ReflectionEvent,
-    ReflectionOutcome,
+    form_experiences_from_reflection, ContinuityEvent, ContinuityStore, ExperienceKind,
+    ExperienceStatus, ReflectionEvent, ReflectionOutcome,
 };
+use std::path::PathBuf;
 
 fn reflection_with_lessons(lessons: Vec<&str>) -> ReflectionEvent {
     ReflectionEvent {
@@ -70,4 +71,121 @@ fn failed_reflection_forms_lower_confidence_candidates() {
     assert_eq!(experiences.len(), 1);
     assert!(experiences[0].confidence < 0.7);
     assert_eq!(experiences[0].status, ExperienceStatus::Candidate);
+}
+
+#[test]
+fn store_records_and_reloads_session_events_in_timestamp_order() {
+    let db_path = temp_db_path("roundtrip");
+    {
+        let store = ContinuityStore::open(&db_path).expect("open store");
+        store
+            .record_event(
+                "/repo/forge",
+                &ContinuityEvent::AssistantResponse {
+                    session_id: "session-1".to_string(),
+                    content_summary: "Answered with implementation summary".to_string(),
+                    timestamp_ms: 30,
+                },
+            )
+            .expect("record assistant");
+        store
+            .record_event(
+                "/repo/forge",
+                &ContinuityEvent::UserMessage {
+                    session_id: "session-1".to_string(),
+                    content: "继续".to_string(),
+                    timestamp_ms: 10,
+                },
+            )
+            .expect("record user");
+    }
+
+    let reopened = ContinuityStore::open(&db_path).expect("reopen store");
+    let events = reopened
+        .list_events_for_session("/repo/forge", "session-1")
+        .expect("list events");
+
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], ContinuityEvent::UserMessage { .. }));
+    assert!(matches!(
+        events[1],
+        ContinuityEvent::AssistantResponse { .. }
+    ));
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn store_isolates_events_by_project_path() {
+    let db_path = temp_db_path("project-isolation");
+    let store = ContinuityStore::open(&db_path).expect("open store");
+
+    store
+        .record_event(
+            "/repo/forge",
+            &ContinuityEvent::UserMessage {
+                session_id: "session-1".to_string(),
+                content: "repo one".to_string(),
+                timestamp_ms: 10,
+            },
+        )
+        .expect("record forge");
+    store
+        .record_event(
+            "/repo/other",
+            &ContinuityEvent::UserMessage {
+                session_id: "session-1".to_string(),
+                content: "repo two".to_string(),
+                timestamp_ms: 20,
+            },
+        )
+        .expect("record other");
+
+    let events = store
+        .list_events_for_session("/repo/forge", "session-1")
+        .expect("list events");
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0],
+        ContinuityEvent::UserMessage {
+            session_id: "session-1".to_string(),
+            content: "repo one".to_string(),
+            timestamp_ms: 10,
+        }
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn store_roundtrips_reflection_events() {
+    let db_path = temp_db_path("reflection");
+    let store = ContinuityStore::open(&db_path).expect("open store");
+    let reflection = reflection_with_lessons(vec![
+        "Keep graph deferred until experience quality is proven.",
+    ]);
+
+    store
+        .record_event(
+            "/repo/forge",
+            &ContinuityEvent::Reflection(reflection.clone()),
+        )
+        .expect("record reflection");
+
+    let events = store
+        .list_events_for_session("/repo/forge", "session-1")
+        .expect("list events");
+
+    assert_eq!(events, vec![ContinuityEvent::Reflection(reflection)]);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+fn temp_db_path(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "forge-continuity-{label}-{}-{}.db",
+        std::process::id(),
+        uuid::Uuid::now_v7()
+    ))
 }
