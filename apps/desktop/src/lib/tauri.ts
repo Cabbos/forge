@@ -100,6 +100,35 @@ export interface ProjectCheckpointStatus {
   message: string;
 }
 
+export type ContinuityExperienceKind =
+  | "lesson"
+  | "bug_pattern"
+  | "workflow"
+  | "decision"
+  | "preference"
+  | "project_fact";
+
+export type ContinuityExperienceStatus =
+  | "candidate"
+  | "accepted"
+  | "pinned"
+  | "forgotten"
+  | "archived";
+
+export interface ContinuityExperience {
+  id: string;
+  kind: ContinuityExperienceKind;
+  status: ContinuityExperienceStatus;
+  title: string;
+  body: string;
+  project_path?: string | null;
+  source_session_id?: string | null;
+  confidence: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  tags: string[];
+}
+
 export interface McpContextResource {
   server_id: string;
   uri: string;
@@ -393,6 +422,29 @@ export async function selectContextMemories(
 ): Promise<SelectedContextMemory[]> {
   if (!hasTauriRuntime()) return [];
   return invoke("select_context_memories", { message, projectPath: projectPath ?? null, sessionId: sessionId ?? null });
+}
+
+export async function listContinuityExperiences(
+  sessionId?: string,
+  workingDir?: string | null,
+): Promise<ContinuityExperience[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("list_continuity_experiences", { sessionId: sessionId ?? null, workingDir: workingDir ?? null });
+}
+
+export async function searchContinuityExperiences(
+  query: string,
+  sessionId?: string,
+  workingDir?: string | null,
+  limit?: number,
+): Promise<ContinuityExperience[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("search_continuity_experiences", {
+    query,
+    sessionId: sessionId ?? null,
+    workingDir: workingDir ?? null,
+    limit: limit ?? null,
+  });
 }
 
 export async function getWorkflowState(sessionId: string): Promise<WorkflowState | null> {
