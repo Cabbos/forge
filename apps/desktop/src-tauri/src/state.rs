@@ -1,4 +1,5 @@
 use crate::agent::session::{AgentSession, SessionStatus};
+use crate::continuity::ContinuityService;
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
 use crate::memory::WikiMemoryStore;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub harness: Arc<Harness>,
     pub dev_server: Arc<RwLock<Option<ManagedDevServer>>>,
     pub wiki_memory: Arc<WikiMemoryStore>,
+    pub continuity: Arc<ContinuityService>,
     pub forge_wiki: Arc<ForgeWikiStore>,
     pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
     pub delivery_states: Arc<RwLock<HashMap<String, DeliverySummary>>>,
@@ -35,6 +37,10 @@ pub struct AppState {
 impl AppState {
     pub fn new(harness: Arc<Harness>) -> Self {
         let pending_confirms = harness.pending_confirms.clone();
+        let continuity_path = harness.working_dir.join(".forge").join("continuity.db");
+        let continuity = Arc::new(
+            ContinuityService::open(&continuity_path).expect("Failed to open continuity database"),
+        );
         Self {
             sessions: RwLock::new(HashMap::new()),
             session_order: RwLock::new(VecDeque::new()),
@@ -42,6 +48,7 @@ impl AppState {
             harness,
             dev_server: Arc::new(RwLock::new(None)),
             wiki_memory: Arc::new(WikiMemoryStore::default()),
+            continuity,
             forge_wiki: Arc::new(ForgeWikiStore::new()),
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
             delivery_states: Arc::new(RwLock::new(HashMap::new())),
@@ -193,6 +200,26 @@ mod tests {
         let sessions = state.sessions.read().await;
         assert!(sessions.contains_key("session-1"));
         assert!(sessions.contains_key("session-2"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn app_state_initializes_project_continuity_service() {
+        let workspace = temp_workspace("continuity-service");
+        let state = AppState::new(Arc::new(Harness::new(workspace.clone())));
+        let event = crate::continuity::ContinuityEvent::UserMessage {
+            session_id: "session-1".to_string(),
+            content: "继续".to_string(),
+            timestamp_ms: 10,
+        };
+
+        state
+            .continuity
+            .record_event(&workspace.to_string_lossy(), &event)
+            .expect("record continuity event");
+
+        assert!(workspace.join(".forge").join("continuity.db").exists());
 
         let _ = std::fs::remove_dir_all(&workspace);
     }

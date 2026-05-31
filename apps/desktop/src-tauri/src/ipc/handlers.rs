@@ -26,6 +26,7 @@ use crate::agent::snapshot::{
     AgentSessionSnapshot,
 };
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
+use crate::continuity::{ContinuityEvent, ReflectionEvent, ReflectionOutcome};
 use crate::forge_wiki::model::{
     ForgeWikiProposalStatus, ForgeWikiUpdateProposal, SelectedForgeWikiPage,
 };
@@ -39,6 +40,7 @@ use crate::ipc::project_runtime::project_runtime_status_for_session;
 use crate::ipc::workspace::resolve_bound_working_dir;
 use crate::memory::{
     extract_candidates_from_user_message, format_selected_memory_context, SelectedContextMemory,
+    WikiMemory,
 };
 use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::{DeliverySummary, StreamEvent};
@@ -1654,6 +1656,73 @@ async fn prepare_send_input_turn_context(
     }
 }
 
+fn record_continuity_event_safely(
+    state: &Arc<AppState>,
+    project_path: &str,
+    event: ContinuityEvent,
+) {
+    if let Err(error) = state.continuity.record_event(project_path, &event) {
+        crate::app_log!("WARN", "[continuity] event record failed: {}", error);
+    }
+}
+
+fn form_continuity_experiences_safely(
+    state: &Arc<AppState>,
+    project_path: &str,
+    session_id: &str,
+    now_ms: u64,
+) {
+    if let Err(error) =
+        state
+            .continuity
+            .form_experiences_for_session(project_path, session_id, now_ms)
+    {
+        crate::app_log!(
+            "WARN",
+            "[continuity] experience formation failed: {}",
+            error
+        );
+    }
+}
+
+fn build_send_input_reflection_event(
+    session_id: &str,
+    user_goal: &str,
+    outcome: ReflectionOutcome,
+    lessons: Vec<String>,
+    timestamp_ms: u64,
+) -> ContinuityEvent {
+    ContinuityEvent::Reflection(ReflectionEvent {
+        session_id: session_id.to_string(),
+        user_goal: user_goal.to_string(),
+        execution_summary: match outcome {
+            ReflectionOutcome::Completed => "send_input completed successfully".to_string(),
+            ReflectionOutcome::Failed => "send_input failed before completion".to_string(),
+            ReflectionOutcome::Cancelled => "send_input was cancelled".to_string(),
+        },
+        outcome,
+        verification_summary: None,
+        lessons,
+        timestamp_ms,
+    })
+}
+
+fn continuity_lessons_from_memory_candidates(candidates: &[WikiMemory]) -> Vec<String> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let title = candidate.title.trim();
+            let body = candidate.body.trim();
+            if title.is_empty() || body.contains(title) {
+                body.to_string()
+            } else {
+                format!("{title}: {body}")
+            }
+        })
+        .filter(|lesson| !lesson.trim().is_empty())
+        .collect()
+}
+
 #[tauri::command]
 pub async fn send_input(
     state: tauri::State<'_, Arc<AppState>>,
@@ -1668,6 +1737,15 @@ pub async fn send_input(
         Some(s) => {
             let s = upgrade_missing_key_session_if_possible(&app_handle, &state, s).await?;
             let project_path = s.harness.working_dir.to_string_lossy().to_string();
+            record_continuity_event_safely(
+                &state,
+                &project_path,
+                ContinuityEvent::UserMessage {
+                    session_id: session_id.clone(),
+                    content: text.clone(),
+                    timestamp_ms: now_ms(),
+                },
+            );
             let turn_guard =
                 reserve_turn_then_record_user_message(&s, &session_id, &text, |event| {
                     if let Err(error) = crate::transcript::append_stream_event(&event) {
@@ -1749,9 +1827,11 @@ pub async fn send_input(
                 crate::app_log!("WARN", "[session_snapshot] {}", error);
             }
             if result.is_ok() {
-                for candidate in
-                    extract_candidates_from_user_message(&session_id, Some(&project_path), &text)
-                {
+                let memory_candidates =
+                    extract_candidates_from_user_message(&session_id, Some(&project_path), &text);
+                let continuity_lessons =
+                    continuity_lessons_from_memory_candidates(&memory_candidates);
+                for candidate in memory_candidates {
                     match state.wiki_memory.upsert_candidate(candidate).await {
                         Ok(Some(memory)) => {
                             crate::transcript::emit_stream_event(
@@ -1772,6 +1852,18 @@ pub async fn send_input(
                         }
                     }
                 }
+                record_continuity_event_safely(
+                    &state,
+                    &project_path,
+                    build_send_input_reflection_event(
+                        &session_id,
+                        &text,
+                        ReflectionOutcome::Completed,
+                        continuity_lessons,
+                        now_ms(),
+                    ),
+                );
+                form_continuity_experiences_safely(&state, &project_path, &session_id, now_ms());
                 let latest_turn_for_delivery = s.snapshot().latest_turn;
                 let writeback = propose_send_input_project_record_update(
                     &state,
@@ -1802,6 +1894,18 @@ pub async fn send_input(
                 if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
                     crate::app_log!("WARN", "[session_snapshot] {}", error);
                 }
+            } else {
+                record_continuity_event_safely(
+                    &state,
+                    &project_path,
+                    build_send_input_reflection_event(
+                        &session_id,
+                        &text,
+                        ReflectionOutcome::Failed,
+                        Vec::new(),
+                        now_ms(),
+                    ),
+                );
             }
             result
         }
@@ -2391,6 +2495,42 @@ mod tests {
             use_count: 0,
             tags: vec!["进度".to_string()],
         }
+    }
+
+    #[test]
+    fn continuity_reflection_uses_memory_candidates_as_lessons() {
+        let candidates = vec![test_project_memory(
+            "memory-1",
+            "后端影子模式",
+            "第一版 Continuity 先保持 backend-only shadow mode",
+            "/repo/forge",
+        )];
+
+        let lessons = continuity_lessons_from_memory_candidates(&candidates);
+        let event = build_send_input_reflection_event(
+            "session-1",
+            "继续经验系统",
+            ReflectionOutcome::Completed,
+            lessons.clone(),
+            42,
+        );
+
+        assert_eq!(
+            lessons,
+            vec!["后端影子模式: 第一版 Continuity 先保持 backend-only shadow mode"]
+        );
+        assert_eq!(
+            event,
+            ContinuityEvent::Reflection(ReflectionEvent {
+                session_id: "session-1".to_string(),
+                user_goal: "继续经验系统".to_string(),
+                execution_summary: "send_input completed successfully".to_string(),
+                outcome: ReflectionOutcome::Completed,
+                verification_summary: None,
+                lessons,
+                timestamp_ms: 42,
+            })
+        );
     }
 
     #[test]
