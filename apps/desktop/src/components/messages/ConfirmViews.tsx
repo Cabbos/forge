@@ -9,7 +9,7 @@ import {
   confirmRiskColor,
   type ConfirmPromptViewModel,
 } from "@/components/messages/confirmPresentation";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 
 export function ConfirmActionBar({
   responded,
@@ -169,7 +169,7 @@ export function ConfirmPromptView({
   onResponse: (approved: boolean) => void;
 }) {
   return (
-    <MessagePanel tone="warning">
+    <MessagePanel tone="warning" className="forge-confirm-card" data-confirm-state={responded ? "resolved" : "pending"}>
       <MessagePanelHeader
         icon={<ForgeIcon icon={ShieldAlert} tone="safety" />}
         title={prompt.kindLabel}

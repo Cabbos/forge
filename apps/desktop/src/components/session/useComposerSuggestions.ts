@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { searchWorkspaceFiles } from "@/lib/tauri";
 import type { ComposerMenuMode } from "./composerTypes";
 
@@ -18,13 +18,22 @@ export function useComposerSuggestions({
   const [showSuggestions, setShowSuggestions] = useState<ComposerMenuMode>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
   const [atResults, setAtResults] = useState<string[]>([]);
+  const atSearchRequestRef = useRef(0);
 
   useEffect(() => {
     setActiveSuggestionIndex(0);
   }, [showSuggestions, atResults.length]);
 
+  useEffect(() => {
+    return () => {
+      atSearchRequestRef.current += 1;
+    };
+  }, []);
+
   const closeSuggestions = useCallback(() => {
+    atSearchRequestRef.current += 1;
     setShowSuggestions(null);
+    setAtResults([]);
   }, []);
 
   const syncSuggestionsForInput = useCallback((inputValue: string, cursorPosition: number) => {
@@ -34,14 +43,22 @@ export function useComposerSuggestions({
     if (lastWord.startsWith("@") && lastWord.length >= 1) {
       onCloseModelMenu();
       setShowSuggestions("@");
+      const requestId = atSearchRequestRef.current + 1;
+      atSearchRequestRef.current = requestId;
       searchWorkspaceFiles(lastWord.slice(1), sessionId, workingDir)
-        .then(setAtResults)
-        .catch(() => setAtResults([]));
+        .then((results) => {
+          if (atSearchRequestRef.current === requestId) setAtResults(results);
+        })
+        .catch(() => {
+          if (atSearchRequestRef.current === requestId) setAtResults([]);
+        });
       return;
     }
 
     if (lastWord === "/") {
       onCloseModelMenu();
+      atSearchRequestRef.current += 1;
+      setAtResults([]);
       setShowSuggestions("/");
       return;
     }
@@ -52,7 +69,14 @@ export function useComposerSuggestions({
   const toggleSuggestion = useCallback((mode: Exclude<ComposerMenuMode, null>) => {
     onFocusTextarea();
     onCloseModelMenu();
-    setShowSuggestions((current) => current === mode ? null : mode);
+    setShowSuggestions((current) => {
+      const next = current === mode ? null : mode;
+      if (next !== "@") {
+        atSearchRequestRef.current += 1;
+        setAtResults([]);
+      }
+      return next;
+    });
   }, [onCloseModelMenu, onFocusTextarea]);
 
   return {

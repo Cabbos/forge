@@ -4,7 +4,7 @@ import { ToolCallCard } from "@/components/messages/ToolCallCard";
 
 export function ToolActivityDetails({ blocks }: { blocks: BlockState[] }) {
   return (
-    <div className="forge-tool-activity-list">
+    <div className="forge-tool-activity-list" data-forge-motion="activity-details">
       {blocks.map((block) => {
         if (block.event_type === "shell") {
           return <ShellCard key={block.block_id} block={block} />;

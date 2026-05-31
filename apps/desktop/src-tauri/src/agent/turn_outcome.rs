@@ -38,6 +38,17 @@ pub(crate) fn final_turn_status_for_run(
     }
 }
 
+pub(crate) fn final_turn_status_for_current_turn(
+    current_status: AgentTurnStatus,
+    running: bool,
+    verification: Option<&AgentVerificationTrace>,
+) -> AgentTurnStatus {
+    if current_status == AgentTurnStatus::Cancelled {
+        return AgentTurnStatus::Cancelled;
+    }
+    final_turn_status_for_run(running, verification)
+}
+
 pub(crate) fn final_turn_transition_reason_for_run(
     running: bool,
     verification: Option<&AgentVerificationTrace>,
@@ -52,6 +63,17 @@ pub(crate) fn final_turn_transition_reason_for_run(
     }
 }
 
+pub(crate) fn final_turn_transition_reason_for_current_turn(
+    current_status: AgentTurnStatus,
+    running: bool,
+    verification: Option<&AgentVerificationTrace>,
+) -> &'static str {
+    if current_status == AgentTurnStatus::Cancelled {
+        return "user_cancelled";
+    }
+    final_turn_transition_reason_for_run(running, verification)
+}
+
 pub(crate) fn verification_has_failed(trace: &AgentVerificationTrace) -> bool {
     matches!(
         trace.status,
@@ -62,7 +84,9 @@ pub(crate) fn verification_has_failed(trace: &AgentVerificationTrace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        final_turn_status_for_run, final_turn_transition_reason_for_run, verification_has_failed,
+        final_turn_status_for_current_turn, final_turn_status_for_run,
+        final_turn_transition_reason_for_current_turn, final_turn_transition_reason_for_run,
+        verification_has_failed,
     };
     use crate::agent::turn_state::{
         AgentTurnStatus, AgentVerificationStatus, AgentVerificationTrace,
@@ -115,6 +139,26 @@ mod tests {
         assert_eq!(
             final_turn_status_for_run(false, None),
             AgentTurnStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn cancelled_current_turn_stays_cancelled_even_if_session_resumed_before_finalization() {
+        assert_eq!(
+            final_turn_status_for_current_turn(
+                AgentTurnStatus::Cancelled,
+                true,
+                Some(&verification(AgentVerificationStatus::Passed)),
+            ),
+            AgentTurnStatus::Cancelled
+        );
+        assert_eq!(
+            final_turn_transition_reason_for_current_turn(
+                AgentTurnStatus::Cancelled,
+                true,
+                Some(&verification(AgentVerificationStatus::Passed)),
+            ),
+            "user_cancelled"
         );
     }
 

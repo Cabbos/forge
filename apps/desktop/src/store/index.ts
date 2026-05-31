@@ -276,17 +276,10 @@ function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent):
 
   if (event_type === "tool_call_result") {
     const next = [...blocks];
-    let existingIdx = next.findIndex((block) =>
+    const existingIdx = next.findIndex((block) =>
       (block.event_type === "tool_call" || block.event_type === "shell" || block.event_type === "thinking") &&
       block.block_id === event.block_id
     );
-    if (existingIdx < 0) {
-      existingIdx = [...next].reverse().findIndex((block) =>
-        (block.event_type === "tool_call" || block.event_type === "shell" || block.event_type === "thinking") &&
-        (!block.content || block.content === "")
-      );
-      if (existingIdx >= 0) existingIdx = next.length - 1 - existingIdx;
-    }
     if (existingIdx >= 0) {
       next[existingIdx] = {
         ...next[existingIdx],
@@ -431,6 +424,14 @@ function sameMcpContextSelection(a: McpContextSelection, b: McpContextSelection)
   return a.kind === "resource" && b.kind === "resource"
     ? a.uri === b.uri
     : a.kind === "prompt" && b.kind === "prompt" && a.name === b.name;
+}
+
+function touchSession(session: SessionState, patch: Partial<SessionState> = {}): SessionState {
+  return {
+    ...session,
+    ...patch,
+    updatedAt: Date.now(),
+  };
 }
 
 export const useStore = create<AppStore>((set, get) => ({
@@ -921,7 +922,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const blocks = session.blocks.map((b) =>
       b.block_id === blockId ? { ...b, ...patch } : b
     );
-    sessions.set(sessionId, { ...session, blocks });
+    sessions.set(sessionId, touchSession(session, { blocks }));
     set({ sessions });
     persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
     persistBlocks(sessionId, blocks);
@@ -931,7 +932,7 @@ export const useStore = create<AppStore>((set, get) => ({
     const sessions = new Map(get().sessions);
     const session = sessions.get(id);
     if (session) {
-      sessions.set(id, { ...session, status });
+      sessions.set(id, touchSession(session, { status }));
     }
     set({ sessions });
     persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
@@ -984,13 +985,13 @@ export const useStore = create<AppStore>((set, get) => ({
     if (event_type === "delivery_summary") {
       const sessionBlocks = get().sessions.get(session_id)?.blocks ?? [];
       const shouldDedupeReplay = isSameAsLastDeliveryBlock(sessionBlocks, event.summary);
+      if (shouldDedupeReplay) {
+        return;
+      }
       const deliverySummaryBySession = new Map(get().deliverySummaryBySession);
       deliverySummaryBySession.set(session_id, event.summary);
       set({ deliverySummaryBySession });
       persistSessions(get().sessions, get().workflowBySession, deliverySummaryBySession);
-      if (shouldDedupeReplay) {
-        return;
-      }
     }
 
     if (event_type === "memory_selection") {
@@ -1035,12 +1036,15 @@ export const useStore = create<AppStore>((set, get) => ({
       // If session_started arrives before addSession, create it from the event
       if (event_type === "session_started") {
         const se = event as Extract<StreamEvent, { event_type: "session_started" }>;
+        const now = Date.now();
         session = {
           id: session_id,
           agentType: se.agent_type,
           model: se.model,
           workingDir: get().activeWorkspaceId,
           workspaceId: get().activeWorkspaceId,
+          createdAt: now,
+          updatedAt: now,
           contextWindowTokens: se.context_window_tokens ?? getModelContextWindow(se.model),
           status: "running",
           blocks: [],
@@ -1090,6 +1094,7 @@ export const useStore = create<AppStore>((set, get) => ({
         contextWindowTokens: startedEvent.context_window_tokens ?? getModelContextWindow(startedEvent.model),
         status: "running",
         streaming: false,
+        updatedAt: Date.now(),
       });
       set({ sessions });
       persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
@@ -1102,6 +1107,7 @@ export const useStore = create<AppStore>((set, get) => ({
         status: "stopped",
         blocks,
         streaming: false,
+        updatedAt: Date.now(),
       });
       set({ sessions });
       persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
@@ -1115,6 +1121,7 @@ export const useStore = create<AppStore>((set, get) => ({
         ...session,
         costUsd: (session.costUsd || 0) + ue.estimated_cost_usd,
         blocks,
+        updatedAt: Date.now(),
       });
       set({ sessions });
       persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
@@ -1129,6 +1136,7 @@ export const useStore = create<AppStore>((set, get) => ({
         status,
         blocks,
         streaming: statusEvent.status === "working",
+        updatedAt: Date.now(),
       });
       set({ sessions });
       persistBlocksNow(session_id, blocks);
@@ -1156,6 +1164,7 @@ export const useStore = create<AppStore>((set, get) => ({
       sessions.set(session_id, {
         ...session,
         blocks: newBlocks,
+        updatedAt: Date.now(),
       });
       set({ sessions });
       persistBlocksNow(session_id, newBlocks);
@@ -1165,21 +1174,9 @@ export const useStore = create<AppStore>((set, get) => ({
     // For tool_call_result, find the tool_call block and merge
     if (event_type === "tool_call_result") {
       const resultEvent = event as Extract<StreamEvent, { event_type: "tool_call_result" }>;
-      // Try exact block_id match first, then fall back to last empty tool/shell/thinking/read block
-      let existingIdx = blocks.findIndex((b) =>
+      const existingIdx = blocks.findIndex((b) =>
         (b.event_type === "tool_call" || b.event_type === "shell" || b.event_type === "thinking") && b.block_id === resultEvent.block_id
       );
-      if (existingIdx < 0) {
-        // Block IDs from streaming vs execution don't match — find the most recent block
-        // of any tool-related type that hasn't received its result yet
-        existingIdx = [...blocks].reverse().findIndex((b) =>
-          (b.event_type === "tool_call" || b.event_type === "shell" || b.event_type === "thinking")
-          && (!b.content || b.content === "")
-        );
-        if (existingIdx >= 0) {
-          existingIdx = blocks.length - 1 - existingIdx;
-        }
-      }
       if (existingIdx >= 0) {
         blocks[existingIdx] = {
           ...blocks[existingIdx],
@@ -1205,7 +1202,7 @@ export const useStore = create<AppStore>((set, get) => ({
           },
         });
       }
-      sessions.set(session_id, { ...session, blocks });
+      sessions.set(session_id, touchSession(session, { blocks }));
       set({ sessions });
       persistBlocksNow(session_id, blocks);
       return;
@@ -1235,7 +1232,7 @@ export const useStore = create<AppStore>((set, get) => ({
           metadata: {},
         });
       }
-      sessions.set(session_id, { ...session, blocks });
+      sessions.set(session_id, touchSession(session, { blocks }));
       set({ sessions });
       persistBlocks(session_id, blocks);
       return;
@@ -1258,7 +1255,7 @@ export const useStore = create<AppStore>((set, get) => ({
           };
         }
       }
-      sessions.set(session_id, { ...session, blocks });
+      sessions.set(session_id, touchSession(session, { blocks }));
       set({ sessions });
       persistBlocksNow(session_id, blocks);
       return;
@@ -1270,7 +1267,7 @@ export const useStore = create<AppStore>((set, get) => ({
       blocks.push(newBlock);
     }
 
-    sessions.set(session_id, { ...session, blocks });
+    sessions.set(session_id, touchSession(session, { blocks }));
     set({ sessions });
     persistBlocks(session_id, blocks);
   },
@@ -1389,8 +1386,13 @@ function deliverySummariesEqual(left: DeliverySummary | null, right: DeliverySum
     (left.verification_command ?? null) === (right.verification_command ?? null) &&
     (left.record_label ?? null) === (right.record_label ?? null) &&
     (left.record_status ?? null) === (right.record_status ?? null) &&
-    JSON.stringify(left.record_target_pages ?? []) === JSON.stringify(right.record_target_pages ?? [])
+    stringArraysEqual(left.record_target_pages ?? [], right.record_target_pages ?? [])
   );
+}
+
+function stringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
 }
 
 // Selector hooks

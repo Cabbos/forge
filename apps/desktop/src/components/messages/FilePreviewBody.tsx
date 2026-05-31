@@ -38,13 +38,13 @@ export function FilePreviewBody({ loading, error, lines }: FilePreviewBodyProps)
         return (
           <div
             key={line.number}
-            className="grid min-w-full grid-cols-[64px_minmax(0,1fr)] border-l-2"
+            className="grid min-w-full grid-cols-[64px_minmax(0,1fr)] border-b border-[var(--forge-border-subtle)] last:border-b-0"
             style={tone.row}
           >
             <div className="select-none px-3 py-0.5 text-right" style={tone.number}>
               {line.number}
             </div>
-            <pre className="m-0 whitespace-pre-wrap break-words px-3 py-0.5 text-[#c9c9c9]">
+            <pre className="m-0 whitespace-pre-wrap break-words px-3 py-0.5 text-[var(--forge-code-text)]">
               {line.content || " "}
             </pre>
           </div>

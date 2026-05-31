@@ -26,7 +26,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       return;
     }
     // During streaming, throttle to every STREAM_THROTTLE_MS
-    const now = Date.now();
+    const now = performance.now();
     const elapsed = now - lastUpdateRef.current;
     if (elapsed >= STREAM_THROTTLE_MS) {
       lastUpdateRef.current = now;
@@ -34,7 +34,7 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
     } else {
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
-        lastUpdateRef.current = Date.now();
+        lastUpdateRef.current = performance.now();
         setDisplayContent(block.content);
       }, STREAM_THROTTLE_MS - elapsed);
     }
@@ -50,8 +50,10 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
       {hasContent ? (
         <div
           data-testid="assistant-message"
-          className="forge-message-with-actions forge-assistant-message"
+          data-message-role="assistant"
+          className="forge-message-with-actions assistant-paper"
         >
+          <span aria-hidden="true" className="forge-assistant-avatar">F</span>
           <MessageCopyAction text={block.content} label="回复" />
           <div className="markdown-content">
             <MarkdownRenderer

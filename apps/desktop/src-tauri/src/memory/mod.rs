@@ -1,13 +1,20 @@
 pub mod extraction;
+pub mod hygiene;
 pub mod model;
 pub mod risk;
 pub mod scoring;
 pub mod storage;
 
 pub use extraction::extract_candidates_from_user_message;
+#[allow(unused_imports)]
+pub use hygiene::{scan_memory_hygiene, SuggestedAction, SuspiciousMemory};
 pub use model::{
     MemoryCategory, MemoryListFilter, MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory,
 };
+#[allow(unused_imports)]
+pub use model::{MemorySelectionAudit, MemoryStatus, RejectReason, RejectedMemory};
+#[allow(unused_imports)]
+pub use scoring::select_relevant_memories_with_audit;
 pub use storage::WikiMemoryStore;
 
 pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Option<String> {

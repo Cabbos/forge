@@ -9,6 +9,7 @@ pub mod hooks;
 pub mod mcp;
 pub mod permissions;
 pub mod registry;
+pub mod shell_policy;
 pub mod skills;
 pub mod write_boundary;
 
@@ -18,6 +19,8 @@ use tauri::AppHandle;
 use tokio::sync::{Notify, RwLock};
 
 use crate::adapters::base::ToolDef;
+use crate::agent::event_sink::EventEmitter;
+use crate::consts::CONFIRM_TIMEOUT;
 use crate::executor::ToolExecutor;
 use crate::harness::capabilities::hooks::BuiltinHookCap;
 use crate::harness::capabilities::mcp::McpServerCap;
@@ -603,9 +606,34 @@ impl Harness {
         tool_block_id: Option<&str>,
         cancel: Option<Arc<Notify>>,
     ) -> String {
+        let emitter: Arc<dyn EventEmitter> = Arc::new(
+            crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone()),
+        );
+        self.execute_tool_with_emitter(
+            session_id,
+            tool_name,
+            tool_input,
+            emitter,
+            tool_block_id,
+            cancel,
+        )
+        .await
+    }
+
+    /// Execute a tool call through the full hook + permission pipeline,
+    /// using an abstract event emitter instead of `AppHandle`.
+    pub(crate) async fn execute_tool_with_emitter(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &serde_json::Value,
+        emitter: Arc<dyn EventEmitter>,
+        tool_block_id: Option<&str>,
+        cancel: Option<Arc<Notify>>,
+    ) -> String {
         if !self.capability_registry.is_tool_enabled(tool_name) {
             let result = format!("Tool disabled by capability settings: {}", tool_name);
-            emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
+            emit_blocked_tool_result_with_emitter(session_id, tool_block_id, &result, &*emitter);
             return result;
         }
 
@@ -623,14 +651,24 @@ impl Harness {
         match modified_input {
             hooks::HookDecision::Block(reason) => {
                 let result = format!("Tool execution blocked by hook: {reason}");
-                emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
+                emit_blocked_tool_result_with_emitter(
+                    session_id,
+                    tool_block_id,
+                    &result,
+                    &*emitter,
+                );
                 self.dispatch_post_tool_event(session_id, tool_name, result.clone())
                     .await;
                 result
             }
             hooks::HookDecision::Proceed(input) => {
                 if let Err(result) = self.ensure_public_mcp_tool_available(tool_name).await {
-                    emit_blocked_tool_result(session_id, tool_block_id, &result, app_handle);
+                    emit_blocked_tool_result_with_emitter(
+                        session_id,
+                        tool_block_id,
+                        &result,
+                        &*emitter,
+                    );
                     self.dispatch_post_tool_event(session_id, tool_name, result.clone())
                         .await;
                     return result;
@@ -644,7 +682,12 @@ impl Harness {
                 {
                     PermissionDecision::Allow => {}
                     PermissionDecision::Deny { reason } => {
-                        emit_blocked_tool_result(session_id, tool_block_id, &reason, app_handle);
+                        emit_blocked_tool_result_with_emitter(
+                            session_id,
+                            tool_block_id,
+                            &reason,
+                            &*emitter,
+                        );
                         self.dispatch_post_tool_event(session_id, tool_name, reason.clone())
                             .await;
                         return reason;
@@ -664,21 +707,19 @@ impl Harness {
                                 .await
                                 .insert(block_id.clone(), tx);
                         }
-                        crate::transcript::emit_stream_event(
-                            app_handle,
-                            crate::protocol::events::StreamEvent::ConfirmAsk {
-                                session_id: session_id.to_string(),
-                                block_id: block_id.clone(),
-                                question,
-                                kind,
-                                boundary: Some(boundary),
-                            },
-                        );
+                        emitter.emit(crate::protocol::events::StreamEvent::ConfirmAsk {
+                            session_id: session_id.to_string(),
+                            block_id: block_id.clone(),
+                            question,
+                            kind,
+                            boundary: Some(boundary),
+                        });
                         // Wait 120s for user response
                         let mut cancelled = false;
                         let approved = if let Some(cancel) = cancel.clone() {
                             tokio::select! {
-                                response = tokio::time::timeout(std::time::Duration::from_secs(120), rx) => {
+                                biased;
+                                response = tokio::time::timeout(CONFIRM_TIMEOUT, rx) => {
                                     match response {
                                         Ok(Ok(true)) => {
                                             if let Some(key) = remember_key {
@@ -697,9 +738,7 @@ impl Harness {
                                 }
                             }
                         } else {
-                            match tokio::time::timeout(std::time::Duration::from_secs(120), rx)
-                                .await
-                            {
+                            match tokio::time::timeout(CONFIRM_TIMEOUT, rx).await {
                                 Ok(Ok(true)) => {
                                     if let Some(key) = remember_key {
                                         self.permission_gate
@@ -718,11 +757,11 @@ impl Harness {
                             } else {
                                 "Permission denied by user".to_string()
                             };
-                            emit_blocked_tool_result(
+                            emit_blocked_tool_result_with_emitter(
                                 session_id,
                                 tool_block_id,
                                 &result,
-                                app_handle,
+                                &*emitter,
                             );
                             self.dispatch_post_tool_event(session_id, tool_name, result.clone())
                                 .await;
@@ -738,13 +777,13 @@ impl Harness {
                         .call_public_mcp_tool(tool_name, input.clone(), cancel.clone())
                         .await
                         .unwrap_or_else(|| format!("Unknown MCP tool: {tool_name}"));
-                    emit_tool_result(
+                    emit_tool_result_with_emitter(
                         session_id,
                         tool_block_id,
                         &result,
                         result.starts_with("Error:") || result.starts_with("Unknown MCP tool:"),
                         started.elapsed().as_millis() as u64,
-                        app_handle,
+                        &*emitter,
                     );
 
                     let modified_result = self
@@ -760,11 +799,11 @@ impl Harness {
 
                 let result = self
                     .tool_executor
-                    .execute_with_cancel(
+                    .execute_with_emitter(
                         session_id,
                         tool_name,
                         &input,
-                        app_handle,
+                        emitter.clone(),
                         tool_block_id,
                         cancel,
                     )
@@ -814,6 +853,15 @@ fn emit_blocked_tool_result(
     emit_tool_result(session_id, tool_block_id, result, true, 0, app_handle);
 }
 
+fn emit_blocked_tool_result_with_emitter(
+    session_id: &str,
+    tool_block_id: Option<&str>,
+    result: &str,
+    emitter: &dyn EventEmitter,
+) {
+    emit_tool_result_with_emitter(session_id, tool_block_id, result, true, 0, emitter);
+}
+
 fn emit_tool_result(
     session_id: &str,
     tool_block_id: Option<&str>,
@@ -835,6 +883,26 @@ fn emit_tool_result(
             duration_ms,
         },
     );
+}
+
+fn emit_tool_result_with_emitter(
+    session_id: &str,
+    tool_block_id: Option<&str>,
+    result: &str,
+    is_error: bool,
+    duration_ms: u64,
+    emitter: &dyn EventEmitter,
+) {
+    let block_id = tool_block_id
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::protocol::BlockId::new().to_string());
+    emitter.emit(crate::protocol::events::StreamEvent::ToolCallResult {
+        session_id: session_id.to_string(),
+        block_id,
+        result: result.to_string(),
+        is_error,
+        duration_ms,
+    });
 }
 
 /// Read project context from working directory.

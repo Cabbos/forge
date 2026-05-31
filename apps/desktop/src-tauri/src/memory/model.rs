@@ -72,3 +72,42 @@ pub struct MemoryListFilter {
     pub scope: Option<MemoryScope>,
     pub project_path: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RejectReason {
+    /// Memory is Forgotten.
+    Forgotten,
+    /// Memory is Archived.
+    Archived,
+    /// Memory has a project_path that doesn't match the active project.
+    ProjectMismatch,
+    /// UserProfile memory contains task-like instruction content (e.g. "我想做一个番茄钟").
+    TaskLikeGlobalPreference,
+    /// The user message was too low-signal to trigger memory injection (e.g. "继续", "好的").
+    LowSignalQuery,
+    /// No relevance signals matched between message and memory.
+    NoRelevanceSignal,
+    /// Final computed score was zero or negative.
+    ScoreBelowThreshold,
+    /// Project-scoped TaskState/Decision memory has no project_path — orphan.
+    OrphanProjectMemory,
+    /// Candidate memory with confidence below threshold.
+    LowConfidenceCandidate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RejectedMemory {
+    pub memory_id: String,
+    pub title: String,
+    pub scope: MemoryScope,
+    pub category: MemoryCategory,
+    pub project_path: Option<String>,
+    pub reason: RejectReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemorySelectionAudit {
+    pub selected: Vec<SelectedContextMemory>,
+    pub rejected: Vec<RejectedMemory>,
+}

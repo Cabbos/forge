@@ -1,9 +1,8 @@
-import { useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, Blocks, Clock3, FolderOpen, Search, SquarePen, Trash2 } from "lucide-react";
+import { AlertCircle, Blocks, Clock3, FolderOpen, Search, Settings, SquarePen, Trash2 } from "lucide-react";
 import { useActiveWorkspace, useStore, useSessionList, useWorkspaceList } from "@/store";
 import { useSession } from "@/hooks/useSession";
-import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { cn } from "@/lib/utils";
 import { getSessionTitle } from "@/lib/session-display";
 import { hasTauriRuntime, pickWorkspaceFolder } from "@/lib/tauri";
@@ -20,6 +19,8 @@ interface SidebarProps {
   onOpenSearch: () => void;
 }
 
+const LazySettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then((module) => ({ default: module.SettingsDialog })));
+
 export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps) {
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [manualWorkspaceEntry, setManualWorkspaceEntry] = useState(false);
@@ -27,6 +28,8 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const [workspacePathError, setWorkspacePathError] = useState<string | null>(null);
   const [choosingWorkspace, setChoosingWorkspace] = useState(false);
   const [sidebarNotice, setSidebarNotice] = useState<SidebarNotice | null>(null);
+  const [settingsDialogMounted, setSettingsDialogMounted] = useState(false);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSession = useStore((s) => s.setActiveSession);
   const setActiveWorkspace = useStore((s) => s.setActiveWorkspace);
@@ -40,6 +43,28 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const { create, deleteConversation } = useSession();
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
+
+  const openSettingsDialog = useCallback(() => {
+    setSettingsDialogMounted(true);
+    setSettingsDialogOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const openSettings = () => openSettingsDialog();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ",") {
+        event.preventDefault();
+        openSettingsDialog();
+      }
+    };
+
+    window.addEventListener("forge:open-settings", openSettings);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("forge:open-settings", openSettings);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openSettingsDialog]);
 
   const focusSessionAt = (index: number) => {
     const nextSession = sessions[index];
@@ -123,15 +148,15 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
       className="forge-sidebar h-full w-full flex flex-col select-none overflow-hidden"
     >
       {/* Brand */}
-      <div className="forge-sidebar-brand">
+      <div data-forge-motion="sidebar-entry" className="forge-sidebar-brand">
         <img src={forgeMark} alt="" className="size-7 flex-shrink-0 rounded-md" />
         <div className="forge-sidebar-brand-copy">
           <span className="forge-sidebar-brand-title">Forge</span>
-          <span className="forge-sidebar-brand-subtitle">Local agent</span>
+          <span className="forge-sidebar-brand-subtitle">Local workbench</span>
         </div>
       </div>
 
-      <div className="relative mb-2 px-1">
+      <div data-forge-motion="sidebar-entry" className="forge-sidebar-workspace-shell relative mb-2 px-1">
         <button
           type="button"
           data-testid="workspace-trigger"
@@ -237,7 +262,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
                     setWorkspacePathError(null);
                   }}
                   placeholder="/Users/you/project/app"
-                  className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/55 focus:border-primary"
+                  className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-primary"
                 />
                 {workspacePathError && (
                   <p className="mt-1 text-[10px] leading-snug text-destructive">{workspacePathError}</p>
@@ -266,7 +291,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         )}
       </div>
 
-      <nav data-testid="sidebar-primary-nav" className="forge-sidebar-primary-nav">
+      <nav data-testid="sidebar-primary-nav" data-forge-motion="sidebar-entry" className="forge-sidebar-primary-nav">
         <SidebarAction icon={<SquarePen className="size-4" />} label="新对话" disabled={!activeWorkspace} onClick={newSession} />
         <SidebarAction icon={<Search className="size-4" />} label="搜索" onClick={onOpenSearch} />
       </nav>
@@ -292,13 +317,13 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
       {/* Sessions */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="mb-1.5 flex items-center justify-between px-1">
-          <span className="text-[10px] font-medium text-muted-foreground/70">对话</span>
+        <div data-forge-motion="sidebar-entry" className="mb-1.5 flex items-center justify-between px-1">
+          <span className="forge-sidebar-section-title">对话</span>
         </div>
-        <div className="flex-1 space-y-px overflow-y-auto">
+        <div className="forge-sidebar-history-list flex-1 overflow-y-auto">
           {groupedSessions.map((group) => (
-            <div key={group.label} className="space-y-px">
-              <div className="px-2 pb-1 pt-2 text-[10px] font-medium text-muted-foreground/55 first:pt-0">
+            <div key={group.label} data-forge-motion="sidebar-entry" className="forge-sidebar-history-group">
+              <div className="forge-sidebar-history-group-label">
                 {group.label}
               </div>
               {group.sessions.map((s) => {
@@ -363,7 +388,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
             </div>
           ))}
           {sessions.length === 0 && (
-            <p className="py-8 text-center text-[11px] text-muted-foreground/55">
+            <p data-forge-motion="sidebar-entry" className="forge-sidebar-empty-state">
               还没有对话
             </p>
           )}
@@ -372,6 +397,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
       <nav
         data-testid="sidebar-utility-nav"
+        data-forge-motion="sidebar-entry"
         className="mt-3 flex h-9 items-center gap-1 border-t border-border pt-2"
       >
         <SidebarIconAction
@@ -386,8 +412,17 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
           active={activePanel === "automation"}
           onClick={() => onOpenPanel("automation")}
         />
-        <SettingsDialog triggerClassName="forge-sidebar-utility-button" />
+        <SidebarIconAction
+          icon={<Settings className="size-4" />}
+          label="设置"
+          onClick={openSettingsDialog}
+        />
       </nav>
+      {settingsDialogMounted && (
+        <Suspense fallback={null}>
+          <LazySettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} hideTrigger />
+        </Suspense>
+      )}
     </aside>
   );
 }

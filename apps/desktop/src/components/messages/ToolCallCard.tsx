@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
-import { Check, ChevronRight, Copy, Loader2, CheckCircle2, XCircle, Wrench } from "lucide-react";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { Check, CheckCircle2, Copy, Loader2, Wrench, XCircle } from "lucide-react";
+import { ForgeCollapsible, ForgeCollapsibleTrigger, ForgeCollapsibleContent } from "@/components/primitives/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
-import { cn } from "@/lib/utils";
 import { deriveToolCallView } from "./processToolPresentation";
 
 export function ToolCallCard({ block }: { block: BlockState }) {
@@ -15,41 +14,45 @@ export function ToolCallCard({ block }: { block: BlockState }) {
     if (block.isComplete && toolView.isError) setOpen(true);
   }, [block.isComplete, toolView.isError]);
 
-  const StatusIcon = { running: Loader2, done: CheckCircle2, error: XCircle }[toolView.status];
-  const statusColor = { running: "var(--forge-text-faint)", done: "var(--forge-icon-safety)", error: "var(--destructive)" }[toolView.status];
   const copyDetails = async () => {
     await navigator.clipboard?.writeText(toolView.detailText);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   };
 
+  const statusLabel = toolView.status === "running" ? "运行中" : toolView.status === "error" ? "失败" : "完成";
+  const StatusIcon = toolView.status === "running" ? Loader2 : toolView.status === "error" ? XCircle : CheckCircle2;
+
   return (
-    <div>
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger
+    <div className="tool-machine">
+      <ForgeCollapsible open={open} onOpenChange={setOpen}>
+        <ForgeCollapsibleTrigger
           data-testid="tool-card-trigger"
           data-state={toolView.status}
-          className="forge-log-line"
+          className="forge-log-line forge-evidence-row tool-machine-plate"
           data-tone={toolView.isError ? "error" : "default"}
         >
-          <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
-          <Wrench className="size-3.5 shrink-0" style={{ color: statusColor }} />
-          <span className="shrink-0 font-medium">{toolView.actionText}</span>
+          <Wrench className="forge-log-line-icon size-3" data-status={toolView.status} />
+          <span className="forge-log-line-command tool-machine-name">{toolView.actionText}</span>
           {toolView.inputSummary && (
-            <span className="min-w-0 truncate font-mono text-[11px]" style={{ color: "var(--muted-foreground)" }}>
-              {toolView.inputSummary}
-            </span>
+            <span className="forge-log-line-input tool-machine-input">{toolView.inputSummary}</span>
           )}
           {toolView.durationLabel && (
-            <span className="ml-auto shrink-0 font-mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+            <span className="forge-log-line-meta forge-log-line-duration tool-machine-duration">
               {toolView.durationLabel}
             </span>
           )}
-          <span className={cn("flex shrink-0 items-center", !toolView.durationLabel && "ml-auto")} style={{ color: statusColor }} title={toolView.status === "running" ? "进行中" : toolView.status === "error" ? "异常" : "完成"}>
-            <StatusIcon className={cn("size-3", toolView.status === "running" && "animate-spin")} />
+          <span
+            className="forge-log-status forge-log-line-status tool-machine-status"
+            data-tone={toolView.status === "error" ? "error" : toolView.status === "running" ? "running" : "success"}
+            data-status={toolView.status}
+            title={statusLabel}
+            aria-label={statusLabel}
+          >
+            <StatusIcon className={`size-3 ${toolView.status === "running" ? "animate-spin" : ""}`} />
           </span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
+        </ForgeCollapsibleTrigger>
+        <ForgeCollapsibleContent>
           {toolView.toolName === "delegate_task" ? (
             <SubAgentTrace content={block.content} />
           ) : (
@@ -81,8 +84,8 @@ export function ToolCallCard({ block }: { block: BlockState }) {
               </div>
             </div>
           )}
-        </CollapsibleContent>
-      </Collapsible>
+        </ForgeCollapsibleContent>
+      </ForgeCollapsible>
     </div>
   );
 }

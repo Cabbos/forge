@@ -27,4 +27,24 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+
+          if (id.includes("@codemirror")) return "vendor-codemirror";
+          if (id.includes("react-diff-viewer")) return "vendor-diff";
+          if (id.includes("react-markdown") || id.includes("remark-") || id.includes("rehype-") || id.includes("micromark") || id.includes("mdast-") || id.includes("hast-") || id.includes("unified")) {
+            return "vendor-markdown";
+          }
+          if (id.includes("gsap") || id.includes("@gsap")) return "vendor-motion";
+          if (id.includes("lucide-react")) return "vendor-icons";
+          if (id.includes("react") || id.includes("scheduler") || id.includes("zustand") || id.includes("@tanstack/react-virtual")) {
+            return "vendor-react";
+          }
+        },
+      },
+    },
+  },
 }));

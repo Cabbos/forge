@@ -1,21 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command";
+  ForgeCommand,
+  ForgeCommandDialog,
+  ForgeCommandEmpty,
+  ForgeCommandGroup,
+  ForgeCommandInput,
+  ForgeCommandItem,
+  ForgeCommandList,
+  ForgeCommandSeparator,
+} from "@/components/primitives/command";
 import { Bug, CheckCircle2, Compass, FolderOpen, MessageSquarePlus, Moon, PanelRightOpen, Settings, Sun, Zap } from "lucide-react";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { useActiveWorkspace, useSessionList, useStore } from "@/store";
 import { useSession } from "@/hooks/useSession";
 import { overrideWorkflowRoute } from "@/lib/tauri";
 import type { WorkflowOverrideAction } from "@/lib/protocol";
 import { getSessionTitle } from "@/lib/session-display";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -23,6 +24,7 @@ interface CommandPaletteProps {
 }
 
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+  const paletteRef = useRef<HTMLDivElement>(null);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const setActiveSession = useStore((s) => s.setActiveSession);
@@ -34,6 +36,45 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const setWorkflowState = useStore((s) => s.setWorkflowState);
   const { create } = useSession();
   const [notice, setNotice] = useState("");
+
+  useGSAP(() => {
+    if (!open || prefersReducedMotion()) return;
+    const palette = paletteRef.current;
+    if (!palette) return;
+
+    const entries = gsap.utils.toArray<HTMLElement>(
+      "[data-forge-motion='command-entry']",
+      palette,
+    );
+    const timeline = gsap.timeline();
+    timeline.fromTo(
+      palette,
+      { autoAlpha: 0, y: 8, scale: 0.99 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        scale: 1,
+        duration: forgeMotion.surface.duration,
+        ease: forgeMotion.surface.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+    if (entries.length > 0) {
+      timeline.fromTo(
+        entries,
+        { autoAlpha: 0, y: 4 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: forgeMotion.evidence.duration,
+          ease: forgeMotion.evidence.ease,
+          stagger: 0.02,
+          clearProps: "transform,opacity,visibility",
+        },
+        "-=0.1",
+      );
+    }
+  }, { scope: paletteRef, dependencies: [open, sessions.length, activeWorkspace?.id] });
 
   // Keyboard shortcut
   useEffect(() => {
@@ -89,98 +130,100 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const sessionList = sessions;
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} className="forge-command-dialog sm:max-w-[580px]">
-      <Command data-testid="command-palette-surface" className="forge-command-surface">
-        <CommandInput placeholder="搜索或输入命令..." className="forge-command-input" />
-        <CommandList className="forge-command-list">
-          <CommandEmpty>没有匹配结果</CommandEmpty>
+    <ForgeCommandDialog open={open} onOpenChange={onOpenChange} className="forge-command-dialog sm:max-w-[580px]">
+      <div ref={paletteRef} className="forge-command-motion-root">
+        <ForgeCommand data-testid="command-palette-surface" className="forge-command-surface">
+          <ForgeCommandInput placeholder="搜索或输入命令..." className="forge-command-input" />
+          <ForgeCommandList className="forge-command-list">
+            <ForgeCommandEmpty>没有匹配结果</ForgeCommandEmpty>
 
-          {activeWorkspace && (
-            <div className="forge-command-context-strip">
-              <ForgeIcon icon={FolderOpen} tone="context" contained={false} />
-              <span className="min-w-0 truncate">当前项目 · {activeWorkspace.name}</span>
-            </div>
-          )}
+            {activeWorkspace && (
+              <div data-forge-motion="command-entry" className="forge-command-context-strip">
+                <ForgeIcon icon={FolderOpen} tone="context" contained={false} />
+                <span className="min-w-0 truncate">当前项目 · {activeWorkspace.name}</span>
+              </div>
+            )}
 
-          {notice && (
-            <div role="status" className="forge-command-notice">
-              {notice}
-            </div>
-          )}
+            {notice && (
+              <div role="status" data-forge-motion="command-entry" className="forge-command-notice">
+                {notice}
+              </div>
+            )}
 
-          <CommandGroup heading="常用">
-            <CommandItem onSelect={handleCreate} disabled={!activeWorkspace}>
-              <ForgeIcon icon={MessageSquarePlus} tone="action" />
-              <span className="min-w-0 flex-1 truncate">{activeWorkspace ? "新建对话" : "先选择项目"}</span>
-              {activeWorkspace && <ShortcutHint keys="⌘N" />}
-            </CommandItem>
-            <CommandItem onSelect={handleOpenProjectArchive}>
-              <ForgeIcon icon={PanelRightOpen} tone="context" />
-              <span className="min-w-0 flex-1 truncate">打开项目档案</span>
-              <ShortcutHint keys="⌘I" />
-            </CommandItem>
-            <CommandItem onSelect={handleOpenSettings}>
-              <ForgeIcon icon={Settings} tone="neutral" />
-              <span className="min-w-0 flex-1 truncate">设置</span>
-              <ShortcutHint keys="⌘," />
-            </CommandItem>
-          </CommandGroup>
+            <ForgeCommandGroup data-forge-motion="command-entry" heading="常用">
+              <ForgeCommandItem onSelect={handleCreate} disabled={!activeWorkspace}>
+                <ForgeIcon icon={MessageSquarePlus} tone="action" />
+                <span className="min-w-0 flex-1 truncate">{activeWorkspace ? "新建对话" : "先选择项目"}</span>
+                {activeWorkspace && <ShortcutHint keys="⌘N" />}
+              </ForgeCommandItem>
+              <ForgeCommandItem onSelect={handleOpenProjectArchive}>
+                <ForgeIcon icon={PanelRightOpen} tone="context" />
+                <span className="min-w-0 flex-1 truncate">打开项目档案</span>
+                <ShortcutHint keys="⌘I" />
+              </ForgeCommandItem>
+              <ForgeCommandItem onSelect={handleOpenSettings}>
+                <ForgeIcon icon={Settings} tone="neutral" />
+                <span className="min-w-0 flex-1 truncate">设置</span>
+                <ShortcutHint keys="⌘," />
+              </ForgeCommandItem>
+            </ForgeCommandGroup>
 
-          {activeSessionId && (
-            <>
-              <CommandSeparator />
-              <CommandGroup heading="当前任务">
-                <CommandItem onSelect={() => handleWorkflowOverride("plan_first")}>
-                  <ForgeIcon icon={Compass} tone="reasoning" />
-                  先梳理方案
-                </CommandItem>
-                <CommandItem onSelect={() => handleWorkflowOverride("direct")}>
-                  <ForgeIcon icon={Zap} tone="action" />
-                  直接处理
-                </CommandItem>
-                <CommandItem onSelect={() => handleWorkflowOverride("debug")}>
-                  <ForgeIcon icon={Bug} tone="safety" />
-                  排查问题
-                </CommandItem>
-                <CommandItem onSelect={() => handleWorkflowOverride("verify")}>
-                  <ForgeIcon icon={CheckCircle2} tone="safety" />
-                  检查结果
-                </CommandItem>
-              </CommandGroup>
-            </>
-          )}
+            {activeSessionId && (
+              <>
+                <ForgeCommandSeparator />
+                <ForgeCommandGroup data-forge-motion="command-entry" heading="当前任务">
+                  <ForgeCommandItem onSelect={() => handleWorkflowOverride("plan_first")}>
+                    <ForgeIcon icon={Compass} tone="reasoning" />
+                    先梳理方案
+                  </ForgeCommandItem>
+                  <ForgeCommandItem onSelect={() => handleWorkflowOverride("direct")}>
+                    <ForgeIcon icon={Zap} tone="action" />
+                    直接处理
+                  </ForgeCommandItem>
+                  <ForgeCommandItem onSelect={() => handleWorkflowOverride("debug")}>
+                    <ForgeIcon icon={Bug} tone="safety" />
+                    排查问题
+                  </ForgeCommandItem>
+                  <ForgeCommandItem onSelect={() => handleWorkflowOverride("verify")}>
+                    <ForgeIcon icon={CheckCircle2} tone="safety" />
+                    检查结果
+                  </ForgeCommandItem>
+                </ForgeCommandGroup>
+              </>
+            )}
 
-          {sessionList.length > 0 && (
-            <>
-              <CommandSeparator />
-              <CommandGroup heading="最近对话">
-                {sessionList.map((s) => (
-                  <CommandItem
-                    key={s.id}
-                    onSelect={() => {
-                      setActiveSession(s.id);
-                      onOpenChange(false);
-                    }}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{getSessionTitle(s)}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </>
-          )}
+            {sessionList.length > 0 && (
+              <>
+                <ForgeCommandSeparator />
+                <ForgeCommandGroup data-forge-motion="command-entry" heading="最近对话">
+                  {sessionList.map((s) => (
+                    <ForgeCommandItem
+                      key={s.id}
+                      onSelect={() => {
+                        setActiveSession(s.id);
+                        onOpenChange(false);
+                      }}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{getSessionTitle(s)}</span>
+                    </ForgeCommandItem>
+                  ))}
+                </ForgeCommandGroup>
+              </>
+            )}
 
-          <CommandSeparator />
-          <CommandGroup heading="外观">
-            <CommandItem
-              onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}
-            >
-              <ForgeIcon icon={theme === "dark" ? Sun : Moon} tone="neutral" />
-              切换主题（{theme === "dark" ? "浅色" : "深色"}）
-            </CommandItem>
-          </CommandGroup>
-        </CommandList>
-      </Command>
-    </CommandDialog>
+            <ForgeCommandSeparator />
+            <ForgeCommandGroup data-forge-motion="command-entry" heading="外观">
+              <ForgeCommandItem
+                onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}
+              >
+                <ForgeIcon icon={theme === "dark" ? Sun : Moon} tone="neutral" />
+                切换主题（{theme === "dark" ? "浅色" : "深色"}）
+              </ForgeCommandItem>
+            </ForgeCommandGroup>
+          </ForgeCommandList>
+        </ForgeCommand>
+      </div>
+    </ForgeCommandDialog>
   );
 }
 

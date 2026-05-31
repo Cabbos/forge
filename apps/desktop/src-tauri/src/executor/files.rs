@@ -61,7 +61,7 @@ impl FileExecutor {
 
     /// Write content to a file. Returns old and new content for diff display.
     pub fn write_file(&self, path: &str, content: &str) -> Result<FileWriteResult, String> {
-        let resolved = self.resolve(path)?;
+        let resolved = self.resolve_for_write(path)?;
         if content.len() > MAX_WRITE_FILE_BYTES {
             return Err(format!(
                 "Refusing to write {} bytes through the AI file tool; limit is {} bytes.",
@@ -70,13 +70,8 @@ impl FileExecutor {
             ));
         }
 
-        // Ensure parent directory exists
-        if let Some(parent) = resolved.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create parent dir: {}", e))?;
-        }
-
         let old_content = if resolved.exists() {
+            ensure_not_symlink(&resolved)?;
             ensure_plain_text_size(&resolved)?;
             std::fs::read_to_string(&resolved).unwrap_or_default()
         } else {
@@ -185,6 +180,7 @@ impl FileExecutor {
     /// Returns the updated content or an error if old_string not found.
     pub fn edit_file(&self, path: &str, old_str: &str, new_str: &str) -> Result<String, String> {
         let resolved = self.resolve(path)?;
+        ensure_not_symlink(&resolved)?;
         ensure_plain_text_size(&resolved)?;
         if new_str.len() > MAX_WRITE_FILE_BYTES {
             return Err(format!(
@@ -230,6 +226,67 @@ impl FileExecutor {
         }
         Ok(canonical)
     }
+
+    fn resolve_for_write(&self, path: &str) -> Result<PathBuf, String> {
+        let requested = std::path::Path::new(path);
+        let resolved = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else {
+            self.working_dir.join(requested)
+        };
+        if resolved
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err("Access denied: parent directory traversal is not allowed".to_string());
+        }
+
+        let filename = resolved
+            .file_name()
+            .ok_or_else(|| format!("Path error: cannot resolve {}", resolved.display()))?
+            .to_os_string();
+        let parent = resolved
+            .parent()
+            .ok_or_else(|| format!("Path error: cannot resolve {}", resolved.display()))?;
+        let work_canon = self
+            .working_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.working_dir.clone());
+        let existing_parent = nearest_existing_parent(parent)?;
+        let existing_parent_canon = existing_parent.canonicalize().map_err(|e| {
+            format!(
+                "Path error: cannot resolve {}: {}",
+                existing_parent.display(),
+                e
+            )
+        })?;
+        if !existing_parent_canon.starts_with(&work_canon) {
+            return Err("Access denied: outside working directory".to_string());
+        }
+
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+        let parent_canon = parent
+            .canonicalize()
+            .map_err(|e| format!("Path error: cannot resolve {}: {}", parent.display(), e))?;
+        if !parent_canon.starts_with(&work_canon) {
+            return Err("Access denied: outside working directory".to_string());
+        }
+
+        Ok(parent_canon.join(filename))
+    }
+}
+
+fn nearest_existing_parent(path: &Path) -> Result<PathBuf, String> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Ok(current.to_path_buf());
+        }
+        current = current
+            .parent()
+            .ok_or_else(|| format!("Path error: cannot resolve {}", path.display()))?;
+    }
 }
 
 fn ensure_plain_text_size(path: &Path) -> Result<(), String> {
@@ -243,8 +300,126 @@ fn ensure_plain_text_size(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_not_symlink(path: &Path) -> Result<(), String> {
+    if std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "Refusing to write through symlink: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn is_oversized_file(path: &Path) -> bool {
     std::fs::metadata(path)
         .map(|metadata| metadata.len() > MAX_TEXT_FILE_BYTES)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_file_creates_nested_paths_inside_workspace() {
+        let workspace = temp_workspace("nested-write");
+        let executor = FileExecutor::new(workspace.clone());
+        let result = executor
+            .write_file("src/generated/app.ts", "export const ok = true;\n")
+            .expect("write inside workspace");
+
+        assert!(result.path.ends_with("src/generated/app.ts"));
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("src/generated/app.ts")).expect("read file"),
+            "export const ok = true;\n"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn write_file_rejects_parent_directory_traversal() {
+        let workspace = temp_workspace("parent-traversal");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .write_file("../outside.txt", "nope")
+            .expect_err("parent traversal should be blocked");
+
+        assert!(error.contains("parent directory traversal"));
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    fn temp_workspace(name: &str) -> PathBuf {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-file-executor-{name}-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+
+        // Create src subdir for tests that need it
+        std::fs::create_dir_all(workspace.join("src")).expect("src dir");
+        std::fs::write(workspace.join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
+
+        workspace
+    }
+
+    #[test]
+    fn write_file_rejects_absolute_path_outside_workspace() {
+        let workspace = temp_workspace("abs-path");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .write_file("/tmp/evil.txt", "nope")
+            .expect_err("absolute path outside workspace should be blocked");
+
+        assert!(
+            error.contains("outside") || error.contains("denied") || error.contains("Access"),
+            "should mention access denial: {error}"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn read_file_rejects_absolute_path_outside_workspace() {
+        let workspace = temp_workspace("read-abs");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .read_file("/etc/hosts")
+            .expect_err("absolute path outside workspace should be blocked");
+
+        assert!(
+            error.contains("outside") || error.contains("denied") || error.contains("Access"),
+            "should mention access denial: {error}"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn read_file_works_inside_workspace() {
+        let workspace = temp_workspace("read-inside");
+        let executor = FileExecutor::new(workspace.clone());
+        let result = executor
+            .read_file("src/main.rs")
+            .expect("should read file inside workspace");
+
+        assert!(result.content.contains("fn main()"));
+        assert_eq!(result.line_count, 1);
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn edit_file_rejects_outside_workspace() {
+        let workspace = temp_workspace("edit-outside");
+        let executor = FileExecutor::new(workspace.clone());
+        let error = executor
+            .edit_file("/tmp/target.txt", "old", "new")
+            .expect_err("edit outside workspace should be blocked");
+
+        assert!(
+            error.contains("outside") || error.contains("denied") || error.contains("Access"),
+            "should mention access denial: {error}"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
 }

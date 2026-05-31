@@ -1,14 +1,10 @@
-import type { CSSProperties } from "react";
+import { useRef } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { commandIconMeta, fileReferenceIconMeta } from "@/lib/capability-icons";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import { COMPOSER_COMMANDS } from "./composerCommands";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
-
-const ACTIVE_MENU_OPTION_STYLE: CSSProperties = {
-  backgroundColor: "rgba(255, 255, 255, 0.052)",
-  borderColor: "var(--forge-border-subtle)",
-  color: "var(--forge-text-primary)",
-};
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface ComposerSuggestionMenuProps {
   activeIndex: number;
@@ -27,8 +23,30 @@ export function ComposerSuggestionMenu({
   onActiveIndexChange,
   onAddChip,
 }: ComposerSuggestionMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    const menu = menuRef.current;
+    if (!menu) return;
+
+    gsap.fromTo(
+      menu,
+      { autoAlpha: 0, y: 6, scale: 0.99 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        scale: 1,
+        duration: forgeMotion.evidence.duration,
+        ease: forgeMotion.evidence.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: menuRef });
+
   return (
     <div
+      ref={menuRef}
       id={id}
       data-testid="composer-command-menu"
       role="listbox"
@@ -38,23 +56,22 @@ export function ComposerSuggestionMenu({
       {mode === "@" && (
         <>
           <div className="forge-menu-heading">引用文件</div>
-          {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/65">输入文件名搜索</div>}
+          {atResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground/80">输入文件名搜索</div>}
           {atResults.map((file, index) => {
             const meta = fileReferenceIconMeta(file);
             return (
-              <button
+              <ButtonPrimitive
                 key={file}
                 role="option"
                 aria-selected={index === activeIndex}
-                onMouseEnter={() => onActiveIndexChange(index)}
+                onPointerMove={() => onActiveIndexChange(index)}
                 onClick={() => onAddChip("file", file)}
                 className="forge-menu-option forge-menu-option--path font-mono"
                 title={file}
-                style={index === activeIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}
               >
                 <ForgeIcon icon={meta.icon} tone={meta.tone} />
                 <span className="forge-menu-option-label">{file}</span>
-              </button>
+              </ButtonPrimitive>
             );
           })}
         </>
@@ -65,19 +82,18 @@ export function ComposerSuggestionMenu({
           {COMPOSER_COMMANDS.map((command, index) => {
             const meta = commandIconMeta(command.text);
             return (
-              <button
+              <ButtonPrimitive
                 key={command.prefix}
                 role="option"
                 aria-selected={index === activeIndex}
-                onMouseEnter={() => onActiveIndexChange(index)}
+                onPointerMove={() => onActiveIndexChange(index)}
                 onClick={() => onAddChip("command", command.text)}
                 className="forge-menu-option"
-                style={index === activeIndex ? ACTIVE_MENU_OPTION_STYLE : undefined}
               >
                 <ForgeIcon icon={meta.icon} tone={meta.tone} />
                 <span className="forge-menu-option-label font-mono">{command.text}</span>
                 <span className="forge-menu-option-meta">{command.desc}</span>
-              </button>
+              </ButtonPrimitive>
             );
           })}
         </>

@@ -1,6 +1,7 @@
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { X } from "lucide-react";
 import { commandIconMeta, fileReferenceIconMeta } from "@/lib/capability-icons";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeIcon } from "@/components/primitives/icon";
 import type { ComposerChip } from "./composerTypes";
 
 interface ComposerChipTrayProps {
@@ -23,14 +24,14 @@ export function ComposerChipTray({ chips, onRemove }: ComposerChipTrayProps) {
           >
             <ForgeIcon icon={meta.icon} tone={meta.tone} contained={false} className="size-3.5" />
             <span className="forge-composer-chip-label">{chip.value}</span>
-            <button
+            <ButtonPrimitive
               type="button"
               aria-label={`移除 ${chip.value}`}
               onClick={() => onRemove(chip.id)}
-              className="ml-0.5 opacity-45 transition-opacity hover:opacity-100"
+              className="forge-composer-chip-remove"
             >
               <X className="size-2.5" />
-            </button>
+            </ButtonPrimitive>
           </span>
         );
       })}

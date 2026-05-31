@@ -111,7 +111,6 @@ pub(crate) fn format_turn_capability_snapshot(snapshot: &TurnCapabilitySnapshot)
     push_snapshot_line(&mut lines, "自动启用技能", &snapshot.matched_skills);
     push_snapshot_line(&mut lines, "安全规则", &snapshot.active_hooks);
     push_snapshot_line(&mut lines, "可用连接", &snapshot.enabled_mcp_servers);
-    push_snapshot_line(&mut lines, "可用连接工具", &snapshot.available_mcp_tools);
 
     if lines.is_empty() {
         return None;
@@ -259,7 +258,8 @@ mod tests {
         assert!(context.contains("自动启用技能：code-review"));
         assert!(context.contains("安全规则：Workspace Boundary Guard"));
         assert!(context.contains("可用连接：obsidian"));
-        assert!(context.contains("可用连接工具：obsidian__search_notes"));
+        assert!(!context.contains("可用连接工具"));
+        assert!(!context.contains("obsidian__search_notes"));
     }
 
     #[test]

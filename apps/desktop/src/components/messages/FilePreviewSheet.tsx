@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FileText } from "lucide-react";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ForgeDialog,
+  ForgeDialogContent,
+  ForgeDialogDescription,
+  ForgeDialogHeader,
+  ForgeDialogTitle,
+} from "@/components/primitives/dialog";
 import { previewFile, type FilePreview } from "@/lib/tauri";
 import { useStore } from "@/store";
 import { FilePreviewActions } from "@/components/messages/FilePreviewActions";
@@ -21,7 +21,11 @@ interface FilePreviewSheetProps {
 }
 
 export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewSheetProps) {
-  const workingDir = useStore((s) => sessionId ? s.sessions.get(sessionId)?.workingDir ?? null : null);
+  const selectWorkingDir = useCallback(
+    (s: ReturnType<typeof useStore.getState>) => sessionId ? s.sessions.get(sessionId)?.workingDir ?? null : null,
+    [sessionId],
+  );
+  const workingDir = useStore(selectWorkingDir);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,18 +57,18 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
   const view = deriveFilePreviewView({ fileRef, preview });
 
   return (
-    <Dialog open={Boolean(fileRef)} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent
+    <ForgeDialog open={Boolean(fileRef)} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <ForgeDialogContent
         className="!h-[min(820px,calc(100vh-48px))] !w-[min(1120px,calc(100vw-48px))] !max-w-[min(1120px,calc(100vw-48px))] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0"
         showCloseButton
       >
-        <DialogHeader className="border-b border-border p-4 pr-12">
-          <DialogTitle className="flex items-center gap-2 min-w-0">
+        <ForgeDialogHeader className="border-b border-border p-4 pr-12">
+          <ForgeDialogTitle className="flex items-center gap-2 min-w-0">
             <FileText className="size-4 text-primary shrink-0" />
             <span className="truncate font-mono text-sm">{view.title}</span>
-          </DialogTitle>
-          <DialogDescription>{view.locationLabel}</DialogDescription>
-        </DialogHeader>
+          </ForgeDialogTitle>
+          <ForgeDialogDescription>{view.locationLabel}</ForgeDialogDescription>
+        </ForgeDialogHeader>
 
         <div className="min-h-0 flex-1 overflow-auto bg-background">
           <FilePreviewBody loading={loading} error={error} lines={view.lines} />
@@ -77,7 +81,7 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
           workingDir={workingDir}
           onError={(message) => setError(message)}
         />
-      </DialogContent>
-    </Dialog>
+      </ForgeDialogContent>
+    </ForgeDialog>
   );
 }

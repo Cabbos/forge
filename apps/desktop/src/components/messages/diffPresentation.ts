@@ -39,13 +39,15 @@ function parseDiff(diff: string) {
   let hunkCount = 0;
   let firstChangedLine: number | null = null;
 
-  const lines = diff.split("\n").map<ParsedDiffLine>((raw) => {
+  const lines: ParsedDiffLine[] = [];
+  for (const raw of diff.split("\n")) {
     const hunk = raw.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?/);
     if (hunk) {
       oldLine = Number.parseInt(hunk[1], 10);
       newLine = Number.parseInt(hunk[2], 10);
       hunkCount += 1;
-      return { raw, type: "hunk", oldNumber: null, newNumber: null };
+      lines.push({ raw, type: "hunk", oldNumber: null, newNumber: null });
+      continue;
     }
 
     if (raw.startsWith("+") && !raw.startsWith("+++")) {
@@ -53,7 +55,8 @@ function parseDiff(diff: string) {
       additions += 1;
       if (!firstChangedLine && lineNumber) firstChangedLine = lineNumber;
       if (newLine) newLine += 1;
-      return { raw, type: "add", oldNumber: null, newNumber: lineNumber };
+      lines.push({ raw, type: "add", oldNumber: null, newNumber: lineNumber });
+      continue;
     }
 
     if (raw.startsWith("-") && !raw.startsWith("---")) {
@@ -61,7 +64,8 @@ function parseDiff(diff: string) {
       deletions += 1;
       if (!firstChangedLine) firstChangedLine = newLine || lineNumber;
       if (oldLine) oldLine += 1;
-      return { raw, type: "remove", oldNumber: lineNumber, newNumber: null };
+      lines.push({ raw, type: "remove", oldNumber: lineNumber, newNumber: null });
+      continue;
     }
 
     if (raw.startsWith(" ") || (oldLine > 0 && newLine > 0 && raw.trim())) {
@@ -69,11 +73,12 @@ function parseDiff(diff: string) {
       const currentNew = newLine || null;
       if (oldLine) oldLine += 1;
       if (newLine) newLine += 1;
-      return { raw, type: "context", oldNumber: currentOld, newNumber: currentNew };
+      lines.push({ raw, type: "context", oldNumber: currentOld, newNumber: currentNew });
+      continue;
     }
 
-    return { raw, type: "header", oldNumber: null, newNumber: null };
-  });
+    lines.push({ raw, type: "header", oldNumber: null, newNumber: null });
+  }
 
   return { lines, additions, deletions, hunkCount, firstChangedLine };
 }

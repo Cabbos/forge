@@ -986,6 +986,7 @@ dependencies = [
  "futures",
  "libc",
  "log",
+ "parking_lot",
  "portable-pty",
  "regex",
  "reqwest 0.12.28",

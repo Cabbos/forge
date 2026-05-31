@@ -7,7 +7,7 @@ export function ErrorCard({ block }: { block: BlockState }) {
   const message = cleanErrorMessage(block.content, title);
 
   return (
-    <MessagePanel tone="danger" className="forge-error-card" role="status" ariaLive="polite">
+    <MessagePanel tone="danger" className="error-note" role="status" ariaLive="polite">
       <MessagePanelHeader
         icon={<AlertCircle className="size-4 forge-error-card-icon" />}
         title={title}

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Circle, ExternalLink, Folder, GitBranch, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, ExternalLink, Folder, GitBranch, Play, RefreshCw, ShieldCheck, type LucideIcon } from "lucide-react";
 import {
   createProjectCheckpoint,
   getProjectCheckpointStatus,
@@ -11,15 +11,20 @@ import {
 } from "@/lib/tauri";
 import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confidence";
 import { cn } from "@/lib/utils";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeActionButton } from "@/components/primitives/action";
+import { ForgeIcon } from "@/components/primitives/icon";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
+import { ForgeSurface } from "@/components/primitives/surface";
 import type { ForgeIconTone } from "@/lib/capability-icons";
 import { useActiveWorkspace, useStore } from "@/store";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface ProjectStatusCardProps {
   sessionId: string | null;
 }
 
 export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
+  const cardRef = useRef<HTMLElement>(null);
   const activeWorkspace = useActiveWorkspace();
   const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
   const [runtime, setRuntime] = useState<ProjectRuntimeStatus | null>(null);
@@ -80,61 +85,98 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   }, [runtime?.working_dir, checkpoint?.working_dir]);
 
   const projectPath = normalizeProjectPath(runtime?.working_dir || checkpoint?.working_dir || "") || "暂无项目路径";
+  const projectPathLabel = projectPath === "暂无项目路径" ? "未选择项目" : "当前项目";
   const delivery = getDeliveryConfidence(runtime, checkpoint);
+  const deliveryActions = [
+    delivery.preview.action && delivery.preview.actionLabel
+      ? { action: delivery.preview.action, label: delivery.preview.actionLabel }
+      : null,
+    delivery.checkpoint.action && delivery.checkpoint.actionLabel
+      ? { action: delivery.checkpoint.action, label: delivery.checkpoint.actionLabel }
+      : null,
+  ].filter(Boolean) as Array<{ action: DeliveryAction; label: string }>;
+
+  useGSAP(() => {
+    if (prefersReducedMotion()) return;
+    const root = cardRef.current;
+    if (!root) return;
+
+    const entries = gsap.utils.toArray<HTMLElement>("[data-forge-motion='project-status-entry']", root);
+    if (entries.length === 0) return;
+
+    gsap.fromTo(
+      entries,
+      { autoAlpha: 0, y: 5, scale: 0.996 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        scale: 1,
+        duration: forgeMotion.surface.duration,
+        ease: forgeMotion.surface.ease,
+        stagger: 0.024,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, {
+    scope: cardRef,
+    dependencies: [delivery.preview.label, delivery.checkpoint.label, expanded, error],
+  });
 
   return (
-    <section className="forge-surface">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-2">
+    <ForgeSurface as="section" ref={cardRef} data-testid="project-status-card" className="forge-project-status">
+      <div data-forge-motion="project-status-entry" className="forge-project-status-header">
+        <div className="forge-project-status-title-group">
           <ForgeIcon icon={Folder} tone="context" contained={false} className="size-3.5" />
           <div className="min-w-0" title={projectPath}>
-            <div className="truncate text-xs font-medium text-foreground">{projectName}</div>
+            <div className="forge-project-status-title">{projectName}</div>
+            <div className="forge-project-status-path">{projectPathLabel}</div>
           </div>
         </div>
-        <button
-          type="button"
+        <ForgeIconButton
           onClick={refresh}
-          className="forge-icon-button size-7"
+          className="size-7"
           title="刷新交付状态"
+          aria-label="刷新交付状态"
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-        </button>
+        </ForgeIconButton>
       </div>
 
-      <div className="space-y-2 px-3 py-2.5">
-        <StatusLine
-          color={delivery.preview.color}
-          label="预览"
-          value={delivery.preview.label}
-        />
-        <StatusLine
-          color={delivery.checkpoint.color}
-          label="检查点"
-          value={delivery.checkpoint.label}
-        />
-        <div className="forge-surface-quiet px-2 py-1.5 text-[11px] leading-relaxed text-muted-foreground">
+      <div className="forge-project-status-body">
+        <div data-testid="project-status-summary" data-forge-motion="project-status-entry" className="forge-project-status-summary">
+          <ProjectStatusMetric
+            icon={Play}
+            iconTone="action"
+            color={delivery.preview.color}
+            label="预览"
+            value={delivery.preview.label}
+          />
+          <ProjectStatusMetric
+            icon={GitBranch}
+            iconTone="safety"
+            color={delivery.checkpoint.color}
+            label="检查点"
+            value={delivery.checkpoint.label}
+          />
+        </div>
+        <div data-forge-motion="project-status-entry" className="forge-project-status-next">
           {delivery.nextAction}
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {delivery.preview.action && delivery.preview.actionLabel && (
-            <DeliveryButton
-              action={delivery.preview.action}
-              busy={actionBusy === delivery.preview.action}
-              label={delivery.preview.actionLabel}
-              onClick={runDeliveryAction}
-            />
-          )}
-          {delivery.checkpoint.action && delivery.checkpoint.actionLabel && (
-            <DeliveryButton
-              action={delivery.checkpoint.action}
-              busy={actionBusy === delivery.checkpoint.action}
-              label={delivery.checkpoint.actionLabel}
-              onClick={runDeliveryAction}
-            />
-          )}
-        </div>
+        {deliveryActions.length > 0 && (
+          <div data-forge-motion="project-status-entry" className="forge-project-status-actions">
+            {deliveryActions.map(({ action, label }) => (
+              <DeliveryButton
+                key={action}
+                action={action}
+                busy={actionBusy === action}
+                label={label}
+                onClick={runDeliveryAction}
+              />
+            ))}
+          </div>
+        )}
         {error && (
-          <div className="rounded border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
+          <div data-forge-motion="project-status-entry" role="status" className="forge-project-status-error">
             {error}
           </div>
         )}
@@ -142,39 +184,53 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
 
       <button
         type="button"
+        data-forge-motion="project-status-entry"
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-center justify-between border-t border-border px-3 py-2 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        className="forge-project-status-disclosure"
       >
         <span>{expanded ? "收起详情" : "展开详情"}</span>
         {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
       </button>
 
       {expanded && (
-        <div className="space-y-2 border-t border-border px-3 py-2.5 text-[11px]">
+        <div data-forge-motion="project-status-entry" className="forge-project-status-details">
           <DetailLine label="预览状态" value={runtime?.message || "暂无"} />
           <DetailLine label="预览地址" value={runtime?.url || "暂无"} />
           <DetailLine label="运行命令" value={runtime?.command || "未检测到"} />
           <DetailLine label="检查点" value={checkpoint?.message || "暂无"} />
           {checkpoint?.last_checkpoint && (
-            <div className="flex min-w-0 items-center gap-2 rounded bg-background/60 px-2 py-1.5 font-mono text-[10px] text-muted-foreground">
+            <div className="forge-project-status-commit">
               <ForgeIcon icon={GitBranch} tone="safety" contained={false} className="size-3.5" />
               <span className="truncate">{checkpoint.last_checkpoint.head}</span>
             </div>
           )}
         </div>
       )}
-    </section>
+    </ForgeSurface>
   );
 }
 
-function StatusLine({ color, label, value }: { color: string; label: string; value: string }) {
+function ProjectStatusMetric({
+  icon,
+  iconTone,
+  color,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  iconTone: ForgeIconTone;
+  color: string;
+  label: string;
+  value: string;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3 text-xs">
-      <span className="flex items-center gap-2 text-muted-foreground">
-        <Circle className="size-2.5 fill-current" style={{ color }} />
-        {label}
-      </span>
-      <span className="min-w-0 truncate text-right text-foreground/80">{value}</span>
+    <div data-testid="project-status-metric" className="forge-project-status-metric">
+      <ForgeIcon icon={icon} tone={iconTone} contained={false} className="size-3.5" />
+      <div className="min-w-0">
+        <div className="forge-project-status-label">{label}</div>
+        <div className="forge-project-status-value">{value}</div>
+      </div>
+      <span className="forge-project-status-dot" style={{ backgroundColor: color, color }} aria-hidden="true" />
     </div>
   );
 }
@@ -194,23 +250,23 @@ function DeliveryButton({
   const tone: ForgeIconTone = action === "create_checkpoint" ? "safety" : "action";
 
   return (
-    <button
-      type="button"
+    <ForgeActionButton
+      data-testid="project-status-action"
       disabled={busy}
       onClick={() => onClick(action)}
-      className="forge-action disabled:cursor-default disabled:opacity-70"
+      className="forge-project-status-action disabled:cursor-default disabled:opacity-70"
     >
       <ForgeIcon icon={Icon} tone={tone} contained={false} className={cn("size-3.5", busy && "animate-pulse")} />
       {label}
-    </button>
+    </ForgeActionButton>
   );
 }
 
 function DetailLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono text-muted-foreground/70">{value}</span>
+    <div className="forge-project-status-detail-line">
+      <span className="forge-project-status-detail-label">{label}</span>
+      <span className="forge-project-status-detail-value">{value}</span>
     </div>
   );
 }

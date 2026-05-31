@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronRight, Loader2, Terminal } from "lucide-react";
-import { CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ForgeCollapsibleTrigger } from "@/components/primitives/collapsible";
 import { cn } from "@/lib/utils";
 
 interface ShellCardHeaderProps {
@@ -22,19 +22,21 @@ export function ShellCardHeader({
   tone,
 }: ShellCardHeaderProps) {
   return (
-    <CollapsibleTrigger
+    <ForgeCollapsibleTrigger
       data-testid="shell-card-trigger"
+      data-forge-motion="evidence-row"
       data-state={state}
-      className="forge-log-line"
+      className="forge-log-line forge-evidence-row"
       data-tone={tone}
     >
       <ChevronRight className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-90")} />
       <Terminal className="size-3 shrink-0" />
-      <span className="min-w-0 truncate font-mono">{command}</span>
+      <span className="forge-log-line-command">{command}</span>
       {isRunning ? (
         <span
-          className="forge-log-status"
+          className="forge-log-status forge-log-line-status"
           data-tone="running"
+          data-status="running"
           title="运行中"
         >
           <Loader2 className="size-3 animate-spin" />
@@ -42,13 +44,14 @@ export function ShellCardHeader({
       ) : (
         <span
           data-testid={isError ? "shell-exit-code" : undefined}
-          className="forge-log-status"
+          className="forge-log-status forge-log-line-status"
           data-tone={isError ? "error" : "success"}
+          data-status={isError ? "error" : "done"}
           title={isError ? `退出码 ${exitCode}` : "完成"}
         >
           {isError ? `exit ${exitCode}` : <CheckCircle2 className="size-3" />}
         </span>
       )}
-    </CollapsibleTrigger>
+    </ForgeCollapsibleTrigger>
   );
 }

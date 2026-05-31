@@ -42,11 +42,10 @@ export function lineTone(line: FilePreviewLine): {
 } {
   return {
     row: {
-      borderLeftColor: line.is_target ? "var(--forge-icon-context)" : "transparent",
-      background: line.is_target ? "rgba(91,155,213,0.13)" : "transparent",
+      background: line.is_target ? "rgba(var(--forge-accent-rgb), 0.12)" : "transparent",
     },
     number: {
-      color: line.is_target ? "#8FC7FF" : "var(--muted-foreground)",
+      color: line.is_target ? "var(--forge-code-header)" : "var(--muted-foreground)",
     },
   };
 }

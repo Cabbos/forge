@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Copy, ExternalLink } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ForgeButton } from "@/components/primitives/button";
 import { openFile } from "@/lib/tauri";
 
 interface FilePreviewTarget {
@@ -40,14 +40,14 @@ export function FilePreviewActions({
 
   return (
     <div className="flex items-center justify-between border-t border-border bg-popover p-3">
-      <Button variant="outline" size="sm" onClick={copyPath} disabled={!copyText}>
+      <ForgeButton variant="outline" size="sm" onClick={copyPath} disabled={!copyText}>
         <Copy className="size-3.5" />
         {copyLabel}
-      </Button>
-      <Button variant="secondary" size="sm" onClick={openExternally} disabled={!fileRef}>
+      </ForgeButton>
+      <ForgeButton variant="secondary" size="sm" onClick={openExternally} disabled={!fileRef}>
         <ExternalLink className="size-3.5" />
         在编辑器打开
-      </Button>
+      </ForgeButton>
     </div>
   );
 }

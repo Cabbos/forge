@@ -1,8 +1,8 @@
 use crate::agent::time::now_ms;
 use crate::agent::turn_state::{
     AgentEvidenceKind, AgentFailureTrace, AgentPlanItemStatus, AgentRecoveryAdvice,
-    AgentToolEvidence, AgentToolStatus, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
-    AgentVerificationTrace,
+    AgentToolCategory, AgentToolEvidence, AgentToolStatus, AgentTurnState, AgentTurnStatus,
+    AgentVerificationStatus, AgentVerificationTrace,
 };
 
 pub(crate) fn api_failure_trace(message: &str) -> AgentFailureTrace {
@@ -233,6 +233,8 @@ pub(crate) fn build_recovery_context(
         _ => return None,
     };
 
+    append_recovery_stop_point_lines(&mut lines, turn);
+
     if let Some(command) = turn
         .verification
         .command
@@ -283,18 +285,19 @@ pub(crate) fn build_recovery_context(
             summarize_recovery_items(&turn.input_intent.enabled_mcp_servers, 8)
         ));
     }
-    if !turn.input_intent.available_mcp_tools.is_empty() {
-        lines.push(format!(
-            "上一轮可用连接工具：{}",
-            summarize_recovery_items(&turn.input_intent.available_mcp_tools, 8)
-        ));
-    }
 
     append_execution_plan_recovery_lines(&mut lines, turn);
 
     let evidence = failed_recovery_evidence(turn);
     for item in evidence.iter().take(3) {
-        let mut detail = format!("失败证据：{}", item.tool_name);
+        let evidence_label = if item.failure_kind.as_deref() == Some("interrupted")
+            || item.status == AgentToolStatus::Cancelled
+        {
+            "中断证据"
+        } else {
+            "失败证据"
+        };
+        let mut detail = format!("{evidence_label}：{}", recovery_tool_label(item));
         if let Some(kind) = item
             .failure_kind
             .as_deref()
@@ -314,7 +317,7 @@ pub(crate) fn build_recovery_context(
             .as_deref()
             .filter(|summary| !summary.trim().is_empty())
         {
-            detail.push_str(&format!("；结果：{summary}"));
+            detail.push_str(&format!("；结果：{}", summarize_recovery_detail(summary)));
         }
         lines.push(detail);
     }
@@ -372,6 +375,121 @@ fn failed_recovery_evidence(turn: &AgentTurnState) -> Vec<AgentToolEvidence> {
             created_at_ms: tool.ended_at_ms.unwrap_or(tool.started_at_ms),
         })
         .collect()
+}
+
+fn append_recovery_stop_point_lines(lines: &mut Vec<String>, turn: &AgentTurnState) {
+    let Some((label, detail)) = recovery_stop_point(turn) else {
+        return;
+    };
+    lines.push(format!("上次停在：{label}"));
+    if let Some(detail) = detail.filter(|detail| !detail.trim().is_empty()) {
+        lines.push(format!("停点线索：{}", summarize_recovery_detail(&detail)));
+    }
+}
+
+fn recovery_stop_point(turn: &AgentTurnState) -> Option<(String, Option<String>)> {
+    match turn.status {
+        AgentTurnStatus::Failed => turn.failure.as_ref().map(|failure| {
+            let detail = clean_recovery_stop_point_detail(
+                recovery_failed_stop_point_detail(turn).unwrap_or_else(|| failure.message.clone()),
+            );
+            (
+                format!("{}阶段失败", recovery_stage_label(&failure.stage)),
+                Some(detail),
+            )
+        }),
+        AgentTurnStatus::Cancelled => {
+            let cancelled_from = turn
+                .transition_log
+                .iter()
+                .rev()
+                .find(|transition| transition.to_status == AgentTurnStatus::Cancelled)
+                .and_then(|transition| transition.from_status.clone());
+            let stopped_status = cancelled_from.or_else(|| {
+                turn.transition_log
+                    .iter()
+                    .rev()
+                    .find(|transition| transition.to_status != AgentTurnStatus::Cancelled)
+                    .map(|transition| transition.to_status.clone())
+            })?;
+            let detail = turn
+                .transition_log
+                .iter()
+                .rev()
+                .find(|transition| {
+                    transition.to_status == stopped_status
+                        && transition
+                            .detail
+                            .as_deref()
+                            .is_some_and(|detail| !detail.trim().is_empty())
+                })
+                .and_then(|transition| transition.detail.clone())
+                .or_else(|| recovery_stop_point_detail_from_state(turn, &stopped_status))
+                .map(clean_recovery_stop_point_detail);
+            Some((
+                turn_status_recovery_label(&stopped_status).to_string(),
+                detail,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn recovery_failed_stop_point_detail(turn: &AgentTurnState) -> Option<String> {
+    failed_recovery_evidence(turn).into_iter().find_map(|item| {
+        item.command
+            .filter(|command| !command.trim().is_empty())
+            .or_else(|| item.summary.filter(|summary| !summary.trim().is_empty()))
+    })
+}
+
+fn clean_recovery_stop_point_detail(detail: String) -> String {
+    detail
+        .strip_prefix("command=")
+        .filter(|command| !command.contains(';'))
+        .unwrap_or(&detail)
+        .to_string()
+}
+
+fn recovery_stop_point_detail_from_state(
+    turn: &AgentTurnState,
+    status: &AgentTurnStatus,
+) -> Option<String> {
+    match status {
+        AgentTurnStatus::Verifying => turn.verification.command.clone(),
+        _ => None,
+    }
+}
+
+fn turn_status_recovery_label(status: &AgentTurnStatus) -> &'static str {
+    match status {
+        AgentTurnStatus::Started => "刚开始处理",
+        AgentTurnStatus::GatheringContext => "正在整理上下文",
+        AgentTurnStatus::CallingModel => "正在请求模型",
+        AgentTurnStatus::RunningTools => "正在执行工具",
+        AgentTurnStatus::Verifying => "正在验证",
+        AgentTurnStatus::Completed => "已经完成",
+        AgentTurnStatus::Failed => "失败处理",
+        AgentTurnStatus::Cancelled => "已经中断",
+    }
+}
+
+fn recovery_stage_label(stage: &str) -> &'static str {
+    match stage {
+        "api_error" => "模型请求",
+        "tool_failed" => "工具执行",
+        "verification_failed" => "验证",
+        "compaction_failed" => "上下文压缩",
+        _ => "处理",
+    }
+}
+
+fn recovery_tool_label(item: &AgentToolEvidence) -> String {
+    if item.category == AgentToolCategory::Mcp || item.tool_name.starts_with("mcp__") {
+        "连接工具".to_string()
+    } else {
+        item.tool_name.clone()
+    }
 }
 
 fn append_execution_plan_recovery_lines(lines: &mut Vec<String>, turn: &AgentTurnState) {
@@ -440,7 +558,8 @@ fn recent_recovery_transition_lines(turn: &AgentTurnState, limit: usize) -> Vec<
 }
 
 fn summarize_recovery_detail(detail: &str) -> String {
-    let normalized = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized =
+        sanitize_internal_tool_ids(&detail.split_whitespace().collect::<Vec<_>>().join(" "));
     if normalized.chars().count() <= 160 {
         normalized
     } else {
@@ -448,6 +567,19 @@ fn summarize_recovery_detail(detail: &str) -> String {
         shortened.push('…');
         shortened
     }
+}
+
+fn sanitize_internal_tool_ids(text: &str) -> String {
+    text.split_whitespace()
+        .map(|token| {
+            if token.contains("mcp__") {
+                "连接工具"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn summarize_recovery_items(items: &[String], limit: usize) -> String {
@@ -521,6 +653,9 @@ fn is_non_recovery_continuation_request(normalized: &str) -> bool {
             "继续讨论",
             "继续聊",
             "继续商量",
+            "继续主线",
+            "继续我们的主线",
+            "回到主线",
             "继续规划",
             "继续说",
             "继续想",
@@ -543,8 +678,11 @@ fn is_history_recall_request(normalized: &str) -> bool {
         &[
             "之前说了什么",
             "之前聊了什么",
+            "之前做了什么",
             "我们之前说",
             "我们之前聊",
+            "我们之前做",
+            "你记得我们之前",
             "刚才说了什么",
             "刚才聊了什么",
             "前面说了什么",
@@ -1059,11 +1197,24 @@ mod tests {
     }
 
     #[test]
+    fn recovery_context_does_not_attach_to_mainline_continuation() {
+        let turn = failed_turn("api_error", true);
+
+        for follow_up in ["继续主线吧", "继续我们的主线", "回到主线吧"] {
+            assert_eq!(build_recovery_context(Some(&turn), follow_up), None);
+        }
+    }
+
+    #[test]
     fn recovery_context_does_not_attach_to_history_recall_question() {
         let turn = failed_turn("api_error", true);
 
         assert_eq!(
             build_recovery_context(Some(&turn), "我们之前说了什么"),
+            None
+        );
+        assert_eq!(
+            build_recovery_context(Some(&turn), "你记得我们之前做了什么吗"),
             None
         );
     }
@@ -1148,6 +1299,8 @@ mod tests {
         assert!(context.contains("失败类别：capability_unavailable"));
         assert!(context.contains("恢复动作：check_capability_status"));
         assert!(context.contains("恢复策略：先检查相关能力、连接或工具是否启用"));
+        assert!(context.contains("失败证据：连接工具"));
+        assert!(!context.contains("mcp__missing__tool"));
     }
 
     #[test]
@@ -1266,9 +1419,65 @@ mod tests {
         assert!(context.contains("上一轮任务被中断"));
         assert!(context.contains("中断类别：interrupted"));
         assert!(context.contains("恢复动作：inspect_interrupted_state"));
-        assert!(context.contains("失败证据：bash"));
+        assert!(context.contains("中断证据：bash"));
+        assert!(!context.contains("失败证据：bash"));
         assert!(context.contains("命令：npm install"));
         assert!(context.contains("不要假设长命令已完成"));
+    }
+
+    #[test]
+    fn recovery_context_names_where_interrupted_turn_stopped() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/workspace/demo".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "workflow".to_string(),
+            "verification".to_string(),
+            "修复页面按钮反馈".to_string(),
+        );
+        turn.mark_status_with_reason(
+            AgentTurnStatus::Verifying,
+            "verification_started",
+            Some("running npm run build"),
+        );
+        turn.normalize_for_session_resume();
+
+        let context = build_recovery_context(Some(&turn), "继续修复").expect("recovery context");
+
+        assert!(context.contains("上次停在：正在验证"));
+        assert!(context.contains("running npm run build"));
+    }
+
+    #[test]
+    fn recovery_context_uses_verification_command_as_interrupted_stop_detail() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/workspace/demo".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "workflow".to_string(),
+            "verification".to_string(),
+            "修复检查失败的问题".to_string(),
+        );
+        turn.mark_status_with_reason(AgentTurnStatus::Verifying, "verification_started", None);
+        turn.set_verification(AgentVerificationTrace {
+            status: AgentVerificationStatus::Running,
+            command: Some("npm run build".to_string()),
+            exit_code: None,
+            stdout_preview: None,
+            stderr_preview: None,
+            duration_ms: None,
+            completed_at_ms: None,
+        });
+        turn.normalize_for_session_resume();
+
+        let context = build_recovery_context(Some(&turn), "继续修").expect("recovery context");
+
+        assert!(context.contains("上次停在：正在验证"));
+        assert!(context.contains("停点线索：npm run build"));
     }
 
     #[test]
@@ -1293,6 +1502,28 @@ mod tests {
         assert!(context.contains("命令：npm run dev"));
         assert!(context.contains("port already in use"));
         assert!(context.contains("上一轮涉及文件：package.json"));
+    }
+
+    #[test]
+    fn recovery_context_uses_failed_tool_command_as_stop_detail() {
+        let mut turn = failed_turn_with_kind("unknown", "tool_failed", true);
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "bash".to_string(),
+            category: AgentToolCategory::Shell,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("Exit code: 1 Stderr: address already in use".to_string()),
+            is_error: true,
+            affected_files: Vec::new(),
+            command: Some("npm run dev".to_string()),
+        });
+
+        let context = build_recovery_context(Some(&turn), "继续").expect("recovery context");
+
+        assert!(context.contains("上次停在：工具执行阶段失败"));
+        assert!(context.contains("停点线索：npm run dev"));
     }
 
     #[test]
@@ -1403,7 +1634,8 @@ mod tests {
 
         assert!(context.contains("上一轮安全规则：Workspace Boundary Guard"));
         assert!(context.contains("上一轮可用连接：obsidian"));
-        assert!(context.contains("上一轮可用连接工具：mcp__obsidian__search_notes"));
+        assert!(!context.contains("上一轮可用连接工具"));
+        assert!(!context.contains("mcp__obsidian__search_notes"));
     }
 
     #[test]

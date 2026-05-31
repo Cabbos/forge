@@ -7,6 +7,8 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::{mpsc, Notify};
 
+use crate::consts::{PROCESS_LINE_DRAIN_INTERVAL, PROCESS_SHUTDOWN_GRACE};
+
 #[derive(Debug, Clone)]
 pub(crate) struct ProcessSpec {
     pub program: String,
@@ -135,13 +137,17 @@ where
                 break;
             }
             _ = &mut timeout => {
-                kill_process_group(pid);
+                if let Err(error) = kill_process_group(pid) {
+                    crate::app_log!("WARN", "[process_runner] timeout kill failed: {error}");
+                }
                 output.timed_out = true;
                 finish_after_kill(wait_task).await;
                 break;
             }
             _ = notified(options.cancel.as_ref()), if options.cancel.is_some() => {
-                kill_process_group(pid);
+                if let Err(error) = kill_process_group(pid) {
+                    crate::app_log!("WARN", "[process_runner] cancel kill failed: {error}");
+                }
                 output.cancelled = true;
                 finish_after_kill(wait_task).await;
                 break;
@@ -163,7 +169,9 @@ pub(crate) fn configure_command_process_group(command: &mut Command) {
     #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
-            libc::setsid();
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
             Ok(())
         });
     }
@@ -171,22 +179,47 @@ pub(crate) fn configure_command_process_group(command: &mut Command) {
 
 pub(crate) async fn kill_child_process_group(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
-        kill_process_group(pid);
+        if let Err(error) = kill_process_group(pid) {
+            crate::app_log!(
+                "WARN",
+                "[process_runner] failed to kill process group: {error}"
+            );
+        }
     } else {
         let _ = child.kill().await;
     }
 }
 
-pub(crate) fn kill_process_group(pid: u32) {
+pub(crate) fn kill_process_group(pid: u32) -> Result<(), String> {
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
+    {
+        let pid_i32 = i32::try_from(pid).map_err(|_| format!("PID out of range: {pid}"))?;
+        let rc = unsafe { libc::kill(-pid_i32, libc::SIGKILL) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        Err(format!("failed to kill process group {pid}: {error}"))
     }
     #[cfg(not(unix))]
     {
-        let _ = std::process::Command::new("taskkill")
+        let output = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .output();
+            .output()
+            .map_err(|error| format!("failed to run taskkill for {pid}: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(if stderr.is_empty() {
+                format!("taskkill failed for process {pid}")
+            } else {
+                stderr
+            })
+        }
     }
 }
 
@@ -199,7 +232,7 @@ async fn notified(cancel: Option<&Arc<Notify>>) {
 }
 
 async fn finish_after_kill(wait_task: tokio::task::JoinHandle<Result<i32, String>>) {
-    let _ = tokio::time::timeout(Duration::from_secs(2), wait_task).await;
+    let _ = tokio::time::timeout(PROCESS_SHUTDOWN_GRACE, wait_task).await;
 }
 
 async fn drain_lines<F>(
@@ -211,7 +244,7 @@ async fn drain_lines<F>(
     F: FnMut(String, bool),
 {
     while let Ok(Some((line, is_stderr))) =
-        tokio::time::timeout(Duration::from_millis(50), line_rx.recv()).await
+        tokio::time::timeout(PROCESS_LINE_DRAIN_INTERVAL, line_rx.recv()).await
     {
         append_line_capped(
             if is_stderr {
@@ -309,6 +342,33 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
+    async fn captured_timeout_kills_background_child_processes() {
+        let root = temp_workspace("captured-timeout-background");
+        let marker = root.join("marker");
+
+        let output = run_captured(
+            ProcessSpec::shell("(sleep 1; echo leaked-child > marker) & wait", root.clone()),
+            ProcessRunOptions {
+                timeout: Duration::from_millis(150),
+                cancel: None,
+                output_limit: 1024,
+            },
+        )
+        .await
+        .expect("process should start");
+
+        assert!(output.timed_out);
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert!(
+            !marker.exists(),
+            "timeout must kill the whole process group, not just the shell parent"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
     async fn streaming_cancel_kills_process_group() {
         let root = temp_workspace("streaming-cancel");
         let marker = root.join("marker");
@@ -344,6 +404,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn streaming_cancel_kills_background_child_processes_after_they_spawn() {
+        let root = temp_workspace("streaming-cancel-background");
+        let marker = root.join("marker");
+        let spawned = root.join("spawned");
+        let cancel = Arc::new(Notify::new());
+        let cancel_for_task = cancel.clone();
+
+        let task = tokio::spawn(async move {
+            run_streaming(
+                ProcessSpec::shell(
+                    "(echo spawned > spawned; sleep 1; echo leaked-child > marker) & wait",
+                    root.clone(),
+                ),
+                ProcessRunOptions {
+                    timeout: Duration::from_secs(10),
+                    cancel: Some(cancel_for_task),
+                    output_limit: 1024,
+                },
+                |_line, _is_stderr| {},
+            )
+            .await
+            .map(|output| (output, root))
+        });
+
+        wait_for_path(&spawned, Duration::from_secs(2)).await;
+        cancel.notify_waiters();
+
+        let (output, root) = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("cancel should complete quickly")
+            .expect("join task")
+            .expect("process should start");
+
+        assert!(output.cancelled);
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert!(
+            !marker.exists(),
+            "cancel must kill the background child, not only the shell parent"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn kill_process_group_rejects_out_of_range_pid() {
+        let error = kill_process_group(u32::MAX).expect_err("oversized pid should be rejected");
+
+        assert!(error.contains("PID out of range"));
+    }
+
     fn temp_workspace(name: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
             "forge-process-runner-{name}-{}",
@@ -351,5 +464,16 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).expect("temp workspace");
         path
+    }
+
+    async fn wait_for_path(path: &std::path::Path, timeout: Duration) {
+        let started = std::time::Instant::now();
+        while started.elapsed() < timeout {
+            if path.exists() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("timed out waiting for {}", path.display());
     }
 }

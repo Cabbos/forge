@@ -6,6 +6,20 @@ pub(crate) struct ToolResultResolution {
     pub(crate) missing: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OrderedToolResultForModel {
+    pub(crate) tool_call_id: String,
+    pub(crate) tool_name: String,
+    pub(crate) content: String,
+    pub(crate) missing: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ToolResultMessageForModel {
+    pub(crate) message: ChatMessage,
+    pub(crate) results: Vec<OrderedToolResultForModel>,
+}
+
 pub(crate) fn resolve_tool_result_for_model(
     result_map: &std::collections::HashMap<String, String>,
     tool_call: &ToolCall,
@@ -23,8 +37,66 @@ pub(crate) fn resolve_tool_result_for_model(
     }
 }
 
+pub(crate) fn build_tool_result_message_for_model(
+    result_map: &std::collections::HashMap<String, String>,
+    tool_calls: &[ToolCall],
+) -> ToolResultMessageForModel {
+    let results = tool_calls
+        .iter()
+        .map(|tool_call| {
+            let resolution = resolve_tool_result_for_model(result_map, tool_call);
+            OrderedToolResultForModel {
+                tool_call_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                content: resolution.content,
+                missing: resolution.missing,
+            }
+        })
+        .collect::<Vec<_>>();
+    let blocks = results
+        .iter()
+        .map(|result| {
+            let mut block = serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": result.tool_call_id,
+                "content": result.content,
+            });
+            if result.missing {
+                block["is_error"] = serde_json::Value::Bool(true);
+            }
+            block
+        })
+        .collect::<Vec<_>>();
+
+    ToolResultMessageForModel {
+        message: ChatMessage {
+            role: "user".to_string(),
+            content: serde_json::Value::Array(blocks),
+        },
+        results,
+    }
+}
+
 pub(crate) fn repair_tool_use_adjacency(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
     repair_tool_result_adjacency(&messages)
+}
+
+pub(crate) fn is_read_only_tool(name: &str) -> bool {
+    const READ_ONLY_TOOLS: &[&str] = &[
+        "read_file",
+        "read",
+        "list_directory",
+        "ls",
+        "list",
+        "search_files",
+        "glob",
+        "search_content",
+        "grep",
+        "web_search",
+        "web_fetch",
+        "git_diff",
+    ];
+    READ_ONLY_TOOLS.contains(&name)
 }
 
 pub(crate) fn push_assistant_result_with_synthetic_tool_results(
@@ -127,10 +199,76 @@ fn synthetic_tool_result_blocks(
 #[cfg(test)]
 mod tests {
     use super::{
-        push_assistant_result_with_synthetic_tool_results, repair_tool_use_adjacency,
-        resolve_tool_result_for_model,
+        build_tool_result_message_for_model, push_assistant_result_with_synthetic_tool_results,
+        repair_tool_use_adjacency, resolve_tool_result_for_model,
     };
     use crate::adapters::base::{ChatMessage, ToolCall};
+
+    #[test]
+    fn tool_result_message_preserves_tool_order_and_marks_missing_results() {
+        let tool_calls = vec![
+            ToolCall {
+                id: "call-a".to_string(),
+                name: "read_file".to_string(),
+                input: serde_json::json!({"path": "src/App.tsx"}),
+            },
+            ToolCall {
+                id: "call-b".to_string(),
+                name: "run_shell".to_string(),
+                input: serde_json::json!({"command": "npm test"}),
+            },
+            ToolCall {
+                id: "call-c".to_string(),
+                name: "git_diff".to_string(),
+                input: serde_json::json!({}),
+            },
+        ];
+        let result_map = std::collections::HashMap::from([
+            ("call-c".to_string(), "diff output".to_string()),
+            ("call-a".to_string(), "file output".to_string()),
+        ]);
+
+        let model_results = build_tool_result_message_for_model(&result_map, &tool_calls);
+
+        assert_eq!(model_results.message.role, "user");
+        let blocks = model_results
+            .message
+            .content
+            .as_array()
+            .expect("tool result blocks");
+        let ids = blocks
+            .iter()
+            .map(|block| {
+                block
+                    .get("tool_use_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["call-a", "call-b", "call-c"]);
+        assert_eq!(
+            blocks[0].get("content").and_then(|value| value.as_str()),
+            Some("file output")
+        );
+        assert!(blocks[1]
+            .get("content")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .contains("Tool result missing: run_shell"));
+        assert_eq!(
+            blocks[1].get("is_error").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            model_results
+                .results
+                .iter()
+                .filter(|result| result.missing)
+                .map(|result| result.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["call-b"]
+        );
+    }
 
     #[test]
     fn missing_tool_result_resolution_names_tool_and_marks_missing() {

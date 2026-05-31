@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Archive, ChevronRight } from "lucide-react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ForgeIcon } from "@/components/ui/ForgeIcon";
+import { ForgeCollapsible, ForgeCollapsibleContent, ForgeCollapsibleTrigger } from "@/components/primitives/collapsible";
+import { ForgeIcon } from "@/components/primitives/icon";
 import type { BlockState } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 
@@ -13,20 +13,20 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
   const after = numberMeta(block, "estimated_tokens_after");
 
   return (
-    <div>
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger
+    <div className="compact-spool">
+      <ForgeCollapsible open={open} onOpenChange={setOpen}>
+        <ForgeCollapsibleTrigger
           data-testid="context-compact-trigger"
           className="forge-log-line forge-context-compact-trigger"
         >
           <ChevronRight className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")} />
           <ForgeIcon icon={Archive} tone="context" contained={false} className="size-3.5" />
           <span className="shrink-0 font-medium">上下文已自动整理</span>
-          <span className="min-w-0 truncate" style={{ color: "var(--muted-foreground)" }}>
+          <span className="compact-spool-meta min-w-0 truncate">
             {compacted} 条历史 · 保留 {retained} 条 · {formatTokens(before)} {"->"} {formatTokens(after)}
           </span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
+        </ForgeCollapsibleTrigger>
+        <ForgeCollapsibleContent>
           <div
             data-testid="log-detail-surface"
             className="forge-log-detail"
@@ -35,8 +35,8 @@ export function ContextCompactCard({ block }: { block: BlockState }) {
               {block.content}
             </div>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+        </ForgeCollapsibleContent>
+      </ForgeCollapsible>
     </div>
   );
 }

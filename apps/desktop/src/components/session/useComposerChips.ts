@@ -1,4 +1,4 @@
-import { useCallback, useState, type MutableRefObject, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import type { ComposerChip } from "./composerTypes";
 
 type SetComposerValue = (nextValue: string | ((current: string) => string)) => void;
@@ -19,6 +19,13 @@ export function useComposerChips({
   valueRef,
 }: UseComposerChipsOptions) {
   const [chips, setChips] = useState<ComposerChip[]>([]);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    };
+  }, []);
 
   const clearChips = useCallback(() => {
     setChips([]);
@@ -38,7 +45,11 @@ export function useComposerChips({
       : [...current, { id: crypto.randomUUID(), type, value }]);
     closeSuggestions();
     removeTriggerTextForChip(type, textareaRef, valueRef, setValue);
-    setTimeout(focusTextarea, 0);
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => {
+      focusTimerRef.current = null;
+      focusTextarea();
+    }, 0);
   }, [closeSuggestions, focusTextarea, setValue, textareaRef, valueRef]);
 
   return {

@@ -41,12 +41,16 @@ export interface MockIPCHandlers {
   discard_forge_wiki_update_proposal?: (args: Record<string, unknown>) => unknown;
 }
 
+const DEFAULT_MOCK_WORKING_DIR = "/tmp/forge-e2e-workspace";
+
 export function createMockIPC(handlers: MockIPCHandlers = {}) {
   let forgeWikiExists = false;
   const forgeWikiProposals = new Map<string, ForgeWikiUpdateProposal>();
 
   return async (cmd: string, args: Record<string, unknown>) => {
-    const workingDir = "/Users/cabbos/project/forge";
+    const workingDir = typeof args.workingDir === "string" && args.workingDir.trim()
+      ? args.workingDir
+      : DEFAULT_MOCK_WORKING_DIR;
     const projectPath = String(args.projectPath ?? workingDir);
     switch (cmd) {
       case "create_session":
@@ -269,12 +273,19 @@ function applyMemoryPatch(args: Record<string, unknown>): WikiMemory {
 }
 
 /** Simulate streaming events from the backend. */
-export function simulateStream(
+export async function simulateStream(
   page: import("@playwright/test").Page,
   sessionId: string,
   events: StreamEvent[],
   delayMs = 50,
 ) {
+  await page.waitForFunction(() => {
+    // @ts-expect-error Tauri listener registry installed by setup()
+    const hasSessionOutputListener = (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    const hasConversationComposer = Boolean(document.querySelector("[data-testid='composer-surface']"));
+    return hasSessionOutputListener && hasConversationComposer;
+  });
+
   return page.evaluate(
     ({ sessionId, events, delayMs }) => {
       return new Promise<void>((resolve) => {

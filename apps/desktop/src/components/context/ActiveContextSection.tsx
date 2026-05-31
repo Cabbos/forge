@@ -1,4 +1,6 @@
 import { BookOpen, Database, FileText, MessageSquareText } from "lucide-react";
+import { ForgePill } from "@/components/primitives/pill";
+import { ForgeSurface } from "@/components/primitives/surface";
 import type { ActiveContextItem } from "@/lib/context-activation";
 import { activeContextSummary } from "@/lib/context-activation";
 import { cn } from "@/lib/utils";
@@ -36,7 +38,7 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
         : Database;
 
   return (
-    <article className="forge-surface px-3 py-2.5">
+    <ForgeSurface as="article" className="px-3 py-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -44,19 +46,18 @@ function ActiveContextRow({ item }: { item: ActiveContextItem }) {
             <span className="truncate text-xs font-medium text-foreground">{item.title}</span>
           </div>
           <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{item.summary}</p>
-          <div className="mt-1 truncate text-[10px] text-muted-foreground/60">
+          <div className="mt-1 truncate text-[10px] text-muted-foreground">
             {item.sourceLabel}{item.sourcePath ? ` · ${item.sourcePath}` : ""}
           </div>
         </div>
-        <span
+        <ForgePill
           className={cn(
-            "forge-pill",
             item.injected ? "border-primary/30 text-primary" : "border-border text-muted-foreground",
           )}
         >
           {item.injected ? "已参考" : "未使用"}
-        </span>
+        </ForgePill>
       </div>
-    </article>
+    </ForgeSurface>
   );
 }

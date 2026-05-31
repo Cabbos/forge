@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::agent::turn_state::{
@@ -6,6 +7,7 @@ use crate::agent::turn_state::{
     AgentVerificationTrace,
 };
 use crate::process_runner::{run_captured, ProcessRunOptions, ProcessSpec};
+use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VerificationStep {
@@ -158,6 +160,13 @@ pub(crate) fn select_verification_plan(
 }
 
 pub(crate) async fn run_verification(plan: VerificationPlan) -> AgentVerificationTrace {
+    run_verification_with_cancel(plan, None).await
+}
+
+pub(crate) async fn run_verification_with_cancel(
+    plan: VerificationPlan,
+    cancel: Option<Arc<Notify>>,
+) -> AgentVerificationTrace {
     let started_at = Instant::now();
     let display_command = plan.display_command.clone();
     let steps = plan.into_steps();
@@ -166,7 +175,7 @@ pub(crate) async fn run_verification(plan: VerificationPlan) -> AgentVerificatio
     let mut total_duration_ms = 0;
 
     for step in steps {
-        let trace = run_verification_step(step).await;
+        let trace = run_verification_step_with_cancel(step, cancel.clone()).await;
         total_duration_ms += trace.duration_ms.unwrap_or(0);
         if let Some(stdout) = trace.stdout_preview.as_deref() {
             stdout_all.push(stdout.to_string());
@@ -202,13 +211,20 @@ pub(crate) async fn run_verification(plan: VerificationPlan) -> AgentVerificatio
 }
 
 async fn run_verification_step(step: VerificationStep) -> AgentVerificationTrace {
+    run_verification_step_with_cancel(step, None).await
+}
+
+async fn run_verification_step_with_cancel(
+    step: VerificationStep,
+    cancel: Option<Arc<Notify>>,
+) -> AgentVerificationTrace {
     let started_at = Instant::now();
     let command = step.display_command.clone();
     let output = match run_captured(
         ProcessSpec::new(step.program, step.args, step.cwd),
         ProcessRunOptions {
             timeout: Duration::from_secs(step.timeout_secs.max(1)),
-            cancel: None,
+            cancel,
             output_limit: 120_000,
         },
     )
@@ -227,6 +243,25 @@ async fn run_verification_step(step: VerificationStep) -> AgentVerificationTrace
             };
         }
     };
+
+    if output.cancelled {
+        return AgentVerificationTrace {
+            status: AgentVerificationStatus::Error,
+            command: Some(command),
+            exit_code: None,
+            stdout_preview: optional_preview(&output.stdout),
+            stderr_preview: Some(preview(&format!(
+                "verification cancelled{}",
+                if output.stderr.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{}", output.stderr)
+                }
+            ))),
+            duration_ms: Some(elapsed_ms(started_at)),
+            completed_at_ms: Some(now_ms()),
+        };
+    }
 
     if output.timed_out {
         return AgentVerificationTrace {
@@ -338,7 +373,7 @@ fn safe_script_segments(script_name: &str, script: &str) -> Option<Vec<Vec<Strin
         return None;
     }
 
-    let segments = normalized
+    let segments = script
         .split("&&")
         .map(str::trim)
         .filter(|part| !part.is_empty())
@@ -353,8 +388,11 @@ fn allowed_script_segment_parts(script_name: &str, segment: &str) -> Option<Vec<
         .split_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
-    let command = parts.first().map(String::as_str).unwrap_or_default();
-    if allowed_script_commands(script_name).contains(&command)
+    let command = parts
+        .first()
+        .map(|part| part.to_ascii_lowercase())
+        .unwrap_or_default();
+    if allowed_script_commands(script_name).contains(&command.as_str())
         && !has_unsafe_verification_args(&parts[1..])
     {
         Some(parts)
@@ -684,13 +722,15 @@ mod tests {
     async fn verification_timeout_kills_process_group() {
         let dir = temp_dir("timeout-process-group");
         let marker = dir.join("marker");
+        let spawned = dir.join("spawned");
         let trace = run_verification_step(VerificationStep {
             display_command: "timeout marker script".to_string(),
             cwd: dir.clone(),
             program: "/bin/sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "(sleep 2; echo should-not-run > marker) & wait".to_string(),
+                "(echo child-started > spawned; sleep 2; echo should-not-run > marker) & wait"
+                    .to_string(),
             ],
             timeout_secs: 1,
         })
@@ -704,6 +744,51 @@ mod tests {
             .contains("verification timed out"));
 
         tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(spawned.exists(), "background child should have started");
+        assert!(!marker.exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn verification_cancel_kills_process_group() {
+        let dir = temp_dir("cancel-process-group");
+        let marker = dir.join("marker");
+        let spawned = dir.join("spawned");
+        let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cancel_for_task = cancel.clone();
+        let step = VerificationStep {
+            display_command: "cancel marker script".to_string(),
+            cwd: dir.clone(),
+            program: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "(echo child-started > spawned; sleep 2; echo should-not-run > marker) & wait"
+                    .to_string(),
+            ],
+            timeout_secs: 30,
+        };
+
+        let task = tokio::spawn(async move {
+            run_verification_step_with_cancel(step, Some(cancel_for_task)).await
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        cancel.notify_waiters();
+        let trace = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("cancelled verification should finish quickly")
+            .expect("verification task should join");
+
+        assert_eq!(trace.status, AgentVerificationStatus::Error);
+        assert!(trace
+            .stderr_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("verification cancelled"));
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(spawned.exists(), "background child should have started");
         assert!(!marker.exists());
 
         let _ = fs::remove_dir_all(dir);
@@ -1179,6 +1264,29 @@ mod tests {
         assert_eq!(plan.cwd, dir);
         assert_eq!(plan.program, "tsc");
         assert_eq!(plan.args, Vec::<String>::new());
+    }
+
+    #[test]
+    fn node_plan_preserves_case_sensitive_script_args() {
+        let dir = temp_dir("node-case-sensitive-args");
+        write_package_json(&dir, r#""build":"tsc -p tsconfig.App.json""#);
+        let mut turn = sample_turn();
+        turn.record_tool(trace(
+            AgentToolCategory::Write,
+            AgentToolStatus::Completed,
+            vec!["src/App.tsx"],
+            None,
+            false,
+        ));
+
+        let plan = select_verification_plan(&dir, &turn).expect("node check should be selected");
+
+        assert_eq!(plan.display_command, "tsc -p tsconfig.App.json");
+        assert_eq!(plan.program, "tsc");
+        assert_eq!(
+            plan.args,
+            vec!["-p".to_string(), "tsconfig.App.json".to_string()]
+        );
     }
 
     #[test]

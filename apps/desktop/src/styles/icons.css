@@ -1,0 +1,44 @@
+@layer components {
+  .forge-icon {
+    display: inline-flex;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: calc(var(--radius) - 2px);
+    color: var(--forge-icon-neutral);
+  }
+
+  .forge-icon[data-contained="true"] {
+    background: color-mix(in srgb, currentColor 14%, transparent);
+  }
+
+  .forge-icon[data-tone="context"] {
+    color: var(--forge-icon-context);
+  }
+
+  .forge-icon[data-tone="action"] {
+    color: var(--forge-icon-action);
+  }
+
+  .forge-icon[data-tone="reasoning"] {
+    color: var(--forge-icon-reasoning);
+  }
+
+  .forge-icon[data-tone="safety"] {
+    color: var(--forge-icon-safety);
+  }
+
+  .forge-icon[data-tone="automation"] {
+    color: var(--forge-icon-automation);
+  }
+
+  .forge-icon[data-tone="danger"] {
+    color: var(--destructive);
+  }
+
+  .forge-icon[data-disabled="true"] {
+    color: var(--forge-text-faint);
+  }
+}
