@@ -3,8 +3,10 @@ use std::collections::HashSet;
 
 use crate::memory::risk::should_reject_persistent_memory;
 
+mod service;
 mod store;
 
+pub use service::ContinuityService;
 pub use store::ContinuityStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,8 +156,11 @@ pub fn form_experiences_from_reflection(
 
         experiences.push(ExperienceMemory {
             id: format!(
-                "experience:{}:{}:{}",
-                reflection.session_id, reflection.timestamp_ms, lesson_index
+                "experience:{}:{}:{}:{}",
+                project_id_component(project_path),
+                reflection.session_id,
+                reflection.timestamp_ms,
+                lesson_index
             ),
             kind: ExperienceKind::Lesson,
             status: ExperienceStatus::Candidate,
@@ -204,4 +209,22 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     } else {
         truncated
     }
+}
+
+fn project_id_component(project_path: Option<&str>) -> String {
+    let Some(project_path) = project_path else {
+        return "global".to_string();
+    };
+    format!("project-{:016x}", stable_hash(project_path.as_bytes()))
+}
+
+fn stable_hash(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }

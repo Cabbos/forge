@@ -1,6 +1,6 @@
 use forge::continuity::{
-    form_experiences_from_reflection, ContinuityEvent, ContinuityStore, ExperienceKind,
-    ExperienceStatus, ReflectionEvent, ReflectionOutcome,
+    form_experiences_from_reflection, ContinuityEvent, ContinuityService, ContinuityStore,
+    ExperienceKind, ExperienceStatus, ReflectionEvent, ReflectionOutcome,
 };
 use std::path::PathBuf;
 
@@ -178,6 +178,126 @@ fn store_roundtrips_reflection_events() {
         .expect("list events");
 
     assert_eq!(events, vec![ContinuityEvent::Reflection(reflection)]);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn store_upserts_candidate_experiences_idempotently() {
+    let db_path = temp_db_path("experience-upsert");
+    let store = ContinuityStore::open(&db_path).expect("open store");
+    let reflection =
+        reflection_with_lessons(vec!["Keep candidate lessons out of automatic injection."]);
+    let experiences = form_experiences_from_reflection(&reflection, Some("/repo/forge"), 42);
+
+    let first_inserted = store
+        .upsert_experiences(&experiences)
+        .expect("first upsert");
+    let second_inserted = store
+        .upsert_experiences(&experiences)
+        .expect("second upsert");
+    let stored = store
+        .list_experiences_for_project("/repo/forge")
+        .expect("list experiences");
+
+    assert_eq!(first_inserted.len(), 1);
+    assert!(second_inserted.is_empty());
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0], experiences[0]);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn service_forms_and_persists_experiences_from_recorded_reflections() {
+    let db_path = temp_db_path("service-formation");
+    let service = ContinuityService::open(&db_path).expect("open service");
+    let reflection = reflection_with_lessons(vec![
+        "Keep graph deferred until recall quality is measured.",
+    ]);
+
+    service
+        .record_event(
+            "/repo/forge",
+            &ContinuityEvent::Reflection(reflection.clone()),
+        )
+        .expect("record reflection");
+
+    let formed = service
+        .form_experiences_for_session("/repo/forge", "session-1", 100)
+        .expect("form experiences");
+    let formed_again = service
+        .form_experiences_for_session("/repo/forge", "session-1", 101)
+        .expect("form experiences again");
+    let stored = service
+        .list_experiences_for_project("/repo/forge")
+        .expect("list experiences");
+
+    assert_eq!(formed.len(), 1);
+    assert!(formed_again.is_empty());
+    assert_eq!(stored.len(), 1);
+    assert_eq!(
+        stored[0].body,
+        "Keep graph deferred until recall quality is measured."
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn service_searches_project_experiences_by_query_terms() {
+    let db_path = temp_db_path("service-search");
+    let service = ContinuityService::open(&db_path).expect("open service");
+    let reflection = reflection_with_lessons(vec![
+        "Use Reflection before memory injection.",
+        "Keep graph deferred until recall quality is measured.",
+    ]);
+
+    service
+        .record_event("/repo/forge", &ContinuityEvent::Reflection(reflection))
+        .expect("record reflection");
+    service
+        .form_experiences_for_session("/repo/forge", "session-1", 100)
+        .expect("form experiences");
+
+    let results = service
+        .search_experiences_for_project("/repo/forge", "reflection memory", 5)
+        .expect("search experiences");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].body, "Use Reflection before memory injection.");
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn service_search_keeps_project_boundaries() {
+    let db_path = temp_db_path("service-search-boundaries");
+    let service = ContinuityService::open(&db_path).expect("open service");
+    let reflection = reflection_with_lessons(vec!["Use Reflection before memory injection."]);
+
+    service
+        .record_event(
+            "/repo/forge",
+            &ContinuityEvent::Reflection(reflection.clone()),
+        )
+        .expect("record forge reflection");
+    service
+        .record_event("/repo/other", &ContinuityEvent::Reflection(reflection))
+        .expect("record other reflection");
+    service
+        .form_experiences_for_session("/repo/forge", "session-1", 100)
+        .expect("form forge experiences");
+    service
+        .form_experiences_for_session("/repo/other", "session-1", 100)
+        .expect("form other experiences");
+
+    let results = service
+        .search_experiences_for_project("/repo/forge", "reflection", 5)
+        .expect("search experiences");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].project_path.as_deref(), Some("/repo/forge"));
 
     let _ = std::fs::remove_file(db_path);
 }
