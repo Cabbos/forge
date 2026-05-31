@@ -4,6 +4,7 @@ pub mod adapters;
 mod agent;
 mod app_metadata;
 mod consts;
+pub mod continuity;
 mod executor;
 mod forge_wiki;
 pub mod harness;
