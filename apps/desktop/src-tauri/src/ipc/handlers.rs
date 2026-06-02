@@ -18,7 +18,8 @@ use crate::ipc::send_input_continuity::{
 };
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
-    emit_missing_api_key_notice, save_session_snapshot_with_workflow,
+    emit_missing_api_key_notice, emit_session_projection_and_delivery, emit_session_started,
+    register_and_dispatch_session_start, save_session_snapshot_with_workflow,
     upgrade_missing_key_session_if_possible,
 };
 use crate::protocol::commands::SessionCreated;
@@ -65,26 +66,22 @@ pub async fn create_session(
     })
     .await?;
 
-    crate::transcript::emit_stream_event(
+    emit_session_started(
         &app_handle,
-        StreamEvent::SessionStarted {
-            session_id: session_id.clone(),
-            agent_type: provider.clone(),
-            model: model_str.clone(),
-            context_window_tokens: session.context_window_tokens,
-        },
+        &session_id,
+        &provider,
+        &model_str,
+        session.context_window_tokens,
     );
     if missing_api_key {
         emit_missing_api_key_notice(&app_handle, &session_id, &provider);
     }
 
-    let harness = session.harness.clone();
     let session = Arc::new(session);
     if let Err(error) = save_session_snapshot(&session.snapshot()) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }
-    state.register_session(session_id.clone(), session).await;
-    let _ = harness.dispatch_session_start_event(&session_id).await;
+    register_and_dispatch_session_start(&state, session, &session_id).await;
     Ok(SessionCreated {
         session_id,
         provider,
@@ -110,19 +107,7 @@ pub async fn resume_session(
         if let Err(error) = save_session_snapshot_with_workflow(&state, &session).await {
             crate::app_log!("WARN", "[session_snapshot] {}", error);
         }
-        if let Some(workflow) = state.workflow_states.read().await.get(&session_id).cloned() {
-            crate::transcript::emit_stream_event(
-                &app_handle,
-                StreamEvent::WorkflowUpdated {
-                    session_id: session_id.clone(),
-                    state: workflow,
-                },
-            );
-        }
-        session.emit_latest_turn_projection(&app_handle);
-        if let Some(delivery) = state.delivery_states.read().await.get(&session_id).cloned() {
-            emit_delivery_summary(&app_handle, &session_id, delivery);
-        }
+        emit_session_projection_and_delivery(&state, &app_handle, &session_id, &session).await;
         return Ok(SessionCreated {
             session_id,
             provider: normalize_provider(Some(&session.agent_type)),
@@ -152,25 +137,17 @@ pub async fn resume_session(
     .await?;
     session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let session = Arc::new(session);
-    state
-        .register_session(snapshot.session_id.clone(), session.clone())
-        .await;
-    let _ = session
-        .harness
-        .dispatch_session_start_event(&snapshot.session_id)
-        .await;
+    register_and_dispatch_session_start(&state, session.clone(), &snapshot.session_id).await;
     if let Err(error) = save_session_snapshot_with_workflow(&state, &session).await {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }
 
-    crate::transcript::emit_stream_event(
+    emit_session_started(
         &app_handle,
-        StreamEvent::SessionStarted {
-            session_id: snapshot.session_id.clone(),
-            agent_type: provider.clone(),
-            model: model_str.clone(),
-            context_window_tokens: session.context_window_tokens,
-        },
+        &snapshot.session_id,
+        &provider,
+        &model_str,
+        session.context_window_tokens,
     );
     if let Some(workflow) = latest_workflow {
         state

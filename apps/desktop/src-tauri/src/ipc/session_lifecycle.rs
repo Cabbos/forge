@@ -7,6 +7,7 @@ use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, save_session_snapshot, AgentSessionSnapshot,
 };
 use crate::harness::Harness;
+use crate::ipc::delivery_summary::emit_delivery_summary;
 use crate::protocol::commands::SessionInfo;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -28,6 +29,59 @@ pub(crate) fn emit_missing_api_key_notice(
             code: "missing_api_key".to_string(),
         },
     );
+}
+
+pub(crate) fn emit_session_started(
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    provider: &str,
+    model: &str,
+    context_window_tokens: Option<u32>,
+) {
+    crate::transcript::emit_stream_event(
+        app_handle,
+        StreamEvent::SessionStarted {
+            session_id: session_id.to_string(),
+            agent_type: provider.to_string(),
+            model: model.to_string(),
+            context_window_tokens,
+        },
+    );
+}
+
+pub(crate) async fn emit_session_projection_and_delivery(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    session: &AgentSession,
+) {
+    if let Some(workflow) = state.workflow_states.read().await.get(session_id).cloned() {
+        crate::transcript::emit_stream_event(
+            app_handle,
+            StreamEvent::WorkflowUpdated {
+                session_id: session_id.to_string(),
+                state: workflow,
+            },
+        );
+    }
+    session.emit_latest_turn_projection(app_handle);
+    if let Some(delivery) = state.delivery_states.read().await.get(session_id).cloned() {
+        emit_delivery_summary(app_handle, session_id, delivery);
+    }
+}
+
+pub(crate) async fn register_and_dispatch_session_start(
+    state: &Arc<AppState>,
+    session: Arc<AgentSession>,
+    session_id: &str,
+) {
+    state
+        .register_session(session_id.to_string(), session.clone())
+        .await;
+    let _ = session
+        .harness
+        .dispatch_session_start_event(session_id)
+        .await;
 }
 
 pub(crate) async fn upgrade_missing_key_session_if_possible(
