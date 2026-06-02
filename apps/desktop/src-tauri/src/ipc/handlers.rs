@@ -19,6 +19,7 @@ use crate::agent::provider_capabilities::{
     provider_label,
 };
 use crate::agent::session::{AgentPreviewStatusUpdate, AgentSession, TurnInflightGuard};
+use crate::agent::time::now_ms;
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
     AgentSessionSnapshot,
@@ -533,13 +534,6 @@ pub async fn resume_session(
         model: model_str,
         missing_api_key,
     })
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn emit_delivery_summary(

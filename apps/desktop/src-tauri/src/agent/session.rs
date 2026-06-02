@@ -386,7 +386,7 @@ impl AgentSession {
             sp.len(),
             sp.contains("Active Skills")
         );
-        let context_bundle = build_context_bundle(
+        let context_bundle = Self::build_context_bundle(
             compacted.messages,
             compacted.summary,
             hidden_contexts.to_vec(),
@@ -432,7 +432,7 @@ impl AgentSession {
                                 &compacted, stats, "overflow_retry", emitter,
                             );
 
-                            let context_bundle = build_context_bundle(
+                            let context_bundle = Self::build_context_bundle(
                                 compacted.messages,
                                 compacted.summary,
                                 hidden_contexts.to_vec(),
@@ -790,7 +790,7 @@ impl AgentSession {
             let messages = lock_unpoisoned(&self.messages).clone();
             let summary = lock_unpoisoned(&self.summary).clone();
             let sp = lock_unpoisoned(&self.system_prompt).clone();
-            let context_bundle = build_context_bundle(
+            let context_bundle = Self::build_context_bundle(
                 messages,
                 summary,
                 hidden_contexts.to_vec(),
@@ -1346,24 +1346,23 @@ impl AgentSession {
         )
         .await
     }
-}
 
-fn build_context_bundle(
-    messages: Vec<ChatMessage>,
-    summary: Option<String>,
-    hidden_contexts: Vec<HiddenContextPart>,
-    system_prompt: String,
-    context_window_tokens: Option<u32>,
-) -> ContextBundle {
-    ContextBuilder::new()
-        .messages(messages)
-        .summary(summary)
-        .hidden_contexts(hidden_contexts)
-        .system_prompt(system_prompt)
-        .context_window_tokens(context_window_tokens)
-        .build()
+    fn build_context_bundle(
+        messages: Vec<ChatMessage>,
+        summary: Option<String>,
+        hidden_contexts: Vec<HiddenContextPart>,
+        system_prompt: String,
+        context_window_tokens: Option<u32>,
+    ) -> ContextBundle {
+        ContextBuilder::new()
+            .messages(messages)
+            .summary(summary)
+            .hidden_contexts(hidden_contexts)
+            .system_prompt(system_prompt)
+            .context_window_tokens(context_window_tokens)
+            .build()
+    }
 }
-
 
 #[cfg(test)]
 #[path = "session_tests.rs"]
