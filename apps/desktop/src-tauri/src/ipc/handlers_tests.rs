@@ -1,10 +1,12 @@
 use super::*;
 use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
+use crate::agent::context_builder::ContextSourceKind;
 use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnStatus,
 };
 use crate::continuity::{FileOperation, ReflectionEvent};
+use crate::harness::capability::CapabilityKind;
 use crate::harness::mcp::McpResourceContent;
 use crate::ipc::delivery_summary::build_delivery_summary_for_session;
 use crate::ipc::mcp_context::{
@@ -15,6 +17,10 @@ use crate::ipc::open_file::resolve_workspace_file_path;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
     should_select_project_records_for_request,
+};
+use crate::ipc::send_input_context::{
+    capability_names_by_kind, prepare_send_input_turn_context, select_send_input_memory_context,
+    PrepareSendInputTurnRequest,
 };
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
