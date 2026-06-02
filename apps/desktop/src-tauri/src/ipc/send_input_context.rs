@@ -19,7 +19,9 @@ use crate::ipc::project_records::propose_send_input_project_record_update;
 use crate::ipc::send_input_continuity::{
     record_failed_send_input_continuity, record_successful_send_input_continuity,
 };
-use crate::ipc::session_lifecycle::save_session_snapshot_with_workflow;
+use crate::ipc::session_lifecycle::{
+    save_session_snapshot_with_workflow, upgrade_missing_key_session_if_possible,
+};
 use crate::memory::{format_selected_memory_context, SelectedContextMemory};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -35,6 +37,23 @@ pub(crate) struct PreparedSendInputTurnContext {
 pub(crate) struct SendInputMemorySelection {
     pub(crate) selected: Vec<SelectedContextMemory>,
     pub(crate) context: Option<String>,
+}
+
+pub(crate) async fn resolve_send_input_session(
+    app_handle: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Result<(Arc<AgentSession>, String), String> {
+    let session = state
+        .sessions
+        .read()
+        .await
+        .get(session_id)
+        .cloned()
+        .ok_or_else(|| format!("Session not found: {session_id}"))?;
+    let session = upgrade_missing_key_session_if_possible(app_handle, state, session).await?;
+    let project_path = session.harness.working_dir.to_string_lossy().to_string();
+    Ok((session, project_path))
 }
 
 pub(crate) async fn select_send_input_memory_context(
