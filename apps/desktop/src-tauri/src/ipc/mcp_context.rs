@@ -444,3 +444,7 @@ pub(crate) fn mcp_context_selection_label(selection: &McpContextSelection) -> St
         } => format!("{server_id}: {name}"),
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_context_tests.rs"]
+mod tests;
