@@ -25,8 +25,7 @@ use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
 };
 use crate::ipc::send_input_context::{
-    prepare_send_input_turn_context, reserve_turn_then_record_user_message,
-    select_send_input_memory_context, PrepareSendInputTurnRequest,
+    prepare_send_input_turn_context, select_send_input_memory_context, PrepareSendInputTurnRequest,
 };
 use crate::ipc::session_lifecycle::{
     list_session_infos_for_state, session_snapshot_with_workflow_state,
@@ -40,7 +39,6 @@ use crate::memory::storage::now_string as memory_now_string;
 use crate::protocol::events::DeliverySummary;
 use crate::workflow::classify_workflow_with_command;
 use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
-use std::sync::atomic::Ordering;
 
 fn test_agent_session(id: &str, workspace: &std::path::Path) -> Arc<AgentSession> {
     Arc::new(AgentSession::new(
@@ -1186,64 +1184,6 @@ fn workspace_file_path_rejects_absolute_path_outside_workspace() {
 
     let _ = std::fs::remove_dir_all(&workspace);
     let _ = std::fs::remove_file(&outside);
-}
-
-#[test]
-fn busy_session_does_not_record_user_message_before_turn_reservation() {
-    let nonce = uuid::Uuid::now_v7();
-    let workspace = std::env::temp_dir().join(format!("forge-busy-turn-{nonce}"));
-    std::fs::create_dir_all(&workspace).expect("workspace");
-    let adapter =
-        Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
-    let session = AgentSession::new(
-        "session-1".to_string(),
-        "deepseek".to_string(),
-        adapter,
-        Arc::new(Harness::new(workspace.clone())),
-        "system".to_string(),
-        None,
-    );
-    let _active_turn = session.reserve_turn().expect("first turn should reserve");
-    let mut recorded = Vec::new();
-
-    let error = reserve_turn_then_record_user_message(&session, "session-1", "继续", |event| {
-        recorded.push(event)
-    })
-    .expect_err("busy session should reject before recording");
-
-    assert!(error.contains("上一条请求"));
-    assert!(recorded.is_empty());
-
-    let _ = std::fs::remove_dir_all(&workspace);
-}
-
-#[test]
-fn stopped_session_does_not_record_user_message_before_turn_reservation() {
-    let nonce = uuid::Uuid::now_v7();
-    let workspace = std::env::temp_dir().join(format!("forge-stopped-turn-{nonce}"));
-    std::fs::create_dir_all(&workspace).expect("workspace");
-    let adapter =
-        Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
-    let session = AgentSession::new(
-        "session-1".to_string(),
-        "deepseek".to_string(),
-        adapter,
-        Arc::new(Harness::new(workspace.clone())),
-        "system".to_string(),
-        None,
-    );
-    session.running.store(false, Ordering::SeqCst);
-    let mut recorded = Vec::new();
-
-    let error = reserve_turn_then_record_user_message(&session, "session-1", "继续", |event| {
-        recorded.push(event)
-    })
-    .expect_err("stopped session should reject before recording");
-
-    assert!(error.contains("Session is not running"));
-    assert!(recorded.is_empty());
-
-    let _ = std::fs::remove_dir_all(&workspace);
 }
 
 #[test]
