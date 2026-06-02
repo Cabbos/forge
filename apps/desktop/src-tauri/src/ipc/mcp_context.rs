@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use crate::harness::Harness;
 use crate::protocol::events::StreamEvent;
+use crate::state::AppState;
 
 pub(crate) const MCP_CONTEXT_ITEM_CHAR_LIMIT: usize = 12_000;
 
@@ -154,6 +157,22 @@ pub(crate) async fn build_mcp_context(
     }
 
     builder.finish()
+}
+
+pub(crate) async fn mcp_context_harness_for_session(
+    state: &Arc<AppState>,
+    session_id: Option<&str>,
+) -> Result<Option<Arc<Harness>>, String> {
+    let Some(session_id) = session_id else {
+        return Ok(None);
+    };
+    state
+        .sessions
+        .read()
+        .await
+        .get(session_id)
+        .map(|session| Some(session.harness.clone()))
+        .ok_or_else(|| "当前会话不可用，请重新打开对话或重新选择项目。".to_string())
 }
 
 fn emit_mcp_context_status(

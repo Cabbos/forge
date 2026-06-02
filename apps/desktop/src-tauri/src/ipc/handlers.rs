@@ -7,7 +7,7 @@ use crate::agent::capability_context::{build_turn_input_intent, ComposerCapabili
 use crate::agent::provider_capabilities::{
     context_window_tokens, default_model, normalize_provider, provider_label,
 };
-use crate::agent::session::{AgentSession, TurnInflightGuard};
+use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
 };
@@ -18,13 +18,16 @@ use crate::ipc::continuity_experiences::{
     list_continuity_experiences_for_request, search_continuity_experiences_for_request,
 };
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
-use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
+use crate::ipc::mcp_context::{
+    build_mcp_context, mcp_context_harness_for_session, McpContextSelection,
+};
 use crate::ipc::open_file::open_file_macos;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
 };
 use crate::ipc::send_input_context::{
-    prepare_send_input_turn_context, select_send_input_memory_context, PrepareSendInputTurnRequest,
+    prepare_send_input_turn_context, reserve_turn_then_record_user_message,
+    select_send_input_memory_context, PrepareSendInputTurnRequest,
 };
 use crate::ipc::send_input_continuity::{
     record_failed_send_input_continuity, record_send_input_user_message_continuity,
@@ -40,7 +43,6 @@ use crate::ipc::workspace_files::{
 };
 use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::StreamEvent;
-use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
 use crate::workflow::classify_workflow_with_command;
@@ -77,24 +79,6 @@ pub struct McpContextPromptArgument {
     name: String,
     description: String,
     required: bool,
-}
-
-fn reserve_turn_then_record_user_message<F>(
-    session: &AgentSession,
-    session_id: &str,
-    text: &str,
-    record_user_message: F,
-) -> Result<TurnInflightGuard, String>
-where
-    F: FnOnce(StreamEvent),
-{
-    let turn_guard = session.reserve_turn()?;
-    record_user_message(StreamEvent::UserMessage {
-        session_id: session_id.to_string(),
-        block_id: BlockId::new().to_string(),
-        content: text.to_string(),
-    });
-    Ok(turn_guard)
 }
 
 #[tauri::command]
@@ -231,22 +215,6 @@ pub async fn list_mcp_context_sources(
         .collect();
 
     Ok(McpContextSources { resources, prompts })
-}
-
-async fn mcp_context_harness_for_session(
-    state: &Arc<AppState>,
-    session_id: Option<&str>,
-) -> Result<Option<Arc<Harness>>, String> {
-    let Some(session_id) = session_id else {
-        return Ok(None);
-    };
-    state
-        .sessions
-        .read()
-        .await
-        .get(session_id)
-        .map(|session| Some(session.harness.clone()))
-        .ok_or_else(|| "当前会话不可用，请重新打开对话或重新选择项目。".to_string())
 }
 
 #[tauri::command]

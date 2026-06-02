@@ -19,8 +19,8 @@ use crate::ipc::continuity_experiences::{
 use crate::ipc::delivery_summary::build_delivery_summary_for_session;
 use crate::ipc::file_search::find_files;
 use crate::ipc::mcp_context::{
-    format_mcp_resource_context, mcp_context_selection_label, McpContextBuilder,
-    MCP_CONTEXT_ITEM_CHAR_LIMIT,
+    format_mcp_resource_context, mcp_context_harness_for_session, mcp_context_selection_label,
+    McpContextBuilder, MCP_CONTEXT_ITEM_CHAR_LIMIT,
 };
 use crate::ipc::open_file::resolve_workspace_file_path;
 use crate::ipc::project_records::{
@@ -28,7 +28,8 @@ use crate::ipc::project_records::{
     should_select_project_records_for_request,
 };
 use crate::ipc::send_input_context::{
-    capability_names_by_kind, prepare_send_input_turn_context, select_send_input_memory_context,
+    capability_names_by_kind, prepare_send_input_turn_context,
+    reserve_turn_then_record_user_message, select_send_input_memory_context,
     PrepareSendInputTurnRequest,
 };
 use crate::ipc::session_lifecycle::{

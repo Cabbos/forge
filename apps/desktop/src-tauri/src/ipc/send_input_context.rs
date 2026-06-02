@@ -4,7 +4,7 @@ use crate::agent::capability_context::{
     format_turn_capability_snapshot, TurnCapabilitySnapshot, TurnInputIntent,
 };
 use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
-use crate::agent::session::AgentSession;
+use crate::agent::session::{AgentSession, TurnInflightGuard};
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
 use crate::harness::capability::CapabilityKind;
 use crate::harness::registry::CapabilityEntry;
@@ -13,6 +13,8 @@ use crate::ipc::file_references::{
     build_file_reference_context_with_paths, resolved_file_reference_paths_for_turn,
 };
 use crate::memory::{format_selected_memory_context, SelectedContextMemory};
+use crate::protocol::events::StreamEvent;
+use crate::protocol::BlockId;
 use crate::state::AppState;
 use crate::workflow::WorkflowState;
 
@@ -35,6 +37,24 @@ pub(crate) async fn select_send_input_memory_context(
     let selected = state.wiki_memory.select(text, Some(project_path), 8).await;
     let context = format_selected_memory_context(&selected);
     SendInputMemorySelection { selected, context }
+}
+
+pub(crate) fn reserve_turn_then_record_user_message<F>(
+    session: &AgentSession,
+    session_id: &str,
+    text: &str,
+    record_user_message: F,
+) -> Result<TurnInflightGuard, String>
+where
+    F: FnOnce(StreamEvent),
+{
+    let turn_guard = session.reserve_turn()?;
+    record_user_message(StreamEvent::UserMessage {
+        session_id: session_id.to_string(),
+        block_id: BlockId::new().to_string(),
+        content: text.to_string(),
+    });
+    Ok(turn_guard)
 }
 
 pub(crate) struct PrepareSendInputTurnRequest<'a> {
