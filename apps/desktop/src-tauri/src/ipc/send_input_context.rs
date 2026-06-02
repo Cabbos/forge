@@ -11,9 +11,15 @@ use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
 use crate::harness::capability::CapabilityKind;
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::Harness;
+use crate::ipc::delivery_summary::build_store_emit_delivery_summary;
 use crate::ipc::file_references::{
     build_file_reference_context_with_paths, resolved_file_reference_paths_for_turn,
 };
+use crate::ipc::project_records::propose_send_input_project_record_update;
+use crate::ipc::send_input_continuity::{
+    record_failed_send_input_continuity, record_successful_send_input_continuity,
+};
+use crate::ipc::session_lifecycle::save_session_snapshot_with_workflow;
 use crate::memory::{format_selected_memory_context, SelectedContextMemory};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -249,6 +255,69 @@ pub(crate) async fn prepare_send_input_turn_context(
         hidden_contexts,
         turn_metadata,
         activation_text,
+    }
+}
+
+pub(crate) async fn finalize_send_input_turn(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session: &AgentSession,
+    text: &str,
+    project_path: &str,
+    workflow: &WorkflowState,
+    result: &Result<(), String>,
+) {
+    if let Err(error) = save_session_snapshot_with_workflow(state, session).await {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    let latest_turn_for_delivery = session.snapshot().latest_turn;
+    if result.is_ok() {
+        record_successful_send_input_continuity(
+            state,
+            app_handle,
+            &session.id,
+            text,
+            project_path,
+            latest_turn_for_delivery.as_ref(),
+        )
+        .await;
+        let writeback = propose_send_input_project_record_update(
+            state,
+            &session.id,
+            text,
+            project_path,
+            workflow,
+            latest_turn_for_delivery.as_ref(),
+        )
+        .await;
+        if let Some(proposal) = writeback.proposal {
+            crate::transcript::emit_stream_event(
+                app_handle,
+                StreamEvent::ForgeWikiUpdateProposed {
+                    session_id: session.id.clone(),
+                    proposal,
+                },
+            );
+        }
+        build_store_emit_delivery_summary(
+            state,
+            app_handle,
+            &session.id,
+            latest_turn_for_delivery.as_ref(),
+            writeback.record_evidence,
+        )
+        .await;
+        if let Err(error) = save_session_snapshot_with_workflow(state, session).await {
+            crate::app_log!("WARN", "[session_snapshot] {}", error);
+        }
+    } else {
+        record_failed_send_input_continuity(
+            state,
+            &session.id,
+            text,
+            project_path,
+            latest_turn_for_delivery.as_ref(),
+        );
     }
 }
 

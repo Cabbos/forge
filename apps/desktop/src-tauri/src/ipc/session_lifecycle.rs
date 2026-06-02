@@ -4,15 +4,18 @@ use crate::adapters::build_adapter;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
 use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
-    delete_session_snapshot, list_session_snapshots, save_session_snapshot, AgentSessionSnapshot,
+    delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
+    AgentSessionSnapshot,
 };
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::emit_delivery_summary;
+use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::protocol::commands::SessionInfo;
-use crate::protocol::events::StreamEvent;
+use crate::protocol::events::{DeliverySummary, StreamEvent};
 use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
+use crate::workflow::WorkflowState;
 use crate::workspace_safety::resolve_workspace_path as resolve_safe_workspace_path;
 
 pub(crate) fn emit_missing_api_key_notice(
@@ -82,6 +85,57 @@ pub(crate) async fn register_and_dispatch_session_start(
         .harness
         .dispatch_session_start_event(session_id)
         .await;
+}
+
+pub(crate) async fn restore_session_from_snapshot(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> Result<
+    (
+        Arc<AgentSession>,
+        String,
+        String,
+        String,
+        bool,
+        Option<WorkflowState>,
+        Option<DeliverySummary>,
+    ),
+    String,
+> {
+    let snapshot = load_session_snapshot(session_id)?;
+    let provider = normalize_provider(Some(&snapshot.provider));
+    let credentials = settings::detect_credentials(&provider);
+    let latest_workflow = snapshot.latest_workflow.clone();
+    let latest_delivery = snapshot.latest_delivery.clone();
+
+    let model_str = snapshot.model.clone();
+    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
+    let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
+        session_id: snapshot.session_id.clone(),
+        provider: provider.clone(),
+        model: model_str.clone(),
+        api_key: &credentials.api_key,
+        api_base: credentials.api_base.as_deref(),
+        working_dir: &working_dir,
+        pending_confirms: state.pending_confirms.clone(),
+        existing_context_window_tokens: snapshot.context_window_tokens,
+    })
+    .await?;
+    session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
+    let session = Arc::new(session);
+    register_and_dispatch_session_start(state, session.clone(), &snapshot.session_id).await;
+    if let Err(error) = save_session_snapshot_with_workflow(state, &session).await {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    Ok((
+        session,
+        snapshot.session_id,
+        provider,
+        model_str,
+        missing_api_key,
+        latest_workflow,
+        latest_delivery,
+    ))
 }
 
 pub(crate) async fn upgrade_missing_key_session_if_possible(

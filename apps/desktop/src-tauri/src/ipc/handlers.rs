@@ -2,34 +2,27 @@ use std::sync::Arc;
 
 use crate::agent::capability_context::ComposerCapabilitySelection;
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
-use crate::agent::snapshot::{load_session_snapshot, save_session_snapshot};
-use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
+use crate::agent::snapshot::save_session_snapshot;
+use crate::ipc::delivery_summary::emit_delivery_summary;
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
-use crate::ipc::project_records::{
-    propose_send_input_project_record_update, select_send_input_project_records_context,
-};
+use crate::ipc::project_records::select_send_input_project_records_context;
 use crate::ipc::send_input_context::{
-    prepare_send_input_turn_context, reserve_turn_then_record_user_message,
-    select_send_input_memory_context, setup_send_input_workflow, PrepareSendInputTurnRequest,
+    finalize_send_input_turn, prepare_send_input_turn_context,
+    reserve_turn_then_record_user_message, select_send_input_memory_context,
+    setup_send_input_workflow, PrepareSendInputTurnRequest,
 };
-use crate::ipc::send_input_continuity::{
-    record_failed_send_input_continuity, record_send_input_user_message_continuity,
-    record_successful_send_input_continuity,
-};
+use crate::ipc::send_input_continuity::record_send_input_user_message_continuity;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, emit_session_projection_and_delivery, emit_session_started,
-    register_and_dispatch_session_start, save_session_snapshot_with_workflow,
-    upgrade_missing_key_session_if_possible,
+    register_and_dispatch_session_start, restore_session_from_snapshot,
+    save_session_snapshot_with_workflow, upgrade_missing_key_session_if_possible,
 };
 use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::StreamEvent;
 use crate::settings;
 use crate::state::AppState;
-use crate::workspace_safety::{
-    resolve_session_workspace_path as resolve_session_working_dir,
-    resolve_workspace_path as resolve_safe_workspace_path,
-};
+use crate::workspace_safety::resolve_session_workspace_path as resolve_session_working_dir;
 
 #[tauri::command]
 pub async fn create_session(
@@ -116,35 +109,12 @@ pub async fn resume_session(
         });
     }
 
-    let snapshot = load_session_snapshot(&session_id)?;
-    let provider = normalize_provider(Some(&snapshot.provider));
-    let credentials = settings::detect_credentials(&provider);
-    let latest_workflow = snapshot.latest_workflow.clone();
-    let latest_delivery = snapshot.latest_delivery.clone();
-
-    let model_str = snapshot.model.clone();
-    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
-    let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
-        session_id: snapshot.session_id.clone(),
-        provider: provider.clone(),
-        model: model_str.clone(),
-        api_key: &credentials.api_key,
-        api_base: credentials.api_base.as_deref(),
-        working_dir: &working_dir,
-        pending_confirms: state.pending_confirms.clone(),
-        existing_context_window_tokens: snapshot.context_window_tokens,
-    })
-    .await?;
-    session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
-    let session = Arc::new(session);
-    register_and_dispatch_session_start(&state, session.clone(), &snapshot.session_id).await;
-    if let Err(error) = save_session_snapshot_with_workflow(&state, &session).await {
-        crate::app_log!("WARN", "[session_snapshot] {}", error);
-    }
+    let (session, _, provider, model_str, missing_api_key, latest_workflow, latest_delivery) =
+        restore_session_from_snapshot(&state, &session_id).await?;
 
     emit_session_started(
         &app_handle,
-        &snapshot.session_id,
+        &session_id,
         &provider,
         &model_str,
         session.context_window_tokens,
@@ -154,11 +124,11 @@ pub async fn resume_session(
             .workflow_states
             .write()
             .await
-            .insert(snapshot.session_id.clone(), workflow.clone());
+            .insert(session_id.clone(), workflow.clone());
         crate::transcript::emit_stream_event(
             &app_handle,
             StreamEvent::WorkflowUpdated {
-                session_id: snapshot.session_id.clone(),
+                session_id: session_id.clone(),
                 state: workflow,
             },
         );
@@ -169,82 +139,19 @@ pub async fn resume_session(
             .delivery_states
             .write()
             .await
-            .insert(snapshot.session_id.clone(), delivery.clone());
-        emit_delivery_summary(&app_handle, &snapshot.session_id, delivery);
+            .insert(session_id.clone(), delivery.clone());
+        emit_delivery_summary(&app_handle, &session_id, delivery);
     }
     if missing_api_key {
-        emit_missing_api_key_notice(&app_handle, &snapshot.session_id, &provider);
+        emit_missing_api_key_notice(&app_handle, &session_id, &provider);
     }
 
     Ok(SessionCreated {
-        session_id: snapshot.session_id,
+        session_id,
         provider,
         model: model_str,
         missing_api_key,
     })
-}
-
-async fn finalize_send_input_turn(
-    state: &Arc<AppState>,
-    app_handle: &tauri::AppHandle,
-    session: &crate::agent::session::AgentSession,
-    text: &str,
-    project_path: &str,
-    workflow: &crate::workflow::WorkflowState,
-    result: &Result<(), String>,
-) {
-    if let Err(error) = save_session_snapshot_with_workflow(state, session).await {
-        crate::app_log!("WARN", "[session_snapshot] {}", error);
-    }
-    let latest_turn_for_delivery = session.snapshot().latest_turn;
-    if result.is_ok() {
-        record_successful_send_input_continuity(
-            state,
-            app_handle,
-            &session.id,
-            text,
-            project_path,
-            latest_turn_for_delivery.as_ref(),
-        )
-        .await;
-        let writeback = propose_send_input_project_record_update(
-            state,
-            &session.id,
-            text,
-            project_path,
-            workflow,
-            latest_turn_for_delivery.as_ref(),
-        )
-        .await;
-        if let Some(proposal) = writeback.proposal {
-            crate::transcript::emit_stream_event(
-                app_handle,
-                StreamEvent::ForgeWikiUpdateProposed {
-                    session_id: session.id.clone(),
-                    proposal,
-                },
-            );
-        }
-        build_store_emit_delivery_summary(
-            state,
-            app_handle,
-            &session.id,
-            latest_turn_for_delivery.as_ref(),
-            writeback.record_evidence,
-        )
-        .await;
-        if let Err(error) = save_session_snapshot_with_workflow(state, session).await {
-            crate::app_log!("WARN", "[session_snapshot] {}", error);
-        }
-    } else {
-        record_failed_send_input_continuity(
-            state,
-            &session.id,
-            text,
-            project_path,
-            latest_turn_for_delivery.as_ref(),
-        );
-    }
 }
 
 #[tauri::command]
