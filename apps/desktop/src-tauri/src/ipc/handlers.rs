@@ -1,18 +1,11 @@
 use std::sync::Arc;
 
-use crate::adapters::base::AiAdapter;
-use crate::adapters::build_adapter;
-use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::capability_context::{build_turn_input_intent, ComposerCapabilitySelection};
-use crate::agent::provider_capabilities::{
-    context_window_tokens, default_model, normalize_provider, provider_label,
-};
-use crate::agent::session::AgentSession;
+use crate::agent::provider_capabilities::{default_model, normalize_provider};
 use crate::agent::snapshot::{
     load_session_snapshot, save_session_snapshot,
 };
 use crate::agent::time::now_ms;
-use crate::harness::Harness;
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::project_records::{
@@ -26,6 +19,7 @@ use crate::ipc::send_input_continuity::{
     record_failed_send_input_continuity, record_send_input_user_message_continuity,
     record_successful_send_input_continuity,
 };
+use crate::ipc::session_builder::build_agent_session;
 use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, save_session_snapshot_with_workflow,
     upgrade_missing_key_session_if_possible,
@@ -63,43 +57,17 @@ pub async fn create_session(
         .or(credentials.model)
         .unwrap_or_else(|| default_model(&provider).to_string());
     let working_dir = resolve_session_working_dir(&working_dir)?;
-    let harness = Arc::new(Harness::new_with_pending(
-        working_dir.clone(),
-        state.pending_confirms.clone(),
-    ));
-    let context_window_tokens = context_window_tokens(&provider, &model_str);
-    let missing_api_key = key.trim().is_empty();
-    let external_tools = if missing_api_key {
-        Vec::new()
-    } else {
-        harness.external_mcp_tool_definitions().await
-    };
-    let adapter = if missing_api_key {
-        Arc::new(MissingKeyAdapter::new(
-            provider_label(&provider),
-            &model_str,
-        )) as Arc<dyn AiAdapter>
-    } else {
-        build_adapter(
-            &provider,
-            &key,
-            &model_str,
-            credentials.api_base.as_deref(),
-            external_tools,
-        )?
-    };
-
-    // Build system prompt from harness (active skills + project CLAUDE.md)
-    let system_prompt = harness.build_system_prompt(&provider, &working_dir).await;
-
-    let session = AgentSession::new(
+    let (session, missing_api_key) = build_agent_session(
         session_id.clone(),
         provider.clone(),
-        adapter,
-        harness.clone(),
-        system_prompt,
-        context_window_tokens,
-    );
+        model_str.clone(),
+        &key,
+        credentials.api_base.as_deref(),
+        &working_dir,
+        state.pending_confirms.clone(),
+        None,
+    )
+    .await?;
 
     crate::transcript::emit_stream_event(
         &app_handle,
@@ -107,13 +75,14 @@ pub async fn create_session(
             session_id: session_id.clone(),
             agent_type: provider.clone(),
             model: model_str.clone(),
-            context_window_tokens,
+            context_window_tokens: session.context_window_tokens,
         },
     );
     if missing_api_key {
         emit_missing_api_key_notice(&app_handle, &session_id, &provider);
     }
 
+    let harness = session.harness.clone();
     let session = Arc::new(session);
     if let Err(error) = save_session_snapshot(&session.snapshot()) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
@@ -173,44 +142,18 @@ pub async fn resume_session(
     let latest_delivery = snapshot.latest_delivery.clone();
 
     let model_str = snapshot.model.clone();
-    let context_window_tokens = snapshot
-        .context_window_tokens
-        .or_else(|| context_window_tokens(&provider, &model_str));
-    let missing_api_key = credentials.api_key.trim().is_empty();
     let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
-    let harness = Arc::new(Harness::new_with_pending(
-        working_dir.clone(),
-        state.pending_confirms.clone(),
-    ));
-    let external_tools = if missing_api_key {
-        Vec::new()
-    } else {
-        harness.external_mcp_tool_definitions().await
-    };
-    let adapter = if missing_api_key {
-        Arc::new(MissingKeyAdapter::new(
-            provider_label(&provider),
-            &model_str,
-        )) as Arc<dyn AiAdapter>
-    } else {
-        build_adapter(
-            &provider,
-            &credentials.api_key,
-            &model_str,
-            credentials.api_base.as_deref(),
-            external_tools,
-        )?
-    };
-    let system_prompt = harness.build_system_prompt(&provider, &working_dir).await;
-
-    let session = AgentSession::new(
+    let (session, missing_api_key) = build_agent_session(
         snapshot.session_id.clone(),
         provider.clone(),
-        adapter,
-        harness,
-        system_prompt,
-        context_window_tokens,
-    );
+        model_str.clone(),
+        &credentials.api_key,
+        credentials.api_base.as_deref(),
+        &working_dir,
+        state.pending_confirms.clone(),
+        snapshot.context_window_tokens,
+    )
+    .await?;
     session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let session = Arc::new(session);
     state
@@ -230,7 +173,7 @@ pub async fn resume_session(
             session_id: snapshot.session_id.clone(),
             agent_type: provider.clone(),
             model: model_str.clone(),
-            context_window_tokens,
+            context_window_tokens: session.context_window_tokens,
         },
     );
     if let Some(workflow) = latest_workflow {

@@ -2,6 +2,8 @@ use super::*;
 use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::context_builder::ContextSourceKind;
+use crate::agent::session::AgentSession;
+use crate::harness::Harness;
 use crate::agent::snapshot::AgentSessionSnapshot;
 use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnState, AgentTurnStatus,

@@ -14,6 +14,7 @@ pub mod project_records;
 pub mod project_runtime;
 pub mod send_input_context;
 pub mod send_input_continuity;
+pub mod session_builder;
 pub mod session_lifecycle;
 pub mod settings_handlers;
 pub mod workflow_handlers;
