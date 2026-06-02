@@ -13,6 +13,7 @@ use crate::continuity::{
 use crate::harness::capability::CapabilityKind;
 use crate::harness::mcp::McpResourceContent;
 use crate::ipc::delivery_summary::build_delivery_summary_for_session;
+use crate::ipc::file_search::find_files;
 use crate::ipc::mcp_context::{
     format_mcp_resource_context, mcp_context_selection_label, McpContextBuilder,
     MCP_CONTEXT_ITEM_CHAR_LIMIT,
@@ -27,6 +28,10 @@ use crate::ipc::send_input_context::{
     PrepareSendInputTurnRequest,
 };
 use crate::ipc::session_lifecycle::session_snapshot_with_workflow_state;
+use crate::ipc::workspace_files::{
+    open_file_target_for_request, preview_file_for_request, search_workspace_files_for_request,
+    working_dir_for_request_or_explicit,
+};
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
 use crate::protocol::events::DeliverySummary;
