@@ -1133,7 +1133,10 @@ static TOOL_FAILURE_PATTERNS: &[(&[&str], &str)] = &[
         ],
         "package_manager_missing",
     ),
-    (&["command not found", "not recognized as an internal"], "command_not_found"),
+    (
+        &["command not found", "not recognized as an internal"],
+        "command_not_found",
+    ),
     (
         &[
             "patch does not apply",
@@ -1166,7 +1169,10 @@ static TOOL_FAILURE_PATTERNS: &[(&[&str], &str)] = &[
         ],
         "workspace_boundary",
     ),
-    (&["permission denied", "access denied", "denied:"], "permission"),
+    (
+        &["permission denied", "access denied", "denied:"],
+        "permission",
+    ),
     (
         &[
             "tool execution blocked by hook",

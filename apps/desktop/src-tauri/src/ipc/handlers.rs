@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use crate::adapters::base::AiAdapter;
 use crate::adapters::build_adapter;
@@ -19,14 +16,12 @@ use crate::agent::provider_capabilities::{
     provider_label,
 };
 use crate::agent::session::{AgentPreviewStatusUpdate, AgentSession, TurnInflightGuard};
-use crate::agent::time::now_ms;
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
     AgentSessionSnapshot,
 };
-use crate::agent::turn_state::{
-    AgentTurnInputIntent, AgentTurnMetadata, AgentTurnState,
-};
+use crate::agent::time::now_ms;
+use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata, AgentTurnState};
 use crate::continuity::{
     build_send_input_reflection_event, continuity_events_from_turn,
     continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, dedupe_lessons,
@@ -44,9 +39,7 @@ use crate::ipc::file_references::{
     build_file_reference_context_with_paths, resolved_file_reference_paths_for_turn,
 };
 use crate::ipc::file_search::find_files;
-use crate::ipc::mcp_context::{
-    build_mcp_context, McpContextSelection,
-};
+use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::open_file::{open_file_macos, resolve_workspace_file_path};
 use crate::ipc::project_checkpoint::project_checkpoint_status_for_session;
 use crate::ipc::project_runtime::project_runtime_status_for_session;
@@ -1637,7 +1630,6 @@ pub async fn get_api_key_status() -> Result<Vec<settings::KeyStatus>, String> {
 pub async fn set_api_key(provider: String, key: String) -> Result<(), String> {
     settings::Settings::load().set_api_key(&provider, &key)
 }
-
 
 #[cfg(test)]
 #[path = "handlers_tests.rs"]

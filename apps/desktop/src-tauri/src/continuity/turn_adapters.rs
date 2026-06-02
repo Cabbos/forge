@@ -3,7 +3,10 @@ use crate::agent::turn_state::{
     AgentVerificationTrace,
 };
 
-use super::{should_reject_experience_lesson, ContinuityEvent, FileOperation, ReflectionEvent, ReflectionOutcome};
+use super::{
+    should_reject_experience_lesson, ContinuityEvent, FileOperation, ReflectionEvent,
+    ReflectionOutcome,
+};
 use crate::memory::model::WikiMemory;
 
 /// Build continuity events from an agent turn.
@@ -123,9 +126,7 @@ pub fn continuity_lessons_from_memory_candidates(candidates: &[WikiMemory]) -> V
         .collect()
 }
 
-fn continuity_verification_failure_summary(
-    trace: &AgentVerificationTrace,
-) -> Option<String> {
+fn continuity_verification_failure_summary(trace: &AgentVerificationTrace) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(exit_code) = trace.exit_code {
         parts.push(format!("exit_code={exit_code}"));

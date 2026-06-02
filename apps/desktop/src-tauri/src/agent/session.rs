@@ -11,6 +11,7 @@ use crate::agent::auto_compact::{
 use crate::agent::context_builder::{
     ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
 };
+use crate::agent::event_sink::EventEmitter;
 use crate::agent::provider_capabilities::is_context_overflow_error;
 use crate::agent::recovery::{
     api_failure_trace, build_recovery_context, verification_failure_trace,
@@ -100,6 +101,16 @@ pub(crate) enum RoundDecision {
     Break,
     /// Continue to the next round.
     Continue,
+}
+
+pub(crate) struct AgentTurnRunRequest<'a> {
+    pub text: &'a str,
+    pub hidden_contexts: Vec<HiddenContextPart>,
+    pub turn_metadata: Option<AgentTurnMetadata>,
+    pub activation_text: Option<&'a str>,
+    pub _turn_guard: TurnInflightGuard,
+    pub emitter: &'a dyn EventEmitter,
+    pub app_handle: Option<&'a tauri::AppHandle>,
 }
 
 impl AgentSession {
@@ -269,15 +280,15 @@ impl AgentSession {
         _turn_guard: TurnInflightGuard,
     ) -> Result<(), String> {
         let emitter = crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone());
-        self.run_agent_turn(
+        self.run_agent_turn(AgentTurnRunRequest {
             text,
             hidden_contexts,
             turn_metadata,
             activation_text,
             _turn_guard,
-            &emitter,
-            Some(app_handle),
-        )
+            emitter: &emitter,
+            app_handle: Some(app_handle),
+        })
         .await
     }
 
@@ -367,11 +378,7 @@ impl AgentSession {
         let compacted = if skip_proactive_compaction {
             CompactResult::unchanged(all_messages, existing_summary)
         } else {
-            compact_messages_if_needed(
-                all_messages,
-                existing_summary,
-                self.context_window_tokens,
-            )
+            compact_messages_if_needed(all_messages, existing_summary, self.context_window_tokens)
         };
         lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
 
@@ -417,9 +424,7 @@ impl AgentSession {
                 Ok(r) => break r,
                 Err(e) => {
                     let msg = e.to_string();
-                    if !*overflow_retry_used
-                        && is_context_overflow_error(&self.agent_type, &msg)
-                    {
+                    if !*overflow_retry_used && is_context_overflow_error(&self.agent_type, &msg) {
                         let all_messages = lock_unpoisoned(&self.messages).clone();
                         let existing_summary = lock_unpoisoned(&self.summary).clone();
                         let compacted =
@@ -429,7 +434,10 @@ impl AgentSession {
                         if let Some(stats) = compacted.stats.as_ref() {
                             *overflow_retry_used = true;
                             self.apply_compaction_emitter(
-                                &compacted, stats, "overflow_retry", emitter,
+                                &compacted,
+                                stats,
+                                "overflow_retry",
+                                emitter,
                             );
 
                             let context_bundle = Self::build_context_bundle(
@@ -440,8 +448,7 @@ impl AgentSession {
                                 self.context_window_tokens,
                             );
                             self.record_latest_context_emitter(&context_bundle, emitter);
-                            msgs_with_context =
-                                repair_tool_use_adjacency(context_bundle.messages);
+                            msgs_with_context = repair_tool_use_adjacency(context_bundle.messages);
                             continue;
                         }
                     }
@@ -482,9 +489,9 @@ impl AgentSession {
         }
 
         if !result.assistant_content.is_empty() {
-            lock_unpoisoned(&self.messages).push(ChatMessage::assistant(
-                serde_json::Value::Array(result.assistant_content.clone()),
-            ));
+            lock_unpoisoned(&self.messages).push(ChatMessage::assistant(serde_json::Value::Array(
+                result.assistant_content.clone(),
+            )));
         }
 
         if result.tool_calls.is_empty() {
@@ -539,12 +546,7 @@ impl AgentSession {
             for tc in &delegated {
                 let started_at_ms = now_ms();
                 self.record_latest_tool_emitter(
-                    running_tool_trace(
-                        tc.id.clone(),
-                        tc.name.clone(),
-                        &tc.input,
-                        started_at_ms,
-                    ),
+                    running_tool_trace(tc.id.clone(), tc.name.clone(), &tc.input, started_at_ms),
                     emitter,
                 );
                 let task = tc
@@ -558,10 +560,7 @@ impl AgentSession {
                 let cancel = lock_unpoisoned(&self.cancel)
                     .clone()
                     .unwrap_or_else(|| Arc::new(Notify::new()));
-                let idx = tool_calls
-                    .iter()
-                    .position(|t| t.id == tc.id)
-                    .unwrap_or(0);
+                let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let wd = self.harness.working_dir.clone();
                 let sub_emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
                     Arc::new(crate::agent::event_sink::NoopEventEmitter);
@@ -573,7 +572,12 @@ impl AgentSession {
                     started_at_ms,
                     tokio::spawn(async move {
                         let r = crate::agent::sub::SubAgent::run_with_emitter(
-                            &task, adapter, harness, &*sub_emitter, cancel, &wd,
+                            &task,
+                            adapter,
+                            harness,
+                            &*sub_emitter,
+                            cancel,
+                            &wd,
                         )
                         .await;
                         (idx, r)
@@ -583,15 +587,14 @@ impl AgentSession {
             for (fallback_idx, id, name, input, started_at_ms, handle) in handles {
                 match handle.await {
                     Ok((idx, r)) => {
-                        let api_text: String =
-                            serde_json::from_str::<serde_json::Value>(&r)
-                                .ok()
-                                .and_then(|v| {
-                                    v.get("result")
-                                        .and_then(|r| r.as_str())
-                                        .map(|s| s.to_string())
-                                })
-                                .unwrap_or_else(|| r.clone());
+                        let api_text: String = serde_json::from_str::<serde_json::Value>(&r)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("result")
+                                    .and_then(|r| r.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| r.clone());
                         emitter.emit(self.tool_call_result_event(&id, &r, false, 0));
                         self.record_latest_tool_emitter(
                             completed_tool_trace(
@@ -740,14 +743,10 @@ impl AgentSession {
             }
         }
 
-        let model_tool_results =
-            build_tool_result_message_for_model(&result_map, tool_calls);
+        let model_tool_results = build_tool_result_message_for_model(&result_map, tool_calls);
         for resolved in &model_tool_results.results {
             if resolved.missing {
-                let Some(tc) = tool_calls
-                    .iter()
-                    .find(|tc| tc.id == resolved.tool_call_id)
-                else {
+                let Some(tc) = tool_calls.iter().find(|tc| tc.id == resolved.tool_call_id) else {
                     continue;
                 };
                 self.record_latest_tool_emitter(
@@ -852,20 +851,20 @@ impl AgentSession {
 
     pub(crate) async fn run_agent_turn(
         &self,
-        text: &str,
-        hidden_contexts: Vec<HiddenContextPart>,
-        turn_metadata: Option<AgentTurnMetadata>,
-        activation_text: Option<&str>,
-        _turn_guard: TurnInflightGuard,
-        emitter: &dyn crate::agent::event_sink::EventEmitter,
-        app_handle: Option<&tauri::AppHandle>,
+        request: AgentTurnRunRequest<'_>,
     ) -> Result<(), String> {
         if !self.running.load(Ordering::SeqCst) {
             return Err("Session is not running".to_string());
         }
 
         let hidden_contexts = self
-            .setup_turn(text, hidden_contexts, turn_metadata, activation_text, emitter)
+            .setup_turn(
+                request.text,
+                request.hidden_contexts,
+                request.turn_metadata,
+                request.activation_text,
+                request.emitter,
+            )
             .await;
 
         let cancel = Arc::new(Notify::new());
@@ -879,8 +878,8 @@ impl AgentSession {
                 .execute_single_round(
                     &hidden_contexts,
                     cancel.clone(),
-                    emitter,
-                    app_handle,
+                    request.emitter,
+                    request.app_handle,
                     &mut overflow_retry_used,
                 )
                 .await?
@@ -890,8 +889,13 @@ impl AgentSession {
             }
         }
 
-        self.finalize_turn(&hidden_contexts, emitter, app_handle, cancel)
-            .await;
+        self.finalize_turn(
+            &hidden_contexts,
+            request.emitter,
+            request.app_handle,
+            cancel,
+        )
+        .await;
         Ok(())
     }
 
@@ -1078,9 +1082,9 @@ impl AgentSession {
         &self,
         app_handle: &tauri::AppHandle,
     ) -> Option<AgentVerificationTrace> {
-        self.verify_latest_turn_emitter(
-            &crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone()),
-        )
+        self.verify_latest_turn_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+            app_handle.clone(),
+        ))
         .await
     }
 
@@ -1107,8 +1111,9 @@ impl AgentSession {
     }
 
     pub fn emit_latest_turn_projection(&self, app_handle: &tauri::AppHandle) {
-        self.emit_with_emitter(&crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone()),
-        );
+        self.emit_with_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+            app_handle.clone(),
+        ));
     }
 
     pub(crate) fn latest_turn_updated_event(&self) -> Option<StreamEvent> {
@@ -1335,15 +1340,15 @@ impl AgentSession {
         activation_text: Option<&str>,
         _turn_guard: TurnInflightGuard,
     ) -> Result<(), String> {
-        self.run_agent_turn(
+        self.run_agent_turn(AgentTurnRunRequest {
             text,
             hidden_contexts,
             turn_metadata,
             activation_text,
             _turn_guard,
             emitter,
-            None,
-        )
+            app_handle: None,
+        })
         .await
     }
 
