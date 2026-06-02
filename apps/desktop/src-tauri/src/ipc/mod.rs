@@ -1,4 +1,5 @@
 pub mod capability_handlers;
+pub mod delivery_summary;
 pub mod file_references;
 pub mod file_search;
 pub mod forge_wiki_handlers;

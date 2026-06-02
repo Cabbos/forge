@@ -6,6 +6,7 @@ use crate::agent::turn_state::{
 };
 use crate::continuity::{FileOperation, ReflectionEvent};
 use crate::harness::mcp::McpResourceContent;
+use crate::ipc::delivery_summary::build_delivery_summary_for_session;
 use crate::ipc::mcp_context::{
     format_mcp_resource_context, mcp_context_selection_label, McpContextBuilder,
     MCP_CONTEXT_ITEM_CHAR_LIMIT,
@@ -13,6 +14,7 @@ use crate::ipc::mcp_context::{
 use crate::ipc::open_file::resolve_workspace_file_path;
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
+use crate::protocol::events::DeliverySummary;
 use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
 use std::sync::atomic::Ordering;
 

@@ -8,14 +8,12 @@ use crate::agent::capability_context::{
     TurnCapabilitySnapshot, TurnInputIntent,
 };
 use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
-use crate::agent::delivery_state::{
-    build_delivery_summary, DeliveryCheckpointInput, DeliveryRecordInput, DeliveryRuntimeInput,
-};
+use crate::agent::delivery_state::DeliveryRecordInput;
 use crate::agent::provider_capabilities::{
     context_window_tokens, default_model, missing_api_key_message, normalize_provider,
     provider_label,
 };
-use crate::agent::session::{AgentPreviewStatusUpdate, AgentSession, TurnInflightGuard};
+use crate::agent::session::{AgentSession, TurnInflightGuard};
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
     AgentSessionSnapshot,
@@ -35,20 +33,19 @@ use crate::forge_wiki::writeback::build_project_archive_writeback;
 use crate::harness::capability::CapabilityKind;
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::Harness;
+use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::file_references::{
     build_file_reference_context_with_paths, resolved_file_reference_paths_for_turn,
 };
 use crate::ipc::file_search::find_files;
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::open_file::{open_file_macos, resolve_workspace_file_path};
-use crate::ipc::project_checkpoint::project_checkpoint_status_for_session;
-use crate::ipc::project_runtime::project_runtime_status_for_session;
 use crate::ipc::workspace::resolve_bound_working_dir;
 use crate::memory::{
     extract_candidates_from_user_message, format_selected_memory_context, SelectedContextMemory,
 };
 use crate::protocol::commands::{SessionCreated, SessionInfo};
-use crate::protocol::events::{DeliverySummary, StreamEvent};
+use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use crate::settings;
 use crate::state::AppState;
@@ -107,21 +104,6 @@ pub struct McpContextPromptArgument {
 
 const CONTINUITY_RECALL_DEFAULT_LIMIT: usize = 8;
 const CONTINUITY_RECALL_MAX_LIMIT: usize = 20;
-
-struct DeliveryPreviewEvidence {
-    project_path: Option<String>,
-    running: bool,
-    can_start: bool,
-    can_open: bool,
-    label: String,
-    url: Option<String>,
-}
-
-struct BuiltDeliverySummary {
-    summary: DeliverySummary,
-    preview_evidence: Option<DeliveryPreviewEvidence>,
-    checkpoint_evidence: Option<(bool, bool, bool)>,
-}
 
 fn emit_missing_api_key_notice(app_handle: &tauri::AppHandle, session_id: &str, provider: &str) {
     crate::transcript::emit_stream_event(
@@ -529,21 +511,6 @@ pub async fn resume_session(
     })
 }
 
-fn emit_delivery_summary(
-    app_handle: &tauri::AppHandle,
-    session_id: &str,
-    summary: DeliverySummary,
-) {
-    crate::transcript::emit_stream_event(
-        app_handle,
-        StreamEvent::DeliverySummary {
-            session_id: session_id.to_string(),
-            block_id: BlockId::new().to_string(),
-            summary,
-        },
-    );
-}
-
 fn should_select_project_records_for_request(text: &str) -> bool {
     !is_conversation_recall_request(text)
 }
@@ -585,121 +552,6 @@ fn is_conversation_recall_request(text: &str) -> bool {
         || normalized.contains("这段对话");
 
     has_recall_topic || (asks_for_summary && references_prior_chat)
-}
-
-async fn build_delivery_summary_for_session(
-    state: &Arc<AppState>,
-    session_id: &str,
-    latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
-    record: Option<DeliveryRecordInput>,
-) -> BuiltDeliverySummary {
-    let mut preview_evidence: Option<DeliveryPreviewEvidence> = None;
-    let runtime = match project_runtime_status_for_session(state, Some(session_id)).await {
-        Ok(status) => {
-            let project_path = status.working_dir.clone();
-            preview_evidence = Some(DeliveryPreviewEvidence {
-                project_path: Some(project_path.clone()),
-                running: status.running,
-                can_start: status.can_start,
-                can_open: status.can_open,
-                label: status.message.clone(),
-                url: Some(status.url.clone()),
-            });
-            Some(DeliveryRuntimeInput {
-                project_path: Some(project_path),
-                running: status.running,
-                can_start: status.can_start,
-                can_open: status.can_open,
-            })
-        }
-        Err(error) => {
-            crate::app_log!("WARN", "[delivery_state] runtime status failed: {}", error);
-            None
-        }
-    };
-    let mut checkpoint_evidence: Option<(bool, bool, bool)> = None;
-    let checkpoint = match project_checkpoint_status_for_session(state, Some(session_id)).await {
-        Ok(status) => {
-            let has_checkpoint = status.last_checkpoint.is_some();
-            checkpoint_evidence = Some((
-                status.is_git_repo,
-                status.dirty,
-                has_checkpoint && status.restorable,
-            ));
-            Some(DeliveryCheckpointInput {
-                is_git_repo: status.is_git_repo,
-                dirty: status.dirty,
-                has_checkpoint,
-                restorable: status.restorable,
-            })
-        }
-        Err(error) => {
-            crate::app_log!(
-                "WARN",
-                "[delivery_state] checkpoint status failed: {}",
-                error
-            );
-            None
-        }
-    };
-    let summary = build_delivery_summary(
-        runtime,
-        checkpoint,
-        latest_turn.map(|turn| &turn.verification),
-        record,
-    );
-    BuiltDeliverySummary {
-        summary,
-        preview_evidence,
-        checkpoint_evidence,
-    }
-}
-
-async fn build_store_emit_delivery_summary(
-    state: &Arc<AppState>,
-    app_handle: &tauri::AppHandle,
-    session_id: &str,
-    latest_turn: Option<&crate::agent::turn_state::AgentTurnState>,
-    record: Option<DeliveryRecordInput>,
-) {
-    let built = build_delivery_summary_for_session(state, session_id, latest_turn, record).await;
-    let summary = built.summary;
-    if let Some(session) = state.sessions.read().await.get(session_id).cloned() {
-        if let Some(preview) = built.preview_evidence.as_ref() {
-            let label = if preview.label.trim().is_empty() {
-                summary.preview_label.as_str()
-            } else {
-                preview.label.as_str()
-            };
-            session.record_latest_preview_status(
-                AgentPreviewStatusUpdate {
-                    project_path: preview.project_path.as_deref(),
-                    running: preview.running,
-                    can_start: preview.can_start,
-                    can_open: preview.can_open,
-                    label,
-                    url: preview.url.as_deref(),
-                },
-                app_handle,
-            );
-        }
-        if let Some((is_git_repo, dirty, has_checkpoint)) = built.checkpoint_evidence {
-            session.record_latest_checkpoint_status(
-                is_git_repo,
-                dirty,
-                has_checkpoint,
-                &summary.checkpoint_label,
-                app_handle,
-            );
-        }
-        session.record_latest_delivery_summary(&summary, app_handle);
-    }
-    state
-        .delivery_states
-        .write()
-        .await
-        .insert(session_id.to_string(), summary.clone());
-    emit_delivery_summary(app_handle, session_id, summary);
 }
 
 struct PreparedSendInputTurnContext {
