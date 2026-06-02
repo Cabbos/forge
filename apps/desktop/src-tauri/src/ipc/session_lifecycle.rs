@@ -87,21 +87,20 @@ pub(crate) async fn register_and_dispatch_session_start(
         .await;
 }
 
+pub(crate) struct RestoredSession {
+    pub(crate) session: Arc<AgentSession>,
+    pub(crate) session_id: String,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) missing_api_key: bool,
+    pub(crate) latest_workflow: Option<WorkflowState>,
+    pub(crate) latest_delivery: Option<DeliverySummary>,
+}
+
 pub(crate) async fn restore_session_from_snapshot(
     state: &Arc<AppState>,
     session_id: &str,
-) -> Result<
-    (
-        Arc<AgentSession>,
-        String,
-        String,
-        String,
-        bool,
-        Option<WorkflowState>,
-        Option<DeliverySummary>,
-    ),
-    String,
-> {
+) -> Result<RestoredSession, String> {
     let snapshot = load_session_snapshot(session_id)?;
     let provider = normalize_provider(Some(&snapshot.provider));
     let credentials = settings::detect_credentials(&provider);
@@ -127,15 +126,15 @@ pub(crate) async fn restore_session_from_snapshot(
     if let Err(error) = save_session_snapshot_with_workflow(state, &session).await {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }
-    Ok((
+    Ok(RestoredSession {
         session,
-        snapshot.session_id,
+        session_id: snapshot.session_id,
         provider,
-        model_str,
+        model: model_str,
         missing_api_key,
         latest_workflow,
         latest_delivery,
-    ))
+    })
 }
 
 pub(crate) async fn upgrade_missing_key_session_if_possible(

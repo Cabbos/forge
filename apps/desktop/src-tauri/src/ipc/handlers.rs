@@ -109,17 +109,16 @@ pub async fn resume_session(
         });
     }
 
-    let (session, _, provider, model_str, missing_api_key, latest_workflow, latest_delivery) =
-        restore_session_from_snapshot(&state, &session_id).await?;
+    let restored = restore_session_from_snapshot(&state, &session_id).await?;
 
     emit_session_started(
         &app_handle,
         &session_id,
-        &provider,
-        &model_str,
-        session.context_window_tokens,
+        &restored.provider,
+        &restored.model,
+        restored.session.context_window_tokens,
     );
-    if let Some(workflow) = latest_workflow {
+    if let Some(workflow) = restored.latest_workflow {
         state
             .workflow_states
             .write()
@@ -133,8 +132,8 @@ pub async fn resume_session(
             },
         );
     }
-    session.emit_latest_turn_projection(&app_handle);
-    if let Some(delivery) = latest_delivery {
+    restored.session.emit_latest_turn_projection(&app_handle);
+    if let Some(delivery) = restored.latest_delivery {
         state
             .delivery_states
             .write()
@@ -142,15 +141,15 @@ pub async fn resume_session(
             .insert(session_id.clone(), delivery.clone());
         emit_delivery_summary(&app_handle, &session_id, delivery);
     }
-    if missing_api_key {
-        emit_missing_api_key_notice(&app_handle, &session_id, &provider);
+    if restored.missing_api_key {
+        emit_missing_api_key_notice(&app_handle, &session_id, &restored.provider);
     }
 
     Ok(SessionCreated {
         session_id,
-        provider,
-        model: model_str,
-        missing_api_key,
+        provider: restored.provider,
+        model: restored.model,
+        missing_api_key: restored.missing_api_key,
     })
 }
 
