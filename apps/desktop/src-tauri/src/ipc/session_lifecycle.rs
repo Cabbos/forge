@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::adapters::build_adapter;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
 use crate::agent::session::AgentSession;
-use crate::agent::snapshot::{list_session_snapshots, save_session_snapshot, AgentSessionSnapshot};
+use crate::agent::snapshot::{delete_session_snapshot, list_session_snapshots, save_session_snapshot, AgentSessionSnapshot};
 use crate::harness::Harness;
 use crate::protocol::commands::SessionInfo;
 use crate::protocol::events::StreamEvent;
@@ -181,4 +181,42 @@ pub async fn list_sessions(
 ) -> Result<Vec<SessionInfo>, String> {
     let snapshots = list_session_snapshots()?;
     Ok(list_session_infos_for_state(&state, snapshots).await)
+}
+
+#[tauri::command]
+pub async fn kill_session(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<(), String> {
+    if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
+        s.kill(&app_handle);
+        let _ = s.harness.dispatch_session_stop_event(&session_id).await;
+        if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
+            crate::app_log!("WARN", "[session_snapshot] {}", error);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_session(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<(), String> {
+    if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
+        s.kill(&app_handle);
+        let _ = s.harness.dispatch_session_stop_event(&session_id).await;
+    }
+    state.unregister_session(&session_id).await;
+    state.workflow_states.write().await.remove(&session_id);
+    state.delivery_states.write().await.remove(&session_id);
+    if let Err(error) = delete_session_snapshot(&session_id) {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    if let Err(error) = crate::transcript::delete_transcript(&session_id) {
+        crate::app_log!("WARN", "[transcript] {}", error);
+    }
+    Ok(())
 }

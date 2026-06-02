@@ -9,7 +9,7 @@ use crate::agent::provider_capabilities::{
 };
 use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
-    delete_session_snapshot, load_session_snapshot, save_session_snapshot,
+    load_session_snapshot, save_session_snapshot,
 };
 use crate::agent::time::now_ms;
 use crate::harness::Harness;
@@ -416,44 +416,6 @@ pub async fn send_input(
         }
         None => Err(format!("Session not found: {session_id}")),
     }
-}
-
-#[tauri::command]
-pub async fn kill_session(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, Arc<AppState>>,
-    session_id: String,
-) -> Result<(), String> {
-    if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
-        s.kill(&app_handle);
-        let _ = s.harness.dispatch_session_stop_event(&session_id).await;
-        if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
-            crate::app_log!("WARN", "[session_snapshot] {}", error);
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn delete_session(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, Arc<AppState>>,
-    session_id: String,
-) -> Result<(), String> {
-    if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
-        s.kill(&app_handle);
-        let _ = s.harness.dispatch_session_stop_event(&session_id).await;
-    }
-    state.unregister_session(&session_id).await;
-    state.workflow_states.write().await.remove(&session_id);
-    state.delivery_states.write().await.remove(&session_id);
-    if let Err(error) = delete_session_snapshot(&session_id) {
-        crate::app_log!("WARN", "[session_snapshot] {}", error);
-    }
-    if let Err(error) = crate::transcript::delete_transcript(&session_id) {
-        crate::app_log!("WARN", "[transcript] {}", error);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
