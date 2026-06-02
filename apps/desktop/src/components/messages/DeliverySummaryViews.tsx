@@ -1,3 +1,4 @@
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ArrowUpRight, ClipboardCheck, ExternalLink, FileText, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DeliveryPrimaryActionView, DeliverySummaryItem } from "@/lib/turn-closure";
@@ -28,7 +29,7 @@ export function DeliveryPrimaryAction({
 }) {
   return (
     <div data-testid="delivery-action-bar" className="forge-delivery-action-bar">
-      <button
+      <ButtonPrimitive
         type="button"
         onClick={onClick}
         data-session-id={sessionId}
@@ -38,7 +39,7 @@ export function DeliveryPrimaryAction({
       >
         {loaded ? <ForgeIcon icon={ArrowUpRight} tone="action" contained={false} className="size-3.5" /> : primaryIcon(action.action)}
         {loaded ? "已放入" : action.label}
-      </button>
+      </ButtonPrimitive>
     </div>
   );
 }

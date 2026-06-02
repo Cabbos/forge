@@ -1,3 +1,4 @@
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { KeyRound, Settings } from "lucide-react";
 import type { BlockState } from "@/lib/protocol";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
@@ -14,7 +15,7 @@ export function MissingApiKeyCard(_props: MissingApiKeyCardProps) {
         title="需要配置模型密钥"
         meta="模型服务暂不可用"
         actions={(
-          <button
+          <ButtonPrimitive
             type="button"
             data-testid="missing-api-key-action"
             onClick={() => window.dispatchEvent(new Event("forge:open-settings"))}
@@ -22,7 +23,7 @@ export function MissingApiKeyCard(_props: MissingApiKeyCardProps) {
           >
             <Settings className="size-3.5" />
             打开设置
-          </button>
+          </ButtonPrimitive>
         )}
       />
       <div data-testid="missing-api-key-card" className="forge-missing-api-key-body">

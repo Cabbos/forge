@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { Check, Copy } from "lucide-react";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
 
 export function MessageCopyAction({ text, label }: { text: string; label: "回复" | "提问" }) {
   const [copied, setCopied] = useState(false);
@@ -21,8 +22,7 @@ export function MessageCopyAction({ text, label }: { text: string; label: "回�
   };
 
   return (
-    <button
-      type="button"
+    <ForgeIconButton
       data-testid="message-copy-action"
       className="forge-message-copy-action"
       aria-label={actionLabel}
@@ -30,6 +30,6 @@ export function MessageCopyAction({ text, label }: { text: string; label: "回�
       onClick={copyMessage}
     >
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-    </button>
+    </ForgeIconButton>
   );
 }

@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { DIFF_LINE_CLASS, type ParsedDiffLine } from "@/components/messages/diffPresentation";
 
 interface DiffBodyProps {
@@ -43,7 +44,7 @@ export function DiffBody({
       </div>
       {isLongDiff && (
         <div className="forge-diff-footer">
-          <button
+          <ButtonPrimitive
             type="button"
             onClick={onToggleExpanded}
             className="forge-diff-expand"
@@ -53,7 +54,7 @@ export function DiffBody({
             {!expanded && (
               <span className="font-mono text-[10px] text-muted-foreground/70">+{hiddenLineCount} 行</span>
             )}
-          </button>
+          </ButtonPrimitive>
         </div>
       )}
     </>

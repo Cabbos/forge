@@ -241,6 +241,18 @@
     transition: color 120ms ease;
   }
 
+  .forge-status-row[data-state="complete"] {
+    min-height: 18px;
+    gap: 0.3125rem;
+    color: var(--forge-text-ghost);
+    font-size: 10px;
+  }
+
+  .forge-status-row[data-state="complete"] svg {
+    width: 0.625rem;
+    height: 0.625rem;
+  }
+
   .forge-status-row[data-state="running"] {
     color: var(--forge-text-faint);
   }
