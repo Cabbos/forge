@@ -4,9 +4,9 @@ use crate::agent::capability_context::{
     build_turn_input_intent, format_turn_capability_snapshot, ComposerCapabilitySelection,
     TurnCapabilitySnapshot, TurnInputIntent,
 };
-use crate::agent::time::now_ms;
 use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
 use crate::agent::session::{AgentSession, TurnInflightGuard};
+use crate::agent::time::now_ms;
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
 use crate::harness::capability::CapabilityKind;
 use crate::harness::registry::CapabilityEntry;

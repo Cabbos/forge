@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use crate::agent::capability_context::ComposerCapabilitySelection;
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
-use crate::agent::snapshot::{
-    load_session_snapshot, save_session_snapshot,
-};
+use crate::agent::snapshot::{load_session_snapshot, save_session_snapshot};
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::project_records::{
@@ -18,7 +16,7 @@ use crate::ipc::send_input_continuity::{
     record_failed_send_input_continuity, record_send_input_user_message_continuity,
     record_successful_send_input_continuity,
 };
-use crate::ipc::session_builder::build_agent_session;
+use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, save_session_snapshot_with_workflow,
     upgrade_missing_key_session_if_possible,
@@ -55,16 +53,16 @@ pub async fn create_session(
         .or(credentials.model)
         .unwrap_or_else(|| default_model(&provider).to_string());
     let working_dir = resolve_session_working_dir(&working_dir)?;
-    let (session, missing_api_key) = build_agent_session(
-        session_id.clone(),
-        provider.clone(),
-        model_str.clone(),
-        &key,
-        credentials.api_base.as_deref(),
-        &working_dir,
-        state.pending_confirms.clone(),
-        None,
-    )
+    let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
+        session_id: session_id.clone(),
+        provider: provider.clone(),
+        model: model_str.clone(),
+        api_key: &key,
+        api_base: credentials.api_base.as_deref(),
+        working_dir: &working_dir,
+        pending_confirms: state.pending_confirms.clone(),
+        existing_context_window_tokens: None,
+    })
     .await?;
 
     crate::transcript::emit_stream_event(
@@ -141,16 +139,16 @@ pub async fn resume_session(
 
     let model_str = snapshot.model.clone();
     let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
-    let (session, missing_api_key) = build_agent_session(
-        snapshot.session_id.clone(),
-        provider.clone(),
-        model_str.clone(),
-        &credentials.api_key,
-        credentials.api_base.as_deref(),
-        &working_dir,
-        state.pending_confirms.clone(),
-        snapshot.context_window_tokens,
-    )
+    let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
+        session_id: snapshot.session_id.clone(),
+        provider: provider.clone(),
+        model: model_str.clone(),
+        api_key: &credentials.api_key,
+        api_base: credentials.api_base.as_deref(),
+        working_dir: &working_dir,
+        pending_confirms: state.pending_confirms.clone(),
+        existing_context_window_tokens: snapshot.context_window_tokens,
+    })
     .await?;
     session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
     let session = Arc::new(session);
@@ -295,14 +293,9 @@ pub async fn send_input(
                 })?;
             let capabilities = capabilities.unwrap_or_default();
             let mcp_context_selections = mcp_context.unwrap_or_default();
-            let (input_intent, workflow) = setup_send_input_workflow(
-                &state,
-                &app_handle,
-                &session_id,
-                &text,
-                &capabilities,
-            )
-            .await;
+            let (input_intent, workflow) =
+                setup_send_input_workflow(&state, &app_handle, &session_id, &text, &capabilities)
+                    .await;
             let project_records =
                 select_send_input_project_records_context(&state, &text, &project_path).await;
             if !project_records.selected.is_empty() {

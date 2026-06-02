@@ -3,7 +3,9 @@ use std::sync::Arc;
 use crate::adapters::build_adapter;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
 use crate::agent::session::AgentSession;
-use crate::agent::snapshot::{delete_session_snapshot, list_session_snapshots, save_session_snapshot, AgentSessionSnapshot};
+use crate::agent::snapshot::{
+    delete_session_snapshot, list_session_snapshots, save_session_snapshot, AgentSessionSnapshot,
+};
 use crate::harness::Harness;
 use crate::protocol::commands::SessionInfo;
 use crate::protocol::events::StreamEvent;

@@ -1,7 +1,7 @@
 use crate::harness::mcp::McpResourceContent;
 use crate::ipc::mcp_context::{
-    format_mcp_resource_context, mcp_context_selection_label, McpContextBuilder, McpContextSelection,
-    MCP_CONTEXT_ITEM_CHAR_LIMIT,
+    format_mcp_resource_context, mcp_context_selection_label, McpContextBuilder,
+    McpContextSelection, MCP_CONTEXT_ITEM_CHAR_LIMIT,
 };
 
 #[test]

@@ -4,8 +4,6 @@ use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::capability_context::build_turn_input_intent;
 use crate::agent::context_builder::ContextSourceKind;
 use crate::agent::session::AgentSession;
-use crate::harness::Harness;
-use crate::workflow::classify_workflow_with_command;
 use crate::agent::snapshot::AgentSessionSnapshot;
 use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnState, AgentTurnStatus,
@@ -15,6 +13,7 @@ use crate::continuity::{
     continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, ContinuityEvent,
     FileOperation, ReflectionEvent, ReflectionOutcome,
 };
+use crate::harness::Harness;
 use crate::ipc::continuity_experiences::{
     list_continuity_experiences_for_request, search_continuity_experiences_for_request,
 };
@@ -39,6 +38,7 @@ use crate::ipc::workspace_files::{
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
 use crate::protocol::events::DeliverySummary;
+use crate::workflow::classify_workflow_with_command;
 use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
 use std::sync::atomic::Ordering;
 
