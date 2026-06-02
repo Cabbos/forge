@@ -17,7 +17,8 @@ use crate::ipc::file_references::{
 };
 use crate::ipc::project_records::propose_send_input_project_record_update;
 use crate::ipc::send_input_continuity::{
-    record_failed_send_input_continuity, record_successful_send_input_continuity,
+    record_failed_send_input_continuity, record_send_input_user_message_continuity,
+    record_successful_send_input_continuity,
 };
 use crate::ipc::session_lifecycle::{
     save_session_snapshot_with_workflow, upgrade_missing_key_session_if_possible,
@@ -54,6 +55,21 @@ pub(crate) async fn resolve_send_input_session(
     let session = upgrade_missing_key_session_if_possible(app_handle, state, session).await?;
     let project_path = session.harness.working_dir.to_string_lossy().to_string();
     Ok((session, project_path))
+}
+
+pub(crate) fn record_send_input_user_turn(
+    state: &Arc<AppState>,
+    session: &AgentSession,
+    session_id: &str,
+    text: &str,
+    project_path: &str,
+) -> Result<TurnInflightGuard, String> {
+    record_send_input_user_message_continuity(state, project_path, session_id, text);
+    reserve_turn_then_record_user_message(session, session_id, text, |event| {
+        if let Err(error) = crate::transcript::append_stream_event(&event) {
+            crate::app_log!("WARN", "[transcript] {}", error);
+        }
+    })
 }
 
 pub(crate) async fn select_send_input_memory_context(

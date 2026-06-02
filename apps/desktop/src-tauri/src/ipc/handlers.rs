@@ -6,11 +6,10 @@ use crate::agent::snapshot::save_session_snapshot;
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::project_records::select_send_input_project_records_context;
 use crate::ipc::send_input_context::{
-    finalize_send_input_turn, prepare_send_input_turn_context,
-    reserve_turn_then_record_user_message, resolve_send_input_session,
-    select_send_input_memory_context, setup_send_input_workflow, PrepareSendInputTurnRequest,
+    finalize_send_input_turn, prepare_send_input_turn_context, record_send_input_user_turn,
+    resolve_send_input_session, select_send_input_memory_context, setup_send_input_workflow,
+    PrepareSendInputTurnRequest,
 };
-use crate::ipc::send_input_continuity::record_send_input_user_message_continuity;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, emit_restored_session_startup, emit_session_started,
@@ -112,12 +111,7 @@ pub async fn send_input(
     capabilities: Option<Vec<ComposerCapabilitySelection>>,
 ) -> Result<(), String> {
     let (s, project_path) = resolve_send_input_session(&app_handle, &state, &session_id).await?;
-    record_send_input_user_message_continuity(&state, &project_path, &session_id, &text);
-    let turn_guard = reserve_turn_then_record_user_message(&s, &session_id, &text, |event| {
-        if let Err(error) = crate::transcript::append_stream_event(&event) {
-            crate::app_log!("WARN", "[transcript] {}", error);
-        }
-    })?;
+    let turn_guard = record_send_input_user_turn(&state, &s, &session_id, &text, &project_path)?;
     let capabilities = capabilities.unwrap_or_default();
     let mcp_context_selections = mcp_context.unwrap_or_default();
     let (input_intent, workflow) =
