@@ -26,6 +26,7 @@ use crate::ipc::send_input_context::{
     capability_names_by_kind, prepare_send_input_turn_context, select_send_input_memory_context,
     PrepareSendInputTurnRequest,
 };
+use crate::ipc::session_lifecycle::session_snapshot_with_workflow_state;
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
 use crate::protocol::events::DeliverySummary;
