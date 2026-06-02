@@ -10,7 +10,7 @@ use crate::agent::snapshot::{
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::emit_delivery_summary;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
-use crate::protocol::commands::SessionInfo;
+use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::{DeliverySummary, StreamEvent};
 use crate::protocol::BlockId;
 use crate::settings;
@@ -135,6 +135,71 @@ pub(crate) async fn restore_session_from_snapshot(
         latest_workflow,
         latest_delivery,
     })
+}
+
+pub(crate) async fn resume_existing_session(
+    app_handle: &tauri::AppHandle,
+    state: &Arc<AppState>,
+    session_id: &str,
+    session: Arc<AgentSession>,
+) -> Result<SessionCreated, String> {
+    let session = upgrade_missing_key_session_if_possible(app_handle, state, session).await?;
+    session.resume(app_handle);
+    let _ = session
+        .harness
+        .dispatch_session_start_event(session_id)
+        .await;
+    if let Err(error) = save_session_snapshot_with_workflow(state, &session).await {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    emit_session_projection_and_delivery(state, app_handle, session_id, &session).await;
+    Ok(SessionCreated {
+        session_id: session_id.to_string(),
+        provider: normalize_provider(Some(&session.agent_type)),
+        model: session.model_id.clone(),
+        missing_api_key: session.is_waiting_for_api_key(),
+    })
+}
+
+pub(crate) async fn emit_restored_session_startup(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    restored: &RestoredSession,
+) {
+    emit_session_started(
+        app_handle,
+        session_id,
+        &restored.provider,
+        &restored.model,
+        restored.session.context_window_tokens,
+    );
+    if let Some(workflow) = &restored.latest_workflow {
+        state
+            .workflow_states
+            .write()
+            .await
+            .insert(session_id.to_string(), workflow.clone());
+        crate::transcript::emit_stream_event(
+            app_handle,
+            StreamEvent::WorkflowUpdated {
+                session_id: session_id.to_string(),
+                state: workflow.clone(),
+            },
+        );
+    }
+    restored.session.emit_latest_turn_projection(app_handle);
+    if let Some(delivery) = &restored.latest_delivery {
+        state
+            .delivery_states
+            .write()
+            .await
+            .insert(session_id.to_string(), delivery.clone());
+        emit_delivery_summary(app_handle, session_id, delivery.clone());
+    }
+    if restored.missing_api_key {
+        emit_missing_api_key_notice(app_handle, session_id, &restored.provider);
+    }
 }
 
 pub(crate) async fn upgrade_missing_key_session_if_possible(

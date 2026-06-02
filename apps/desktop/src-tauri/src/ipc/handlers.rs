@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::agent::capability_context::ComposerCapabilitySelection;
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
 use crate::agent::snapshot::save_session_snapshot;
-use crate::ipc::delivery_summary::emit_delivery_summary;
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::project_records::select_send_input_project_records_context;
 use crate::ipc::send_input_context::{
@@ -14,9 +13,9 @@ use crate::ipc::send_input_context::{
 use crate::ipc::send_input_continuity::record_send_input_user_message_continuity;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
-    emit_missing_api_key_notice, emit_session_projection_and_delivery, emit_session_started,
-    register_and_dispatch_session_start, restore_session_from_snapshot,
-    save_session_snapshot_with_workflow, upgrade_missing_key_session_if_possible,
+    emit_missing_api_key_notice, emit_restored_session_startup, emit_session_started,
+    register_and_dispatch_session_start, restore_session_from_snapshot, resume_existing_session,
+    upgrade_missing_key_session_if_possible,
 };
 use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::StreamEvent;
@@ -91,60 +90,11 @@ pub async fn resume_session(
 ) -> Result<SessionCreated, String> {
     let existing_session = state.sessions.read().await.get(&session_id).cloned();
     if let Some(session) = existing_session {
-        let session = upgrade_missing_key_session_if_possible(&app_handle, &state, session).await?;
-        session.resume(&app_handle);
-        let _ = session
-            .harness
-            .dispatch_session_start_event(&session_id)
-            .await;
-        if let Err(error) = save_session_snapshot_with_workflow(&state, &session).await {
-            crate::app_log!("WARN", "[session_snapshot] {}", error);
-        }
-        emit_session_projection_and_delivery(&state, &app_handle, &session_id, &session).await;
-        return Ok(SessionCreated {
-            session_id,
-            provider: normalize_provider(Some(&session.agent_type)),
-            model: session.model_id.clone(),
-            missing_api_key: session.is_waiting_for_api_key(),
-        });
+        return resume_existing_session(&app_handle, &state, &session_id, session).await;
     }
 
     let restored = restore_session_from_snapshot(&state, &session_id).await?;
-
-    emit_session_started(
-        &app_handle,
-        &session_id,
-        &restored.provider,
-        &restored.model,
-        restored.session.context_window_tokens,
-    );
-    if let Some(workflow) = restored.latest_workflow {
-        state
-            .workflow_states
-            .write()
-            .await
-            .insert(session_id.clone(), workflow.clone());
-        crate::transcript::emit_stream_event(
-            &app_handle,
-            StreamEvent::WorkflowUpdated {
-                session_id: session_id.clone(),
-                state: workflow,
-            },
-        );
-    }
-    restored.session.emit_latest_turn_projection(&app_handle);
-    if let Some(delivery) = restored.latest_delivery {
-        state
-            .delivery_states
-            .write()
-            .await
-            .insert(session_id.clone(), delivery.clone());
-        emit_delivery_summary(&app_handle, &session_id, delivery);
-    }
-    if restored.missing_api_key {
-        emit_missing_api_key_notice(&app_handle, &session_id, &restored.provider);
-    }
-
+    emit_restored_session_startup(&state, &app_handle, &session_id, &restored).await;
     Ok(SessionCreated {
         session_id,
         provider: restored.provider,
