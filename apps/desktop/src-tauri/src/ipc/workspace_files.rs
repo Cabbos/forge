@@ -42,6 +42,13 @@ pub(crate) async fn search_workspace_files_for_request(
     Ok(results)
 }
 
+#[tauri::command]
+pub async fn get_default_working_dir(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    Ok(state.harness.working_dir.to_string_lossy().to_string())
+}
+
 pub(crate) async fn preview_file_for_request(
     state: &Arc<AppState>,
     path: &str,

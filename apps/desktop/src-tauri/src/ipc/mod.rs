@@ -1,4 +1,5 @@
 pub mod capability_handlers;
+pub mod confirmations;
 pub mod continuity_experiences;
 pub mod delivery_summary;
 pub mod file_references;
@@ -14,6 +15,7 @@ pub mod project_runtime;
 pub mod send_input_context;
 pub mod send_input_continuity;
 pub mod session_lifecycle;
+pub mod settings_handlers;
 pub mod workflow_handlers;
 pub mod workspace;
 pub mod workspace_files;

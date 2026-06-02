@@ -474,21 +474,6 @@ pub async fn list_sessions(
 }
 
 #[tauri::command]
-pub async fn confirm_response(
-    state: tauri::State<'_, Arc<AppState>>,
-    block_id: String,
-    approved: bool,
-) -> Result<(), String> {
-    let sender = { state.pending_confirms.write().await.remove(&block_id) };
-    match sender {
-        Some(tx) => tx
-            .send(approved)
-            .map_err(|_| format!("Confirm receiver already closed for: {block_id}")),
-        None => Err(format!("No pending confirm for: {block_id}")),
-    }
-}
-
-#[tauri::command]
 pub async fn list_continuity_experiences(
     state: tauri::State<'_, Arc<AppState>>,
     session_id: Option<String>,
@@ -530,13 +515,6 @@ pub async fn search_workspace_files(
         working_dir.as_deref(),
     )
     .await
-}
-
-#[tauri::command]
-pub async fn get_default_working_dir(
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<String, String> {
-    Ok(state.harness.working_dir.to_string_lossy().to_string())
 }
 
 /// Preview a small slice of a file around a target line inside the app.
@@ -594,16 +572,6 @@ pub async fn open_file(
     }
 
     Ok(())
-}
-
-#[tauri::command]
-pub async fn get_api_key_status() -> Result<Vec<settings::KeyStatus>, String> {
-    Ok(settings::Settings::load().key_status())
-}
-
-#[tauri::command]
-pub async fn set_api_key(provider: String, key: String) -> Result<(), String> {
-    settings::Settings::load().set_api_key(&provider, &key)
 }
 
 #[cfg(test)]
