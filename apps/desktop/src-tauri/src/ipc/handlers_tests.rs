@@ -12,6 +12,10 @@ use crate::ipc::mcp_context::{
     MCP_CONTEXT_ITEM_CHAR_LIMIT,
 };
 use crate::ipc::open_file::resolve_workspace_file_path;
+use crate::ipc::project_records::{
+    propose_send_input_project_record_update, select_send_input_project_records_context,
+    should_select_project_records_for_request,
+};
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
 use crate::protocol::events::DeliverySummary;

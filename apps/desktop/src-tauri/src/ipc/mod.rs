@@ -8,6 +8,7 @@ pub mod mcp_context;
 pub mod memory_handlers;
 pub mod open_file;
 pub mod project_checkpoint;
+pub mod project_records;
 pub mod project_runtime;
 pub mod workflow_handlers;
 pub mod workspace;
