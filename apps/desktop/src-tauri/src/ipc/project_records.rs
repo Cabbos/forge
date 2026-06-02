@@ -170,3 +170,7 @@ fn is_conversation_recall_request(text: &str) -> bool {
 
     has_recall_topic || (asks_for_summary && references_prior_chat)
 }
+
+#[cfg(test)]
+#[path = "project_records_tests.rs"]
+mod tests;

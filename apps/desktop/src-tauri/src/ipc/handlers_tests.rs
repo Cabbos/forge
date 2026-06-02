@@ -25,7 +25,6 @@ use crate::ipc::mcp_context::mcp_context_harness_for_session;
 use crate::ipc::open_file::resolve_workspace_file_path;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
-    should_select_project_records_for_request,
 };
 use crate::ipc::send_input_context::{
     capability_names_by_kind, prepare_send_input_turn_context,
@@ -457,26 +456,6 @@ fn turn_capability_names_omit_internal_infrastructure() {
     assert!(hooks.iter().any(|name| name == "Workspace Boundary Guard"));
 
     let _ = std::fs::remove_dir_all(&workspace);
-}
-
-#[test]
-fn conversation_recall_requests_do_not_auto_inject_project_records() {
-    assert!(!should_select_project_records_for_request(
-        "我们之前说了什么"
-    ));
-    assert!(!should_select_project_records_for_request(
-        "刚才聊到哪里了？"
-    ));
-    assert!(!should_select_project_records_for_request(
-        "总结一下前面讨论过的内容"
-    ));
-
-    assert!(should_select_project_records_for_request(
-        "继续优化当前项目的首页"
-    ));
-    assert!(should_select_project_records_for_request(
-        "根据项目记录看看下一步"
-    ));
 }
 
 #[test]
