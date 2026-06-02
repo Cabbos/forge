@@ -18,9 +18,7 @@ use crate::ipc::continuity_experiences::{
     list_continuity_experiences_for_request, search_continuity_experiences_for_request,
 };
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
-use crate::ipc::mcp_context::{
-    build_mcp_context, mcp_context_harness_for_session, McpContextSelection,
-};
+use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::open_file::open_file_macos;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
@@ -50,36 +48,6 @@ use crate::workspace_safety::{
     resolve_session_workspace_path as resolve_session_working_dir,
     resolve_workspace_path as resolve_safe_workspace_path,
 };
-
-#[derive(serde::Serialize)]
-pub struct McpContextSources {
-    resources: Vec<McpContextResource>,
-    prompts: Vec<McpContextPrompt>,
-}
-
-#[derive(serde::Serialize)]
-pub struct McpContextResource {
-    server_id: String,
-    uri: String,
-    name: String,
-    description: String,
-    mime_type: Option<String>,
-}
-
-#[derive(serde::Serialize)]
-pub struct McpContextPrompt {
-    server_id: String,
-    name: String,
-    description: String,
-    arguments: Vec<McpContextPromptArgument>,
-}
-
-#[derive(serde::Serialize)]
-pub struct McpContextPromptArgument {
-    name: String,
-    description: String,
-    required: bool,
-}
 
 #[tauri::command]
 pub async fn create_session(
@@ -167,54 +135,6 @@ pub async fn create_session(
         model: model_str,
         missing_api_key,
     })
-}
-
-#[tauri::command]
-pub async fn list_mcp_context_sources(
-    state: tauri::State<'_, Arc<AppState>>,
-    session_id: Option<String>,
-) -> Result<McpContextSources, String> {
-    let Some(harness) = mcp_context_harness_for_session(&state, session_id.as_deref()).await?
-    else {
-        return Ok(McpContextSources {
-            resources: Vec::new(),
-            prompts: Vec::new(),
-        });
-    };
-
-    let resources = harness
-        .external_mcp_resource_definitions()
-        .await
-        .into_iter()
-        .map(|resource| McpContextResource {
-            server_id: resource.server_id,
-            uri: resource.uri,
-            name: resource.name,
-            description: resource.description,
-            mime_type: resource.mime_type,
-        })
-        .collect();
-    let prompts = harness
-        .external_mcp_prompt_definitions()
-        .await
-        .into_iter()
-        .map(|prompt| McpContextPrompt {
-            server_id: prompt.server_id,
-            name: prompt.name,
-            description: prompt.description,
-            arguments: prompt
-                .arguments
-                .into_iter()
-                .map(|argument| McpContextPromptArgument {
-                    name: argument.name,
-                    description: argument.description,
-                    required: argument.required,
-                })
-                .collect(),
-        })
-        .collect();
-
-    Ok(McpContextSources { resources, prompts })
 }
 
 #[tauri::command]

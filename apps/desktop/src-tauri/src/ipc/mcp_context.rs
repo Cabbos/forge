@@ -6,6 +6,36 @@ use crate::state::AppState;
 
 pub(crate) const MCP_CONTEXT_ITEM_CHAR_LIMIT: usize = 12_000;
 
+#[derive(serde::Serialize)]
+pub struct McpContextSources {
+    resources: Vec<McpContextResource>,
+    prompts: Vec<McpContextPrompt>,
+}
+
+#[derive(serde::Serialize)]
+pub struct McpContextResource {
+    server_id: String,
+    uri: String,
+    name: String,
+    description: String,
+    mime_type: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct McpContextPrompt {
+    server_id: String,
+    name: String,
+    description: String,
+    arguments: Vec<McpContextPromptArgument>,
+}
+
+#[derive(serde::Serialize)]
+pub struct McpContextPromptArgument {
+    name: String,
+    description: String,
+    required: bool,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "kind")]
 pub enum McpContextSelection {
@@ -173,6 +203,54 @@ pub(crate) async fn mcp_context_harness_for_session(
         .get(session_id)
         .map(|session| Some(session.harness.clone()))
         .ok_or_else(|| "当前会话不可用，请重新打开对话或重新选择项目。".to_string())
+}
+
+#[tauri::command]
+pub async fn list_mcp_context_sources(
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: Option<String>,
+) -> Result<McpContextSources, String> {
+    let Some(harness) = mcp_context_harness_for_session(&state, session_id.as_deref()).await?
+    else {
+        return Ok(McpContextSources {
+            resources: Vec::new(),
+            prompts: Vec::new(),
+        });
+    };
+
+    let resources = harness
+        .external_mcp_resource_definitions()
+        .await
+        .into_iter()
+        .map(|resource| McpContextResource {
+            server_id: resource.server_id,
+            uri: resource.uri,
+            name: resource.name,
+            description: resource.description,
+            mime_type: resource.mime_type,
+        })
+        .collect();
+    let prompts = harness
+        .external_mcp_prompt_definitions()
+        .await
+        .into_iter()
+        .map(|prompt| McpContextPrompt {
+            server_id: prompt.server_id,
+            name: prompt.name,
+            description: prompt.description,
+            arguments: prompt
+                .arguments
+                .into_iter()
+                .map(|argument| McpContextPromptArgument {
+                    name: argument.name,
+                    description: argument.description,
+                    required: argument.required,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(McpContextSources { resources, prompts })
 }
 
 fn emit_mcp_context_status(
