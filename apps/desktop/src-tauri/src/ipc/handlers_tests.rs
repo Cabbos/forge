@@ -2,6 +2,7 @@ use super::*;
 use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::context_builder::ContextSourceKind;
+use crate::agent::snapshot::AgentSessionSnapshot;
 use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnState, AgentTurnStatus,
 };
@@ -27,7 +28,9 @@ use crate::ipc::send_input_context::{
     capability_names_by_kind, prepare_send_input_turn_context, select_send_input_memory_context,
     PrepareSendInputTurnRequest,
 };
-use crate::ipc::session_lifecycle::session_snapshot_with_workflow_state;
+use crate::ipc::session_lifecycle::{
+    list_session_infos_for_state, session_snapshot_with_workflow_state,
+};
 use crate::ipc::workspace_files::{
     open_file_target_for_request, preview_file_for_request, search_workspace_files_for_request,
     working_dir_for_request_or_explicit,

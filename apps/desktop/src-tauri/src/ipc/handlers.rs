@@ -10,7 +10,6 @@ use crate::agent::provider_capabilities::{
 use crate::agent::session::{AgentSession, TurnInflightGuard};
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
-    AgentSessionSnapshot,
 };
 use crate::agent::time::now_ms;
 use crate::continuity::ExperienceMemory;
@@ -29,7 +28,7 @@ use crate::ipc::send_input_continuity::{
     record_successful_send_input_continuity,
 };
 use crate::ipc::session_lifecycle::{
-    emit_missing_api_key_notice, save_session_snapshot_with_workflow,
+    emit_missing_api_key_notice, list_session_infos_for_state, save_session_snapshot_with_workflow,
     upgrade_missing_key_session_if_possible,
 };
 use crate::ipc::workspace_files::{
@@ -584,69 +583,6 @@ pub async fn list_sessions(
 ) -> Result<Vec<SessionInfo>, String> {
     let snapshots = list_session_snapshots()?;
     Ok(list_session_infos_for_state(&state, snapshots).await)
-}
-
-async fn list_session_infos_for_state(
-    state: &Arc<AppState>,
-    snapshots: Vec<AgentSessionSnapshot>,
-) -> Vec<SessionInfo> {
-    let mut by_id = std::collections::HashMap::new();
-    for snapshot in snapshots {
-        by_id.insert(
-            snapshot.session_id.clone(),
-            SessionInfo {
-                id: snapshot.session_id,
-                provider: snapshot.provider,
-                model: snapshot.model,
-                status: "stopped".to_string(),
-                created_at: String::new(),
-                working_dir: Some(snapshot.working_dir),
-                created_at_ms: Some(snapshot.created_at_ms),
-                updated_at_ms: Some(snapshot.updated_at_ms),
-                context_window_tokens: snapshot.context_window_tokens,
-                latest_workflow: snapshot.latest_workflow,
-                latest_delivery: snapshot.latest_delivery,
-            },
-        );
-    }
-
-    let sessions = state.sessions.read().await;
-    let workflow_states = state.workflow_states.read().await;
-    let delivery_states = state.delivery_states.read().await;
-    for (id, session) in sessions.iter() {
-        let status = session.status.lock();
-        let snapshot = session.snapshot();
-        by_id.insert(
-            id.clone(),
-            SessionInfo {
-                id: id.clone(),
-                provider: session.agent_type.clone(),
-                model: session.model_id.clone(),
-                status: status.as_str().to_string(),
-                created_at: String::new(),
-                working_dir: Some(snapshot.working_dir),
-                created_at_ms: Some(snapshot.created_at_ms),
-                updated_at_ms: Some(snapshot.updated_at_ms),
-                context_window_tokens: snapshot.context_window_tokens,
-                latest_workflow: workflow_states
-                    .get(id)
-                    .cloned()
-                    .or(snapshot.latest_workflow),
-                latest_delivery: delivery_states
-                    .get(id)
-                    .cloned()
-                    .or(snapshot.latest_delivery),
-            },
-        );
-    }
-
-    let mut result: Vec<_> = by_id.into_values().collect();
-    result.sort_by(|a, b| {
-        b.updated_at_ms
-            .unwrap_or(0)
-            .cmp(&a.updated_at_ms.unwrap_or(0))
-    });
-    result
 }
 
 #[tauri::command]
