@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::adapters::build_adapter;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
 use crate::agent::session::AgentSession;
-use crate::agent::snapshot::{save_session_snapshot, AgentSessionSnapshot};
+use crate::agent::snapshot::{list_session_snapshots, save_session_snapshot, AgentSessionSnapshot};
 use crate::harness::Harness;
 use crate::protocol::commands::SessionInfo;
 use crate::protocol::events::StreamEvent;
@@ -173,4 +173,12 @@ pub(crate) async fn list_session_infos_for_state(
             .cmp(&a.updated_at_ms.unwrap_or(0))
     });
     result
+}
+
+#[tauri::command]
+pub async fn list_sessions(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<SessionInfo>, String> {
+    let snapshots = list_session_snapshots()?;
+    Ok(list_session_infos_for_state(&state, snapshots).await)
 }

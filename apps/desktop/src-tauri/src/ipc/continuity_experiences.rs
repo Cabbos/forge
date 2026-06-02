@@ -17,6 +17,16 @@ pub(crate) async fn list_continuity_experiences_for_request(
     state.continuity.list_experiences_for_project(&project_path)
 }
 
+#[tauri::command]
+pub async fn list_continuity_experiences(
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+) -> Result<Vec<ExperienceMemory>, String> {
+    list_continuity_experiences_for_request(&state, session_id.as_deref(), working_dir.as_deref())
+        .await
+}
+
 pub(crate) async fn search_continuity_experiences_for_request(
     state: &Arc<AppState>,
     session_id: Option<&str>,
@@ -32,4 +42,22 @@ pub(crate) async fn search_continuity_experiences_for_request(
     state
         .continuity
         .search_experiences_for_project(&project_path, query, limit)
+}
+
+#[tauri::command]
+pub async fn search_continuity_experiences(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: String,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<ExperienceMemory>, String> {
+    search_continuity_experiences_for_request(
+        &state,
+        session_id.as_deref(),
+        working_dir.as_deref(),
+        &query,
+        limit,
+    )
+    .await
 }

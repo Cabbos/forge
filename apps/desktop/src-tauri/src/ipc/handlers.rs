@@ -9,14 +9,10 @@ use crate::agent::provider_capabilities::{
 };
 use crate::agent::session::AgentSession;
 use crate::agent::snapshot::{
-    delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
+    delete_session_snapshot, load_session_snapshot, save_session_snapshot,
 };
 use crate::agent::time::now_ms;
-use crate::continuity::ExperienceMemory;
 use crate::harness::Harness;
-use crate::ipc::continuity_experiences::{
-    list_continuity_experiences_for_request, search_continuity_experiences_for_request,
-};
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::project_records::{
@@ -31,10 +27,10 @@ use crate::ipc::send_input_continuity::{
     record_successful_send_input_continuity,
 };
 use crate::ipc::session_lifecycle::{
-    emit_missing_api_key_notice, list_session_infos_for_state, save_session_snapshot_with_workflow,
+    emit_missing_api_key_notice, save_session_snapshot_with_workflow,
     upgrade_missing_key_session_if_possible,
 };
-use crate::protocol::commands::{SessionCreated, SessionInfo};
+use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::StreamEvent;
 use crate::settings;
 use crate::state::AppState;
@@ -458,42 +454,6 @@ pub async fn delete_session(
         crate::app_log!("WARN", "[transcript] {}", error);
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn list_sessions(
-    state: tauri::State<'_, Arc<AppState>>,
-) -> Result<Vec<SessionInfo>, String> {
-    let snapshots = list_session_snapshots()?;
-    Ok(list_session_infos_for_state(&state, snapshots).await)
-}
-
-#[tauri::command]
-pub async fn list_continuity_experiences(
-    state: tauri::State<'_, Arc<AppState>>,
-    session_id: Option<String>,
-    working_dir: Option<String>,
-) -> Result<Vec<ExperienceMemory>, String> {
-    list_continuity_experiences_for_request(&state, session_id.as_deref(), working_dir.as_deref())
-        .await
-}
-
-#[tauri::command]
-pub async fn search_continuity_experiences(
-    state: tauri::State<'_, Arc<AppState>>,
-    query: String,
-    session_id: Option<String>,
-    working_dir: Option<String>,
-    limit: Option<usize>,
-) -> Result<Vec<ExperienceMemory>, String> {
-    search_continuity_experiences_for_request(
-        &state,
-        session_id.as_deref(),
-        working_dir.as_deref(),
-        &query,
-        limit,
-    )
-    .await
 }
 
 #[cfg(test)]
