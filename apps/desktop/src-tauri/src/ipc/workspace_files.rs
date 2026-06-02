@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::ipc::file_search::find_files;
+use crate::ipc::open_file::open_file_macos;
 use crate::ipc::open_file::resolve_workspace_file_path;
 use crate::ipc::workspace::resolve_bound_working_dir;
 use crate::state::AppState;
@@ -40,6 +41,22 @@ pub(crate) async fn search_workspace_files_for_request(
     let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
     let results = find_files(&working_dir, query, 20);
     Ok(results)
+}
+
+#[tauri::command]
+pub async fn search_workspace_files(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: String,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+) -> Result<Vec<String>, String> {
+    search_workspace_files_for_request(
+        &state,
+        &query,
+        session_id.as_deref(),
+        working_dir.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -123,6 +140,27 @@ pub(crate) async fn preview_file_for_request(
     })
 }
 
+/// Preview a small slice of a file around a target line inside the app.
+#[tauri::command]
+pub async fn preview_file(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+    line: Option<u32>,
+    context: Option<u32>,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+) -> Result<FilePreview, String> {
+    preview_file_for_request(
+        &state,
+        &path,
+        line,
+        context,
+        session_id.as_deref(),
+        working_dir.as_deref(),
+    )
+    .await
+}
+
 pub(crate) async fn open_file_target_for_request(
     state: &Arc<AppState>,
     path: &str,
@@ -137,4 +175,40 @@ pub(crate) async fn open_file_target_for_request(
         return Err(message);
     }
     Ok(full_path)
+}
+
+/// Open a file in the system's default editor at a specific line.
+#[tauri::command]
+pub async fn open_file(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+    line: Option<u32>,
+    session_id: Option<String>,
+    working_dir: Option<String>,
+) -> Result<(), String> {
+    let full_path =
+        open_file_target_for_request(&state, &path, session_id.as_deref(), working_dir.as_deref())
+            .await?;
+
+    crate::app_log!(
+        "INFO",
+        "[open_file] request path={} line={:?} resolved={}",
+        path,
+        line,
+        full_path.display()
+    );
+
+    let path_str = full_path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "macos")]
+    {
+        open_file_macos(&path_str, line)?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (path_str, line);
+        return Err("open_file is only supported on macOS currently".into());
+    }
+
+    Ok(())
 }

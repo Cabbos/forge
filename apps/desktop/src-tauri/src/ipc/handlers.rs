@@ -19,7 +19,6 @@ use crate::ipc::continuity_experiences::{
 };
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
-use crate::ipc::open_file::open_file_macos;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
 };
@@ -34,10 +33,6 @@ use crate::ipc::send_input_continuity::{
 use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, list_session_infos_for_state, save_session_snapshot_with_workflow,
     upgrade_missing_key_session_if_possible,
-};
-use crate::ipc::workspace_files::{
-    open_file_target_for_request, preview_file_for_request, search_workspace_files_for_request,
-    FilePreview,
 };
 use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::StreamEvent;
@@ -499,79 +494,6 @@ pub async fn search_continuity_experiences(
         limit,
     )
     .await
-}
-
-#[tauri::command]
-pub async fn search_workspace_files(
-    state: tauri::State<'_, Arc<AppState>>,
-    query: String,
-    session_id: Option<String>,
-    working_dir: Option<String>,
-) -> Result<Vec<String>, String> {
-    search_workspace_files_for_request(
-        &state,
-        &query,
-        session_id.as_deref(),
-        working_dir.as_deref(),
-    )
-    .await
-}
-
-/// Preview a small slice of a file around a target line inside the app.
-#[tauri::command]
-pub async fn preview_file(
-    state: tauri::State<'_, Arc<AppState>>,
-    path: String,
-    line: Option<u32>,
-    context: Option<u32>,
-    session_id: Option<String>,
-    working_dir: Option<String>,
-) -> Result<FilePreview, String> {
-    preview_file_for_request(
-        &state,
-        &path,
-        line,
-        context,
-        session_id.as_deref(),
-        working_dir.as_deref(),
-    )
-    .await
-}
-
-/// Open a file in the system's default editor at a specific line.
-#[tauri::command]
-pub async fn open_file(
-    state: tauri::State<'_, Arc<AppState>>,
-    path: String,
-    line: Option<u32>,
-    session_id: Option<String>,
-    working_dir: Option<String>,
-) -> Result<(), String> {
-    let full_path =
-        open_file_target_for_request(&state, &path, session_id.as_deref(), working_dir.as_deref())
-            .await?;
-
-    crate::app_log!(
-        "INFO",
-        "[open_file] request path={} line={:?} resolved={}",
-        path,
-        line,
-        full_path.display()
-    );
-
-    let path_str = full_path.to_string_lossy().to_string();
-
-    #[cfg(target_os = "macos")]
-    {
-        open_file_macos(&path_str, line)?;
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (path_str, line);
-        return Err("open_file is only supported on macOS currently".into());
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
