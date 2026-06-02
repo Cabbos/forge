@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use crate::agent::capability_context::{
-    format_turn_capability_snapshot, TurnCapabilitySnapshot, TurnInputIntent,
+    build_turn_input_intent, format_turn_capability_snapshot, ComposerCapabilitySelection,
+    TurnCapabilitySnapshot, TurnInputIntent,
 };
+use crate::agent::time::now_ms;
 use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
 use crate::agent::session::{AgentSession, TurnInflightGuard};
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
@@ -16,7 +18,7 @@ use crate::memory::{format_selected_memory_context, SelectedContextMemory};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use crate::state::AppState;
-use crate::workflow::WorkflowState;
+use crate::workflow::{classify_workflow_with_command, WorkflowState};
 
 pub(crate) struct PreparedSendInputTurnContext {
     pub(crate) hidden_contexts: Vec<HiddenContextPart>,
@@ -37,6 +39,37 @@ pub(crate) async fn select_send_input_memory_context(
     let selected = state.wiki_memory.select(text, Some(project_path), 8).await;
     let context = format_selected_memory_context(&selected);
     SendInputMemorySelection { selected, context }
+}
+
+/// Classify workflow from user input, store it, emit the update event,
+/// and return the input intent and workflow for downstream use.
+pub(crate) async fn setup_send_input_workflow(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    text: &str,
+    capabilities: &[ComposerCapabilitySelection],
+) -> (TurnInputIntent, WorkflowState) {
+    let input_intent = build_turn_input_intent(text, capabilities, Vec::new());
+    let workflow = classify_workflow_with_command(
+        session_id,
+        text,
+        input_intent.slash_command.as_deref(),
+        now_ms(),
+    );
+    state
+        .workflow_states
+        .write()
+        .await
+        .insert(session_id.to_string(), workflow.clone());
+    crate::transcript::emit_stream_event(
+        app_handle,
+        StreamEvent::WorkflowUpdated {
+            session_id: session_id.to_string(),
+            state: workflow.clone(),
+        },
+    );
+    (input_intent, workflow)
 }
 
 pub(crate) fn reserve_turn_then_record_user_message<F>(

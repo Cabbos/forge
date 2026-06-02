@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use crate::agent::capability_context::{build_turn_input_intent, ComposerCapabilitySelection};
+use crate::agent::capability_context::ComposerCapabilitySelection;
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
 use crate::agent::snapshot::{
     load_session_snapshot, save_session_snapshot,
 };
-use crate::agent::time::now_ms;
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::project_records::{
@@ -13,7 +12,7 @@ use crate::ipc::project_records::{
 };
 use crate::ipc::send_input_context::{
     prepare_send_input_turn_context, reserve_turn_then_record_user_message,
-    select_send_input_memory_context, PrepareSendInputTurnRequest,
+    select_send_input_memory_context, setup_send_input_workflow, PrepareSendInputTurnRequest,
 };
 use crate::ipc::send_input_continuity::{
     record_failed_send_input_continuity, record_send_input_user_message_continuity,
@@ -28,7 +27,6 @@ use crate::protocol::commands::SessionCreated;
 use crate::protocol::events::StreamEvent;
 use crate::settings;
 use crate::state::AppState;
-use crate::workflow::classify_workflow_with_command;
 use crate::workspace_safety::{
     resolve_session_workspace_path as resolve_session_working_dir,
     resolve_workspace_path as resolve_safe_workspace_path,
@@ -234,25 +232,14 @@ pub async fn send_input(
                 })?;
             let capabilities = capabilities.unwrap_or_default();
             let mcp_context_selections = mcp_context.unwrap_or_default();
-            let input_intent = build_turn_input_intent(&text, &capabilities, Vec::new());
-            let workflow = classify_workflow_with_command(
+            let (input_intent, workflow) = setup_send_input_workflow(
+                &state,
+                &app_handle,
                 &session_id,
                 &text,
-                input_intent.slash_command.as_deref(),
-                now_ms(),
-            );
-            state
-                .workflow_states
-                .write()
-                .await
-                .insert(session_id.clone(), workflow.clone());
-            crate::transcript::emit_stream_event(
-                &app_handle,
-                StreamEvent::WorkflowUpdated {
-                    session_id: session_id.clone(),
-                    state: workflow.clone(),
-                },
-            );
+                &capabilities,
+            )
+            .await;
             let project_records =
                 select_send_input_project_records_context(&state, &text, &project_path).await;
             if !project_records.selected.is_empty() {
