@@ -3,9 +3,13 @@ use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::context_builder::ContextSourceKind;
 use crate::agent::turn_state::{
-    AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnStatus,
+    AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnState, AgentTurnStatus,
 };
-use crate::continuity::{FileOperation, ReflectionEvent};
+use crate::continuity::{
+    build_send_input_reflection_event, continuity_events_from_turn,
+    continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, ContinuityEvent,
+    FileOperation, ReflectionEvent, ReflectionOutcome,
+};
 use crate::harness::capability::CapabilityKind;
 use crate::harness::mcp::McpResourceContent;
 use crate::ipc::delivery_summary::build_delivery_summary_for_session;

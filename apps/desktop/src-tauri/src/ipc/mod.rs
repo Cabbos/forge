@@ -11,5 +11,6 @@ pub mod project_checkpoint;
 pub mod project_records;
 pub mod project_runtime;
 pub mod send_input_context;
+pub mod send_input_continuity;
 pub mod workflow_handlers;
 pub mod workspace;

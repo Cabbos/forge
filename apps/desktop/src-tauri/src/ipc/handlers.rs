@@ -14,12 +14,7 @@ use crate::agent::snapshot::{
     AgentSessionSnapshot,
 };
 use crate::agent::time::now_ms;
-use crate::agent::turn_state::AgentTurnState;
-use crate::continuity::{
-    build_send_input_reflection_event, continuity_events_from_turn,
-    continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, dedupe_lessons,
-    ContinuityEvent, ExperienceMemory, ReflectionOutcome,
-};
+use crate::continuity::ExperienceMemory;
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::file_search::find_files;
@@ -31,8 +26,11 @@ use crate::ipc::project_records::{
 use crate::ipc::send_input_context::{
     prepare_send_input_turn_context, select_send_input_memory_context, PrepareSendInputTurnRequest,
 };
+use crate::ipc::send_input_continuity::{
+    record_failed_send_input_continuity, record_send_input_user_message_continuity,
+    record_successful_send_input_continuity,
+};
 use crate::ipc::workspace::resolve_bound_working_dir;
-use crate::memory::extract_candidates_from_user_message;
 use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -500,48 +498,6 @@ pub async fn resume_session(
     })
 }
 
-fn record_continuity_event_safely(
-    state: &Arc<AppState>,
-    project_path: &str,
-    event: ContinuityEvent,
-) {
-    if let Err(error) = state.continuity.record_event(project_path, &event) {
-        crate::app_log!("WARN", "[continuity] event record failed: {}", error);
-    }
-}
-
-fn form_continuity_experiences_safely(
-    state: &Arc<AppState>,
-    project_path: &str,
-    session_id: &str,
-    now_ms: u64,
-) {
-    if let Err(error) =
-        state
-            .continuity
-            .form_experiences_for_session(project_path, session_id, now_ms)
-    {
-        crate::app_log!(
-            "WARN",
-            "[continuity] experience formation failed: {}",
-            error
-        );
-    }
-}
-
-fn record_turn_continuity_events_safely(
-    state: &Arc<AppState>,
-    project_path: &str,
-    turn: Option<&AgentTurnState>,
-) {
-    let Some(turn) = turn else {
-        return;
-    };
-    for event in continuity_events_from_turn(turn) {
-        record_continuity_event_safely(state, project_path, event);
-    }
-}
-
 #[tauri::command]
 pub async fn send_input(
     state: tauri::State<'_, Arc<AppState>>,
@@ -556,15 +512,7 @@ pub async fn send_input(
         Some(s) => {
             let s = upgrade_missing_key_session_if_possible(&app_handle, &state, s).await?;
             let project_path = s.harness.working_dir.to_string_lossy().to_string();
-            record_continuity_event_safely(
-                &state,
-                &project_path,
-                ContinuityEvent::UserMessage {
-                    session_id: session_id.clone(),
-                    content: text.clone(),
-                    timestamp_ms: now_ms(),
-                },
-            );
+            record_send_input_user_message_continuity(&state, &project_path, &session_id, &text);
             let turn_guard =
                 reserve_turn_then_record_user_message(&s, &session_id, &text, |event| {
                     if let Err(error) = crate::transcript::append_stream_event(&event) {
@@ -647,52 +595,15 @@ pub async fn send_input(
             }
             let latest_turn_for_delivery = s.snapshot().latest_turn;
             if result.is_ok() {
-                let memory_candidates =
-                    extract_candidates_from_user_message(&session_id, Some(&project_path), &text);
-                let mut continuity_lessons =
-                    continuity_lessons_from_memory_candidates(&memory_candidates);
-                if let Some(turn) = latest_turn_for_delivery.as_ref() {
-                    continuity_lessons.extend(continuity_lessons_from_turn(turn));
-                    continuity_lessons = dedupe_lessons(continuity_lessons);
-                }
-                for candidate in memory_candidates {
-                    match state.wiki_memory.upsert_candidate(candidate).await {
-                        Ok(Some(memory)) => {
-                            crate::transcript::emit_stream_event(
-                                &app_handle,
-                                StreamEvent::MemoryCandidate {
-                                    session_id: session_id.clone(),
-                                    memory,
-                                },
-                            );
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            crate::app_log!(
-                                "WARN",
-                                "[wiki_memory] candidate upsert failed: {}",
-                                error
-                            );
-                        }
-                    }
-                }
-                record_continuity_event_safely(
+                record_successful_send_input_continuity(
                     &state,
-                    &project_path,
-                    build_send_input_reflection_event(
-                        &session_id,
-                        &text,
-                        ReflectionOutcome::Completed,
-                        continuity_lessons,
-                        now_ms(),
-                    ),
-                );
-                record_turn_continuity_events_safely(
-                    &state,
+                    &app_handle,
+                    &session_id,
+                    &text,
                     &project_path,
                     latest_turn_for_delivery.as_ref(),
-                );
-                form_continuity_experiences_safely(&state, &project_path, &session_id, now_ms());
+                )
+                .await;
                 let writeback = propose_send_input_project_record_update(
                     &state,
                     &session_id,
@@ -723,27 +634,13 @@ pub async fn send_input(
                     crate::app_log!("WARN", "[session_snapshot] {}", error);
                 }
             } else {
-                let continuity_lessons = latest_turn_for_delivery
-                    .as_ref()
-                    .map(continuity_lessons_from_turn)
-                    .unwrap_or_default();
-                record_continuity_event_safely(
+                record_failed_send_input_continuity(
                     &state,
-                    &project_path,
-                    build_send_input_reflection_event(
-                        &session_id,
-                        &text,
-                        ReflectionOutcome::Failed,
-                        continuity_lessons,
-                        now_ms(),
-                    ),
-                );
-                record_turn_continuity_events_safely(
-                    &state,
+                    &session_id,
+                    &text,
                     &project_path,
                     latest_turn_for_delivery.as_ref(),
                 );
-                form_continuity_experiences_safely(&state, &project_path, &session_id, now_ms());
             }
             result
         }
