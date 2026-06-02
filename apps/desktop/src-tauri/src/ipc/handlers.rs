@@ -209,6 +209,69 @@ pub async fn resume_session(
     })
 }
 
+async fn finalize_send_input_turn(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session: &crate::agent::session::AgentSession,
+    text: &str,
+    project_path: &str,
+    workflow: &crate::workflow::WorkflowState,
+    result: &Result<(), String>,
+) {
+    if let Err(error) = save_session_snapshot_with_workflow(state, session).await {
+        crate::app_log!("WARN", "[session_snapshot] {}", error);
+    }
+    let latest_turn_for_delivery = session.snapshot().latest_turn;
+    if result.is_ok() {
+        record_successful_send_input_continuity(
+            state,
+            app_handle,
+            &session.id,
+            text,
+            project_path,
+            latest_turn_for_delivery.as_ref(),
+        )
+        .await;
+        let writeback = propose_send_input_project_record_update(
+            state,
+            &session.id,
+            text,
+            project_path,
+            workflow,
+            latest_turn_for_delivery.as_ref(),
+        )
+        .await;
+        if let Some(proposal) = writeback.proposal {
+            crate::transcript::emit_stream_event(
+                app_handle,
+                StreamEvent::ForgeWikiUpdateProposed {
+                    session_id: session.id.clone(),
+                    proposal,
+                },
+            );
+        }
+        build_store_emit_delivery_summary(
+            state,
+            app_handle,
+            &session.id,
+            latest_turn_for_delivery.as_ref(),
+            writeback.record_evidence,
+        )
+        .await;
+        if let Err(error) = save_session_snapshot_with_workflow(state, session).await {
+            crate::app_log!("WARN", "[session_snapshot] {}", error);
+        }
+    } else {
+        record_failed_send_input_continuity(
+            state,
+            &session.id,
+            text,
+            project_path,
+            latest_turn_for_delivery.as_ref(),
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn send_input(
     state: tauri::State<'_, Arc<AppState>>,
@@ -290,58 +353,16 @@ pub async fn send_input(
                     turn_guard,
                 )
                 .await;
-            if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
-                crate::app_log!("WARN", "[session_snapshot] {}", error);
-            }
-            let latest_turn_for_delivery = s.snapshot().latest_turn;
-            if result.is_ok() {
-                record_successful_send_input_continuity(
-                    &state,
-                    &app_handle,
-                    &session_id,
-                    &text,
-                    &project_path,
-                    latest_turn_for_delivery.as_ref(),
-                )
-                .await;
-                let writeback = propose_send_input_project_record_update(
-                    &state,
-                    &session_id,
-                    &text,
-                    &project_path,
-                    &workflow,
-                    latest_turn_for_delivery.as_ref(),
-                )
-                .await;
-                if let Some(proposal) = writeback.proposal {
-                    crate::transcript::emit_stream_event(
-                        &app_handle,
-                        StreamEvent::ForgeWikiUpdateProposed {
-                            session_id: session_id.clone(),
-                            proposal,
-                        },
-                    );
-                }
-                build_store_emit_delivery_summary(
-                    &state,
-                    &app_handle,
-                    &session_id,
-                    latest_turn_for_delivery.as_ref(),
-                    writeback.record_evidence,
-                )
-                .await;
-                if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
-                    crate::app_log!("WARN", "[session_snapshot] {}", error);
-                }
-            } else {
-                record_failed_send_input_continuity(
-                    &state,
-                    &session_id,
-                    &text,
-                    &project_path,
-                    latest_turn_for_delivery.as_ref(),
-                );
-            }
+            finalize_send_input_turn(
+                &state,
+                &app_handle,
+                &s,
+                &text,
+                &project_path,
+                &workflow,
+                &result,
+            )
+            .await;
             result
         }
         None => Err(format!("Session not found: {session_id}")),
