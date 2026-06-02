@@ -13,6 +13,9 @@ use crate::continuity::{
 };
 use crate::harness::capability::CapabilityKind;
 use crate::harness::mcp::McpResourceContent;
+use crate::ipc::continuity_experiences::{
+    list_continuity_experiences_for_request, search_continuity_experiences_for_request,
+};
 use crate::ipc::delivery_summary::build_delivery_summary_for_session;
 use crate::ipc::file_search::find_files;
 use crate::ipc::mcp_context::{

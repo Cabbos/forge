@@ -14,6 +14,9 @@ use crate::agent::snapshot::{
 use crate::agent::time::now_ms;
 use crate::continuity::ExperienceMemory;
 use crate::harness::Harness;
+use crate::ipc::continuity_experiences::{
+    list_continuity_experiences_for_request, search_continuity_experiences_for_request,
+};
 use crate::ipc::delivery_summary::{build_store_emit_delivery_summary, emit_delivery_summary};
 use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
 use crate::ipc::open_file::open_file_macos;
@@ -33,7 +36,7 @@ use crate::ipc::session_lifecycle::{
 };
 use crate::ipc::workspace_files::{
     open_file_target_for_request, preview_file_for_request, search_workspace_files_for_request,
-    working_dir_for_request_or_explicit, FilePreview,
+    FilePreview,
 };
 use crate::protocol::commands::{SessionCreated, SessionInfo};
 use crate::protocol::events::StreamEvent;
@@ -75,9 +78,6 @@ pub struct McpContextPromptArgument {
     description: String,
     required: bool,
 }
-
-const CONTINUITY_RECALL_DEFAULT_LIMIT: usize = 8;
-const CONTINUITY_RECALL_MAX_LIMIT: usize = 20;
 
 fn reserve_turn_then_record_user_message<F>(
     session: &AgentSession,
@@ -610,16 +610,6 @@ pub async fn list_continuity_experiences(
         .await
 }
 
-async fn list_continuity_experiences_for_request(
-    state: &Arc<AppState>,
-    session_id: Option<&str>,
-    working_dir: Option<&str>,
-) -> Result<Vec<ExperienceMemory>, String> {
-    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
-    let project_path = working_dir.to_string_lossy().to_string();
-    state.continuity.list_experiences_for_project(&project_path)
-}
-
 #[tauri::command]
 pub async fn search_continuity_experiences(
     state: tauri::State<'_, Arc<AppState>>,
@@ -636,23 +626,6 @@ pub async fn search_continuity_experiences(
         limit,
     )
     .await
-}
-
-async fn search_continuity_experiences_for_request(
-    state: &Arc<AppState>,
-    session_id: Option<&str>,
-    working_dir: Option<&str>,
-    query: &str,
-    limit: Option<usize>,
-) -> Result<Vec<ExperienceMemory>, String> {
-    let working_dir = working_dir_for_request_or_explicit(state, session_id, working_dir).await?;
-    let project_path = working_dir.to_string_lossy().to_string();
-    let limit = limit
-        .unwrap_or(CONTINUITY_RECALL_DEFAULT_LIMIT)
-        .min(CONTINUITY_RECALL_MAX_LIMIT);
-    state
-        .continuity
-        .search_experiences_for_project(&project_path, query, limit)
 }
 
 #[tauri::command]
