@@ -90,6 +90,9 @@ export interface ProjectCheckpoint {
   created_at: number;
   head: string;
   status: string;
+  restorable: boolean;
+  untracked_file_count: number;
+  skipped_untracked_file_count: number;
 }
 
 export interface ProjectCheckpointStatus {
@@ -97,6 +100,8 @@ export interface ProjectCheckpointStatus {
   is_git_repo: boolean;
   dirty: boolean;
   last_checkpoint: ProjectCheckpoint | null;
+  restorable: boolean;
+  snapshot_warning?: string | null;
   message: string;
 }
 
@@ -564,6 +569,8 @@ function fallbackProjectCheckpointStatus(): ProjectCheckpointStatus {
     is_git_repo: false,
     dirty: false,
     last_checkpoint: null,
+    restorable: false,
+    snapshot_warning: null,
     message: "在桌面应用中读取检查点",
   };
 }

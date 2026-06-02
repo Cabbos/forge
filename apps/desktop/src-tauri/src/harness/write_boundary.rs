@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::path::Path;
 
 use crate::harness::mcp;
+use crate::ipc::project_checkpoint::project_checkpoint_status_for_path;
 use crate::workspace_safety::{classify_existing_workspace_path, WorkspaceRisk};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +27,8 @@ pub struct WriteBoundary {
     pub impact: String,
     pub risk: WriteBoundaryRisk,
     pub recovery: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_status: Option<String>,
     pub warning: Option<String>,
 }
 
@@ -56,6 +59,7 @@ pub fn build_write_boundary(
     };
     let workspace_safety = classify_existing_workspace_path(working_dir);
     let is_forge_source = workspace_safety.risk == WorkspaceRisk::High;
+    let checkpoint_status = checkpoint_status_value(working_dir);
 
     WriteBoundary {
         title: "准备修改项目".to_string(),
@@ -71,6 +75,7 @@ pub fn build_write_boundary(
         command,
         risk: risk_for(kind, is_forge_source),
         recovery: "交付区会显示预览和检查点状态。".to_string(),
+        checkpoint_status,
         warning: workspace_safety.warning,
     }
 }
@@ -95,6 +100,7 @@ fn build_mcp_boundary(tool_name: &str, input: &Value, working_dir: &Path) -> Wri
             "将调用 {} 提供的 {} 工具；Forge 不会绕过连接自身的权限。",
             server, tool
         ),
+        checkpoint_status: None,
         warning: None,
     }
 }
@@ -123,6 +129,7 @@ fn build_mcp_resource_boundary(input: &Value, working_dir: &Path) -> WriteBounda
         impact: format!("资料：{}", truncate_text(uri, 500)),
         risk: WriteBoundaryRisk::Caution,
         recovery: "读取结果只应进入本轮上下文；取消后不会读取连接资料。".to_string(),
+        checkpoint_status: None,
         warning: None,
     }
 }
@@ -155,8 +162,23 @@ fn build_mcp_prompt_boundary(input: &Value, working_dir: &Path) -> WriteBoundary
         impact: format!("参数：{}", arguments),
         risk: WriteBoundaryRisk::Caution,
         recovery: "提示词结果只应辅助本轮任务；取消后不会使用连接提示词。".to_string(),
+        checkpoint_status: None,
         warning: None,
     }
+}
+
+fn checkpoint_status_value(working_dir: &Path) -> Option<String> {
+    let status = project_checkpoint_status_for_path(working_dir).ok()?;
+    if !status.is_git_repo {
+        return Some("unavailable".to_string());
+    }
+    if status.restorable {
+        return Some("ready".to_string());
+    }
+    if status.last_checkpoint.is_some() {
+        return Some("unavailable".to_string());
+    }
+    Some("missing".to_string())
 }
 
 fn canonical_tool_name(tool_name: &str) -> &str {

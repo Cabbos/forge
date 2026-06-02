@@ -147,6 +147,7 @@ export interface WriteBoundary {
   impact: string;
   risk: WriteBoundaryRisk;
   recovery: string;
+  checkpoint_status?: "ready" | "pending" | "unavailable" | "missing" | null;
   warning?: string | null;
 }
 

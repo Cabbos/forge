@@ -15,6 +15,9 @@ export function ProjectStatusDetails({
       <DetailLine label="预览地址" value={runtime?.url || "暂无"} />
       <DetailLine label="运行命令" value={runtime?.command || "未检测到"} />
       <DetailLine label="检查点" value={checkpoint?.message || "暂无"} />
+      {checkpoint?.snapshot_warning ? (
+        <DetailLine label="快照提醒" value={checkpoint.snapshot_warning} />
+      ) : null}
       {checkpoint?.last_checkpoint && (
         <div className="forge-project-status-commit">
           <ForgeIcon icon={GitBranch} tone="safety" contained={false} className="size-3.5" />

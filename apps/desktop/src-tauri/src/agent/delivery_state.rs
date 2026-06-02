@@ -12,6 +12,7 @@ pub(crate) struct DeliveryCheckpointInput {
     pub is_git_repo: bool,
     pub dirty: bool,
     pub has_checkpoint: bool,
+    pub restorable: bool,
 }
 
 pub(crate) struct DeliveryRecordInput {
@@ -33,6 +34,7 @@ pub(crate) fn build_delivery_summary(
     .to_string();
 
     let checkpoint_label = match checkpoint.as_ref() {
+        Some(checkpoint) if checkpoint.has_checkpoint && !checkpoint.restorable => "检查点不可回退",
         Some(checkpoint) if checkpoint.has_checkpoint && checkpoint.dirty => {
             "已有检查点，当前有改动"
         }
@@ -60,9 +62,9 @@ pub(crate) fn build_delivery_summary(
     let needs_preview = runtime
         .as_ref()
         .is_some_and(|runtime| !runtime.running && runtime.can_start);
-    let needs_checkpoint = checkpoint
-        .as_ref()
-        .is_some_and(|checkpoint| checkpoint.is_git_repo && !checkpoint.has_checkpoint);
+    let needs_checkpoint = checkpoint.as_ref().is_some_and(|checkpoint| {
+        checkpoint.is_git_repo && (!checkpoint.has_checkpoint || !checkpoint.restorable)
+    });
 
     let next_action = match verification.map(|trace| &trace.status) {
         Some(AgentVerificationStatus::Failed) => "下一步：先修复检查未通过的问题。",
@@ -135,6 +137,7 @@ mod tests {
                 is_git_repo: true,
                 dirty: false,
                 has_checkpoint: true,
+                restorable: true,
             }),
             Some(&verification(AgentVerificationStatus::Passed)),
             None,
@@ -159,6 +162,7 @@ mod tests {
                 is_git_repo: true,
                 dirty: true,
                 has_checkpoint: false,
+                restorable: false,
             }),
             None,
             None,
@@ -182,6 +186,7 @@ mod tests {
                 is_git_repo: true,
                 dirty: true,
                 has_checkpoint: false,
+                restorable: false,
             }),
             Some(&verification(AgentVerificationStatus::Failed)),
             None,
@@ -189,6 +194,29 @@ mod tests {
 
         assert_eq!(summary.verification_label.as_deref(), Some("检查未通过"));
         assert_eq!(summary.next_action, "下一步：先修复检查未通过的问题。");
+    }
+
+    #[test]
+    fn unrestoreable_checkpoint_needs_checkpoint_action() {
+        let summary = build_delivery_summary(
+            Some(DeliveryRuntimeInput {
+                project_path: Some("/workspace".to_string()),
+                running: false,
+                can_start: false,
+                can_open: false,
+            }),
+            Some(DeliveryCheckpointInput {
+                is_git_repo: true,
+                dirty: true,
+                has_checkpoint: true,
+                restorable: false,
+            }),
+            None,
+            None,
+        );
+
+        assert_eq!(summary.checkpoint_label, "检查点不可回退");
+        assert_eq!(summary.next_action, "下一步：创建检查点。");
     }
 
     #[test]

@@ -1335,11 +1335,16 @@ async fn build_delivery_summary_for_session(
     let checkpoint = match project_checkpoint_status_for_session(state, Some(session_id)).await {
         Ok(status) => {
             let has_checkpoint = status.last_checkpoint.is_some();
-            checkpoint_evidence = Some((status.is_git_repo, status.dirty, has_checkpoint));
+            checkpoint_evidence = Some((
+                status.is_git_repo,
+                status.dirty,
+                has_checkpoint && status.restorable,
+            ));
             Some(DeliveryCheckpointInput {
                 is_git_repo: status.is_git_repo,
                 dirty: status.dirty,
                 has_checkpoint,
+                restorable: status.restorable,
             })
         }
         Err(error) => {

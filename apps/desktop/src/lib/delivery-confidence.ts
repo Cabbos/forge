@@ -39,12 +39,17 @@ export function getDeliveryConfidence(
       };
 
   const hasCheckpoint = Boolean(checkpoint?.last_checkpoint);
+  const restorableCheckpoint = Boolean(checkpoint?.restorable);
   const checkpointView = hasCheckpoint
     ? {
-        label: checkpoint?.dirty ? "已有检查点，当前有改动" : "检查点已就绪",
-        color: "var(--primary)",
-        action: null,
-        actionLabel: null,
+        label: restorableCheckpoint
+          ? checkpoint?.dirty
+            ? "已有检查点，当前有改动"
+            : "检查点已就绪"
+          : "检查点不可回退",
+        color: restorableCheckpoint ? "var(--primary)" : "var(--forge-icon-action)",
+        action: restorableCheckpoint ? null : "create_checkpoint" as const,
+        actionLabel: restorableCheckpoint ? null : "重新创建检查点",
       }
     : {
         label: checkpoint

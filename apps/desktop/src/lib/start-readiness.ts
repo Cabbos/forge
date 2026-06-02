@@ -31,6 +31,8 @@ export function deriveStartReadiness(input: {
   const keySet = keyStatuses.some((item) => item.provider === input.providerId && item.set);
   const workspaceBlocked = !input.workspace;
   const keyBlocked = !keySet;
+  const hasCheckpoint = Boolean(input.checkpoint?.last_checkpoint);
+  const restorableCheckpoint = Boolean(input.checkpoint?.restorable);
   const rows: StartReadinessRow[] = [
     {
       label: "当前项目",
@@ -59,14 +61,20 @@ export function deriveStartReadiness(input: {
     },
     {
       label: "检查点",
-      value: input.checkpoint?.last_checkpoint
-        ? "检查点已就绪"
+      value: hasCheckpoint
+        ? restorableCheckpoint
+          ? "检查点已就绪"
+          : "检查点不可回退"
         : input.checkpoint?.is_git_repo
           ? "可创建"
           : "当前不是 Git 项目",
-      tone: input.checkpoint?.last_checkpoint || input.checkpoint?.is_git_repo ? "ready" : "warning",
-      action: input.checkpoint?.is_git_repo && !input.checkpoint.last_checkpoint ? "create_checkpoint" : null,
-      actionLabel: input.checkpoint?.is_git_repo && !input.checkpoint.last_checkpoint ? "创建检查点" : null,
+      tone: restorableCheckpoint || (input.checkpoint?.is_git_repo && !hasCheckpoint) ? "ready" : "warning",
+      action: input.checkpoint?.is_git_repo && !restorableCheckpoint ? "create_checkpoint" : null,
+      actionLabel: input.checkpoint?.is_git_repo && !restorableCheckpoint
+        ? hasCheckpoint
+          ? "重新创建检查点"
+          : "创建检查点"
+        : null,
     },
   ];
 
