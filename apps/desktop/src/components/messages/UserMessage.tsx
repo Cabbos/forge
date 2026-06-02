@@ -9,7 +9,7 @@ export function UserMessage({ block }: { block: BlockState }) {
   const [previewFileRef, setPreviewFileRef] = useState<FileRef | null>(null);
 
   return (
-    <div className="flex justify-end">
+    <div className="forge-user-message-row">
       <div
         data-testid="user-message"
         className="forge-message-with-actions user-command-note"

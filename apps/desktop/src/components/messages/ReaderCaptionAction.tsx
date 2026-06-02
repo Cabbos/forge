@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { ForgeIconButton } from "@/components/primitives/icon-button";
 
 interface ReaderCaptionActionProps {
   text: string;
@@ -25,14 +26,13 @@ export function ReaderCaptionAction({
   };
 
   return (
-    <button
-      type="button"
+    <ForgeIconButton
       onClick={copy}
       className="forge-caption-action"
       aria-label={copied ? copiedLabel : idleLabel}
       title={copied ? copiedLabel : idleLabel}
     >
       {copied ? <Check className="size-3.5" style={{ color: "var(--forge-icon-safety)" }} /> : <Copy className="size-3.5" />}
-    </button>
+    </ForgeIconButton>
   );
 }

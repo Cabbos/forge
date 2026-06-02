@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ChevronRight, Brain, MessageSquare, Search, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -34,7 +35,7 @@ function ToolStepRow({ step }: { step: ToolStep }) {
   const shortResult = step.result.slice(0, 200);
   return (
     <div className="forge-sub-agent-tool">
-      <button
+      <ButtonPrimitive
         type="button"
         data-testid="sub-agent-tool-trigger"
         aria-expanded={open}
@@ -47,7 +48,7 @@ function ToolStepRow({ step }: { step: ToolStep }) {
         <span className="forge-sub-agent-muted">{step.input.slice(0, 40)}</span>
         <span className="forge-sub-agent-muted">→</span>
         <span className="forge-sub-agent-preview">{shortResult}</span>
-      </button>
+      </ButtonPrimitive>
       {open && (
         <div data-testid="sub-agent-tool-result" className="forge-sub-agent-output forge-sub-agent-output--tool">
           {step.result}
@@ -63,7 +64,7 @@ function RoundCard({ step }: { step: RoundStep }) {
 
   return (
     <div className="forge-sub-agent-round">
-      <button
+      <ButtonPrimitive
         type="button"
         data-testid="sub-agent-round-trigger"
         aria-expanded={open}
@@ -75,7 +76,7 @@ function RoundCard({ step }: { step: RoundStep }) {
         {step.thinking && <Brain className="size-2.5" />}
         {step.text && <MessageSquare className="size-2.5" />}
         <span className="forge-sub-agent-muted">{step.tool_calls.length} 个工具</span>
-      </button>
+      </ButtonPrimitive>
       {open && hasDetail && (
         <div data-testid="sub-agent-round-detail" className="forge-sub-agent-round-detail">
           {step.thinking && (

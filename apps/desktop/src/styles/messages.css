@@ -18,14 +18,14 @@
   }
 
   .forge-message-lane {
-    row-gap: var(--forge-message-gap);
+    row-gap: 0;
   }
 
   .forge-conversation-turn {
     display: flex;
     min-width: 0;
     flex-direction: column;
-    row-gap: var(--forge-message-gap);
+    row-gap: 0;
     margin: 0;
     border: 0;
     border-radius: 0;
@@ -44,6 +44,29 @@
   .forge-message-block {
     min-width: 0;
     margin: 0;
+  }
+
+  .forge-message-block + .forge-message-block {
+    margin-top: var(--forge-message-gap);
+  }
+
+  .forge-message-block[data-block-role="trace"] + .forge-message-block[data-block-role="trace"] {
+    margin-top: 0.25rem;
+  }
+
+  .forge-message-block[data-block-role="user"] + .forge-message-block[data-block-role="trace"],
+  .forge-message-block[data-block-role="assistant"] + .forge-message-block[data-block-role="trace"],
+  .forge-message-block[data-block-role="trace"] + .forge-message-block[data-block-role="assistant"] {
+    margin-top: 0.5rem;
+  }
+
+  .forge-message-block[data-block-role="trace"] + .forge-message-block[data-block-role="artifact"],
+  .forge-message-block[data-block-role="artifact"] + .forge-message-block[data-block-role="trace"] {
+    margin-top: 0.625rem;
+  }
+
+  .forge-message-block[data-block-role="artifact"] + .forge-message-block[data-block-role="assistant"] {
+    margin-top: 0.75rem;
   }
 
   .forge-scroll-to-bottom {
@@ -267,13 +290,19 @@
   }
 
   /* §2 UserCommandNote — quiet user note */
+  .forge-user-message-row {
+    display: flex;
+    justify-content: flex-start;
+    padding-left: 2.25rem;
+  }
+
   .user-command-note {
     position: relative;
-    max-width: 80%;
+    max-width: min(640px, calc(100% - 2.25rem));
     background: var(--forge-object-paper);
     border: 1px solid var(--forge-object-paper-border);
     border-radius: 6px;
-    padding: 10px 14px;
+    padding: 9px 13px;
     box-shadow: none;
     transform: none;
     font-size: 14px;
@@ -282,7 +311,17 @@
 
   @media (min-width: 640px) {
     .user-command-note {
-      max-width: 68%;
+      max-width: min(640px, 78%);
+    }
+  }
+
+  @media (max-width: 639px) {
+    .forge-user-message-row {
+      padding-left: 0;
+    }
+
+    .user-command-note {
+      max-width: 100%;
     }
   }
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { X } from "lucide-react";
 import { CapabilityManager, type CapabilityTab } from "@/components/settings/CapabilityManager";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
@@ -56,7 +57,7 @@ export function CapabilityDrawer({ open, initialTab, title, onClose }: Capabilit
       >
         <div data-testid="capability-drawer-header" className="forge-titlebar forge-capability-drawer-header">
           <span className="text-xs font-semibold text-foreground">{title}</span>
-          <button
+          <ButtonPrimitive
             type="button"
             aria-label={`关闭${title}`}
             onClick={onClose}
@@ -64,7 +65,7 @@ export function CapabilityDrawer({ open, initialTab, title, onClose }: Capabilit
             title="关闭"
           >
             <X className="size-4" />
-          </button>
+          </ButtonPrimitive>
         </div>
         <div className="min-h-0 flex-1 px-3 pb-3">
           <CapabilityManager

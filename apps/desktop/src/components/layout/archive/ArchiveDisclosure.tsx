@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 export function ArchiveDisclosure({
@@ -23,7 +24,7 @@ export function ArchiveDisclosure({
 
   return (
     <section data-testid={testId}>
-      <button
+      <ButtonPrimitive
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -34,7 +35,7 @@ export function ArchiveDisclosure({
           <span className="truncate text-[11px] font-medium text-foreground">{title}</span>
         </span>
         {meta && <span className="shrink-0 text-[10px] text-muted-foreground">{meta}</span>}
-      </button>
+      </ButtonPrimitive>
       {open && <div className="mt-2 space-y-3">{children}</div>}
     </section>
   );
