@@ -1,7 +1,11 @@
 pub mod capability_handlers;
+pub mod file_references;
+pub mod file_search;
 pub mod forge_wiki_handlers;
 pub mod handlers;
 pub mod memory_handlers;
+pub mod mcp_context;
+pub mod open_file;
 pub mod project_checkpoint;
 pub mod project_runtime;
 pub mod workflow_handlers;

@@ -5,9 +5,11 @@ use crate::memory::risk::should_reject_persistent_memory;
 
 mod service;
 mod store;
+mod turn_adapters;
 
 pub use service::ContinuityService;
 pub use store::ContinuityStore;
+pub use turn_adapters::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

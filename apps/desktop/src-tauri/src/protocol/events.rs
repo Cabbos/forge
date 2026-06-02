@@ -284,4 +284,404 @@ impl StreamEvent {
             | Usage { session_id, .. } => session_id,
         }
     }
+
+    /// Returns the serde `event_type` tag for this variant.
+    /// Kept in sync with src/lib/protocol.ts.
+    pub fn event_type(&self) -> &'static str {
+        use StreamEvent::*;
+        match self {
+            UserMessage { .. } => "user_message",
+            ThinkingStart { .. } => "thinking_start",
+            ThinkingChunk { .. } => "thinking_chunk",
+            ThinkingEnd { .. } => "thinking_end",
+            TextStart { .. } => "text_start",
+            TextChunk { .. } => "text_chunk",
+            TextEnd { .. } => "text_end",
+            ToolCallStart { .. } => "tool_call_start",
+            ToolCallResult { .. } => "tool_call_result",
+            ToolCallEnd { .. } => "tool_call_end",
+            DiffView { .. } => "diff_view",
+            ShellStart { .. } => "shell_start",
+            ShellOutput { .. } => "shell_output",
+            ShellEnd { .. } => "shell_end",
+            ConfirmAsk { .. } => "confirm_ask",
+            ContextCompacted { .. } => "context_compacted",
+            MemorySelection { .. } => "memory_selection",
+            MemoryCandidate { .. } => "memory_candidate",
+            MemoryUpdated { .. } => "memory_updated",
+            ForgeWikiContextSelected { .. } => "forge_wiki_context_selected",
+            ForgeWikiUpdateProposed { .. } => "forge_wiki_update_proposed",
+            ForgeWikiUpdated { .. } => "forge_wiki_updated",
+            McpContextStatus { .. } => "mcp_context_status",
+            WorkflowUpdated { .. } => "workflow_updated",
+            AgentTurnUpdated { .. } => "agent_turn_updated",
+            DeliverySummary { .. } => "delivery_summary",
+            SessionStarted { .. } => "session_started",
+            SessionStatus { .. } => "session_status",
+            SessionStopped { .. } => "session_stopped",
+            Error { .. } => "error",
+            Usage { .. } => "usage",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guardrail: every StreamEvent variant must have an `event_type` that
+    /// matches the TypeScript discriminated union in src/lib/protocol.ts.
+    #[test]
+    fn stream_event_types_match_typescript_protocol() {
+        // Minimal dummy instances — only the tag matters for this test.
+        let cases: Vec<(StreamEvent, &'static str)> = vec![
+            (
+                StreamEvent::UserMessage {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    content: "c".into(),
+                },
+                "user_message",
+            ),
+            (
+                StreamEvent::ThinkingStart {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                },
+                "thinking_start",
+            ),
+            (
+                StreamEvent::ThinkingChunk {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    content: "c".into(),
+                },
+                "thinking_chunk",
+            ),
+            (
+                StreamEvent::ThinkingEnd {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                },
+                "thinking_end",
+            ),
+            (
+                StreamEvent::TextStart {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                },
+                "text_start",
+            ),
+            (
+                StreamEvent::TextChunk {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    content: "c".into(),
+                },
+                "text_chunk",
+            ),
+            (
+                StreamEvent::TextEnd {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                },
+                "text_end",
+            ),
+            (
+                StreamEvent::ToolCallStart {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    tool_name: "t".into(),
+                    tool_input: serde_json::Value::Null,
+                },
+                "tool_call_start",
+            ),
+            (
+                StreamEvent::ToolCallResult {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    result: "r".into(),
+                    is_error: false,
+                    duration_ms: 0,
+                },
+                "tool_call_result",
+            ),
+            (
+                StreamEvent::ToolCallEnd {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                },
+                "tool_call_end",
+            ),
+            (
+                StreamEvent::DiffView {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    file_path: "f".into(),
+                    old_content: "o".into(),
+                    new_content: "n".into(),
+                },
+                "diff_view",
+            ),
+            (
+                StreamEvent::ShellStart {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    command: "c".into(),
+                },
+                "shell_start",
+            ),
+            (
+                StreamEvent::ShellOutput {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    content: "c".into(),
+                },
+                "shell_output",
+            ),
+            (
+                StreamEvent::ShellEnd {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    exit_code: 0,
+                },
+                "shell_end",
+            ),
+            (
+                StreamEvent::ConfirmAsk {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    question: "q".into(),
+                    kind: "k".into(),
+                    boundary: None,
+                },
+                "confirm_ask",
+            ),
+            (
+                StreamEvent::ContextCompacted {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    summary: "sum".into(),
+                    retained_messages: 0,
+                    compacted_messages: 0,
+                    estimated_tokens_before: 0,
+                    estimated_tokens_after: 0,
+                },
+                "context_compacted",
+            ),
+            (
+                StreamEvent::MemorySelection {
+                    session_id: "s".into(),
+                    selected: vec![],
+                },
+                "memory_selection",
+            ),
+            (
+                StreamEvent::MemoryCandidate {
+                    session_id: "s".into(),
+                    memory: WikiMemory {
+                        id: "i".into(),
+                        category: crate::memory::MemoryCategory::Preference,
+                        scope: crate::memory::MemoryScope::Session,
+                        status: crate::memory::MemoryStatus::Candidate,
+                        title: "t".into(),
+                        body: "b".into(),
+                        project_path: None,
+                        source_session_id: None,
+                        source_message_ids: vec![],
+                        confidence: 0.0,
+                        created_at: "0".into(),
+                        updated_at: "0".into(),
+                        last_used_at: None,
+                        use_count: 0,
+                        tags: vec![],
+                    },
+                },
+                "memory_candidate",
+            ),
+            (
+                StreamEvent::MemoryUpdated {
+                    session_id: "s".into(),
+                    memory: WikiMemory {
+                        id: "i".into(),
+                        category: crate::memory::MemoryCategory::Preference,
+                        scope: crate::memory::MemoryScope::Session,
+                        status: crate::memory::MemoryStatus::Candidate,
+                        title: "t".into(),
+                        body: "b".into(),
+                        project_path: None,
+                        source_session_id: None,
+                        source_message_ids: vec![],
+                        confidence: 0.0,
+                        created_at: "0".into(),
+                        updated_at: "0".into(),
+                        last_used_at: None,
+                        use_count: 0,
+                        tags: vec![],
+                    },
+                },
+                "memory_updated",
+            ),
+            (
+                StreamEvent::ForgeWikiContextSelected {
+                    session_id: "s".into(),
+                    selected: vec![],
+                },
+                "forge_wiki_context_selected",
+            ),
+            (
+                StreamEvent::ForgeWikiUpdateProposed {
+                    session_id: "s".into(),
+                    proposal: ForgeWikiUpdateProposal {
+                        id: "i".into(),
+                        project_path: "p".into(),
+                        session_id: None,
+                        target_pages: vec![],
+                        title: "t".into(),
+                        summary: "s".into(),
+                        patch_preview: None,
+                        status: crate::forge_wiki::model::ForgeWikiProposalStatus::Pending,
+                        created_at: "0".into(),
+                    },
+                },
+                "forge_wiki_update_proposed",
+            ),
+            (
+                StreamEvent::ForgeWikiUpdated {
+                    session_id: "s".into(),
+                    proposal: ForgeWikiUpdateProposal {
+                        id: "i".into(),
+                        project_path: "p".into(),
+                        session_id: None,
+                        target_pages: vec![],
+                        title: "t".into(),
+                        summary: "s".into(),
+                        patch_preview: None,
+                        status: crate::forge_wiki::model::ForgeWikiProposalStatus::Pending,
+                        created_at: "0".into(),
+                    },
+                },
+                "forge_wiki_updated",
+            ),
+            (
+                StreamEvent::McpContextStatus {
+                    session_id: "s".into(),
+                    source_id: "src".into(),
+                    status: "ok".into(),
+                    message: None,
+                },
+                "mcp_context_status",
+            ),
+            (
+                StreamEvent::WorkflowUpdated {
+                    session_id: "s".into(),
+                    state: WorkflowState {
+                        session_id: "s".into(),
+                        route: crate::workflow::WorkflowRoute::Direct,
+                        phase: crate::workflow::WorkflowPhase::Idle,
+                        beginner_label: "b".into(),
+                        developer_label: "d".into(),
+                        matched_signals: vec![],
+                        reason: "r".into(),
+                        gate: crate::workflow::WorkflowGate::None,
+                        override_actions: vec![],
+                        spec_path: None,
+                        plan_path: None,
+                        checkpoint_id: None,
+                        updated_at: 0,
+                    },
+                },
+                "workflow_updated",
+            ),
+            (
+                StreamEvent::AgentTurnUpdated {
+                    session_id: "s".into(),
+                    state: AgentTurnProjection {
+                        session_id: "s".into(),
+                        status: crate::agent::turn_state::AgentTurnStatus::Started,
+                        step_label: "l".into(),
+                        workspace_path: "w".into(),
+                        compact_count: 0,
+                        verification_status:
+                            crate::agent::turn_state::AgentVerificationStatus::NotNeeded,
+                    },
+                },
+                "agent_turn_updated",
+            ),
+            (
+                StreamEvent::DeliverySummary {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    summary: DeliverySummary {
+                        project_path: None,
+                        preview_label: "p".into(),
+                        checkpoint_label: "c".into(),
+                        next_action: "n".into(),
+                        verification_label: None,
+                        verification_status: None,
+                        verification_command: None,
+                        record_label: None,
+                        record_status: None,
+                        record_target_pages: vec![],
+                    },
+                },
+                "delivery_summary",
+            ),
+            (
+                StreamEvent::SessionStarted {
+                    session_id: "s".into(),
+                    agent_type: "a".into(),
+                    model: "m".into(),
+                    context_window_tokens: None,
+                },
+                "session_started",
+            ),
+            (
+                StreamEvent::SessionStatus {
+                    session_id: "s".into(),
+                    status: "idle".into(),
+                },
+                "session_status",
+            ),
+            (
+                StreamEvent::SessionStopped {
+                    session_id: "s".into(),
+                    reason: "r".into(),
+                },
+                "session_stopped",
+            ),
+            (
+                StreamEvent::Error {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    message: "m".into(),
+                    code: "c".into(),
+                },
+                "error",
+            ),
+            (
+                StreamEvent::Usage {
+                    session_id: "s".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    estimated_cost_usd: 0.0,
+                },
+                "usage",
+            ),
+        ];
+
+        for (event, expected) in cases {
+            assert_eq!(
+                event.event_type(),
+                expected,
+                "StreamEvent variant must serialize with event_type={expected}"
+            );
+            let json = serde_json::to_value(&event).unwrap();
+            let actual = json["event_type"].as_str().unwrap();
+            assert_eq!(
+                actual, expected,
+                "serde tag mismatch: expected {expected}, got {actual}"
+            );
+        }
+    }
 }
