@@ -30,7 +30,8 @@ use crate::agent::turn_state::{
     AgentTurnState, AgentVerificationStatus, AgentVerificationTrace,
 };
 use crate::continuity::{
-    ContinuityEvent, ExperienceMemory, FileOperation, ReflectionEvent, ReflectionOutcome,
+    should_reject_experience_lesson, ContinuityEvent, ExperienceMemory, FileOperation,
+    ReflectionEvent, ReflectionOutcome,
 };
 use crate::forge_wiki::model::{
     ForgeWikiProposalStatus, ForgeWikiUpdateProposal, SelectedForgeWikiPage,
@@ -1745,7 +1746,7 @@ fn continuity_lessons_from_turn(turn: &AgentTurnState) -> Vec<String> {
     for tool in turn
         .tools
         .iter()
-        .filter(|tool| continuity_tool_is_error(tool))
+        .filter(|tool| continuity_tool_failure_is_actionable(tool))
         .take(3)
     {
         lessons.push(format!(
@@ -1885,6 +1886,38 @@ fn continuity_tool_is_error(tool: &AgentToolTrace) -> bool {
         )
 }
 
+fn continuity_tool_failure_is_actionable(tool: &AgentToolTrace) -> bool {
+    if !continuity_tool_is_error(tool) {
+        return false;
+    }
+
+    if matches!(tool.category, AgentToolCategory::Shell) {
+        if let Some(summary) = tool.result_summary.as_deref() {
+            return !shell_failure_summary_looks_successful(summary);
+        }
+    }
+
+    true
+}
+
+fn shell_failure_summary_looks_successful(summary: &str) -> bool {
+    let lower = summary.to_lowercase();
+    let has_error_marker = lower.contains("error:")
+        || lower.contains(" failed")
+        || lower.contains("failed ")
+        || lower.contains("panic")
+        || lower.contains("not found")
+        || lower.contains("cannot find")
+        || lower.contains("no such file");
+    let looks_like_vite_build_success = lower.contains("vite ")
+        && lower.contains("building")
+        && lower.contains("rendering chunks")
+        && lower.contains("computing gzip size")
+        && lower.contains("✓ built in");
+
+    looks_like_vite_build_success && !has_error_marker
+}
+
 fn continuity_tool_status_label(status: &AgentToolStatus) -> &'static str {
     match status {
         AgentToolStatus::Pending => "pending",
@@ -1934,7 +1967,7 @@ fn continuity_lessons_from_memory_candidates(candidates: &[WikiMemory]) -> Vec<S
                 format!("{title}: {body}")
             }
         })
-        .filter(|lesson| !lesson.trim().is_empty())
+        .filter(|lesson| !should_reject_experience_lesson(lesson))
         .collect()
 }
 
@@ -2970,6 +3003,37 @@ mod tests {
     }
 
     #[test]
+    fn continuity_reflection_rejects_prompt_echo_memory_candidates() {
+        let candidates = vec![
+            test_project_memory(
+                "memory-1",
+                "项目已定方案：接下来这个项目有什么可以继续的方向呢",
+                "接下来这个项目有什么可以继续的方向呢",
+                "/repo/forge",
+            ),
+            test_project_memory(
+                "memory-2",
+                "当前进度：接下来这个项目有什么可以继续的方向呢",
+                "接下来这个项目有什么可以继续的方向呢",
+                "/repo/forge",
+            ),
+            test_project_memory(
+                "memory-3",
+                "任务清单状态",
+                "TaskNotes 当前只使用 useState，刷新后任务会丢失，下一步应加 localStorage 持久化验证。",
+                "/repo/forge",
+            ),
+        ];
+
+        let lessons = continuity_lessons_from_memory_candidates(&candidates);
+
+        assert_eq!(
+            lessons,
+            vec!["任务清单状态: TaskNotes 当前只使用 useState，刷新后任务会丢失，下一步应加 localStorage 持久化验证。"]
+        );
+    }
+
+    #[test]
     fn continuity_events_from_turn_include_tools_file_changes_and_assistant_summary() {
         let mut turn = AgentTurnState::new(
             "turn-1".to_string(),
@@ -3096,6 +3160,40 @@ mod tests {
                 "Verification `cargo test continuity` failed during `Add continuity FTS recall`: exit_code=101; stderr=no such module fts5",
             ]
         );
+    }
+
+    #[test]
+    fn continuity_lessons_from_turn_ignore_shell_success_looking_false_errors() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/repo/forge".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Run final verification".to_string(),
+        );
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "run_shell".to_string(),
+            category: AgentToolCategory::Shell,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some(
+                "Exit code: -1 Stdout: > continuity-manual-test-app@0.1.0 build > tsc && vite build vite v7.3.5 building client environment for production... transforming... ✓ 30 modules transformed. rendering chunks... computing gzip size... ✓ built in 339ms Stderr:"
+                    .to_string(),
+            ),
+            is_error: true,
+            affected_files: Vec::new(),
+            command: Some("npm run build".to_string()),
+        });
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let lessons = continuity_lessons_from_turn(&turn);
+
+        assert!(lessons.is_empty());
     }
 
     #[test]

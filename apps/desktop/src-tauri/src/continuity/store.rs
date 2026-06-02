@@ -3,7 +3,10 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection};
 
-use super::{ContinuityEvent, ExperienceKind, ExperienceMemory, ExperienceStatus};
+use super::{
+    should_reject_experience_lesson, ContinuityEvent, ExperienceKind, ExperienceMemory,
+    ExperienceStatus,
+};
 
 pub struct ContinuityStore {
     conn: Mutex<Connection>,
@@ -271,18 +274,68 @@ impl ContinuityStore {
                     tags,
                     tokenize = 'unicode61'
                 );
-            INSERT INTO continuity_experiences_fts
-                (id, project_path, title, body, tags)
-            SELECT id, project_path, title, body, tags_json
-            FROM continuity_experiences
-            WHERE id NOT IN (
-                SELECT id FROM continuity_experiences_fts
-            );
             ",
         )
         .map_err(|err| format!("Failed to migrate continuity database: {err}"))?;
+        prune_low_quality_candidate_experiences(&conn)?;
+        rebuild_experience_fts(&conn)?;
         Ok(())
     }
+}
+
+fn prune_low_quality_candidate_experiences(conn: &Connection) -> Result<(), String> {
+    let ids = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, body
+                 FROM continuity_experiences
+                 WHERE status = 'candidate' AND kind = 'lesson'",
+            )
+            .map_err(|err| format!("Failed to prepare continuity experience cleanup: {err}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|err| format!("Failed to query continuity experience cleanup: {err}"))?;
+
+        let mut ids = Vec::new();
+        for row in rows {
+            let (id, body) =
+                row.map_err(|err| format!("Failed to read continuity cleanup row: {err}"))?;
+            if should_reject_experience_lesson(&body) {
+                ids.push(id);
+            }
+        }
+        ids
+    };
+
+    for id in ids {
+        conn.execute(
+            "DELETE FROM continuity_experiences WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|err| format!("Failed to prune continuity experience: {err}"))?;
+        conn.execute(
+            "DELETE FROM continuity_experiences_fts WHERE id = ?1",
+            params![id],
+        )
+        .map_err(|err| format!("Failed to prune continuity experience index: {err}"))?;
+    }
+    Ok(())
+}
+
+fn rebuild_experience_fts(conn: &Connection) -> Result<(), String> {
+    conn.execute("DELETE FROM continuity_experiences_fts", [])
+        .map_err(|err| format!("Failed to clear continuity experience index: {err}"))?;
+    conn.execute(
+        "INSERT INTO continuity_experiences_fts
+            (id, project_path, title, body, tags)
+         SELECT id, project_path, title, body, tags_json
+         FROM continuity_experiences",
+        [],
+    )
+    .map_err(|err| format!("Failed to rebuild continuity experience index: {err}"))?;
+    Ok(())
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {

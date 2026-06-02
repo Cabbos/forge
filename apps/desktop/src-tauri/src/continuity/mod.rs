@@ -145,7 +145,7 @@ pub fn form_experiences_from_reflection(
 
     for (lesson_index, lesson) in reflection.lessons.iter().enumerate() {
         let body = normalize_text(lesson);
-        if body.is_empty() || should_reject_persistent_memory(&body) {
+        if should_reject_experience_lesson(&body) {
             continue;
         }
 
@@ -176,6 +176,49 @@ pub fn form_experiences_from_reflection(
     }
 
     experiences
+}
+
+pub(crate) fn should_reject_experience_lesson(body: &str) -> bool {
+    let body = normalize_text(body);
+    body.is_empty() || should_reject_persistent_memory(&body) || is_prompt_echo_question(&body)
+}
+
+fn is_prompt_echo_question(body: &str) -> bool {
+    let parts = split_label_parts(body);
+    if parts.len() < 3 {
+        return false;
+    }
+
+    let tail = parts.last().map(|part| part.trim()).unwrap_or_default();
+    if tail.is_empty() || !is_question_like(tail) {
+        return false;
+    }
+
+    let prior = parts[..parts.len() - 1].join(" ");
+    prior.contains(tail)
+}
+
+fn split_label_parts(value: &str) -> Vec<&str> {
+    value
+        .split([':', '：'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn is_question_like(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.ends_with('?')
+        || trimmed.ends_with('？')
+        || trimmed.ends_with('呢')
+        || trimmed.ends_with('吗')
+        || trimmed.contains("什么")
+        || trimmed.contains("如何")
+        || trimmed.contains("怎么")
+        || trimmed.contains("为什么")
+        || trimmed.contains("是否")
+        || trimmed.contains("能不能")
+        || trimmed.contains("可以继续")
 }
 
 fn confidence_for_outcome(outcome: &ReflectionOutcome) -> f32 {

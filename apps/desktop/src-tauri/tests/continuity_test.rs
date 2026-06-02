@@ -63,6 +63,23 @@ fn formation_rejects_empty_and_sensitive_lessons() {
 }
 
 #[test]
+fn formation_rejects_prompt_echo_question_lessons() {
+    let reflection = reflection_with_lessons(vec![
+        "项目已定方案：接下来这个项目有什么可以继续的方向呢: 接下来这个项目有什么可以继续的方向呢",
+        "TaskNotes 当前只使用 useState，刷新后任务会丢失，下一步应加 localStorage 持久化验证。",
+    ]);
+
+    let experiences =
+        form_experiences_from_reflection(&reflection, Some("/repo/forge"), 1_778_688_001_000);
+
+    assert_eq!(experiences.len(), 1);
+    assert_eq!(
+        experiences[0].body,
+        "TaskNotes 当前只使用 useState，刷新后任务会丢失，下一步应加 localStorage 持久化验证。"
+    );
+}
+
+#[test]
 fn failed_reflection_forms_lower_confidence_candidates() {
     let mut reflection = reflection_with_lessons(vec!["Do not auto-inject unverified lessons."]);
     reflection.outcome = ReflectionOutcome::Failed;
@@ -347,6 +364,38 @@ fn service_search_keeps_project_boundaries() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].project_path.as_deref(), Some("/repo/forge"));
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn store_migration_prunes_prompt_echo_candidate_experiences() {
+    let db_path = temp_db_path("migration-prunes-prompt-echo");
+    let prompt_echo = ExperienceMemory {
+        id: "experience-old-prompt-echo".to_string(),
+        kind: ExperienceKind::Lesson,
+        status: ExperienceStatus::Candidate,
+        title: "项目已定方案：接下来这个项目有什么可以继续的方向呢: 接下来这个项目有什么可以继续的方向呢".to_string(),
+        body: "项目已定方案：接下来这个项目有什么可以继续的方向呢: 接下来这个项目有什么可以继续的方向呢".to_string(),
+        project_path: Some("/repo/forge".to_string()),
+        source_session_id: Some("session-1".to_string()),
+        confidence: 0.74,
+        created_at_ms: 10,
+        updated_at_ms: 10,
+        tags: Vec::new(),
+    };
+    seed_legacy_experience_db(&db_path, &prompt_echo);
+
+    let service = ContinuityService::open(&db_path).expect("open service");
+    let listed = service
+        .list_experiences_for_project("/repo/forge")
+        .expect("list experiences");
+    let searched = service
+        .search_experiences_for_project("/repo/forge", "接下来", 5)
+        .expect("search experiences");
+
+    assert!(listed.is_empty());
+    assert!(searched.is_empty());
 
     let _ = std::fs::remove_file(db_path);
 }
