@@ -251,3 +251,7 @@ pub(crate) async fn prepare_send_input_turn_context(
         activation_text,
     }
 }
+
+#[cfg(test)]
+#[path = "send_input_context_tests.rs"]
+mod tests;

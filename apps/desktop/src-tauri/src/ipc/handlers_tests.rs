@@ -15,7 +15,6 @@ use crate::continuity::{
     continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, ContinuityEvent,
     FileOperation, ReflectionEvent, ReflectionOutcome,
 };
-use crate::harness::capability::CapabilityKind;
 use crate::ipc::continuity_experiences::{
     list_continuity_experiences_for_request, search_continuity_experiences_for_request,
 };
@@ -27,9 +26,8 @@ use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
 };
 use crate::ipc::send_input_context::{
-    capability_names_by_kind, prepare_send_input_turn_context,
-    reserve_turn_then_record_user_message, select_send_input_memory_context,
-    PrepareSendInputTurnRequest,
+    prepare_send_input_turn_context, reserve_turn_then_record_user_message,
+    select_send_input_memory_context, PrepareSendInputTurnRequest,
 };
 use crate::ipc::session_lifecycle::{
     list_session_infos_for_state, session_snapshot_with_workflow_state,
@@ -437,25 +435,6 @@ fn continuity_lessons_from_turn_ignore_shell_success_looking_false_errors() {
     let lessons = continuity_lessons_from_turn(&turn);
 
     assert!(lessons.is_empty());
-}
-
-#[test]
-fn turn_capability_names_omit_internal_infrastructure() {
-    let nonce = uuid::Uuid::now_v7();
-    let workspace = std::env::temp_dir().join(format!("forge-turn-capabilities-{nonce}"));
-    std::fs::create_dir_all(&workspace).expect("workspace");
-    let harness = Harness::new(workspace.clone());
-
-    let skills = capability_names_by_kind(&harness, CapabilityKind::Skill);
-    let hooks = capability_names_by_kind(&harness, CapabilityKind::Hook);
-
-    assert!(!skills.iter().any(|name| name == "Skill Loader"));
-    assert!(!hooks.iter().any(|name| name == "Logging Hook"));
-    assert!(!hooks.iter().any(|name| name == "File System Audit Hook"));
-    assert!(hooks.iter().any(|name| name == "Sensitive Content Guard"));
-    assert!(hooks.iter().any(|name| name == "Workspace Boundary Guard"));
-
-    let _ = std::fs::remove_dir_all(&workspace);
 }
 
 #[test]
