@@ -47,9 +47,9 @@
 
   .forge-empty-composer-frame {
     flex-shrink: 0;
-    border-top: 1px solid var(--forge-border-subtle);
-    background: var(--forge-glass-depth);
-    box-shadow: 0 -1px 0 rgba(255, 252, 246, 0.58) inset;
+    border-top: 0;
+    background: transparent;
+    box-shadow: none;
     padding: 0.875rem var(--forge-conversation-gutter-x);
   }
 

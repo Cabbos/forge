@@ -33,6 +33,7 @@ test.describe("Workspace Safety v0", () => {
 
     await setup(page);
     await page.goto("http://localhost:1420");
+    await page.waitForSelector("[data-testid='workspace-trigger']", { timeout: 10000 });
     await page.evaluate(async ({ workspaceA, workspaceB, sessionA, sessionB }) => {
       const openDb = () => new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("keyval-store");

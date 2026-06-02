@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, GitBranch, Link2, Search } from "lucide-react";
 import { ForgeIcon } from "@/components/primitives/icon";
-import { capabilityIconMeta } from "@/lib/capability-icons";
+import { filterCapabilities } from "@/components/settings/CapabilityContentModel";
+import { CapabilityContentViews } from "@/components/settings/CapabilityContentViews";
+import { CapabilityTabs } from "@/components/settings/CapabilityTabs";
+import { tabLabel, type CapabilityTab } from "@/components/settings/capabilityTypes";
 import { cn } from "@/lib/utils";
 import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
-export type CapabilityTab = "skills" | "mcp" | "hooks";
+export type { CapabilityTab } from "@/components/settings/capabilityTypes";
 
 interface CapabilityManagerProps {
   initialTab?: CapabilityTab;
@@ -28,12 +31,12 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
     listCapabilities().then(setCapabilities).catch(console.error);
   }, []);
 
-  const tabCapabilities = useMemo(() => ({
+  const tabCapabilities = useMemo<Record<CapabilityTab, CapabilityInfo[]>>(() => ({
     skills: capabilities.filter((c) => c.kind === "skill" || c.kind === "tool"),
     mcp: capabilities.filter((c) => c.kind === "mcp_server"),
     hooks: capabilities.filter((c) => c.kind === "hook"),
   }), [capabilities]);
-  const counts = {
+  const counts: Record<CapabilityTab, number> = {
     skills: tabCapabilities.skills.length,
     mcp: tabCapabilities.mcp.length,
     hooks: tabCapabilities.hooks.length,
@@ -100,24 +103,7 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
 
   return (
     <div ref={managerRef} data-testid="capability-manager" className={cn("forge-capability-manager", className)}>
-      <div role="tablist" aria-label="能力类型" className="forge-capability-tabs">
-        {(["skills", "mcp", "hooks"] as CapabilityTab[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            role="tab"
-            aria-selected={tab === item}
-            data-state={tab === item ? "active" : "idle"}
-            onClick={() => setTab(item)}
-            className="forge-capability-tab"
-          >
-            <span>{tabLabel(item)}</span>
-            <span className="forge-capability-tab-count">
-              {item === "skills" ? counts.skills : item === "mcp" ? counts.mcp : counts.hooks}
-            </span>
-          </button>
-        ))}
-      </div>
+      <CapabilityTabs tab={tab} counts={counts} onTabChange={setTab} />
 
       <div data-testid="capability-summary-strip" data-forge-motion="capability-entry" className="forge-capability-summary-strip" aria-label="能力摘要">
         {summaryItems.map((item) => (
@@ -145,198 +131,12 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
         </label>
       </div>
 
-      <div data-forge-motion="capability-entry" className="forge-capability-body">
-        {tab === "skills" && <SkillsContent caps={tabCapabilities.skills} search={search} onToggle={handleToggle} />}
-        {tab === "mcp" && <MCPContent servers={tabCapabilities.mcp} search={search} onToggle={handleToggle} />}
-        {tab === "hooks" && <HooksContent hooks={tabCapabilities.hooks} search={search} onToggle={handleToggle} />}
-      </div>
+      <CapabilityContentViews
+        tab={tab}
+        capabilities={tabCapabilities}
+        search={search}
+        onToggle={handleToggle}
+      />
     </div>
-  );
-}
-
-function tabLabel(tab: CapabilityTab) {
-  switch (tab) {
-    case "skills":
-      return "插件";
-    case "mcp":
-      return "连接";
-    case "hooks":
-      return "自动化";
-  }
-}
-
-function SkillsContent({
-  caps,
-  search,
-  onToggle,
-}: {
-  caps: CapabilityInfo[];
-  search: string;
-  onToggle: (id: string, enabled: boolean) => void;
-}) {
-  const skills = filterCapabilities(caps, search, "skills");
-
-  return (
-    <div className="forge-capability-sections">
-      <section className="forge-capability-section">
-        <CapabilitySectionHeader label="已安装" count={caps.length} />
-        <div className="forge-capability-list">
-          {skills.map((s) => {
-            const meta = capabilityIconMeta(s.kind);
-            return (
-              <div key={s.id} className="forge-capability-row" data-state={s.enabled === false ? "disabled" : "enabled"}>
-                <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={s.enabled === false} />
-                <div className="forge-capability-copy">
-                  <div className="forge-capability-name">{s.name}</div>
-                  <div className="forge-capability-description">{s.description}</div>
-                </div>
-                <CapabilityStatusButton
-                  enabled={s.enabled !== false}
-                  onClick={() => onToggle(s.id, s.enabled === false)}
-                />
-              </div>
-            );
-          })}
-          {skills.length === 0 && (
-            <div className="forge-capability-empty">
-              没有匹配的已安装插件
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="forge-capability-section">
-        <CapabilitySectionHeader label="可安装" />
-        <div className="forge-capability-empty">
-          暂无内置推荐插件
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function MCPContent({
-  servers,
-  search,
-  onToggle,
-}: {
-  servers: CapabilityInfo[];
-  search: string;
-  onToggle: (id: string, enabled: boolean) => void;
-}) {
-  const filtered = filterCapabilities(servers, search, "mcp");
-
-  return (
-    <section className="forge-capability-list">
-      {filtered.map((s) => {
-        const meta = capabilityIconMeta(s.kind);
-        return (
-          <div key={s.id} className="forge-capability-row" data-state={s.enabled === false ? "disabled" : "enabled"}>
-            <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={s.enabled === false} />
-            <div className="forge-capability-copy">
-              <div className="forge-capability-name forge-capability-name-mono">{s.name}</div>
-              <div className="forge-capability-description">{s.source || s.id}</div>
-            </div>
-            <CapabilitySwitch
-              enabled={s.enabled !== false}
-              label={`${s.name}${s.enabled !== false ? "已启用" : "已停用"}`}
-              onClick={() => onToggle(s.id, s.enabled === false)}
-            />
-          </div>
-        );
-      })}
-      {filtered.length === 0 && (
-        <div className="forge-capability-empty">
-          没有匹配的连接
-        </div>
-      )}
-    </section>
-  );
-}
-
-function HooksContent({
-  hooks,
-  search,
-  onToggle,
-}: {
-  hooks: CapabilityInfo[];
-  search: string;
-  onToggle: (id: string, enabled: boolean) => void;
-}) {
-  const filtered = filterCapabilities(hooks, search, "hooks");
-
-  return (
-    <section className="forge-capability-list">
-      {filtered.map((h) => {
-        const meta = capabilityIconMeta(h.kind);
-        return (
-          <div key={h.id} className="forge-capability-row" data-state={h.enabled === false ? "disabled" : "enabled"}>
-            <ForgeIcon icon={meta.icon} tone={meta.tone} disabled={h.enabled === false} />
-            <div className="forge-capability-copy">
-              <div className="forge-capability-name">{h.name}</div>
-              <div className="forge-capability-description forge-capability-description-mono">{h.version || h.source}</div>
-            </div>
-            <CapabilityStatusButton
-              enabled={h.enabled !== false}
-              onClick={() => onToggle(h.id, h.enabled === false)}
-            />
-          </div>
-        );
-      })}
-      {filtered.length === 0 && (
-        <div className="forge-capability-empty">
-          没有匹配的自动化
-        </div>
-      )}
-    </section>
-  );
-}
-
-function CapabilitySectionHeader({ label, count }: { label: string; count?: number }) {
-  return (
-    <div className="forge-capability-section-header">
-      <h5>{label}</h5>
-      {typeof count === "number" && <span className="forge-capability-count">{count} 个</span>}
-    </div>
-  );
-}
-
-function CapabilityStatusButton({ enabled, onClick }: { enabled: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={enabled}
-      data-state={enabled ? "enabled" : "disabled"}
-      className="forge-capability-toggle"
-      onClick={onClick}
-    >
-      {enabled ? "已启用" : "已停用"}
-    </button>
-  );
-}
-
-function filterCapabilities(list: CapabilityInfo[], search: string, tab: CapabilityTab) {
-  const query = search.trim().toLowerCase();
-  if (!query) return list;
-  return list.filter((capability) => {
-    const searchable = tab === "mcp"
-      ? [capability.name, capability.id, capability.source]
-      : [capability.name, capability.description, capability.id, capability.version, capability.source];
-    return searchable.some((value) => String(value ?? "").toLowerCase().includes(query));
-  });
-}
-
-function CapabilitySwitch({ enabled, label, onClick }: { enabled: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={enabled}
-      data-state={enabled ? "enabled" : "disabled"}
-      className="forge-capability-switch"
-      onClick={onClick}
-    >
-      <span className="forge-capability-switch-thumb" />
-    </button>
   );
 }

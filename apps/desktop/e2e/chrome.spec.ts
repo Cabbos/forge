@@ -369,8 +369,12 @@ test.describe("Timeline Chrome", () => {
         const primaryNav = node.querySelector<HTMLElement>("[data-testid='sidebar-primary-nav']");
         const primaryActions = Array.from(node.querySelectorAll<HTMLElement>("[data-testid='sidebar-primary-action']"));
         const brand = node.querySelector<HTMLElement>(".forge-sidebar-brand");
+        const sidebarStyle = getComputedStyle(node);
         const style = workspace ? getComputedStyle(workspace) : null;
         return {
+          sidebarPaddingLeft: Math.round(Number.parseFloat(sidebarStyle.paddingLeft)),
+          sidebarPaddingRight: Math.round(Number.parseFloat(sidebarStyle.paddingRight)),
+          sidebarPaddingBottom: Math.round(Number.parseFloat(sidebarStyle.paddingBottom)),
           workspaceHeight: workspace ? Math.round(workspace.getBoundingClientRect().height) : 0,
           workspaceRadius: style ? Number.parseFloat(style.borderTopLeftRadius) : 0,
           workspaceBorder: style?.borderTopColor ?? "",
@@ -381,25 +385,44 @@ test.describe("Timeline Chrome", () => {
           brandHeight: brand ? Math.round(brand.getBoundingClientRect().height) : 0,
         };
       });
-      expect(railMetrics.workspaceHeight).toBe(32);
+      expect(railMetrics.sidebarPaddingLeft).toBeGreaterThanOrEqual(8);
+      expect(railMetrics.sidebarPaddingRight).toBeGreaterThanOrEqual(8);
+      expect(railMetrics.sidebarPaddingBottom).toBeGreaterThanOrEqual(8);
+      expect(railMetrics.workspaceHeight).toBe(30);
       expect(railMetrics.workspaceRadius).toBeLessThanOrEqual(8);
-      expect(railMetrics.workspaceBorder).toBe("rgb(216, 203, 184)");
-      expect(railMetrics.workspaceBackground).not.toBe("rgba(0, 0, 0, 0)");
-      expect(railMetrics.primaryGap).toBe(3);
+      expect(railMetrics.workspaceBorder).toBe("rgba(0, 0, 0, 0)");
+      expect(railMetrics.workspaceBackground).toBe("rgba(0, 0, 0, 0)");
+      expect(railMetrics.primaryGap).toBeLessThanOrEqual(3);
       expect(railMetrics.primaryActions).toEqual([28, 28]);
-      expect(railMetrics.brandHeight).toBeGreaterThanOrEqual(44);
-      expect(railMetrics.brandHeight).toBeLessThanOrEqual(48);
+      expect(railMetrics.brandHeight).toBeGreaterThanOrEqual(40);
+      expect(railMetrics.brandHeight).toBeLessThanOrEqual(46);
       const utilityMetrics = await sidebar.locator("[data-testid='sidebar-utility-nav']").evaluate((node) => {
         const rect = node.getBoundingClientRect();
+        const sidebarRect = node.closest("aside")?.getBoundingClientRect();
+        const style = getComputedStyle(node);
         const buttons = Array.from(node.querySelectorAll("button")).map((button) => {
           const item = button.getBoundingClientRect();
-          return Math.round(item.width);
+          return {
+            width: Math.round(item.width),
+            left: sidebarRect ? Math.round(item.left - sidebarRect.left) : 0,
+          };
         });
         const transitions = Array.from(node.querySelectorAll("button")).map((button) => getComputedStyle(button).transitionProperty);
-        return { height: Math.round(rect.height), buttons, transitions };
+        return {
+          height: Math.round(rect.height),
+          borderTop: style.borderTopColor,
+          paddingTop: Math.round(Number.parseFloat(style.paddingTop)),
+          bottomGap: sidebarRect ? Math.round(sidebarRect.bottom - rect.bottom) : 0,
+          buttons,
+          transitions,
+        };
       });
-      expect(utilityMetrics.height).toBeLessThanOrEqual(40);
-      expect(utilityMetrics.buttons).toEqual([28, 28, 28]);
+      expect(utilityMetrics.height).toBeLessThanOrEqual(42);
+      expect(utilityMetrics.borderTop).toBe("rgb(216, 203, 184)");
+      expect(utilityMetrics.paddingTop).toBeGreaterThanOrEqual(6);
+      expect(utilityMetrics.bottomGap).toBeGreaterThanOrEqual(8);
+      expect(utilityMetrics.buttons.map((button) => button.width)).toEqual([28, 28, 28]);
+      expect(utilityMetrics.buttons[0].left).toBeGreaterThanOrEqual(8);
       expect(railMetrics.primaryTransitions.every((value) => value === "all" || value.includes("box-shadow"))).toBe(true);
       expect(utilityMetrics.transitions.every((value) => value === "all" || value.includes("box-shadow"))).toBe(true);
   
@@ -449,11 +472,12 @@ test.describe("Timeline Chrome", () => {
       await page.goto("http://localhost:1420");
       await page.getByRole("button", { name: "新对话", exact: true }).click();
       await expect(page.locator("textarea")).toBeVisible();
-      await page.locator("textarea").fill("Build a compact scanner");
+      const longTitle = "Build a compact scanner with an extremely long workspace path and confirmation command preview";
+      await page.locator("textarea").fill(longTitle);
       await page.locator("textarea").press("Enter");
   
       const sidebar = page.locator("aside").first();
-      const row = sidebar.getByRole("button", { name: "Build a compact scanner", exact: true });
+      const row = sidebar.locator(".forge-sidebar-history-row").first();
       await expect(row).toBeVisible();
   
       const metrics = await row.evaluate((node) => {
@@ -463,6 +487,7 @@ test.describe("Timeline Chrome", () => {
         const label = node.querySelector("span");
         const deleteButton = node.querySelector("button");
         const list = node.closest(".forge-sidebar-history-list");
+        const group = node.closest(".forge-sidebar-history-group");
         const groupLabel = document.querySelector(".forge-sidebar-history-group-label");
         return {
           token: getComputedStyle(root).getPropertyValue("--forge-sidebar-row-height").trim(),
@@ -475,6 +500,11 @@ test.describe("Timeline Chrome", () => {
           background: style.backgroundColor,
           deleteOpacity: deleteButton ? getComputedStyle(deleteButton).opacity : null,
           listDisplay: list ? getComputedStyle(list).display : "",
+          rowClientWidth: node.clientWidth,
+          rowScrollWidth: node.scrollWidth,
+          groupClientWidth: group?.clientWidth ?? 0,
+          groupScrollWidth: group?.scrollWidth ?? 0,
+          groupOverflowX: group ? getComputedStyle(group).overflowX : "",
           groupLabelHeight: groupLabel ? Math.round(groupLabel.getBoundingClientRect().height) : 0,
         };
       });
@@ -489,6 +519,9 @@ test.describe("Timeline Chrome", () => {
       expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
       expect(metrics.deleteOpacity).toBe("0");
       expect(metrics.listDisplay).toBe("flex");
+      expect(metrics.rowScrollWidth).toBeLessThanOrEqual(metrics.rowClientWidth + 1);
+      expect(metrics.groupScrollWidth).toBeLessThanOrEqual(metrics.groupClientWidth + 1);
+      expect(metrics.groupOverflowX).toBe("hidden");
       expect(metrics.groupLabelHeight).toBeGreaterThanOrEqual(20);
     });
 

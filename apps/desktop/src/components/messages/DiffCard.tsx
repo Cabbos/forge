@@ -1,5 +1,6 @@
 import { ChevronRight, FileDiff } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import type { BlockState } from "@/lib/protocol";
 import { ForgeIcon } from "@/components/primitives/icon";
 import { FilePreviewSheet } from "@/components/messages/FilePreviewSheet";
@@ -82,7 +83,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
           <span>{view.hunkCount} 个变更块</span>
           {view.firstChangedLine ? <span>首处第 {view.firstChangedLine} 行</span> : null}
           <span>{view.lines.length} 行</span>
-          <button
+          <ButtonPrimitive
             type="button"
             data-testid="diff-body-toggle"
             aria-expanded={bodyOpen}
@@ -91,7 +92,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
           >
             <ChevronRight className={cn("size-3 transition-transform", bodyOpen && "rotate-90")} />
             {bodyOpen ? "隐藏改动" : "查看改动"}
-          </button>
+          </ButtonPrimitive>
         </div>
         {bodyOpen && (
           <div data-forge-motion="diff-body">

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Check, CheckCircle2, Copy, Loader2, Wrench, XCircle } from "lucide-react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ForgeCollapsible, ForgeCollapsibleTrigger, ForgeCollapsibleContent } from "@/components/primitives/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
@@ -61,7 +62,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                 <span className="text-[11px]" style={{ color: "var(--muted-foreground)" }}>技术细节</span>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[10px]" style={{ color: "var(--muted-foreground)" }}>{toolView.toolName}</span>
-                  <button
+                  <ButtonPrimitive
                     type="button"
                     aria-label={copied ? "已复制工具输出" : "复制工具输出"}
                     title={copied ? "已复制" : "复制工具输出"}
@@ -70,7 +71,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                     className="forge-log-action disabled:cursor-default disabled:opacity-45"
                   >
                     {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-                  </button>
+                  </ButtonPrimitive>
                 </div>
               </div>
               {toolView.resultSummary && (

@@ -218,6 +218,26 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(userMaterial.before).toBe("none");
     expect(userMaterial.after).toBe("none");
     await expect(page.getByTestId("assistant-message").last()).toHaveCSS("border-top-width", "0px");
+
+    const laneAlignment = await page.evaluate(() => {
+      const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
+      const user = document.querySelector<HTMLElement>("[data-testid='user-message']");
+      const assistant = document.querySelector<HTMLElement>("[data-testid='assistant-message']");
+      if (!lane || !user || !assistant) return null;
+      const laneRect = lane.getBoundingClientRect();
+      const userRect = user.getBoundingClientRect();
+      const assistantRect = assistant.getBoundingClientRect();
+      return {
+        assistantLeft: Math.round(assistantRect.left),
+        userLeft: Math.round(userRect.left),
+        userRight: Math.round(userRect.right),
+        laneRight: Math.round(laneRect.right),
+      };
+    });
+    expect(laneAlignment).not.toBeNull();
+    expect(laneAlignment!.userLeft - laneAlignment!.assistantLeft).toBeGreaterThanOrEqual(28);
+    expect(laneAlignment!.userLeft - laneAlignment!.assistantLeft).toBeLessThanOrEqual(44);
+    expect(laneAlignment!.userRight).toBeLessThanOrEqual(laneAlignment!.laneRight);
   });
 
   test("scroll-to-bottom control stays outside the centered reading lane", async ({ page }) => {
@@ -879,12 +899,18 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     const metrics = await page.evaluate(() => {
       const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
       const turns = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-turn']"));
+      const first = turns[0];
       const second = turns[1];
-      if (!lane || !second) return null;
+      if (!lane || !first || !second) return null;
       const laneStyle = getComputedStyle(lane);
+      const firstStyle = getComputedStyle(first);
       const turnStyle = getComputedStyle(second);
+      const firstBlocks = Array.from(first.querySelectorAll<HTMLElement>("[data-testid='message-block']"));
       return {
         laneGap: Math.round(Number.parseFloat(laneStyle.rowGap)),
+        firstTurnGap: Math.round(Number.parseFloat(firstStyle.rowGap)),
+        firstRoles: firstBlocks.map((block) => block.dataset.blockRole),
+        firstMargins: firstBlocks.map((block) => Math.round(Number.parseFloat(getComputedStyle(block).marginTop))),
         secondPaddingTop: Math.round(Number.parseFloat(turnStyle.paddingTop)),
         secondBorderRadius: Math.round(Number.parseFloat(turnStyle.borderTopLeftRadius)),
         secondBackground: turnStyle.backgroundColor,
@@ -892,7 +918,10 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.laneGap).toBe(14);
+    expect(metrics!.laneGap).toBe(0);
+    expect(metrics!.firstTurnGap).toBe(0);
+    expect(metrics!.firstRoles).toEqual(["user", "assistant"]);
+    expect(metrics!.firstMargins).toEqual([0, 14]);
     expect(metrics!.secondPaddingTop).toBe(16);
     expect(metrics!.secondBorderRadius).toBe(0);
     expect(metrics!.secondBackground).toBe("rgba(0, 0, 0, 0)");
@@ -1395,7 +1424,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
   });
 
-  test("message stream uses one gap token without component margins", async ({ page }) => {
+  test("message stream uses role-aware rhythm without component margins", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -1434,12 +1463,16 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     const layout = await page.evaluate(() => {
       const root = document.documentElement;
       const lane = document.querySelector("[data-testid='message-lane']");
-      const blocks = [...document.querySelectorAll("[data-testid='message-block']")];
-      if (!lane || blocks.length < 2) return null;
+      const turn = document.querySelector("[data-testid='conversation-turn']");
+      const blocks = [...document.querySelectorAll<HTMLElement>("[data-testid='message-block']")];
+      if (!lane || !turn || blocks.length < 2) return null;
       const laneStyle = getComputedStyle(lane);
+      const turnStyle = getComputedStyle(turn);
       return {
         token: getComputedStyle(root).getPropertyValue("--forge-message-gap").trim(),
-        gap: Math.round(Number.parseFloat(laneStyle.rowGap)),
+        laneGap: Math.round(Number.parseFloat(laneStyle.rowGap)),
+        turnGap: Math.round(Number.parseFloat(turnStyle.rowGap)),
+        roles: blocks.map((block) => block.dataset.blockRole),
         margins: blocks.map((block) => {
           const style = getComputedStyle(block);
           return {
@@ -1452,8 +1485,11 @@ import { simulateStream, fullConversation } from "./mock-ipc";
 
     expect(layout).not.toBeNull();
     expect(layout!.token).toBe("14px");
-    expect(layout!.gap).toBe(14);
-    expect(layout!.margins.every((margin) => margin.top === 0 && margin.bottom === 0)).toBeTruthy();
+    expect(layout!.laneGap).toBe(0);
+    expect(layout!.turnGap).toBe(0);
+    expect(layout!.roles).toEqual(["assistant", "trace"]);
+    expect(layout!.margins[0]).toEqual({ top: 0, bottom: 0 });
+    expect(layout!.margins[1]).toEqual({ top: 8, bottom: 0 });
   });
 
   test("conversation turns create hidden work structure without workflow chrome", async ({ page }) => {
@@ -1531,21 +1567,26 @@ import { simulateStream, fullConversation } from "./mock-ipc";
       if (turnNodes.length < 2) return null;
       const firstStyle = getComputedStyle(turnNodes[0]);
       const secondStyle = getComputedStyle(turnNodes[1]);
+      const firstBlocks = [...turnNodes[0].querySelectorAll<HTMLElement>("[data-testid='message-block']")];
       return {
         rowGap: Math.round(Number.parseFloat(firstStyle.rowGap)),
         secondPaddingTop: Math.round(Number.parseFloat(secondStyle.paddingTop)),
         firstBackground: firstStyle.backgroundColor,
         firstBorderTop: Math.round(Number.parseFloat(firstStyle.borderTopWidth)),
         firstRadius: Number.parseFloat(firstStyle.borderTopLeftRadius),
+        firstRoles: firstBlocks.map((block) => block.dataset.blockRole),
+        firstMargins: firstBlocks.map((block) => Math.round(Number.parseFloat(getComputedStyle(block).marginTop))),
       };
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.rowGap).toBe(14);
+    expect(metrics!.rowGap).toBe(0);
     expect(metrics!.secondPaddingTop).toBeGreaterThanOrEqual(16);
     expect(metrics!.firstBackground).toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.firstBorderTop).toBe(0);
     expect(metrics!.firstRadius).toBe(0);
+    expect(metrics!.firstRoles).toEqual(["user", "trace", "assistant"]);
+    expect(metrics!.firstMargins).toEqual([0, 8, 8]);
   });
 
   test("context compaction notice follows message rhythm", async ({ page }) => {

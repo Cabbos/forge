@@ -692,7 +692,7 @@ test.describe("InputBar", () => {
       window.__mockSessionId = sessionId;
     }, sessionId);
     await page.goto("http://localhost:1420");
-    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await page.getByRole("button", { name: "开始新对话", exact: true }).click();
     const textarea = page.locator("textarea");
     await expect(textarea).toBeVisible();
 

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import {
   setup,
   holdSendInput,
@@ -16,6 +16,14 @@ import {
 } from "./fixtures/app";
 import { simulateStream, fullConversation } from "./mock-ipc";
 import type { WorkflowState } from "../src/lib/protocol";
+
+function collectTsxFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return collectTsxFiles(path);
+    return entry.isFile() && entry.name.endsWith(".tsx") ? [path] : [];
+  });
+}
 
 test.describe("Frontend maintainability guardrails", () => {
   test("brand theme styles avoid pre-brand warm gray literals", () => {
@@ -286,6 +294,17 @@ test.describe("Frontend maintainability guardrails", () => {
     }
   });
 
+  test("frontend components compose button primitives instead of raw buttons", () => {
+    const componentFiles = collectTsxFiles(resolve(process.cwd(), "src/components"));
+
+    for (const path of componentFiles) {
+      const source = readFileSync(path, "utf8");
+      const displayPath = relative(process.cwd(), path);
+
+      expect(source, `${displayPath} should not render a raw button`).not.toContain("<button");
+    }
+  });
+
   test("forge semantic primitives own shared surface and action classes", () => {
     const primitiveSpecs = [
       ["src/components/primitives/surface.tsx", "ForgeSurface", "forge-surface"],
@@ -302,16 +321,30 @@ test.describe("Frontend maintainability guardrails", () => {
       expect(source).toContain(className);
     }
 
-    const projectStatus = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusCard.tsx"), "utf8");
+    const projectStatus = [
+      "src/components/layout/ProjectStatusView.tsx",
+      "src/components/layout/ProjectStatusActions.tsx",
+    ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8")).join("\n");
     const currentTask = readFileSync(resolve(process.cwd(), "src/components/workflow/CurrentTaskCard.tsx"), "utf8");
     const diffActions = readFileSync(resolve(process.cwd(), "src/components/messages/DiffHeaderActions.tsx"), "utf8");
     const projectOverview = readFileSync(resolve(process.cwd(), "src/components/context/ProjectOverviewCard.tsx"), "utf8");
     const activeContext = readFileSync(resolve(process.cwd(), "src/components/context/ActiveContextSection.tsx"), "utf8");
     const firstLoop = readFileSync(resolve(process.cwd(), "src/components/context/FirstLoopCard.tsx"), "utf8");
     const archiveMaterials = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterials.tsx"), "utf8");
-    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessCard.tsx"), "utf8");
-    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
-    const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessView.tsx"), "utf8");
+    const wikiSections = [
+      "src/components/context/WikiProjectRecordsSection.tsx",
+      "src/components/context/WikiPendingUpdatesSection.tsx",
+      "src/components/context/WikiSavedBackgroundSection.tsx",
+      "src/components/context/WikiRecordRows.tsx",
+      "src/components/context/WikiSectionChrome.tsx",
+    ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8")).join("\n");
+    const hubPanel = [
+      "src/components/layout/HubPanel.tsx",
+      "src/components/layout/HubPanelShell.tsx",
+    ].filter((path) => existsSync(resolve(process.cwd(), path)))
+      .map((path) => readFileSync(resolve(process.cwd(), path), "utf8"))
+      .join("\n");
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
 
     expect(projectStatus).toContain("@/components/primitives/surface");
@@ -383,21 +416,35 @@ test.describe("Frontend maintainability guardrails", () => {
   });
 
   test("start readiness row actions compose Base UI button behavior", () => {
-    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessCard.tsx"), "utf8");
+    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessView.tsx"), "utf8");
 
     expect(startReadiness).toContain("ButtonPrimitive");
     expect(startReadiness).toContain("forge-readiness-row-action");
     expect(startReadiness).not.toContain("<button");
   });
 
+  test("start readiness rendering is owned by a focused subview", () => {
+    const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessCard.tsx"), "utf8");
+    const startReadinessView = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessView.tsx"), "utf8");
+
+    expect(startReadiness).toContain("StartReadinessView");
+    expect(startReadiness).not.toContain("forge-readiness-panel");
+    expect(startReadiness).not.toContain("function readinessIconFor");
+    expect(startReadiness).not.toContain("function readinessIconTone");
+    expect(startReadinessView).toContain("forge-readiness-panel");
+    expect(startReadinessView).toContain("function ReadinessRows");
+    expect(startReadinessView).toContain("function readinessIconFor");
+    expect(startReadinessView).toContain("function readinessIconTone");
+  });
+
   test("forge icon primitive owns semantic tone presentation", () => {
     const primitiveIcon = readFileSync(resolve(process.cwd(), "src/components/primitives/icon.ts"), "utf8");
     const legacyIcon = readFileSync(resolve(process.cwd(), "src/components/ui/ForgeIcon.tsx"), "utf8");
     const componentFiles = [
-      "src/components/CommandPalette.tsx",
+      "src/components/CommandPaletteContent.tsx",
       "src/components/session/ComposerSuggestionMenu.tsx",
-      "src/components/session/StartReadinessCard.tsx",
-      "src/components/layout/ProjectStatusCard.tsx",
+      "src/components/session/StartReadinessView.tsx",
+      "src/components/layout/ProjectStatusView.tsx",
       "src/components/messages/ConfirmViews.tsx",
       "src/components/settings/CapabilityManager.tsx",
     ];
@@ -435,23 +482,28 @@ test.describe("Frontend maintainability guardrails", () => {
     }
 
     const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const providerRows = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsProviderRows.tsx"), "utf8");
     const filePreviewSheet = readFileSync(resolve(process.cwd(), "src/components/messages/FilePreviewSheet.tsx"), "utf8");
     const filePreviewActions = readFileSync(resolve(process.cwd(), "src/components/messages/FilePreviewActions.tsx"), "utf8");
     const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    const hubPanelShell = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"), "utf8");
+    const hubPanelContent = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"), "utf8");
 
     expect(settings).toContain("ForgeDialog");
     expect(settings).toContain("ForgeDialogContent");
     expect(settings).toContain("ForgeButton");
-    expect(settings).toContain("ForgeTextInput");
+    expect(providerRows).toContain("ForgeTextInput");
     expect(settings).not.toContain("import { Button } from \"@/components/primitives/button\"");
-    expect(settings).not.toContain("import { Input } from \"@/components/primitives/input\"");
+    expect(providerRows).not.toContain("import { Input } from \"@/components/primitives/input\"");
 
     expect(filePreviewSheet).toContain("ForgeDialog");
     expect(filePreviewSheet).toContain("ForgeDialogContent");
     expect(filePreviewActions).toContain("ForgeButton");
     expect(filePreviewActions).not.toContain("import { Button } from \"@/components/primitives/button\"");
 
-    expect(hubPanel).toContain("ForgeScrollArea");
+    expect(hubPanel).toContain("HubPanelShell");
+    expect(hubPanelShell).toContain("HubPanelContent");
+    expect(hubPanelContent).toContain("ForgeScrollArea");
     expect(hubPanel).not.toContain("import { ScrollArea } from \"@/components/primitives/scroll-area\"");
   });
 
@@ -459,6 +511,7 @@ test.describe("Frontend maintainability guardrails", () => {
     const commandPrimitive = readFileSync(resolve(process.cwd(), "src/components/primitives/command.ts"), "utf8");
     const collapsiblePrimitive = readFileSync(resolve(process.cwd(), "src/components/primitives/collapsible.ts"), "utf8");
     const commandPalette = readFileSync(resolve(process.cwd(), "src/components/CommandPalette.tsx"), "utf8");
+    const commandPaletteContent = readFileSync(resolve(process.cwd(), "src/components/CommandPaletteContent.tsx"), "utf8");
     const processFiles = [
       "src/components/messages/ContextCompactCard.tsx",
       "src/components/messages/ShellCard.tsx",
@@ -480,8 +533,8 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(collapsiblePrimitive).toContain("React.forwardRef");
 
     expect(commandPalette).toContain("ForgeCommandDialog");
-    expect(commandPalette).toContain("ForgeCommandInput");
-    expect(commandPalette).toContain("ForgeCommandItem");
+    expect(commandPaletteContent).toContain("ForgeCommandInput");
+    expect(commandPaletteContent).toContain("ForgeCommandItem");
     expect(commandPalette).not.toContain("import {\n  Command,");
 
     for (const path of processFiles) {
@@ -494,28 +547,46 @@ test.describe("Frontend maintainability guardrails", () => {
   test("dialog content forwards refs for scoped surface animation", () => {
     const dialog = readFileSync(resolve(process.cwd(), "src/components/ui/dialog.tsx"), "utf8");
     const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/settings/useSettingsDialogController.ts"), "utf8");
+    const motion = readFileSync(resolve(process.cwd(), "src/components/settings/useSettingsDialogMotion.ts"), "utf8");
 
     expect(dialog).toContain("React.forwardRef");
     expect(dialog).toContain("ref={ref}");
     expect(dialog).toContain("DialogContent.displayName");
-    expect(settings).toContain("dialogRef");
+    expect(settings).toContain("useSettingsDialogController");
     expect(settings).toContain("ref={dialogRef}");
-    expect(settings).toContain("gsap.timeline");
-    expect(settings).toContain(".forge-settings-summary-item, [data-testid='settings-provider-row'], .forge-settings-danger-zone");
+    expect(controller).toContain("useSettingsDialogMotion");
+    expect(settings).not.toContain("gsap.timeline");
+    expect(settings).not.toContain("[data-forge-motion='settings-entry']");
+    expect(motion).toContain("dialogRef");
+    expect(motion).toContain("gsap.timeline");
+    expect(motion).toContain("[data-forge-motion='settings-entry']");
   });
 
   test("settings summarize provider readiness before detailed rows", () => {
     const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const model = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialogModel.ts"), "utf8");
+    const controllerPath = resolve(process.cwd(), "src/components/settings/useSettingsDialogController.ts");
+    const controller = existsSync(controllerPath) ? readFileSync(controllerPath, "utf8") : "";
+    const summary = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsSummaryStrip.tsx"), "utf8");
+    const providerRows = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsProviderRows.tsx"), "utf8");
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
     const settingsCss = readFileSync(resolve(process.cwd(), "src/styles/settings.css"), "utf8");
 
-    expect(settings).toContain("settings-summary-strip");
-    expect(settings).toContain("SettingsSummaryItem");
+    expect(settings).toContain("SettingsSummaryStrip");
+    expect(summary).toContain("settings-summary-strip");
+    expect(summary).toContain("SettingsSummaryItem");
     expect(settings).toContain("configuredCount");
-    expect(settings).toContain("keyByProvider");
-    expect(settings).toContain("knownProviderStatuses");
-    expect(settings).toContain("forge-settings-provider-mark");
-    expect(settings).not.toContain("text-muted-foreground/60");
+    expect(settings).toContain("useSettingsDialogController");
+    expect(settings).not.toContain("buildSettingsProviderState");
+    expect(controller).toContain("buildSettingsProviderState");
+    expect(settings).not.toContain("keyByProvider");
+    expect(settings).not.toContain("knownProviderStatuses");
+    expect(model).toContain("function buildSettingsProviderState");
+    expect(model).toContain("keyByProvider");
+    expect(model).toContain("knownProviderStatuses");
+    expect(providerRows).toContain("forge-settings-provider-mark");
+    expect(providerRows).not.toContain("text-muted-foreground/60");
     const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
     expect(hubPanel).not.toContain("border-t border-border pt-3 first:border-t-0 first:pt-0");
     expect(settingsCss).toContain(".forge-settings-summary-strip");
@@ -524,6 +595,61 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(settingsCss).toContain(".forge-settings-preferences-panel");
     expect(settingsCss).toContain("gap: 0.5rem;");
     expect(globals).not.toContain(".forge-settings-row:first-child");
+  });
+
+  test("settings summary, provider rows, and local data are owned by focused subviews", () => {
+    const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const summary = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsSummaryStrip.tsx"), "utf8");
+    const providerSectionPath = resolve(process.cwd(), "src/components/settings/SettingsProviderSection.tsx");
+    const providerSection = existsSync(providerSectionPath) ? readFileSync(providerSectionPath, "utf8") : "";
+    const providerRows = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsProviderRows.tsx"), "utf8");
+    const localData = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsLocalDataSection.tsx"), "utf8");
+
+    expect(settings).toContain("SettingsSummaryStrip");
+    expect(settings).toContain("SettingsProviderSection");
+    expect(settings).toContain("SettingsLocalDataSection");
+    expect(settings).not.toContain("function SettingsSummaryItem");
+    expect(settings).not.toContain("data-testid=\"settings-provider-row\"");
+    expect(settings).not.toContain("forge-settings-heading");
+    expect(settings).not.toContain("forge-settings-danger-zone");
+    expect(summary).toContain("SettingsSummaryItem");
+    expect(summary).toContain("settings-summary-strip");
+    expect(providerSection).toContain("SettingsProviderRows");
+    expect(providerSection).toContain("forge-settings-heading");
+    expect(providerSection).toContain("模型服务");
+    expect(providerRows).toContain("settings-provider-row");
+    expect(providerRows).toContain("formatContextWindow");
+    expect(localData).toContain("forge-settings-danger-zone");
+  });
+
+  test("settings dialog state and actions are owned by a focused controller hook", () => {
+    const settings = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsDialog.tsx"), "utf8");
+    const controllerPath = resolve(process.cwd(), "src/components/settings/useSettingsDialogController.ts");
+
+    expect(existsSync(controllerPath), "useSettingsDialogController should own settings dialog state").toBe(true);
+
+    const controller = existsSync(controllerPath) ? readFileSync(controllerPath, "utf8") : "";
+
+    expect(settings).toContain("useSettingsDialogController");
+    expect(settings).not.toContain("getApiKeyStatus");
+    expect(settings).not.toContain("setApiKey");
+    expect(settings).not.toContain("deleteSession");
+    expect(settings).not.toContain("useStore");
+    expect(settings).not.toContain("useState");
+    expect(settings).not.toContain("useEffect");
+    expect(settings).not.toContain("handleSave");
+    expect(settings).not.toContain("handleRemove");
+    expect(settings).not.toContain("handleClearAll");
+
+    expect(controller).toContain("function useSettingsDialogController");
+    expect(controller).toContain("getApiKeyStatus");
+    expect(controller).toContain("setApiKey");
+    expect(controller).toContain("deleteSession");
+    expect(controller).toContain("useStore");
+    expect(controller).toContain("handleSave");
+    expect(controller).toContain("handleRemove");
+    expect(controller).toContain("handleClearAll");
+    expect(controller).toContain("forge:open-settings");
   });
 
   test("capability manager summarizes capability state with scoped motion", () => {
@@ -540,46 +666,356 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(styles).toContain(".forge-capability-summary-item");
   });
 
+  test("capability manager tabs and content are owned by focused subviews", () => {
+    const manager = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityManager.tsx"), "utf8");
+    const tabs = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityTabs.tsx"), "utf8");
+    const content = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityContentViews.tsx"), "utf8");
+    const model = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityContentModel.ts"), "utf8");
+    const types = readFileSync(resolve(process.cwd(), "src/components/settings/capabilityTypes.ts"), "utf8");
+
+    expect(manager).toContain("CapabilityTabs");
+    expect(manager).toContain("CapabilityContentViews");
+    expect(manager).not.toContain("role=\"tab\"");
+    expect(manager).not.toContain("function SkillsContent");
+    expect(manager).not.toContain("function filterCapabilities");
+    expect(tabs).toContain("role=\"tab\"");
+    expect(tabs).toContain("tabLabel");
+    expect(content).toContain("SkillsContent");
+    expect(content).not.toContain("function filterCapabilities");
+    expect(model).toContain("function filterCapabilities");
+    expect(types).toContain("CapabilityTab");
+    expect(types).toContain("tabLabel");
+  });
+
+  test("capability content rows and filtering are owned by focused modules", () => {
+    const content = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityContentViews.tsx"), "utf8");
+    const rows = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityRows.tsx"), "utf8");
+    const model = readFileSync(resolve(process.cwd(), "src/components/settings/CapabilityContentModel.ts"), "utf8");
+
+    expect(content).toContain("CapabilityRow");
+    expect(content).toContain("CapabilitySectionHeader");
+    expect(content).toContain("filterCapabilities");
+    expect(content).not.toContain("@base-ui/react/button");
+    expect(content).not.toContain("capabilityIconMeta");
+    expect(content).not.toContain("function CapabilityStatusButton");
+    expect(content).not.toContain("function CapabilitySwitch");
+    expect(rows).toContain("function CapabilityRow");
+    expect(rows).toContain("function CapabilityStatusButton");
+    expect(rows).toContain("function CapabilitySwitch");
+    expect(rows).toContain("function CapabilitySectionHeader");
+    expect(rows).toContain("@base-ui/react/button");
+    expect(rows).toContain("capabilityIconMeta");
+    expect(model).toContain("function filterCapabilities");
+  });
+
   test("command palette uses scoped motion on desktop shell entries", () => {
     const commandPalette = readFileSync(resolve(process.cwd(), "src/components/CommandPalette.tsx"), "utf8");
+    const commandPaletteContent = readFileSync(resolve(process.cwd(), "src/components/CommandPaletteContent.tsx"), "utf8");
     const commandCss = readFileSync(resolve(process.cwd(), "src/styles/command.css"), "utf8");
 
     expect(commandPalette).toContain("paletteRef");
     expect(commandPalette).toContain("scope: paletteRef");
     expect(commandPalette).toContain("prefersReducedMotion");
-    expect(commandPalette).toContain("data-forge-motion=\"command-entry\"");
+    expect(commandPaletteContent).toContain("data-forge-motion=\"command-entry\"");
     expect(commandPalette).toContain("[data-forge-motion='command-entry']");
     expect(commandCss).toContain(".forge-command-motion-root");
     expect(commandCss).toContain("[data-forge-motion=\"command-entry\"]");
   });
 
+  test("command palette command groups are owned by a focused subview", () => {
+    const commandPalette = readFileSync(resolve(process.cwd(), "src/components/CommandPalette.tsx"), "utf8");
+    const content = readFileSync(resolve(process.cwd(), "src/components/CommandPaletteContent.tsx"), "utf8");
+
+    expect(commandPalette).toContain("CommandPaletteContent");
+    expect(commandPalette).not.toContain("ForgeCommandItem");
+    expect(commandPalette).not.toContain("function ShortcutHint");
+    expect(commandPalette).not.toContain("getSessionTitle");
+    expect(content).toContain("ForgeCommandItem");
+    expect(content).toContain("function ShortcutHint");
+    expect(content).toContain("getSessionTitle");
+    expect(content).toContain("data-forge-motion=\"command-entry\"");
+  });
+
   test("project archive opens with a compact inspector summary and scoped motion", () => {
     const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    const shell = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"), "utf8");
+    const content = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"), "utf8");
     const summaryStrip = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveSummaryStrip.tsx"), "utf8");
     const archiveStyles = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
 
     expect(summaryStrip).toContain("project-archive-summary-strip");
     expect(summaryStrip).toContain("ArchiveSummaryStrip");
-    expect(hub).toContain("data-forge-motion=\"archive-section\"");
+    expect(hub).toContain("HubPanelShell");
+    expect(shell).toContain("HubPanelContent");
+    expect(content).toContain("data-forge-motion=\"archive-section\"");
     expect(hub).toContain("gsap.timeline");
     expect(hub).toContain("[data-forge-motion='archive-section']");
     expect(archiveStyles).toContain(".forge-archive-summary-strip");
     expect(archiveStyles).toContain(".forge-inspector-title-block");
   });
 
+  test("project archive body rendering is owned by a focused subview", () => {
+    const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+    const shell = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"), "utf8");
+    const content = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"), "utf8");
+
+    expect(hub).toContain("HubPanelShell");
+    expect(shell).toContain("HubPanelContent");
+    expect(hub).not.toContain("ProjectOverviewCard");
+    expect(hub).not.toContain("ArchiveDisclosure");
+    expect(hub).not.toContain("ContextFilesSection");
+    expect(content).toContain("ProjectOverviewCard");
+    expect(content).toContain("ArchiveDisclosure");
+    expect(content).toContain("ContextFilesSection");
+    expect(content).toContain("ProjectStatusCard");
+    expect(content).toContain("ForgeScrollArea");
+  });
+
+  test("project archive shell and data queries are owned by focused modules", () => {
+    const shellPath = resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx");
+    const dataPath = resolve(process.cwd(), "src/components/layout/useHubPanelData.ts");
+    const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+
+    expect(existsSync(shellPath), "HubPanelShell should own inspector chrome").toBe(true);
+    expect(existsSync(dataPath), "useHubPanelData should own archive data queries").toBe(true);
+
+    const shell = existsSync(shellPath) ? readFileSync(shellPath, "utf8") : "";
+    const data = existsSync(dataPath) ? readFileSync(dataPath, "utf8") : "";
+
+    expect(hub).toContain("HubPanelShell");
+    expect(hub).toContain("useHubPanelData");
+    expect(hub).not.toContain("getProjectRuntimeStatus");
+    expect(hub).not.toContain("listMcpContextSources");
+    expect(hub).not.toContain("deriveProjectArchiveOverview");
+    expect(hub).not.toContain("buildContextMaterials");
+    expect(hub).not.toContain("<aside");
+    expect(hub).not.toContain("forge-inspector-header");
+
+    expect(shell).toContain("ForgeIconButton");
+    expect(shell).toContain("project-archive-panel");
+    expect(shell).toContain("forge-inspector-header");
+    expect(shell).toContain("HubPanelContent");
+
+    expect(data).toContain("getProjectRuntimeStatus");
+    expect(data).toContain("listMcpContextSources");
+    expect(data).toContain("deriveProjectArchiveOverview");
+    expect(data).toContain("buildContextMaterials");
+    expect(data).toContain("getActiveContextItems");
+  });
+
+  test("project archive context material rows and prompt arguments are owned by focused modules", () => {
+    const archiveMaterials = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterials.tsx"), "utf8");
+    const rowsPath = resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterialRows.tsx");
+    const promptFormPath = resolve(process.cwd(), "src/components/layout/archive/ArchivePromptArgumentForm.tsx");
+
+    expect(existsSync(rowsPath), "ArchiveContextMaterialRows should own material row rendering").toBe(true);
+    expect(existsSync(promptFormPath), "ArchivePromptArgumentForm should own prompt argument editing").toBe(true);
+
+    const rows = existsSync(rowsPath) ? readFileSync(rowsPath, "utf8") : "";
+    const promptForm = existsSync(promptFormPath) ? readFileSync(promptFormPath, "utf8") : "";
+
+    expect(archiveMaterials).toContain("ContextMaterialRows");
+    expect(archiveMaterials).not.toContain("function ContextFileRow");
+    expect(archiveMaterials).not.toContain("function ContextPromptRow");
+    expect(archiveMaterials).not.toContain("useState");
+    expect(archiveMaterials).not.toContain("@base-ui/react/button");
+    expect(archiveMaterials).not.toContain("statusClass");
+    expect(archiveMaterials).not.toContain("statusLabel");
+
+    expect(rows).toContain("function ContextMaterialRows");
+    expect(rows).toContain("function ContextFileRow");
+    expect(rows).toContain("ArchivePromptMaterialRow");
+    expect(rows).toContain("@base-ui/react/button");
+    expect(rows).toContain("statusClass");
+    expect(rows).toContain("statusLabel");
+    expect(rows).not.toContain("useState");
+    expect(rows).not.toContain("ForgeTextInput");
+
+    expect(promptForm).toContain("function ArchivePromptArgumentForm");
+    expect(promptForm).toContain("function ArchivePromptMaterialRow");
+    expect(promptForm).toContain("useState");
+    expect(promptForm).toContain("ForgeTextInput");
+    expect(promptForm).toContain("加入本轮");
+  });
+
   test("project delivery status uses compact inspector motion", () => {
     const projectStatus = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusCard.tsx"), "utf8");
+    const projectStatusView = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusView.tsx"), "utf8");
+    const summary = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusSummary.tsx"), "utf8");
     const archiveStyles = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
 
-    expect(projectStatus).toContain("data-testid=\"project-status-card\"");
-    expect(projectStatus).toContain("data-testid=\"project-status-summary\"");
-    expect(projectStatus).toContain("data-forge-motion=\"project-status-entry\"");
+    expect(projectStatusView).toContain("data-testid=\"project-status-card\"");
+    expect(projectStatusView).toContain("ProjectStatusSummary");
+    expect(summary).toContain("data-testid=\"project-status-summary\"");
+    expect(projectStatusView).toContain("data-forge-motion=\"project-status-entry\"");
     expect(projectStatus).toContain("scope: cardRef");
     expect(projectStatus).toContain("prefersReducedMotion");
-    expect(projectStatus).toContain("forge-project-status-summary");
+    expect(summary).toContain("forge-project-status-summary");
     expect(archiveStyles).toContain(".forge-project-status");
     expect(archiveStyles).toContain(".forge-project-status-metric");
     expect(archiveStyles).toContain("[data-forge-motion=\"project-status-entry\"]");
+  });
+
+  test("project delivery card rendering is owned by a focused subview", () => {
+    const projectStatus = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusCard.tsx"), "utf8");
+    const projectStatusView = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusView.tsx"), "utf8");
+    const summary = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusSummary.tsx"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusActions.tsx"), "utf8");
+    const details = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusDetails.tsx"), "utf8");
+
+    expect(projectStatus).toContain("ProjectStatusView");
+    expect(projectStatus).not.toContain("function ProjectStatusMetric");
+    expect(projectStatus).not.toContain("function DeliveryButton");
+    expect(projectStatus).not.toContain("function DetailLine");
+    expect(projectStatus).not.toContain("forge-project-status-summary");
+    expect(projectStatusView).toContain("ProjectStatusSummary");
+    expect(projectStatusView).toContain("ProjectStatusActions");
+    expect(projectStatusView).toContain("ProjectStatusDetails");
+    expect(projectStatusView).not.toContain("function ProjectStatusMetric");
+    expect(projectStatusView).not.toContain("function DeliveryButton");
+    expect(projectStatusView).not.toContain("function DetailLine");
+    expect(summary).toContain("function ProjectStatusMetric");
+    expect(actions).toContain("function DeliveryButton");
+    expect(details).toContain("function DetailLine");
+    expect(projectStatusView).toContain("forge-project-status-disclosure");
+  });
+
+  test("wiki sections rendering is owned by a focused subview", () => {
+    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
+    const wikiSectionsView = readFileSync(resolve(process.cwd(), "src/components/context/WikiSectionsView.tsx"), "utf8");
+    const projectRecords = readFileSync(resolve(process.cwd(), "src/components/context/WikiProjectRecordsSection.tsx"), "utf8");
+    const pendingUpdates = readFileSync(resolve(process.cwd(), "src/components/context/WikiPendingUpdatesSection.tsx"), "utf8");
+    const savedBackground = readFileSync(resolve(process.cwd(), "src/components/context/WikiSavedBackgroundSection.tsx"), "utf8");
+    const rows = readFileSync(resolve(process.cwd(), "src/components/context/WikiRecordRows.tsx"), "utf8");
+
+    expect(wikiSections).toContain("WikiSectionsView");
+    expect(wikiSections).not.toContain("function SectionHeader");
+    expect(wikiSections).not.toContain("function ForgeWikiPageRow");
+    expect(wikiSections).not.toContain("function ForgeWikiProposalRow");
+    expect(wikiSections).not.toContain("function MemoryRow");
+    expect(wikiSections).not.toContain("forge-wiki:init");
+    expect(wikiSectionsView).toContain("ProjectRecordsSection");
+    expect(wikiSectionsView).toContain("PendingUpdatesSection");
+    expect(wikiSectionsView).toContain("SavedBackgroundSection");
+    expect(projectRecords).toContain("function ProjectRecordsSection");
+    expect(pendingUpdates).toContain("function PendingUpdatesSection");
+    expect(savedBackground).toContain("function SavedBackgroundSection");
+    expect(rows).toContain("function MemoryRow");
+  });
+
+  test("wiki section rows and chrome are owned by focused modules", () => {
+    const wikiSectionsView = readFileSync(resolve(process.cwd(), "src/components/context/WikiSectionsView.tsx"), "utf8");
+    const chrome = readFileSync(resolve(process.cwd(), "src/components/context/WikiSectionChrome.tsx"), "utf8");
+    const rows = readFileSync(resolve(process.cwd(), "src/components/context/WikiRecordRows.tsx"), "utf8");
+    const types = readFileSync(resolve(process.cwd(), "src/components/context/WikiSectionTypes.ts"), "utf8");
+
+    expect(wikiSectionsView).not.toContain("function ProjectRecordsSection");
+    expect(wikiSectionsView).not.toContain("function PendingUpdatesSection");
+    expect(wikiSectionsView).not.toContain("function SavedBackgroundSection");
+    expect(wikiSectionsView).not.toContain("function MemoryRow");
+    expect(wikiSectionsView).not.toContain("function SectionHeader");
+    expect(chrome).toContain("function SectionHeader");
+    expect(chrome).toContain("function EmptyState");
+    expect(rows).toContain("function ForgeWikiProposalRow");
+    expect(rows).toContain("function MemoryRow");
+    expect(rows).toContain("function RecordMetaGrid");
+    expect(types).toContain("DraftState");
+    expect(types).toContain("FORGE_WIKI_INIT_OPERATION_ID");
+  });
+
+  test("wiki record rows delegate edit controls and label copy to focused modules", () => {
+    const rows = readFileSync(resolve(process.cwd(), "src/components/context/WikiRecordRows.tsx"), "utf8");
+    const draftEditor = readFileSync(resolve(process.cwd(), "src/components/context/WikiMemoryDraftEditor.tsx"), "utf8");
+    const labels = readFileSync(resolve(process.cwd(), "src/components/context/WikiRecordLabels.ts"), "utf8");
+
+    expect(rows).toContain("MemoryDraftEditor");
+    expect(rows).toContain("proposalStatusLabel");
+    expect(rows).toContain("categoryLabel");
+    expect(rows).not.toContain("<input");
+    expect(rows).not.toContain("<textarea");
+    expect(rows).not.toContain("function proposalStatusLabel");
+    expect(rows).not.toContain("function proposalStatusMeta");
+    expect(rows).not.toContain("function categoryLabel");
+    expect(rows).not.toContain("function statusLabel");
+    expect(draftEditor).toContain("function MemoryDraftEditor");
+    expect(draftEditor).toContain("<input");
+    expect(draftEditor).toContain("<textarea");
+    expect(labels).toContain("function proposalStatusLabel");
+    expect(labels).toContain("function proposalStatusMeta");
+    expect(labels).toContain("function categoryLabel");
+    expect(labels).toContain("function statusLabel");
+  });
+
+  test("wiki sections derived model logic is owned by a focused module", () => {
+    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
+    const model = readFileSync(resolve(process.cwd(), "src/components/context/WikiSectionsModel.ts"), "utf8");
+
+    expect(wikiSections).toContain("filterCandidateMemories");
+    expect(wikiSections).toContain("filterVisibleForgeWikiProposals");
+    expect(wikiSections).not.toContain("function normalizeProjectPath");
+    expect(wikiSections).not.toContain("function memoryBelongsToCurrentContext");
+    expect(model).toContain("function normalizeProjectPath");
+    expect(model).toContain("function memoryBelongsToCurrentContext");
+    expect(model).toContain("function indexMemoriesById");
+    expect(model).toContain("function filterProjectMemories");
+  });
+
+  test("wiki sections busy state is owned by a focused hook", () => {
+    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
+    const busyState = readFileSync(resolve(process.cwd(), "src/components/context/useWikiBusyState.ts"), "utf8");
+
+    expect(wikiSections).toContain("useWikiBusyState");
+    expect(wikiSections).not.toContain("busyTokenRef");
+    expect(wikiSections).not.toContain("const beginBusy");
+    expect(wikiSections).not.toContain("const clearBusy");
+    expect(busyState).toContain("function useWikiBusyState");
+    expect(busyState).toContain("beginBusy");
+    expect(busyState).toContain("clearBusy");
+  });
+
+  test("wiki sections request identity is owned by a focused hook", () => {
+    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
+    const requestIdentity = readFileSync(resolve(process.cwd(), "src/components/context/useCurrentWikiRequest.ts"), "utf8");
+
+    expect(wikiSections).toContain("useCurrentWikiRequest");
+    expect(wikiSections).not.toContain("currentProjectPathRef");
+    expect(wikiSections).not.toContain("sessionIdRef");
+    expect(wikiSections).not.toContain("useCallback((projectAtStart");
+    expect(requestIdentity).toContain("function useCurrentWikiRequest");
+    expect(requestIdentity).toContain("currentProjectPathRef");
+    expect(requestIdentity).toContain("sessionIdRef");
+  });
+
+  test("wiki sections mutation actions are owned by a focused hook", () => {
+    const actionsPath = resolve(process.cwd(), "src/components/context/useWikiSectionsActions.ts");
+    const wikiSections = readFileSync(resolve(process.cwd(), "src/components/context/WikiSections.tsx"), "utf8");
+
+    expect(existsSync(actionsPath), "useWikiSectionsActions should own wiki mutation handlers").toBe(true);
+
+    const actions = existsSync(actionsPath) ? readFileSync(actionsPath, "utf8") : "";
+
+    expect(wikiSections).toContain("useWikiSectionsActions");
+    expect(wikiSections).not.toContain("acceptForgeWikiUpdateProposal");
+    expect(wikiSections).not.toContain("discardForgeWikiUpdateProposal");
+    expect(wikiSections).not.toContain("forgetMemory");
+    expect(wikiSections).not.toContain("initForgeWiki");
+    expect(wikiSections).not.toContain("pinMemory");
+    expect(wikiSections).not.toContain("updateMemory");
+    expect(wikiSections).not.toContain("const handleAcceptForgeWikiProposal");
+    expect(wikiSections).not.toContain("const handleDiscardForgeWikiProposal");
+    expect(wikiSections).not.toContain("const saveDraft");
+    expect(wikiSections).not.toContain("const handlePin");
+    expect(wikiSections).not.toContain("const handleAccept");
+    expect(wikiSections).not.toContain("const handleForget");
+
+    expect(actions).toContain("function useWikiSectionsActions");
+    expect(actions).toContain("acceptForgeWikiUpdateProposal");
+    expect(actions).toContain("discardForgeWikiUpdateProposal");
+    expect(actions).toContain("forgetMemory");
+    expect(actions).toContain("initForgeWiki");
+    expect(actions).toContain("pinMemory");
+    expect(actions).toContain("updateMemory");
+    expect(actions).toContain("FORGE_WIKI_INIT_OPERATION_ID");
   });
 
   test("markdown reader styles are owned by the markdown stylesheet", () => {
@@ -1183,6 +1619,8 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("prototype motion uses scoped GSAP with reduced motion support", () => {
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
+    const messageMotionPath = resolve(process.cwd(), "src/components/chat/useMessageEntryMotion.ts");
+    const messageMotion = existsSync(messageMotionPath) ? readFileSync(messageMotionPath, "utf8") : "";
     const shellCard = readFileSync(resolve(process.cwd(), "src/components/messages/ShellCard.tsx"), "utf8");
     const motion = readFileSync(resolve(process.cwd(), "src/lib/forgeMotion.ts"), "utf8");
 
@@ -1190,25 +1628,90 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(motion).toContain("gsap.registerPlugin(useGSAP)");
     expect(motion).toContain("prefersReducedMotion");
     expect(motion).toContain("(prefers-reduced-motion: reduce)");
-    expect(messageList).toContain("useGSAP");
-    expect(messageList).toContain("scope: laneRef");
+    expect(messageList).toContain("useMessageEntryMotion");
+    expect(messageList).not.toContain("useGSAP");
+    expect(messageList).not.toContain("gsap.fromTo");
+    expect(messageMotion).toContain("function useMessageEntryMotion");
+    expect(messageMotion).toContain("useGSAP");
+    expect(messageMotion).toContain("scope: laneRef");
     expect(shellCard).toContain("data-forge-motion=\"shell-detail\"");
   });
 
   test("empty workbench keeps CSS motion hooks without eager GSAP runtime", () => {
     const appShell = readFileSync(resolve(process.cwd(), "src/components/layout/AppShell.tsx"), "utf8");
+    const emptyWorkbenchView = readFileSync(resolve(process.cwd(), "src/components/layout/EmptyWorkbench.tsx"), "utf8");
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
     const emptyWorkbench = readFileSync(resolve(process.cwd(), "src/styles/empty-workbench.css"), "utf8");
 
+    expect(appShell).toContain("EmptyWorkbench");
     expect(appShell).not.toContain("@/lib/forgeMotion");
     expect(appShell).not.toContain("useGSAP");
     expect(appShell).not.toContain("emptyShellRef");
-    expect(appShell).toContain("data-forge-motion=\"empty-entry\"");
-    expect(appShell).toContain("data-forge-motion=\"empty-composer\"");
+    expect(appShell).not.toContain("data-forge-motion=\"empty-entry\"");
+    expect(appShell).not.toContain("data-forge-motion=\"empty-composer\"");
+    expect(emptyWorkbenchView).toContain("data-forge-motion=\"empty-entry\"");
+    expect(emptyWorkbenchView).toContain("data-forge-motion=\"empty-composer\"");
     expect(emptyWorkbench).toContain("[data-forge-motion=\"empty-entry\"]");
     expect(emptyWorkbench).toContain("will-change: transform, opacity");
     expect(globals).not.toContain(".forge-empty-entry-card::before");
     expect(emptyWorkbench).toContain(".forge-empty-entry-card[data-active=\"true\"] .forge-empty-entry-icon");
+  });
+
+  test("empty workbench rendering is owned by a focused layout subview", () => {
+    const appShell = readFileSync(resolve(process.cwd(), "src/components/layout/AppShell.tsx"), "utf8");
+    const emptyWorkbench = readFileSync(resolve(process.cwd(), "src/components/layout/EmptyWorkbench.tsx"), "utf8");
+
+    expect(appShell).toContain("EmptyWorkbench");
+    expect(appShell).not.toContain("EMPTY_START_HINTS");
+    expect(appShell).not.toContain("forge-empty-entry-grid");
+    expect(appShell).not.toContain("empty-start-composer");
+    expect(emptyWorkbench).toContain("EMPTY_START_HINTS");
+    expect(emptyWorkbench).toContain("forge-empty-entry-grid");
+    expect(emptyWorkbench).toContain("empty-start-composer");
+    expect(emptyWorkbench).toContain("StartReadinessCard");
+  });
+
+  test("empty workbench orchestration is owned by a focused hook", () => {
+    const hookPath = resolve(process.cwd(), "src/components/layout/useEmptyWorkbenchController.ts");
+    const appShell = readFileSync(resolve(process.cwd(), "src/components/layout/AppShell.tsx"), "utf8");
+
+    expect(existsSync(hookPath), "useEmptyWorkbenchController should own empty workbench orchestration").toBe(true);
+
+    const hook = existsSync(hookPath) ? readFileSync(hookPath, "utf8") : "";
+
+    expect(appShell).toContain("useEmptyWorkbenchController");
+    expect(appShell).not.toContain("pickWorkspaceFolder");
+    expect(appShell).not.toContain("createProjectCheckpoint");
+    expect(appShell).not.toContain("buildFirstLoopAgentPrompt");
+    expect(appShell).not.toContain("deriveFirstLoopDraft");
+    expect(appShell).not.toContain("isBroadWorkspacePath");
+    expect(appShell).not.toContain("workspaceFromPath");
+    expect(appShell).not.toContain("emptyPromptStarting");
+    expect(appShell).not.toContain("emptyWorkspaceNotice");
+    expect(appShell).not.toContain("selectNewToolEntry");
+    expect(appShell).not.toContain("selectExistingProjectEntry");
+
+    expect(hook).toContain("function useEmptyWorkbenchController");
+    expect(hook).toContain("pickWorkspaceFolder");
+    expect(hook).toContain("createProjectCheckpoint");
+    expect(hook).toContain("buildFirstLoopAgentPrompt");
+    expect(hook).toContain("deriveFirstLoopDraft");
+    expect(hook).toContain("isBroadWorkspacePath");
+    expect(hook).toContain("workspaceFromPath");
+  });
+
+  test("app shell titlebar rendering is owned by a focused layout subview", () => {
+    const appShell = readFileSync(resolve(process.cwd(), "src/components/layout/AppShell.tsx"), "utf8");
+    const appTitlebar = readFileSync(resolve(process.cwd(), "src/components/layout/AppTitlebar.tsx"), "utf8");
+
+    expect(appShell).toContain("AppTitlebar");
+    expect(appShell).not.toContain("data-testid=\"app-titlebar\"");
+    expect(appShell).not.toContain("forge-titlebar-project");
+    expect(appShell).not.toContain("titlebarStatusState");
+    expect(appTitlebar).toContain("data-testid=\"app-titlebar\"");
+    expect(appTitlebar).toContain("forge-titlebar-project");
+    expect(appTitlebar).toContain("titlebarStatusState");
+    expect(appTitlebar).toContain("ButtonPrimitive");
   });
 
   test("sidebar keeps CSS motion hooks without eager GSAP runtime", () => {
@@ -1225,6 +1728,47 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(sidebarCss).toContain(".forge-sidebar-history-group-label");
     expect(globals).not.toContain(".forge-sidebar-history-row[data-active=\"true\"]::before");
     expect(sidebarCss).toContain("[data-forge-motion=\"sidebar-entry\"]");
+  });
+
+  test("sidebar workspace and history rendering are owned by focused subviews", () => {
+    const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
+    const workspaceMenu = readFileSync(resolve(process.cwd(), "src/components/layout/SidebarWorkspaceMenu.tsx"), "utf8");
+    const workspaceMenuContent = readFileSync(resolve(process.cwd(), "src/components/layout/SidebarWorkspaceMenuContent.tsx"), "utf8");
+    const history = readFileSync(resolve(process.cwd(), "src/components/layout/SidebarSessionHistory.tsx"), "utf8");
+
+    expect(sidebar).toContain("SidebarWorkspaceMenu");
+    expect(sidebar).toContain("SidebarSessionHistory");
+    expect(sidebar).not.toContain("workspace-menu");
+    expect(sidebar).not.toContain("workspace-path-input");
+    expect(sidebar).not.toContain("forge-sidebar-history-list");
+    expect(sidebar).not.toContain("groupSessionsByRecency");
+    expect(workspaceMenu).toContain("workspace-trigger");
+    expect(workspaceMenu).toContain("SidebarWorkspaceMenuContent");
+    expect(workspaceMenu).not.toContain("workspace-path-input");
+    expect(workspaceMenu).not.toContain("function WorkspacePathForm");
+    expect(workspaceMenuContent).toContain("workspace-menu");
+    expect(workspaceMenuContent).toContain("workspace-path-input");
+    expect(workspaceMenuContent).toContain("function WorkspacePathForm");
+    expect(history).toContain("forge-sidebar-history-list");
+    expect(history).toContain("groupSessionsByRecency");
+    expect(history).toContain("sessionRecencyLabel");
+  });
+
+  test("sidebar actions and notice rendering are owned by a focused module", () => {
+    const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/layout/SidebarActions.tsx"), "utf8");
+
+    expect(sidebar).toContain("SidebarPrimaryNav");
+    expect(sidebar).toContain("SidebarNoticeBanner");
+    expect(sidebar).toContain("SidebarUtilityNav");
+    expect(sidebar).not.toContain("function SidebarAction");
+    expect(sidebar).not.toContain("function SidebarIconAction");
+    expect(sidebar).not.toContain("function createSessionNotice");
+    expect(sidebar).not.toContain("role=\"status\"");
+    expect(actions).toContain("function SidebarPrimaryNav");
+    expect(actions).toContain("function SidebarNoticeBanner");
+    expect(actions).toContain("function SidebarUtilityNav");
+    expect(actions).toContain("function createSessionNotice");
   });
 
   test("settings dialog stays behind a lazy boundary from the sidebar", () => {
@@ -1260,6 +1804,39 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(processStyles).not.toContain("rgba(81, 71, 55");
   });
 
+  test("process detail action buttons compose Base UI button behavior", () => {
+    const files = [
+      "src/components/messages/ThinkingBlock.tsx",
+      "src/components/messages/ShellCardDetail.tsx",
+      "src/components/messages/ToolCallCard.tsx",
+    ];
+
+    for (const path of files) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+
+      expect(source, `${path} should compose Base UI Button`).toContain("@base-ui/react/button");
+      expect(source, `${path} should use ButtonPrimitive`).toContain("ButtonPrimitive");
+      expect(source, `${path} should not render a raw button`).not.toContain("<button");
+    }
+  });
+
+  test("remaining message action buttons compose Base UI button behavior", () => {
+    const files = [
+      "src/components/messages/ConfirmActions.tsx",
+      "src/components/messages/DeliverySummaryViews.tsx",
+      "src/components/messages/MissingApiKeyCard.tsx",
+      "src/components/messages/SubAgentTrace.tsx",
+    ];
+
+    for (const path of files) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+
+      expect(source, `${path} should compose Base UI Button`).toContain("@base-ui/react/button");
+      expect(source, `${path} should use ButtonPrimitive`).toContain("ButtonPrimitive");
+      expect(source, `${path} should not render a raw button`).not.toContain("<button");
+    }
+  });
+
   test("process status dots are owned by a shared component", () => {
     const thinking = readFileSync(resolve(process.cwd(), "src/components/messages/ThinkingBlock.tsx"), "utf8");
     const pending = readFileSync(resolve(process.cwd(), "src/components/messages/PendingBlock.tsx"), "utf8");
@@ -1275,14 +1852,44 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("message block routing is owned by the block renderer", () => {
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
+    const conversationLane = readFileSync(resolve(process.cwd(), "src/components/chat/ConversationLane.tsx"), "utf8");
     const blockRenderer = readFileSync(resolve(process.cwd(), "src/components/chat/BlockRenderer.tsx"), "utf8");
 
-    expect(messageList).toContain("MemoizedBlockRenderer");
+    expect(messageList).toContain("ConversationLane");
+    expect(conversationLane).toContain("MemoizedBlockRenderer");
     expect(blockRenderer).toContain("function BlockRenderer");
     expect(blockRenderer).toContain("switch (block.event_type)");
     expect(blockRenderer).toContain("MissingApiKeyCard");
+    expect(messageList).not.toContain("MemoizedBlockRenderer");
     expect(messageList).not.toContain("switch (block.event_type)");
     expect(messageList).not.toContain("MissingApiKeyCard");
+  });
+
+  test("message list scroll and lane rendering are owned by focused modules", () => {
+    const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
+    const scrollHookPath = resolve(process.cwd(), "src/components/chat/useConversationScroll.ts");
+    const lanePath = resolve(process.cwd(), "src/components/chat/ConversationLane.tsx");
+
+    expect(existsSync(scrollHookPath), "useConversationScroll should own bottom lock and scroll handlers").toBe(true);
+    expect(existsSync(lanePath), "ConversationLane should own turn rendering").toBe(true);
+
+    const scrollHook = existsSync(scrollHookPath) ? readFileSync(scrollHookPath, "utf8") : "";
+    const lane = existsSync(lanePath) ? readFileSync(lanePath, "utf8") : "";
+
+    expect(messageList).toContain("useConversationScroll");
+    expect(messageList).toContain("ConversationLane");
+    expect(messageList).not.toContain("requestAnimationFrame");
+    expect(messageList).not.toContain("cancelAnimationFrame");
+    expect(messageList).not.toContain("useState");
+    expect(messageList).not.toContain("conversationTurns.map");
+    expect(scrollHook).toContain("BOTTOM_LOCK_THRESHOLD");
+    expect(scrollHook).toContain("requestAnimationFrame");
+    expect(scrollHook).toContain("handleScroll");
+    expect(scrollHook).toContain("scrollToBottom");
+    expect(lane).toContain("conversationTurns.map");
+    expect(lane).toContain("ToolActivityGroup");
+    expect(lane).toContain("MemoizedBlockRenderer");
+    expect(lane).toContain("StartReadinessCard");
   });
 
   test("markdown rendering is owned by the markdown renderer module", () => {
@@ -1364,13 +1971,29 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(messageStyles).not.toContain("border-left: 3px solid transparent");
   });
 
+  test("diff action buttons compose Base UI button behavior", () => {
+    const diffCard = readFileSync(resolve(process.cwd(), "src/components/messages/DiffCard.tsx"), "utf8");
+    const diffBody = readFileSync(resolve(process.cwd(), "src/components/messages/DiffBody.tsx"), "utf8");
+
+    for (const source of [diffCard, diffBody]) {
+      expect(source).toContain("@base-ui/react/button");
+      expect(source).toContain("ButtonPrimitive");
+      expect(source).not.toContain("<button");
+    }
+
+    expect(diffCard).toContain("diff-body-toggle");
+    expect(diffBody).toContain("forge-diff-expand");
+  });
+
   test("confirmation copy and risk presentation are owned by its view model", () => {
     const confirmCard = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmCard.tsx"), "utf8");
     const confirmViews = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmViews.tsx"), "utf8");
+    const boundaryViews = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmBoundaryViews.tsx"), "utf8");
     const viewModel = readFileSync(resolve(process.cwd(), "src/components/messages/confirmPresentation.ts"), "utf8");
 
     expect(confirmCard).toContain("deriveConfirmPromptView");
-    expect(confirmViews).toContain("confirmRiskColor");
+    expect(confirmViews).not.toContain("confirmRiskColor");
+    expect(boundaryViews).toContain("confirmRiskColor");
     expect(confirmViews).not.toContain("permission-ticket");
     expect(viewModel).toContain("kindLabels");
     expect(viewModel).toContain("helperTextForKind");
@@ -1407,13 +2030,27 @@ test.describe("Frontend maintainability guardrails", () => {
   test("confirmation boundary rendering is owned by focused subviews", () => {
     const confirmCard = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmCard.tsx"), "utf8");
     const views = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmViews.tsx"), "utf8");
+    const actions = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmActions.tsx"), "utf8");
+    const boundaryViews = readFileSync(resolve(process.cwd(), "src/components/messages/ConfirmBoundaryViews.tsx"), "utf8");
 
     expect(confirmCard).toContain("ConfirmBoundaryPendingView");
     expect(confirmCard).toContain("ConfirmBoundaryResolvedView");
     expect(confirmCard).toContain("ConfirmPromptView");
     expect(views).toContain("ConfirmActionBar");
-    expect(views).toContain("forge-confirm-boundary-row");
-    expect(views).toContain("confirm-resolved-summary");
+    expect(views).toContain("ConfirmBoundaryGrid");
+    expect(views).toContain("ConfirmResolvedSummary");
+    expect(views).not.toContain("@base-ui/react/button");
+    expect(views).not.toContain("function ConfirmActionBar");
+    expect(views).not.toContain("function BoundaryLine");
+    expect(views).not.toContain("forge-confirm-boundary-row");
+    expect(views).not.toContain("confirm-resolved-summary");
+    expect(actions).toContain("function ConfirmActionBar");
+    expect(actions).toContain("@base-ui/react/button");
+    expect(boundaryViews).toContain("function ConfirmBoundaryGrid");
+    expect(boundaryViews).toContain("function ConfirmResolvedSummary");
+    expect(boundaryViews).toContain("function BoundaryLine");
+    expect(boundaryViews).toContain("forge-confirm-boundary-row");
+    expect(boundaryViews).toContain("confirm-resolved-summary");
     expect(views).not.toContain("permission-ticket-tag");
     expect(confirmCard).not.toContain("forge-confirm-boundary-row");
     expect(confirmCard).not.toContain("confirm-resolved-summary");
@@ -1443,6 +2080,21 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(action).toContain("navigator.clipboard");
     expect(codeBlock).not.toContain("navigator.clipboard");
     expect(diagramBlock).not.toContain("navigator.clipboard");
+  });
+
+  test("shared message copy actions compose the icon button primitive", () => {
+    const readerAction = readFileSync(resolve(process.cwd(), "src/components/messages/ReaderCaptionAction.tsx"), "utf8");
+    const messageAction = readFileSync(resolve(process.cwd(), "src/components/messages/MessageCopyAction.tsx"), "utf8");
+
+    for (const source of [readerAction, messageAction]) {
+      expect(source).toContain("@/components/primitives/icon-button");
+      expect(source).toContain("ForgeIconButton");
+      expect(source).not.toContain("<button");
+    }
+
+    expect(readerAction).toContain("forge-caption-action");
+    expect(messageAction).toContain("forge-message-copy-action");
+    expect(messageAction).toContain("data-testid=\"message-copy-action\"");
   });
 
   test("code block metadata is owned by its presentation module", () => {
@@ -1555,6 +2207,7 @@ test.describe("Timeline Message Flow", () => {
       const project = node.querySelector<HTMLElement>("[data-testid='empty-workbench-project']");
       const action = node.querySelector<HTMLElement>("[data-testid='empty-workbench-action']");
       const style = workbench ? getComputedStyle(workbench) : null;
+      const frameStyle = frame ? getComputedStyle(frame) : null;
       const actionStyle = action ? getComputedStyle(action) : null;
       const nodeRect = (node as HTMLElement).getBoundingClientRect();
       const frameRect = frame?.getBoundingClientRect();
@@ -1563,6 +2216,9 @@ test.describe("Timeline Message Flow", () => {
         background: style?.backgroundColor ?? "",
         textAlign: style?.textAlign ?? "",
         composerWidth: composer ? Math.round(composer.getBoundingClientRect().width) : 0,
+        frameBackground: frameStyle?.backgroundColor ?? "",
+        frameBorderTop: frameStyle ? Math.round(Number.parseFloat(frameStyle.borderTopWidth)) : -1,
+        frameShadow: frameStyle?.boxShadow ?? "",
         frameBottomGap: frameRect ? Math.round(nodeRect.bottom - frameRect.bottom) : -1,
         frameTop: frameRect ? Math.round(frameRect.top - nodeRect.top) : 0,
         mainHeight: Math.round(nodeRect.height),
@@ -1577,6 +2233,9 @@ test.describe("Timeline Message Flow", () => {
     expect(emptyMetrics.background).toBe("rgba(0, 0, 0, 0)");
     expect(emptyMetrics.textAlign).toBe("left");
     expect(emptyMetrics.composerWidth).toBeGreaterThanOrEqual(520);
+    expect(emptyMetrics.frameBackground).toBe("rgba(0, 0, 0, 0)");
+    expect(emptyMetrics.frameBorderTop).toBe(0);
+    expect(emptyMetrics.frameShadow).toBe("none");
     expect(emptyMetrics.frameBottomGap).toBeLessThanOrEqual(1);
     expect(emptyMetrics.frameTop).toBeGreaterThan(emptyMetrics.mainHeight * 0.65);
     expect(emptyMetrics.projectHeight).toBe(26);
