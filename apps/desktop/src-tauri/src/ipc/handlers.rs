@@ -6,7 +6,8 @@ use crate::agent::snapshot::save_session_snapshot;
 use crate::ipc::mcp_context::McpContextSelection;
 use crate::ipc::send_input_context::{
     build_prepared_send_input_turn, record_send_input_user_turn, resolve_send_input_session,
-    run_reserved_send_input_turn, select_send_input_contexts,
+    run_reserved_send_input_turn, select_send_input_contexts, BuildPreparedSendInputTurnRequest,
+    RunReservedSendInputTurnRequest, SelectSendInputContextsRequest,
 };
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
@@ -109,39 +110,39 @@ pub async fn send_input(
 ) -> Result<(), String> {
     let (s, project_path) = resolve_send_input_session(&app_handle, &state, &session_id).await?;
     let turn_guard = record_send_input_user_turn(&state, &s, &session_id, &text, &project_path)?;
-    let contexts = select_send_input_contexts(
-        &state,
-        &app_handle,
-        &session_id,
-        &text,
-        &project_path,
-        &s.harness,
-        capabilities.unwrap_or_default(),
-        mcp_context.unwrap_or_default(),
-    )
+    let contexts = select_send_input_contexts(SelectSendInputContextsRequest {
+        state: &state,
+        app_handle: &app_handle,
+        session_id: &session_id,
+        text: &text,
+        project_path: &project_path,
+        harness: &s.harness,
+        capabilities: capabilities.unwrap_or_default(),
+        mcp_context_selections: mcp_context.unwrap_or_default(),
+    })
     .await;
-    let prepared = build_prepared_send_input_turn(
-        &session_id,
-        &s,
-        &text,
-        contexts.input_intent,
-        &contexts.workflow,
-        contexts.mcp_result.ready_labels,
-        contexts.memory_selection.context,
-        contexts.project_records.context,
-        contexts.mcp_result.context,
-    )
+    let prepared = build_prepared_send_input_turn(BuildPreparedSendInputTurnRequest {
+        session_id: &session_id,
+        session: &s,
+        text: &text,
+        input_intent: contexts.input_intent,
+        workflow: &contexts.workflow,
+        ready_connector_labels: contexts.mcp_result.ready_labels,
+        memory_context: contexts.memory_selection.context,
+        wiki_context: contexts.project_records.context,
+        connector_context: contexts.mcp_result.context,
+    })
     .await;
-    run_reserved_send_input_turn(
-        &state,
-        &app_handle,
-        &s,
-        &text,
-        &project_path,
-        &contexts.workflow,
+    run_reserved_send_input_turn(RunReservedSendInputTurnRequest {
+        state: &state,
+        app_handle: &app_handle,
+        session: &s,
+        text: &text,
+        project_path: &project_path,
+        workflow: &contexts.workflow,
         prepared,
         turn_guard,
-    )
+    })
     .await
 }
 

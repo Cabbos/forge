@@ -368,17 +368,31 @@ pub(crate) struct SendInputContextBundle {
     pub(crate) mcp_result: McpContextBuildResult,
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct SelectSendInputContextsRequest<'a> {
+    pub(crate) state: &'a Arc<AppState>,
+    pub(crate) app_handle: &'a tauri::AppHandle,
+    pub(crate) session_id: &'a str,
+    pub(crate) text: &'a str,
+    pub(crate) project_path: &'a str,
+    pub(crate) harness: &'a Harness,
+    pub(crate) capabilities: Vec<ComposerCapabilitySelection>,
+    pub(crate) mcp_context_selections: Vec<McpContextSelection>,
+}
+
 pub(crate) async fn select_send_input_contexts(
-    state: &Arc<AppState>,
-    app_handle: &tauri::AppHandle,
-    session_id: &str,
-    text: &str,
-    project_path: &str,
-    harness: &Harness,
-    capabilities: Vec<ComposerCapabilitySelection>,
-    mcp_context_selections: Vec<McpContextSelection>,
+    request: SelectSendInputContextsRequest<'_>,
 ) -> SendInputContextBundle {
+    let SelectSendInputContextsRequest {
+        state,
+        app_handle,
+        session_id,
+        text,
+        project_path,
+        harness,
+        capabilities,
+        mcp_context_selections,
+    } = request;
+
     let (input_intent, workflow) =
         setup_send_input_workflow(state, app_handle, session_id, text, &capabilities).await;
     let project_records =
@@ -411,18 +425,33 @@ pub(crate) async fn select_send_input_contexts(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct BuildPreparedSendInputTurnRequest<'a> {
+    pub(crate) session_id: &'a str,
+    pub(crate) session: &'a AgentSession,
+    pub(crate) text: &'a str,
+    pub(crate) input_intent: TurnInputIntent,
+    pub(crate) workflow: &'a WorkflowState,
+    pub(crate) ready_connector_labels: Vec<String>,
+    pub(crate) memory_context: Option<String>,
+    pub(crate) wiki_context: Option<String>,
+    pub(crate) connector_context: Option<String>,
+}
+
 pub(crate) async fn build_prepared_send_input_turn(
-    session_id: &str,
-    session: &AgentSession,
-    text: &str,
-    input_intent: TurnInputIntent,
-    workflow: &WorkflowState,
-    ready_connector_labels: Vec<String>,
-    memory_context: Option<String>,
-    wiki_context: Option<String>,
-    connector_context: Option<String>,
+    request: BuildPreparedSendInputTurnRequest<'_>,
 ) -> PreparedSendInputTurnContext {
+    let BuildPreparedSendInputTurnRequest {
+        session_id,
+        session,
+        text,
+        input_intent,
+        workflow,
+        ready_connector_labels,
+        memory_context,
+        wiki_context,
+        connector_context,
+    } = request;
+
     prepare_send_input_turn_context(PrepareSendInputTurnRequest {
         session_id,
         session,
@@ -437,17 +466,31 @@ pub(crate) async fn build_prepared_send_input_turn(
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct RunReservedSendInputTurnRequest<'a> {
+    pub(crate) state: &'a Arc<AppState>,
+    pub(crate) app_handle: &'a tauri::AppHandle,
+    pub(crate) session: &'a AgentSession,
+    pub(crate) text: &'a str,
+    pub(crate) project_path: &'a str,
+    pub(crate) workflow: &'a WorkflowState,
+    pub(crate) prepared: PreparedSendInputTurnContext,
+    pub(crate) turn_guard: TurnInflightGuard,
+}
+
 pub(crate) async fn run_reserved_send_input_turn(
-    state: &Arc<AppState>,
-    app_handle: &tauri::AppHandle,
-    session: &AgentSession,
-    text: &str,
-    project_path: &str,
-    workflow: &WorkflowState,
-    prepared: PreparedSendInputTurnContext,
-    turn_guard: TurnInflightGuard,
+    request: RunReservedSendInputTurnRequest<'_>,
 ) -> Result<(), String> {
+    let RunReservedSendInputTurnRequest {
+        state,
+        app_handle,
+        session,
+        text,
+        project_path,
+        workflow,
+        prepared,
+        turn_guard,
+    } = request;
+
     let result = session
         .send_message_with_reserved_turn(
             text,
