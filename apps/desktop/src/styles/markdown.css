@@ -19,7 +19,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   border-color: var(--forge-material-border) !important;
   border-radius: calc(var(--radius) - 2px) !important;
   background: var(--forge-material-raised) !important;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset !important;
+  box-shadow: !important;
 }
 .code-caption {
   display: flex;
@@ -28,7 +28,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   justify-content: space-between;
   gap: 0.75rem;
   border-bottom: 1px solid var(--forge-material-border);
-  background: rgba(255, 252, 246, 0.36);
+  background: var(--forge-bg-raised);
   padding: 0 0.75rem;
 }
 .code-caption-dot {
@@ -48,16 +48,14 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   justify-content: center;
   border: 1px solid var(--forge-border-subtle);
   border-radius: calc(var(--radius) - 3px);
-  background: rgba(255, 252, 246, 0.36);
+  background: var(--forge-bg-raised);
   color: var(--forge-text-muted);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.014) inset;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 .forge-caption-action:hover {
   border-color: var(--forge-material-border-hover);
-  background: rgba(255, 255, 255, 0.052);
+  background: var(--forge-hover);
   color: var(--forge-text-primary);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.024) inset;
 }
 .forge-caption-action:focus-visible {
   outline: 1px solid var(--forge-focus-ring);
@@ -125,7 +123,6 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   border: 1px solid var(--forge-material-border);
   border-radius: calc(var(--radius) - 2px);
   background: var(--forge-material-raised);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset;
 }
 .diagram-caption {
   display: flex;
@@ -134,7 +131,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   justify-content: space-between;
   gap: 0.625rem;
   border-bottom: 1px solid var(--forge-material-border);
-  background: rgba(255, 252, 246, 0.36);
+  background: var(--forge-bg-raised);
   padding: 0 0.75rem;
 }
 .diagram-caption-title {
@@ -268,7 +265,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   margin: var(--forge-markdown-block-gap) 0;
   border: 1px solid var(--forge-border-subtle);
   border-radius: calc(var(--radius) - 2px);
-  background: rgba(255, 252, 246, 0.58);
+  background: var(--forge-bg-surface);
   padding: 8px 12px;
   color: var(--forge-text-muted);
   text-align: left;
@@ -360,7 +357,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   white-space: nowrap;
 }
 .markdown-content th {
-  background: rgba(255, 252, 246, 0.38);
+  background: var(--forge-bg-raised);
   color: var(--forge-text-secondary);
   font-weight: 500;
 }

@@ -16,7 +16,7 @@
     justify-content: space-between;
     gap: 0.5rem;
     border-bottom: 1px solid var(--forge-border-subtle);
-    background: rgba(255, 252, 246, 0.36);
+    background: var(--forge-bg-raised);
     padding: 0.375rem 0.625rem;
   }
 }

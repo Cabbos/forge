@@ -17,8 +17,6 @@
 
   body {
     @apply bg-background text-foreground;
-    background:
-      linear-gradient(180deg, rgba(255, 252, 246, 0.42), transparent 22rem),
-      var(--forge-bg-base);
+    background: var(--forge-bg-base);
   }
 }

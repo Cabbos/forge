@@ -30,16 +30,12 @@
 @layer components {
   .forge-app-shell {
     grid-template-columns: var(--forge-sidebar-width) minmax(0, 1fr);
-    background:
-      linear-gradient(180deg, rgba(255, 252, 246, 0.42), transparent 18rem),
-      var(--forge-bg-base);
+    background: var(--forge-bg-base);
   }
 
   .forge-main-workbench {
     position: relative;
-    background:
-      linear-gradient(180deg, rgba(255, 252, 246, 0.34), transparent 18rem),
-      var(--forge-bg-base);
+    background: var(--forge-bg-base);
   }
 
   @media (min-width: 860px) {
@@ -56,9 +52,7 @@
   }
 
   .forge-session-operating-surface {
-    background:
-      linear-gradient(180deg, rgba(255, 252, 246, 0.22), transparent 12rem),
-      var(--forge-bg-base);
+    background: var(--forge-bg-base);
   }
 
   .forge-titlebar-button:focus-visible,

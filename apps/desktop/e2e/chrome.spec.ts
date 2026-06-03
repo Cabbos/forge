@@ -250,11 +250,11 @@ test.describe("Timeline Chrome", () => {
       expect(metrics!.statusBackground).not.toBe("rgba(0, 0, 0, 0)");
       expect(metrics!.actionsGap).toBe(4);
       expect(metrics!.buttonSizes).toEqual([{ width: 28, height: 28 }, { width: 28, height: 28 }]);
-      expect(metrics!.buttonTransitions.every((value) => value.includes("box-shadow"))).toBe(true);
+      expect(metrics!.buttonTransitions.every((value) => value.includes("background-color"))).toBe(true);
   
       const searchButton = titlebar.getByRole("button", { name: "搜索" });
       await searchButton.hover();
-      await expect(searchButton).not.toHaveCSS("box-shadow", "none");
+      await expect(searchButton).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
       await releaseHeldSendInput(page);
     });
 
@@ -418,20 +418,20 @@ test.describe("Timeline Chrome", () => {
         };
       });
       expect(utilityMetrics.height).toBeLessThanOrEqual(42);
-      expect(utilityMetrics.borderTop).toBe("rgb(216, 203, 184)");
+      expect(utilityMetrics.borderTop).toBe("rgb(216, 201, 184)");
       expect(utilityMetrics.paddingTop).toBeGreaterThanOrEqual(6);
       expect(utilityMetrics.bottomGap).toBeGreaterThanOrEqual(8);
       expect(utilityMetrics.buttons.map((button) => button.width)).toEqual([28, 28, 28]);
       expect(utilityMetrics.buttons[0].left).toBeGreaterThanOrEqual(8);
-      expect(railMetrics.primaryTransitions.every((value) => value === "all" || value.includes("box-shadow"))).toBe(true);
-      expect(utilityMetrics.transitions.every((value) => value === "all" || value.includes("box-shadow"))).toBe(true);
+      expect(railMetrics.primaryTransitions.every((value) => value === "all" || value.includes("background-color"))).toBe(true);
+      expect(utilityMetrics.transitions.every((value) => value === "all" || value.includes("background-color"))).toBe(true);
   
       const searchAction = sidebar.getByRole("button", { name: "搜索" });
       await searchAction.hover();
-      await expect(searchAction).not.toHaveCSS("box-shadow", "none");
+      await expect(searchAction).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
       const pluginsAction = sidebar.getByRole("button", { name: "插件" });
       await pluginsAction.hover();
-      await expect(pluginsAction).not.toHaveCSS("box-shadow", "none");
+      await expect(pluginsAction).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
   
       await sidebar.getByRole("button", { name: "插件" }).click();
       const drawer = page.getByRole("complementary", { name: "插件" });
@@ -455,7 +455,7 @@ test.describe("Timeline Chrome", () => {
       });
       expect(drawerMaterial.token).toBe("232px");
       expect(drawerMaterial.backdrop).toBe("none");
-      expect(drawerMaterial.background).toBe("rgba(251, 244, 234, 0.96)");
+      expect(drawerMaterial.background).toBe("rgba(243, 234, 220, 0.96)");
       await expect(drawer.getByTestId("forge-icon-action").first()).toBeVisible();
       await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
       await page.keyboard.press("Escape");
@@ -515,7 +515,7 @@ test.describe("Timeline Chrome", () => {
       expect(metrics.labelInset).toBeGreaterThanOrEqual(10);
       expect(metrics.indicatorContent).toBe("none");
       expect(metrics.indicatorWidth).toBe("auto");
-      expect(metrics.borderColor).toBe("rgb(216, 203, 184)");
+      expect(metrics.borderColor).toBe("rgb(216, 201, 184)");
       expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
       expect(metrics.deleteOpacity).toBe("0");
       expect(metrics.listDisplay).toBe("flex");

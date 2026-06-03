@@ -1,8 +1,6 @@
 @layer components {
   .forge-conversation-scroll {
-    background:
-      linear-gradient(180deg, rgba(255, 252, 246, 0.34), transparent 7rem),
-      var(--forge-bg-base);
+    background: var(--forge-bg-base);
     padding: var(--forge-conversation-gutter-y) var(--forge-conversation-gutter-x);
     scroll-padding-block: var(--forge-conversation-gutter-y);
   }
@@ -73,7 +71,7 @@
     bottom: var(--forge-conversation-gutter-y);
     right: max(12px, calc((100% - var(--forge-conversation-lane-max)) / 2 - 44px));
     background: var(--forge-glass-raised);
-    box-shadow: 0 12px 28px rgba(36, 42, 36, 0.14), 0 1px 0 rgba(255, 252, 246, 0.7) inset;
+    box-shadow: var(--forge-shadow-soft);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
@@ -107,7 +105,6 @@
     font-size: 11px;
     font-weight: 500;
     line-height: 1;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
 
@@ -180,7 +177,6 @@
     font-size: 10px;
     font-weight: 600;
     line-height: 1;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset;
   }
 
   .forge-user-message {
@@ -224,7 +220,7 @@
     opacity: 0;
     pointer-events: none;
     transform: translateY(-2px) scale(0.96);
-    box-shadow: 0 8px 22px rgba(36, 42, 36, 0.1), 0 1px 0 rgba(255, 252, 246, 0.58) inset;
+    box-shadow: var(--forge-shadow-soft);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     transition: opacity 120ms ease, transform 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
@@ -245,7 +241,7 @@
 
   .forge-message-copy-action:focus-visible {
     opacity: 1;
-    outline: 1px solid rgba(255, 255, 255, 0.32);
+    outline: 1px solid var(--forge-focus-ring);
     outline-offset: 2px;
     pointer-events: auto;
   }
@@ -360,9 +356,8 @@
   .compact-spool .forge-context-compact-trigger {
     width: 100%;
     border: 1px solid var(--forge-border-subtle);
-    background: rgba(255, 252, 246, 0.72);
+    background: var(--forge-bg-surface);
     padding: 0 0.625rem;
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.62) inset;
     color: var(--forge-text-muted);
   }
 
@@ -402,8 +397,7 @@
     width: 100%;
     text-align: left;
     border-color: var(--forge-border-subtle);
-    background: rgba(255, 252, 246, 0.78);
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.62) inset;
+    background: var(--forge-bg-surface);
     cursor: pointer;
   }
 
@@ -452,11 +446,10 @@
   }
 
   .shell-reel-body {
-    background: rgba(255, 252, 246, 0.78);
+    background: var(--forge-bg-surface);
     border: 1px solid var(--forge-border-subtle);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.62) inset;
   }
 
   .shell-reel-header .forge-log-line {
@@ -473,7 +466,7 @@
     border: 1px solid var(--forge-border-subtle);
     border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 4px 12px rgba(36, 42, 36, 0.1);
+    box-shadow: var(--forge-shadow-soft);
   }
 
   .diff-filmstrip > .forge-message-panel {

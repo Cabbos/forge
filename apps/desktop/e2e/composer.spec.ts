@@ -995,7 +995,7 @@ test.describe("Timeline Composer", () => {
           toolbarHeight: toolbar ? Math.round(toolbar.getBoundingClientRect().height) : 0,
           resumeHeight: resume ? Math.round(resume.getBoundingClientRect().height) : 0,
           resumeRadius: resumeStyle ? Number.parseFloat(resumeStyle.borderTopLeftRadius) : 0,
-          resumeShadow: resumeStyle?.boxShadow ?? "",
+          resumeBorder: resumeStyle ? resumeStyle.borderColor : "",
         };
       });
   
@@ -1006,7 +1006,7 @@ test.describe("Timeline Composer", () => {
       expect(metrics.toolbarHeight).toBeLessThanOrEqual(36);
       expect(metrics.resumeHeight).toBe(32);
       expect(metrics.resumeRadius).toBeLessThanOrEqual(8);
-      expect(metrics.resumeShadow).not.toBe("none");
+      expect(metrics.resumeBorder).not.toBe("rgba(0, 0, 0, 0)");
     });
   
     test("composer floats in a transparent frame with bottom breathing room", async ({ page }) => {
@@ -1253,7 +1253,7 @@ test.describe("Timeline Composer", () => {
           selectedBackground: selectedStyle.backgroundColor,
           selectedRadius: Number.parseFloat(selectedStyle.borderTopLeftRadius),
           selectedBorder: Math.round(Number.parseFloat(selectedStyle.borderTopWidth)),
-          selectedShadow: selectedStyle.boxShadow,
+          selectedBorderColor: selectedStyle.borderColor,
         };
       });
   
@@ -1264,7 +1264,7 @@ test.describe("Timeline Composer", () => {
       expect(metrics!.selectedBackground).toBe(metrics!.hoverToken);
       expect(metrics!.selectedRadius).toBeLessThanOrEqual(8);
       expect(metrics!.selectedBorder).toBe(1);
-      expect(metrics!.selectedShadow).not.toBe("none");
+      expect(metrics!.selectedBorderColor).not.toBe("rgba(0, 0, 0, 0)");
     });
   
     test("composer uses a grounded editor surface instead of a plastic card", async ({ page }) => {

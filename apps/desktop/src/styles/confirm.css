@@ -39,7 +39,7 @@
     overflow: hidden;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 3px);
-    background: rgba(255, 252, 246, 0.36);
+    background: var(--forge-bg-raised);
     color: var(--forge-text-secondary);
     font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
     font-size: 11px;
@@ -89,7 +89,7 @@
     justify-content: flex-end;
     gap: 0.5rem;
     border-top: 1px solid rgba(184, 138, 86, 0.11);
-    background: rgba(255, 252, 246, 0.36);
+    background: var(--forge-bg-raised);
     padding: 0.375rem 0.625rem;
   }
 
@@ -142,7 +142,7 @@
   .forge-confirm-card[data-confirm-state="resolved"] .forge-message-panel-header {
     min-height: 1.75rem;
     padding: 0.125rem 0.625rem;
-    background: rgba(255, 252, 246, 0.32);
+    background: var(--forge-bg-surface);
   }
 
   .forge-confirm-resolved-summary {
@@ -187,7 +187,6 @@
     font-size: 11px;
     font-weight: 500;
     line-height: 1rem;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.014) inset;
   }
 
   .forge-confirm-resolved[data-state="approved"] {

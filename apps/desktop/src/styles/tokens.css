@@ -1,20 +1,20 @@
 @layer base {
   :root {
     --forge-ink: #242A24;
-    --forge-paper: #F7F1E8;
+    --forge-paper: #F7F2E9;
     --forge-brass: #C48A3A;
     --forge-moss: #5D805A;
     --forge-blue-gray: #4E7389;
     --forge-caution: #B85C4B;
-    --forge-bg-base: #F7F1E8;
-    --forge-bg-depth: #E8DDCF;
+    --forge-bg-base: #F7F2E9;
+    --forge-bg-depth: #ECE2D4;
     --forge-bg-subtle: #EFE5D6;
     --forge-bg-surface: #FBF7EF;
-    --forge-bg-raised: #FFFCF6;
-    --forge-bg-raised-hover: #F2E8D9;
-    --forge-bg-overlay: #FBF4EA;
-    --forge-bg-composer: #FFFCF6;
-    --forge-border-subtle: #D8CBB8;
+    --forge-bg-raised: #F3EADC;
+    --forge-bg-raised-hover: #E8DCCD;
+    --forge-bg-overlay: #F3EADC;
+    --forge-bg-composer: #F3EADC;
+    --forge-border-subtle: #D8C9B8;
     --forge-border-muted: rgba(36, 42, 36, 0.2);
     --forge-border-strong: #B8AA96;
     --forge-text-primary: #242A24;
@@ -44,37 +44,37 @@
     --forge-hover: rgba(36, 42, 36, 0.055);
     --forge-active: rgba(196, 138, 58, 0.14);
     --forge-focus-ring: rgba(196, 138, 58, 0.38);
-    --forge-shadow-soft: 0 14px 34px rgba(36, 42, 36, 0.1);
-    --forge-shadow-focus: 0 18px 42px rgba(36, 42, 36, 0.14);
-    --forge-glass-depth: rgba(232, 221, 207, 0.92);
+    --forge-shadow-soft: 0 4px 14px rgba(36, 42, 36, 0.08);
+    --forge-shadow-focus: 0 6px 20px rgba(36, 42, 36, 0.12);
+    --forge-glass-depth: rgba(236, 226, 212, 0.92);
     --forge-glass-surface: rgba(251, 247, 239, 0.92);
-    --forge-glass-raised: rgba(255, 252, 246, 0.94);
-    --forge-glass-overlay: rgba(251, 244, 234, 0.96);
-    --forge-glass-popover: rgba(255, 252, 246, 0.98);
-    --forge-material-border: #D8CBB8;
+    --forge-glass-raised: rgba(243, 234, 220, 0.94);
+    --forge-glass-overlay: rgba(243, 234, 220, 0.96);
+    --forge-glass-popover: rgba(243, 234, 220, 0.98);
+    --forge-material-border: #D8C9B8;
     --forge-material-border-hover: rgba(36, 42, 36, 0.28);
     --forge-material-border-focus: rgba(196, 138, 58, 0.42);
     --forge-material-surface: rgba(251, 247, 239, 0.96);
-    --forge-material-surface-focus: rgba(255, 252, 246, 0.99);
-    --forge-material-raised: rgba(255, 252, 246, 0.94);
-    --forge-material-popover: rgba(255, 252, 246, 0.99);
-    --forge-material-overlay: rgba(251, 244, 234, 0.96);
-    --forge-material-quiet: rgba(255, 252, 246, 0.48);
+    --forge-material-surface-focus: rgba(251, 247, 239, 0.99);
+    --forge-material-raised: rgba(243, 234, 220, 0.94);
+    --forge-material-popover: rgba(243, 234, 220, 0.99);
+    --forge-material-overlay: rgba(243, 234, 220, 0.96);
+    --forge-material-quiet: rgba(243, 234, 220, 0.48);
     --forge-material-danger: rgba(184, 92, 75, 0.08);
-    --forge-material-shadow: 0 16px 38px rgba(36, 42, 36, 0.1), 0 1px 0 rgba(255, 252, 246, 0.66) inset;
-    --forge-material-shadow-strong: 0 22px 52px rgba(36, 42, 36, 0.14), 0 0 0 1px rgba(36, 42, 36, 0.03), 0 1px 0 rgba(255, 252, 246, 0.78) inset;
-    --forge-code-bg: rgba(255, 252, 246, 0.9);
+    --forge-material-shadow: 0 3px 10px rgba(36, 42, 36, 0.08);
+    --forge-material-shadow-strong: 0 4px 14px rgba(36, 42, 36, 0.1);
+    --forge-code-bg: rgba(251, 247, 239, 0.9);
     --forge-code-text: #242A24;
     --forge-code-grid-line: rgba(36, 42, 36, 0.06);
     --forge-code-header: #8E7548;
     --forge-composer-text: #242A24;
     --forge-composer-muted: #5F5D55;
     --forge-composer-faint: #675F54;
-    --forge-composer-surface: rgba(255, 252, 246, 0.96);
-    --forge-composer-surface-focus: rgba(255, 252, 246, 0.99);
-    --forge-composer-border: #D8CBB8;
-    --forge-composer-shadow: 0 18px 40px rgba(36, 42, 36, 0.1), 0 1px 0 rgba(255, 252, 246, 0.68) inset;
-    --forge-composer-shadow-focus: 0 22px 48px rgba(36, 42, 36, 0.14), 0 0 0 1px rgba(196, 138, 58, 0.08), 0 1px 0 rgba(255, 252, 246, 0.82) inset;
+    --forge-composer-surface: rgba(243, 234, 220, 0.96);
+    --forge-composer-surface-focus: rgba(243, 234, 220, 0.99);
+    --forge-composer-border: #D8C9B8;
+    --forge-composer-shadow: 0 3px 10px rgba(36, 42, 36, 0.08);
+    --forge-composer-shadow-focus: 0 4px 14px rgba(36, 42, 36, 0.1), 0 0 0 1px rgba(196, 138, 58, 0.08);
     --background: var(--forge-bg-base);
     --foreground: var(--forge-text-primary);
     --card: var(--forge-bg-surface);
@@ -146,13 +146,13 @@
     --forge-led-idle: #675F54;
 
     /* Object materials */
-    --forge-object-paper: rgba(255, 252, 246, 0.94);
-    --forge-object-paper-border: #D8CBB8;
+    --forge-object-paper: rgba(243, 234, 220, 0.94);
+    --forge-object-paper-border: #D8C9B8;
     --forge-object-metal: rgba(232, 221, 207, 0.88);
-    --forge-object-metal-border: #D8CBB8;
-    --forge-object-receipt: rgba(255, 252, 246, 0.94);
-    --forge-object-ticket: rgba(255, 252, 246, 0.96);
-    --forge-object-ticket-border: #D8CBB8;
+    --forge-object-metal-border: #D8C9B8;
+    --forge-object-receipt: rgba(243, 234, 220, 0.94);
+    --forge-object-ticket: rgba(243, 234, 220, 0.96);
+    --forge-object-ticket-border: #D8C9B8;
 
     /* LED glow */
     --forge-led-glow-running: 0 0 4px rgba(196, 138, 58, 0.3);
@@ -161,11 +161,11 @@
 
     /* Meter bar */
     --forge-meter-filled: #5D805A;
-    --forge-meter-empty: #D8CBB8;
+    --forge-meter-empty: #D8C9B8;
 
     /* Film strip */
-    --forge-film-bg: rgba(255, 252, 246, 0.92);
+    --forge-film-bg: rgba(243, 234, 220, 0.92);
     --forge-film-perf: rgba(36, 42, 36, 0.09);
-    --forge-film-header: rgba(232, 221, 207, 0.82);
+    --forge-film-header: rgba(236, 226, 212, 0.82);
   }
 }

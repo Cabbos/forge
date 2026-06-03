@@ -1066,10 +1066,10 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.every((item) => item.background !== "rgba(0, 0, 0, 0)")).toBe(true);
     expect(metrics!.every((item) => item.border !== "rgba(0, 0, 0, 0)")).toBe(true);
     expect(metrics!.every((item) => item.color !== "rgb(184, 138, 86)")).toBe(true);
-    expect(metrics!.every((item) => item.transitionProperty.includes("box-shadow"))).toBe(true);
+    expect(metrics!.every((item) => item.transitionProperty.includes("background-color"))).toBe(true);
 
     await page.getByRole("button", { name: "复制代码" }).hover();
-    await expect(page.getByRole("button", { name: "复制代码" })).not.toHaveCSS("box-shadow", "none");
+    await expect(page.getByRole("button", { name: "复制代码" })).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
   });
 
   test("ascii architecture diagrams render as diagram surfaces instead of code blocks", async ({ page }) => {
@@ -1869,7 +1869,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.gapToken).toBe("10px");
     expect(metrics!.rowToken).toBe("28px");
     expect(metrics!.width).toBe(300);
-    expect(metrics!.background).toBe("rgb(251, 244, 234)");
+    expect(metrics!.background).toBe("rgb(236, 226, 212)");
     expect(metrics!.backdropFilter).toBe("none");
     expect(metrics!.bodyGap).toBe(10);
     expect(metrics!.rowHeight).toBe(28);
@@ -2017,7 +2017,7 @@ test.describe("Timeline Messages", () => {
           faintOnRaised: contrast(faint, raised),
         };
       });
-      expect(tokens.base).toBe("#F7F1E8");
+      expect(tokens.base).toBe("#F7F2E9");
       expect(tokens.ink).toBe("#242A24");
       expect(tokens.brass).toBe("#C48A3A");
       expect(tokens.mutedOnBase).toBeGreaterThanOrEqual(4.5);
@@ -2265,21 +2265,21 @@ test.describe("Timeline Messages", () => {
       });
   
       expect(metrics).not.toBeNull();
-      expect(metrics!.borderSubtle).toBe("#D8CBB8");
-      expect(metrics!.materialBorder).toBe("#D8CBB8");
+      expect(metrics!.borderSubtle).toBe("#D8C9B8");
+      expect(metrics!.materialBorder).toBe("#D8C9B8");
       expect(metrics!.materialSurface).toBe("rgba(251, 247, 239, 0.96)");
-      expect(metrics!.materialRaised).toBe("rgba(255, 252, 246, 0.94)");
-      expect(metrics!.materialPopover).toBe("rgba(255, 252, 246, 0.99)");
-      expect(metrics!.materialOverlay).toBe("rgba(251, 244, 234, 0.96)");
-      expect(metrics!.materialShadow).toContain("0 16px 38px");
-      expect(metrics!.composerBorderToken).toBe("#D8CBB8");
-      expect(metrics!.composerSurface).toBe("rgba(255, 252, 246, 0.96)");
-      expect(metrics!.composerShadowToken).toContain("0 18px 40px");
-      expect(metrics!.bgRaised).toBe("#FFFCF6");
+      expect(metrics!.materialRaised).toBe("rgba(243, 234, 220, 0.94)");
+      expect(metrics!.materialPopover).toBe("rgba(243, 234, 220, 0.99)");
+      expect(metrics!.materialOverlay).toBe("rgba(243, 234, 220, 0.96)");
+      expect(metrics!.materialShadow).toContain("0 3px 10px");
+      expect(metrics!.composerBorderToken).toBe("#D8C9B8");
+      expect(metrics!.composerSurface).toBe("rgba(243, 234, 220, 0.96)");
+      expect(metrics!.composerShadowToken).toContain("0 3px 10px");
+      expect(metrics!.bgRaised).toBe("#F3EADC");
       expect(metrics!.hover).toBe("rgba(36, 42, 36, 0.055)");
       expect(metrics!.focusRing).toBe("rgba(196, 138, 58, 0.38)");
-      expect(metrics!.titlebarBorder).toBe("rgb(216, 203, 184)");
-      expect(metrics!.sidebarBorder).toBe("rgb(216, 203, 184)");
+      expect(metrics!.titlebarBorder).toBe("rgb(216, 201, 184)");
+      expect(metrics!.sidebarBorder).toBe("rgb(216, 201, 184)");
       expect(metrics!.composerBorder).toBe(metrics!.composerBorderFocusToken);
       expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocus);
     });
@@ -2300,11 +2300,11 @@ test.describe("Timeline Messages", () => {
       });
   
       expect(tokens).toEqual({
-        base: "#F7F1E8",
-        depth: "#E8DDCF",
+        base: "#F7F2E9",
+        depth: "#ECE2D4",
         surface: "#FBF7EF",
-        raised: "#FFFCF6",
-        composer: "#FFFCF6",
+        raised: "#F3EADC",
+        composer: "#F3EADC",
         muted: "#5F5D55",
       });
     });

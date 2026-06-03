@@ -8,7 +8,7 @@
     overflow: hidden;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(255, 252, 246, 0.36);
+    background: var(--forge-bg-raised);
     padding: 0 0.625rem;
     margin-bottom: var(--forge-markdown-tight-gap);
     font-size: 11px;

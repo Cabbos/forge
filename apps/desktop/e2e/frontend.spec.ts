@@ -2385,7 +2385,7 @@ test.describe("Timeline Message Flow", () => {
         actionRadius: action ? Number.parseFloat(getComputedStyle(action).borderTopLeftRadius) : 0,
         actionBackground: actionStyle?.backgroundColor ?? "",
         actionBorder: actionStyle?.borderTopColor ?? "",
-        actionShadow: actionStyle?.boxShadow ?? "",
+        actionBorderColor: actionStyle?.borderColor ?? "",
       };
     });
     expect(setupMetrics.width).toBeLessThanOrEqual(620);
@@ -2397,7 +2397,7 @@ test.describe("Timeline Message Flow", () => {
     expect(setupMetrics.actionRadius).toBeLessThanOrEqual(8);
     expect(setupMetrics.actionBackground).not.toBe("rgb(184, 138, 86)");
     expect(setupMetrics.actionBorder).not.toBe("rgba(0, 0, 0, 0)");
-    expect(setupMetrics.actionShadow).not.toBe("none");
+    expect(setupMetrics.actionBorderColor).not.toBe("rgba(0, 0, 0, 0)");
     await page.getByRole("button", { name: "打开设置" }).click();
     await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "模型服务" })).toBeVisible();

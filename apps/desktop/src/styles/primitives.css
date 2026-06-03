@@ -3,7 +3,6 @@
     border: 1px solid var(--forge-material-border);
     border-radius: var(--radius);
     background: var(--forge-material-raised);
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.68) inset;
   }
 
   .forge-surface-quiet {

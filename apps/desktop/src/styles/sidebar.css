@@ -45,14 +45,13 @@
     border-radius: calc(var(--radius) - 2px);
     background: transparent;
     color: var(--forge-text-muted);
-    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   }
 
   .forge-sidebar-utility-button:hover,
   .forge-sidebar-utility-button-active {
     border-color: var(--forge-border-subtle);
     background: var(--forge-hover);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.016) inset;
     color: var(--forge-text-primary);
   }
 
@@ -70,14 +69,13 @@
     text-align: left;
     color: var(--forge-text-muted);
     box-shadow: none;
-    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
   }
 
   .forge-sidebar-workspace-trigger:hover,
   .forge-sidebar-workspace-trigger[aria-expanded="true"] {
     border-color: var(--forge-border-muted);
     background: var(--forge-hover);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.018) inset;
     color: var(--forge-text-primary);
   }
 
@@ -105,14 +103,13 @@
     color: var(--forge-text-muted);
     font-size: 12px;
     text-align: left;
-    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
   }
 
   .forge-sidebar-action:hover:not(:disabled),
   .forge-sidebar-action[data-active="true"] {
     border-color: var(--forge-border-subtle);
     background: var(--forge-hover);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.016) inset;
     color: var(--forge-text-primary);
   }
 
@@ -169,7 +166,7 @@
     margin: 1.125rem 0 0;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(255, 252, 246, 0.28);
+    background: var(--forge-bg-surface);
     padding: 0.75rem 0.625rem;
     color: var(--forge-text-faint);
     font-size: 11px;
@@ -212,14 +209,13 @@
     border-radius: calc(var(--radius) - 2px);
     padding: 0 0.45rem 0 0.625rem;
     font-size: 12px;
-    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
   }
 
   .forge-sidebar-history-row[data-active="true"] {
     border-color: var(--forge-border-subtle);
-    background: rgba(255, 252, 246, 0.42);
+    background: var(--forge-bg-surface);
     color: var(--forge-text-primary);
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.68) inset;
   }
 
   .forge-sidebar-history-row:not([data-active="true"]):hover {

@@ -4,7 +4,7 @@
     background: rgba(251, 247, 239, 0.92);
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.72) inset;
+    box-shadow: none;
   }
 
   .forge-app-titlebar {
@@ -58,7 +58,6 @@
     font-size: 10px;
     font-weight: 500;
     line-height: 1;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.014) inset;
   }
 
   .forge-titlebar-status-dot {
@@ -83,7 +82,7 @@
     overflow: hidden;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 3px);
-    background: rgba(255, 252, 246, 0.42);
+    background: var(--forge-bg-surface);
     padding: 0 0.5rem;
     color: var(--forge-text-faint);
     font-size: 11px;
@@ -131,7 +130,7 @@
   .forge-titlebar-button:hover {
     border-color: var(--forge-border-subtle);
     background: var(--forge-hover);
-    box-shadow: 0 1px 0 rgba(255, 252, 246, 0.72) inset;
+    box-shadow: none;
     color: var(--forge-text-primary);
   }
 }

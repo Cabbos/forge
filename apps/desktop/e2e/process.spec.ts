@@ -299,7 +299,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.listGap).toBe(2);
     expect(metrics!.toolHeight).toBe(44);
     expect(metrics!.toolRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.toolBorder).toBe("rgb(216, 203, 184)");
+    expect(metrics!.toolBorder).toBe("rgb(216, 201, 184)");
     expect(metrics!.toolBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.shellHeight).toBe(44);
     expect(metrics!.toolMargin).toBe("0px");
@@ -310,7 +310,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.shellWrapperMarginTop).toBe(0);
     expect(metrics!.shellWrapperBackground).toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.shellBodyRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.shellBodyBorder).toBe("rgb(216, 203, 184)");
+    expect(metrics!.shellBodyBorder).toBe("rgb(216, 201, 184)");
     expect(metrics!.shellBodyBackground).not.toBe("rgba(0, 0, 0, 0)");
   });
 
@@ -638,7 +638,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
           radius: Number.parseFloat(style.borderTopLeftRadius),
           headerHeight: header ? Math.round(header.getBoundingClientRect().height) : 0,
           detailBackground: style.backgroundColor,
-          detailBoxShadow: style.boxShadow,
+          detailBorder: style.borderColor,
           outputMaxHeight: outputStyle?.maxHeight ?? "",
           outputPaddingTop: outputStyle ? Math.round(Number.parseFloat(outputStyle.paddingTop)) : 0,
           outputFontSize: outputStyle ? Number.parseFloat(outputStyle.fontSize) : 0,
@@ -654,7 +654,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(surfaces.every((surface) => surface.radius <= 8)).toBeTruthy();
     expect(surfaces.every((surface) => surface.headerHeight === 32)).toBeTruthy();
     expect(surfaces.every((surface) => surface.detailBackground !== "rgba(0, 0, 0, 0)")).toBeTruthy();
-    expect(surfaces.every((surface) => surface.detailBoxShadow !== "none")).toBeTruthy();
+    expect(surfaces.every((surface) => surface.detailBorder !== "rgba(0, 0, 0, 0)")).toBeTruthy();
     expect(surfaces.every((surface) => surface.outputMaxHeight === "220px")).toBeTruthy();
     expect(surfaces.every((surface) => surface.outputPaddingTop === 7)).toBeTruthy();
     expect(surfaces.every((surface) => surface.outputFontSize <= 11.5)).toBeTruthy();
@@ -759,9 +759,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics).not.toBeNull();
     expect(metrics!.composerBorder).toBe(metrics!.materialBorderFocus);
     expect(metrics!.composerBackground).toBe(metrics!.composerSurfaceFocus);
-    expect(metrics!.materialShadowStrong).toContain("0 22px 52px");
-    expect(metrics!.composerShadowFocus).toContain("0 22px 48px");
-    expect(metrics!.composerShadow).toContain("22px 48px");
+    expect(metrics!.materialShadowStrong).toContain("0 4px 14px");
+    expect(metrics!.composerShadowFocus).toContain("0 4px 14px");
+    expect(metrics!.composerShadow).toContain("4px 14px");
     expect(metrics!.detailBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.detailBackground).toBe(metrics!.materialRaised);
     expect(metrics!.menuBorder).toBe(metrics!.materialBorderColor);
@@ -1202,7 +1202,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics).not.toBeNull();
     expect(metrics!.openState).toBe("true");
     expect(metrics!.cardWidth).toBeLessThanOrEqual(760);
-    expect(metrics!.cardBackground).toBe("rgba(255, 252, 246, 0.92)");
+    expect(metrics!.cardBackground).toBe("rgba(243, 234, 220, 0.92)");
     expect(metrics!.perfRows).toBe(0);
     expect(metrics!.maxWidth).not.toBe("none");
     expect(metrics!.bodyMaxHeight).toBe("320px");

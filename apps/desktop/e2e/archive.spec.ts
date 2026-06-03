@@ -976,7 +976,7 @@ test.describe("Timeline Archive", () => {
           secondRowBorderTop: secondRowStyle?.borderTopColor ?? "",
           firstRowTransition: rowStyle?.transitionProperty ?? "",
           statusRadius: status ? Number.parseFloat(getComputedStyle(status).borderTopLeftRadius) : 0,
-          statusBoxShadow: status ? getComputedStyle(status).boxShadow : "",
+          statusBorder: status ? getComputedStyle(status).borderColor : "",
         };
       });
       expect(settingsMetrics.panelRadius).toBeLessThanOrEqual(8);
@@ -988,11 +988,11 @@ test.describe("Timeline Archive", () => {
       expect(settingsMetrics.firstRowBackground).not.toBe("rgba(0, 0, 0, 0)");
       expect(settingsMetrics.firstRowBorderTop).toBe("rgba(0, 0, 0, 0)");
       expect(settingsMetrics.secondRowBorderTop).toBe("rgba(0, 0, 0, 0)");
-      expect(settingsMetrics.firstRowTransition.includes("box-shadow")).toBe(true);
+      expect(settingsMetrics.firstRowTransition.includes("background-color")).toBe(true);
       expect(settingsMetrics.statusRadius).toBeLessThanOrEqual(8);
-      expect(settingsMetrics.statusBoxShadow).not.toBe("none");
+      expect(settingsMetrics.statusBorder).not.toBe("rgba(0, 0, 0, 0)");
       await providerRows.first().hover();
-      await expect(providerRows.first()).not.toHaveCSS("box-shadow", "none");
+      await expect(providerRows.first()).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
       const deepseek = dialog.locator("section").filter({ hasText: "DeepSeek" });
       await expect(deepseek.getByText("DeepSeek V4 Flash 1M")).toBeVisible();
       await expect(deepseek.getByText("默认模型 · 上下文 1M")).toBeVisible();
