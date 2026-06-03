@@ -3,12 +3,10 @@ use std::sync::Arc;
 use crate::agent::capability_context::ComposerCapabilitySelection;
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
 use crate::agent::snapshot::save_session_snapshot;
-use crate::ipc::mcp_context::{build_mcp_context, McpContextSelection};
-use crate::ipc::project_records::select_send_input_project_records_context;
+use crate::ipc::mcp_context::McpContextSelection;
 use crate::ipc::send_input_context::{
-    finalize_send_input_turn, prepare_send_input_turn_context, record_send_input_user_turn,
-    resolve_send_input_session, select_send_input_memory_context, setup_send_input_workflow,
-    PrepareSendInputTurnRequest,
+    build_prepared_send_input_turn, record_send_input_user_turn, resolve_send_input_session,
+    run_reserved_send_input_turn, select_send_input_contexts,
 };
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
@@ -16,7 +14,6 @@ use crate::ipc::session_lifecycle::{
     register_and_dispatch_session_start, restore_session_from_snapshot, resume_existing_session,
 };
 use crate::protocol::commands::SessionCreated;
-use crate::protocol::events::StreamEvent;
 use crate::settings;
 use crate::state::AppState;
 use crate::workspace_safety::resolve_session_workspace_path as resolve_session_working_dir;
@@ -112,70 +109,40 @@ pub async fn send_input(
 ) -> Result<(), String> {
     let (s, project_path) = resolve_send_input_session(&app_handle, &state, &session_id).await?;
     let turn_guard = record_send_input_user_turn(&state, &s, &session_id, &text, &project_path)?;
-    let capabilities = capabilities.unwrap_or_default();
-    let mcp_context_selections = mcp_context.unwrap_or_default();
-    let (input_intent, workflow) =
-        setup_send_input_workflow(&state, &app_handle, &session_id, &text, &capabilities).await;
-    let project_records =
-        select_send_input_project_records_context(&state, &text, &project_path).await;
-    if !project_records.selected.is_empty() {
-        crate::transcript::emit_stream_event(
-            &app_handle,
-            StreamEvent::ForgeWikiContextSelected {
-                session_id: session_id.clone(),
-                selected: project_records.selected.clone(),
-            },
-        );
-    }
-    let memory_selection = select_send_input_memory_context(&state, &text, &project_path).await;
-    crate::transcript::emit_stream_event(
-        &app_handle,
-        StreamEvent::MemorySelection {
-            session_id: session_id.clone(),
-            selected: memory_selection.selected.clone(),
-        },
-    );
-    let mcp_context_result = build_mcp_context(
-        &s.harness,
-        &mcp_context_selections,
+    let contexts = select_send_input_contexts(
+        &state,
         &app_handle,
         &session_id,
+        &text,
+        &project_path,
+        &s.harness,
+        capabilities.unwrap_or_default(),
+        mcp_context.unwrap_or_default(),
     )
     .await;
-    let ready_connector_labels = mcp_context_result.ready_labels.clone();
-    let prepared = prepare_send_input_turn_context(PrepareSendInputTurnRequest {
-        session_id: &session_id,
-        session: &s,
-        text: &text,
-        input_intent,
-        workflow: &workflow,
-        ready_connector_labels,
-        memory_context: memory_selection.context,
-        wiki_context: project_records.context,
-        connector_context: mcp_context_result.context,
-    })
+    let prepared = build_prepared_send_input_turn(
+        &session_id,
+        &s,
+        &text,
+        contexts.input_intent,
+        &contexts.workflow,
+        contexts.mcp_result.ready_labels,
+        contexts.memory_selection.context,
+        contexts.project_records.context,
+        contexts.mcp_result.context,
+    )
     .await;
-    let result = s
-        .send_message_with_reserved_turn(
-            &text,
-            &app_handle,
-            prepared.hidden_contexts,
-            Some(prepared.turn_metadata),
-            Some(&prepared.activation_text),
-            turn_guard,
-        )
-        .await;
-    finalize_send_input_turn(
+    run_reserved_send_input_turn(
         &state,
         &app_handle,
         &s,
         &text,
         &project_path,
-        &workflow,
-        &result,
+        &contexts.workflow,
+        prepared,
+        turn_guard,
     )
-    .await;
-    result
+    .await
 }
 
 #[cfg(test)]

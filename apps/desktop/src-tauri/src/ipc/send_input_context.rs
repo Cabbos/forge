@@ -15,7 +15,11 @@ use crate::ipc::delivery_summary::build_store_emit_delivery_summary;
 use crate::ipc::file_references::{
     build_file_reference_context_with_paths, resolved_file_reference_paths_for_turn,
 };
-use crate::ipc::project_records::propose_send_input_project_record_update;
+use crate::ipc::mcp_context::{build_mcp_context, McpContextBuildResult, McpContextSelection};
+use crate::ipc::project_records::{
+    propose_send_input_project_record_update, select_send_input_project_records_context,
+    SendInputProjectRecordsSelection,
+};
 use crate::ipc::send_input_continuity::{
     record_failed_send_input_continuity, record_send_input_user_message_continuity,
     record_successful_send_input_continuity,
@@ -354,6 +358,117 @@ pub(crate) async fn finalize_send_input_turn(
             latest_turn_for_delivery.as_ref(),
         );
     }
+}
+
+pub(crate) struct SendInputContextBundle {
+    pub(crate) input_intent: TurnInputIntent,
+    pub(crate) workflow: WorkflowState,
+    pub(crate) project_records: SendInputProjectRecordsSelection,
+    pub(crate) memory_selection: SendInputMemorySelection,
+    pub(crate) mcp_result: McpContextBuildResult,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn select_send_input_contexts(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    text: &str,
+    project_path: &str,
+    harness: &Harness,
+    capabilities: Vec<ComposerCapabilitySelection>,
+    mcp_context_selections: Vec<McpContextSelection>,
+) -> SendInputContextBundle {
+    let (input_intent, workflow) =
+        setup_send_input_workflow(state, app_handle, session_id, text, &capabilities).await;
+    let project_records =
+        select_send_input_project_records_context(state, text, project_path).await;
+    if !project_records.selected.is_empty() {
+        crate::transcript::emit_stream_event(
+            app_handle,
+            StreamEvent::ForgeWikiContextSelected {
+                session_id: session_id.to_string(),
+                selected: project_records.selected.clone(),
+            },
+        );
+    }
+    let memory_selection = select_send_input_memory_context(state, text, project_path).await;
+    crate::transcript::emit_stream_event(
+        app_handle,
+        StreamEvent::MemorySelection {
+            session_id: session_id.to_string(),
+            selected: memory_selection.selected.clone(),
+        },
+    );
+    let mcp_result =
+        build_mcp_context(harness, &mcp_context_selections, app_handle, session_id).await;
+    SendInputContextBundle {
+        input_intent,
+        workflow,
+        project_records,
+        memory_selection,
+        mcp_result,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn build_prepared_send_input_turn(
+    session_id: &str,
+    session: &AgentSession,
+    text: &str,
+    input_intent: TurnInputIntent,
+    workflow: &WorkflowState,
+    ready_connector_labels: Vec<String>,
+    memory_context: Option<String>,
+    wiki_context: Option<String>,
+    connector_context: Option<String>,
+) -> PreparedSendInputTurnContext {
+    prepare_send_input_turn_context(PrepareSendInputTurnRequest {
+        session_id,
+        session,
+        text,
+        input_intent,
+        workflow,
+        ready_connector_labels,
+        memory_context,
+        wiki_context,
+        connector_context,
+    })
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_reserved_send_input_turn(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+    session: &AgentSession,
+    text: &str,
+    project_path: &str,
+    workflow: &WorkflowState,
+    prepared: PreparedSendInputTurnContext,
+    turn_guard: TurnInflightGuard,
+) -> Result<(), String> {
+    let result = session
+        .send_message_with_reserved_turn(
+            text,
+            app_handle,
+            prepared.hidden_contexts,
+            Some(prepared.turn_metadata),
+            Some(&prepared.activation_text),
+            turn_guard,
+        )
+        .await;
+    finalize_send_input_turn(
+        state,
+        app_handle,
+        session,
+        text,
+        project_path,
+        workflow,
+        &result,
+    )
+    .await;
+    result
 }
 
 #[cfg(test)]
