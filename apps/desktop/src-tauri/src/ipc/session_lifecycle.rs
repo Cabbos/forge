@@ -394,3 +394,7 @@ pub async fn delete_session(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "session_lifecycle_tests.rs"]
+mod tests;
