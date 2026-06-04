@@ -5,6 +5,10 @@ node_modules/
 dist/
 src-tauri/target/
 
+# Test output
+test-results/
+playwright-report/
+
 # IDE
 .vscode/
 .idea/
