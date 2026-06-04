@@ -9,13 +9,12 @@ interface ShellOutputSection {
 }
 
 interface ShellCardDetailProps {
-  command: string;
   output: string;
   outputSections: ShellOutputSection[];
   tone: string;
 }
 
-export function ShellCardDetail({ command, output, outputSections, tone }: ShellCardDetailProps) {
+export function ShellCardDetail({ output, outputSections, tone }: ShellCardDetailProps) {
   const [copied, setCopied] = useState(false);
 
   const copyOutput = async () => {
@@ -27,7 +26,7 @@ export function ShellCardDetail({ command, output, outputSections, tone }: Shell
   return (
     <div data-testid="log-detail-surface" className="forge-log-detail" data-tone={tone}>
       <div data-testid="log-detail-header" className="forge-log-detail-header">
-        <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground/75">{command}</span>
+        <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground/75">命令输出</span>
         <ButtonPrimitive
           type="button"
           aria-label={copied ? "已复制命令输出" : "复制命令输出"}

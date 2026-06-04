@@ -56,9 +56,10 @@ export function ComposerToolbar({
             title="引用文件"
             onClick={() => onToggleSuggestion("@")}
             data-active={showSuggestions === "@" ? "true" : "false"}
-            className="forge-composer-tool"
+            className="forge-composer-tool forge-composer-tool--file"
           >
             <ForgeIcon icon={composerToolbarIcons.file.icon} tone={composerToolbarIcons.file.tone} contained={false} />
+            <span className="forge-composer-tool-label">选择文件</span>
           </ButtonPrimitive>
           <ButtonPrimitive
             type="button"
@@ -70,7 +71,7 @@ export function ComposerToolbar({
             title="常用请求"
             onClick={() => onToggleSuggestion("/")}
             data-active={showSuggestions === "/" ? "true" : "false"}
-            className="forge-composer-tool"
+            className="forge-composer-tool forge-composer-tool--command"
           >
             <ForgeIcon icon={composerToolbarIcons.command.icon} tone={composerToolbarIcons.command.tone} contained={false} />
           </ButtonPrimitive>

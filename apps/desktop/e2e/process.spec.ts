@@ -1202,7 +1202,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics).not.toBeNull();
     expect(metrics!.openState).toBe("true");
     expect(metrics!.cardWidth).toBeLessThanOrEqual(760);
-    expect(metrics!.cardBackground).toBe("rgba(243, 234, 220, 0.92)");
+    expect(metrics!.cardBackground).toBe("rgba(42, 39, 33, 0.94)");
     expect(metrics!.perfRows).toBe(0);
     expect(metrics!.maxWidth).not.toBe("none");
     expect(metrics!.bodyMaxHeight).toBe("320px");
@@ -1620,4 +1620,3 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     );
     expect(doneTone).toBe("success");
   });
-

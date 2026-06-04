@@ -1557,6 +1557,9 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(card).toContain("deriveToolCallView");
     expect(card).toContain("forge-evidence-row");
     expect(viewModel).toContain("TOOL_COPY");
+    expect(viewModel).toContain("list_directory");
+    expect(viewModel).toContain("hasRenderableToolInput");
+    expect(viewModel).toContain('if (!hasRenderableToolInput(data)) return "";');
     expect(viewModel).toContain("summarizeToolInput");
     expect(viewModel).toContain("summarizeToolResult");
     expect(card).not.toContain("const TOOL_COPY");
@@ -1576,6 +1579,10 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(viewModel).toContain("parseShellOutput");
     expect(viewModel).toContain("outputSections");
     expect(viewModel).toContain("exitCode");
+    expect(viewModel).toContain("if (!output.trim()) return [];");
+    expect(viewModel).toContain("if (content.trim()) sections.push");
+    expect(viewModel).toContain("let sawExplicitLabel = false;");
+    expect(viewModel).toContain("if (sawExplicitLabel) return [];");
     expect(card).not.toContain("function parseShellOutput");
     expect(card).not.toContain("shell-reel-cap");
     expect(styles).not.toContain(".shell-reel-cap");
@@ -1586,7 +1593,11 @@ test.describe("Frontend maintainability guardrails", () => {
     const header = readFileSync(resolve(process.cwd(), "src/components/messages/ShellCardHeader.tsx"), "utf8");
 
     expect(card).toContain("ShellCardHeader");
+    expect(card).toContain("const hasOutput = shellView.outputSections.length > 0");
+    expect(card).toContain("hasDetail={hasOutput}");
     expect(header).toContain("shell-card-trigger");
+    expect(header).toContain("data-expandable=\"false\"");
+    expect(header).toContain("data-expandable=\"true\"");
     expect(header).toContain("forge-log-status");
     expect(header).toContain("shell-exit-code");
     expect(header).toContain("CollapsibleTrigger");
@@ -1602,8 +1613,12 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(card).toContain("ShellCardDetail");
     expect(detail).toContain("navigator.clipboard");
     expect(detail).toContain("log-detail-header");
+    expect(detail).toContain("命令输出");
+    expect(detail).not.toContain("{command}");
+    expect(output).toContain("if (sections.length === 0) return null;");
     expect(output).toContain("shell-output-section");
     expect(output).toContain("forge-shell-output-label");
+    expect(output).not.toContain('section.content || " "');
     expect(card).not.toContain("navigator.clipboard");
     expect(card).not.toContain("shell-output-section");
   });
@@ -1712,6 +1727,22 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(appTitlebar).toContain("forge-titlebar-project");
     expect(appTitlebar).toContain("titlebarStatusState");
     expect(appTitlebar).toContain("ButtonPrimitive");
+  });
+
+  test("macOS window chrome keeps native controls inside the sidebar plane", () => {
+    const tauriConfig = JSON.parse(readFileSync(resolve(process.cwd(), "src-tauri/tauri.conf.json"), "utf8"));
+    const sidebar = readFileSync(resolve(process.cwd(), "src/components/layout/Sidebar.tsx"), "utf8");
+    const sidebarCss = readFileSync(resolve(process.cwd(), "src/styles/sidebar.css"), "utf8");
+    const primaryWindow = tauriConfig.app.windows[0];
+
+    expect(primaryWindow.decorations).toBe(true);
+    expect(primaryWindow.titleBarStyle).toBe("Overlay");
+    expect(primaryWindow.hiddenTitle).toBe(true);
+    expect(primaryWindow.trafficLightPosition).toEqual({ x: 16, y: 15 });
+    expect(sidebar).toContain("forge-sidebar-window-drag-region");
+    expect(sidebar).toContain("data-tauri-drag-region=\"true\"");
+    expect(sidebarCss).toContain("--forge-sidebar-chrome-safe-top");
+    expect(sidebarCss).toContain("--forge-sidebar-traffic-safe-left");
   });
 
   test("sidebar keeps CSS motion hooks without eager GSAP runtime", () => {

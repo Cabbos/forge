@@ -73,6 +73,12 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
   return (
     <aside data-testid="app-sidebar" className="forge-sidebar h-full w-full select-none overflow-hidden">
+      <div
+        aria-hidden="true"
+        data-tauri-drag-region="true"
+        className="forge-sidebar-window-drag-region"
+      />
+
       {/* Brand */}
       <div data-forge-motion="sidebar-entry" className="forge-sidebar-brand">
         <img src={forgeMark} alt="" className="size-7 flex-shrink-0 rounded-md" />

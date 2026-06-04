@@ -51,9 +51,11 @@ export function TextBlock({ block, sessionId }: { block: BlockState; sessionId?:
         <div
           data-testid="assistant-message"
           data-message-role="assistant"
+          data-state={block.isComplete ? "complete" : "streaming"}
           className="forge-message-with-actions assistant-paper"
         >
           <span aria-hidden="true" className="forge-assistant-avatar">F</span>
+          <span className="forge-assistant-name">Forge</span>
           <MessageCopyAction text={block.content} label="回复" />
           <div className="markdown-content">
             <MarkdownRenderer

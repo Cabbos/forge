@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm run check:conversation-style",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:build": "tauri build",
+    "check:conversation-style": "node scripts/check-conversation-style.mjs",
     "check:backend": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"

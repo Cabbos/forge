@@ -391,7 +391,7 @@ test.describe("Timeline Chrome", () => {
       expect(railMetrics.workspaceHeight).toBe(30);
       expect(railMetrics.workspaceRadius).toBeLessThanOrEqual(8);
       expect(railMetrics.workspaceBorder).toBe("rgba(0, 0, 0, 0)");
-      expect(railMetrics.workspaceBackground).toBe("rgba(0, 0, 0, 0)");
+      expect(railMetrics.workspaceBackground).toBe("rgba(34, 32, 28, 0.74)");
       expect(railMetrics.primaryGap).toBeLessThanOrEqual(3);
       expect(railMetrics.primaryActions).toEqual([28, 28]);
       expect(railMetrics.brandHeight).toBeGreaterThanOrEqual(40);
@@ -418,7 +418,7 @@ test.describe("Timeline Chrome", () => {
         };
       });
       expect(utilityMetrics.height).toBeLessThanOrEqual(42);
-      expect(utilityMetrics.borderTop).toBe("rgb(216, 201, 184)");
+      expect(utilityMetrics.borderTop).toBe("rgb(58, 53, 44)");
       expect(utilityMetrics.paddingTop).toBeGreaterThanOrEqual(6);
       expect(utilityMetrics.bottomGap).toBeGreaterThanOrEqual(8);
       expect(utilityMetrics.buttons.map((button) => button.width)).toEqual([28, 28, 28]);
@@ -453,9 +453,9 @@ test.describe("Timeline Chrome", () => {
           background: style.backgroundColor,
         };
       });
-      expect(drawerMaterial.token).toBe("232px");
+      expect(drawerMaterial.token).toBe("216px");
       expect(drawerMaterial.backdrop).toBe("none");
-      expect(drawerMaterial.background).toBe("rgba(243, 234, 220, 0.96)");
+      expect(drawerMaterial.background).toBe("rgba(42, 39, 33, 0.97)");
       await expect(drawer.getByTestId("forge-icon-action").first()).toBeVisible();
       await expect(drawer.getByText(/[☖⎔◈●]/)).toHaveCount(0);
       await page.keyboard.press("Escape");

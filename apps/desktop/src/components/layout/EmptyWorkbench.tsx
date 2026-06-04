@@ -2,6 +2,7 @@ import type { KeyboardEventHandler, RefObject } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ArrowUp, FolderOpen, SquarePen } from "lucide-react";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
+import forgeMark from "@/assets/forge-mark.svg";
 
 const EMPTY_START_HINTS = [
   "我想做一个记录喝水次数的小工具",
@@ -51,6 +52,11 @@ export function EmptyWorkbench({
   onUseEmptyHint,
   project,
 }: EmptyWorkbenchProps) {
+  const emptyHeading = hasActiveWorkspace ? "从当前项目开始" : "选择项目开始";
+  const emptySubheading = hasActiveWorkspace
+    ? "选择一个入口，或直接在下方输入下一步任务。"
+    : "先绑定一个本地文件夹，Forge 才会开始行动。";
+
   return (
     <div
       className={hasActiveWorkspace ? "forge-empty-shell forge-empty-shell-codex" : "forge-empty-shell forge-empty-shell-centered"}
@@ -58,6 +64,14 @@ export function EmptyWorkbench({
       <div data-testid="empty-workbench" className="forge-empty-workbench">
         <div data-testid="empty-middle-hints" className="forge-empty-hints">
           <div className="forge-empty-hints-inner">
+            <div className="forge-empty-identity" data-forge-motion="empty-entry">
+              <img src={forgeMark} alt="" className="forge-empty-identity-mark" />
+              <div className="forge-empty-identity-copy">
+                <span className="forge-empty-kicker">Forge Workbench</span>
+                <h1 className="forge-empty-heading">{emptyHeading}</h1>
+                <p className="forge-empty-subheading">{emptySubheading}</p>
+              </div>
+            </div>
             <div className="forge-empty-entry-grid" aria-label="开始方式">
               <ButtonPrimitive
                 type="button"

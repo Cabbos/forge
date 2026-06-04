@@ -3,9 +3,11 @@ import type { DraftState } from "./WikiSectionTypes";
 import { PendingUpdatesSection } from "./WikiPendingUpdatesSection";
 import { ProjectRecordsSection } from "./WikiProjectRecordsSection";
 import { SavedBackgroundSection } from "./WikiSavedBackgroundSection";
+import { ContinuityExperiencesSection } from "./ContinuityExperiencesSection";
 
 interface WikiSectionsViewProps {
   currentProjectPath: string;
+  sessionId: string | null;
   forgeWikiState: ForgeWikiState | null;
   loading: boolean;
   error: string;
@@ -30,6 +32,7 @@ interface WikiSectionsViewProps {
 
 export function WikiSectionsView({
   currentProjectPath,
+  sessionId,
   forgeWikiState,
   loading,
   error,
@@ -90,6 +93,8 @@ export function WikiSectionsView({
         onPinMemory={onPinMemory}
         onForgetMemory={onForgetMemory}
       />
+
+      <ContinuityExperiencesSection currentProjectPath={currentProjectPath} sessionId={sessionId} />
 
       {error && (
         <div className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">

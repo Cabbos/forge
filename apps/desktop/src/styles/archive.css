@@ -5,7 +5,7 @@
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     border-left: 1px solid var(--forge-material-border);
-    box-shadow: -4px 0 10px rgba(36, 42, 36, 0.04);
+    box-shadow: -8px 0 18px rgba(0, 0, 0, 0.18);
   }
 
   :root:has(.forge-composer-model-menu) .forge-inspector {

@@ -5,7 +5,7 @@
     left: var(--forge-sidebar-width);
     right: 0;
     z-index: 40;
-    background: rgba(251, 244, 234, 0.78);
+    background: rgba(247, 242, 233, 0.72);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -21,10 +21,10 @@
     flex-direction: column;
     overflow: hidden;
     border-right: 1px solid var(--forge-border-subtle);
-    background: var(--forge-glass-overlay);
+    background: var(--forge-material-overlay);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    box-shadow: 14px 0 34px rgba(36, 42, 36, 0.1);
+    box-shadow: 14px 0 34px rgba(66, 52, 34, 0.12);
   }
 
   .forge-capability-drawer-header {
@@ -42,7 +42,7 @@
     overflow: hidden;
     border: 1px solid var(--forge-border-subtle);
     border-radius: var(--radius);
-    background: var(--forge-material-surface);
+    background: var(--forge-material-popover);
     color: var(--forge-text-secondary);
   }
 
@@ -340,7 +340,7 @@
     height: 0.625rem;
     border-radius: 50%;
     background: var(--forge-text-secondary);
-    box-shadow: 0 1px 2px rgba(36, 42, 36, 0.18);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
     transition: transform 120ms ease, background-color 120ms ease;
   }
 

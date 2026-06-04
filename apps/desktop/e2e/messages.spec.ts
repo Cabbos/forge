@@ -2017,9 +2017,9 @@ test.describe("Timeline Messages", () => {
           faintOnRaised: contrast(faint, raised),
         };
       });
-      expect(tokens.base).toBe("#F7F2E9");
-      expect(tokens.ink).toBe("#242A24");
-      expect(tokens.brass).toBe("#C48A3A");
+      expect(tokens.base).toBe("#1B1A17");
+      expect(tokens.ink).toBe("#12110F");
+      expect(tokens.brass).toBe("#B88A56");
       expect(tokens.mutedOnBase).toBeGreaterThanOrEqual(4.5);
       expect(tokens.mutedOnDepth).toBeGreaterThanOrEqual(4.5);
       expect(tokens.faintOnBase).toBeGreaterThanOrEqual(4.5);
@@ -2265,26 +2265,26 @@ test.describe("Timeline Messages", () => {
       });
   
       expect(metrics).not.toBeNull();
-      expect(metrics!.borderSubtle).toBe("#D8C9B8");
-      expect(metrics!.materialBorder).toBe("#D8C9B8");
-      expect(metrics!.materialSurface).toBe("rgba(251, 247, 239, 0.96)");
-      expect(metrics!.materialRaised).toBe("rgba(243, 234, 220, 0.94)");
-      expect(metrics!.materialPopover).toBe("rgba(243, 234, 220, 0.99)");
-      expect(metrics!.materialOverlay).toBe("rgba(243, 234, 220, 0.96)");
-      expect(metrics!.materialShadow).toContain("0 3px 10px");
-      expect(metrics!.composerBorderToken).toBe("#D8C9B8");
-      expect(metrics!.composerSurface).toBe("rgba(243, 234, 220, 0.96)");
-      expect(metrics!.composerShadowToken).toContain("0 3px 10px");
-      expect(metrics!.bgRaised).toBe("#F3EADC");
-      expect(metrics!.hover).toBe("rgba(36, 42, 36, 0.055)");
-      expect(metrics!.focusRing).toBe("rgba(196, 138, 58, 0.38)");
-      expect(metrics!.titlebarBorder).toBe("rgb(216, 201, 184)");
-      expect(metrics!.sidebarBorder).toBe("rgb(216, 201, 184)");
+      expect(metrics!.borderSubtle).toBe("#3A352C");
+      expect(metrics!.materialBorder).toBe("#3A352C");
+      expect(metrics!.materialSurface).toBe("rgba(34, 32, 28, 0.96)");
+      expect(metrics!.materialRaised).toBe("rgba(42, 39, 33, 0.94)");
+      expect(metrics!.materialPopover).toBe("rgba(42, 39, 33, 0.99)");
+      expect(metrics!.materialOverlay).toBe("rgba(42, 39, 33, 0.97)");
+      expect(metrics!.materialShadow).toContain("0 10px 28px");
+      expect(metrics!.composerBorderToken).toBe("#514737");
+      expect(metrics!.composerSurface).toBe("rgba(34, 32, 28, 0.98)");
+      expect(metrics!.composerShadowToken).toContain("0 12px 28px");
+      expect(metrics!.bgRaised).toBe("#26231E");
+      expect(metrics!.hover).toBe("rgba(207, 199, 184, 0.07)");
+      expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.42)");
+      expect(metrics!.titlebarBorder).toBe("rgb(58, 53, 44)");
+      expect(metrics!.sidebarBorder).toBe("rgb(58, 53, 44)");
       expect(metrics!.composerBorder).toBe(metrics!.composerBorderFocusToken);
       expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocus);
     });
   
-    test("V3 color ladder keeps the light workbench readable", async ({ page }) => {
+    test("V3 color ladder keeps the dark workbench readable", async ({ page }) => {
       await page.goto("http://localhost:1420");
   
       const tokens = await page.evaluate(() => {
@@ -2300,12 +2300,12 @@ test.describe("Timeline Messages", () => {
       });
   
       expect(tokens).toEqual({
-        base: "#F7F2E9",
-        depth: "#ECE2D4",
-        surface: "#FBF7EF",
-        raised: "#F3EADC",
-        composer: "#F3EADC",
-        muted: "#5F5D55",
+        base: "#1B1A17",
+        depth: "#12110F",
+        surface: "#22201C",
+        raised: "#26231E",
+        composer: "#22201C",
+        muted: "#928B7E",
       });
     });
   
@@ -2354,7 +2354,7 @@ test.describe("Timeline Messages", () => {
         };
       });
   
-      expect(metrics.accent).toBe("#C48A3A");
+      expect(metrics.accent).toBe("#B88A56");
       expect(metrics.radius).toBeLessThanOrEqual(8);
       expect(metrics.tabHeight).toBe(32);
       expect(metrics.tabBorder).toBe("rgb(196, 138, 58)");

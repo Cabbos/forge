@@ -200,4 +200,67 @@
     background: rgba(212, 119, 119, 0.055);
     color: var(--forge-danger);
   }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card {
+    max-width: min(820px, 100%);
+    border-color: #E1D8CC !important;
+    background: #FFFBF4 !important;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card[data-confirm-state="pending"] {
+    border-color: #E3D1C7 !important;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-boundary-grid {
+    padding: 0.5rem 0.875rem;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-boundary-row {
+    min-height: 2.25rem;
+    border-top-color: #E8E1D7;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-file-chip,
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-command {
+    border-color: #DED6CB;
+    background: #F7F2E9;
+    color: var(--forge-text-secondary);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-action-bar {
+    min-height: 3rem;
+    border-top-color: #E8E1D7;
+    background: #FBF7EF;
+    padding: 0.5rem 0.875rem;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button {
+    height: 2rem;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button[data-variant="approve"] {
+    border-color: #171612;
+    background: #171612;
+    color: #F7F4EE;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button[data-variant="cancel"] {
+    border-color: #DDD6CB;
+    background: #FBF7EF;
+    color: var(--forge-text-secondary);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-resolved[data-state="approved"] {
+    border-color: #CFE4C8;
+    background: #EEF7EB;
+    color: #3F7041;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-resolved[data-state="cancelled"] {
+    border-color: #E7C5B9;
+    background: #FFF0EA;
+    color: #994731;
+  }
 }

@@ -30,6 +30,7 @@ export function ConversationLane({ conversationTurns, laneRef, sessionId, empty 
             data-testid="conversation-turn"
             data-turn-shape={turn.hasEvidence ? "with-evidence" : "direct"}
             data-turn-start={turn.startsWithUser ? "user" : "system"}
+            data-turn-rail={getConversationTurnRail(turn)}
             className="forge-conversation-turn"
           >
             {turn.items.map((item) => (
@@ -74,4 +75,8 @@ function getMessageBlockRole(item: MessageItem) {
     default:
       return item.block.content ? "assistant" : "trace";
   }
+}
+
+function getConversationTurnRail(turn: ConversationTurn) {
+  return turn.items.some((item) => getMessageBlockRole(item) !== "user") ? "assistant" : "user";
 }

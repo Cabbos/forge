@@ -7,11 +7,14 @@ import { MessageCopyAction } from "@/components/messages/MessageCopyAction";
 
 export function UserMessage({ block }: { block: BlockState }) {
   const [previewFileRef, setPreviewFileRef] = useState<FileRef | null>(null);
+  const isLongMessage = block.content.length > 160 || block.content.includes("\n");
 
   return (
-    <div className="forge-user-message-row">
+    <div className="forge-user-message-row" data-message-length={isLongMessage ? "long" : "short"}>
       <div
         data-testid="user-message"
+        data-message-role="user"
+        data-long={isLongMessage ? "true" : "false"}
         className="forge-message-with-actions user-command-note"
       >
         <MessageCopyAction text={block.content} label="提问" />

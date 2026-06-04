@@ -19,14 +19,18 @@ export function deriveShellView(block: BlockState) {
 }
 
 function parseShellOutput(output: string, isError: boolean) {
+  if (!output.trim()) return [];
+
   const lines = output.split("\n");
   const sections: Array<{ label: string; content: string }> = [];
   let currentLabel: string | null = null;
   let currentLines: string[] = [];
+  let sawExplicitLabel = false;
 
   const flush = () => {
     if (!currentLabel) return;
-    sections.push({ label: currentLabel, content: currentLines.join("\n").trimEnd() });
+    const content = currentLines.join("\n").trimEnd();
+    if (content.trim()) sections.push({ label: currentLabel, content });
     currentLines = [];
   };
 
@@ -35,6 +39,7 @@ function parseShellOutput(output: string, isError: boolean) {
     if (match) {
       flush();
       currentLabel = match[1].toLowerCase();
+      sawExplicitLabel = true;
       continue;
     }
     if (!currentLabel) currentLabel = isError ? "output" : "stdout";
@@ -42,5 +47,7 @@ function parseShellOutput(output: string, isError: boolean) {
   }
   flush();
 
-  return sections.length ? sections : [{ label: isError ? "output" : "stdout", content: output }];
+  if (sections.length) return sections;
+  if (sawExplicitLabel) return [];
+  return [{ label: isError ? "output" : "stdout", content: output.trimEnd() }];
 }

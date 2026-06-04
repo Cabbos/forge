@@ -452,6 +452,20 @@ export async function searchContinuityExperiences(
   });
 }
 
+export async function updateContinuityExperienceStatus(
+  experienceId: string,
+  status: ContinuityExperienceStatus,
+  sessionId?: string,
+  workingDir?: string | null,
+): Promise<ContinuityExperience> {
+  return invoke("update_continuity_experience_status", {
+    experienceId,
+    status,
+    sessionId: sessionId ?? null,
+    workingDir: workingDir ?? null,
+  });
+}
+
 export async function getWorkflowState(sessionId: string): Promise<WorkflowState | null> {
   if (!hasTauriRuntime()) return null;
   return invoke("get_workflow_state", { sessionId });

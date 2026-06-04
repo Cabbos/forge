@@ -5,7 +5,10 @@ interface SessionViewProps { sessionId: string }
 
 export function SessionView({ sessionId }: SessionViewProps) {
   return (
-    <div className="forge-session-operating-surface flex-1 min-h-0 flex flex-col bg-background">
+    <div
+      data-conversation-theme="light"
+      className="forge-session-operating-surface flex-1 min-h-0 flex flex-col bg-background"
+    >
       {/* Chat scroll area — takes all remaining space */}
       <ChatView />
 

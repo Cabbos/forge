@@ -2,6 +2,7 @@
   .forge-delivery-card {
     max-width: 720px;
     background: var(--forge-material-raised) !important;
+    box-shadow: var(--forge-material-shadow);
   }
 
   .forge-delivery-card .forge-message-panel-header {
@@ -27,7 +28,7 @@
     align-items: flex-start;
     gap: 0.5rem;
     overflow: hidden;
-    border: 1px solid rgba(36, 42, 36, 0.12);
+    border: 1px solid var(--forge-border-muted);
     border-radius: calc(var(--radius) - 2px);
     background: var(--forge-bg-surface);
     padding: 0.5rem 0.625rem;
@@ -94,12 +95,63 @@
 
   .forge-delivery-action[data-loaded="true"] {
     border-color: rgba(184, 138, 86, 0.38);
-    background: rgba(184, 138, 86, 0.1);
+    background: rgba(184, 138, 86, 0.12);
     color: var(--forge-accent);
   }
 
   .forge-delivery-action:focus-visible {
     outline: 1px solid var(--forge-focus-ring);
     outline-offset: 2px;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-card {
+    max-width: min(820px, 100%);
+    border-color: #E1D8CC !important;
+    background: #FFFBF4 !important;
+    box-shadow: 0 8px 20px rgba(66, 52, 34, 0.045);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-card .forge-message-panel-header {
+    min-height: 2.5rem;
+    background: #FBF7EF;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-grid {
+    gap: 0.625rem;
+    padding: 0.75rem 0.875rem;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-item {
+    min-height: 3.25rem;
+    border-color: #E3DDD3;
+    border-radius: 8px;
+    background: #FBF7EF;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-label {
+    color: var(--forge-text-muted);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-value {
+    color: var(--forge-text-primary);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-action-bar {
+    padding: 0 0.875rem 0.875rem;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-action {
+    height: 2rem;
+    border-color: #D8CDBF;
+    border-radius: 8px;
+    background: #F7F2E9;
+    color: #8A5C2C;
+    font-size: 12px;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-action:hover {
+    border-color: #C9B79F;
+    background: #F5EBDD;
+    color: #70481F;
   }
 }

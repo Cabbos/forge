@@ -8,12 +8,17 @@ import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMot
 
 export function ShellCard({ block }: { block: BlockState }) {
   const shellView = deriveShellView(block);
+  const hasOutput = shellView.outputSections.length > 0;
   const [expanded, setExpanded] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!hasOutput) {
+      setExpanded(false);
+      return;
+    }
     if (block.isComplete && shellView.isError) setExpanded(true);
-  }, [block.isComplete, shellView.isError]);
+  }, [block.isComplete, hasOutput, shellView.isError]);
 
   useGSAP(() => {
     if (!expanded || prefersReducedMotion()) return;
@@ -36,13 +41,16 @@ export function ShellCard({ block }: { block: BlockState }) {
 
   return (
     <div ref={rootRef} className="shell-reel">
-      <ForgeCollapsible open={expanded} onOpenChange={setExpanded}>
+      <ForgeCollapsible open={expanded && hasOutput} onOpenChange={(open) => {
+        if (hasOutput) setExpanded(open);
+      }}>
         <div className="shell-reel-header">
           <div className="shell-reel-body">
             <ShellCardHeader
               command={shellView.command}
               expanded={expanded}
               exitCode={shellView.exitCode}
+              hasDetail={hasOutput}
               isError={shellView.isError}
               isRunning={shellView.isRunning}
               state={shellView.state}
@@ -50,14 +58,15 @@ export function ShellCard({ block }: { block: BlockState }) {
             />
           </div>
         </div>
-        <ForgeCollapsibleContent data-forge-motion="shell-detail">
-          <ShellCardDetail
-            command={shellView.command}
-            output={shellView.output}
-            outputSections={shellView.outputSections}
-            tone={shellView.tone}
-          />
-        </ForgeCollapsibleContent>
+        {hasOutput && (
+          <ForgeCollapsibleContent data-forge-motion="shell-detail">
+            <ShellCardDetail
+              output={shellView.output}
+              outputSections={shellView.outputSections}
+              tone={shellView.tone}
+            />
+          </ForgeCollapsibleContent>
+        )}
       </ForgeCollapsible>
     </div>
   );

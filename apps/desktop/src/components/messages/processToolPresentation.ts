@@ -11,6 +11,7 @@ const TOOL_COPY: Record<string, { label: string; done: string; running: string }
   grep: { label: "搜索内容", running: "正在搜索内容", done: "已搜索内容" },
   search_files: { label: "查找文件", running: "正在查找文件", done: "已查找文件" },
   glob: { label: "查找文件", running: "正在查找文件", done: "已查找文件" },
+  list_directory: { label: "列出目录", running: "正在列出目录", done: "已列出目录" },
   git_diff: { label: "查看改动", running: "正在查看改动", done: "已整理改动" },
   run_shell: { label: "运行命令", running: "正在运行命令", done: "命令已完成" },
   bash: { label: "运行命令", running: "正在运行命令", done: "命令已完成" },
@@ -45,6 +46,7 @@ export function deriveToolCallView(block: BlockState) {
 function summarizeToolInput(toolName: string, input: unknown) {
   if (!input || typeof input !== "object") return "";
   const data = input as Record<string, unknown>;
+  if (!hasRenderableToolInput(data)) return "";
   const pick = (...keys: string[]) => keys.map((key) => data[key]).find((value) => typeof value === "string" && value.trim()) as string | undefined;
 
   if (["read_file", "read", "write_file", "edit"].includes(toolName)) {
@@ -61,6 +63,10 @@ function summarizeToolInput(toolName: string, input: unknown) {
     return pick("pattern", "query") ?? compactPath(pick("path") ?? "");
   }
 
+  if (toolName === "list_directory") {
+    return compactPath(pick("path", "directory", "dir") ?? "");
+  }
+
   if (["run_shell", "bash", "execute_command", "shell"].includes(toolName)) {
     return truncateMiddle(pick("command", "cmd") ?? "", 72);
   }
@@ -74,6 +80,17 @@ function summarizeToolInput(toolName: string, input: unknown) {
   }
 
   return truncateMiddle(JSON.stringify(data), 72);
+}
+
+function hasRenderableToolInput(data: Record<string, unknown>) {
+  return Object.values(data).some((value) => {
+    if (value === null || value === undefined) return false;
+    if (typeof value === "string") return value.trim().length > 0;
+    if (typeof value === "number" || typeof value === "boolean") return true;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    return false;
+  });
 }
 
 function compactPath(path: string) {

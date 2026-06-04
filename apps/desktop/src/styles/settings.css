@@ -1,7 +1,33 @@
 @layer components {
   .forge-settings-dialog {
+    --forge-bg-base: #F7F2E9;
+    --forge-bg-surface: #FFFBF4;
+    --forge-bg-raised: #F7F2E9;
+    --forge-bg-raised-hover: #ECE4D7;
+    --forge-border-subtle: #DDD6CB;
+    --forge-border-muted: rgba(92, 81, 68, 0.16);
+    --forge-border-strong: #CFC7B8;
+    --forge-text-primary: #211F1B;
+    --forge-text-secondary: #4D4740;
+    --forge-text-muted: #716A61;
+    --forge-text-faint: #948B80;
+    --forge-hover: rgba(92, 81, 68, 0.055);
+    --forge-active: rgba(184, 138, 86, 0.12);
+    --forge-focus-ring: rgba(184, 138, 86, 0.38);
+    --forge-shadow-focus: 0 12px 32px rgba(66, 52, 34, 0.11);
+    --forge-material-surface: #FFFBF4;
+    --forge-material-raised: #F7F2E9;
+    --forge-material-popover: #FFFBF4;
+    --background: var(--forge-bg-base);
+    --foreground: var(--forge-text-primary);
+    --popover: var(--forge-material-popover);
+    --popover-foreground: var(--forge-text-primary);
+    --muted: var(--forge-bg-raised);
+    --muted-foreground: var(--forge-text-muted);
+    --border: var(--forge-border-subtle);
     border-color: var(--forge-border-subtle);
     background: var(--forge-material-popover);
+    color: var(--forge-text-primary);
     outline: none;
     --tw-ring-color: var(--forge-border-subtle);
     --tw-ring-shadow: 0 0 0 1px var(--forge-border-subtle);
@@ -117,7 +143,7 @@
   }
 
   .forge-settings-row:hover {
-    border-color: rgba(196, 138, 58, 0.18);
+    border-color: rgba(184, 138, 86, 0.18);
     background: var(--forge-material-surface);
   }
 

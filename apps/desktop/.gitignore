@@ -34,3 +34,4 @@ docs/superpowers/
 
 # Local MCP config (contains API keys)
 .mcp.json
+.gitnexus

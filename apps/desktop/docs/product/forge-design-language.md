@@ -178,3 +178,5 @@ Each slice should keep these checks current:
 - long Markdown content remains bounded
 - reduced motion remains understandable
 - screenshots of dense conversations do not read as a wall of cards
+
+For the P0 light conversation pass, `npm run check:conversation-style` is the static contract gate. It verifies the light conversation scope, material tokens, composer states, message primitives, process summary states, confirmation actions, and delivery surfaces before `npm run build` proceeds.

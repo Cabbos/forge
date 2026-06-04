@@ -5,6 +5,7 @@
     border: 1px solid var(--forge-material-border);
     border-radius: calc(var(--radius) - 2px);
     background: var(--forge-material-quiet);
+    box-shadow: 0 1px 0 rgba(238, 234, 225, 0.04) inset;
     margin: 0;
   }
 
@@ -18,5 +19,19 @@
     border-bottom: 1px solid var(--forge-border-subtle);
     background: var(--forge-bg-raised);
     padding: 0.375rem 0.625rem;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel {
+    border-color: #DDD6CB;
+    border-radius: 10px;
+    background: #FFFBF4 !important;
+    box-shadow: 0 8px 20px rgba(66, 52, 34, 0.045);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel-header {
+    min-height: 2.5rem;
+    border-bottom-color: #E8E1D7;
+    background: #FBF7EF;
+    padding: 0.5rem 0.75rem;
   }
 }

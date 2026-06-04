@@ -132,6 +132,7 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
   return (
     <WikiSectionsView
       currentProjectPath={currentProjectPath}
+      sessionId={sessionId}
       forgeWikiState={forgeWikiState}
       loading={loading}
       error={error}
