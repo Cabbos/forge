@@ -188,6 +188,57 @@ def test_api_with_sqlite_storage_persists_run_after_restart(tmp_path: Path) -> N
     assert report.json()["tasks"][0]["task_id"] == "task-pass"
 
 
+def test_api_with_sqlite_storage_lists_runs_and_artifacts_after_restart(
+    tmp_path: Path,
+) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    db_path = tmp_path / "forge_eval.db"
+    artifacts_path = tmp_path / "artifacts"
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=db_path,
+        artifacts_path=artifacts_path,
+    )
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1"},
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run_id"]
+
+    restarted_storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=db_path,
+        artifacts_path=artifacts_path,
+    )
+    restarted_client = TestClient(create_app(storage=restarted_storage))
+
+    runs = restarted_client.get("/runs")
+    assert runs.status_code == 200
+    assert [run["run_id"] for run in runs.json()] == [run_id]
+    assert runs.json()[0]["metrics"]["success_rate"] == 1.0
+
+    trace = restarted_client.get(f"/runs/{run_id}/trace")
+    assert trace.status_code == 200
+    assert trace.json()[0]["task_id"] == "task-pass"
+
+    metrics = restarted_client.get(f"/runs/{run_id}/metrics")
+    assert metrics.status_code == 200
+    assert metrics.json()["success_rate"] == 1.0
+
+    report = restarted_client.get(f"/runs/{run_id}/report")
+    assert report.status_code == 200
+    assert report.json()["tasks"][0]["task_id"] == "task-pass"
+
+    artifacts = restarted_client.get(f"/runs/{run_id}/artifacts")
+    assert artifacts.status_code == 200
+    assert {artifact["kind"] for artifact in artifacts.json()} == {"report", "trace"}
+    assert all(Path(artifact["path"]).exists() for artifact in artifacts.json())
+
+
 def test_build_storage_uses_sqlite_when_configured(tmp_path: Path) -> None:
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)

@@ -32,10 +32,12 @@ flowchart TD
         H["GET /health"]
         TL["GET /tasks"]
         CR["POST /runs"]
+        LR["GET /runs"]
         GR["GET /runs/{id}"]
         GT["GET /runs/{id}/trace"]
         GM["GET /runs/{id}/metrics"]
         GP["GET /runs/{id}/report"]
+        GA["GET /runs/{id}/artifacts"]
     end
 
     subgraph CLI["CLI"]
@@ -196,6 +198,15 @@ flowchart LR
 
 `provider=forge` 时，API 会使用 `FORGE_EVAL_FORGE_AGENT_COMMAND` 指定的外部命令。
 
+本地真实 Forge 接入命令：
+
+```bash
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+  uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
+```
+
+Forge headless command 从 stdin 读取 task/prompt/workspace JSON，从 stdout 输出单个 trace JSON。进程 exit code 只表示 headless runner 是否崩溃；任务成功、验证失败、scope violation、模型/API 错误都应通过 trace 字段表达。
+
 ```mermaid
 flowchart LR
     E[EvaluationTask] --> W[临时 workspace]
@@ -227,7 +238,7 @@ flowchart TD
     TR --> TS[(SQLite eval_run_tasks<br/>summary only)]
 ```
 
-The database stores metadata and summaries only. Large trace/report JSON remains in filesystem artifacts so SQLite rows stay small and easy to inspect.
+The database stores metadata and summaries only. Large trace/report JSON remains in filesystem artifacts so SQLite rows stay small and easy to inspect. The API can list persisted runs through `GET /runs` and expose trace/report artifact metadata through `GET /runs/{id}/artifacts`.
 
 Local SQLite mode:
 

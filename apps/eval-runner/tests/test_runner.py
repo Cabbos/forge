@@ -413,6 +413,63 @@ json.dump(
     assert trace.failure_reason == "Verification command failed."
 
 
+def test_forge_runner_maps_headless_agent_error_to_runner_error(tmp_path: Path) -> None:
+    script = tmp_path / "fake_headless_agent_error.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "changed_files": [],
+        "error": "agent_error",
+        "failure_category": "agent_error",
+        "failure_reason": "Forge agent turn failed.",
+        "final_answer": "",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="headless-agent-error",
+        title="Headless agent error",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "agent_error"
+    assert trace.failure_category == FailureCategory.RUNNER_ERROR
+    assert trace.failure_reason == "Forge agent turn failed."
+
+
+def test_forge_runner_reports_invalid_stdout_as_contract_error(tmp_path: Path) -> None:
+    script = tmp_path / "fake_invalid_stdout.py"
+    script.write_text("print('not json')\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="invalid-stdout",
+        title="Invalid stdout",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert trace.failure_reason.startswith("Forge command returned invalid trace JSON:")
+
+
 def test_forge_runner_returns_runner_error_when_command_is_missing() -> None:
     task = EvaluationTask(id="missing-command", title="Missing command", prompt="Run Forge.")
 

@@ -7,6 +7,7 @@ from app.metrics import calculate_metrics
 from app.models import (
     AgentTrace,
     BacktestReport,
+    EvalArtifact,
     EvaluationRun,
     EvaluationTask,
     MetricsSummary,
@@ -110,6 +111,10 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
         get_storage().save_run(run)
         return run
 
+    @app.get("/runs", response_model=list[EvaluationRun])
+    def list_runs() -> list[EvaluationRun]:
+        return get_storage().list_runs()
+
     @app.get("/runs/{run_id}", response_model=EvaluationRun)
     def get_run(run_id: str) -> EvaluationRun:
         return require_run(run_id)
@@ -125,6 +130,11 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
     @app.get("/runs/{run_id}/report", response_model=BacktestReport)
     def get_run_report(run_id: str) -> BacktestReport:
         return build_report(require_run(run_id).traces)
+
+    @app.get("/runs/{run_id}/artifacts", response_model=list[EvalArtifact])
+    def get_run_artifacts(run_id: str) -> list[EvalArtifact]:
+        require_run(run_id)
+        return get_storage().list_artifacts(run_id)
 
     return app
 

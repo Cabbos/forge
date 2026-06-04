@@ -13,6 +13,7 @@ class FailureCategory(StrEnum):
     TOOL_ERROR = "tool_error"
     TIMEOUT = "timeout"
     SCOPE_VIOLATION = "scope_violation"
+    FORGE_CONTRACT_ERROR = "forge_contract_error"
 
 
 class RunStatus(StrEnum):

@@ -63,10 +63,12 @@ forge-eval-runner/
 - `GET /health`
 - `GET /tasks`
 - `POST /runs`
+- `GET /runs`
 - `GET /runs/{run_id}`
 - `GET /runs/{run_id}/trace`
 - `GET /runs/{run_id}/metrics`
 - `GET /runs/{run_id}/report`
+- `GET /runs/{run_id}/artifacts`
 
 ## Run Locally
 
@@ -107,7 +109,7 @@ artifacts/
     report.json
 ```
 
-This preserves the current synchronous API contract while making completed runs queryable after the storage object or process restarts.
+This preserves the current synchronous API contract while making completed runs, trace/report artifacts, and run lists queryable after the storage object or process restarts.
 
 ## Worker Mode
 
@@ -169,18 +171,20 @@ The CLI prints a JSON backtest report:
 }
 ```
 
-Use the same command shape for the Forge contract once `FORGE_EVAL_FORGE_AGENT_COMMAND` points to a headless-compatible Forge command:
+Use the same command shape for the Forge contract once `FORGE_EVAL_FORGE_AGENT_COMMAND` points to the Forge headless binary:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="python scripts/fake_forge_agent.py" \
-  uv run python -m app.cli --cases eval_cases --provider forge --model local-forge
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+  uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
 ```
+
+The Forge command reads the eval payload from stdin and writes one trace JSON object to stdout. The current headless default is DeepSeek `deepseek-v4-flash`; override it with `FORGE_HEADLESS_PROVIDER` or `FORGE_HEADLESS_MODEL` when needed.
 
 When debugging a real agent run, add `--output` to keep the full trace artifact
 while stdout remains the compact report:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="python scripts/fake_forge_agent.py" \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli \
     --cases eval_cases/small-edit-success \
     --provider forge \
@@ -223,6 +227,12 @@ Fetch trace:
 curl http://localhost:8000/runs/<run_id>/trace
 ```
 
+List runs:
+
+```bash
+curl http://localhost:8000/runs
+```
+
 Fetch metrics:
 
 ```bash
@@ -233,6 +243,12 @@ Fetch the backtest report:
 
 ```bash
 curl http://localhost:8000/runs/<run_id>/report
+```
+
+Fetch artifact metadata:
+
+```bash
+curl http://localhost:8000/runs/<run_id>/artifacts
 ```
 
 ## Eval Case Format
@@ -267,10 +283,10 @@ Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id
 
 ## Running Against Forge
 
-Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to a headless Forge-compatible command, then create a run with `provider: "forge"`:
+Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to the Forge headless binary, then create a run with `provider: "forge"`:
 
 ```bash
-export FORGE_EVAL_FORGE_AGENT_COMMAND="python scripts/fake_forge_agent.py"
+export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
 
 curl -X POST http://localhost:8000/runs \
   -H "Content-Type: application/json" \

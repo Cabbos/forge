@@ -270,7 +270,7 @@ class ForgeAgentRunner:
                     started_at=started_at,
                     error="invalid_forge_trace",
                     failure_reason=f"Forge command returned invalid trace JSON: {exc}",
-                    failure_category=FailureCategory.RUNNER_ERROR,
+                    failure_category=FailureCategory.FORGE_CONTRACT_ERROR,
                     shell_outputs=[*setup_outputs, command_output],
                 )
 
@@ -512,14 +512,33 @@ def run_validation_commands(task: EvaluationTask, workspace: Path) -> list[Shell
 
 
 def normalize_failure_category(value: str | FailureCategory) -> FailureCategory:
-    if value == "verification":
-        return FailureCategory.VERIFICATION_FAILED
-    return FailureCategory(value)
+    if isinstance(value, FailureCategory):
+        return value
+
+    aliases = {
+        "api": FailureCategory.RUNNER_ERROR,
+        "agent_error": FailureCategory.RUNNER_ERROR,
+        "missing_api_key": FailureCategory.RUNNER_ERROR,
+        "setup_failed": FailureCategory.RUNNER_ERROR,
+        "tool": FailureCategory.TOOL_ERROR,
+        "tool_failed": FailureCategory.TOOL_ERROR,
+        "verification": FailureCategory.VERIFICATION_FAILED,
+    }
+    normalized = aliases.get(str(value))
+    if normalized is not None:
+        return normalized
+
+    try:
+        return FailureCategory(str(value))
+    except ValueError:
+        return FailureCategory.FORGE_CONTRACT_ERROR
 
 
 def normalize_error(error: str | None, failure_category: FailureCategory) -> str | None:
     if error == "verification" and failure_category == FailureCategory.VERIFICATION_FAILED:
         return "verification_failed"
+    if error is None and failure_category != FailureCategory.NONE:
+        return failure_category.value
     return error
 
 
