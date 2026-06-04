@@ -5,7 +5,7 @@ use tokio::sync::Notify;
 use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::harness::Harness;
 
-const MAX_ROUNDS: usize = 3;
+const MAX_ROUNDS: usize = 20;
 const MAX_RESULT_CHARS: usize = 8000;
 
 /// Structured trace of one sub-agent round for the frontend viewer.

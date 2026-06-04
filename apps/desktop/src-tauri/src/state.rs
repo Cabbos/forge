@@ -37,10 +37,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(harness: Arc<Harness>) -> Self {
         let pending_confirms = harness.pending_confirms.clone();
-        let continuity_path = harness.working_dir.join(".forge").join("continuity.db");
-        let continuity = Arc::new(
-            ContinuityService::open(&continuity_path).expect("Failed to open continuity database"),
-        );
+        let continuity = Arc::new(ContinuityService::new());
         Self {
             sessions: RwLock::new(HashMap::new()),
             session_order: RwLock::new(VecDeque::new()),
@@ -219,6 +216,8 @@ mod tests {
             .record_event(&workspace.to_string_lossy(), &event)
             .expect("record continuity event");
 
+        // DB should be created inside the project's own .forge/ directory,
+        // not in the Forge application's working directory.
         assert!(workspace.join(".forge").join("continuity.db").exists());
 
         let _ = std::fs::remove_dir_all(&workspace);

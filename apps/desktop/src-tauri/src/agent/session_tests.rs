@@ -489,6 +489,70 @@ impl AiAdapter for FakeAdapter {
     }
 }
 
+struct StreamingFakeAdapter {
+    inner: FakeAdapter,
+}
+
+impl StreamingFakeAdapter {
+    fn new(responses: Vec<StreamResult>) -> Self {
+        Self {
+            inner: FakeAdapter::new(responses),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AiAdapter for StreamingFakeAdapter {
+    async fn stream_message(
+        &self,
+        _session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _app_handle: &tauri::AppHandle,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("StreamingFakeAdapter::stream_message should not be called in tests");
+    }
+
+    async fn call(
+        &self,
+        messages: &[crate::adapters::base::ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.inner.call(messages, cancel).await
+    }
+
+    async fn call_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[crate::adapters::base::ChatMessage],
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        let result = self.call(messages, cancel).await?;
+        for tool_call in &result.tool_calls {
+            emitter.emit(StreamEvent::ToolCallStart {
+                session_id: session_id.to_string(),
+                block_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                tool_input: tool_call.input.clone(),
+            });
+            emitter.emit(StreamEvent::ToolCallEnd {
+                session_id: session_id.to_string(),
+                block_id: tool_call.id.clone(),
+            });
+        }
+        Ok(result)
+    }
+
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+}
+
 /// Build a test workspace with a known file and return the path.
 fn setup_test_workspace(prefix: &str) -> std::path::PathBuf {
     let workspace = std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::now_v7()));
@@ -1089,6 +1153,135 @@ async fn adapter_called_exactly_once_per_tool_round_plus_final_summary() {
         adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
         2,
         "should call adapter exactly 2 times: 1 tool round + 1 final summary"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
+async fn final_summary_tool_calls_are_kept_out_of_rendered_stream() {
+    let workspace = setup_test_workspace("forge-final-summary-tool-stream");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+    let response = StreamResult {
+        assistant_content: vec![
+            serde_json::json!({"type": "text", "text": "我需要验证一下"}),
+            serde_json::json!({
+                "type": "tool_use", "id": "summary-shell-1", "name": "run_shell",
+                "input": {"command": "npm run build"}
+            }),
+        ],
+        tool_calls: vec![ToolCall {
+            id: "summary-shell-1".to_string(),
+            name: "run_shell".to_string(),
+            input: serde_json::json!({"command": "npm run build"}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    let adapter = Arc::new(StreamingFakeAdapter::new(vec![response]));
+    let session = AgentSession::new(
+        "session-final-summary-tool-stream".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+    lock_unpoisoned(&session.messages).push(ChatMessage::user("工具结果已经返回"));
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    session
+        .finalize_turn(&[], &emitter, None, Arc::new(Notify::new()))
+        .await;
+
+    let events = emitter.drain();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            StreamEvent::TextChunk { content, .. } if content.contains("我需要验证一下")
+        )),
+        "final summary text should still render"
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            StreamEvent::ToolCallStart { block_id, .. }
+                | StreamEvent::ToolCallEnd { block_id, .. }
+                | StreamEvent::ToolCallResult { block_id, .. } if block_id == "summary-shell-1"
+        )),
+        "final-summary tool calls are not executed and must not render as failed tools"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
+async fn agent_turn_allows_long_tool_loop_before_final_answer() {
+    let workspace = setup_test_workspace("forge-many-tool-rounds");
+    std::fs::write(workspace.join("data.txt"), "test-data\n").expect("write data.txt");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    let mut responses = Vec::new();
+    for idx in 0..30 {
+        let id = format!("read-{idx}");
+        responses.push(StreamResult {
+            assistant_content: vec![
+                serde_json::json!({"type": "text", "text": format!("第 {idx} 轮读取")}),
+                serde_json::json!({
+                    "type": "tool_use", "id": id, "name": "read_file",
+                    "input": {"path": "data.txt"}
+                }),
+            ],
+            tool_calls: vec![ToolCall {
+                id: format!("read-{idx}"),
+                name: "read_file".to_string(),
+                input: serde_json::json!({"path": "data.txt"}),
+            }],
+            stop_reason: Some("tool_use".to_string()),
+        });
+    }
+    responses.push(StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text", "text": "完成"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    });
+
+    let adapter = Arc::new(FakeAdapter::new(responses));
+    let session = AgentSession::new(
+        "session-many-tool-rounds".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    let emitter = crate::agent::event_sink::NoopEventEmitter;
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+    session
+        .send_message_with_emitter(
+            "连续读取文件直到完成",
+            &emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        )
+        .await
+        .expect("turn succeeds");
+
+    assert_eq!(
+        adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
+        31,
+        "30 tool rounds plus final answer should run before finalization"
+    );
+
+    let turn = lock_unpoisoned(&session.latest_turn);
+    assert_eq!(
+        turn.as_ref().map(|turn| turn.status.clone()),
+        Some(AgentTurnStatus::Completed)
     );
 
     let _ = std::fs::remove_dir_all(&workspace);

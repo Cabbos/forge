@@ -3,9 +3,8 @@ use std::sync::Arc;
 use crate::agent::time::now_ms;
 use crate::agent::turn_state::AgentTurnState;
 use crate::continuity::{
-    build_send_input_reflection_event, continuity_events_from_turn,
-    continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, dedupe_lessons,
-    ContinuityEvent, ReflectionOutcome,
+    build_episode_from_turn, build_send_input_reflection_event, continuity_events_from_turn,
+    continuity_lessons_from_turn, ContinuityEvent, ReflectionOutcome,
 };
 use crate::memory::extract_candidates_from_user_message;
 use crate::protocol::events::StreamEvent;
@@ -78,13 +77,10 @@ pub(crate) async fn record_successful_send_input_continuity(
     project_path: &str,
     latest_turn: Option<&AgentTurnState>,
 ) {
+    // Memory candidates go to wiki_memory separately; do NOT mix them into
+    // continuity reflection lessons to avoid prompt-echo pollution.
     let memory_candidates =
         extract_candidates_from_user_message(session_id, Some(project_path), text);
-    let mut continuity_lessons = continuity_lessons_from_memory_candidates(&memory_candidates);
-    if let Some(turn) = latest_turn {
-        continuity_lessons.extend(continuity_lessons_from_turn(turn));
-        continuity_lessons = dedupe_lessons(continuity_lessons);
-    }
     for candidate in memory_candidates {
         match state.wiki_memory.upsert_candidate(candidate).await {
             Ok(Some(memory)) => {
@@ -102,6 +98,14 @@ pub(crate) async fn record_successful_send_input_continuity(
             }
         }
     }
+
+    // Continuity lessons come ONLY from execution outcomes (tool failures,
+    // verification failures), never from raw user message memory candidates.
+    let continuity_lessons = latest_turn
+        .map(continuity_lessons_from_turn)
+        .unwrap_or_default();
+    let episode = latest_turn.map(build_episode_from_turn);
+
     record_continuity_event_safely(
         state,
         project_path,
@@ -110,6 +114,7 @@ pub(crate) async fn record_successful_send_input_continuity(
             text,
             ReflectionOutcome::Completed,
             continuity_lessons,
+            episode,
             now_ms(),
         ),
     );
@@ -127,6 +132,7 @@ pub(crate) fn record_failed_send_input_continuity(
     let continuity_lessons = latest_turn
         .map(continuity_lessons_from_turn)
         .unwrap_or_default();
+    let episode = latest_turn.map(build_episode_from_turn);
     record_continuity_event_safely(
         state,
         project_path,
@@ -135,6 +141,7 @@ pub(crate) fn record_failed_send_input_continuity(
             text,
             ReflectionOutcome::Failed,
             continuity_lessons,
+            episode,
             now_ms(),
         ),
     );

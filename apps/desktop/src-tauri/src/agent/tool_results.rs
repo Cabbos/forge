@@ -186,14 +186,17 @@ fn synthetic_tool_result_blocks(
             serde_json::json!({
                 "type": "tool_result",
                 "tool_use_id": tool_use.id,
-                "content": format!(
-                    "Tool result unavailable: {reason}. The previous tool call was interrupted before Forge could capture its result. Tool: '{}'. Re-check the current workspace state before continuing.",
-                    tool_use.name
-                ),
+                "content": synthetic_tool_result_content(&tool_use.name, reason),
                 "is_error": true
             })
         })
         .collect()
+}
+
+pub(crate) fn synthetic_tool_result_content(tool_name: &str, reason: &str) -> String {
+    format!(
+        "Tool result unavailable: {reason}. The previous tool call was interrupted before Forge could capture its result. Tool: '{tool_name}'. Re-check the current workspace state before continuing."
+    )
 }
 
 #[cfg(test)]

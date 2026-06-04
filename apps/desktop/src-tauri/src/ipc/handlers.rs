@@ -130,6 +130,7 @@ pub async fn send_input(
         ready_connector_labels: contexts.mcp_result.ready_labels,
         memory_context: contexts.memory_selection.context,
         wiki_context: contexts.project_records.context,
+        continuity_context: contexts.continuity_context,
         connector_context: contexts.mcp_result.context,
     })
     .await;

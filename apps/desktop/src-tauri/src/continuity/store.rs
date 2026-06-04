@@ -147,6 +147,51 @@ impl ContinuityStore {
         Ok(inserted)
     }
 
+    pub fn update_experience_status(
+        &self,
+        project_path: &str,
+        experience_id: &str,
+        status: ExperienceStatus,
+        now_ms: u64,
+    ) -> Result<ExperienceMemory, String> {
+        let updated_at_ms = to_i64_timestamp(now_ms)?;
+        let conn = self.conn.lock().unwrap_or_else(|err| err.into_inner());
+        let experience_json = conn
+            .query_row(
+                "SELECT experience_json
+                 FROM continuity_experiences
+                 WHERE project_path = ?1 AND id = ?2",
+                params![project_path, experience_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|err| format!("Failed to load continuity experience: {err}"))?;
+        let mut experience: ExperienceMemory =
+            serde_json::from_str(&experience_json).map_err(|err| {
+                format!("Failed to deserialize continuity experience for update: {err}")
+            })?;
+        experience.status = status;
+        experience.updated_at_ms = now_ms;
+        let next_json = serde_json::to_string(&experience)
+            .map_err(|err| format!("Failed to serialize continuity experience update: {err}"))?;
+
+        conn.execute(
+            "UPDATE continuity_experiences
+             SET status = ?3,
+                 updated_at_ms = ?4,
+                 experience_json = ?5
+             WHERE project_path = ?1 AND id = ?2",
+            params![
+                project_path,
+                experience_id,
+                experience_status_key(&experience.status),
+                updated_at_ms,
+                next_json,
+            ],
+        )
+        .map_err(|err| format!("Failed to update continuity experience: {err}"))?;
+        Ok(experience)
+    }
+
     pub fn list_experiences_for_project(
         &self,
         project_path: &str,
@@ -222,6 +267,59 @@ impl ContinuityStore {
                 row.map_err(|err| format!("Failed to read continuity search row: {err}"))?;
             let experience = serde_json::from_str(&experience_json).map_err(|err| {
                 format!("Failed to deserialize continuity search experience: {err}")
+            })?;
+            experiences.push(experience);
+        }
+        Ok(experiences)
+    }
+
+    pub fn recall_experiences_for_project(
+        &self,
+        project_path: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ExperienceMemory>, String> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(query) = fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let limit = i64::try_from(limit)
+            .map_err(|_| format!("Continuity recall limit is too large: {limit}"))?;
+
+        let conn = self.conn.lock().unwrap_or_else(|err| err.into_inner());
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.experience_json
+                 FROM continuity_experiences_fts
+                 JOIN continuity_experiences e
+                    ON e.id = continuity_experiences_fts.id
+                 WHERE continuity_experiences_fts.project_path = ?1
+                    AND continuity_experiences_fts MATCH ?2
+                    AND e.status IN ('accepted', 'pinned')
+                 ORDER BY
+                    CASE e.status WHEN 'pinned' THEN 0 ELSE 1 END,
+                    bm25(continuity_experiences_fts),
+                    e.confidence DESC,
+                    e.updated_at_ms DESC,
+                    e.id ASC
+                 LIMIT ?3",
+            )
+            .map_err(|err| format!("Failed to prepare continuity experience recall: {err}"))?;
+
+        let rows = stmt
+            .query_map(params![project_path, query, limit], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|err| format!("Failed to recall continuity experiences: {err}"))?;
+
+        let mut experiences = Vec::new();
+        for row in rows {
+            let experience_json =
+                row.map_err(|err| format!("Failed to read continuity recall row: {err}"))?;
+            let experience = serde_json::from_str(&experience_json).map_err(|err| {
+                format!("Failed to deserialize continuity recall experience: {err}")
             })?;
             experiences.push(experience);
         }

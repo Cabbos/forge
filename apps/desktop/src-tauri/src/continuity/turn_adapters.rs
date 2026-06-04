@@ -4,10 +4,9 @@ use crate::agent::turn_state::{
 };
 
 use super::{
-    should_reject_experience_lesson, ContinuityEvent, FileOperation, ReflectionEvent,
-    ReflectionOutcome,
+    filters::shell_failure_is_false_positive, ContinuityEvent, Episode, FileOperation,
+    ReflectionEvent, ReflectionOutcome,
 };
-use crate::memory::model::WikiMemory;
 
 /// Build continuity events from an agent turn.
 pub fn continuity_events_from_turn(turn: &AgentTurnState) -> Vec<ContinuityEvent> {
@@ -45,7 +44,6 @@ pub fn continuity_events_from_turn(turn: &AgentTurnState) -> Vec<ContinuityEvent
 
 /// Build actionable lessons from an agent turn for experience formation.
 pub fn continuity_lessons_from_turn(turn: &AgentTurnState) -> Vec<String> {
-    let goal = normalize_inline_text(&turn.user_goal, 120);
     let mut lessons = Vec::new();
 
     for tool in turn
@@ -55,9 +53,8 @@ pub fn continuity_lessons_from_turn(turn: &AgentTurnState) -> Vec<String> {
         .take(3)
     {
         lessons.push(format!(
-            "Tool `{}` failed during `{}` ({}): {}",
+            "Tool `{}` failed: {} -> {}",
             normalize_inline_text(&tool.name, 80),
-            goal,
             continuity_tool_input_summary(tool),
             continuity_tool_output_summary(tool)
         ));
@@ -75,9 +72,8 @@ pub fn continuity_lessons_from_turn(turn: &AgentTurnState) -> Vec<String> {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("verification");
             lessons.push(format!(
-                "Verification `{}` failed during `{}`: {}",
+                "Verification `{}` failed: {}",
                 normalize_inline_text(command, 120),
-                goal,
                 summary
             ));
         }
@@ -92,6 +88,7 @@ pub fn build_send_input_reflection_event(
     user_goal: &str,
     outcome: ReflectionOutcome,
     lessons: Vec<String>,
+    episode: Option<Episode>,
     timestamp_ms: u64,
 ) -> ContinuityEvent {
     ContinuityEvent::Reflection(ReflectionEvent {
@@ -105,25 +102,9 @@ pub fn build_send_input_reflection_event(
         outcome,
         verification_summary: None,
         lessons,
+        episode,
         timestamp_ms,
     })
-}
-
-/// Convert memory candidates into lesson strings for reflection.
-pub fn continuity_lessons_from_memory_candidates(candidates: &[WikiMemory]) -> Vec<String> {
-    candidates
-        .iter()
-        .map(|candidate| {
-            let title = candidate.title.trim();
-            let body = candidate.body.trim();
-            if title.is_empty() || body.contains(title) {
-                body.to_string()
-            } else {
-                format!("{title}: {body}")
-            }
-        })
-        .filter(|lesson| !should_reject_experience_lesson(lesson))
-        .collect()
 }
 
 fn continuity_verification_failure_summary(trace: &AgentVerificationTrace) -> Option<String> {
@@ -236,31 +217,7 @@ fn continuity_tool_failure_is_actionable(tool: &AgentToolTrace) -> bool {
         return false;
     }
 
-    if matches!(tool.category, AgentToolCategory::Shell) {
-        if let Some(summary) = tool.result_summary.as_deref() {
-            return !shell_failure_summary_looks_successful(summary);
-        }
-    }
-
-    true
-}
-
-fn shell_failure_summary_looks_successful(summary: &str) -> bool {
-    let lower = summary.to_lowercase();
-    let has_error_marker = lower.contains("error:")
-        || lower.contains(" failed")
-        || lower.contains("failed ")
-        || lower.contains("panic")
-        || lower.contains("not found")
-        || lower.contains("cannot find")
-        || lower.contains("no such file");
-    let looks_like_vite_build_success = lower.contains("vite ")
-        && lower.contains("building")
-        && lower.contains("rendering chunks")
-        && lower.contains("computing gzip size")
-        && lower.contains("✓ built in");
-
-    looks_like_vite_build_success && !has_error_marker
+    !shell_failure_is_false_positive(tool.command.as_deref(), tool.result_summary.as_deref())
 }
 
 fn continuity_tool_status_label(status: &AgentToolStatus) -> &'static str {
@@ -276,4 +233,150 @@ fn continuity_tool_status_label(status: &AgentToolStatus) -> &'static str {
 fn normalize_inline_text(value: &str, limit: usize) -> String {
     let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
     normalized.chars().take(limit).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::turn_state::{
+        AgentTurnContextSnapshot, AgentTurnInputIntent, AgentTurnState, AgentTurnStatus,
+    };
+
+    #[test]
+    fn shell_false_failure_with_exit_zero_does_not_form_lesson() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/repo".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Run tests".to_string(),
+        );
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "run_shell".to_string(),
+            category: AgentToolCategory::Shell,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some(
+                "Exit code: -1 Stdout: > test-app@0.1.0 test > npx tsx src/test.ts normalizeInput tests ✅ passed ✅ passed EXIT: 0 Stderr:"
+                    .to_string(),
+            ),
+            is_error: true,
+            affected_files: Vec::new(),
+            command: Some("npm test".to_string()),
+        });
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let lessons = continuity_lessons_from_turn(&turn);
+        assert!(
+            lessons.is_empty(),
+            "shell with EXIT: 0 should not form a failure lesson"
+        );
+    }
+
+    #[test]
+    fn shell_false_failure_for_successful_inspection_does_not_form_lesson() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/repo".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Inspect continuity database".to_string(),
+        );
+
+        for (index, (command, summary)) in [
+            (
+                "cd /repo && sqlite3 .forge/continuity.db \".tables\" 2>&1",
+                "Exit code: -1 Stdout: continuity_events continuity_experiences continuity_experiences_fts Stderr:",
+            ),
+            (
+                "cd /repo && sqlite3 .forge/continuity.db \"SELECT event_type, COUNT(*) FROM continuity_events GROUP BY event_type\" 2>&1",
+                "Exit code: -1 Stdout: user_message|1 tool_execution|30 Stderr:",
+            ),
+            (
+                "cd /repo && ls -la .forge/ 2>&1; echo \"---\"; file .forge/continuity.db 2>&1; echo \"---\"; wc -c .forge/continuity.db 2>&1",
+                "Exit code: -1 Stdout: total 312 drwxr-xr-x checkpoints -rw-r--r-- continuity.db --- SQLite 3.x database --- 4096 .forge/continuity.db Stderr:",
+            ),
+        ]
+        .iter()
+        .enumerate()
+        {
+            turn.record_tool(AgentToolTrace {
+                tool_call_id: format!("tool-{index}"),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Failed,
+                started_at_ms: 10 + index as u64,
+                ended_at_ms: Some(20 + index as u64),
+                result_summary: Some((*summary).to_string()),
+                is_error: true,
+                affected_files: Vec::new(),
+                command: Some((*command).to_string()),
+            });
+        }
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let lessons = continuity_lessons_from_turn(&turn);
+
+        assert!(
+            lessons.is_empty(),
+            "successful read-only inspection commands should not form failure lessons: {lessons:?}"
+        );
+    }
+
+    #[test]
+    fn failed_tool_lessons_do_not_echo_long_user_prompt() {
+        let turn = AgentTurnState {
+            turn_id: "turn-1".to_string(),
+            session_id: "session-1".to_string(),
+            workspace_path: "/repo/forge".to_string(),
+            provider: "openai".to_string(),
+            model: "gpt-test".to_string(),
+            route: "direct".to_string(),
+            phase: "executing".to_string(),
+            user_goal:
+                "我们现在在 /Users/cabbos/project/continuity-manual-test-app 做一次 Continuity 长流程人工测试，\
+                 请故意更新 package.json 中的 test 命令，同时跑两个测试文件，观察候选经验是否进入 SQLite。"
+                    .to_string(),
+            input_intent: AgentTurnInputIntent::default(),
+            execution_plan: None,
+            context: AgentTurnContextSnapshot::default(),
+            tools: vec![AgentToolTrace {
+                tool_call_id: "tool-1".to_string(),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Failed,
+                started_at_ms: 10,
+                ended_at_ms: Some(20),
+                result_summary: Some("npm ERR! Missing script: test".to_string()),
+                is_error: true,
+                affected_files: Vec::new(),
+                command: Some("npm test".to_string()),
+            }],
+            evidence: Vec::new(),
+            compact_events: Vec::new(),
+            verification: AgentVerificationTrace::default(),
+            failure: None,
+            transition_log: Vec::new(),
+            status: AgentTurnStatus::Failed,
+            created_at_ms: 1,
+            updated_at_ms: 20,
+        };
+
+        let lessons = continuity_lessons_from_turn(&turn);
+
+        assert_eq!(lessons.len(), 1);
+        assert!(lessons[0].contains("run_shell"));
+        assert!(lessons[0].contains("npm test"));
+        assert!(lessons[0].contains("Missing script"));
+        assert!(!lessons[0].contains("continuity-manual-test-app"));
+        assert!(!lessons[0].contains("长流程人工测试"));
+    }
 }

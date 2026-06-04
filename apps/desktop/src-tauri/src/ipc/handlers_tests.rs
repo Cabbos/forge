@@ -6,9 +6,8 @@ use crate::agent::turn_state::{
     AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnState, AgentTurnStatus,
 };
 use crate::continuity::{
-    build_send_input_reflection_event, continuity_events_from_turn,
-    continuity_lessons_from_memory_candidates, continuity_lessons_from_turn, ContinuityEvent,
-    FileOperation, ReflectionEvent, ReflectionOutcome,
+    build_send_input_reflection_event, continuity_events_from_turn, continuity_lessons_from_turn,
+    ContinuityEvent, FileOperation, ReflectionEvent, ReflectionOutcome,
 };
 use crate::harness::Harness;
 use crate::ipc::continuity_experiences::{
@@ -74,6 +73,7 @@ fn record_test_continuity_lesson(
         outcome: ReflectionOutcome::Completed,
         verification_summary: Some("test passed".to_string()),
         lessons: vec![lesson.to_string()],
+        episode: None,
         timestamp_ms,
     });
     state
@@ -193,27 +193,18 @@ async fn search_continuity_experiences_uses_session_workspace() {
 }
 
 #[test]
-fn continuity_reflection_uses_memory_candidates_as_lessons() {
-    let candidates = vec![test_project_memory(
-        "memory-1",
-        "后端影子模式",
-        "第一版 Continuity 先保持 backend-only shadow mode",
-        "/repo/forge",
-    )];
-
-    let lessons = continuity_lessons_from_memory_candidates(&candidates);
+fn continuity_reflection_does_not_include_memory_candidates_as_lessons() {
+    // Memory candidates (user preferences, project facts) must NOT become
+    // continuity reflection lessons to avoid prompt-echo pollution.
     let event = build_send_input_reflection_event(
         "session-1",
         "继续经验系统",
         ReflectionOutcome::Completed,
-        lessons.clone(),
+        vec![],
+        None,
         42,
     );
 
-    assert_eq!(
-        lessons,
-        vec!["后端影子模式: 第一版 Continuity 先保持 backend-only shadow mode"]
-    );
     assert_eq!(
         event,
         ContinuityEvent::Reflection(ReflectionEvent {
@@ -222,41 +213,11 @@ fn continuity_reflection_uses_memory_candidates_as_lessons() {
             execution_summary: "send_input completed successfully".to_string(),
             outcome: ReflectionOutcome::Completed,
             verification_summary: None,
-            lessons,
+            lessons: vec![],
+            episode: None,
             timestamp_ms: 42,
         })
     );
-}
-
-#[test]
-fn continuity_reflection_rejects_prompt_echo_memory_candidates() {
-    let candidates = vec![
-        test_project_memory(
-            "memory-1",
-            "项目已定方案：接下来这个项目有什么可以继续的方向呢",
-            "接下来这个项目有什么可以继续的方向呢",
-            "/repo/forge",
-        ),
-        test_project_memory(
-            "memory-2",
-            "当前进度：接下来这个项目有什么可以继续的方向呢",
-            "接下来这个项目有什么可以继续的方向呢",
-            "/repo/forge",
-        ),
-        test_project_memory(
-            "memory-3",
-            "任务清单状态",
-            "TaskNotes 当前只使用 useState，刷新后任务会丢失，下一步应加 localStorage 持久化验证。",
-            "/repo/forge",
-        ),
-    ];
-
-    let lessons = continuity_lessons_from_memory_candidates(&candidates);
-
-    assert_eq!(
-            lessons,
-            vec!["任务清单状态: TaskNotes 当前只使用 useState，刷新后任务会丢失，下一步应加 localStorage 持久化验证。"]
-        );
 }
 
 #[test]
@@ -380,12 +341,12 @@ fn continuity_lessons_from_turn_capture_failures_conservatively() {
     let lessons = continuity_lessons_from_turn(&turn);
 
     assert_eq!(
-            lessons,
-            vec![
-                "Tool `bash` failed during `Add continuity FTS recall` (command=cargo test continuity): sqlite error: no such module fts5",
-                "Verification `cargo test continuity` failed during `Add continuity FTS recall`: exit_code=101; stderr=no such module fts5",
-            ]
-        );
+        lessons,
+        vec![
+            "Tool `bash` failed: command=cargo test continuity -> sqlite error: no such module fts5",
+            "Verification `cargo test continuity` failed: exit_code=101; stderr=no such module fts5",
+        ]
+    );
 }
 
 #[test]

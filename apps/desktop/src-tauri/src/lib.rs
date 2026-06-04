@@ -72,6 +72,7 @@ pub fn run() {
             ipc::confirmations::confirm_response,
             ipc::continuity_experiences::list_continuity_experiences,
             ipc::continuity_experiences::search_continuity_experiences,
+            ipc::continuity_experiences::update_continuity_experience_status,
             ipc::workspace_files::search_workspace_files,
             ipc::workspace_files::get_default_working_dir,
             ipc::settings_handlers::get_api_key_status,

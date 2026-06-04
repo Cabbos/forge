@@ -331,16 +331,21 @@ fn select_node_step(working_dir: &Path) -> Option<VerificationStep> {
                 return None;
             }
             let command = safe_script_segments(script, value)?.into_iter().next()?;
-            let display_command = command.join(" ");
             let mut parts = command.into_iter();
             let program = parts.next()?;
-            Some(VerificationStep {
-                display_command,
-                cwd: working_dir.to_path_buf(),
-                program: resolve_node_tool(working_dir, &program),
-                args: parts.collect(),
-                timeout_secs: 120,
-            })
+            if let Some(resolved_program) = resolve_node_tool(working_dir, &program) {
+                return Some(VerificationStep {
+                    display_command: std::iter::once(program)
+                        .chain(parts.clone())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    cwd: working_dir.to_path_buf(),
+                    program: resolved_program,
+                    args: parts.collect(),
+                    timeout_secs: 120,
+                });
+            }
+            Some(package_script_step(working_dir, script))
         })
 }
 
@@ -351,12 +356,22 @@ fn has_lifecycle_script(
     scripts.contains_key(&format!("pre{script}")) || scripts.contains_key(&format!("post{script}"))
 }
 
-fn resolve_node_tool(working_dir: &Path, command: &str) -> String {
+fn package_script_step(working_dir: &Path, script: &str) -> VerificationStep {
+    VerificationStep {
+        display_command: format!("npm run {script}"),
+        cwd: working_dir.to_path_buf(),
+        program: "npm".to_string(),
+        args: vec!["run".to_string(), script.to_string()],
+        timeout_secs: 120,
+    }
+}
+
+fn resolve_node_tool(working_dir: &Path, command: &str) -> Option<String> {
     let local_bin = working_dir.join("node_modules").join(".bin").join(command);
     if local_bin.exists() {
-        local_bin.to_string_lossy().to_string()
+        Some(local_bin.to_string_lossy().to_string())
     } else {
-        command.to_string()
+        None
     }
 }
 
@@ -715,6 +730,11 @@ mod tests {
             format!(r#"{{"scripts":{{{scripts}}}}}"#),
         )
         .expect("write package.json");
+    }
+
+    fn write_local_bin(dir: &Path, command: &str) {
+        fs::create_dir_all(dir.join("node_modules/.bin")).expect("create local bin");
+        fs::write(dir.join("node_modules/.bin").join(command), "").expect("write local bin");
     }
 
     #[tokio::test]
@@ -1246,8 +1266,9 @@ mod tests {
     }
 
     #[test]
-    fn node_plan_runs_direct_tool_command_not_package_manager_script() {
+    fn node_plan_runs_direct_local_tool_command_not_package_manager_script() {
         let dir = temp_dir("node-direct");
+        write_local_bin(&dir, "tsc");
         write_package_json(&dir, r#""build":"tsc && vite build""#);
         let mut turn = sample_turn();
         turn.record_tool(trace(
@@ -1262,13 +1283,61 @@ mod tests {
 
         assert_eq!(plan.display_command, "tsc");
         assert_eq!(plan.cwd, dir);
-        assert_eq!(plan.program, "tsc");
+        assert_eq!(
+            plan.program,
+            dir.join("node_modules/.bin/tsc").to_string_lossy()
+        );
         assert_eq!(plan.args, Vec::<String>::new());
+    }
+
+    #[test]
+    fn node_plan_uses_local_bin_for_direct_tool_commands() {
+        let dir = temp_dir("node-local-bin");
+        write_local_bin(&dir, "tsc");
+        write_package_json(&dir, r#""build":"tsc && vite build""#);
+        let mut turn = sample_turn();
+        turn.record_tool(trace(
+            AgentToolCategory::Write,
+            AgentToolStatus::Completed,
+            vec!["src/App.tsx"],
+            None,
+            false,
+        ));
+
+        let plan = select_verification_plan(&dir, &turn).expect("node check should be selected");
+
+        assert_eq!(plan.display_command, "tsc");
+        assert_eq!(
+            plan.program,
+            dir.join("node_modules/.bin/tsc").to_string_lossy()
+        );
+        assert_eq!(plan.args, Vec::<String>::new());
+    }
+
+    #[test]
+    fn node_plan_falls_back_to_package_script_when_local_bin_is_missing() {
+        let dir = temp_dir("node-script-fallback");
+        write_package_json(&dir, r#""build":"tsc && vite build""#);
+        let mut turn = sample_turn();
+        turn.record_tool(trace(
+            AgentToolCategory::Write,
+            AgentToolStatus::Completed,
+            vec!["src/App.tsx"],
+            None,
+            false,
+        ));
+
+        let plan = select_verification_plan(&dir, &turn).expect("node check should be selected");
+
+        assert_eq!(plan.display_command, "npm run build");
+        assert_eq!(plan.program, "npm");
+        assert_eq!(plan.args, vec!["run".to_string(), "build".to_string()]);
     }
 
     #[test]
     fn node_plan_preserves_case_sensitive_script_args() {
         let dir = temp_dir("node-case-sensitive-args");
+        write_local_bin(&dir, "tsc");
         write_package_json(&dir, r#""build":"tsc -p tsconfig.App.json""#);
         let mut turn = sample_turn();
         turn.record_tool(trace(
@@ -1282,7 +1351,10 @@ mod tests {
         let plan = select_verification_plan(&dir, &turn).expect("node check should be selected");
 
         assert_eq!(plan.display_command, "tsc -p tsconfig.App.json");
-        assert_eq!(plan.program, "tsc");
+        assert_eq!(
+            plan.program,
+            dir.join("node_modules/.bin/tsc").to_string_lossy()
+        );
         assert_eq!(
             plan.args,
             vec!["-p".to_string(), "tsconfig.App.json".to_string()]
@@ -1292,6 +1364,7 @@ mod tests {
     #[test]
     fn package_json_build_selects_direct_node_command() {
         let dir = temp_dir("node-build");
+        write_local_bin(&dir, "tsc");
         write_package_json(&dir, r#""lint":"eslint .","build":"tsc && vite build""#);
         fs::write(dir.join("pnpm-lock.yaml"), "").expect("write lockfile");
         let mut turn = sample_turn();
@@ -1307,7 +1380,10 @@ mod tests {
 
         assert_eq!(plan.display_command, "tsc");
         assert_eq!(plan.cwd, dir);
-        assert_eq!(plan.program, "tsc");
+        assert_eq!(
+            plan.program,
+            dir.join("node_modules/.bin/tsc").to_string_lossy()
+        );
         assert_eq!(plan.args, Vec::<String>::new());
     }
 
@@ -1384,10 +1460,14 @@ mod tests {
         let plan =
             select_verification_plan(&dir, &turn).expect("combined check should be selected");
 
-        assert_eq!(plan.display_command, "cargo check && tsc");
+        assert_eq!(plan.display_command, "cargo check && npm run build");
         assert_eq!(plan.extra_steps.len(), 1);
         assert_eq!(plan.program, "cargo");
-        assert_eq!(plan.extra_steps[0].program, "tsc");
+        assert_eq!(plan.extra_steps[0].program, "npm");
+        assert_eq!(
+            plan.extra_steps[0].args,
+            vec!["run".to_string(), "build".to_string()]
+        );
     }
 
     #[test]

@@ -6,13 +6,14 @@ use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::capability_context::build_turn_input_intent;
 use crate::agent::context_builder::ContextSourceKind;
 use crate::agent::session::AgentSession;
+use crate::continuity::ContinuityStore;
 use crate::harness::capability::CapabilityKind;
 use crate::harness::Harness;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
 };
 use crate::ipc::send_input_context::{
-    capability_names_by_kind, prepare_send_input_turn_context,
+    capability_names_by_kind, prepare_send_input_turn_context, record_send_input_user_turn,
     reserve_turn_then_record_user_message, select_send_input_memory_context,
     PrepareSendInputTurnRequest,
 };
@@ -102,6 +103,38 @@ fn busy_session_does_not_record_user_message_before_turn_reservation() {
 }
 
 #[test]
+fn busy_session_does_not_record_continuity_user_message_before_turn_reservation() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-busy-continuity-turn-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter =
+        Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")) as Arc<dyn AiAdapter>;
+    let session = AgentSession::new(
+        "session-1".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        None,
+    );
+    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+    let _active_turn = session.reserve_turn().expect("first turn should reserve");
+    let project_path = workspace.to_string_lossy().to_string();
+
+    let error = record_send_input_user_turn(&state, &session, "session-1", "继续", &project_path)
+        .expect_err("busy session should reject before recording");
+
+    assert!(error.contains("上一条请求"));
+    let events = ContinuityStore::open(workspace.join(".forge").join("continuity.db"))
+        .expect("open continuity store")
+        .list_events_for_session(&project_path, "session-1")
+        .expect("list continuity events");
+    assert!(events.is_empty());
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
 fn stopped_session_does_not_record_user_message_before_turn_reservation() {
     let nonce = uuid::Uuid::now_v7();
     let workspace = std::env::temp_dir().join(format!("forge-stopped-turn-{nonce}"));
@@ -177,6 +210,7 @@ async fn send_input_turn_context_uses_session_workspace_for_metadata_and_file_re
         ready_connector_labels: Vec::new(),
         memory_context: None,
         wiki_context: None,
+        continuity_context: None,
         connector_context: None,
     })
     .await;
@@ -201,6 +235,42 @@ async fn send_input_turn_context_uses_session_workspace_for_metadata_and_file_re
 
     let _ = std::fs::remove_dir_all(session_workspace);
     let _ = std::fs::remove_dir_all(default_workspace);
+}
+
+#[tokio::test]
+async fn send_input_turn_context_includes_continuity_experience_context() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-send-continuity-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let session = test_agent_session("session-1", &workspace);
+    let input_intent = build_turn_input_intent("继续 package script 测试", &[], Vec::new());
+    let workflow = classify_workflow_with_command("session-1", "继续 package script 测试", None, 1);
+
+    let prepared = prepare_send_input_turn_context(PrepareSendInputTurnRequest {
+        session_id: "session-1",
+        session: &session,
+        text: "继续 package script 测试",
+        input_intent,
+        workflow: &workflow,
+        ready_connector_labels: Vec::new(),
+        memory_context: None,
+        wiki_context: None,
+        continuity_context: Some(
+            "Continuity Experience:\n- [pinned] Package script changes require npm test."
+                .to_string(),
+        ),
+        connector_context: None,
+    })
+    .await;
+
+    let continuity = prepared
+        .hidden_contexts
+        .iter()
+        .find(|context| context.kind == ContextSourceKind::ContinuityExperience)
+        .expect("continuity context");
+    assert!(continuity.content.contains("[pinned] Package script"));
+
+    let _ = std::fs::remove_dir_all(&workspace);
 }
 
 #[tokio::test]

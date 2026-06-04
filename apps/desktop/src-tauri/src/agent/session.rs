@@ -41,6 +41,9 @@ use crate::agent::verification;
 use crate::consts::{AGENT_LOOP_SETTLE_DELAY, AGENT_OVERFLOW_RETRY_DELAY};
 use crate::harness::Harness;
 use crate::protocol::events::StreamEvent;
+use crate::protocol::BlockId;
+
+const MAX_AGENT_TOOL_ROUNDS: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -776,7 +779,7 @@ impl AgentSession {
         &self,
         hidden_contexts: &[HiddenContextPart],
         emitter: &dyn crate::agent::event_sink::EventEmitter,
-        app_handle: Option<&tauri::AppHandle>,
+        _app_handle: Option<&tauri::AppHandle>,
         cancel: Arc<Notify>,
     ) {
         let verification_trace = if self.running.load(Ordering::SeqCst) {
@@ -804,17 +807,10 @@ impl AgentSession {
                     verification_trace.as_ref(),
                 )));
                 crate::app_log!("INFO", "Agent loop complete — requesting text-only summary");
-                let adapter_result = if let Some(app) = app_handle {
-                    self.adapter
-                        .stream_message(&self.id, &msgs, app, cancel.clone())
-                        .await
-                } else {
-                    self.adapter
-                        .call_with_emitter(&self.id, &msgs, emitter, cancel.clone())
-                        .await
-                };
+                let adapter_result = self.adapter.call(&msgs, cancel.clone()).await;
                 if let Ok(result) = adapter_result {
                     if !result.assistant_content.is_empty() {
+                        self.emit_final_summary_text_emitter(&result.assistant_content, emitter);
                         let mut messages = lock_unpoisoned(&self.messages);
                         push_assistant_result_with_synthetic_tool_results(
                             &mut messages,
@@ -873,7 +869,7 @@ impl AgentSession {
 
         let mut overflow_retry_used = false;
 
-        for _round in 0..10 {
+        for _round in 0..MAX_AGENT_TOOL_ROUNDS {
             match self
                 .execute_single_round(
                     &hidden_contexts,
@@ -1151,6 +1147,32 @@ impl AgentSession {
         }
     }
 
+    fn emit_final_summary_text_emitter(
+        &self,
+        assistant_content: &[serde_json::Value],
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
+    ) {
+        let text = final_summary_text(assistant_content);
+        if text.trim().is_empty() {
+            return;
+        }
+
+        let block_id = BlockId::new().to_string();
+        emitter.emit(StreamEvent::TextStart {
+            session_id: self.id.clone(),
+            block_id: block_id.clone(),
+        });
+        emitter.emit(StreamEvent::TextChunk {
+            session_id: self.id.clone(),
+            block_id: block_id.clone(),
+            content: text,
+        });
+        emitter.emit(StreamEvent::TextEnd {
+            session_id: self.id.clone(),
+            block_id,
+        });
+    }
+
     fn start_turn_with_emitter(
         &self,
         text: &str,
@@ -1367,6 +1389,21 @@ impl AgentSession {
             .context_window_tokens(context_window_tokens)
             .build()
     }
+}
+
+fn final_summary_text(assistant_content: &[serde_json::Value]) -> String {
+    assistant_content
+        .iter()
+        .filter_map(|block| {
+            if let Some(text) = block.as_str() {
+                return Some(text);
+            }
+            (block.get("type").and_then(|value| value.as_str()) == Some("text"))
+                .then(|| block.get("text").and_then(|value| value.as_str()))
+                .flatten()
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
 use crate::agent::session::{AgentSession, TurnInflightGuard};
 use crate::agent::time::now_ms;
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
+use crate::continuity::form_continuity_experience_context;
 use crate::harness::capability::CapabilityKind;
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::Harness;
@@ -68,12 +69,13 @@ pub(crate) fn record_send_input_user_turn(
     text: &str,
     project_path: &str,
 ) -> Result<TurnInflightGuard, String> {
-    record_send_input_user_message_continuity(state, project_path, session_id, text);
-    reserve_turn_then_record_user_message(session, session_id, text, |event| {
+    let turn_guard = reserve_turn_then_record_user_message(session, session_id, text, |event| {
         if let Err(error) = crate::transcript::append_stream_event(&event) {
             crate::app_log!("WARN", "[transcript] {}", error);
         }
-    })
+    })?;
+    record_send_input_user_message_continuity(state, project_path, session_id, text);
+    Ok(turn_guard)
 }
 
 pub(crate) async fn select_send_input_memory_context(
@@ -84,6 +86,33 @@ pub(crate) async fn select_send_input_memory_context(
     let selected = state.wiki_memory.select(text, Some(project_path), 8).await;
     let context = format_selected_memory_context(&selected);
     SendInputMemorySelection { selected, context }
+}
+
+pub(crate) async fn select_send_input_continuity_context(
+    state: &Arc<AppState>,
+    text: &str,
+    project_path: &str,
+) -> Option<String> {
+    match state
+        .continuity
+        .recall_experiences_for_project(project_path, text, 5)
+    {
+        Ok(experiences) => {
+            if !experiences.is_empty() {
+                let ids = experiences
+                    .iter()
+                    .map(|experience| experience.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                crate::app_log!("INFO", "[continuity] recalled experiences: {}", ids);
+            }
+            form_continuity_experience_context(&experiences)
+        }
+        Err(error) => {
+            crate::app_log!("WARN", "[continuity] recall failed: {}", error);
+            None
+        }
+    }
 }
 
 /// Classify workflow from user input, store it, emit the update event,
@@ -144,6 +173,7 @@ pub(crate) struct PrepareSendInputTurnRequest<'a> {
     pub(crate) ready_connector_labels: Vec<String>,
     pub(crate) memory_context: Option<String>,
     pub(crate) wiki_context: Option<String>,
+    pub(crate) continuity_context: Option<String>,
     pub(crate) connector_context: Option<String>,
 }
 
@@ -207,6 +237,7 @@ pub(crate) async fn prepare_send_input_turn_context(
         ready_connector_labels,
         memory_context,
         wiki_context,
+        continuity_context,
         connector_context,
     } = request;
     let project_path = session.harness.working_dir.to_string_lossy().to_string();
@@ -254,6 +285,14 @@ pub(crate) async fn prepare_send_input_turn_context(
             ContextSourceKind::ProjectRecords,
             "项目记录",
             "自动匹配到的项目记录",
+            context,
+        ));
+    }
+    if let Some(context) = continuity_context {
+        hidden_contexts.push(HiddenContextPart::new(
+            ContextSourceKind::ContinuityExperience,
+            "经验回忆",
+            "自动召回的已确认项目经验",
             context,
         ));
     }
@@ -365,6 +404,7 @@ pub(crate) struct SendInputContextBundle {
     pub(crate) workflow: WorkflowState,
     pub(crate) project_records: SendInputProjectRecordsSelection,
     pub(crate) memory_selection: SendInputMemorySelection,
+    pub(crate) continuity_context: Option<String>,
     pub(crate) mcp_result: McpContextBuildResult,
 }
 
@@ -414,6 +454,7 @@ pub(crate) async fn select_send_input_contexts(
             selected: memory_selection.selected.clone(),
         },
     );
+    let continuity_context = select_send_input_continuity_context(state, text, project_path).await;
     let mcp_result =
         build_mcp_context(harness, &mcp_context_selections, app_handle, session_id).await;
     SendInputContextBundle {
@@ -421,6 +462,7 @@ pub(crate) async fn select_send_input_contexts(
         workflow,
         project_records,
         memory_selection,
+        continuity_context,
         mcp_result,
     }
 }
@@ -434,6 +476,7 @@ pub(crate) struct BuildPreparedSendInputTurnRequest<'a> {
     pub(crate) ready_connector_labels: Vec<String>,
     pub(crate) memory_context: Option<String>,
     pub(crate) wiki_context: Option<String>,
+    pub(crate) continuity_context: Option<String>,
     pub(crate) connector_context: Option<String>,
 }
 
@@ -449,6 +492,7 @@ pub(crate) async fn build_prepared_send_input_turn(
         ready_connector_labels,
         memory_context,
         wiki_context,
+        continuity_context,
         connector_context,
     } = request;
 
@@ -461,6 +505,7 @@ pub(crate) async fn build_prepared_send_input_turn(
         ready_connector_labels,
         memory_context,
         wiki_context,
+        continuity_context,
         connector_context,
     })
     .await
