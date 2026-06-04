@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "small-edit-success",
+    "title": "Small focused edit succeeds",
+    "prompt": "Update src/calculator.py so add_one returns value + 1, then run the validation command.",
+    "fixture_path": "fixture",
+    "context_files": [
+      "src/calculator.py",
+      "tests/test_calculator.py"
+    ],
+    "setup_commands": [],
+    "validation_commands": [
+      "python -m pytest tests/test_calculator.py"
+    ],
+    "verification_command": "python -m pytest tests/test_calculator.py",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/calculator.py"
+    ],
+    "forbidden_files_changed": [
+      ".env"
+    ],
+    "tags": [
+      "small-edit",
+      "success",
+      "scope"
+    ],
+    "metadata": {
+      "mock": {
+        "changed_files": [
+          "src/calculator.py"
+        ],
+        "model_rounds": 2,
+        "confirm_requests": 0,
+        "duration_ms": 280,
+        "input_tokens": 180,
+        "output_tokens": 60
+      }
+    }
+  }
+}

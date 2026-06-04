@@ -6,17 +6,26 @@
 flowchart TD
     subgraph Input
         T[tasks/sample_tasks.json<br/>EvaluationTask[]]
+        EC[eval_cases/*/case.json<br/>fixture + task definitions]
     end
 
     subgraph Core
-        R[DeterministicMockRunner<br/>生成确定性 trace]
+        CL[load_cases()<br/>JSON file / directory loader]
+        R[RunnerFactory<br/>mock / forge]
+        WK[EvalWorker<br/>claim pending run]
+        MR[DeterministicMockRunner<br/>生成确定性 trace]
+        FR[ForgeAgentRunner<br/>调用外部 Forge headless 命令]
         M[calculate_metrics()<br/>纯函数，无副作用]
-        S[InMemoryStorage<br/>进程内存储边界]
+        BR[build_report()<br/>回测报告聚合]
+        S[EvalStorage<br/>InMemory / SQLite]
+        DB[(SQLite<br/>eval_runs / eval_run_tasks / eval_artifacts)]
+        FS[artifacts/{run_id}<br/>trace.json / report.json]
     end
 
     subgraph Output
         AT[AgentTrace<br/>tool_calls, shell_outputs,<br/>file_diffs, verification_result,<br/>failure_category]
         MS[MetricsSummary<br/>success_rate,<br/>verification_coverage,<br/>failure_categories]
+        RP[BacktestReport<br/>verification_pass_rate,<br/>scope_violation_rate,<br/>per-task trace summary]
     end
 
     subgraph API["FastAPI Service"]
@@ -26,6 +35,12 @@ flowchart TD
         GR["GET /runs/{id}"]
         GT["GET /runs/{id}/trace"]
         GM["GET /runs/{id}/metrics"]
+        GP["GET /runs/{id}/report"]
+    end
+
+    subgraph CLI["CLI"]
+        BC["python -m app.cli<br/>--cases eval_cases --provider mock"]
+        WC["python -m app.worker<br/>--once / polling"]
     end
 
     subgraph Deliverables
@@ -35,20 +50,36 @@ flowchart TD
         RF[ruff 代码质量]
     end
 
-    T --> S
+    T --> CL
+    EC --> CL
+    CL --> S
+    CL --> BC
+    S --> DB
+    S --> FS
     S --> R
-    R --> AT
+    S --> WK
+    WK --> R
+    R --> MR
+    R --> FR
+    MR --> AT
+    FR --> AT
     AT --> M
+    AT --> BR
     M --> MS
+    BR --> RP
 
     S --> TL
     S --> CR
     S --> GR
     AT --> GT
     MS --> GM
+    RP --> GP
 
     CR --> R
     R --> S
+    BC --> R
+    BC --> RP
+    WC --> WK
 
     API --> OD
     API --> DF
@@ -104,6 +135,7 @@ flowchart TD
     AGG --> ATC[average_tool_calls]
     AGG --> FC[failure_categories<br/>各类型计数]
     AGG --> PT[per-task pass/fail]
+    AT --> RP[BacktestReport<br/>success_rate, verification_pass_rate,<br/>scope_violation_rate,<br/>avg_duration_ms,<br/>avg_model_rounds,<br/>avg_confirm_requests,<br/>failure_categories,<br/>per-task trace summary]
 ```
 
 ## Forge + forge-eval-runner 关系
@@ -151,13 +183,97 @@ flowchart LR
     end
 
     subgraph Phase2["Phase 2（后续）"]
-        R1[RealProviderAdapter]
+        R1[ForgeAgentRunner]
         R2[相同 trace shape]
         R3[相同 API contract]
-        R4[真实模型执行]
+        R4[真实 Forge Agent 执行]
     end
 
     Phase1 -->|替换 runner 实现| Phase2
+```
+
+## Forge Runner 接入协议
+
+`provider=forge` 时，API 会使用 `FORGE_EVAL_FORGE_AGENT_COMMAND` 指定的外部命令。
+
+```mermaid
+flowchart LR
+    E[EvaluationTask] --> W[临时 workspace]
+    E --> P[stdin JSON payload]
+    W --> F[Forge headless command]
+    P --> F
+    F --> O[stdout JSON trace]
+    O --> AT[AgentTrace]
+    AT --> M[MetricsSummary]
+```
+
+外部命令输出的 `changed_files` 会和任务里的 `expected_files_changed` / `forbidden_files_changed` 做 scope check。即使验证命令通过，只要改动越界，也会计入 `scope_violation`。
+
+## V0.2 Persistence
+
+V0.2 adds a storage abstraction that keeps the current synchronous API behavior while allowing run state to survive process restarts.
+
+```mermaid
+flowchart TD
+    API["POST /runs"] --> R[RunnerFactory]
+    R --> TR[AgentTrace[]]
+    TR --> MS[MetricsSummary]
+    TR --> RP[BacktestReport]
+    MS --> DB[(SQLite eval_runs)]
+    TR --> TF[artifacts/{run_id}/trace.json]
+    RP --> RF[artifacts/{run_id}/report.json]
+    TF --> AM[(SQLite eval_artifacts)]
+    RF --> AM
+    TR --> TS[(SQLite eval_run_tasks<br/>summary only)]
+```
+
+The database stores metadata and summaries only. Large trace/report JSON remains in filesystem artifacts so SQLite rows stay small and easy to inspect.
+
+Local SQLite mode:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+## V0.3 Worker
+
+V0.3 keeps synchronous API execution as the default, then adds a queued mode for team-service behavior.
+
+```mermaid
+flowchart TD
+    CR["POST /runs<br/>queued mode"] --> PR[(eval_runs<br/>status=pending)]
+    WK["python -m app.worker"] --> CLM[claim_pending_run()]
+    CLM --> RR[(eval_runs<br/>status=running)]
+    RR --> EX[RunnerFactory<br/>mock / forge]
+    EX --> TR[AgentTrace]
+    TR --> TS[(eval_run_tasks)]
+    TR --> TF[trace.json]
+    TR --> RF[report.json]
+    TF --> AR[(eval_artifacts)]
+    RF --> AR
+    TS --> DONE[(eval_runs<br/>status=completed)]
+```
+
+Queued API mode:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_RUN_EXECUTION_MODE=queued \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Worker:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run python -m app.worker --once
 ```
 
 ## 技术栈
@@ -171,3 +287,6 @@ flowchart LR
 | 代码质量 | ruff | lint + format |
 | 容器化 | Dockerfile + docker-compose | 一键启动 |
 | Runner | DeterministicMockRunner | 确定性输出，可复现 |
+| Case Loader | `app.cases.load_cases()` | 从 JSON 文件或目录批量加载 eval case |
+| CLI | `python -m app.cli` | 离线 mock 回测和 JSON report 输出 |
+| Persistence | `sqlite3` 标准库 | 本地 durable run/task/artifact metadata |

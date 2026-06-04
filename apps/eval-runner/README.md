@@ -2,7 +2,7 @@
 
 Forge Eval Runner is a Python MVP for evaluating coding agents. It focuses on the parts hiring teams usually care about for AI Product Engineer, LLM Application Engineer, and Agent Engineer roles: trace capture, task-level metrics, failure analysis, typed API contracts, tests, and containerized delivery.
 
-The first version uses a deterministic mock runner instead of calling a real model. That keeps the project reproducible while preserving the same trace shape a real agent platform would need: prompts, context files, tool calls, shell output, file diffs, final answer, verification result, timing, and failure reason.
+The default version still uses a deterministic mock runner for reproducible tests. It now also has a `provider=forge` runner seam for connecting a real Forge headless command without changing the API shape. Both paths produce the same trace contract: prompts, context files, raw events, tool calls, shell output, file diffs, changed files, scope violations, final answer, verification result, timing, and failure reason.
 
 ## Why This Project Exists
 
@@ -27,7 +27,7 @@ tasks/sample_tasks.json
 InMemoryStorage ----> FastAPI routes
         |                  |
         v                  v
-DeterministicMockRunner -> AgentTrace[]
+RunnerFactory -> DeterministicMockRunner / ForgeAgentRunner -> AgentTrace[]
         |                  |
         v                  v
 VerificationResult    calculate_metrics()
@@ -38,13 +38,18 @@ VerificationResult    calculate_metrics()
 ```text
 forge-eval-runner/
   app/
+    cases.py      JSON eval case loader for files or directories
+    cli.py        Minimal backtest CLI for local/offline runs
     main.py       FastAPI app and route handlers
     models.py     Pydantic task, trace, run, and metrics schemas
     runner.py     Deterministic mock coding-agent runner
     trace.py      Trace timestamp and mock diff helpers
     metrics.py    Success, coverage, duration, and failure aggregation
-    storage.py    In-memory task/run storage boundary
+    reporting.py  Backtest report aggregation and per-task summaries
+    storage.py    Memory and SQLite task/run/artifact storage boundary
     config.py     Environment-driven settings
+  eval_cases/
+    */case.json   Portable eval case definitions plus disposable fixtures
   tasks/
     sample_tasks.json
   tests/
@@ -61,6 +66,7 @@ forge-eval-runner/
 - `GET /runs/{run_id}`
 - `GET /runs/{run_id}/trace`
 - `GET /runs/{run_id}/metrics`
+- `GET /runs/{run_id}/report`
 
 ## Run Locally
 
@@ -74,6 +80,122 @@ Open:
 
 - API docs: `http://localhost:8000/docs`
 - Health check: `http://localhost:8000/health`
+
+## SQLite Persistence
+
+The API still defaults to in-memory storage for local smoke tests. V0.2 adds a SQLite-backed storage option for durable run, task, and artifact metadata:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+SQLite creates three metadata tables:
+
+- `eval_runs`: run status, requested task ids, metrics summary, report rates, failure category counts.
+- `eval_run_tasks`: per-task pass/fail summary, duration, model rounds, confirm requests, changed files, scope violations.
+- `eval_artifacts`: artifact kind, path, size, and created timestamp.
+
+Large trace/report payloads are written to filesystem artifacts instead of database rows:
+
+```text
+artifacts/
+  {run_id}/
+    trace.json
+    report.json
+```
+
+This preserves the current synchronous API contract while making completed runs queryable after the storage object or process restarts.
+
+## Worker Mode
+
+V0.3 adds a small local worker while keeping synchronous execution as the default. To make `POST /runs` return immediately with a `pending` run, start the API with queued execution:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_RUN_EXECUTION_MODE=queued \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Run one pending job:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run python -m app.worker --once
+```
+
+Or poll continuously:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run python -m app.worker
+```
+
+The worker claims the oldest `pending` run, marks it `running`, executes each task through the existing runner boundary, writes per-task summaries, stores trace/report artifacts, and marks the run `completed`.
+
+## Run Eval Cases With CLI
+
+The repository includes five portable cases under `eval_cases/`. The default mock provider runs fully offline and is intended to validate case loading, trace shaping, scope checks, and report aggregation:
+
+```bash
+uv run python -m app.cli --cases eval_cases --provider mock
+```
+
+The CLI prints a JSON backtest report:
+
+```json
+{
+  "total_tasks": 5,
+  "success_rate": 0.4,
+  "verification_pass_rate": 0.6,
+  "scope_violation_rate": 0.2,
+  "avg_duration_ms": 564.0,
+  "avg_model_rounds": 2.0,
+  "avg_confirm_requests": 0.6,
+  "failure_categories": {
+    "scope_violation": 1,
+    "timeout": 1,
+    "verification_failed": 1
+  },
+  "tasks": []
+}
+```
+
+Use the same command shape for the Forge contract once `FORGE_EVAL_FORGE_AGENT_COMMAND` points to a headless-compatible Forge command:
+
+```bash
+FORGE_EVAL_FORGE_AGENT_COMMAND="python scripts/fake_forge_agent.py" \
+  uv run python -m app.cli --cases eval_cases --provider forge --model local-forge
+```
+
+When debugging a real agent run, add `--output` to keep the full trace artifact
+while stdout remains the compact report:
+
+```bash
+FORGE_EVAL_FORGE_AGENT_COMMAND="python scripts/fake_forge_agent.py" \
+  uv run python -m app.cli \
+    --cases eval_cases/small-edit-success \
+    --provider forge \
+    --model local-forge \
+    --output output/small-edit-success.trace.json
+```
+
+The output file contains:
+
+```json
+{
+  "report": {},
+  "traces": []
+}
+```
 
 ## Example Requests
 
@@ -107,6 +229,102 @@ Fetch metrics:
 curl http://localhost:8000/runs/<run_id>/metrics
 ```
 
+Fetch the backtest report:
+
+```bash
+curl http://localhost:8000/runs/<run_id>/report
+```
+
+## Eval Case Format
+
+Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id>/case.json` with fixture paths resolved relative to that file:
+
+```json
+{
+  "schema_version": 1,
+  "task": {
+    "id": "small-edit-success",
+    "title": "Small focused edit succeeds",
+    "prompt": "Update src/calculator.py and run validation.",
+    "fixture_path": "fixture",
+    "context_files": ["src/calculator.py", "tests/test_calculator.py"],
+    "validation_commands": ["python -m pytest tests/test_calculator.py"],
+    "verification_command": "python -m pytest tests/test_calculator.py",
+    "expected_files_changed": ["src/calculator.py"],
+    "forbidden_files_changed": [".env"],
+    "metadata": {
+      "mock": {
+        "changed_files": ["src/calculator.py"],
+        "model_rounds": 2,
+        "confirm_requests": 0
+      }
+    }
+  }
+}
+```
+
+`metadata.mock` is only used by the deterministic mock provider. It lets offline cases simulate changed files, raw events, tool commands, model rounds, confirmation requests, token counts, and failure categories without depending on a live Forge app.
+
+## Running Against Forge
+
+Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to a headless Forge-compatible command, then create a run with `provider: "forge"`:
+
+```bash
+export FORGE_EVAL_FORGE_AGENT_COMMAND="python scripts/fake_forge_agent.py"
+
+curl -X POST http://localhost:8000/runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_ids": ["python-cli-dry-run"],
+    "provider": "forge",
+    "model": "local-forge"
+  }'
+```
+
+The command receives JSON on stdin:
+
+```json
+{
+  "task": {
+    "id": "python-cli-dry-run",
+    "prompt": "Add a --dry-run flag...",
+    "context_files": ["src/cli.py"],
+    "expected_files_changed": ["src/cli.py"],
+    "forbidden_files_changed": [".env"]
+  },
+  "prompt": "Add a --dry-run flag...",
+  "provider": "forge",
+  "model": "local-forge",
+  "workspace_path": "/tmp/forge-eval-.../workspace"
+}
+```
+
+It should write a JSON object to stdout. The runner maps it into `AgentTrace`:
+
+```json
+{
+  "raw_events": [{ "event_type": "tool_call_start", "tool_name": "read_file" }],
+  "tool_calls": [{ "command": "read_file src/cli.py", "stdout": "loaded", "exit_code": 0 }],
+  "shell_outputs": [{ "command": "pytest", "stdout": "1 passed", "exit_code": 0 }],
+  "file_diffs": [{ "path": "src/cli.py", "change_type": "modified", "diff": "diff --git ..." }],
+  "changed_files": ["src/cli.py"],
+  "verification_result": {
+    "command": "pytest",
+    "passed": true,
+    "exit_code": 0
+  },
+  "final_answer": "Completed.",
+  "model_rounds": 2,
+  "confirm_requests": 1,
+  "input_tokens": 120,
+  "output_tokens": 40
+}
+```
+
+Scope checks are automatic: files in `forbidden_files_changed`, or files outside `expected_files_changed` when that list is provided, mark the trace as `scope_violation` even if verification passed.
+
+For stronger backtests, put independent judge commands in `validation_commands`. These run inside the disposable workspace after Forge finishes and override any `verification_result` returned by the external command.
+
 ## Run With Docker
 
 ```bash
@@ -138,7 +356,7 @@ This project maps directly to real agent-platform work:
 
 - Persist runs to SQLite or Postgres.
 - Add a frontend trace viewer with timeline and diff panels.
-- Run real agent providers behind a common adapter interface.
+- Wire `ForgeAgentRunner` to Forge's real headless/Tauri backend entry point.
 - Execute verification commands in an isolated container.
 - Compare multiple models/providers across the same task set.
 - Export run reports as JSON, Markdown, or HTML.

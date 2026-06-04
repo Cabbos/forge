@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "forge-session-truncate-text",
+    "title": "Real Forge session: add truncateText with failure recovery",
+    "prompt": "在当前 TypeScript 项目中新增文本截断工具。新增 src/truncate.ts，导出 truncateText(text: string, maxLen?: number): string。要求短文本原样返回，超过 maxLen 时追加省略号；maxLen 默认 30；maxLen 小于等于 0 时返回空字符串；maxLen 为 1 或 2 时返回对应长度的点号。新增 src/truncate.test.ts 覆盖短文本、中文长文本、刚好等于 maxLen、空字符串、maxLen 0/1/2/3、默认 maxLen 和英文截断。更新 package.json 的 test script，让 npm test 能运行这个测试。若测试失败，请根据失败输出做最小修复后重跑。不要修改 .env、.forge 或 package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/App.tsx"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "npm test && npx tsc --noEmit"
+    ],
+    "verification_command": "npm test && npx tsc --noEmit",
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/truncate.ts",
+      "src/truncate.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/continuity.db",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "tags": [
+      "real-forge-session",
+      "typescript",
+      "failure-recovery",
+      "tests"
+    ],
+    "metadata": {
+      "source": {
+        "forge_session_id": "019e8c50-ef72-74c0-854a-35b38aa619e2",
+        "source_project": "/Users/cabbos/project/continuity-manual-test-app"
+      },
+      "mock": {
+        "changed_files": [
+          "package.json",
+          "src/truncate.ts",
+          "src/truncate.test.ts"
+        ],
+        "raw_events": [
+          {
+            "event_type": "validation_failed",
+            "command": "npx tsx src/truncate.test.ts",
+            "note": "Historical Forge session fixed a bad truncation expectation before passing."
+          }
+        ],
+        "tool_commands": [
+          "write_file src/truncate.ts",
+          "write_file src/truncate.test.ts",
+          "edit_file package.json",
+          "shell npx tsx src/truncate.test.ts",
+          "edit_file src/truncate.test.ts",
+          "shell npm test && npx tsc --noEmit"
+        ],
+        "model_rounds": 4,
+        "confirm_requests": 3,
+        "duration_ms": 840,
+        "input_tokens": 500,
+        "output_tokens": 210
+      }
+    }
+  }
+}

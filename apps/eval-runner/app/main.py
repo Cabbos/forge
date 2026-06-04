@@ -6,27 +6,41 @@ from app.config import get_settings
 from app.metrics import calculate_metrics
 from app.models import (
     AgentTrace,
+    BacktestReport,
     EvaluationRun,
     EvaluationTask,
     MetricsSummary,
     RunCreateRequest,
     RunStatus,
 )
-from app.runner import DeterministicMockRunner
-from app.storage import InMemoryStorage
+from app.reporting import build_report
+from app.runner import create_runner
+from app.storage import EvalStorage, InMemoryStorage, SQLiteStorage
 from app.trace import duration_ms, utc_now
 
 
-def create_app(storage: InMemoryStorage | None = None) -> FastAPI:
+def build_storage(settings) -> EvalStorage:
+    if settings.storage_backend == "sqlite":
+        return SQLiteStorage(
+            tasks_path=settings.tasks_path,
+            db_path=settings.db_path,
+            artifacts_path=settings.artifacts_path,
+        )
+    if settings.storage_backend == "memory":
+        return InMemoryStorage(tasks_path=settings.tasks_path)
+    raise ValueError(f"Unsupported storage backend: {settings.storage_backend}")
+
+
+def create_app(storage: EvalStorage | None = None) -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title="Forge Eval Runner",
         summary="Agent evaluation runner with trace capture and metrics APIs.",
         version="0.1.0",
     )
-    app.state.storage = storage or InMemoryStorage(tasks_path=settings.tasks_path)
+    app.state.storage = storage or build_storage(settings)
 
-    def get_storage() -> InMemoryStorage:
+    def get_storage() -> EvalStorage:
         return app.state.storage
 
     def require_run(run_id: str) -> EvaluationRun:
@@ -50,13 +64,42 @@ def create_app(storage: InMemoryStorage | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-        runner = DeterministicMockRunner(provider=request.provider, model=request.model)
         started_at = utc_now()
+        if settings.run_execution_mode == "queued":
+            run = EvaluationRun(
+                run_id=str(uuid4()),
+                status=RunStatus.PENDING,
+                provider=request.provider,
+                model=request.model,
+                case_source=str(settings.tasks_path),
+                requested_task_ids=[task.id for task in tasks],
+                traces=[],
+                metrics=calculate_metrics([]),
+                started_at=started_at,
+                ended_at=started_at,
+                duration_ms=0,
+            )
+            get_storage().create_run(run)
+            return run
+        if settings.run_execution_mode != "sync":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Unsupported run execution mode: {settings.run_execution_mode}",
+            )
+
+        runner = create_runner(
+            provider=request.provider,
+            model=request.model,
+            forge_command=settings.forge_agent_command,
+        )
         traces = [runner.run_task(task) for task in tasks]
         ended_at = utc_now()
         run = EvaluationRun(
             run_id=str(uuid4()),
             status=RunStatus.COMPLETED,
+            provider=request.provider,
+            model=request.model,
+            case_source=str(settings.tasks_path),
             requested_task_ids=[task.id for task in tasks],
             traces=traces,
             metrics=calculate_metrics(traces),
@@ -78,6 +121,10 @@ def create_app(storage: InMemoryStorage | None = None) -> FastAPI:
     @app.get("/runs/{run_id}/metrics", response_model=MetricsSummary)
     def get_run_metrics(run_id: str) -> MetricsSummary:
         return require_run(run_id).metrics
+
+    @app.get("/runs/{run_id}/report", response_model=BacktestReport)
+    def get_run_report(run_id: str) -> BacktestReport:
+        return build_report(require_run(run_id).traces)
 
     return app
 

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "forge-session-capitalize",
+    "title": "Real Forge session: add capitalize",
+    "prompt": "在当前 TypeScript 项目中新增字符串首字母大写工具。新增 src/capitalize.ts，导出 capitalize(text: string): string。要求空字符串原样返回，普通英文首字母大写，其余字母小写，单字符正常处理，数字开头保持合理结果。新增 src/capitalize.test.ts 覆盖 hello、HELLO、hELLO、空字符串、单字符、带空格短语和数字开头。更新 package.json 的 test script，让 npm test 能运行这个测试。不要修改 .env、.forge 或 package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/App.tsx"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "npm test && npx tsc --noEmit"
+    ],
+    "verification_command": "npm test && npx tsc --noEmit",
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/capitalize.ts",
+      "src/capitalize.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/continuity.db",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "tags": [
+      "real-forge-session",
+      "typescript",
+      "utility",
+      "tests"
+    ],
+    "metadata": {
+      "source": {
+        "forge_session_id": "019e8c50-ef72-74c0-854a-35b38aa619e2",
+        "source_project": "/Users/cabbos/project/continuity-manual-test-app"
+      },
+      "mock": {
+        "changed_files": [
+          "package.json",
+          "src/capitalize.ts",
+          "src/capitalize.test.ts"
+        ],
+        "tool_commands": [
+          "write_file src/capitalize.ts",
+          "write_file src/capitalize.test.ts",
+          "edit_file package.json",
+          "shell npm test && npx tsc --noEmit"
+        ],
+        "model_rounds": 3,
+        "confirm_requests": 2,
+        "duration_ms": 560,
+        "input_tokens": 360,
+        "output_tokens": 150
+      }
+    }
+  }
+}
