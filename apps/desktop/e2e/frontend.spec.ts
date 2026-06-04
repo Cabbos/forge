@@ -2222,7 +2222,7 @@ test.describe("Timeline Message Flow", () => {
   test("app loads and shows empty state", async ({ page }) => {
     const main = page.getByRole("main");
     await expect(page.getByTestId("app-titlebar")).toHaveAttribute("data-tauri-drag-region", "true");
-    await expect(page.getByTestId("app-titlebar")).toHaveCSS("height", "56px");
+    await expect(page.getByTestId("app-titlebar")).toHaveCSS("height", "64px");
     await expect(main.getByTestId("empty-workbench")).toBeVisible();
     await expect(main.getByTestId("empty-workbench-project")).toContainText("forge");
     await expect(main.getByTestId("empty-start-composer")).toBeVisible();
@@ -2291,7 +2291,8 @@ test.describe("Timeline Message Flow", () => {
     expect(Math.abs(entryMetrics[0].height - entryMetrics[1].height)).toBeLessThanOrEqual(12);
     expect(entryMetrics[0].borderColor).toBe(entryMetrics[1].borderColor);
     expect(entryMetrics[0].radius).toBeLessThanOrEqual(8);
-    await expect(main.locator("img")).toHaveCount(0);
+    await expect(main.locator("img")).toHaveCount(1);
+    await expect(main.locator("img.forge-empty-identity-mark")).toHaveCount(1);
     await expect(main.locator("p", { hasText: "从当前对话开始" })).toHaveCount(0);
     await expect(main.getByText("Forge 会带着项目档案，把结果推进到可预览、可检查、可继续。")).toHaveCount(0);
     await expect(main.getByText("当前任务", { exact: true })).toHaveCount(0);

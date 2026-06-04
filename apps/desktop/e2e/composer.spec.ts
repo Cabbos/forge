@@ -479,7 +479,7 @@ test.describe("InputBar", () => {
     });
 
     expect(metrics.radius).toBeLessThanOrEqual(8);
-    expect(metrics.surfaceHeight).toBeGreaterThanOrEqual(102);
+    expect(metrics.surfaceHeight).toBeGreaterThanOrEqual(98);
     expect(metrics.surfaceHeight).toBeLessThanOrEqual(110);
     expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics.borderColor).not.toBe("rgba(0, 0, 0, 0)");
@@ -488,7 +488,7 @@ test.describe("InputBar", () => {
     expect(metrics.minInputHeight).toBeLessThanOrEqual(46);
     expect(metrics.lineHeight).toBe(24);
     expect(metrics.toolbarHeight).toBeGreaterThanOrEqual(34);
-    expect(metrics.toolbarHeight).toBeLessThanOrEqual(38);
+    expect(metrics.toolbarHeight).toBeLessThanOrEqual(40);
     expect(metrics.toolbarBorderTopWidth).toBe(0);
     expect(metrics.toolbarBackground).toBe("rgba(0, 0, 0, 0)");
     expect(metrics.toolbarPaddingBottom).toBe(8);
@@ -749,7 +749,7 @@ test.describe("InputBar", () => {
     expect(metrics!.surfaceWidth).toBeLessThanOrEqual(500);
     expect(metrics!.surfaceHeight).toBeLessThanOrEqual(250);
     expect(metrics!.toolbarWrap).toBe("wrap");
-    expect(metrics!.toolbarHeight).toBeLessThanOrEqual(76);
+    expect(metrics!.toolbarHeight).toBeLessThanOrEqual(78);
     expect(metrics!.toolLeft).toBeGreaterThanOrEqual(16);
     expect(metrics!.controlRight).toBeLessThanOrEqual(-16);
     expect(metrics!.sendRight).toBeLessThanOrEqual(-16);
@@ -913,6 +913,17 @@ test.describe("Timeline Composer", () => {
       const main = page.getByRole("main");
       const hints = main.getByTestId("empty-middle-hints");
       await expect(hints).toBeVisible();
+      const hintMetrics = await hints.getByRole("button", { name: "检查这个项目能不能运行" }).evaluate((node) => {
+        const style = getComputedStyle(node);
+        return {
+          background: style.backgroundColor,
+          color: style.color,
+          radius: Number.parseFloat(style.borderTopLeftRadius),
+        };
+      });
+      expect(hintMetrics.background).toBe("rgb(250, 247, 241)");
+      expect(hintMetrics.color).toBe("rgb(77, 71, 64)");
+      expect(hintMetrics.radius).toBeLessThanOrEqual(8);
       await hints.getByRole("button", { name: "检查这个项目能不能运行" }).click();
   
       await expect(main.getByTestId("empty-start-composer").getByRole("textbox")).toHaveValue("检查这个项目能不能运行");
@@ -1321,14 +1332,17 @@ test.describe("Timeline Composer", () => {
       });
   
       expect(metrics).not.toBeNull();
-      expect(metrics!.surfaceBackdrop).not.toBe("none");
+      expect(metrics!.surfaceBackdrop).toBe("none");
       expect(metrics!.surfaceOverflow).toBe("hidden");
       expect(metrics!.surfaceShadow).not.toBe("none");
       expect(metrics!.surfaceRadius).toBeLessThanOrEqual(8);
       expect(metrics!.toolbarHeight).toBeLessThanOrEqual(40);
       expect(metrics!.toolClusterHeight).toBeLessThanOrEqual(32);
       expect(metrics!.controlGap).toBeLessThanOrEqual(8);
-      expect(metrics!.toolSizes).toEqual([{ width: 30, height: 30 }, { width: 30, height: 30 }]);
+      expect(metrics!.toolSizes[0].height).toBe(30);
+      expect(metrics!.toolSizes[0].width).toBeGreaterThanOrEqual(88);
+      expect(metrics!.toolSizes[0].width).toBeLessThanOrEqual(110);
+      expect(metrics!.toolSizes[1]).toEqual({ width: 30, height: 30 });
       expect(metrics!.modelRadius).toBeLessThanOrEqual(8);
       expect(metrics!.modelHeight).toBe(30);
       expect(metrics!.modelBackground).not.toBe("rgba(0, 0, 0, 0)");

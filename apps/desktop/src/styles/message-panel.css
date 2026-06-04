@@ -22,16 +22,16 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel {
-    border-color: #DDD6CB;
-    border-radius: 10px;
-    background: #FFFBF4 !important;
-    box-shadow: 0 8px 20px rgba(66, 52, 34, 0.045);
+    border-color: #DED6CB;
+    border-radius: 12px;
+    background: #FEFCF8 !important;
+    box-shadow: 0 6px 18px rgba(79, 62, 42, 0.04);
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel-header {
     min-height: 2.5rem;
-    border-bottom-color: #E8E1D7;
-    background: #FBF7EF;
+    border-bottom-color: #E9E0D4;
+    background: #FAF7F1;
     padding: 0.5rem 0.75rem;
   }
 }

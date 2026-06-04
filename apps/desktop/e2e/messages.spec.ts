@@ -1946,7 +1946,7 @@ test.describe("Timeline Messages", () => {
       });
   
       const titlebar = page.getByTestId("app-titlebar");
-      await expect(titlebar).toHaveCSS("height", "56px");
+      await expect(titlebar).toHaveCSS("height", "64px");
   
       const composerFrame = page.getByTestId("composer-frame");
       await expect(composerFrame).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -1956,7 +1956,7 @@ test.describe("Timeline Messages", () => {
       await simulateStream(page, sessionId, fullConversation(sessionId), 10);
       const processSummary = page.getByTestId("tool-activity-summary").first();
       await expect(processSummary).toContainText("过程已收起 · 2 步");
-      await expect(processSummary).toHaveCSS("min-height", "22px");
+      await expect(processSummary).toHaveCSS("min-height", "24px");
     });
   
     test("V3 operating surface keeps conversation focused without the Inspector rail", async ({ page }) => {

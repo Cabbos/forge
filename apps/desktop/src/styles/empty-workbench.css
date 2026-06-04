@@ -213,19 +213,21 @@
     min-width: 0;
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(42, 39, 33, 0.72);
+    background: var(--forge-bg-surface);
     padding: 0.4375rem 0.625rem;
-    color: var(--forge-text-muted);
+    color: var(--forge-text-secondary);
     font-size: 12px;
     line-height: 1;
-    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+    box-shadow: 0 1px 0 rgba(255, 251, 244, 0.82) inset;
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
   }
 
   .forge-empty-hint:hover,
   .forge-empty-hint:focus-visible {
     border-color: rgba(184, 138, 86, 0.28);
     background: rgba(184, 138, 86, 0.055);
-    color: var(--forge-text-secondary);
+    color: var(--forge-text-primary);
+    box-shadow: 0 0 0 1px rgba(184, 138, 86, 0.04), 0 1px 0 rgba(255, 251, 244, 0.9) inset;
   }
   .forge-empty-context-row {
     display: flex;

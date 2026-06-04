@@ -14,7 +14,7 @@ export function memoryBelongsToCurrentContext(memory: WikiMemory, currentProject
   return currentProjectPath !== "" && normalizeProjectPath(memory.project_path) === currentProjectPath;
 }
 
-export function indexMemoriesById(memories: WikiMemory[], currentProjectPath: string): Map<string, WikiMemory> {
+export function indexMemoriesById(memories: WikiMemory[] | null | undefined, currentProjectPath: string): Map<string, WikiMemory> {
   const byId = new Map<string, WikiMemory>();
   filterContextMemories(memories, currentProjectPath).forEach((memory) => {
     byId.set(memory.id, memory);
@@ -22,12 +22,12 @@ export function indexMemoriesById(memories: WikiMemory[], currentProjectPath: st
   return byId;
 }
 
-export function filterCandidateMemories(memories: WikiMemory[], currentProjectPath: string): WikiMemory[] {
+export function filterCandidateMemories(memories: WikiMemory[] | null | undefined, currentProjectPath: string): WikiMemory[] {
   return filterContextMemories(memories, currentProjectPath).filter((memory) => memory.status === "candidate");
 }
 
-export function filterProjectMemories(memories: WikiMemory[], currentProjectPath: string): WikiMemory[] {
-  return memories.filter(
+export function filterProjectMemories(memories: WikiMemory[] | null | undefined, currentProjectPath: string): WikiMemory[] {
+  return (memories ?? []).filter(
     (memory) =>
       memory.scope === "project" &&
       currentProjectPath !== "" &&
@@ -37,10 +37,10 @@ export function filterProjectMemories(memories: WikiMemory[], currentProjectPath
 }
 
 export function filterVisibleForgeWikiProposals(
-  proposals: ForgeWikiUpdateProposal[],
+  proposals: ForgeWikiUpdateProposal[] | null | undefined,
   currentProjectPath: string,
 ): ForgeWikiUpdateProposal[] {
-  return proposals.filter(
+  return (proposals ?? []).filter(
     (proposal) =>
       (proposal.status === "pending" ||
         proposal.status === "accepted" ||
@@ -49,6 +49,6 @@ export function filterVisibleForgeWikiProposals(
   );
 }
 
-function filterContextMemories(memories: WikiMemory[], currentProjectPath: string): WikiMemory[] {
-  return memories.filter((memory) => memoryBelongsToCurrentContext(memory, currentProjectPath));
+function filterContextMemories(memories: WikiMemory[] | null | undefined, currentProjectPath: string): WikiMemory[] {
+  return (memories ?? []).filter((memory) => memoryBelongsToCurrentContext(memory, currentProjectPath));
 }

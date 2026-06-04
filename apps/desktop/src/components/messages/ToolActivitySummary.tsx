@@ -31,10 +31,14 @@ export function ToolActivitySummary({
         data-running-icon={isRunning ? "true" : undefined}
         className={cn("size-3.5 shrink-0", isRunning && "animate-spin")}
       />
-      <span className="shrink-0 font-medium">{label}</span>
-      {summaryItems.map((item) => (
-        <span key={item} className="forge-tool-activity-summary-item">{item}</span>
-      ))}
+      <span className="forge-tool-activity-summary-label">{label}</span>
+      {summaryItems.length > 0 && (
+        <span className="forge-tool-activity-summary-items">
+          {summaryItems.map((item) => (
+            <span key={item} className="forge-tool-activity-summary-item">{item}</span>
+          ))}
+        </span>
+      )}
     </ForgeCollapsibleTrigger>
   );
 }

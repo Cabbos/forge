@@ -1,23 +1,23 @@
 @layer components {
   .forge-settings-dialog {
-    --forge-bg-base: #F7F2E9;
-    --forge-bg-surface: #FFFBF4;
-    --forge-bg-raised: #F7F2E9;
-    --forge-bg-raised-hover: #ECE4D7;
-    --forge-border-subtle: #DDD6CB;
+    --forge-bg-base: #F2EFE8;
+    --forge-bg-surface: #FEFCF8;
+    --forge-bg-raised: #FAF7F1;
+    --forge-bg-raised-hover: #ECE5DA;
+    --forge-border-subtle: #DDD2C3;
     --forge-border-muted: rgba(92, 81, 68, 0.16);
-    --forge-border-strong: #CFC7B8;
-    --forge-text-primary: #211F1B;
+    --forge-border-strong: #CFC1AE;
+    --forge-text-primary: #1D1A16;
     --forge-text-secondary: #4D4740;
     --forge-text-muted: #716A61;
     --forge-text-faint: #948B80;
     --forge-hover: rgba(92, 81, 68, 0.055);
     --forge-active: rgba(184, 138, 86, 0.12);
     --forge-focus-ring: rgba(184, 138, 86, 0.38);
-    --forge-shadow-focus: 0 12px 32px rgba(66, 52, 34, 0.11);
-    --forge-material-surface: #FFFBF4;
-    --forge-material-raised: #F7F2E9;
-    --forge-material-popover: #FFFBF4;
+    --forge-shadow-focus: 0 16px 36px rgba(79, 62, 42, 0.12);
+    --forge-material-surface: #FEFCF8;
+    --forge-material-raised: #FAF7F1;
+    --forge-material-popover: #FEFCF8;
     --background: var(--forge-bg-base);
     --foreground: var(--forge-text-primary);
     --popover: var(--forge-material-popover);
@@ -75,7 +75,7 @@
     align-items: center;
     gap: 0.625rem;
     border: 1px solid var(--forge-border-subtle);
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 12px;
     background: var(--forge-bg-surface);
     padding: 0.5rem 0.625rem;
   }
@@ -123,7 +123,7 @@
     gap: 0.5rem;
     overflow: visible;
     border: 1px solid var(--forge-border-subtle);
-    border-radius: var(--radius);
+    border-radius: 14px;
     background: var(--forge-bg-raised);
     padding: 0.5rem;
     box-shadow: none;
@@ -136,7 +136,7 @@
     align-items: start;
     gap: 0.625rem;
     border: 1px solid transparent;
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 12px;
     background: var(--forge-bg-surface);
     padding: 0.75rem;
     transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
@@ -154,7 +154,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--forge-border-subtle);
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 10px;
     background: var(--forge-bg-raised);
     color: var(--forge-text-muted);
     font-size: 11px;
@@ -186,7 +186,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--forge-border-subtle);
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 999px;
     background: var(--forge-bg-raised);
     padding: 0 0.45rem;
     font-size: 10px;
@@ -206,7 +206,7 @@
     display: grid;
     gap: 0.5rem;
     border: 1px solid var(--forge-border-subtle);
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 12px;
     background: var(--forge-bg-surface);
     padding: 0.625rem;
   }
@@ -215,7 +215,7 @@
     display: grid;
     gap: 0.75rem;
     border: 1px solid rgba(212, 119, 119, 0.18);
-    border-radius: var(--radius);
+    border-radius: 14px;
     background: rgba(212, 119, 119, 0.035);
     padding: 0.75rem;
   }

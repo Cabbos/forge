@@ -1,23 +1,23 @@
 @layer components {
   .forge-command-dialog {
-    --forge-bg-base: #F7F2E9;
-    --forge-bg-surface: #FFFBF4;
-    --forge-bg-raised: #F7F2E9;
-    --forge-bg-raised-hover: #ECE4D7;
-    --forge-border-subtle: #DDD6CB;
+    --forge-bg-base: #F2EFE8;
+    --forge-bg-surface: #FEFCF8;
+    --forge-bg-raised: #FAF7F1;
+    --forge-bg-raised-hover: #ECE5DA;
+    --forge-border-subtle: #DDD2C3;
     --forge-border-muted: rgba(92, 81, 68, 0.16);
-    --forge-border-strong: #CFC7B8;
-    --forge-text-primary: #211F1B;
+    --forge-border-strong: #CFC1AE;
+    --forge-text-primary: #1D1A16;
     --forge-text-secondary: #4D4740;
     --forge-text-muted: #716A61;
     --forge-text-faint: #948B80;
     --forge-hover: rgba(92, 81, 68, 0.055);
     --forge-active: rgba(184, 138, 86, 0.12);
     --forge-focus-ring: rgba(184, 138, 86, 0.38);
-    --forge-shadow-focus: 0 12px 32px rgba(66, 52, 34, 0.11);
-    --forge-glass-popover: #FFFBF4;
-    --forge-material-surface: #FFFBF4;
-    --forge-material-popover: #FFFBF4;
+    --forge-shadow-focus: 0 16px 36px rgba(79, 62, 42, 0.12);
+    --forge-glass-popover: #FEFCF8;
+    --forge-material-surface: #FEFCF8;
+    --forge-material-popover: #FEFCF8;
     --background: var(--forge-bg-base);
     --foreground: var(--forge-text-primary);
     --popover: var(--forge-glass-popover);
@@ -54,7 +54,7 @@
   }
 
   .forge-command-surface {
-    border-radius: var(--radius) !important;
+    border-radius: 14px !important;
     background: var(--forge-glass-popover);
     color: var(--forge-text-primary);
     padding: 0.375rem;
@@ -65,9 +65,9 @@
   }
 
   .forge-command-surface [data-slot="command-input-wrapper"] > [data-slot="input-group"] {
-    height: 2.25rem !important;
+    height: 2.5rem !important;
     border-color: var(--forge-border-strong);
-    border-radius: calc(var(--radius) - 2px) !important;
+    border-radius: 12px !important;
     background: var(--forge-bg-raised);
   }
 
@@ -102,7 +102,7 @@
     align-items: center;
     gap: 0.5rem;
     border: 1px solid var(--forge-border-subtle);
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 10px;
     background: var(--forge-bg-raised);
     margin: 0 0 0.375rem;
     padding: 0 0.625rem;
@@ -129,9 +129,9 @@
   }
 
   .forge-command-surface [data-slot="command-item"] {
-    min-height: 2rem;
+    min-height: 2.25rem;
     border: 1px solid transparent;
-    border-radius: calc(var(--radius) - 2px) !important;
+    border-radius: 10px !important;
     padding: 0 0.5rem;
     font-size: 12px;
     color: var(--forge-text-secondary);

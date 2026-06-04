@@ -117,7 +117,7 @@
     --forge-conversation-gutter-y: 18px;
     --forge-conversation-gutter-x: 18px;
     --forge-conversation-gutter-x-wide: 28px;
-    --forge-conversation-lane-max: 790px;
+    --forge-conversation-lane-max: 760px;
     --forge-message-gap: 14px;
     --forge-markdown-paragraph-gap: 9px;
     --forge-markdown-block-gap: 14px;
@@ -125,7 +125,7 @@
     --forge-markdown-list-indent: 20px;
     --forge-log-row-height: 22px;
     --forge-log-output-max-height: 220px;
-    --forge-sidebar-width: 216px;
+    --forge-sidebar-width: 284px;
     --forge-cockpit-width: 320px;
     --forge-sidebar-row-height: 28px;
     --forge-titlebar-height: 42px;

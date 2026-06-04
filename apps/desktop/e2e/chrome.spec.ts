@@ -237,11 +237,11 @@ test.describe("Timeline Chrome", () => {
       });
   
       expect(metrics).not.toBeNull();
-      expect(metrics!.titlebarHeight).toBe(56);
+      expect(metrics!.titlebarHeight).toBe(64);
       expect(metrics!.contextLeft).toBeGreaterThanOrEqual(24);
       expect(metrics!.actionsRightGap).toBeGreaterThanOrEqual(18);
       expect(metrics!.titleLineHeight).toBeLessThanOrEqual(20);
-      expect(metrics!.projectHeight).toBe(22);
+      expect(metrics!.projectHeight).toBe(24);
       expect(metrics!.projectTopGap).toBeGreaterThanOrEqual(4);
       expect(metrics!.projectBackground).not.toBe("rgba(0, 0, 0, 0)");
       expect(metrics!.projectBorder).not.toBe("rgba(0, 0, 0, 0)");
@@ -249,13 +249,41 @@ test.describe("Timeline Chrome", () => {
       expect(metrics!.statusRadius).toBeLessThanOrEqual(8);
       expect(metrics!.statusBackground).not.toBe("rgba(0, 0, 0, 0)");
       expect(metrics!.actionsGap).toBe(4);
-      expect(metrics!.buttonSizes).toEqual([{ width: 28, height: 28 }, { width: 28, height: 28 }]);
+      expect(metrics!.buttonSizes).toEqual([{ width: 32, height: 32 }, { width: 32, height: 32 }]);
       expect(metrics!.buttonTransitions.every((value) => value.includes("background-color"))).toBe(true);
   
       const searchButton = titlebar.getByRole("button", { name: "搜索" });
       await searchButton.hover();
       await expect(searchButton).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
       await releaseHeldSendInput(page);
+    });
+
+    test("search command palette keeps portal surfaces in the light workbench theme", async ({ page }) => {
+      const searchButton = page.locator('button[aria-label="搜索"]');
+      await expect(searchButton).toHaveCount(1);
+      await searchButton.click();
+
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByPlaceholder("搜索或输入命令...")).toBeVisible();
+
+      const paletteMetrics = await page.evaluate(() => {
+        const overlay = document.querySelector<HTMLElement>("[data-slot='dialog-overlay']");
+        const dialog = document.querySelector<HTMLElement>("[data-slot='dialog-content']");
+        const surface = document.querySelector<HTMLElement>("[data-testid='command-palette-surface']");
+        return {
+          bodyBackground: getComputedStyle(document.body).backgroundColor,
+          overlayBackground: overlay ? getComputedStyle(overlay).backgroundColor : "",
+          dialogBackground: dialog ? getComputedStyle(dialog).backgroundColor : "",
+          surfaceBackground: surface ? getComputedStyle(surface).backgroundColor : "",
+          hasViteOverlay: Boolean(document.querySelector("vite-error-overlay")),
+        };
+      });
+
+      expect(paletteMetrics.bodyBackground).toBe("rgb(242, 239, 232)");
+      expect(paletteMetrics.overlayBackground).toBe("rgba(251, 244, 234, 0.78)");
+      expect(paletteMetrics.dialogBackground).toBe("rgb(254, 252, 248)");
+      expect(paletteMetrics.surfaceBackground).toBe("rgb(254, 252, 248)");
+      expect(paletteMetrics.hasViteOverlay).toBe(false);
     });
 
     test("reduced motion keeps running chrome steady", async ({ page }) => {

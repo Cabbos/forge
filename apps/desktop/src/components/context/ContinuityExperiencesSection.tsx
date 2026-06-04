@@ -39,7 +39,7 @@ export function ContinuityExperiencesSection({
       const nextExperiences = trimmedQuery
         ? await searchContinuityExperiences(trimmedQuery, sessionId ?? undefined, currentProjectPath, 20)
         : await listContinuityExperiences(sessionId ?? undefined, currentProjectPath);
-      setExperiences(nextExperiences);
+      setExperiences(nextExperiences ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -52,7 +52,7 @@ export function ContinuityExperiencesSection({
   }, [loadExperiences]);
 
   const visibleExperiences = useMemo(
-    () => experiences.filter((experience) => experience.project_path === currentProjectPath),
+    () => (experiences ?? []).filter((experience) => experience.project_path === currentProjectPath),
     [currentProjectPath, experiences],
   );
 
