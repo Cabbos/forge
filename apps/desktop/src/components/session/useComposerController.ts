@@ -5,10 +5,13 @@ import { useComposerModelMenu } from "./useComposerModelMenu";
 import { useComposerPresentation } from "./useComposerPresentation";
 import { useComposerSessionState } from "./useComposerSessionState";
 import { useComposerSuggestions } from "./useComposerSuggestions";
+import { buildComposerContextUsageView } from "./contextUsageView";
 
 export function useComposerController(sessionId: string) {
   const {
     composerState,
+    contextUsage,
+    contextWindowTokens,
     isRunning,
     isTurnInFlight,
     workflow,
@@ -67,10 +70,12 @@ export function useComposerController(sessionId: string) {
     handleCompositionEnd,
     handleCompositionStart,
     handleKeyDown,
+    handleCompact,
     handleResume,
     handleSend,
     handleStop,
     handleToggleModelMenu,
+    isCompacting,
     isResuming,
     resumeError,
   } = useComposerActions({
@@ -98,6 +103,12 @@ export function useComposerController(sessionId: string) {
     workingDir,
   });
   const canSend = isRunning && !isTurnInFlight && (value.trim().length > 0 || chips.length > 0);
+  const contextUsageView = buildComposerContextUsageView({
+    fallbackContextWindowTokens: contextWindowTokens,
+    isCompacting,
+    isStreaming: isTurnInFlight,
+    usage: contextUsage,
+  });
 
   const {
     composerRootRef,
@@ -112,6 +123,7 @@ export function useComposerController(sessionId: string) {
     closeModelMenu,
     closeSuggestions,
     composerState,
+    contextUsageView,
     focusTextarea,
     isResuming,
     isRunning,
@@ -122,6 +134,7 @@ export function useComposerController(sessionId: string) {
     onCompositionEnd: handleCompositionEnd,
     onRemoveChip: removeChip,
     onResume: handleResume,
+    onCompact: handleCompact,
     onSelectModel: selectModel,
     onSend: handleSend,
     onStop: handleStop,

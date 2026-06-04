@@ -273,6 +273,34 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error mock
           window.__lastSendInputArgs = args;
           return undefined;
+        case "compact_session_context":
+          // @ts-expect-error mock
+          window.__lastCompactSessionContextArgs = args;
+          // @ts-expect-error mock
+          const compactResult = window.__mockCompactSessionContextResult ?? {
+            compacted: true,
+            retained_messages: 32,
+            compacted_messages: 8,
+            estimated_tokens_before: 142000,
+            estimated_tokens_after: 32000,
+          };
+          if (compactResult.compacted === false) {
+            window.setTimeout(() => {
+              // @ts-expect-error listeners
+              for (const listener of window.__tauriListeners?.["session-output"] ?? []) {
+                listener({
+                  payload: {
+                    event_type: "context_compact_skipped",
+                    session_id: String(args.sessionId ?? ""),
+                    block_id: crypto.randomUUID(),
+                    reason: String(compactResult.skipped_reason ?? "history_too_short"),
+                    retained_messages: Number(compactResult.retained_messages ?? 0),
+                  },
+                });
+              }
+            }, 0);
+          }
+          return compactResult;
         case "kill_session":
           // @ts-expect-error mock
           window.__lastKilledSessionId = args.sessionId;

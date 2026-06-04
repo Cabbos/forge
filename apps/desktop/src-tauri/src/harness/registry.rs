@@ -188,7 +188,8 @@ fn capability_id_for_tool(tool_name: &str) -> &str {
         "ls" | "list" => "list_directory",
         "glob" => "search_files",
         "grep" => "search_content",
-        "bash" | "execute_command" | "shell" => "run_shell",
+        "bash" | "execute_command" | "shell" | "shell_command" | "run_command"
+        | "run_shell_command" => "run_shell",
         other => other,
     }
 }

@@ -128,7 +128,14 @@ impl SubAgent {
                 let tool_id = tc.id.clone();
                 let is_blocked = matches!(
                     name.as_str(),
-                    "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task"
+                    "run_shell"
+                        | "shell_command"
+                        | "run_command"
+                        | "run_shell_command"
+                        | "write_to_file"
+                        | "edit_file"
+                        | "bash"
+                        | "delegate_task"
                 );
                 let app = app_handle.clone();
                 let cancel_for_tool = cancel.clone();
@@ -278,7 +285,14 @@ impl SubAgent {
             for tc in &stream_result.tool_calls {
                 let is_blocked = matches!(
                     tc.name.as_str(),
-                    "run_shell" | "write_to_file" | "edit_file" | "bash" | "delegate_task"
+                    "run_shell"
+                        | "shell_command"
+                        | "run_command"
+                        | "run_shell_command"
+                        | "write_to_file"
+                        | "edit_file"
+                        | "bash"
+                        | "delegate_task"
                 );
                 let result = if is_blocked {
                     format!("Tool '{}' is blocked for sub-agents", tc.name)

@@ -39,6 +39,7 @@ impl WikiMemoryStore {
             .filter(|memory| {
                 memory.status != MemoryStatus::Forgotten && memory.status != MemoryStatus::Archived
             })
+            .filter(|memory| !is_hidden_candidate(memory, &memories))
             .filter(|memory| {
                 filter
                     .scope
@@ -64,6 +65,20 @@ impl WikiMemoryStore {
 
         if next_memories.iter().any(|memory| {
             memory.status == MemoryStatus::Forgotten
+                && memory.category == candidate.category
+                && memory.scope == candidate.scope
+                && same_project_path(
+                    memory.project_path.as_deref(),
+                    candidate.project_path.as_deref(),
+                )
+                && memory.title == candidate.title
+                && memory.body == candidate.body
+        }) {
+            return Ok(None);
+        }
+
+        if next_memories.iter().any(|memory| {
+            matches!(memory.status, MemoryStatus::Accepted | MemoryStatus::Pinned)
                 && memory.category == candidate.category
                 && memory.scope == candidate.scope
                 && same_project_path(
@@ -294,6 +309,74 @@ fn same_project_path(left: Option<&str>, right: Option<&str>) -> bool {
     }
 }
 
+fn is_hidden_candidate(memory: &WikiMemory, memories: &[WikiMemory]) -> bool {
+    memory.status == MemoryStatus::Candidate
+        && (is_turn_scoped_action_candidate(memory)
+            || memories.iter().any(|existing| {
+                matches!(
+                    existing.status,
+                    MemoryStatus::Accepted | MemoryStatus::Pinned
+                ) && existing.category == memory.category
+                    && existing.scope == memory.scope
+                    && same_project_path(
+                        existing.project_path.as_deref(),
+                        memory.project_path.as_deref(),
+                    )
+                    && existing.title == memory.title
+                    && existing.body == memory.body
+            }))
+}
+
+fn is_turn_scoped_action_candidate(memory: &WikiMemory) -> bool {
+    let lower = memory.body.to_lowercase();
+    let turn_scoped = [
+        "当前项目",
+        "目标项目",
+        "这个任务",
+        "这轮任务",
+        "本轮",
+        "这次",
+        "不要修改",
+        "不要改",
+        "不要碰",
+        "不要动",
+        ".forge",
+        "current project",
+        "this task",
+        "this turn",
+        "do not touch",
+        "don't touch",
+    ]
+    .iter()
+    .any(|signal| lower.contains(signal));
+    if !turn_scoped {
+        return false;
+    }
+
+    [
+        "请",
+        "帮我",
+        "我希望你",
+        "给项目",
+        "增加",
+        "修改",
+        "改动",
+        "实现",
+        "修复",
+        "检查",
+        "验证",
+        "运行",
+        "please",
+        "can you",
+        "implement",
+        "change",
+        "fix",
+        "verify",
+    ]
+    .iter()
+    .any(|signal| lower.contains(signal))
+}
+
 fn same_normalized_path(left: &str, right: &str) -> bool {
     normalize_path(left) == normalize_path(right)
 }
@@ -468,6 +551,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn candidate_upsert_suppresses_exact_duplicate_of_accepted_memory() {
+        let path = temp_path("accepted-duplicate-suppressed");
+        let store = WikiMemoryStore::new(path.clone());
+        let accepted = memory(
+            "accepted-memory",
+            MemoryStatus::Accepted,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        store.memories.write().unwrap().push(accepted.clone());
+
+        let duplicate = memory(
+            "candidate-memory",
+            MemoryStatus::Candidate,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        let result = store
+            .upsert_candidate(duplicate)
+            .await
+            .expect("candidate suppression should not error");
+
+        assert!(result.is_none());
+        let memories = store.list(MemoryListFilter::default()).await;
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, "accepted-memory");
+        assert_eq!(memories[0].status, MemoryStatus::Accepted);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn list_hides_candidate_duplicate_of_accepted_memory() {
+        let path = temp_path("accepted-duplicate-hidden");
+        let store = WikiMemoryStore::new(path.clone());
+        let accepted = memory(
+            "accepted-memory",
+            MemoryStatus::Accepted,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        let duplicate = memory(
+            "candidate-memory",
+            MemoryStatus::Candidate,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        store.memories.write().unwrap().push(accepted);
+        store.memories.write().unwrap().push(duplicate);
+
+        let memories = store.list(MemoryListFilter::default()).await;
+
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, "accepted-memory");
+        assert_eq!(memories[0].status, MemoryStatus::Accepted);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn list_hides_turn_scoped_action_candidates() {
+        let path = temp_path("turn-scoped-action-hidden");
+        let store = WikiMemoryStore::new(path.clone());
+        let mut noisy = memory(
+            "noisy-candidate",
+            MemoryStatus::Candidate,
+            "用户偏好：请只在当前项目 continuity-manual-test-a...",
+            Some("/tmp/project"),
+        );
+        noisy.body = "请只在当前项目 continuity-manual-test-app 内工作，不要修改 Forge 主项目，不要修改 .forge 目录。我希望你做一个小改动：给任务列表增加“只显示未完成任务”的过滤逻辑。实现后运行验证。".to_string();
+        store.memories.write().unwrap().push(noisy);
+
+        let mut preference = memory(
+            "real-preference",
+            MemoryStatus::Candidate,
+            "用户偏好：以后这个项目默认用 npm run build...",
+            Some("/tmp/project"),
+        );
+        preference.body = "以后这个项目默认用 npm run build 做前端验证。".to_string();
+        store.memories.write().unwrap().push(preference);
+
+        let memories = store.list(MemoryListFilter::default()).await;
+
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, "real-preference");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn candidate_upsert_does_not_overwrite_pinned_memory() {
         let path = temp_path("pinned-no-overwrite");
         let store = WikiMemoryStore::new(path.clone());
@@ -503,6 +673,37 @@ mod tests {
                 && memory.status == MemoryStatus::Candidate
                 && memory.body == "New candidate body"
         }));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn candidate_upsert_suppresses_exact_duplicate_of_pinned_memory() {
+        let path = temp_path("pinned-duplicate-suppressed");
+        let store = WikiMemoryStore::new(path.clone());
+        let pinned = memory(
+            "pinned-memory",
+            MemoryStatus::Pinned,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        store.memories.write().unwrap().push(pinned.clone());
+
+        let duplicate = memory(
+            "candidate-memory",
+            MemoryStatus::Candidate,
+            "Forge direction",
+            Some("/tmp/forge"),
+        );
+        let result = store
+            .upsert_candidate(duplicate)
+            .await
+            .expect("candidate suppression should not error");
+
+        assert!(result.is_none());
+        let memories = store.list(MemoryListFilter::default()).await;
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, "pinned-memory");
+        assert_eq!(memories[0].status, MemoryStatus::Pinned);
         let _ = std::fs::remove_file(path);
     }
 

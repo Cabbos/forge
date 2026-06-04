@@ -12,11 +12,14 @@ type SendComposerInput = (
   capabilities?: ComposerCapabilitySelection[],
 ) => Promise<void>;
 
+type CompactSessionContext = () => Promise<void>;
+
 interface UseComposerSubmitOptions {
   chips: ComposerChip[];
   isRunning: boolean;
   onClearChips: () => void;
   onResetDraft: () => void;
+  compact: CompactSessionContext;
   send: SendComposerInput;
   sessionId: string;
   value: string;
@@ -28,6 +31,7 @@ export function useComposerSubmit({
   isRunning,
   onClearChips,
   onResetDraft,
+  compact,
   send,
   sessionId,
   value,
@@ -44,6 +48,12 @@ export function useComposerSubmit({
     let message = text;
     const fileChips = chips.filter((chip) => chip.type === "file");
     const cmdChips = chips.filter((chip) => chip.type === "command");
+    if (fileChips.length === 0 && isManualCompactRequest(text, cmdChips)) {
+      onResetDraft();
+      onClearChips();
+      await compact();
+      return;
+    }
     const capabilities: ComposerCapabilitySelection[] = [
       ...cmdChips.map((chip) => ({ kind: "slash_command" as const, command: chip.value })),
       ...fileChips.map((chip) => ({ kind: "file_reference" as const, path: chip.value })),
@@ -72,6 +82,7 @@ export function useComposerSubmit({
     isRunning,
     onClearChips,
     onResetDraft,
+    compact,
     selectedMcpContext,
     send,
     sessionId,
@@ -79,4 +90,9 @@ export function useComposerSubmit({
     value,
     workingDir,
   ]);
+}
+
+function isManualCompactRequest(text: string, cmdChips: ComposerChip[]) {
+  return text.trim().toLowerCase() === "/compact"
+    || cmdChips.some((chip) => chip.value.trim().toLowerCase() === "/compact");
 }

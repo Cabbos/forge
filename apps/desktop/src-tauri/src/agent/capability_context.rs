@@ -130,6 +130,7 @@ fn canonical_slash_command(command: &str) -> Option<&'static str> {
         "/refactor" => Some("/refactor"),
         "/test" => Some("/test"),
         "/docs" => Some("/docs"),
+        "/compact" => Some("/compact"),
         _ => None,
     }
 }
@@ -159,6 +160,10 @@ fn slash_command_intent(command: &str) -> Option<SlashCommandIntent> {
         "/docs" => Some(SlashCommandIntent {
             label: "整理文档",
             instruction: "补充或整理和当前任务直接相关的说明文档；保持文档准确、简洁，并避免扩大范围。",
+        }),
+        "/compact" => Some(SlashCommandIntent {
+            label: "压缩上下文",
+            instruction: "压缩当前会话的历史上下文，保留最近消息并生成摘要；这是 Forge 的系统动作，不需要模型解释。",
         }),
         _ => None,
     }

@@ -11,4 +11,5 @@ export const COMPOSER_COMMANDS: ComposerCommand[] = [
   { prefix: "/refactor", text: "/refactor", desc: "整理代码结构" },
   { prefix: "/test", text: "/test", desc: "运行相关检查" },
   { prefix: "/docs", text: "/docs", desc: "补充说明文档" },
+  { prefix: "/compact", text: "/compact", desc: "压缩当前上下文" },
 ];

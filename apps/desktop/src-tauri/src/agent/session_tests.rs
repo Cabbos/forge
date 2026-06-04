@@ -410,6 +410,185 @@ fn lifecycle_events_can_be_built_without_app_handle() {
     let _ = std::fs::remove_dir_all(workspace);
 }
 
+#[tokio::test]
+async fn manual_compact_updates_session_history_summary_and_emits_event() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-manual-compact-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-manual-compact".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    {
+        let mut messages = lock_unpoisoned(&session.messages);
+        for index in 0..40 {
+            if index % 2 == 0 {
+                messages.push(ChatMessage::user(&format!("user message {index}")));
+            } else {
+                messages.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                    "assistant message {index}"
+                ))));
+            }
+        }
+    }
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    let result = session
+        .compact_now_with_emitter(&emitter)
+        .await
+        .expect("manual compact should be handled");
+
+    assert!(result.compacted);
+    assert_eq!(result.compacted_messages, 8);
+    assert_eq!(lock_unpoisoned(&session.messages).len(), 32);
+    assert!(lock_unpoisoned(&session.summary).is_some());
+    let events = emitter.drain();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ContextCompacted {
+            session_id,
+            compacted_messages: 8,
+            retained_messages: 32,
+            ..
+        } if session_id == "session-manual-compact"
+    )));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn manual_compact_uses_model_generated_summary_when_adapter_available() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-manual-model-compact-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(FakeAdapter::new(vec![StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "<analysis>scratch space that must not be stored</analysis>\n<summary>\nMODEL GENERATED SUMMARY\n</summary>",
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    }]));
+    let session = AgentSession::new(
+        "session-manual-model-compact".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    {
+        let mut messages = lock_unpoisoned(&session.messages);
+        for index in 0..40 {
+            if index % 2 == 0 {
+                messages.push(ChatMessage::user(&format!("user message {index}")));
+            } else {
+                messages.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                    "assistant message {index}"
+                ))));
+            }
+        }
+    }
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    let result = session
+        .compact_now_with_emitter(&emitter)
+        .await
+        .expect("manual compact should be handled");
+
+    assert!(result.compacted);
+    assert_eq!(
+        adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "manual compact should call the adapter to generate a semantic summary"
+    );
+    let summary = lock_unpoisoned(&session.summary)
+        .clone()
+        .expect("summary should be persisted");
+    assert!(summary.contains("MODEL GENERATED SUMMARY"));
+    assert!(
+        !summary.contains("<analysis>"),
+        "scratch analysis tags should be stripped before persisting the summary"
+    );
+    assert_eq!(lock_unpoisoned(&session.messages).len(), 32);
+
+    let events = emitter.drain();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ContextCompacted {
+            session_id,
+            summary,
+            compacted_messages: 8,
+            retained_messages: 32,
+            ..
+        } if session_id == "session-manual-model-compact"
+            && summary.contains("MODEL GENERATED SUMMARY")
+            && !summary.contains("<analysis>")
+    )));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn manual_compact_short_history_emits_skipped_event() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-manual-compact-skipped-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-manual-compact-skipped".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    {
+        let mut messages = lock_unpoisoned(&session.messages);
+        for index in 0..12 {
+            if index % 2 == 0 {
+                messages.push(ChatMessage::user(&format!("user message {index}")));
+            } else {
+                messages.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                    "assistant message {index}"
+                ))));
+            }
+        }
+    }
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    let result = session
+        .compact_now_with_emitter(&emitter)
+        .await
+        .expect("manual compact should return skipped result");
+
+    assert!(!result.compacted);
+    assert_eq!(result.skipped_reason.as_deref(), Some("history_too_short"));
+    let events = emitter.drain();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ContextCompactSkipped {
+            session_id,
+            reason,
+            retained_messages: 12,
+            ..
+        } if session_id == "session-manual-compact-skipped" && reason == "history_too_short"
+    )));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
 // ── FakeAdapter for full-turn testing ─────────────────────────
 
 use crate::adapters::base::{AdapterError, AiAdapter, StreamResult, ToolCall};
@@ -553,6 +732,132 @@ impl AiAdapter for StreamingFakeAdapter {
     }
 }
 
+struct UsageEmittingFakeAdapter {
+    inner: FakeAdapter,
+    usage_by_call: Vec<Option<(u32, u32)>>,
+}
+
+impl UsageEmittingFakeAdapter {
+    fn new(responses: Vec<StreamResult>, usage_by_call: Vec<Option<(u32, u32)>>) -> Self {
+        Self {
+            inner: FakeAdapter::new(responses),
+            usage_by_call,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AiAdapter for UsageEmittingFakeAdapter {
+    async fn stream_message(
+        &self,
+        _session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _app_handle: &tauri::AppHandle,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("UsageEmittingFakeAdapter::stream_message should not be called in tests");
+    }
+
+    async fn call(
+        &self,
+        messages: &[crate::adapters::base::ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.inner.call(messages, cancel).await
+    }
+
+    async fn call_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[crate::adapters::base::ChatMessage],
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        let result = self.inner.call(messages, cancel).await?;
+        let call_index = self
+            .inner
+            .call_count
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .saturating_sub(1);
+        if let Some(Some((input_tokens, output_tokens))) = self.usage_by_call.get(call_index) {
+            emitter.emit(StreamEvent::Usage {
+                session_id: session_id.to_string(),
+                input_tokens: *input_tokens,
+                output_tokens: *output_tokens,
+                estimated_cost_usd: 0.0,
+            });
+        }
+        Ok(result)
+    }
+
+    fn model_id(&self) -> &str {
+        self.inner.model_id()
+    }
+
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+}
+
+struct StreamingUsageOnlyFakeAdapter {
+    response: StreamResult,
+}
+
+#[async_trait::async_trait]
+impl AiAdapter for StreamingUsageOnlyFakeAdapter {
+    async fn stream_message(
+        &self,
+        _session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _app_handle: &tauri::AppHandle,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("test should use stream_message_with_emitter, not AppHandle streaming");
+    }
+
+    async fn stream_message_with_emitter(
+        &self,
+        session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        emitter: &dyn EventEmitter,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        emitter.emit(StreamEvent::Usage {
+            session_id: session_id.to_string(),
+            input_tokens: 345,
+            output_tokens: 67,
+            estimated_cost_usd: 0.0,
+        });
+        Ok(self.response.clone())
+    }
+
+    async fn call(
+        &self,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("test should use streaming path, not non-streaming call");
+    }
+
+    async fn call_with_emitter(
+        &self,
+        _session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _emitter: &dyn EventEmitter,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("test should use stream_message_with_emitter, not call_with_emitter");
+    }
+
+    fn model_id(&self) -> &str {
+        "streaming-usage-only"
+    }
+
+    fn model_name(&self) -> &str {
+        "Streaming Usage Only"
+    }
+}
+
 /// Build a test workspace with a known file and return the path.
 fn setup_test_workspace(prefix: &str) -> std::path::PathBuf {
     let workspace = std::env::temp_dir().join(format!("{}-{}", prefix, uuid::Uuid::now_v7()));
@@ -563,6 +868,103 @@ fn setup_test_workspace(prefix: &str) -> std::path::PathBuf {
     )
     .expect("write test file");
     workspace
+}
+
+#[tokio::test]
+async fn agent_turn_records_usage_from_streaming_event_sink() {
+    let workspace = setup_test_workspace("forge-streaming-turn-metrics");
+    let response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "streamed"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+    let session = AgentSession::new(
+        "session-streaming-turn-metrics".to_string(),
+        "deepseek".to_string(),
+        Arc::new(StreamingUsageOnlyFakeAdapter { response }),
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+    session
+        .send_message_with_emitter("stream usage", &emitter, vec![], None, None, turn_guard)
+        .await
+        .expect("turn should complete");
+
+    let metrics = session.latest_turn_usage_snapshot();
+    assert_eq!(metrics.provider_input_tokens, Some(345));
+    assert_eq!(metrics.provider_output_tokens, Some(67));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn agent_turn_records_context_usage_and_compaction_metrics() {
+    let workspace = setup_test_workspace("forge-turn-metrics");
+    let session_id = "session-turn-metrics".to_string();
+    let compact_summary_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "<summary>Older task history was compacted.</summary>"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+    let final_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "done"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+    let adapter = Arc::new(UsageEmittingFakeAdapter::new(
+        vec![compact_summary_response, final_response],
+        vec![None, Some((1234, 56))],
+    ));
+    let session = AgentSession::new(
+        session_id,
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    let mut history = Vec::new();
+    for index in 0..90 {
+        if index % 2 == 0 {
+            history.push(ChatMessage::user(&format!("user history {index}")));
+        } else {
+            history.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                "assistant history {index}"
+            ))));
+        }
+    }
+    session.restore_state(history, None, None);
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+    session
+        .send_message_with_emitter("continue", &emitter, vec![], None, None, turn_guard)
+        .await
+        .expect("turn should complete");
+
+    let metrics = session.latest_turn_usage_snapshot();
+    assert_eq!(metrics.provider_input_tokens, Some(1234));
+    assert_eq!(metrics.provider_output_tokens, Some(56));
+    assert_eq!(metrics.compact_count, 1);
+    assert!(metrics.compact_saved_tokens > 0);
+    assert!(metrics
+        .estimated_context_tokens_before_model_call
+        .is_some_and(|tokens| tokens > 0));
+
+    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[tokio::test]
@@ -746,6 +1148,119 @@ async fn full_agent_turn_fake_adapter_preserves_tool_result_order_and_history() 
     );
 
     let _ = std::fs::remove_dir_all(&workspace);
+}
+
+struct AutoApprovePendingEmitter {
+    pending_confirms: Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    >,
+}
+
+impl AutoApprovePendingEmitter {
+    fn new(
+        pending_confirms: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        >,
+    ) -> Self {
+        Self { pending_confirms }
+    }
+}
+
+impl EventEmitter for AutoApprovePendingEmitter {
+    fn emit(&self, event: crate::protocol::events::StreamEvent) {
+        if let crate::protocol::events::StreamEvent::ConfirmAsk { block_id, kind, .. } = event {
+            let pending_confirms = self.pending_confirms.clone();
+            let approve = kind != "ask_user";
+            tokio::spawn(async move {
+                for _ in 0..100 {
+                    if let Some(sender) = pending_confirms.write().await.remove(&block_id) {
+                        let _ = sender.send(approve);
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            });
+        }
+    }
+}
+
+#[tokio::test]
+async fn shared_emitter_resolves_headless_write_permission_during_agent_turn() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-shared-emitter-write-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let harness = Arc::new(Harness::new_with_pending(
+        workspace.clone(),
+        pending_confirms.clone(),
+    ));
+    let created_path = workspace.join("created.txt");
+    let response_1 = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": "call-write-1",
+            "name": "write_to_file",
+            "input": {
+                "path": created_path.to_string_lossy(),
+                "content": "created through shared emitter"
+            }
+        })],
+        tool_calls: vec![ToolCall {
+            id: "call-write-1".to_string(),
+            name: "write_to_file".to_string(),
+            input: serde_json::json!({
+                "path": created_path.to_string_lossy(),
+                "content": "created through shared emitter"
+            }),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+    let response_2 = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "done"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+
+    let adapter = Arc::new(FakeAdapter::new(vec![response_1, response_2]));
+    let session = AgentSession::new(
+        "session-shared-emitter".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        harness,
+        "system".to_string(),
+        Some(128_000),
+    );
+    let emitter: Arc<dyn EventEmitter> = Arc::new(AutoApprovePendingEmitter::new(pending_confirms));
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        session.send_message_with_shared_emitter(
+            "create a file",
+            emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        ),
+    )
+    .await
+    .expect("shared emitter should resolve permission without hanging")
+    .expect("agent turn should succeed");
+
+    assert_eq!(
+        std::fs::read_to_string(&created_path).expect("created file should exist"),
+        "created through shared emitter"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[tokio::test]
@@ -1381,6 +1896,162 @@ impl AiAdapter for CancellableFakeAdapter {
     }
 }
 
+struct CompactSummaryCancellableAdapter {
+    summary_call_count: std::sync::atomic::AtomicUsize,
+    model_call_count: std::sync::atomic::AtomicUsize,
+    ready: std::sync::atomic::AtomicBool,
+}
+
+impl CompactSummaryCancellableAdapter {
+    fn new() -> Self {
+        Self {
+            summary_call_count: std::sync::atomic::AtomicUsize::new(0),
+            model_call_count: std::sync::atomic::AtomicUsize::new(0),
+            ready: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AiAdapter for CompactSummaryCancellableAdapter {
+    async fn stream_message(
+        &self,
+        _session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _app_handle: &tauri::AppHandle,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("use stream_message_with_emitter");
+    }
+
+    async fn stream_message_with_emitter(
+        &self,
+        _session_id: &str,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _emitter: &dyn EventEmitter,
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.model_call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(StreamResult {
+            assistant_content: vec![serde_json::json!({
+                "type": "text",
+                "text": "should not be called after compact cancellation",
+            })],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        })
+    }
+
+    async fn call(
+        &self,
+        _messages: &[crate::adapters::base::ChatMessage],
+        _cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        panic!("use compact_summary or stream_message_with_emitter");
+    }
+
+    async fn compact_summary(
+        &self,
+        _messages: &[crate::adapters::base::ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.summary_call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+        cancel.notified().await;
+        Err(AdapterError::Stream("Cancelled".to_string()))
+    }
+
+    fn model_id(&self) -> &str {
+        "fake-compact-cancel-model"
+    }
+
+    fn model_name(&self) -> &str {
+        "Fake Compact Cancel Model"
+    }
+}
+
+#[tokio::test]
+async fn kill_during_auto_compact_summary_cancels_without_model_call() {
+    let workspace = setup_test_workspace("forge-kill-during-auto-compact");
+    let adapter = Arc::new(CompactSummaryCancellableAdapter::new());
+    let session = Arc::new(AgentSession::new(
+        "session-kill-during-auto-compact".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    ));
+    let mut history = Vec::new();
+    for index in 0..90 {
+        if index % 2 == 0 {
+            history.push(ChatMessage::user(&format!("older user message {index}")));
+        } else {
+            history.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                "older assistant message {index}"
+            ))));
+        }
+    }
+    session.restore_state(history, None, None);
+
+    let emitter = Arc::new(crate::agent::event_sink::CollectingEventEmitter::new());
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+    let session_for_turn = session.clone();
+    let emitter_for_turn = emitter.clone();
+    let handle = tokio::spawn(async move {
+        session_for_turn
+            .send_message_with_emitter(
+                "continue",
+                &*emitter_for_turn,
+                vec![],
+                None,
+                None,
+                turn_guard,
+            )
+            .await
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !adapter.ready.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("compact summary should reach cancellation point");
+
+    let kill_emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    session.kill_with_emitter(&kill_emitter);
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+        .await
+        .expect("killed turn should finish")
+        .expect("task should not panic");
+
+    assert!(result.is_err(), "killed compact turn should return error");
+    assert_eq!(
+        adapter
+            .summary_call_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "auto compact should start one summary request"
+    );
+    assert_eq!(
+        adapter
+            .model_call_count
+            .load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "cancel during compact summary must not continue into the normal model call"
+    );
+
+    let turn = lock_unpoisoned(&session.latest_turn);
+    let turn = turn.as_ref().expect("latest turn");
+    assert_eq!(turn.status, AgentTurnStatus::Cancelled);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
 #[tokio::test]
 async fn cancel_mid_turn_sets_cancelled_state_and_preserves_history() {
     // This test proves the cancel contract:
@@ -1555,6 +2226,102 @@ async fn cancel_mid_turn_sets_cancelled_state_and_preserves_history() {
 }
 
 #[tokio::test]
+async fn auto_compact_uses_model_generated_summary_before_model_call() {
+    let workspace = setup_test_workspace("forge-auto-model-compact");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+    let session_id = "session-auto-model-compact".to_string();
+
+    let compact_summary_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "<summary>\nMODEL AUTO SUMMARY\n</summary>"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+    let final_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "auto compact 后继续回答"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        compact_summary_response,
+        final_response,
+    ]));
+    let session = AgentSession::new(
+        session_id.clone(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    {
+        let mut msgs = lock_unpoisoned(&session.messages);
+        for i in 0..45 {
+            msgs.push(ChatMessage::user(&format!("历史用户消息 {}", i)));
+            msgs.push(ChatMessage::assistant(serde_json::json!([
+                { "type": "text", "text": format!("历史助手回复 {}", i) }
+            ])));
+        }
+    }
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    session
+        .send_message_with_emitter("继续处理当前任务", &emitter, vec![], None, None, turn_guard)
+        .await
+        .expect("turn should complete after auto compact");
+
+    assert_eq!(
+        adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "auto compact should call the model once for summary and once for the normal answer"
+    );
+    let summary = lock_unpoisoned(&session.summary)
+        .clone()
+        .expect("summary should be persisted");
+    assert!(summary.contains("MODEL AUTO SUMMARY"));
+
+    let messages = lock_unpoisoned(&session.messages);
+    assert!(
+        messages.len() < 92,
+        "auto compact should reduce persisted message history"
+    );
+    let final_assistant = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant")
+        .expect("final assistant message");
+    let final_text = final_summary_text(
+        final_assistant
+            .content
+            .as_array()
+            .expect("assistant content should be blocks"),
+    );
+    assert!(final_text.contains("auto compact 后继续回答"));
+    drop(messages);
+
+    let events = emitter.drain();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ContextCompacted {
+            session_id,
+            summary,
+            ..
+        } if session_id == "session-auto-model-compact"
+            && summary.contains("MODEL AUTO SUMMARY")
+    )));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
 async fn overflow_retry_compacts_and_turn_completes() {
     // This test proves that when the adapter returns a context overflow error,
     // the agent loop triggers compaction, retries, and completes successfully.
@@ -1562,13 +2329,13 @@ async fn overflow_retry_compacts_and_turn_completes() {
     // Scenario:
     //   1. Session has 24 pre-seeded messages (above MIN_COMPACT_MESSAGES threshold)
     //   2. FakeAdapter call 0 → context_length_exceeded error
-    //   3. Overflow retry: compact_messages_for_overflow_retry reduces messages + creates summary
-    //   4. FakeAdapter call 1 → final text answer (no tool calls)
+    //   3. Overflow retry: compact plan asks the model for a summary
+    //   4. FakeAdapter call 2 → final text answer (no tool calls)
     //   5. Turn completes with correct state
     //
     // Verified:
     //   - Turn status: Completed
-    //   - Adapter called exactly 2 times (overflow + retry)
+    //   - Adapter called exactly 3 times (overflow + summary + retry)
     //   - Messages compacted (fewer than initial)
     //   - Summary is set
     //   - ContextCompacted event emitted
@@ -1587,6 +2354,14 @@ async fn overflow_retry_compacts_and_turn_completes() {
         tool_calls: vec![],
         stop_reason: Some("end_turn".to_string()),
     };
+    let compact_summary_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "<summary>\nMODEL OVERFLOW SUMMARY\n</summary>"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
 
     let adapter = Arc::new(FakeAdapter::new_with_errors(vec![
         // Call 0: context overflow error — triggers compaction
@@ -1594,7 +2369,9 @@ async fn overflow_retry_compacts_and_turn_completes() {
             "context_length_exceeded: This model's maximum context length is 128000 tokens."
                 .to_string(),
         ),
-        // Call 1: success after compaction retry
+        // Call 1: semantic compact summary
+        Ok(compact_summary_response),
+        // Call 2: success after compaction retry
         Ok(retry_response),
     ]));
 
@@ -1690,11 +2467,11 @@ async fn overflow_retry_compacts_and_turn_completes() {
             .collect::<Vec<_>>()
     );
 
-    // 5. Adapter should be called exactly 2 times: overflow error + retry success
+    // 5. Adapter should be called exactly 3 times: overflow error + summary + retry success
     assert_eq!(
         adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
-        2,
-        "adapter should be called exactly 2 times: overflow error + retry"
+        3,
+        "adapter should be called exactly 3 times: overflow error + compact summary + retry"
     );
 
     // 6. Final assistant message should contain the retry response text
@@ -1740,15 +2517,15 @@ async fn tool_use_followed_by_overflow_retry_preserves_pairing_and_completes() {
     //   1. FakeAdapter call 0 → tool_use (read_file)
     //   2. Harness executes read_file → tool_result added to history
     //   3. FakeAdapter call 1 → context_length_exceeded error
-    //   4. Overflow compaction: 27 messages → compacted, tool_use/tool_result preserved
-    //   5. FakeAdapter call 2 → final text answer
+    //   4. Overflow compaction: model summary, tool_use/tool_result preserved
+    //   5. FakeAdapter call 3 → final text answer
     //   6. Turn Completed
     //
     // Verified:
     //   - tool_use/tool_result pairing survives compaction
     //   - tool_result content is correct (contains file content)
     //   - Turn status: Completed
-    //   - Adapter called exactly 3 times
+    //   - Adapter called exactly 4 times
     //   - ContextCompacted event emitted
     //   - Messages compacted
 
@@ -1784,7 +2561,17 @@ async fn tool_use_followed_by_overflow_retry_preserves_pairing_and_completes() {
     let overflow_error =
         "context_length_exceeded: This model's maximum context length is 128000 tokens.";
 
-    // Response 2: success after compaction retry
+    // Response 2: semantic compact summary
+    let response_compact_summary = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "<summary>\nMODEL TOOL OVERFLOW SUMMARY\n</summary>"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+
+    // Response 3: success after compaction retry
     let response_final = StreamResult {
         assistant_content: vec![serde_json::json!({
             "type": "text",
@@ -1797,6 +2584,7 @@ async fn tool_use_followed_by_overflow_retry_preserves_pairing_and_completes() {
     let adapter = Arc::new(FakeAdapter::new_with_errors(vec![
         Ok(response_tool_use),
         Err(overflow_error.to_string()),
+        Ok(response_compact_summary),
         Ok(response_final),
     ]));
 
@@ -1931,11 +2719,11 @@ async fn tool_use_followed_by_overflow_retry_preserves_pairing_and_completes() {
     });
     assert!(has_compacted, "ContextCompacted event should be emitted");
 
-    // 7. Adapter should be called exactly 3 times: tool_use + overflow + retry
+    // 7. Adapter should be called exactly 4 times: tool_use + overflow + summary + retry
     assert_eq!(
         adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
-        3,
-        "adapter should be called 3 times: tool_use + overflow error + retry"
+        4,
+        "adapter should be called 4 times: tool_use + overflow error + compact summary + retry"
     );
 
     // 8. Final assistant message from retry
@@ -1972,8 +2760,8 @@ async fn multiple_tool_calls_followed_by_overflow_preserves_all_pairings() {
     //   1. FakeAdapter call 0 → 2 tool_calls (read_file × 2)
     //   2. Harness executes both → 2 tool_results added
     //   3. FakeAdapter call 1 → context_length_exceeded
-    //   4. Overflow compaction → preserves recent messages including both pairs
-    //   5. FakeAdapter call 2 → final text
+    //   4. Overflow compaction → model summary, preserving both pairs
+    //   5. FakeAdapter call 3 → final text
     //   6. Turn Completed
 
     let workspace = setup_test_workspace("forge-multi-tool-overflow");
@@ -2023,10 +2811,19 @@ async fn multiple_tool_calls_followed_by_overflow_preserves_all_pairings() {
         tool_calls: vec![],
         stop_reason: Some("end_turn".to_string()),
     };
+    let response_compact_summary = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "<summary>\nMODEL MULTI TOOL OVERFLOW SUMMARY\n</summary>"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
 
     let adapter = Arc::new(FakeAdapter::new_with_errors(vec![
         Ok(response_multi_tool),
         Err("context_length_exceeded: too many tokens".to_string()),
+        Ok(response_compact_summary),
         Ok(response_final),
     ]));
 
@@ -2163,10 +2960,10 @@ async fn multiple_tool_calls_followed_by_overflow_preserves_all_pairings() {
     // 5. Summary set
     assert!(lock_unpoisoned(&session.summary).is_some());
 
-    // 6. Adapter called exactly 3 times: multi-tool + overflow + retry
+    // 6. Adapter called exactly 4 times: multi-tool + overflow + summary + retry
     assert_eq!(
         adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
-        3
+        4
     );
 
     // 7. Final text from retry

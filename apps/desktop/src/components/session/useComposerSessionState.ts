@@ -20,6 +20,8 @@ export function useComposerSessionState(sessionId: string) {
     composerState,
     isRunning,
     isTurnInFlight,
+    contextUsage: session?.contextUsage ?? null,
+    contextWindowTokens: session?.contextWindowTokens ?? null,
     workflow,
     workingDir: session?.workingDir,
   };

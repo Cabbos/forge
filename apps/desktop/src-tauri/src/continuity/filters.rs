@@ -32,9 +32,9 @@ fn shell_failure_summary_looks_successful(summary: &str) -> bool {
         && lower.contains("computing gzip size")
         && lower.contains("✓ built in");
 
-    let has_explicit_success_exit = summary.contains("TSC_EXIT: 0")
-        || summary.contains("TEST_EXIT: 0")
-        || summary.contains("EXIT: 0");
+    let has_explicit_success_exit = shell_summary_has_success_exit_marker(&lower);
+    let has_explicit_test_success = lower.contains("all tests passed")
+        || (summary.contains("通过") && summary.contains("0 失败"));
 
     let looks_like_npm_test_success = lower.contains("npm test")
         || lower.contains("npx tsx")
@@ -43,8 +43,24 @@ fn shell_failure_summary_looks_successful(summary: &str) -> bool {
     let npm_output_shows_passing =
         looks_like_npm_test_success && lower.contains('✓') && lower.contains('=');
 
-    (looks_like_vite_build_success || has_explicit_success_exit || npm_output_shows_passing)
+    (looks_like_vite_build_success
+        || has_explicit_success_exit
+        || has_explicit_test_success
+        || npm_output_shows_passing)
         && !has_error_marker
+}
+
+fn shell_summary_has_success_exit_marker(lower_summary: &str) -> bool {
+    let compact = lower_summary.split_whitespace().collect::<String>();
+    lower_summary.contains("tsc_exit: 0")
+        || lower_summary.contains("test_exit: 0")
+        || lower_summary.contains("exit: 0")
+        || lower_summary.contains("exit code: 0")
+        || compact.contains("tsc_exit:0")
+        || compact.contains("test_exit:0")
+        || compact.contains("exit:0")
+        || compact.contains("exit=0")
+        || compact.contains("exitcode:0")
 }
 
 fn shell_failure_looks_like_successful_inspection(command: &str, summary: &str) -> bool {
@@ -213,6 +229,46 @@ mod tests {
         assert!(shell_failure_is_false_positive(
             Some("npm test"),
             Some("TEST_EXIT: 0")
+        ));
+    }
+
+    #[test]
+    fn exit_code_word_zero_is_false_positive() {
+        assert!(shell_failure_is_false_positive(
+            Some("npx tsc --noEmit 2>&1"),
+            Some("Exit code: -1 Stdout: TypeScript clean\nEXIT CODE: 0 Stderr:")
+        ));
+    }
+
+    #[test]
+    fn compact_exit_zero_is_false_positive() {
+        assert!(shell_failure_is_false_positive(
+            Some("npm test"),
+            Some("Exit code: -1 Stdout: tests passed\nEXIT:0 Stderr:")
+        ));
+    }
+
+    #[test]
+    fn equals_exit_zero_is_false_positive() {
+        assert!(shell_failure_is_false_positive(
+            Some("npx tsc --noEmit 2>&1"),
+            Some("Exit code: -1 Stdout: EXIT=0 Stderr:")
+        ));
+    }
+
+    #[test]
+    fn chinese_test_summary_is_false_positive() {
+        assert!(shell_failure_is_false_positive(
+            Some("npm test"),
+            Some("Exit code: -1 Stdout: 结果: 24 通过, 0 失败 Stderr:")
+        ));
+    }
+
+    #[test]
+    fn all_tests_passed_is_false_positive() {
+        assert!(shell_failure_is_false_positive(
+            Some("npm test"),
+            Some("Exit code: -1 Stdout: ALL TESTS PASSED Stderr:")
         ));
     }
 

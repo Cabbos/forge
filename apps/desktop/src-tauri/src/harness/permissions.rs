@@ -214,7 +214,8 @@ fn canonical_tool(tool: &str) -> &str {
         "ls" | "list" => "list_directory",
         "glob" => "search_files",
         "grep" => "search_content",
-        "bash" | "execute_command" | "shell" => "run_shell",
+        "bash" | "execute_command" | "shell" | "shell_command" | "run_command"
+        | "run_shell_command" => "run_shell",
         other => other,
     }
 }
@@ -350,6 +351,9 @@ mod tests {
         assert_eq!(canonical_tool("bash"), "run_shell");
         assert_eq!(canonical_tool("execute_command"), "run_shell");
         assert_eq!(canonical_tool("shell"), "run_shell");
+        assert_eq!(canonical_tool("shell_command"), "run_shell");
+        assert_eq!(canonical_tool("run_command"), "run_shell");
+        assert_eq!(canonical_tool("run_shell_command"), "run_shell");
     }
 
     #[test]

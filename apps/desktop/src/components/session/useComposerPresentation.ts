@@ -16,6 +16,7 @@ interface UseComposerPresentationOptions {
   closeModelMenu: () => void;
   closeSuggestions: () => void;
   composerState: ComposerSurfaceProps["composerState"];
+  contextUsageView: ComposerSurfaceProps["contextUsageView"];
   focusTextarea: () => void;
   isResuming: ComposerSurfaceProps["isResuming"];
   isRunning: ComposerSurfaceProps["isRunning"];
@@ -36,6 +37,7 @@ interface UseComposerPresentationOptions {
   onCompositionEnd: ComposerSurfaceProps["onCompositionEnd"];
   onCompositionStart: ComposerSurfaceProps["onCompositionStart"];
   onRemoveChip: ComposerSurfaceProps["onRemoveChip"];
+  onCompact: ComposerSurfaceProps["onCompact"];
   onResume: ComposerSurfaceProps["onResume"];
   onSelectModel: ComposerMenuLayerProps["onSelectModel"];
   onSend: ComposerSurfaceProps["onSend"];
@@ -54,6 +56,7 @@ export function useComposerPresentation({
   closeModelMenu,
   closeSuggestions,
   composerState,
+  contextUsageView,
   focusTextarea,
   isResuming,
   isRunning,
@@ -63,6 +66,7 @@ export function useComposerPresentation({
   onCompositionEnd,
   onCompositionStart,
   onRemoveChip,
+  onCompact,
   onResume,
   onSelectModel,
   onSend,
@@ -116,6 +120,7 @@ export function useComposerPresentation({
     canSend,
     chips,
     composerState,
+    contextUsageView,
     isResuming,
     isRunning,
     isTurnInFlight,
@@ -123,6 +128,7 @@ export function useComposerPresentation({
     onCompositionStart,
     onCompositionEnd,
     onRemoveChip,
+    onCompact,
     onResume,
     onSend,
     onStop,

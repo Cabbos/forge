@@ -3,12 +3,14 @@ import { ComposerChipTray } from "./ComposerChipTray";
 import { ComposerTextarea } from "./ComposerTextarea";
 import { ComposerToolbar } from "./ComposerToolbar";
 import type { ComposerSurfaceState } from "./composerTurnState";
+import type { ComposerContextUsageView } from "./contextUsageView";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
 
 export interface ComposerSurfaceProps {
   canSend: boolean;
   chips: ComposerChip[];
   composerState: ComposerSurfaceState;
+  contextUsageView: ComposerContextUsageView;
   isResuming: boolean;
   isRunning: boolean;
   isStreaming: boolean;
@@ -23,6 +25,7 @@ export interface ComposerSurfaceProps {
   value: string;
   onCompositionEnd: React.CompositionEventHandler<HTMLTextAreaElement>;
   onCompositionStart: React.CompositionEventHandler<HTMLTextAreaElement>;
+  onCompact: () => void;
   onRemoveChip: (chipId: string) => void;
   onResume: () => void;
   onSend: () => void;
@@ -37,12 +40,14 @@ const ComposerSurface = React.forwardRef<HTMLTextAreaElement, ComposerSurfacePro
   canSend,
   chips,
   composerState,
+  contextUsageView,
   isResuming,
   isRunning,
   isStreaming,
   modelMenuId,
   onCompositionEnd,
   onCompositionStart,
+  onCompact,
   onRemoveChip,
   onResume,
   onSend,
@@ -87,6 +92,7 @@ const ComposerSurface = React.forwardRef<HTMLTextAreaElement, ComposerSurfacePro
         isResuming={isResuming}
         isRunning={isRunning}
         isStreaming={isStreaming}
+        contextUsageView={contextUsageView}
         modelMenuId={modelMenuId}
         selectedContextWindow={selectedContextWindow}
         selectedModelLabel={selectedModelLabel}
@@ -94,6 +100,7 @@ const ComposerSurface = React.forwardRef<HTMLTextAreaElement, ComposerSurfacePro
         showModelMenu={showModelMenu}
         showSuggestions={showSuggestions}
         suggestionListId={suggestionListId}
+        onCompact={onCompact}
         onResume={onResume}
         onSend={onSend}
         onStop={onStop}

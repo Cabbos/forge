@@ -1,14 +1,15 @@
 use crate::adapters::base::ChatMessage;
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS: usize = 128_000;
-const AUTO_COMPACT_THRESHOLD_NUMERATOR: usize = 7;
-const AUTO_COMPACT_THRESHOLD_DENOMINATOR: usize = 10;
+const DEFAULT_RESERVED_OUTPUT_TOKENS: usize = 20_000;
+const AUTO_COMPACT_BUFFER_TOKENS: usize = 13_000;
 const MAX_HISTORY_MESSAGES_BEFORE_COMPACT: usize = 80;
 const RETAIN_RECENT_MESSAGES: usize = 32;
 const OVERFLOW_RETRY_RETAIN_RECENT_MESSAGES: usize = 16;
 const MIN_COMPACT_MESSAGES: usize = 8;
 const MAX_SUMMARY_CHARS: usize = 14_000;
 const MAX_SUMMARY_ITEM_CHARS: usize = 360;
+const MAX_MODEL_SUMMARY_ITEM_CHARS: usize = 12_000;
 const MAX_CONSECUTIVE_AUTO_COMPACT_MISSES: u8 = 3;
 
 #[derive(Debug, Clone)]
@@ -40,7 +41,7 @@ impl CompactResult {
         }
     }
 
-    fn skipped(
+    pub(crate) fn skipped(
         messages: Vec<ChatMessage>,
         summary: Option<String>,
         reason: impl Into<String>,
@@ -62,6 +63,25 @@ impl CompactResult {
             attempted: true,
             skipped_reason: None,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompactPlan {
+    pub(crate) original_messages: Vec<ChatMessage>,
+    pub(crate) compacted_messages: Vec<ChatMessage>,
+    pub(crate) retained_messages: Vec<ChatMessage>,
+    pub(crate) existing_summary: Option<String>,
+    pub(crate) estimated_tokens_before: usize,
+}
+
+impl CompactPlan {
+    pub(crate) fn retained_message_count(&self) -> usize {
+        self.retained_messages.len()
+    }
+
+    pub(crate) fn compacted_message_count(&self) -> usize {
+        self.compacted_messages.len()
     }
 }
 
@@ -96,26 +116,52 @@ pub(crate) fn compact_messages_if_needed(
     existing_summary: Option<String>,
     context_window_tokens: Option<u32>,
 ) -> CompactResult {
+    match prepare_compaction_if_needed(msgs, existing_summary, context_window_tokens) {
+        Ok(plan) => finalize_compaction_plan_with_heuristic_summary(plan),
+        Err(result) => *result,
+    }
+}
+
+pub(crate) fn compact_messages_for_overflow_retry(
+    msgs: Vec<ChatMessage>,
+    existing_summary: Option<String>,
+) -> CompactResult {
+    match prepare_compaction_for_overflow_retry(msgs, existing_summary) {
+        Ok(plan) => finalize_compaction_plan_with_heuristic_summary(plan),
+        Err(result) => *result,
+    }
+}
+
+pub(crate) fn compact_messages_now(
+    msgs: Vec<ChatMessage>,
+    existing_summary: Option<String>,
+) -> CompactResult {
+    match prepare_compaction_now(msgs, existing_summary) {
+        Ok(plan) => finalize_compaction_plan_with_heuristic_summary(plan),
+        Err(result) => *result,
+    }
+}
+
+pub(crate) fn prepare_compaction_if_needed(
+    msgs: Vec<ChatMessage>,
+    existing_summary: Option<String>,
+    context_window_tokens: Option<u32>,
+) -> Result<CompactPlan, Box<CompactResult>> {
     let existing_summary_tokens = existing_summary
         .as_deref()
         .map(estimate_text_tokens)
         .unwrap_or(0);
     let estimated_before = estimate_messages_tokens(&msgs) + existing_summary_tokens;
-    let context_limit = context_window_tokens
-        .map(|tokens| tokens as usize)
-        .unwrap_or(DEFAULT_CONTEXT_WINDOW_TOKENS)
-        .max(16_000);
-    let compact_threshold = (context_limit * AUTO_COMPACT_THRESHOLD_NUMERATOR
-        / AUTO_COMPACT_THRESHOLD_DENOMINATOR)
-        .max(8_000);
+    let context_limit = effective_context_limit(context_window_tokens);
+    let compact_threshold = auto_compact_threshold(context_limit);
     let over_budget = estimated_before > compact_threshold;
     let too_many_messages = msgs.len() > MAX_HISTORY_MESSAGES_BEFORE_COMPACT;
 
     if !over_budget && !too_many_messages {
-        return CompactResult::unchanged(msgs, existing_summary);
+        return Err(Box::new(CompactResult::unchanged(msgs, existing_summary)));
     }
 
-    compact_messages_with_retention(
+    prepare_compaction_with_retention(
         msgs,
         existing_summary,
         estimated_before,
@@ -123,17 +169,17 @@ pub(crate) fn compact_messages_if_needed(
     )
 }
 
-pub(crate) fn compact_messages_for_overflow_retry(
+pub(crate) fn prepare_compaction_for_overflow_retry(
     msgs: Vec<ChatMessage>,
     existing_summary: Option<String>,
-) -> CompactResult {
+) -> Result<CompactPlan, Box<CompactResult>> {
     let existing_summary_tokens = existing_summary
         .as_deref()
         .map(estimate_text_tokens)
         .unwrap_or(0);
     let estimated_before = estimate_messages_tokens(&msgs) + existing_summary_tokens;
 
-    compact_messages_with_retention(
+    prepare_compaction_with_retention(
         msgs,
         existing_summary,
         estimated_before,
@@ -141,14 +187,36 @@ pub(crate) fn compact_messages_for_overflow_retry(
     )
 }
 
-fn compact_messages_with_retention(
+pub(crate) fn prepare_compaction_now(
+    msgs: Vec<ChatMessage>,
+    existing_summary: Option<String>,
+) -> Result<CompactPlan, Box<CompactResult>> {
+    let existing_summary_tokens = existing_summary
+        .as_deref()
+        .map(estimate_text_tokens)
+        .unwrap_or(0);
+    let estimated_before = estimate_messages_tokens(&msgs) + existing_summary_tokens;
+
+    prepare_compaction_with_retention(
+        msgs,
+        existing_summary,
+        estimated_before,
+        RETAIN_RECENT_MESSAGES,
+    )
+}
+
+fn prepare_compaction_with_retention(
     msgs: Vec<ChatMessage>,
     existing_summary: Option<String>,
     estimated_before: usize,
     retain_recent_messages: usize,
-) -> CompactResult {
+) -> Result<CompactPlan, Box<CompactResult>> {
     if msgs.len() <= retain_recent_messages || msgs.len() <= MIN_COMPACT_MESSAGES {
-        return CompactResult::skipped(msgs, existing_summary, "history_too_short");
+        return Err(Box::new(CompactResult::skipped(
+            msgs,
+            existing_summary,
+            "history_too_short",
+        )));
     }
 
     let split_at = msgs.len().saturating_sub(retain_recent_messages);
@@ -160,31 +228,65 @@ fn compact_messages_with_retention(
                 .find(|&i| is_safe_retention_boundary(&msgs[i]))
         })
     else {
-        return CompactResult::skipped(msgs, existing_summary, "no_safe_retention_boundary");
+        return Err(Box::new(CompactResult::skipped(
+            msgs,
+            existing_summary,
+            "no_safe_retention_boundary",
+        )));
     };
 
     if start < MIN_COMPACT_MESSAGES {
-        return CompactResult::skipped(msgs, existing_summary, "too_few_messages_to_compact");
+        return Err(Box::new(CompactResult::skipped(
+            msgs,
+            existing_summary,
+            "too_few_messages_to_compact",
+        )));
     }
 
     let compacted_messages = msgs[..start].to_vec();
     let retained_messages = msgs[start..].to_vec();
-    let new_summary = match build_summary(&compacted_messages) {
-        Some(summary) => summary,
-        None => return CompactResult::skipped(msgs, existing_summary, "empty_summary"),
+
+    Ok(CompactPlan {
+        original_messages: msgs,
+        compacted_messages,
+        retained_messages,
+        existing_summary,
+        estimated_tokens_before: estimated_before,
+    })
+}
+
+pub(crate) fn finalize_compaction_plan_with_heuristic_summary(plan: CompactPlan) -> CompactResult {
+    let Some(summary) = build_summary(&plan.compacted_messages) else {
+        return CompactResult::skipped(
+            plan.original_messages,
+            plan.existing_summary,
+            "empty_summary",
+        );
     };
-    let merged_summary = merge_summaries(existing_summary, new_summary);
+    finalize_compaction_plan(plan, summary)
+}
+
+pub(crate) fn finalize_compaction_plan(plan: CompactPlan, summary_update: String) -> CompactResult {
+    if summary_update.trim().is_empty() {
+        return CompactResult::skipped(
+            plan.original_messages,
+            plan.existing_summary,
+            "empty_summary",
+        );
+    }
+
+    let merged_summary = merge_summaries(plan.existing_summary, summary_update);
     let estimated_after =
-        estimate_messages_tokens(&retained_messages) + estimate_text_tokens(&merged_summary);
+        estimate_messages_tokens(&plan.retained_messages) + estimate_text_tokens(&merged_summary);
     let stats = CompactStats {
         summary: merged_summary.clone(),
-        retained_messages: retained_messages.len(),
-        compacted_messages: compacted_messages.len(),
-        estimated_tokens_before: to_u32_tokens(estimated_before),
+        retained_messages: plan.retained_messages.len(),
+        compacted_messages: plan.compacted_messages.len(),
+        estimated_tokens_before: to_u32_tokens(plan.estimated_tokens_before),
         estimated_tokens_after: to_u32_tokens(estimated_after),
     };
 
-    CompactResult::compacted(retained_messages, merged_summary, stats)
+    CompactResult::compacted(plan.retained_messages, merged_summary, stats)
 }
 
 fn build_summary(msgs: &[ChatMessage]) -> Option<String> {
@@ -217,6 +319,31 @@ fn build_summary(msgs: &[ChatMessage]) -> Option<String> {
         ));
     }
     Some(summary.trim_end().to_string())
+}
+
+pub(crate) fn render_messages_for_model_summary(msgs: &[ChatMessage], char_limit: usize) -> String {
+    if msgs.is_empty() {
+        return String::new();
+    }
+
+    let mut rendered = String::new();
+    for (index, msg) in msgs.iter().enumerate() {
+        let content = compact_content(&msg.content, MAX_MODEL_SUMMARY_ITEM_CHARS);
+        if content.is_empty() {
+            continue;
+        }
+        rendered.push_str(&format!(
+            "<message index=\"{}\" role=\"{}\">\n{}\n</message>\n\n",
+            index + 1,
+            msg.role,
+            content
+        ));
+    }
+
+    truncate_middle_chars(
+        rendered.trim_end(),
+        char_limit.max(MAX_SUMMARY_ITEM_CHARS * 2),
+    )
 }
 
 fn summarize_message(msg: &ChatMessage) -> Option<String> {
@@ -347,6 +474,22 @@ fn estimate_text_tokens(text: &str) -> usize {
     text.chars().count().div_ceil(3)
 }
 
+fn effective_context_limit(context_window_tokens: Option<u32>) -> usize {
+    context_window_tokens
+        .map(|tokens| tokens as usize)
+        .unwrap_or(DEFAULT_CONTEXT_WINDOW_TOKENS)
+        .max(16_000)
+}
+
+fn auto_compact_threshold(context_limit: usize) -> usize {
+    let reserved_output = DEFAULT_RESERVED_OUTPUT_TOKENS.min(context_limit / 4);
+    let buffer = AUTO_COMPACT_BUFFER_TOKENS.min(context_limit / 10);
+    context_limit
+        .saturating_sub(reserved_output)
+        .saturating_sub(buffer)
+        .max(8_000)
+}
+
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -361,6 +504,35 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     let mut shortened = text.chars().take(limit - 3).collect::<String>();
     shortened.push_str("...");
     shortened
+}
+
+fn truncate_middle_chars(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_string();
+    }
+    if limit <= 32 {
+        return truncate_chars(text, limit);
+    }
+
+    let marker = "\n\n<omitted_middle_messages_due_to_summary_prompt_budget />\n\n";
+    let marker_len = marker.chars().count();
+    if marker_len >= limit {
+        return truncate_chars(text, limit);
+    }
+
+    let remaining = limit - marker_len;
+    let head_len = remaining * 3 / 5;
+    let tail_len = remaining - head_len;
+    let head: String = text.chars().take(head_len).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(tail_len)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{head}{marker}{tail}")
 }
 
 fn to_u32_tokens(value: usize) -> u32 {
@@ -386,8 +558,8 @@ mod tests {
     use crate::adapters::base::ChatMessage;
 
     use super::{
-        compact_messages_for_overflow_retry, compact_messages_if_needed, AutoCompactGuard,
-        CompactResult, CompactStats,
+        compact_messages_for_overflow_retry, compact_messages_if_needed, compact_messages_now,
+        AutoCompactGuard, CompactResult, CompactStats,
     };
 
     fn numbered_messages(count: usize) -> Vec<ChatMessage> {
@@ -517,6 +689,25 @@ mod tests {
         assert_eq!(
             result.messages[0].content,
             serde_json::Value::String("user message 24".to_string())
+        );
+    }
+
+    #[test]
+    fn manual_compact_compresses_history_below_proactive_threshold_when_safe() {
+        let messages = numbered_messages(40);
+
+        let proactive = compact_messages_if_needed(messages.clone(), None, None);
+        assert!(proactive.stats.is_none());
+
+        let result = compact_messages_now(messages, None);
+
+        let stats = result.stats.expect("expected manual compaction");
+        assert_eq!(stats.retained_messages, 32);
+        assert_eq!(stats.compacted_messages, 8);
+        assert_eq!(result.messages.len(), 32);
+        assert_eq!(
+            result.messages[0].content,
+            serde_json::Value::String("user message 8".to_string())
         );
     }
 

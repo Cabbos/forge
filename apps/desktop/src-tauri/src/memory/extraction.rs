@@ -11,6 +11,7 @@ pub fn extract_candidates_from_user_message(
     if body.chars().count() < 8
         || should_suppress_persistent_memory(&body)
         || is_low_signal_continuation(&body)
+        || is_turn_scoped_action_prompt(&body)
         || should_reject_persistent_memory(&body)
     {
         return Vec::new();
@@ -242,6 +243,58 @@ fn is_task_like_instruction(text: &str) -> bool {
             "prioritize",
             "first version",
             "mvp",
+        ],
+    )
+}
+
+fn is_turn_scoped_action_prompt(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let turn_scoped = contains_any(
+        &lower,
+        &[
+            "当前项目",
+            "目标项目",
+            "这个任务",
+            "这轮任务",
+            "本轮",
+            "这次",
+            "不要修改",
+            "不要改",
+            "不要碰",
+            "不要动",
+            ".forge",
+            "current project",
+            "this task",
+            "this turn",
+            "do not touch",
+            "don't touch",
+        ],
+    );
+    if !turn_scoped {
+        return false;
+    }
+
+    contains_any(
+        &lower,
+        &[
+            "请",
+            "帮我",
+            "我希望你",
+            "给项目",
+            "增加",
+            "修改",
+            "改动",
+            "实现",
+            "修复",
+            "检查",
+            "验证",
+            "运行",
+            "please",
+            "can you",
+            "implement",
+            "change",
+            "fix",
+            "verify",
         ],
     )
 }
@@ -511,6 +564,34 @@ mod tests {
         assert!(memory.title.starts_with("项目事实："));
         assert_eq!(memory.body, "这个任务只改 demo 项目，不要动 Forge 本体。");
         assert_eq!(memory.tags, vec!["project_fact"]);
+    }
+
+    #[test]
+    fn suppresses_turn_scoped_action_prompt_background_candidates() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/continuity-manual-test-app"),
+            "请只在当前项目 continuity-manual-test-app 内工作，不要修改 Forge 主项目，不要修改 .forge 目录。我希望你做一个小改动：给任务列表增加“只显示未完成任务”的过滤逻辑。实现后运行验证。",
+        );
+
+        assert!(
+            candidates.is_empty(),
+            "turn-scoped action prompts should not become saved-background candidates: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn keeps_explicit_long_term_project_preference() {
+        let candidates = extract_candidates_from_user_message(
+            "session-1",
+            Some("/tmp/project"),
+            "以后这个项目默认用 npm run build 做前端验证，优先保持当前目录结构。",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].category, MemoryCategory::Preference);
+        assert_eq!(candidates[0].scope, MemoryScope::Project);
+        assert_eq!(candidates[0].project_path.as_deref(), Some("/tmp/project"));
     }
 
     #[test]

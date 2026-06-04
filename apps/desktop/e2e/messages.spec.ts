@@ -235,9 +235,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
       };
     });
     expect(laneAlignment).not.toBeNull();
-    expect(laneAlignment!.userLeft - laneAlignment!.assistantLeft).toBeGreaterThanOrEqual(28);
-    expect(laneAlignment!.userLeft - laneAlignment!.assistantLeft).toBeLessThanOrEqual(44);
+    expect(laneAlignment!.userLeft).toBeGreaterThan(laneAlignment!.assistantLeft);
     expect(laneAlignment!.userRight).toBeLessThanOrEqual(laneAlignment!.laneRight);
+    expect(laneAlignment!.laneRight - laneAlignment!.userRight).toBeLessThanOrEqual(4);
   });
 
   test("scroll-to-bottom control stays outside the centered reading lane", async ({ page }) => {
@@ -694,7 +694,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
         tableMaxWidth: tableStyle.maxWidth,
         tableOverflowX: tableStyle.overflowX,
         tableScrollbarWidth: tableStyle.scrollbarWidth,
+        tableRadius: Math.round(Number.parseFloat(tableStyle.borderTopLeftRadius)),
         cellPaddingTop: Math.round(Number.parseFloat(cellStyle.paddingTop)),
+        cellBorderRightWidth: Math.round(Number.parseFloat(cellStyle.borderRightWidth)),
       };
     });
 
@@ -703,9 +705,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.blockGapToken).toBe("14px");
     expect(metrics!.assistantMaxWidth).not.toBe("none");
     expect(metrics!.assistantWidth).toBeLessThanOrEqual(760);
-    expect(metrics!.assistantPaddingRight).toBeGreaterThanOrEqual(34);
+    expect(metrics!.assistantPaddingRight).toBeGreaterThanOrEqual(16);
     expect(metrics!.assistantOverflowWrap).toBe("anywhere");
-    expect(metrics!.paragraphMarginBottom).toBe(9);
+    expect(metrics!.paragraphMarginBottom).toBe(14);
     expect(metrics!.headingFontSize).toBe(15);
     expect(metrics!.headingLineHeight).toBe(23);
     expect(metrics!.headingMarginTop).toBe(18);
@@ -728,7 +730,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.tableMaxWidth).toBe("100%");
     expect(metrics!.tableOverflowX).toBe("auto");
     expect(metrics!.tableScrollbarWidth).toBe("thin");
-    expect(metrics!.cellPaddingTop).toBe(7);
+    expect(metrics!.tableRadius).toBe(8);
+    expect(metrics!.cellPaddingTop).toBe(8);
+    expect(metrics!.cellBorderRightWidth).toBe(0);
   });
 
   test("markdown tables fit their content before falling back to horizontal scroll", async ({ page }) => {
@@ -755,9 +759,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
         content: [
           "这里有一张短表和一张很宽的表。",
           "",
-          "| 名称 | 状态 |",
+          "| 文件 | 状态 |",
           "| --- | --- |",
-          "| buildTool() | 可复用 |",
+          "| `src/filter.test.ts` | 可复用 |",
           "",
           "| 扩展点 | 机制 | 示例 | 备注 |",
           "| --- | --- | --- | --- |",
@@ -775,6 +779,9 @@ import { simulateStream, fullConversation } from "./mock-ipc";
       const compactRect = compact.getBoundingClientRect();
       const wideRect = wide.getBoundingClientRect();
       const assistantRect = assistant.getBoundingClientRect();
+      const compactCode = compact.querySelector<HTMLElement>(".forge-inline-code");
+      const compactCodeRect = compactCode?.getBoundingClientRect();
+      const compactCodeStyle = compactCode ? getComputedStyle(compactCode) : null;
       return {
         assistantWidth: Math.round(assistantRect.width),
         compactWidth: Math.round(compactRect.width),
@@ -783,16 +790,24 @@ import { simulateStream, fullConversation } from "./mock-ipc";
         wideScrollWidth: Math.round(wide.scrollWidth),
         compactOverflowX: getComputedStyle(compact).overflowX,
         wideOverflowX: getComputedStyle(wide).overflowX,
+        compactCodeHeight: compactCodeRect ? Math.round(compactCodeRect.height) : 0,
+        compactCodeWidth: compactCodeRect ? Math.round(compactCodeRect.width) : 0,
+        compactCodeOverflowWrap: compactCodeStyle?.overflowWrap ?? "",
+        compactCodeWhiteSpace: compactCodeStyle?.whiteSpace ?? "",
       };
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.compactWidth).toBeLessThan(metrics!.assistantWidth - 160);
+    expect(metrics!.compactWidth).toBeLessThan(metrics!.assistantWidth - 120);
     expect(metrics!.compactWidth).toBeLessThanOrEqual(360);
     expect(metrics!.wideWidth).toBeLessThanOrEqual(metrics!.assistantWidth);
     expect(metrics!.wideScrollWidth).toBeGreaterThan(metrics!.wideClientWidth);
     expect(metrics!.compactOverflowX).toBe("auto");
     expect(metrics!.wideOverflowX).toBe("auto");
+    expect(metrics!.compactCodeWhiteSpace).toBe("nowrap");
+    expect(metrics!.compactCodeOverflowWrap).toBe("normal");
+    expect(metrics!.compactCodeWidth).toBeGreaterThan(100);
+    expect(metrics!.compactCodeHeight).toBeLessThanOrEqual(26);
   });
 
   test("inline file references stay quiet and wrap within the message lane", async ({ page }) => {
@@ -1652,7 +1667,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.triggerBackground).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.triggerBorderTop).toBe("1px");
     expect(metrics!.triggerRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.metaColor).toBe("rgb(95, 93, 85)");
+    expect(metrics!.metaColor).toBe("rgb(113, 106, 97)");
   });
 
   test("structured message panels use one compact conversation style", async ({ page }) => {

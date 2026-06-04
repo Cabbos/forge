@@ -19,7 +19,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   border-color: var(--forge-material-border) !important;
   border-radius: calc(var(--radius) - 2px) !important;
   background: var(--forge-material-raised) !important;
-  box-shadow: !important;
+  box-shadow: none !important;
 }
 .code-caption {
   display: flex;
@@ -333,16 +333,17 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 .markdown-content table {
   display: block;
   width: max-content;
-  min-width: min(100%, 20rem);
+  min-width: min(100%, 18rem);
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--forge-material-border);
-  border-radius: calc(var(--radius) - 2px);
+  border: 1px solid rgba(221, 210, 195, 0.82);
+  border-radius: 8px;
   border-spacing: 0;
   border-collapse: separate;
-  background: var(--forge-material-raised);
+  background: rgba(255, 251, 244, 0.72);
   margin: var(--forge-markdown-block-gap) 0;
-  font-size: 13px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  font-size: 12.75px;
   line-height: 20px;
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
@@ -350,26 +351,33 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 }
 .markdown-content th,
 .markdown-content td {
-  border-bottom: 1px solid var(--forge-material-border);
-  border-right: 1px solid var(--forge-material-border);
-  padding: 7px 9px;
+  border-bottom: 1px solid rgba(221, 210, 195, 0.74);
+  padding: 8px 12px;
   text-align: left;
   white-space: nowrap;
 }
+.markdown-content table .forge-inline-code {
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
+}
 .markdown-content th {
-  background: var(--forge-bg-raised);
-  color: var(--forge-text-secondary);
-  font-weight: 500;
+  background: rgba(241, 233, 221, 0.62);
+  color: #756C60;
+  font-weight: 600;
 }
 .markdown-content td {
-  color: var(--forge-text-muted);
+  color: #61594F;
+}
+.markdown-content tbody tr:hover td {
+  background: rgba(184, 138, 86, 0.035);
 }
 .markdown-content tr:last-child td {
   border-bottom: 0;
 }
-.markdown-content th:last-child,
-.markdown-content td:last-child {
-  border-right: 0;
+.markdown-content tbody tr:last-child td:first-child {
+  font-weight: 600;
+  color: var(--forge-text-primary);
 }
 .markdown-content hr {
   height: 1px;

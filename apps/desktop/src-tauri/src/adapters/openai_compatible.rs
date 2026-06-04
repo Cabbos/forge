@@ -9,6 +9,7 @@ use super::base::{
     repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
     ToolDef,
 };
+use crate::agent::event_sink::EventEmitter;
 use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -230,11 +231,60 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         Ok(parse_openai_chat_completion(&parsed))
     }
 
-    async fn stream_message(
+    async fn compact_summary(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        let mut request = self.request_for_messages(messages, false);
+        request.tools = None;
+
+        let response = tokio::select! {
+            response = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send() => response,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text: String = tokio::select! {
+                text = response.text() => text,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            }
+            .unwrap_or_default();
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = tokio::select! {
+            json = response.json() => json,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Stream(e.to_string()))?;
+
+        if parsed["error"].is_object() {
+            let message = parsed["error"]["message"]
+                .as_str()
+                .unwrap_or("Unknown OpenAI-compatible API error");
+            return Err(AdapterError::Api {
+                code: "api_error".to_string(),
+                message: message.to_string(),
+            });
+        }
+
+        Ok(parse_openai_chat_completion(&parsed))
+    }
+
+    async fn stream_message_with_emitter(
         &self,
         session_id: &str,
         messages: &[ChatMessage],
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn EventEmitter,
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
         crate::app_log!(
@@ -306,23 +356,17 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
                 if update.text_started {
                     active_text_block_id = Some(BlockId::new().to_string());
-                    crate::transcript::emit_stream_event(
-                        app_handle,
-                        StreamEvent::TextStart {
-                            session_id: session.clone(),
-                            block_id: active_text_block_id.clone().unwrap(),
-                        },
-                    );
+                    emitter.emit(StreamEvent::TextStart {
+                        session_id: session.clone(),
+                        block_id: active_text_block_id.clone().unwrap(),
+                    });
                 }
                 for content in update.text_chunks {
-                    crate::transcript::emit_stream_event(
-                        app_handle,
-                        StreamEvent::TextChunk {
-                            session_id: session.clone(),
-                            block_id: active_text_block_id.clone().unwrap_or_default(),
-                            content,
-                        },
-                    );
+                    emitter.emit(StreamEvent::TextChunk {
+                        session_id: session.clone(),
+                        block_id: active_text_block_id.clone().unwrap_or_default(),
+                        content,
+                    });
                 }
 
                 if let Some((input_toks, output_toks)) = update.usage {
@@ -331,27 +375,21 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                         input_toks,
                         output_toks,
                     );
-                    crate::transcript::emit_stream_event(
-                        app_handle,
-                        StreamEvent::Usage {
-                            session_id: session.clone(),
-                            input_tokens: input_toks,
-                            output_tokens: output_toks,
-                            estimated_cost_usd: cost,
-                        },
-                    );
+                    emitter.emit(StreamEvent::Usage {
+                        session_id: session.clone(),
+                        input_tokens: input_toks,
+                        output_tokens: output_toks,
+                        estimated_cost_usd: cost,
+                    });
                 }
 
                 if let Some(msg) = update.error {
-                    crate::transcript::emit_stream_event(
-                        app_handle,
-                        StreamEvent::Error {
-                            session_id: session.clone(),
-                            block_id: BlockId::new().to_string(),
-                            message: msg,
-                            code: "api_error".to_string(),
-                        },
-                    );
+                    emitter.emit(StreamEvent::Error {
+                        session_id: session.clone(),
+                        block_id: BlockId::new().to_string(),
+                        message: msg,
+                        code: "api_error".to_string(),
+                    });
                 }
             }
         }
@@ -361,33 +399,24 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         let result = parser.finish();
         if has_text {
             let bid = active_text_block_id.unwrap_or_else(|| BlockId::new().to_string());
-            crate::transcript::emit_stream_event(
-                app_handle,
-                StreamEvent::TextEnd {
-                    session_id: session_id.to_string(),
-                    block_id: bid,
-                },
-            );
+            emitter.emit(StreamEvent::TextEnd {
+                session_id: session_id.to_string(),
+                block_id: bid,
+            });
         }
 
         for tool_call in &result.tool_calls {
             let bid = tool_call.id.clone();
-            crate::transcript::emit_stream_event(
-                app_handle,
-                StreamEvent::ToolCallStart {
-                    session_id: session_id.to_string(),
-                    block_id: bid.clone(),
-                    tool_name: tool_call.name.clone(),
-                    tool_input: tool_call.input.clone(),
-                },
-            );
-            crate::transcript::emit_stream_event(
-                app_handle,
-                StreamEvent::ToolCallEnd {
-                    session_id: session_id.to_string(),
-                    block_id: bid,
-                },
-            );
+            emitter.emit(StreamEvent::ToolCallStart {
+                session_id: session_id.to_string(),
+                block_id: bid.clone(),
+                tool_name: tool_call.name.clone(),
+                tool_input: tool_call.input.clone(),
+            });
+            emitter.emit(StreamEvent::ToolCallEnd {
+                session_id: session_id.to_string(),
+                block_id: bid,
+            });
         }
 
         Ok(result)

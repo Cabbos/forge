@@ -3,6 +3,7 @@ import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
 import type {
   AgentTurnProjection,
   BlockState,
+  ContextUsageState,
   ForgeWikiUpdateProposal,
   McpContextStatus,
   SelectedContextMemory,
@@ -114,6 +115,7 @@ interface PersistedSession {
   createdAt?: number | null;
   updatedAt?: number | null;
   contextWindowTokens?: number | null;
+  contextUsage?: ContextUsageState | null;
   status: SessionState["status"];
   workflowState?: WorkflowState | null;
   deliverySummary?: DeliverySummary | null;
@@ -129,6 +131,7 @@ function persistedSessionFromBackend(info: SessionInfo): PersistedSession {
     createdAt: info.created_at_ms ?? null,
     updatedAt: info.updated_at_ms ?? info.created_at_ms ?? null,
     contextWindowTokens: info.context_window_tokens ?? null,
+    contextUsage: null,
     status: coerceSessionStatus(info.status),
     workflowState: info.latest_workflow ?? null,
     deliverySummary: info.latest_delivery ?? null,
@@ -138,6 +141,35 @@ function persistedSessionFromBackend(info: SessionInfo): PersistedSession {
 function coerceSessionStatus(status: string): SessionState["status"] {
   if (status === "running" || status === "error") return status;
   return "stopped";
+}
+
+function buildContextUsage(
+  usedTokens: number | null,
+  contextWindowTokens: number | null | undefined,
+  source: ContextUsageState["source"],
+  previous?: ContextUsageState | null,
+  compacted?: { from: number | null; to: number | null },
+): ContextUsageState {
+  const safeUsed = typeof usedTokens === "number" && Number.isFinite(usedTokens)
+    ? Math.max(0, Math.round(usedTokens))
+    : null;
+  const safeWindow = typeof contextWindowTokens === "number" && Number.isFinite(contextWindowTokens)
+    ? Math.max(0, Math.round(contextWindowTokens))
+    : null;
+  const percentUsed = safeUsed !== null && safeWindow && safeWindow > 0
+    ? Math.min(100, Math.round((safeUsed / safeWindow) * 100))
+    : null;
+
+  return {
+    usedTokens: safeUsed,
+    contextWindowTokens: safeWindow,
+    percentUsed,
+    source,
+    lastUpdatedAt: Date.now(),
+    lastCompactedAt: compacted ? Date.now() : previous?.lastCompactedAt ?? null,
+    compactedFromTokens: compacted ? compacted.from : previous?.compactedFromTokens ?? null,
+    compactedToTokens: compacted ? compacted.to : previous?.compactedToTokens ?? null,
+  };
 }
 
 function persistWorkspaces(workspaces: Map<string, Workspace>, activeWorkspaceId: string | null) {
@@ -168,6 +200,7 @@ function persistSessions(
       createdAt: s.createdAt ?? null,
       updatedAt: s.updatedAt ?? null,
       contextWindowTokens: s.contextWindowTokens ?? null,
+      contextUsage: s.contextUsage ?? null,
       status: s.status,
       workflowState: workflowBySession.get(s.id) ?? null,
       deliverySummary: deliverySummaryBySession.get(s.id) ?? null,
@@ -274,12 +307,13 @@ function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent):
     ];
   }
 
+  if (event_type === "shell_start") {
+    return applyShellStartToBlocks(blocks, event);
+  }
+
   if (event_type === "tool_call_result") {
     const next = [...blocks];
-    const existingIdx = next.findIndex((block) =>
-      (block.event_type === "tool_call" || block.event_type === "shell" || block.event_type === "thinking") &&
-      block.block_id === event.block_id
-    );
+    const existingIdx = findToolResultTargetBlockIndex(next, event.block_id);
     if (existingIdx >= 0) {
       next[existingIdx] = {
         ...next[existingIdx],
@@ -311,7 +345,9 @@ function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent):
 
   if (event_type === "thinking_chunk" || event_type === "text_chunk" || event_type === "shell_output") {
     const next = [...blocks];
-    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+    const existingIdx = event_type === "shell_output"
+      ? findShellTargetBlockIndex(next, event.block_id)
+      : next.findIndex((block) => block.block_id === event.block_id);
     const blockType = event_type === "thinking_chunk" ? "thinking" : event_type === "shell_output" ? "shell" : "text";
     if (existingIdx >= 0) {
       next[existingIdx] = {
@@ -334,7 +370,9 @@ function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent):
 
   if (event_type === "thinking_end" || event_type === "text_end" || event_type === "shell_end" || event_type === "tool_call_end") {
     const next = [...blocks];
-    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+    const existingIdx = event_type === "shell_end"
+      ? findShellTargetBlockIndex(next, event.block_id)
+      : next.findIndex((block) => block.block_id === event.block_id);
     if (existingIdx >= 0) {
       if (event_type !== "tool_call_end") {
         next[existingIdx] = { ...next[existingIdx], isComplete: true };
@@ -351,6 +389,67 @@ function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent):
 
   const block = eventToBlock(event);
   return block ? [...blocks, block] : blocks;
+}
+
+function applyShellStartToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "shell_start" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingShellIdx = next.findIndex((block) =>
+    block.block_id === event.block_id && block.event_type === "shell"
+  );
+  if (existingShellIdx >= 0) {
+    next[existingShellIdx] = {
+      ...next[existingShellIdx],
+      isComplete: false,
+      metadata: {
+        ...next[existingShellIdx].metadata,
+        command: event.command,
+      },
+    };
+    return next;
+  }
+
+  const existingToolIdx = next.findIndex((block) =>
+    block.block_id === event.block_id &&
+    (block.event_type === "tool_call" || block.event_type === "tool_call_result")
+  );
+  if (existingToolIdx >= 0) {
+    next[existingToolIdx] = {
+      ...next[existingToolIdx],
+      event_type: "shell",
+      content: "",
+      isComplete: false,
+      metadata: {
+        ...next[existingToolIdx].metadata,
+        command: event.command,
+      },
+    };
+    return next;
+  }
+
+  const block = eventToBlock(event);
+  return block ? [...next, block] : next;
+}
+
+function findShellTargetBlockIndex(blocks: BlockState[], blockId: string) {
+  const shellIdx = blocks.findIndex((block) =>
+    block.block_id === blockId && block.event_type === "shell"
+  );
+  if (shellIdx >= 0) return shellIdx;
+  return blocks.findIndex((block) => block.block_id === blockId);
+}
+
+function findToolResultTargetBlockIndex(blocks: BlockState[], blockId: string) {
+  const shellIdx = blocks.findIndex((block) =>
+    block.block_id === blockId && block.event_type === "shell"
+  );
+  if (shellIdx >= 0) return shellIdx;
+  return blocks.findIndex((block) =>
+    block.block_id === blockId &&
+    (block.event_type === "tool_call" || block.event_type === "thinking")
+  );
 }
 
 function latestDeliverySummaryFromBlocks(blocks: BlockState[]): DeliverySummary | null {
@@ -557,6 +656,7 @@ export const useStore = create<AppStore>((set, get) => ({
             updatedAt: s.updatedAt ?? s.createdAt ?? hydratedAt,
             blocks,
             costUsd: 0,
+            contextUsage: s.contextUsage ?? null,
             streaming: false,
             status: "stopped" as const,
           });
@@ -820,6 +920,7 @@ export const useStore = create<AppStore>((set, get) => ({
       status: "running",
       blocks: existing?.blocks ?? [],
       costUsd: existing?.costUsd ?? 0,
+      contextUsage: existing?.contextUsage ?? null,
       streaming: existing?.streaming ?? false,
     });
     set({ sessions, workspaces, activeWorkspaceId: workspaceId, activeSessionId: id });
@@ -1049,6 +1150,7 @@ export const useStore = create<AppStore>((set, get) => ({
           status: "running",
           blocks: [],
           costUsd: 0,
+          contextUsage: null,
           streaming: false,
         };
         sessions.set(session_id, session);
@@ -1085,13 +1187,22 @@ export const useStore = create<AppStore>((set, get) => ({
     if (event_type === "session_started") {
       // Update session info from the backend event
       const startedEvent = event as Extract<StreamEvent, { event_type: "session_started" }>;
+      const contextWindowTokens = startedEvent.context_window_tokens ?? getModelContextWindow(startedEvent.model);
       sessions.set(session_id, {
         ...session,
         agentType: startedEvent.agent_type,
         model: startedEvent.model,
         workingDir: session.workingDir ?? get().activeWorkspaceId,
         workspaceId: session.workspaceId ?? get().activeWorkspaceId,
-        contextWindowTokens: startedEvent.context_window_tokens ?? getModelContextWindow(startedEvent.model),
+        contextWindowTokens,
+        contextUsage: session.contextUsage
+          ? buildContextUsage(
+              session.contextUsage.usedTokens,
+              contextWindowTokens,
+              session.contextUsage.source,
+              session.contextUsage,
+            )
+          : null,
         status: "running",
         streaming: false,
         updatedAt: Date.now(),
@@ -1117,9 +1228,16 @@ export const useStore = create<AppStore>((set, get) => ({
 
     if (event_type === "usage") {
       const ue = event as Extract<StreamEvent, { event_type: "usage" }>;
+      const contextWindowTokens = session.contextWindowTokens ?? getModelContextWindow(session.model);
       sessions.set(session_id, {
         ...session,
         costUsd: (session.costUsd || 0) + ue.estimated_cost_usd,
+        contextUsage: buildContextUsage(
+          ue.input_tokens,
+          contextWindowTokens,
+          "provider_usage",
+          session.contextUsage,
+        ),
         blocks,
         updatedAt: Date.now(),
       });
@@ -1171,12 +1289,21 @@ export const useStore = create<AppStore>((set, get) => ({
       return;
     }
 
+    if (event_type === "shell_start") {
+      blocks = applyShellStartToBlocks(
+        blocks,
+        event as Extract<StreamEvent, { event_type: "shell_start" }>,
+      );
+      sessions.set(session_id, touchSession(session, { blocks }));
+      set({ sessions });
+      persistBlocks(session_id, blocks);
+      return;
+    }
+
     // For tool_call_result, find the tool_call block and merge
     if (event_type === "tool_call_result") {
       const resultEvent = event as Extract<StreamEvent, { event_type: "tool_call_result" }>;
-      const existingIdx = blocks.findIndex((b) =>
-        (b.event_type === "tool_call" || b.event_type === "shell" || b.event_type === "thinking") && b.block_id === resultEvent.block_id
-      );
+      const existingIdx = findToolResultTargetBlockIndex(blocks, resultEvent.block_id);
       if (existingIdx >= 0) {
         blocks[existingIdx] = {
           ...blocks[existingIdx],
@@ -1211,7 +1338,9 @@ export const useStore = create<AppStore>((set, get) => ({
     // For chunk events, find existing block and append content
     if (chunkTypes.includes(event_type)) {
       const blockIdEvent = event as { block_id: string };
-      const existingIdx = blocks.findIndex((b) => b.block_id === blockIdEvent.block_id);
+      const existingIdx = event_type === "shell_output"
+        ? findShellTargetBlockIndex(blocks, blockIdEvent.block_id)
+        : blocks.findIndex((b) => b.block_id === blockIdEvent.block_id);
       const content = "content" in event ? (event as { content: string }).content : "";
 
       if (existingIdx >= 0) {
@@ -1241,7 +1370,9 @@ export const useStore = create<AppStore>((set, get) => ({
     // For end events, mark block as complete (except tool_call_end — results set isComplete later)
     if (endTypes.includes(event_type)) {
       const blockIdEvent = event as { block_id: string };
-      const existingIdx = blocks.findIndex((b) => b.block_id === blockIdEvent.block_id);
+      const existingIdx = event_type === "shell_end"
+        ? findShellTargetBlockIndex(blocks, blockIdEvent.block_id)
+        : blocks.findIndex((b) => b.block_id === blockIdEvent.block_id);
       if (existingIdx >= 0) {
         if (event_type !== "tool_call_end") {
           blocks[existingIdx] = { ...blocks[existingIdx], isComplete: true };
@@ -1267,8 +1398,24 @@ export const useStore = create<AppStore>((set, get) => ({
       blocks.push(newBlock);
     }
 
-    sessions.set(session_id, touchSession(session, { blocks }));
+    const contextUsage = event_type === "context_compacted"
+      ? buildContextUsage(
+          (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_after,
+          session.contextWindowTokens ?? getModelContextWindow(session.model),
+          "local_estimate",
+          session.contextUsage,
+          {
+            from: (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_before,
+            to: (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_after,
+          },
+        )
+      : session.contextUsage;
+
+    sessions.set(session_id, touchSession(session, { blocks, contextUsage }));
     set({ sessions });
+    if (event_type === "context_compacted") {
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
+    }
     persistBlocks(session_id, blocks);
   },
 
@@ -1359,6 +1506,17 @@ function eventToBlock(event: StreamEvent): BlockState | null {
         },
         isComplete: true,
       };
+    case "context_compact_skipped":
+      return {
+        ...base,
+        event_type: "context_compact_skipped",
+        content: compactSkipMessage(event.reason),
+        metadata: {
+          reason: event.reason,
+          retained_messages: event.retained_messages,
+        },
+        isComplete: true,
+      };
     case "delivery_summary":
       return {
         ...base,
@@ -1371,6 +1529,18 @@ function eventToBlock(event: StreamEvent): BlockState | null {
       };
     default:
       return null;
+  }
+}
+
+function compactSkipMessage(reason: string) {
+  switch (reason) {
+    case "history_too_short":
+    case "too_few_messages_to_compact":
+      return "当前历史还不够长，暂时无需压缩。";
+    case "no_safe_retention_boundary":
+      return "当前历史里没有安全的压缩边界，Forge 已保留原上下文。";
+    default:
+      return "当前上下文暂时无需压缩。";
   }
 }
 

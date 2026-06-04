@@ -1,4 +1,4 @@
-import type { MutableRefObject } from "react";
+import { useCallback, useState, type MutableRefObject } from "react";
 import { useSession } from "@/hooks/useSession";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
 import { useComposerInputHandlers } from "./useComposerInputHandlers";
@@ -57,7 +57,17 @@ export function useComposerActions({
   valueRef,
   workingDir,
 }: UseComposerActionsOptions) {
-  const { send, stop, resume } = useSession();
+  const { send, stop, resume, compact } = useSession();
+  const [isCompacting, setIsCompacting] = useState(false);
+  const runCompactWithFeedback = useCallback(async () => {
+    if (!isRunning || isCompacting) return;
+    setIsCompacting(true);
+    try {
+      await compact(sessionId);
+    } finally {
+      setIsCompacting(false);
+    }
+  }, [compact, isCompacting, isRunning, sessionId]);
   const {
     handleResume,
     isResuming,
@@ -90,11 +100,15 @@ export function useComposerActions({
     isRunning,
     onClearChips: clearChips,
     onResetDraft: resetDraft,
+    compact: runCompactWithFeedback,
     send,
     sessionId,
     value,
     workingDir,
   });
+  const handleCompact = useCallback(() => {
+    void runCompactWithFeedback();
+  }, [runCompactWithFeedback]);
   const handleKeyDown = useComposerKeyboard({
     activeSuggestionIndex,
     addChip,
@@ -117,8 +131,10 @@ export function useComposerActions({
     handleKeyDown,
     handleResume,
     handleSend,
+    handleCompact,
     handleStop,
     handleToggleModelMenu,
+    isCompacting,
     isResuming,
     resumeError,
   };

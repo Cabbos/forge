@@ -969,7 +969,8 @@ pub fn classify_tool_category(name: &str) -> AgentToolCategory {
         }
         "write_file" | "write_to_file" | "write" | "edit_file" | "edit" | "apply_patch"
         | "create_file" | "delete_file" | "move_file" => AgentToolCategory::Write,
-        "run_shell" | "bash" | "shell" | "exec" | "execute_command" => AgentToolCategory::Shell,
+        "run_shell" | "bash" | "shell" | "shell_command" | "run_command" | "run_shell_command"
+        | "exec" | "execute_command" => AgentToolCategory::Shell,
         "delegate_task" => AgentToolCategory::Delegate,
         name if name.starts_with("mcp__") => AgentToolCategory::Mcp,
         _ => AgentToolCategory::Other,

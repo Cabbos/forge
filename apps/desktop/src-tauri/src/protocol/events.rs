@@ -148,6 +148,13 @@ pub enum StreamEvent {
         estimated_tokens_before: u32,
         estimated_tokens_after: u32,
     },
+    #[serde(rename = "context_compact_skipped")]
+    ContextCompactSkipped {
+        session_id: String,
+        block_id: String,
+        reason: String,
+        retained_messages: usize,
+    },
 
     // ── Project Records Memory ──
     #[serde(rename = "memory_selection")]
@@ -267,6 +274,7 @@ impl StreamEvent {
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
             | ContextCompacted { session_id, .. }
+            | ContextCompactSkipped { session_id, .. }
             | MemorySelection { session_id, .. }
             | MemoryCandidate { session_id, .. }
             | MemoryUpdated { session_id, .. }
@@ -306,6 +314,7 @@ impl StreamEvent {
             ShellEnd { .. } => "shell_end",
             ConfirmAsk { .. } => "confirm_ask",
             ContextCompacted { .. } => "context_compacted",
+            ContextCompactSkipped { .. } => "context_compact_skipped",
             MemorySelection { .. } => "memory_selection",
             MemoryCandidate { .. } => "memory_candidate",
             MemoryUpdated { .. } => "memory_updated",
@@ -468,6 +477,15 @@ mod tests {
                     estimated_tokens_after: 0,
                 },
                 "context_compacted",
+            ),
+            (
+                StreamEvent::ContextCompactSkipped {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    reason: "history_too_short".into(),
+                    retained_messages: 12,
+                },
+                "context_compact_skipped",
             ),
             (
                 StreamEvent::MemorySelection {

@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Archive,
   AtSign,
   BookOpen,
   BrainCircuit,
@@ -44,6 +45,9 @@ export function commandIconMeta(command: string): ForgeIconMeta {
   }
   if (command.includes("docs")) {
     return { icon: BookOpen, tone: "context", label: "文档" };
+  }
+  if (command.includes("compact")) {
+    return { icon: Archive, tone: "context", label: "压缩" };
   }
   if (command.includes("refactor")) {
     return { icon: ListChecks, tone: "reasoning", label: "整理" };

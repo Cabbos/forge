@@ -10,6 +10,7 @@ pub(crate) enum StructuredBodyMode {
 
 pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode) -> String {
     let mut lines = Vec::new();
+    let goal = experience_goal_label(episode);
 
     // Problem
     let problem = match mode {
@@ -17,10 +18,10 @@ pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode
             if episode.failed_tools > 0 && !episode.notable_failures.is_empty() {
                 format!(
                     "While working on '{}', encountered {} tool failure(s).",
-                    episode.user_goal_summary, episode.failed_tools
+                    goal, episode.failed_tools
                 )
             } else {
-                format!("Needed to implement '{}'.", episode.user_goal_summary)
+                format!("Needed to implement '{}'.", goal)
             }
         }
         StructuredBodyMode::FailurePattern => {
@@ -28,14 +29,14 @@ pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode
             format!(
                 "Tool '{}' failed during '{}': {}.",
                 failure.tool_name,
-                episode.user_goal_summary,
+                goal,
                 summarize_text(&failure.summary, 120)
             )
         }
         StructuredBodyMode::Workflow => {
             format!(
                 "Multi-step change '{}' required {} tools across {} files.",
-                episode.user_goal_summary,
+                goal,
                 episode.tool_count,
                 episode.changed_files.len()
             )
@@ -134,7 +135,7 @@ pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode
     // Applies when
     lines.push(format!(
         "Applies when: working on '{}' with {} tools and {} changed file(s).",
-        episode.user_goal_summary,
+        goal,
         episode.tool_count,
         episode.changed_files.len()
     ));
@@ -160,6 +161,112 @@ pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode
     lines.push(format!("Evidence: {evidence}"));
 
     lines.join(" ")
+}
+
+fn experience_goal_label(episode: &Episode) -> String {
+    let cleaned = clean_goal_summary(&episode.user_goal_summary);
+    if !cleaned.is_empty() {
+        return summarize_text(&cleaned, 90);
+    }
+
+    if episode.changed_files.is_empty() {
+        return "this task".to_string();
+    }
+
+    if episode.changed_files.len() == 1 {
+        return format!(
+            "changes to {}",
+            summarize_text(&episode.changed_files[0], 60)
+        );
+    }
+
+    format!("changes across {} files", episode.changed_files.len())
+}
+
+fn clean_goal_summary(summary: &str) -> String {
+    let normalized = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    for marker in [
+        "任务目标：",
+        "任务目标:",
+        "目标：",
+        "目标:",
+        "task:",
+        "goal:",
+        "objective:",
+    ] {
+        if let Some(index) = normalized.to_lowercase().find(&marker.to_lowercase()) {
+            let value = &normalized[index + marker.len()..];
+            return clean_goal_fragment(value);
+        }
+    }
+
+    let mut candidates = normalized
+        .split(['。', '；', ';', '\n'])
+        .map(clean_goal_fragment)
+        .filter(|part| !part.is_empty())
+        .filter(|part| !looks_like_prompt_context(part))
+        .collect::<Vec<_>>();
+
+    if let Some(candidate) = candidates.pop() {
+        return candidate;
+    }
+
+    clean_goal_fragment(&normalized)
+}
+
+fn clean_goal_fragment(value: &str) -> String {
+    let fragment = value
+        .split(['。', '；', ';', '\n'])
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .trim_matches(['"', '\'', '“', '”', '‘', '’', '.', ',', '，', ':', '：']);
+
+    strip_prompt_prefix(fragment)
+        .trim()
+        .trim_matches(['"', '\'', '“', '”', '‘', '’', '.', ',', '，', ':', '：'])
+        .to_string()
+}
+
+fn strip_prompt_prefix(value: &str) -> &str {
+    let lower = value.to_lowercase();
+    for prefix in [
+        "请严格",
+        "请先",
+        "请优先",
+        "请检查",
+        "帮我实现",
+        "帮我做",
+        "帮我写",
+        "please implement",
+        "please build",
+        "i want to",
+    ] {
+        if lower.starts_with(prefix) {
+            return value[prefix.len()..].trim();
+        }
+    }
+    value
+}
+
+fn looks_like_prompt_context(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    [
+        "我们现在在 ",
+        "人工测试",
+        "人工验证",
+        "请严格只修改",
+        "目标不是",
+        "验证本地",
+        "完整闭环",
+        "观察候选",
+    ]
+    .iter()
+    .any(|marker| lower.contains(&marker.to_lowercase()))
 }
 
 pub(crate) fn confidence_for_episode(episode: &Episode) -> f32 {

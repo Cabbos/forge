@@ -5,6 +5,7 @@ mod agent;
 mod app_metadata;
 mod consts;
 pub mod continuity;
+pub mod eval_headless;
 mod executor;
 mod forge_wiki;
 pub mod harness;
@@ -64,6 +65,7 @@ pub fn run() {
             ipc::mcp_context::list_mcp_context_sources,
             ipc::handlers::resume_session,
             ipc::handlers::send_input,
+            ipc::handlers::compact_session_context,
             ipc::session_lifecycle::kill_session,
             ipc::session_lifecycle::delete_session,
             ipc::session_lifecycle::list_sessions,

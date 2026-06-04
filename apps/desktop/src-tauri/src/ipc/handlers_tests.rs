@@ -1,5 +1,5 @@
 use super::*;
-use crate::adapters::base::AiAdapter;
+use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::session::AgentSession;
 use crate::agent::turn_state::{
@@ -56,6 +56,67 @@ fn test_project_memory(id: &str, title: &str, body: &str, project_path: &str) ->
         use_count: 0,
         tags: vec!["进度".to_string()],
     }
+}
+
+fn seed_compactable_history(session: &AgentSession, count: usize) {
+    let mut messages = crate::agent::session_guards::lock_unpoisoned(&session.messages);
+    for index in 0..count {
+        if index % 2 == 0 {
+            messages.push(ChatMessage::user(&format!("user message {index}")));
+        } else {
+            messages.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                "assistant message {index}"
+            ))));
+        }
+    }
+}
+
+#[tokio::test]
+async fn compact_session_context_for_state_compacts_registered_session() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-ipc-manual-compact-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+    let session = test_agent_session("session-compact", &workspace);
+    seed_compactable_history(&session, 40);
+    state
+        .register_session("session-compact".to_string(), session.clone())
+        .await;
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    let result = compact_session_context_for_state(&state, "session-compact", &emitter)
+        .await
+        .expect("manual compact should succeed");
+
+    assert!(result.compacted);
+    assert_eq!(result.compacted_messages, 8);
+    assert_eq!(
+        crate::agent::session_guards::lock_unpoisoned(&session.messages).len(),
+        32
+    );
+    assert!(emitter.drain().iter().any(|event| matches!(
+        event,
+        crate::protocol::events::StreamEvent::ContextCompacted {
+            session_id,
+            compacted_messages: 8,
+            retained_messages: 32,
+            ..
+        } if session_id == "session-compact"
+    )));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
+fn manual_compact_request_matches_text_and_structured_capability() {
+    assert!(is_manual_compact_request("/compact", &[]));
+    assert!(is_manual_compact_request(
+        "请按所选动作继续。",
+        &[ComposerCapabilitySelection::SlashCommand {
+            command: "/compact".to_string(),
+        }]
+    ));
+    assert!(!is_manual_compact_request("/fix", &[]));
 }
 
 fn record_test_continuity_lesson(

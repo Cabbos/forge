@@ -1,8 +1,9 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { ArrowUp, ChevronDown, RotateCcw, X } from "lucide-react";
+import { Archive, ArrowUp, ChevronDown, RotateCcw, X } from "lucide-react";
 import { composerToolbarIcons } from "@/lib/capability-icons";
 import { ForgeIcon } from "@/components/primitives/icon";
 import { cn } from "@/lib/utils";
+import type { ComposerContextUsageView } from "./contextUsageView";
 import type { ComposerMenuMode } from "./composerTypes";
 
 interface ComposerToolbarProps {
@@ -10,6 +11,7 @@ interface ComposerToolbarProps {
   isResuming: boolean;
   isRunning: boolean;
   isStreaming: boolean;
+  contextUsageView: ComposerContextUsageView;
   modelMenuId: string;
   selectedContextWindow: string;
   selectedModelLabel: string;
@@ -17,6 +19,7 @@ interface ComposerToolbarProps {
   showModelMenu: boolean;
   showSuggestions: ComposerMenuMode;
   suggestionListId: string;
+  onCompact: () => void;
   onResume: () => void;
   onSend: () => void;
   onStop: () => void;
@@ -29,6 +32,7 @@ export function ComposerToolbar({
   isResuming,
   isRunning,
   isStreaming,
+  contextUsageView,
   modelMenuId,
   selectedContextWindow,
   selectedModelLabel,
@@ -36,12 +40,16 @@ export function ComposerToolbar({
   showModelMenu,
   showSuggestions,
   suggestionListId,
+  onCompact,
   onResume,
   onSend,
   onStop,
   onToggleModelMenu,
   onToggleSuggestion,
 }: ComposerToolbarProps) {
+  const compactButton = contextUsageView.compactButton;
+  const isCompacting = compactButton.state === "compacting";
+
   return (
     <div data-testid="composer-toolbar" className="forge-composer-toolbar">
       <div data-testid="composer-tool-cluster" className="forge-composer-tool-cluster">
@@ -101,6 +109,32 @@ export function ComposerToolbar({
             <ChevronDown className="size-3" style={{ color: "var(--muted-foreground)" }} />
           </ButtonPrimitive>
         </div>
+
+        {isRunning ? (
+          <>
+            {contextUsageView.label ? (
+              <span
+                data-testid="composer-context-usage"
+                className="forge-composer-context-usage"
+                title={contextUsageView.title}
+              >
+                {contextUsageView.label}
+              </span>
+            ) : null}
+            <ButtonPrimitive
+              type="button"
+              data-testid="composer-compact-context"
+              aria-label={compactButton.ariaLabel}
+              title={compactButton.title}
+              onClick={onCompact}
+              disabled={compactButton.disabled}
+              data-state={compactButton.state}
+              className="forge-composer-compact disabled:cursor-default disabled:opacity-50"
+            >
+              <Archive className={cn("size-3.5", isCompacting && "animate-pulse")} />
+            </ButtonPrimitive>
+          </>
+        ) : null}
 
         {!isRunning ? (
           <ButtonPrimitive

@@ -226,6 +226,7 @@
 
   .forge-composer-tool,
   .forge-composer-model,
+  .forge-composer-compact,
   .forge-composer-send {
     display: inline-flex;
     height: 1.875rem;
@@ -245,6 +246,22 @@
   .forge-composer-send {
     width: 1.875rem;
     height: 1.875rem;
+  }
+
+  .forge-composer-compact {
+    width: 1.875rem;
+    color: var(--forge-text-muted);
+  }
+
+  .forge-composer-context-usage {
+    display: inline-flex;
+    max-width: 7.5rem;
+    min-width: 0;
+    align-items: center;
+    color: var(--forge-text-faint);
+    font-size: 10px;
+    line-height: 1rem;
+    white-space: nowrap;
   }
 
   .forge-composer-model {
@@ -271,10 +288,18 @@
   .forge-composer-tool[data-active="true"],
   .forge-composer-model:hover,
   .forge-composer-model[data-active="true"],
+  .forge-composer-compact:hover,
   .forge-composer-send:hover {
     border-color: var(--forge-material-border-hover);
     background: var(--forge-hover);
     color: var(--forge-text-primary);
+  }
+
+  .forge-composer-compact:disabled {
+    cursor: default;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
   }
 
   .forge-composer-send:disabled {
@@ -293,6 +318,7 @@
 
   .forge-composer-tool:focus-visible,
   .forge-composer-model:focus-visible,
+  .forge-composer-compact:focus-visible,
   .forge-composer-send:focus-visible,
   .forge-composer-resume:focus-visible {
     outline: 1px solid var(--forge-focus-ring);
@@ -527,7 +553,7 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-frame .forge-conversation-lane {
-    max-width: min(820px, 100%);
+    max-width: min(760px, 100%);
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer {
@@ -593,6 +619,7 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-model,
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-compact,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-resume {
     border-color: #DDD2C3;
     background: #FAF7F1;
@@ -635,6 +662,7 @@
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool[data-active="true"],
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-model:hover,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-model[data-active="true"],
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-compact:hover,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-resume:hover {
     border-color: #CFC7B8;
     background: #F3EADC;

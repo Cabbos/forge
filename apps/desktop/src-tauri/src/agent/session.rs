@@ -5,8 +5,12 @@ use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::auto_compact::{
-    compact_messages_for_overflow_retry, compact_messages_if_needed, AutoCompactGuard,
-    CompactResult, CompactStats,
+    finalize_compaction_plan, finalize_compaction_plan_with_heuristic_summary,
+    prepare_compaction_for_overflow_retry, prepare_compaction_if_needed, prepare_compaction_now,
+    AutoCompactGuard, CompactPlan, CompactResult, CompactStats,
+};
+use crate::agent::compact_summary::{
+    compact_summary_prompt_messages, extract_compact_summary_text,
 };
 use crate::agent::context_builder::{
     ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
@@ -28,6 +32,7 @@ use crate::agent::tool_results::{
     build_tool_result_message_for_model, is_read_only_tool,
     push_assistant_result_with_synthetic_tool_results, repair_tool_use_adjacency,
 };
+use crate::agent::turn_metrics::{TurnMetrics, TurnMetricsEventEmitter, TurnUsageSnapshot};
 use crate::agent::turn_outcome::{
     final_answer_instruction, final_turn_status_for_current_turn,
     final_turn_transition_reason_for_current_turn, verification_has_failed,
@@ -44,6 +49,7 @@ use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
 const MAX_AGENT_TOOL_ROUNDS: usize = 80;
+pub use crate::agent::manual_compact::ManualCompactResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
@@ -78,6 +84,7 @@ pub struct AgentSession {
     pub(crate) system_prompt: Mutex<String>,
     pub(crate) summary: Mutex<Option<String>>,
     pub(crate) latest_turn: Mutex<Option<AgentTurnState>>,
+    pub(crate) turn_metrics: Arc<Mutex<TurnMetrics>>,
     pub(crate) auto_compact_guard: Mutex<AutoCompactGuard>,
     pub(crate) context_window_tokens: Option<u32>,
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
@@ -86,7 +93,8 @@ pub struct AgentSession {
 // Lock discipline for AgentSession:
 // - Prefer taking one mutex per statement and cloning the small value needed.
 // - If multiple locks are unavoidable, acquire them in this order:
-//   status -> system_prompt -> messages -> summary -> latest_turn -> auto_compact_guard -> cancel.
+//   status -> system_prompt -> messages -> summary -> latest_turn -> turn_metrics
+//   -> auto_compact_guard -> cancel.
 // This keeps resume/snapshot/turn setup from growing accidental lock-order cycles.
 
 pub(crate) struct AgentPreviewStatusUpdate<'a> {
@@ -113,6 +121,7 @@ pub(crate) struct AgentTurnRunRequest<'a> {
     pub activation_text: Option<&'a str>,
     pub _turn_guard: TurnInflightGuard,
     pub emitter: &'a dyn EventEmitter,
+    pub tool_emitter: Option<Arc<dyn EventEmitter>>,
     pub app_handle: Option<&'a tauri::AppHandle>,
 }
 
@@ -142,6 +151,7 @@ impl AgentSession {
             system_prompt: Mutex::new(system_prompt),
             summary: Mutex::new(None),
             latest_turn: Mutex::new(None),
+            turn_metrics: Arc::new(Mutex::new(TurnMetrics::default())),
             auto_compact_guard: Mutex::new(AutoCompactGuard::default()),
             context_window_tokens,
             cancel: Mutex::new(None),
@@ -290,17 +300,14 @@ impl AgentSession {
             activation_text,
             _turn_guard,
             emitter: &emitter,
+            tool_emitter: None,
             app_handle: Some(app_handle),
         })
         .await
     }
 
-    /// Core agent turn loop — unified implementation used by both the
-    /// production AppHandle path and the testable EventEmitter path.
-    ///
-    /// `app_handle` is `Some` in production so the adapter can stream events
-    /// to the frontend via `stream_message`.  When `None`, `call_with_emitter`
-    /// is used instead (test path).
+    /// Core agent turn loop — unified implementation used by both production
+    /// Tauri events and test/headless emitters.
     /// Phase 1 — set up the turn: recovery context, system prompt, user message,
     /// cancel token, and initial status.
     async fn setup_turn(
@@ -361,6 +368,7 @@ impl AgentSession {
         cancel: Arc<Notify>,
         emitter: &dyn crate::agent::event_sink::EventEmitter,
         app_handle: Option<&tauri::AppHandle>,
+        tool_emitter: Option<Arc<dyn crate::agent::event_sink::EventEmitter>>,
         overflow_retry_used: &mut bool,
     ) -> Result<RoundDecision, String> {
         if !self.running.load(Ordering::SeqCst) {
@@ -381,7 +389,44 @@ impl AgentSession {
         let compacted = if skip_proactive_compaction {
             CompactResult::unchanged(all_messages, existing_summary)
         } else {
-            compact_messages_if_needed(all_messages, existing_summary, self.context_window_tokens)
+            match prepare_compaction_if_needed(
+                all_messages,
+                existing_summary,
+                self.context_window_tokens,
+            ) {
+                Ok(plan) => match self
+                    .compact_plan_with_summary(&plan, cancel.clone(), false)
+                    .await
+                {
+                    Ok(compacted) => compacted,
+                    Err(err)
+                        if compact_summary_was_cancelled(&err)
+                            || !self.running.load(Ordering::SeqCst) =>
+                    {
+                        self.mark_latest_turn_status_with_reason_emitter(
+                            AgentTurnStatus::Cancelled,
+                            "user_cancelled",
+                            Some("cancelled during auto compact summary"),
+                            emitter,
+                        );
+                        return Err("Cancelled".to_string());
+                    }
+                    Err(err) => {
+                        crate::app_log!(
+                            "WARN",
+                            "Auto compact summary failed for session {}: {}",
+                            self.id,
+                            err
+                        );
+                        CompactResult::skipped(
+                            plan.original_messages.clone(),
+                            plan.existing_summary.clone(),
+                            format!("model_summary_failed: {err}"),
+                        )
+                    }
+                },
+                Err(result) => *result,
+            }
         };
         lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
 
@@ -404,6 +449,7 @@ impl AgentSession {
             self.context_window_tokens,
         );
         self.record_latest_context_emitter(&context_bundle, emitter);
+        self.record_context_metrics(&context_bundle);
         let mut msgs_with_context = repair_tool_use_adjacency(context_bundle.messages);
 
         self.mark_latest_turn_status_with_reason_emitter(
@@ -413,16 +459,17 @@ impl AgentSession {
             emitter,
         );
         let mut retries = 0;
+        let metrics_emitter = TurnMetricsEventEmitter::new(emitter, self.turn_metrics.clone());
         let result = loop {
-            let adapter_result = if let Some(app) = app_handle {
-                self.adapter
-                    .stream_message(&self.id, &msgs_with_context, app, cancel.clone())
-                    .await
-            } else {
-                self.adapter
-                    .call_with_emitter(&self.id, &msgs_with_context, emitter, cancel.clone())
-                    .await
-            };
+            let adapter_result = self
+                .adapter
+                .stream_message_with_emitter(
+                    &self.id,
+                    &msgs_with_context,
+                    &metrics_emitter,
+                    cancel.clone(),
+                )
+                .await;
             match adapter_result {
                 Ok(r) => break r,
                 Err(e) => {
@@ -430,8 +477,43 @@ impl AgentSession {
                     if !*overflow_retry_used && is_context_overflow_error(&self.agent_type, &msg) {
                         let all_messages = lock_unpoisoned(&self.messages).clone();
                         let existing_summary = lock_unpoisoned(&self.summary).clone();
-                        let compacted =
-                            compact_messages_for_overflow_retry(all_messages, existing_summary);
+                        let compacted = match prepare_compaction_for_overflow_retry(
+                            all_messages,
+                            existing_summary,
+                        ) {
+                            Ok(plan) => match self
+                                .compact_plan_with_summary(&plan, cancel.clone(), true)
+                                .await
+                            {
+                                Ok(compacted) => compacted,
+                                Err(err)
+                                    if compact_summary_was_cancelled(&err)
+                                        || !self.running.load(Ordering::SeqCst) =>
+                                {
+                                    self.mark_latest_turn_status_with_reason_emitter(
+                                        AgentTurnStatus::Cancelled,
+                                        "user_cancelled",
+                                        Some("cancelled during overflow compact summary"),
+                                        emitter,
+                                    );
+                                    return Err("Cancelled".to_string());
+                                }
+                                Err(err) => {
+                                    crate::app_log!(
+                                        "WARN",
+                                        "Overflow compact summary failed for session {}: {}",
+                                        self.id,
+                                        err
+                                    );
+                                    CompactResult::skipped(
+                                        plan.original_messages.clone(),
+                                        plan.existing_summary.clone(),
+                                        format!("model_summary_failed: {err}"),
+                                    )
+                                }
+                            },
+                            Err(result) => *result,
+                        };
                         lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
 
                         if let Some(stats) = compacted.stats.as_ref() {
@@ -451,6 +533,7 @@ impl AgentSession {
                                 self.context_window_tokens,
                             );
                             self.record_latest_context_emitter(&context_bundle, emitter);
+                            self.record_context_metrics(&context_bundle);
                             msgs_with_context = repair_tool_use_adjacency(context_bundle.messages);
                             continue;
                         }
@@ -525,8 +608,14 @@ impl AgentSession {
                 .collect::<Vec<_>>()
         );
 
-        self.execute_tools(&result.tool_calls, emitter, app_handle, cancel)
-            .await;
+        self.execute_tools(
+            &result.tool_calls,
+            emitter,
+            app_handle,
+            tool_emitter,
+            cancel,
+        )
+        .await;
 
         tokio::time::sleep(AGENT_LOOP_SETTLE_DELAY).await;
         Ok(RoundDecision::Continue)
@@ -538,6 +627,7 @@ impl AgentSession {
         tool_calls: &[crate::adapters::base::ToolCall],
         emitter: &dyn crate::agent::event_sink::EventEmitter,
         app_handle: Option<&tauri::AppHandle>,
+        tool_emitter_override: Option<Arc<dyn crate::agent::event_sink::EventEmitter>>,
         cancel: Arc<Notify>,
     ) {
         let (delegated, regular): (Vec<_>, Vec<_>) =
@@ -650,6 +740,8 @@ impl AgentSession {
                         Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
                             app.clone(),
                         ))
+                    } else if let Some(shared) = tool_emitter_override.clone() {
+                        shared
                     } else {
                         Arc::new(crate::agent::event_sink::NoopEventEmitter)
                     };
@@ -704,6 +796,8 @@ impl AgentSession {
                     Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
                         app.clone(),
                     ))
+                } else if let Some(shared) = tool_emitter_override.clone() {
+                    shared
                 } else {
                     Arc::new(crate::agent::event_sink::NoopEventEmitter)
                 };
@@ -876,6 +970,7 @@ impl AgentSession {
                     cancel.clone(),
                     request.emitter,
                     request.app_handle,
+                    request.tool_emitter.clone(),
                     &mut overflow_retry_used,
                 )
                 .await?
@@ -1129,6 +1224,101 @@ impl AgentSession {
         session_events::context_compacted_event(&self.id, stats)
     }
 
+    pub(crate) fn context_compact_skipped_event(
+        &self,
+        reason: &str,
+        retained_messages: usize,
+    ) -> StreamEvent {
+        session_events::context_compact_skipped_event(&self.id, reason, retained_messages)
+    }
+
+    async fn compact_plan_with_summary(
+        &self,
+        plan: &CompactPlan,
+        cancel: Arc<Notify>,
+        fallback_on_model_error: bool,
+    ) -> Result<CompactResult, String> {
+        if self.adapter.is_missing_api_key_adapter() {
+            return Ok(finalize_compaction_plan_with_heuristic_summary(
+                plan.clone(),
+            ));
+        }
+
+        match self.generate_model_compact_summary(plan, cancel).await {
+            Ok(summary) => Ok(finalize_compaction_plan(plan.clone(), summary)),
+            Err(err) if compact_summary_was_cancelled(&err) => Err(err),
+            Err(err) if fallback_on_model_error => {
+                crate::app_log!(
+                    "WARN",
+                    "Falling back to heuristic compact summary for session {}: {}",
+                    self.id,
+                    err
+                );
+                Ok(finalize_compaction_plan_with_heuristic_summary(
+                    plan.clone(),
+                ))
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn generate_model_compact_summary(
+        &self,
+        plan: &CompactPlan,
+        cancel: Arc<Notify>,
+    ) -> Result<String, String> {
+        let messages = compact_summary_prompt_messages(plan, self.context_window_tokens);
+        let result = self
+            .adapter
+            .compact_summary(&messages, cancel)
+            .await
+            .map_err(|err| err.to_string())?;
+        extract_compact_summary_text(&result)
+    }
+
+    pub(crate) async fn compact_now_with_emitter(
+        &self,
+        emitter: &dyn EventEmitter,
+    ) -> Result<ManualCompactResult, String> {
+        let all_messages = lock_unpoisoned(&self.messages).clone();
+        let existing_summary = lock_unpoisoned(&self.summary).clone();
+        let compacted = match prepare_compaction_now(all_messages, existing_summary) {
+            Ok(plan) => {
+                self.compact_plan_with_summary(&plan, Arc::new(Notify::new()), false)
+                    .await?
+            }
+            Err(result) => *result,
+        };
+
+        if let Some(stats) = compacted.stats.as_ref() {
+            lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
+            self.apply_compaction_emitter(&compacted, stats, "manual_compact", emitter);
+            return Ok(ManualCompactResult {
+                compacted: true,
+                skipped_reason: None,
+                retained_messages: stats.retained_messages,
+                compacted_messages: stats.compacted_messages,
+                estimated_tokens_before: stats.estimated_tokens_before,
+                estimated_tokens_after: stats.estimated_tokens_after,
+            });
+        }
+
+        let retained_messages = compacted.messages.len();
+        let skipped_reason = compacted.skipped_reason.clone();
+        if let Some(reason) = skipped_reason.as_deref() {
+            emitter.emit(self.context_compact_skipped_event(reason, retained_messages));
+        }
+
+        Ok(ManualCompactResult {
+            compacted: false,
+            skipped_reason,
+            retained_messages,
+            compacted_messages: 0,
+            estimated_tokens_before: 0,
+            estimated_tokens_after: 0,
+        })
+    }
+
     pub(crate) fn tool_call_result_event(
         &self,
         block_id: &str,
@@ -1198,6 +1388,7 @@ impl AgentSession {
             ],
         );
         *lock_unpoisoned(&self.latest_turn) = Some(turn);
+        lock_unpoisoned(&self.turn_metrics).begin_turn();
         self.emit_with_emitter(emitter);
     }
 
@@ -1245,6 +1436,8 @@ impl AgentSession {
     ) {
         *lock_unpoisoned(&self.summary) = compacted.summary.clone();
         *lock_unpoisoned(&self.messages) = compacted.messages.clone();
+        lock_unpoisoned(&self.turn_metrics)
+            .record_compaction(stats.estimated_tokens_before, stats.estimated_tokens_after);
         emitter.emit(self.context_compacted_event(stats));
         self.record_latest_compact_emitter(
             AgentCompactTrace {
@@ -1279,6 +1472,15 @@ impl AgentSession {
             turn.set_context(bundle.to_turn_context_snapshot());
         }
         self.emit_with_emitter(emitter);
+    }
+
+    fn record_context_metrics(&self, bundle: &ContextBundle) {
+        lock_unpoisoned(&self.turn_metrics)
+            .record_context_before_model_call(bundle.estimated_tokens);
+    }
+
+    pub(crate) fn latest_turn_usage_snapshot(&self) -> TurnUsageSnapshot {
+        lock_unpoisoned(&self.turn_metrics).snapshot()
     }
 
     async fn verify_latest_turn_emitter(
@@ -1369,6 +1571,30 @@ impl AgentSession {
             activation_text,
             _turn_guard,
             emitter,
+            tool_emitter: None,
+            app_handle: None,
+        })
+        .await
+    }
+
+    pub(crate) async fn send_message_with_shared_emitter(
+        &self,
+        text: &str,
+        emitter: Arc<dyn crate::agent::event_sink::EventEmitter>,
+        hidden_contexts: Vec<HiddenContextPart>,
+        turn_metadata: Option<AgentTurnMetadata>,
+        activation_text: Option<&str>,
+        _turn_guard: TurnInflightGuard,
+    ) -> Result<(), String> {
+        let tool_emitter = emitter.clone();
+        self.run_agent_turn(AgentTurnRunRequest {
+            text,
+            hidden_contexts,
+            turn_metadata,
+            activation_text,
+            _turn_guard,
+            emitter: &*emitter,
+            tool_emitter: Some(tool_emitter),
             app_handle: None,
         })
         .await
@@ -1404,6 +1630,11 @@ fn final_summary_text(assistant_content: &[serde_json::Value]) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn compact_summary_was_cancelled(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("cancelled") || lower.contains("canceled")
 }
 
 #[cfg(test)]

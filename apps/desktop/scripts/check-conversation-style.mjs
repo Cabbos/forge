@@ -46,6 +46,7 @@ const files = {
   sidebar: read("src/styles/sidebar.css"),
   titlebar: read("src/styles/titlebar.css"),
   messages: read("src/styles/messages.css"),
+  markdown: read("src/styles/markdown.css"),
   composer: read("src/styles/composer.css"),
   process: read("src/styles/process.css"),
   messagePanel: read("src/styles/message-panel.css"),
@@ -127,6 +128,10 @@ assertIncludes(composerBlock, "border-radius: 8px;", "light composer radius");
 assertIncludes(composerBlock, "background: var(--forge-composer-surface);", "light composer material");
 assertNotIncludes(composerBlock, "border-radius: 22px;", "light composer radius");
 
+const composerLaneBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-frame .forge-conversation-lane');
+assertIncludes(composerLaneBlock, "max-width: min(760px, 100%);", "composer lane matches reading lane");
+assertNotIncludes(composerLaneBlock, "max-width: min(820px, 100%);", "composer lane should not drift wider than messages");
+
 const composerFocusBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer:focus-within');
 assertIncludes(composerFocusBlock, "border-color: #D1C7BA;", "composer focused border");
 assertIncludes(composerFocusBlock, "background: #FFFBF4;", "composer focused material");
@@ -175,9 +180,12 @@ assertIncludes(composerSendErrorBlock, "background: #FFF0EA;", "composer stop/er
 assertIncludes(composerSendErrorBlock, "color: #994731;", "composer stop/error send color");
 
 const userNoteBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .user-command-note');
-assertIncludes(userNoteBlock, "border-radius: 13px;", "user note radius");
+assertIncludes(userNoteBlock, "border-radius: 8px;", "user note radius");
 assertIncludes(userNoteBlock, "background: #F1E9DD;", "user note material");
 assertIncludes(userNoteBlock, "max-width: min(440px, 68%);", "user note width");
+
+const shortUserRowBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-user-message-row');
+assertIncludes(shortUserRowBlock, "justify-content: flex-end;", "short user messages stay right-aligned");
 
 const longUserRowBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-user-message-row[data-message-length="long"]');
 assertIncludes(longUserRowBlock, "justify-content: center;", "long user message centered");
@@ -185,6 +193,19 @@ assertIncludes(longUserRowBlock, "justify-content: center;", "long user message 
 const longUserNoteBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .user-command-note[data-long="true"]');
 assertIncludes(longUserNoteBlock, "width: min(620px, 100%);", "long user note width");
 assertIncludes(longUserNoteBlock, "background: #F4EDE3;", "long user note material");
+
+const markdownTableBlock = selectorBlock(files.markdown, ".markdown-content table");
+assertIncludes(markdownTableBlock, "border-radius: 8px;", "markdown table report radius");
+assertIncludes(markdownTableBlock, "background: rgba(255, 251, 244, 0.72);", "markdown table report material");
+assertNotIncludes(markdownTableBlock, "border-radius: calc(var(--radius) - 2px);", "markdown table should avoid generic panel radius");
+
+const markdownCellBlock = selectorBlock(files.markdown, ".markdown-content th,\n.markdown-content td");
+assertIncludes(markdownCellBlock, "padding: 8px 12px;", "markdown table report density");
+assertNotIncludes(markdownCellBlock, "border-right:", "markdown table should avoid heavy vertical grid");
+
+const markdownTableCodeBlock = selectorBlock(files.markdown, ".markdown-content table .forge-inline-code");
+assertIncludes(markdownTableCodeBlock, "white-space: nowrap;", "markdown table code should stay horizontal");
+assertIncludes(markdownTableCodeBlock, "overflow-wrap: normal;", "markdown table code should not inherit prose wrapping");
 
 const lightLaneBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-conversation-lane');
 assertIncludes(lightLaneBlock, "--forge-assistant-avatar-size: 2rem;", "assistant rail avatar size");

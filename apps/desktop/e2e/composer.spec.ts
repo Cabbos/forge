@@ -1,9 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   setup,
   expectLastSendInputArgs,
   expectNoSendInput,
 } from "./fixtures/app";
+import { simulateStream } from "./mock-ipc";
 
 test.describe("InputBar", () => {
   test.beforeEach(async ({ page }) => {
@@ -411,6 +414,257 @@ test.describe("InputBar", () => {
     const sentText = String(sendArgs.text);
     expect(sentText).toContain("按钮没有反应");
     expect(sentText).not.toContain("/fix");
+  });
+
+  test("composer shows context usage and invokes manual compact without sending a prompt", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    })).toBe(true);
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "session_started",
+        session_id: sessionId,
+        agent_type: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        context_window_tokens: 1_000_000,
+      },
+      {
+        event_type: "usage",
+        session_id: sessionId,
+        input_tokens: 142_000,
+        output_tokens: 800,
+        estimated_cost_usd: 0.002,
+      },
+    ], 1);
+
+    await expect(page.getByTestId("composer-context-usage")).toContainText("142K / 1M");
+    await expect(page.getByTestId("composer-context-usage")).toHaveAttribute(
+      "title",
+      /距离自动压缩还有约 825K tokens/,
+    );
+    await page.getByTestId("composer-compact-context").click();
+
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCompactSessionContextArgs;
+    })).toMatchObject({ sessionId });
+    await expectNoSendInput(page);
+  });
+
+  test("composer context usage view-model owns display copy and compact control state", () => {
+    const viewPath = resolve(process.cwd(), "src/components/session/contextUsageView.ts");
+    const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");
+    const toolbar = readFileSync(resolve(process.cwd(), "src/components/session/ComposerToolbar.tsx"), "utf8");
+
+    expect(existsSync(viewPath), "context usage display should be owned by a focused view-model").toBe(true);
+    const view = readFileSync(viewPath, "utf8");
+    expect(view).toContain("buildComposerContextUsageView");
+    expect(view).toContain("formatAutoCompactDistance");
+    expect(view).toContain("compactButton");
+    expect(controller).toContain("buildComposerContextUsageView");
+    expect(controller).not.toContain("function formatComposerContextUsage");
+    expect(controller).not.toContain("function autoCompactThreshold");
+    expect(toolbar).not.toContain("正在压缩上下文，模型正在生成摘要");
+    expect(toolbar).not.toContain("contextUsageTitle || \"压缩当前上下文\"");
+  });
+
+  test("composer updates context usage after compacted history", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    })).toBe(true);
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "session_started",
+        session_id: sessionId,
+        agent_type: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        context_window_tokens: 1_000_000,
+      },
+      {
+        event_type: "context_compacted",
+        session_id: sessionId,
+        block_id: crypto.randomUUID(),
+        retained_messages: 32,
+        compacted_messages: 8,
+        estimated_tokens_before: 142_000,
+        estimated_tokens_after: 32_000,
+      },
+    ], 1);
+
+    const usage = page.getByTestId("composer-context-usage");
+    await expect(usage).toContainText("32K / 1M");
+    await expect(usage).toHaveAttribute("title", /压缩后估算/);
+    await expect(usage).toHaveAttribute("title", /上次压缩 142K -> 32K/);
+  });
+
+  test("manual compact shows pending feedback while backend is summarizing", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      const originalMockIpc = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__compactSessionContextResolve = undefined;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "compact_session_context") {
+          // @ts-expect-error mock
+          window.__lastCompactSessionContextArgs = args;
+          await new Promise<void>((resolve) => {
+            // @ts-expect-error mock
+            window.__compactSessionContextResolve = resolve;
+          });
+          return {
+            compacted: true,
+            retained_messages: 32,
+            compacted_messages: 8,
+            estimated_tokens_before: 142000,
+            estimated_tokens_after: 32000,
+          };
+        }
+        return originalMockIpc?.(cmd, args);
+      };
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    const compactButton = page.getByTestId("composer-compact-context");
+    await compactButton.click();
+
+    await expect(compactButton).toBeDisabled();
+    await expect(compactButton).toHaveAttribute("aria-label", "正在压缩上下文");
+    await expect(compactButton).toHaveAttribute("title", /正在压缩上下文/);
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCompactSessionContextArgs;
+    })).toMatchObject({ sessionId });
+
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      window.__compactSessionContextResolve?.();
+    });
+
+    await expect(compactButton).toBeEnabled();
+    await expect(compactButton).toHaveAttribute("aria-label", "压缩上下文");
+    await expectNoSendInput(page);
+  });
+
+  test("manual compact explains when history is too short", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+      // @ts-expect-error mock
+      window.__mockCompactSessionContextResult = {
+        compacted: false,
+        skipped_reason: "history_too_short",
+        retained_messages: 12,
+        compacted_messages: 0,
+        estimated_tokens_before: 0,
+        estimated_tokens_after: 0,
+      };
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    })).toBe(true);
+
+    await page.getByTestId("composer-compact-context").click();
+
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCompactSessionContextArgs;
+    })).toMatchObject({ sessionId });
+    const notice = page.getByTestId("context-compact-trigger").last();
+    await expect(notice).toContainText("上下文无需压缩");
+    await expect(notice).toContainText("保留 12 条");
+    await notice.click();
+    await expect(page.getByTestId("log-detail-output").last()).toContainText("当前历史还不够长");
+    await expectNoSendInput(page);
+  });
+
+  test("typing slash compact invokes manual compact without adding a user turn", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      const originalMockIpc = window.__tauriMockIPC;
+      // @ts-expect-error mock
+      window.__compactSessionContextResolve = undefined;
+      // @ts-expect-error mock
+      window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
+        if (cmd === "compact_session_context") {
+          // @ts-expect-error mock
+          window.__lastCompactSessionContextArgs = args;
+          await new Promise<void>((resolve) => {
+            // @ts-expect-error mock
+            window.__compactSessionContextResolve = resolve;
+          });
+          return {
+            compacted: true,
+            retained_messages: 32,
+            compacted_messages: 8,
+            estimated_tokens_before: 142000,
+            estimated_tokens_after: 32000,
+          };
+        }
+        return originalMockIpc?.(cmd, args);
+      };
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    const textarea = page.locator("textarea");
+    await expect(textarea).toBeVisible();
+
+    await textarea.fill("/compact");
+    await textarea.press("Enter");
+
+    const compactButton = page.getByTestId("composer-compact-context");
+    await expect(compactButton).toBeDisabled();
+    await expect(compactButton).toHaveAttribute("aria-label", "正在压缩上下文");
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastCompactSessionContextArgs;
+    })).toMatchObject({ sessionId });
+
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      window.__compactSessionContextResolve?.();
+    });
+
+    await expect(compactButton).toBeEnabled();
+    await expectNoSendInput(page);
+    await expect(page.getByTestId("user-message")).toHaveCount(0);
   });
 
   test("composer keeps active tool state quiet and explicit", async ({ page }) => {

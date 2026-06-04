@@ -1,4 +1,5 @@
-import { Check, Edit3, Pin, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { Check, ChevronDown, Edit3, Pin, Trash2, X } from "lucide-react";
 import type {
   ForgeWikiUpdateProposal,
   WikiMemory,
@@ -91,6 +92,9 @@ export function MemoryRow({
   onPin?: () => void;
   onForget: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = memory.title.length > 48 || memory.body.length > 140;
+
   if (draft) {
     return (
       <MemoryDraftEditor
@@ -108,10 +112,26 @@ export function MemoryRow({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           {intentLabel && <RowIntentLabel>{intentLabel}</RowIntentLabel>}
-          <div className="truncate text-xs font-medium text-foreground">{memory.title}</div>
-          <div className="mt-1 max-h-[3.8rem] overflow-hidden break-words text-[11px] leading-relaxed text-muted-foreground">
+          <div className={`${expanded ? "break-words" : "truncate"} text-xs font-medium text-foreground`}>
+            {memory.title}
+          </div>
+          <div
+            className={`mt-1 break-words text-[11px] leading-relaxed text-muted-foreground ${
+              expanded ? "whitespace-pre-wrap" : "max-h-[3.8rem] overflow-hidden"
+            }`}
+          >
             {memory.body}
           </div>
+          {canExpand && (
+            <button
+              type="button"
+              className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              {expanded ? "收起详情" : "展开详情"}
+            </button>
+          )}
           {intentLabel && (
             <RecordMetaGrid
               rows={[

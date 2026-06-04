@@ -1,8 +1,10 @@
 pub(crate) mod auto_compact;
 pub(crate) mod capability_context;
+pub(crate) mod compact_summary;
 pub(crate) mod context_builder;
 pub(crate) mod delivery_state;
 pub(crate) mod event_sink;
+pub(crate) mod manual_compact;
 pub(crate) mod provider_capabilities;
 pub(crate) mod recovery;
 pub(crate) mod retry_policy;
@@ -13,6 +15,7 @@ pub mod snapshot;
 pub mod sub;
 pub(crate) mod time;
 pub(crate) mod tool_results;
+pub(crate) mod turn_metrics;
 pub(crate) mod turn_outcome;
 pub mod turn_state;
 pub(crate) mod verification;

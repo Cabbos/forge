@@ -185,7 +185,8 @@ fn canonical_tool_name(tool_name: &str) -> &str {
     match tool_name {
         "write" | "write_file" => "write_to_file",
         "edit" => "edit_file",
-        "bash" | "execute_command" | "shell" => "run_shell",
+        "bash" | "execute_command" | "shell" | "shell_command" | "run_command"
+        | "run_shell_command" => "run_shell",
         other => other,
     }
 }

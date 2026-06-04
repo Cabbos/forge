@@ -1,6 +1,13 @@
 import { useCallback } from "react";
 import { useStore } from "../store";
-import { createSession, deleteSession, resumeSession, sendInput, killSession } from "../lib/tauri";
+import {
+  compactSessionContext,
+  createSession,
+  deleteSession,
+  resumeSession,
+  sendInput,
+  killSession,
+} from "../lib/tauri";
 import type { ComposerCapabilitySelection, McpContextSelection } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
 
@@ -103,6 +110,24 @@ export function useSession() {
     [dispatchOutputEvent]
   );
 
+  const compact = useCallback(
+    async (sessionId: string) => {
+      try {
+        await compactSessionContext(sessionId);
+      } catch (e) {
+        console.error("Failed to compact session context:", e);
+        dispatchOutputEvent({
+          event_type: "error",
+          session_id: sessionId,
+          block_id: crypto.randomUUID(),
+          message: userFacingSendError(e, "压缩上下文失败"),
+          code: "compact_failed",
+        });
+      }
+    },
+    [dispatchOutputEvent]
+  );
+
   const deleteConversation = useCallback(
     async (sessionId: string) => {
       try {
@@ -116,7 +141,7 @@ export function useSession() {
     [removeSession]
   );
 
-  return { create, resume, send, stop, deleteConversation };
+  return { create, resume, send, stop, compact, deleteConversation };
 }
 
 function userFacingSendError(error: unknown, prefix = "发送失败") {

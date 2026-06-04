@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::agent::capability_context::ComposerCapabilitySelection;
+use crate::agent::event_sink::{EventEmitter, TauriEventEmitter};
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
+use crate::agent::session::ManualCompactResult;
 use crate::agent::snapshot::save_session_snapshot;
 use crate::ipc::mcp_context::McpContextSelection;
 use crate::ipc::send_input_context::{
@@ -18,6 +20,8 @@ use crate::protocol::commands::SessionCreated;
 use crate::settings;
 use crate::state::AppState;
 use crate::workspace_safety::resolve_session_workspace_path as resolve_session_working_dir;
+
+const MANUAL_COMPACT_COMMAND: &str = "/compact";
 
 #[tauri::command]
 pub async fn create_session(
@@ -108,6 +112,13 @@ pub async fn send_input(
     mcp_context: Option<Vec<McpContextSelection>>,
     capabilities: Option<Vec<ComposerCapabilitySelection>>,
 ) -> Result<(), String> {
+    let capabilities = capabilities.unwrap_or_default();
+    if is_manual_compact_request(&text, &capabilities) {
+        let emitter = TauriEventEmitter::new(app_handle);
+        compact_session_context_for_state(&state, &session_id, &emitter).await?;
+        return Ok(());
+    }
+
     let (s, project_path) = resolve_send_input_session(&app_handle, &state, &session_id).await?;
     let turn_guard = record_send_input_user_turn(&state, &s, &session_id, &text, &project_path)?;
     let contexts = select_send_input_contexts(SelectSendInputContextsRequest {
@@ -117,7 +128,7 @@ pub async fn send_input(
         text: &text,
         project_path: &project_path,
         harness: &s.harness,
-        capabilities: capabilities.unwrap_or_default(),
+        capabilities,
         mcp_context_selections: mcp_context.unwrap_or_default(),
     })
     .await;
@@ -145,6 +156,44 @@ pub async fn send_input(
         turn_guard,
     })
     .await
+}
+
+#[tauri::command]
+pub async fn compact_session_context(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    session_id: String,
+) -> Result<ManualCompactResult, String> {
+    let emitter = TauriEventEmitter::new(app_handle);
+    compact_session_context_for_state(&state, &session_id, &emitter).await
+}
+
+pub(crate) async fn compact_session_context_for_state(
+    state: &Arc<AppState>,
+    session_id: &str,
+    emitter: &dyn EventEmitter,
+) -> Result<ManualCompactResult, String> {
+    let session = state
+        .sessions
+        .read()
+        .await
+        .get(session_id)
+        .cloned()
+        .ok_or_else(|| format!("Session not found: {session_id}"))?;
+    session.compact_now_with_emitter(emitter).await
+}
+
+pub(crate) fn is_manual_compact_request(
+    text: &str,
+    capabilities: &[ComposerCapabilitySelection],
+) -> bool {
+    text.trim().eq_ignore_ascii_case(MANUAL_COMPACT_COMMAND)
+        || capabilities.iter().any(|capability| match capability {
+            ComposerCapabilitySelection::SlashCommand { command } => {
+                command.trim().eq_ignore_ascii_case(MANUAL_COMPACT_COMMAND)
+            }
+            ComposerCapabilitySelection::FileReference { .. } => false,
+        })
 }
 
 #[cfg(test)]

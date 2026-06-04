@@ -1,0 +1,110 @@
+import type { ContextUsageState } from "@/lib/protocol";
+
+export interface ComposerContextUsageView {
+  label: string;
+  title: string;
+  compactButton: {
+    ariaLabel: string;
+    disabled: boolean;
+    state?: "compacting";
+    title: string;
+  };
+}
+
+interface BuildComposerContextUsageViewOptions {
+  fallbackContextWindowTokens?: number | null;
+  isCompacting: boolean;
+  isStreaming: boolean;
+  usage?: ContextUsageState | null;
+}
+
+export function buildComposerContextUsageView({
+  fallbackContextWindowTokens,
+  isCompacting,
+  isStreaming,
+  usage,
+}: BuildComposerContextUsageViewOptions): ComposerContextUsageView {
+  const usedTokens = usage?.usedTokens ?? null;
+  const contextWindowTokens = usage?.contextWindowTokens ?? fallbackContextWindowTokens ?? null;
+  const label = formatComposerContextUsage(usedTokens, contextWindowTokens);
+  const title = formatComposerContextUsageTitle(usage, contextWindowTokens);
+  const compactButton = buildCompactButtonView({
+    isCompacting,
+    isStreaming,
+    usageTitle: title,
+  });
+
+  return {
+    label,
+    title,
+    compactButton,
+  };
+}
+
+function buildCompactButtonView({
+  isCompacting,
+  isStreaming,
+  usageTitle,
+}: {
+  isCompacting: boolean;
+  isStreaming: boolean;
+  usageTitle: string;
+}): ComposerContextUsageView["compactButton"] {
+  if (isCompacting) {
+    return {
+      ariaLabel: "正在压缩上下文",
+      disabled: true,
+      state: "compacting",
+      title: "正在压缩上下文，模型正在生成摘要",
+    };
+  }
+
+  return {
+    ariaLabel: "压缩上下文",
+    disabled: isStreaming,
+    title: usageTitle || "压缩当前上下文",
+  };
+}
+
+function formatComposerContextUsage(usedTokens?: number | null, contextWindowTokens?: number | null) {
+  if (!usedTokens || !contextWindowTokens) return "";
+  return `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}`;
+}
+
+function formatComposerContextUsageTitle(
+  usage: ContextUsageState | null | undefined,
+  fallbackContextWindowTokens?: number | null,
+) {
+  const usedTokens = usage?.usedTokens ?? null;
+  const contextWindowTokens = usage?.contextWindowTokens ?? fallbackContextWindowTokens ?? null;
+  if (!usedTokens || !contextWindowTokens) return "压缩当前上下文";
+
+  const percent = usage?.percentUsed !== null && usage?.percentUsed !== undefined ? ` · ${usage.percentUsed}%` : "";
+  const source = usage?.source === "local_estimate" ? " · 压缩后估算" : " · 模型 usage";
+  const autoCompact = formatAutoCompactDistance(usedTokens, contextWindowTokens);
+  const compacted = usage?.compactedFromTokens && usage.compactedToTokens
+    ? ` · 上次压缩 ${formatTokenCount(usage.compactedFromTokens)} -> ${formatTokenCount(usage.compactedToTokens)}`
+    : "";
+
+  return `上下文 ${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}${percent}${source}${autoCompact}${compacted}`;
+}
+
+function formatTokenCount(tokens: number) {
+  if (tokens >= 1_000_000) return `${Math.round(tokens / 1_000_000)}M`;
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+  return String(tokens);
+}
+
+function formatAutoCompactDistance(usedTokens: number, contextWindowTokens: number) {
+  const threshold = autoCompactThreshold(contextWindowTokens);
+  const remaining = threshold - usedTokens;
+  if (remaining <= 0) return " · 已达到自动压缩阈值";
+  return ` · 距离自动压缩还有约 ${formatTokenCount(remaining)} tokens`;
+}
+
+function autoCompactThreshold(contextWindowTokens: number) {
+  const contextLimit = Math.max(16_000, Math.round(contextWindowTokens));
+  const reservedOutput = Math.min(20_000, Math.floor(contextLimit / 4));
+  const buffer = Math.min(13_000, Math.floor(contextLimit / 10));
+  return Math.max(8_000, contextLimit - reservedOutput - buffer);
+}

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 
 use super::base::{AdapterError, AiAdapter, ChatMessage, StreamResult};
+use crate::agent::event_sink::EventEmitter;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -50,22 +51,19 @@ impl AiAdapter for MissingKeyAdapter {
         Err(AdapterError::MissingApiKey)
     }
 
-    async fn stream_message(
+    async fn stream_message_with_emitter(
         &self,
         session_id: &str,
         _messages: &[ChatMessage],
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn EventEmitter,
         _cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        crate::transcript::emit_stream_event(
-            app_handle,
-            StreamEvent::Error {
-                session_id: session_id.to_string(),
-                block_id: BlockId::new().to_string(),
-                message: self.message(),
-                code: "missing_api_key".to_string(),
-            },
-        );
+        emitter.emit(StreamEvent::Error {
+            session_id: session_id.to_string(),
+            block_id: BlockId::new().to_string(),
+            message: self.message(),
+            code: "missing_api_key".to_string(),
+        });
 
         Ok(StreamResult {
             assistant_content: Vec::new(),

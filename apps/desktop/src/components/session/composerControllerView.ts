@@ -21,6 +21,7 @@ interface BuildComposerSurfacePropsOptions {
   canSend: ComposerSurfaceProps["canSend"];
   chips: ComposerSurfaceProps["chips"];
   composerState: ComposerSurfaceProps["composerState"];
+  contextUsageView: ComposerSurfaceProps["contextUsageView"];
   isResuming: ComposerSurfaceProps["isResuming"];
   isRunning: ComposerSurfaceProps["isRunning"];
   isTurnInFlight: ComposerSurfaceProps["isStreaming"];
@@ -36,6 +37,7 @@ interface BuildComposerSurfacePropsOptions {
   onCompositionStart: ComposerSurfaceProps["onCompositionStart"];
   onCompositionEnd: ComposerSurfaceProps["onCompositionEnd"];
   onRemoveChip: ComposerSurfaceProps["onRemoveChip"];
+  onCompact: ComposerSurfaceProps["onCompact"];
   onResume: ComposerSurfaceProps["onResume"];
   onSend: ComposerSurfaceProps["onSend"];
   onStop: ComposerSurfaceProps["onStop"];
@@ -77,6 +79,7 @@ export function buildComposerSurfaceProps({
   canSend,
   chips,
   composerState,
+  contextUsageView,
   isResuming,
   isRunning,
   isTurnInFlight,
@@ -84,6 +87,7 @@ export function buildComposerSurfaceProps({
   onCompositionEnd,
   onCompositionStart,
   onRemoveChip,
+  onCompact,
   onResume,
   onSend,
   onStop,
@@ -104,6 +108,7 @@ export function buildComposerSurfaceProps({
     canSend,
     chips,
     composerState,
+    contextUsageView,
     isResuming,
     isRunning,
     isStreaming: isTurnInFlight,
@@ -119,6 +124,7 @@ export function buildComposerSurfaceProps({
     onCompositionStart,
     onCompositionEnd,
     onRemoveChip,
+    onCompact,
     onResume,
     onSend,
     onStop,

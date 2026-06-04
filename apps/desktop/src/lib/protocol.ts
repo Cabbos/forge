@@ -238,6 +238,13 @@ export type StreamEvent =
       estimated_tokens_before: number;
       estimated_tokens_after: number;
     }
+  | {
+      event_type: "context_compact_skipped";
+      session_id: string;
+      block_id: string;
+      reason: string;
+      retained_messages: number;
+    }
   // ── Saved Context ──
   | { event_type: "memory_selection"; session_id: string; selected: SelectedContextMemory[] }
   | { event_type: "memory_candidate"; session_id: string; memory: WikiMemory }
@@ -266,6 +273,17 @@ export interface BlockState {
   isComplete: boolean;
 }
 
+export interface ContextUsageState {
+  usedTokens: number | null;
+  contextWindowTokens: number | null;
+  percentUsed: number | null;
+  source: "provider_usage" | "local_estimate";
+  lastUpdatedAt: number;
+  lastCompactedAt?: number | null;
+  compactedFromTokens?: number | null;
+  compactedToTokens?: number | null;
+}
+
 // Session state
 export interface SessionState {
   id: string;
@@ -280,6 +298,7 @@ export interface SessionState {
   streaming: boolean;
   blocks: BlockState[];
   costUsd: number;
+  contextUsage?: ContextUsageState | null;
 }
 
 export type AgentType = "claude" | "codex" | "hermes";

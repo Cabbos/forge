@@ -1,0 +1,1293 @@
+use std::collections::{BTreeSet, HashMap};
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
+use crate::agent::provider_capabilities::{default_model, normalize_provider};
+use crate::agent::session_guards::lock_unpoisoned;
+use crate::agent::turn_state::{
+    AgentToolTrace, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
+};
+use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
+use crate::protocol::events::StreamEvent;
+use crate::settings;
+
+type PendingConfirms =
+    Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
+const HEADLESS_CONFIRM_RETRY_ATTEMPTS: usize = 100;
+const HEADLESS_CONFIRM_RETRY_DELAY_MS: u64 = 10;
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EvalHeadlessRequest {
+    #[serde(default)]
+    pub task: Option<EvalHeadlessTask>,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    pub workspace_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct EvalHeadlessTask {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HeadlessFileDiff {
+    pub path: String,
+    pub change_type: String,
+    pub diff: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TracePayloadInput {
+    pub task_id: String,
+    pub prompt: String,
+    pub provider: String,
+    pub model: String,
+    pub raw_events: Vec<StreamEvent>,
+    pub latest_turn: Option<AgentTurnState>,
+    pub file_diffs: Vec<HeadlessFileDiff>,
+    pub changed_files: Vec<String>,
+    pub final_answer: String,
+    pub duration_ms: u64,
+}
+
+pub async fn run_stdin_json(input: &str) -> Result<serde_json::Value, String> {
+    let request: EvalHeadlessRequest = serde_json::from_str(input)
+        .map_err(|error| format!("failed to parse Forge eval stdin JSON: {error}"))?;
+    run_request(request).await
+}
+
+pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Value, String> {
+    let started = Instant::now();
+    let task_id = request
+        .task
+        .as_ref()
+        .and_then(|task| task.id.clone())
+        .unwrap_or_else(|| "forge-headless-task".to_string());
+    let prompt = resolve_prompt(&request)?;
+    let display_provider = request
+        .provider
+        .clone()
+        .unwrap_or_else(|| "forge".to_string());
+    let display_model = request
+        .model
+        .clone()
+        .unwrap_or_else(|| "local-forge".to_string());
+    let workspace_path = request.workspace_path.clone();
+
+    let before_snapshot = snapshot_workspace(&workspace_path)?;
+    let agent_provider = resolve_agent_provider(request.provider.as_deref());
+    let credentials = settings::detect_credentials(&agent_provider);
+    let agent_model = resolve_agent_model(
+        request.model.as_deref(),
+        credentials.model.as_deref(),
+        &agent_provider,
+    );
+
+    if credentials.api_key.trim().is_empty() {
+        return Ok(build_setup_error_payload(SetupErrorPayloadInput {
+            task_id,
+            prompt,
+            display_provider,
+            display_model,
+            agent_provider,
+            agent_model,
+            duration_ms: started.elapsed().as_millis() as u64,
+            error: "missing_api_key".to_string(),
+            failure_reason:
+                "Forge headless eval could not find an API key for the selected provider."
+                    .to_string(),
+        }));
+    }
+
+    let pending_confirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+    let session_id = uuid::Uuid::now_v7().to_string();
+    let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
+        session_id,
+        provider: agent_provider.clone(),
+        model: agent_model.clone(),
+        api_key: &credentials.api_key,
+        api_base: credentials.api_base.as_deref(),
+        working_dir: &workspace_path,
+        pending_confirms: pending_confirms.clone(),
+        existing_context_window_tokens: None,
+    })
+    .await?;
+
+    if missing_api_key {
+        return Ok(build_setup_error_payload(SetupErrorPayloadInput {
+            task_id,
+            prompt,
+            display_provider,
+            display_model,
+            agent_provider,
+            agent_model,
+            duration_ms: started.elapsed().as_millis() as u64,
+            error: "missing_api_key".to_string(),
+            failure_reason: "Forge headless eval built a session without usable credentials."
+                .to_string(),
+        }));
+    }
+
+    let emitter = Arc::new(HeadlessEventEmitter::new(pending_confirms));
+    let turn_guard = session.reserve_turn()?;
+    let run_result = session
+        .send_message_with_shared_emitter(
+            &prompt,
+            emitter.clone(),
+            Vec::new(),
+            None,
+            None,
+            turn_guard,
+        )
+        .await;
+    let raw_events = emitter.drain();
+    let latest_turn = lock_unpoisoned(&session.latest_turn).clone();
+    let after_snapshot = snapshot_workspace(&workspace_path)?;
+    let (changed_files, file_diffs) = diff_workspace_snapshots(&before_snapshot, &after_snapshot);
+    let final_answer = final_answer_from_events(&raw_events);
+
+    let mut payload = build_trace_payload(TracePayloadInput {
+        task_id,
+        prompt,
+        provider: display_provider,
+        model: display_model,
+        raw_events,
+        latest_turn,
+        file_diffs,
+        changed_files,
+        final_answer,
+        duration_ms: started.elapsed().as_millis() as u64,
+    });
+    insert_agent_identity(&mut payload, &agent_provider, &agent_model);
+
+    if let Err(error) = run_result {
+        insert_failure_fields(
+            &mut payload,
+            "agent_error",
+            "agent_error",
+            &format!("Forge agent turn failed: {error}"),
+        );
+    }
+
+    Ok(payload)
+}
+
+struct HeadlessEventEmitter {
+    collector: CollectingEventEmitter,
+    pending_confirms: PendingConfirms,
+}
+
+impl HeadlessEventEmitter {
+    fn new(pending_confirms: PendingConfirms) -> Self {
+        Self {
+            collector: CollectingEventEmitter::new(),
+            pending_confirms,
+        }
+    }
+
+    fn drain(&self) -> Vec<StreamEvent> {
+        self.collector.drain()
+    }
+}
+
+impl EventEmitter for HeadlessEventEmitter {
+    fn emit(&self, event: StreamEvent) {
+        if let StreamEvent::ConfirmAsk { block_id, kind, .. } = &event {
+            let pending_confirms = self.pending_confirms.clone();
+            let block_id = block_id.clone();
+            let approve = kind != "ask_user";
+            tokio::spawn(async move {
+                for _ in 0..HEADLESS_CONFIRM_RETRY_ATTEMPTS {
+                    if let Some(sender) = pending_confirms.write().await.remove(&block_id) {
+                        let _ = sender.send(approve);
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        HEADLESS_CONFIRM_RETRY_DELAY_MS,
+                    ))
+                    .await;
+                }
+            });
+        }
+
+        self.collector.emit(event);
+    }
+}
+
+pub fn build_trace_payload(input: TracePayloadInput) -> serde_json::Value {
+    let mut event_summary = summarize_events(&input.raw_events);
+    let verification_result = input
+        .latest_turn
+        .as_ref()
+        .and_then(verification_result_from_turn);
+    let (error, failure_reason, failure_category) =
+        failure_fields(input.latest_turn.as_ref(), verification_result.as_ref());
+    let mut tool_calls = std::mem::take(&mut event_summary.tool_calls);
+    if let Some(turn) = input.latest_turn.as_ref() {
+        tool_calls = enrich_tool_calls_with_turn_tools(tool_calls, &turn.tools);
+    }
+
+    serde_json::json!({
+        "task_id": input.task_id,
+        "user_prompt": input.prompt,
+        "provider": input.provider,
+        "model": input.model,
+        "raw_events": input.raw_events
+            .iter()
+            .filter_map(|event| serde_json::to_value(event).ok())
+            .collect::<Vec<_>>(),
+        "tool_calls": tool_calls,
+        "shell_outputs": event_summary.shell_outputs,
+        "file_diffs": input.file_diffs
+            .into_iter()
+            .map(|diff| {
+                serde_json::json!({
+                    "path": diff.path,
+                    "change_type": diff.change_type,
+                    "diff": diff.diff,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "changed_files": input.changed_files,
+        "verification_result": verification_result,
+        "final_answer": input.final_answer,
+        "model_rounds": event_summary.model_rounds,
+        "confirm_requests": event_summary.confirm_requests,
+        "compact_events": event_summary.compact_events,
+        "compact_count": event_summary.compact_count,
+        "compact_estimated_tokens_saved": event_summary.compact_estimated_tokens_saved,
+        "input_tokens": event_summary.input_tokens,
+        "output_tokens": event_summary.output_tokens,
+        "error": error,
+        "failure_reason": failure_reason,
+        "failure_category": failure_category,
+        "duration_ms": input.duration_ms,
+    })
+}
+
+struct SetupErrorPayloadInput {
+    task_id: String,
+    prompt: String,
+    display_provider: String,
+    display_model: String,
+    agent_provider: String,
+    agent_model: String,
+    duration_ms: u64,
+    error: String,
+    failure_reason: String,
+}
+
+fn build_setup_error_payload(input: SetupErrorPayloadInput) -> serde_json::Value {
+    let mut payload = build_trace_payload(TracePayloadInput {
+        task_id: input.task_id,
+        prompt: input.prompt,
+        provider: input.display_provider,
+        model: input.display_model,
+        raw_events: Vec::new(),
+        latest_turn: None,
+        file_diffs: Vec::new(),
+        changed_files: Vec::new(),
+        final_answer: String::new(),
+        duration_ms: input.duration_ms,
+    });
+    insert_agent_identity(&mut payload, &input.agent_provider, &input.agent_model);
+    insert_failure_fields(
+        &mut payload,
+        &input.error,
+        "runner_error",
+        &input.failure_reason,
+    );
+    payload
+}
+
+#[derive(Default)]
+struct EventSummary {
+    tool_calls: Vec<serde_json::Value>,
+    shell_outputs: Vec<serde_json::Value>,
+    model_rounds: u64,
+    confirm_requests: u64,
+    compact_events: Vec<serde_json::Value>,
+    compact_count: u64,
+    compact_estimated_tokens_saved: u64,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+}
+
+#[derive(Default)]
+struct PendingTool {
+    name: String,
+    input: serde_json::Value,
+}
+
+#[derive(Default)]
+struct PendingShell {
+    command: String,
+    stdout: String,
+}
+
+fn summarize_events(events: &[StreamEvent]) -> EventSummary {
+    let mut summary = EventSummary::default();
+    let mut pending_tools: HashMap<String, PendingTool> = HashMap::new();
+    let mut pending_shells: HashMap<String, PendingShell> = HashMap::new();
+    let mut last_turn_was_calling_model = false;
+    let mut calling_model_transitions = 0;
+
+    for event in events {
+        match event {
+            StreamEvent::ToolCallStart {
+                block_id,
+                tool_name,
+                tool_input,
+                ..
+            } => {
+                summary.model_rounds += 1;
+                pending_tools.insert(
+                    block_id.clone(),
+                    PendingTool {
+                        name: tool_name.clone(),
+                        input: tool_input.clone(),
+                    },
+                );
+            }
+            StreamEvent::ToolCallResult {
+                block_id,
+                result,
+                is_error,
+                duration_ms,
+                ..
+            } => {
+                let pending = pending_tools.remove(block_id).unwrap_or_default();
+                summary.tool_calls.push(serde_json::json!({
+                    "command": format_tool_command(&pending.name, &pending.input),
+                    "stdout": result,
+                    "stderr": if *is_error { result.as_str() } else { "" },
+                    "exit_code": if *is_error { 1 } else { 0 },
+                    "duration_ms": duration_ms,
+                }));
+            }
+            StreamEvent::ShellStart {
+                block_id, command, ..
+            } => {
+                pending_shells.insert(
+                    block_id.clone(),
+                    PendingShell {
+                        command: command.clone(),
+                        stdout: String::new(),
+                    },
+                );
+            }
+            StreamEvent::ShellOutput {
+                block_id, content, ..
+            } => {
+                pending_shells
+                    .entry(block_id.clone())
+                    .or_default()
+                    .stdout
+                    .push_str(content);
+            }
+            StreamEvent::ShellEnd {
+                block_id,
+                exit_code,
+                ..
+            } => {
+                let pending = pending_shells.remove(block_id).unwrap_or_default();
+                summary.shell_outputs.push(serde_json::json!({
+                    "command": pending.command,
+                    "stdout": pending.stdout,
+                    "stderr": "",
+                    "exit_code": exit_code,
+                    "duration_ms": 0,
+                }));
+            }
+            StreamEvent::ConfirmAsk { .. } => {
+                summary.confirm_requests += 1;
+            }
+            StreamEvent::ContextCompacted {
+                summary: compact_summary,
+                retained_messages,
+                compacted_messages,
+                estimated_tokens_before,
+                estimated_tokens_after,
+                ..
+            } => {
+                let saved = estimated_tokens_before.saturating_sub(*estimated_tokens_after) as u64;
+                let reduction_percent = if *estimated_tokens_before > 0 {
+                    ((*estimated_tokens_before - *estimated_tokens_after) as f64
+                        / *estimated_tokens_before as f64
+                        * 100.0)
+                        .round() as u64
+                } else {
+                    0
+                };
+                summary.compact_count += 1;
+                summary.compact_estimated_tokens_saved += saved;
+                summary.compact_events.push(serde_json::json!({
+                    "summary": compact_summary,
+                    "retained_messages": retained_messages,
+                    "compacted_messages": compacted_messages,
+                    "estimated_tokens_before": estimated_tokens_before,
+                    "estimated_tokens_after": estimated_tokens_after,
+                    "estimated_tokens_saved": saved,
+                    "estimated_reduction_percent": reduction_percent,
+                }));
+            }
+            StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+                ..
+            } => {
+                summary.input_tokens = Some(*input_tokens);
+                summary.output_tokens = Some(*output_tokens);
+            }
+            StreamEvent::AgentTurnUpdated { state, .. } => {
+                let is_calling_model = state.status == AgentTurnStatus::CallingModel;
+                if is_calling_model && !last_turn_was_calling_model {
+                    calling_model_transitions += 1;
+                }
+                last_turn_was_calling_model = is_calling_model;
+            }
+            _ => {}
+        }
+    }
+
+    if summary.model_rounds == 0 {
+        summary.model_rounds = calling_model_transitions;
+    }
+
+    summary
+}
+
+fn enrich_tool_calls_with_turn_tools(
+    mut tool_calls: Vec<serde_json::Value>,
+    turn_tools: &[AgentToolTrace],
+) -> Vec<serde_json::Value> {
+    if tool_calls.is_empty() {
+        return turn_tools.iter().map(tool_call_from_turn_tool).collect();
+    }
+
+    for (index, tool_call) in tool_calls.iter_mut().enumerate() {
+        let command_is_empty = tool_call
+            .get("command")
+            .and_then(|value| value.as_str())
+            .is_none_or(|command| command.trim().is_empty());
+        if !command_is_empty {
+            continue;
+        }
+
+        if let (Some(object), Some(turn_tool)) = (tool_call.as_object_mut(), turn_tools.get(index))
+        {
+            object.insert(
+                "command".to_string(),
+                serde_json::Value::String(format_turn_tool_command(turn_tool)),
+            );
+        }
+    }
+
+    tool_calls
+}
+
+fn tool_call_from_turn_tool(tool: &AgentToolTrace) -> serde_json::Value {
+    let duration_ms = tool
+        .ended_at_ms
+        .map(|ended| ended.saturating_sub(tool.started_at_ms))
+        .unwrap_or(0);
+    serde_json::json!({
+        "command": format_turn_tool_command(tool),
+        "stdout": tool.result_summary.clone().unwrap_or_default(),
+        "stderr": if tool.is_error {
+            tool.result_summary.clone().unwrap_or_default()
+        } else {
+            String::new()
+        },
+        "exit_code": if tool.is_error { 1 } else { 0 },
+        "duration_ms": duration_ms,
+    })
+}
+
+fn format_turn_tool_command(tool: &AgentToolTrace) -> String {
+    if let Some(command) = tool
+        .command
+        .as_ref()
+        .filter(|command| !command.trim().is_empty())
+    {
+        return command.to_string();
+    }
+    if let Some(path) = tool
+        .affected_files
+        .first()
+        .filter(|path| !path.trim().is_empty())
+    {
+        return format!("{} {path}", tool.name);
+    }
+    tool.name.clone()
+}
+
+fn format_tool_command(tool_name: &str, input: &serde_json::Value) -> String {
+    let path = input
+        .get("path")
+        .and_then(|value| value.as_str())
+        .or_else(|| input.get("command").and_then(|value| value.as_str()));
+    match path {
+        Some(path) if !path.trim().is_empty() => format!("{tool_name} {path}"),
+        _ => tool_name.to_string(),
+    }
+}
+
+fn resolve_prompt(request: &EvalHeadlessRequest) -> Result<String, String> {
+    let prompt = request
+        .task
+        .as_ref()
+        .and_then(|task| task.prompt.as_deref())
+        .filter(|prompt| !prompt.trim().is_empty())
+        .unwrap_or(&request.prompt)
+        .trim()
+        .to_string();
+    if prompt.is_empty() {
+        return Err("Forge eval request did not include a prompt.".to_string());
+    }
+    Ok(prompt)
+}
+
+fn resolve_agent_provider(display_provider: Option<&str>) -> String {
+    let env_provider = std::env::var("FORGE_HEADLESS_PROVIDER")
+        .or_else(|_| std::env::var("FORGE_EVAL_AI_PROVIDER"))
+        .ok();
+    let provider_hint = env_provider
+        .as_deref()
+        .or_else(|| display_provider.filter(|provider| provider != &"forge"));
+    normalize_provider(provider_hint)
+}
+
+fn resolve_agent_model(
+    display_model: Option<&str>,
+    credential_model: Option<&str>,
+    provider: &str,
+) -> String {
+    if let Some(model) = std::env::var("FORGE_HEADLESS_MODEL")
+        .or_else(|_| std::env::var("FORGE_EVAL_AI_MODEL"))
+        .ok()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty())
+    {
+        return model;
+    }
+
+    credential_model
+        .filter(|model| model_matches_provider(provider, model))
+        .map(str::to_string)
+        .or_else(|| {
+            display_model
+                .filter(|model| model != &"local-forge")
+                .filter(|model| model_matches_provider(provider, model))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| default_headless_model(provider).to_string())
+}
+
+fn model_matches_provider(provider: &str, model: &str) -> bool {
+    let model = model.trim().to_lowercase();
+    if model.is_empty() {
+        return false;
+    }
+
+    match provider {
+        "deepseek" => model.starts_with("deepseek-"),
+        "anthropic" => model.starts_with("claude"),
+        "openai" => model.starts_with("gpt-") || model.starts_with("o1") || model.starts_with("o3"),
+        "openrouter" => true,
+        _ => true,
+    }
+}
+
+fn default_headless_model(provider: &str) -> &'static str {
+    match provider {
+        "deepseek" => "deepseek-v4-flash",
+        _ => default_model(provider),
+    }
+}
+
+fn final_answer_from_events(events: &[StreamEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::TextChunk { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn insert_agent_identity(payload: &mut serde_json::Value, provider: &str, model: &str) {
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "forge_agent_provider".to_string(),
+            serde_json::Value::String(provider.to_string()),
+        );
+        object.insert(
+            "forge_agent_model".to_string(),
+            serde_json::Value::String(model.to_string()),
+        );
+    }
+}
+
+fn insert_failure_fields(
+    payload: &mut serde_json::Value,
+    error: &str,
+    failure_category: &str,
+    failure_reason: &str,
+) {
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "error".to_string(),
+            serde_json::Value::String(error.to_string()),
+        );
+        object.insert(
+            "failure_category".to_string(),
+            serde_json::Value::String(failure_category.to_string()),
+        );
+        object.insert(
+            "failure_reason".to_string(),
+            serde_json::Value::String(failure_reason.to_string()),
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotFile {
+    contents: Vec<u8>,
+}
+
+type WorkspaceSnapshot = HashMap<String, SnapshotFile>;
+
+fn snapshot_workspace(root: &Path) -> Result<WorkspaceSnapshot, String> {
+    if !root.is_dir() {
+        return Err(format!(
+            "Forge eval workspace does not exist or is not a directory: {}",
+            root.display()
+        ));
+    }
+
+    let mut snapshot = WorkspaceSnapshot::new();
+    snapshot_dir(root, root, &mut snapshot).map_err(|error| {
+        format!(
+            "failed to snapshot Forge eval workspace {}: {error}",
+            root.display()
+        )
+    })?;
+    Ok(snapshot)
+}
+
+fn snapshot_dir(root: &Path, dir: &Path, snapshot: &mut WorkspaceSnapshot) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+
+        if file_type.is_dir() {
+            if is_ignored_snapshot_dir(&name) {
+                continue;
+            }
+            snapshot_dir(root, &path, snapshot)?;
+            continue;
+        }
+
+        if !file_type.is_file() || is_ignored_snapshot_file(&name) {
+            continue;
+        }
+
+        let relative_path = normalize_relative_path(root, &path)?;
+        let contents = fs::read(&path)?;
+        snapshot.insert(relative_path, SnapshotFile { contents });
+    }
+    Ok(())
+}
+
+fn normalize_relative_path(root: &Path, path: &Path) -> io::Result<String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    Ok(relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+fn is_ignored_snapshot_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | ".forge" | "node_modules" | "target" | ".venv" | "__pycache__" | ".pytest_cache"
+    )
+}
+
+fn is_ignored_snapshot_file(name: &str) -> bool {
+    matches!(name, ".DS_Store")
+}
+
+fn is_ignored_snapshot_path(path: &str) -> bool {
+    path == ".forge" || path.starts_with(".forge/")
+}
+
+fn diff_workspace_snapshots(
+    before: &WorkspaceSnapshot,
+    after: &WorkspaceSnapshot,
+) -> (Vec<String>, Vec<HeadlessFileDiff>) {
+    let paths = before
+        .keys()
+        .chain(after.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changed_files = Vec::new();
+    let mut file_diffs = Vec::new();
+
+    for path in paths {
+        if is_ignored_snapshot_path(&path) {
+            continue;
+        }
+        let change_type = match (before.get(&path), after.get(&path)) {
+            (None, Some(_)) => Some("added"),
+            (Some(_), None) => Some("deleted"),
+            (Some(before), Some(after)) if before != after => Some("modified"),
+            _ => None,
+        };
+        if let Some(change_type) = change_type {
+            changed_files.push(path.clone());
+            file_diffs.push(HeadlessFileDiff {
+                path: path.clone(),
+                change_type: change_type.to_string(),
+                diff: format!("workspace snapshot detected {change_type}: {path}"),
+            });
+        }
+    }
+
+    (changed_files, file_diffs)
+}
+
+fn verification_result_from_turn(turn: &AgentTurnState) -> Option<serde_json::Value> {
+    let command = turn.verification.command.clone()?;
+    let passed = matches!(
+        turn.verification.status,
+        AgentVerificationStatus::Passed | AgentVerificationStatus::Skipped
+    );
+    Some(serde_json::json!({
+        "command": command,
+        "passed": passed,
+        "stdout": turn.verification.stdout_preview.clone().unwrap_or_default(),
+        "stderr": turn.verification.stderr_preview.clone().unwrap_or_default(),
+        "exit_code": turn.verification.exit_code.unwrap_or(if passed { 0 } else { 1 }),
+        "duration_ms": turn.verification.duration_ms.unwrap_or(0),
+    }))
+}
+
+fn failure_fields(
+    turn: Option<&AgentTurnState>,
+    verification_result: Option<&serde_json::Value>,
+) -> (Option<String>, Option<String>, String) {
+    if let Some(failure) = turn.and_then(|turn| turn.failure.as_ref()) {
+        return (
+            Some(failure.kind.clone()),
+            Some(failure.message.clone()),
+            failure.kind.clone(),
+        );
+    }
+
+    if verification_result
+        .and_then(|value| value.get("passed"))
+        .and_then(|value| value.as_bool())
+        == Some(false)
+    {
+        return (
+            Some("verification_failed".to_string()),
+            Some("Forge verification failed.".to_string()),
+            "verification_failed".to_string(),
+        );
+    }
+
+    (None, None, "none".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::turn_state::{
+        AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnProjection, AgentTurnState,
+        AgentTurnStatus, AgentVerificationStatus,
+    };
+    use crate::harness::write_boundary::{WriteBoundary, WriteBoundaryRisk};
+    use crate::protocol::events::StreamEvent;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env(key: &str, value: Option<String>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn trace_payload_maps_forge_events_turn_state_and_diffs() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/tmp/workspace".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash[1m]".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Update calculator".to_string(),
+        );
+        turn.tools.push(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "edit_file".to_string(),
+            category: AgentToolCategory::Write,
+            status: AgentToolStatus::Completed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("Edited src/calculator.py".to_string()),
+            is_error: false,
+            affected_files: vec!["src/calculator.py".to_string()],
+            command: None,
+        });
+        turn.verification.status = AgentVerificationStatus::Passed;
+        turn.verification.command = Some("python -m pytest tests/test_calculator.py".to_string());
+        turn.verification.exit_code = Some(0);
+        turn.verification.stdout_preview = Some("1 passed".to_string());
+        turn.verification.duration_ms = Some(120);
+
+        let payload = build_trace_payload(TracePayloadInput {
+            task_id: "small-edit-success".to_string(),
+            prompt: "Update src/calculator.py so add_one returns value + 1".to_string(),
+            provider: "forge".to_string(),
+            model: "local-forge".to_string(),
+            raw_events: vec![
+                StreamEvent::ToolCallStart {
+                    session_id: "session-1".to_string(),
+                    block_id: "tool-1".to_string(),
+                    tool_name: "edit_file".to_string(),
+                    tool_input: serde_json::json!({
+                        "path": "src/calculator.py",
+                        "old_string": "return value",
+                        "new_string": "return value + 1"
+                    }),
+                },
+                StreamEvent::ToolCallResult {
+                    session_id: "session-1".to_string(),
+                    block_id: "tool-1".to_string(),
+                    result: "Edited src/calculator.py".to_string(),
+                    is_error: false,
+                    duration_ms: 10,
+                },
+                StreamEvent::ShellStart {
+                    session_id: "session-1".to_string(),
+                    block_id: "shell-1".to_string(),
+                    command: "python -m pytest tests/test_calculator.py".to_string(),
+                },
+                StreamEvent::ShellOutput {
+                    session_id: "session-1".to_string(),
+                    block_id: "shell-1".to_string(),
+                    content: "1 passed\n".to_string(),
+                },
+                StreamEvent::ShellEnd {
+                    session_id: "session-1".to_string(),
+                    block_id: "shell-1".to_string(),
+                    exit_code: 0,
+                },
+                StreamEvent::ContextCompacted {
+                    session_id: "session-1".to_string(),
+                    block_id: "compact-1".to_string(),
+                    summary: "Kept the important setup and validation details.".to_string(),
+                    retained_messages: 16,
+                    compacted_messages: 48,
+                    estimated_tokens_before: 120_000,
+                    estimated_tokens_after: 42_000,
+                },
+                StreamEvent::Usage {
+                    session_id: "session-1".to_string(),
+                    input_tokens: 120,
+                    output_tokens: 40,
+                    estimated_cost_usd: 0.001,
+                },
+            ],
+            latest_turn: Some(turn),
+            file_diffs: vec![HeadlessFileDiff {
+                path: "src/calculator.py".to_string(),
+                change_type: "modified".to_string(),
+                diff: "diff --git a/src/calculator.py b/src/calculator.py".to_string(),
+            }],
+            changed_files: vec!["src/calculator.py".to_string()],
+            final_answer: "Completed.".to_string(),
+            duration_ms: 250,
+        });
+
+        assert_eq!(payload["task_id"], "small-edit-success");
+        assert_eq!(payload["provider"], "forge");
+        assert_eq!(payload["model"], "local-forge");
+        assert_eq!(
+            payload["changed_files"],
+            serde_json::json!(["src/calculator.py"])
+        );
+        assert_eq!(
+            payload["tool_calls"][0]["command"],
+            "edit_file src/calculator.py"
+        );
+        assert_eq!(
+            payload["tool_calls"][0]["stdout"],
+            "Edited src/calculator.py"
+        );
+        assert_eq!(
+            payload["shell_outputs"][0]["command"],
+            "python -m pytest tests/test_calculator.py"
+        );
+        assert_eq!(payload["shell_outputs"][0]["stdout"], "1 passed\n");
+        assert_eq!(payload["verification_result"]["passed"], true);
+        assert_eq!(payload["model_rounds"], 1);
+        assert_eq!(payload["confirm_requests"], 0);
+        assert_eq!(payload["input_tokens"], 120);
+        assert_eq!(payload["output_tokens"], 40);
+        assert_eq!(payload["compact_count"], 1);
+        assert_eq!(payload["compact_estimated_tokens_saved"], 78_000);
+        assert_eq!(payload["compact_events"][0]["retained_messages"], 16);
+        assert_eq!(payload["compact_events"][0]["compacted_messages"], 48);
+        assert_eq!(
+            payload["compact_events"][0]["estimated_tokens_before"],
+            120_000
+        );
+        assert_eq!(
+            payload["compact_events"][0]["estimated_tokens_after"],
+            42_000
+        );
+        assert_eq!(
+            payload["compact_events"][0]["estimated_tokens_saved"],
+            78_000
+        );
+        assert_eq!(
+            payload["compact_events"][0]["estimated_reduction_percent"],
+            65
+        );
+        assert_eq!(payload["failure_category"], "none");
+    }
+
+    #[test]
+    fn workspace_snapshot_diff_reports_added_modified_and_deleted_files() {
+        let before = HashMap::from([
+            (
+                "src/old.py".to_string(),
+                SnapshotFile {
+                    contents: b"old".to_vec(),
+                },
+            ),
+            (
+                "src/keep.py".to_string(),
+                SnapshotFile {
+                    contents: b"same".to_vec(),
+                },
+            ),
+            (
+                "src/delete.py".to_string(),
+                SnapshotFile {
+                    contents: b"delete me".to_vec(),
+                },
+            ),
+        ]);
+        let after = HashMap::from([
+            (
+                ".forge/registry.db".to_string(),
+                SnapshotFile {
+                    contents: b"internal runtime state".to_vec(),
+                },
+            ),
+            (
+                "src/old.py".to_string(),
+                SnapshotFile {
+                    contents: b"new".to_vec(),
+                },
+            ),
+            (
+                "src/keep.py".to_string(),
+                SnapshotFile {
+                    contents: b"same".to_vec(),
+                },
+            ),
+            (
+                "src/add.py".to_string(),
+                SnapshotFile {
+                    contents: b"add me".to_vec(),
+                },
+            ),
+        ]);
+
+        let (changed_files, file_diffs) = diff_workspace_snapshots(&before, &after);
+
+        assert_eq!(
+            changed_files,
+            vec![
+                "src/add.py".to_string(),
+                "src/delete.py".to_string(),
+                "src/old.py".to_string()
+            ]
+        );
+        assert_eq!(file_diffs[0].change_type, "added");
+        assert_eq!(file_diffs[1].change_type, "deleted");
+        assert_eq!(file_diffs[2].change_type, "modified");
+    }
+
+    #[test]
+    fn deepseek_headless_model_ignores_anthropic_credential_model() {
+        let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        let previous_headless_model = std::env::var("FORGE_HEADLESS_MODEL").ok();
+        let previous_eval_model = std::env::var("FORGE_EVAL_AI_MODEL").ok();
+        std::env::remove_var("FORGE_HEADLESS_MODEL");
+        std::env::remove_var("FORGE_EVAL_AI_MODEL");
+
+        let model = resolve_agent_model(Some("local-forge"), Some("kimi-for-coding"), "deepseek");
+
+        restore_env("FORGE_HEADLESS_MODEL", previous_headless_model);
+        restore_env("FORGE_EVAL_AI_MODEL", previous_eval_model);
+        assert_eq!(model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn trace_payload_uses_turn_tools_when_events_have_results_without_starts() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/tmp/workspace".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Read calculator".to_string(),
+        );
+        turn.tools.push(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "read_file".to_string(),
+            category: AgentToolCategory::Read,
+            status: AgentToolStatus::Completed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("Loaded src/calculator.py".to_string()),
+            is_error: false,
+            affected_files: vec!["src/calculator.py".to_string()],
+            command: None,
+        });
+
+        let payload = build_trace_payload(TracePayloadInput {
+            task_id: "small-edit-success".to_string(),
+            prompt: "Read src/calculator.py".to_string(),
+            provider: "forge".to_string(),
+            model: "local-forge".to_string(),
+            raw_events: vec![StreamEvent::ToolCallResult {
+                session_id: "session-1".to_string(),
+                block_id: "tool-1".to_string(),
+                result: "def add_one(value): return value".to_string(),
+                is_error: false,
+                duration_ms: 10,
+            }],
+            latest_turn: Some(turn),
+            file_diffs: Vec::new(),
+            changed_files: Vec::new(),
+            final_answer: String::new(),
+            duration_ms: 50,
+        });
+
+        assert_eq!(
+            payload["tool_calls"][0]["command"],
+            "read_file src/calculator.py"
+        );
+        assert_eq!(
+            payload["tool_calls"][0]["stdout"],
+            "def add_one(value): return value"
+        );
+    }
+
+    #[test]
+    fn summarize_events_counts_calling_model_transitions_without_tool_starts() {
+        let events = vec![
+            agent_turn_event("session-1", AgentTurnStatus::Started),
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+            agent_turn_event("session-1", AgentTurnStatus::RunningTools),
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+        ];
+
+        let summary = summarize_events(&events);
+
+        assert_eq!(summary.model_rounds, 2);
+    }
+
+    #[tokio::test]
+    async fn headless_event_emitter_auto_resolves_confirm_requests() {
+        let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let emitter = HeadlessEventEmitter::new(pending_confirms.clone());
+
+        let (ask_tx, ask_rx) = tokio::sync::oneshot::channel();
+        pending_confirms
+            .write()
+            .await
+            .insert("ask-user".to_string(), ask_tx);
+        emitter.emit(StreamEvent::ConfirmAsk {
+            session_id: "session-1".to_string(),
+            block_id: "ask-user".to_string(),
+            question: "Need input?".to_string(),
+            kind: "ask_user".to_string(),
+            boundary: None,
+        });
+        let ask_response = tokio::time::timeout(Duration::from_secs(1), ask_rx)
+            .await
+            .expect("ask_user response should not hang")
+            .expect("ask_user sender should respond");
+        assert!(!ask_response);
+
+        let (permission_tx, permission_rx) = tokio::sync::oneshot::channel();
+        pending_confirms
+            .write()
+            .await
+            .insert("write-file".to_string(), permission_tx);
+        emitter.emit(StreamEvent::ConfirmAsk {
+            session_id: "session-1".to_string(),
+            block_id: "write-file".to_string(),
+            question: "Allow write?".to_string(),
+            kind: "file_write".to_string(),
+            boundary: Some(WriteBoundary {
+                title: "准备修改项目".to_string(),
+                target_label: None,
+                workspace_name: "workspace".to_string(),
+                workspace_path: "/tmp/workspace".to_string(),
+                operation: "修改文件".to_string(),
+                affected_files: vec!["src/calculator.py".to_string()],
+                command: None,
+                impact: "将修改 1 个文件".to_string(),
+                risk: WriteBoundaryRisk::Normal,
+                recovery: "disposable eval workspace".to_string(),
+                checkpoint_status: None,
+                warning: None,
+            }),
+        });
+        let permission_response = tokio::time::timeout(Duration::from_secs(1), permission_rx)
+            .await
+            .expect("permission response should not hang")
+            .expect("permission sender should respond");
+        assert!(permission_response);
+    }
+
+    #[tokio::test]
+    async fn headless_event_emitter_approves_permission_by_kind_without_boundary() {
+        let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let emitter = HeadlessEventEmitter::new(pending_confirms.clone());
+
+        let (permission_tx, permission_rx) = tokio::sync::oneshot::channel();
+        pending_confirms
+            .write()
+            .await
+            .insert("write-file".to_string(), permission_tx);
+        emitter.emit(StreamEvent::ConfirmAsk {
+            session_id: "session-1".to_string(),
+            block_id: "write-file".to_string(),
+            question: "Allow write?".to_string(),
+            kind: "file_write".to_string(),
+            boundary: None,
+        });
+
+        let permission_response = tokio::time::timeout(Duration::from_secs(1), permission_rx)
+            .await
+            .expect("permission response should not hang")
+            .expect("permission sender should respond");
+        assert!(permission_response);
+    }
+
+    #[tokio::test]
+    async fn headless_event_emitter_retries_until_confirm_sender_is_registered() {
+        let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let emitter = HeadlessEventEmitter::new(pending_confirms.clone());
+
+        emitter.emit(StreamEvent::ConfirmAsk {
+            session_id: "session-1".to_string(),
+            block_id: "late-sender".to_string(),
+            question: "Allow write?".to_string(),
+            kind: "file_write".to_string(),
+            boundary: None,
+        });
+
+        let (permission_tx, permission_rx) = tokio::sync::oneshot::channel();
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        pending_confirms
+            .write()
+            .await
+            .insert("late-sender".to_string(), permission_tx);
+
+        let permission_response = tokio::time::timeout(Duration::from_secs(1), permission_rx)
+            .await
+            .expect("permission response should not hang")
+            .expect("permission sender should respond");
+        assert!(permission_response);
+    }
+
+    #[tokio::test]
+    async fn headless_event_emitter_approves_harness_write_permission() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-headless-write-permission-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace should be created");
+        let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let harness =
+            crate::harness::Harness::new_with_pending(workspace.clone(), pending_confirms.clone());
+        let emitter = Arc::new(HeadlessEventEmitter::new(pending_confirms));
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            harness.execute_tool_with_emitter(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({
+                    "path": workspace.join("created.txt").to_string_lossy(),
+                    "content": "created by headless test"
+                }),
+                emitter,
+                Some("tool-block-1"),
+                None,
+            ),
+        )
+        .await
+        .expect("write permission should be resolved without hanging");
+
+        assert!(result.starts_with("File written:"), "{result}");
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("created.txt")).unwrap(),
+            "created by headless test"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    fn agent_turn_event(session_id: &str, status: AgentTurnStatus) -> StreamEvent {
+        StreamEvent::AgentTurnUpdated {
+            session_id: session_id.to_string(),
+            state: AgentTurnProjection {
+                session_id: session_id.to_string(),
+                status,
+                step_label: String::new(),
+                workspace_path: "/tmp/workspace".to_string(),
+                compact_count: 0,
+                verification_status: AgentVerificationStatus::NotNeeded,
+            },
+        }
+    }
+}

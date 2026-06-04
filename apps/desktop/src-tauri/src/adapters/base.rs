@@ -355,7 +355,27 @@ pub trait AiAdapter: Send + Sync {
         messages: &[ChatMessage],
         app_handle: &tauri::AppHandle,
         cancel: std::sync::Arc<Notify>,
-    ) -> Result<StreamResult, AdapterError>;
+    ) -> Result<StreamResult, AdapterError> {
+        let emitter = crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone());
+        self.stream_message_with_emitter(session_id, messages, &emitter, cancel)
+            .await
+    }
+
+    /// Stream a message and send provider events through the shared event sink.
+    ///
+    /// Implement streaming providers here so production and tests observe the
+    /// same event path. The `stream_message` AppHandle wrapper above exists for
+    /// legacy call sites only.
+    async fn stream_message_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[ChatMessage],
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
+        cancel: std::sync::Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call_with_emitter(session_id, messages, emitter, cancel)
+            .await
+    }
 
     /// Call the AI API without emitting any frontend events.
     /// Used by sub-agents that shouldn't pollute the main UI.
@@ -364,6 +384,19 @@ pub trait AiAdapter: Send + Sync {
         messages: &[ChatMessage],
         cancel: std::sync::Arc<Notify>,
     ) -> Result<StreamResult, AdapterError>;
+
+    /// Call the model for context compaction summary generation.
+    ///
+    /// Providers should disable normal agent tools here: a compaction pass must
+    /// summarize already-observed context, not mutate the workspace or ask for
+    /// new tool results.
+    async fn compact_summary(
+        &self,
+        messages: &[ChatMessage],
+        cancel: std::sync::Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call(messages, cancel).await
+    }
 
     /// Call the AI API using an abstract event emitter instead of `AppHandle`.
     /// Default implementation delegates to `call()` (ignoring the emitter).

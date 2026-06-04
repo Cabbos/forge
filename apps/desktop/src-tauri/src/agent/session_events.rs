@@ -41,6 +41,19 @@ pub(crate) fn context_compacted_event(session_id: &str, stats: &CompactStats) ->
     }
 }
 
+pub(crate) fn context_compact_skipped_event(
+    session_id: &str,
+    reason: &str,
+    retained_messages: usize,
+) -> StreamEvent {
+    StreamEvent::ContextCompactSkipped {
+        session_id: session_id.to_string(),
+        block_id: BlockId::new().to_string(),
+        reason: reason.to_string(),
+        retained_messages,
+    }
+}
+
 pub(crate) fn tool_call_result_event(
     session_id: &str,
     block_id: &str,
@@ -61,8 +74,8 @@ pub(crate) fn tool_call_result_event(
 mod tests {
     use crate::agent::auto_compact::CompactStats;
     use crate::agent::session_events::{
-        agent_turn_updated_event, api_error_event, context_compacted_event, session_stopped_event,
-        tool_call_result_event,
+        agent_turn_updated_event, api_error_event, context_compact_skipped_event,
+        context_compacted_event, session_stopped_event, tool_call_result_event,
     };
     use crate::agent::turn_state::{AgentTurnState, AgentTurnStatus};
     use crate::protocol::events::StreamEvent;
@@ -92,6 +105,8 @@ mod tests {
         let error_event = api_error_event("session-1", "API error: timeout");
         let stopped_event = session_stopped_event("session-1", "killed");
         let compacted_event = context_compacted_event("session-1", &compact_stats);
+        let compact_skipped_event =
+            context_compact_skipped_event("session-1", "history_too_short", 12);
         let tool_result_event = tool_call_result_event("session-1", "tool-1", "ok", false, 25);
 
         match turn_event {
@@ -140,6 +155,19 @@ mod tests {
                 assert_eq!(estimated_tokens_after, 30_000);
             }
             other => panic!("unexpected compacted event: {other:?}"),
+        }
+        match compact_skipped_event {
+            StreamEvent::ContextCompactSkipped {
+                session_id,
+                reason,
+                retained_messages,
+                ..
+            } => {
+                assert_eq!(session_id, "session-1");
+                assert_eq!(reason, "history_too_short");
+                assert_eq!(retained_messages, 12);
+            }
+            other => panic!("unexpected compact skipped event: {other:?}"),
         }
         match tool_result_event {
             StreamEvent::ToolCallResult {

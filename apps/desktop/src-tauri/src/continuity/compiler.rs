@@ -238,6 +238,60 @@ mod tests {
     }
 
     #[test]
+    fn compiler_returns_empty_for_read_only_affected_files() {
+        let episode = make_episode(
+            "Inspect task filtering behavior",
+            vec!["package.json", "src", "src/tasks.tsx"],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "t1".to_string(),
+                    name: "read_file".to_string(),
+                    category: AgentToolCategory::Read,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: Some("package json content".to_string()),
+                    is_error: false,
+                    affected_files: vec!["package.json".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t2".to_string(),
+                    name: "list_directory".to_string(),
+                    category: AgentToolCategory::Read,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: Some("src tasks package".to_string()),
+                    is_error: false,
+                    affected_files: vec!["src".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t3".to_string(),
+                    name: "search_files".to_string(),
+                    category: AgentToolCategory::Read,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 30,
+                    ended_at_ms: Some(40),
+                    result_summary: Some("found matches".to_string()),
+                    is_error: false,
+                    affected_files: vec!["src/tasks.tsx".to_string()],
+                    command: None,
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::NotNeeded,
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some("/repo"), 42);
+        assert!(
+            experiences.is_empty(),
+            "read-only inspected files must not produce continuity experience"
+        );
+    }
+
+    #[test]
     fn compiler_returns_empty_for_cancelled_turn() {
         let episode = make_episode(
             "Add feature",
@@ -358,6 +412,70 @@ mod tests {
         assert!(
             body.contains("package.json"),
             "body should mention changed file"
+        );
+    }
+
+    #[test]
+    fn compiler_sanitizes_manual_test_prompt_goal() {
+        let episode = make_episode(
+            "我们现在在 /Users/cabbos/project/continuity-manual-test-app 做人工验证。请严格只修改这个测试项目，不要改 Forge 主仓库。任务目标：给任务列表增加按优先级排序能力，并补测试。",
+            vec!["src/tasks.tsx", "src/sort.test.ts"],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "t1".to_string(),
+                    name: "write_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/tasks.tsx".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t2".to_string(),
+                    name: "write_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/sort.test.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t3".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 30,
+                    ended_at_ms: Some(40),
+                    result_summary: Some("tests passed".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npm test".to_string()),
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::Passed,
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some("/repo"), 42);
+        assert!(
+            !experiences.is_empty(),
+            "manual test prompt should still produce a candidate for real verified code changes"
+        );
+
+        let body = &experiences[0].body;
+        assert!(
+            body.contains("按优先级排序"),
+            "body should keep the task signal: {body}"
+        );
+        assert!(
+            !body.contains("我们现在在") && !body.contains("人工验证") && !body.contains("请严格"),
+            "body should not echo the manual test prompt: {body}"
         );
     }
 

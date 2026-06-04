@@ -229,6 +229,19 @@ export async function sendInput(
   return invoke("send_input", { sessionId, text, mcpContext, capabilities });
 }
 
+export interface ManualCompactResult {
+  compacted: boolean;
+  skipped_reason?: string | null;
+  retained_messages: number;
+  compacted_messages: number;
+  estimated_tokens_before: number;
+  estimated_tokens_after: number;
+}
+
+export async function compactSessionContext(sessionId: string): Promise<ManualCompactResult> {
+  return invoke("compact_session_context", { sessionId });
+}
+
 export async function killSession(sessionId: string): Promise<void> {
   return invoke("kill_session", { sessionId });
 }

@@ -187,7 +187,8 @@ impl ToolExecutor {
                     Err(e) => format!("git diff failed: {}", e),
                 }
             }
-            "run_shell" | "bash" | "execute_command" | "shell" => {
+            "run_shell" | "bash" | "execute_command" | "shell" | "shell_command"
+            | "run_command" | "run_shell_command" => {
                 let command = get_str(tool_input, "command").unwrap_or("");
                 if let Err(reason) = validate_shell_command_failsafe(command) {
                     crate::app_log!(
@@ -474,7 +475,8 @@ fn summarize_tool_input(tool_name: &str, val: &serde_json::Value) -> String {
                 preview_for_log(get_str(val, "path").unwrap_or(""))
             )
         }
-        "run_shell" | "bash" | "execute_command" | "shell" => {
+        "run_shell" | "bash" | "execute_command" | "shell" | "shell_command" | "run_command"
+        | "run_shell_command" => {
             format!(
                 "command={}",
                 preview_for_log(get_str(val, "command").unwrap_or(""))
@@ -1125,7 +1127,9 @@ fn simple_match(name: &str, pattern: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_shell_command_failsafe;
+    use super::{validate_shell_command_failsafe, ToolExecutor};
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     #[test]
     fn shell_failsafe_blocks_destructive_root_commands() {
@@ -1173,5 +1177,33 @@ mod tests {
         validate_shell_command_failsafe("npm run build").expect("build is not hard-blocked");
         validate_shell_command_failsafe("git status --short")
             .expect("git status is not hard-blocked");
+    }
+
+    #[tokio::test]
+    async fn shell_command_aliases_execute_shell() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-shell-command-alias-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending_confirms);
+        for alias in ["shell_command", "run_command", "run_shell_command"] {
+            let result = executor
+                .execute_with_emitter(
+                    "session-1",
+                    alias,
+                    &serde_json::json!({"command": "echo alias-ok"}),
+                    Arc::new(crate::agent::event_sink::NoopEventEmitter),
+                    Some("tool-block-1"),
+                    None,
+                )
+                .await;
+
+            assert!(!result.contains("Unknown tool"), "{alias}: {result}");
+            assert!(result.contains("Stdout:"), "{alias}: {result}");
+            assert!(result.contains("alias-ok"), "{alias}: {result}");
+        }
+        let _ = std::fs::remove_dir_all(workspace);
     }
 }

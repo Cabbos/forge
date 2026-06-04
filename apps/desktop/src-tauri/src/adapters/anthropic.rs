@@ -9,6 +9,7 @@ use super::base::{
     repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
     ToolDef,
 };
+use crate::agent::event_sink::EventEmitter;
 use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -364,11 +365,63 @@ impl AiAdapter for AnthropicAdapter {
         })
     }
 
-    async fn stream_message(
+    async fn compact_summary(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        let mut body = self.request_for_messages(messages, false, false);
+        body.tools = None;
+        body.thinking = None;
+
+        let url = format!("{}/v1/messages", self.base_url);
+        let request = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body);
+
+        let response = tokio::select! {
+            r = request.send() => r,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        };
+        let response = response.map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text: String = tokio::select! {
+                t = response.text() => t,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            }
+            .unwrap_or_default();
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = match tokio::select! {
+            j = response.json() => j,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        } {
+            Ok(v) => v,
+            Err(e) => return Err(AdapterError::Stream(e.to_string())),
+        };
+
+        let content = parsed["content"].as_array().cloned().unwrap_or_default();
+        let stop_reason = parsed["stop_reason"].as_str().map(|s| s.to_string());
+
+        Ok(StreamResult {
+            assistant_content: content,
+            tool_calls: Vec::new(),
+            stop_reason,
+        })
+    }
+
+    async fn stream_message_with_emitter(
         &self,
         session_id: &str,
         messages: &[ChatMessage],
-        app_handle: &tauri::AppHandle,
+        emitter: &dyn EventEmitter,
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
         let body = self.request_for_messages(messages, true, false);
@@ -417,13 +470,10 @@ impl AiAdapter for AnthropicAdapter {
                         let update = parser.apply_event(&parsed);
 
                         if let Some(status) = update.session_status {
-                            crate::transcript::emit_stream_event(
-                                app_handle,
-                                StreamEvent::SessionStatus {
-                                    session_id: session.clone(),
-                                    status,
-                                },
-                            );
+                            emitter.emit(StreamEvent::SessionStatus {
+                                session_id: session.clone(),
+                                status,
+                            });
                         }
 
                         if let Some(block_start) = update.block_start {
@@ -431,92 +481,68 @@ impl AiAdapter for AnthropicAdapter {
                             match block_start {
                                 AnthropicBlockStart::Thinking => {
                                     active_block_id = Some(bid.clone());
-                                    crate::transcript::emit_stream_event(
-                                        app_handle,
-                                        StreamEvent::ThinkingStart {
-                                            session_id: session.clone(),
-                                            block_id: bid,
-                                        },
-                                    );
+                                    emitter.emit(StreamEvent::ThinkingStart {
+                                        session_id: session.clone(),
+                                        block_id: bid,
+                                    });
                                 }
                                 AnthropicBlockStart::Text => {
                                     active_block_id = Some(bid.clone());
-                                    crate::transcript::emit_stream_event(
-                                        app_handle,
-                                        StreamEvent::TextStart {
-                                            session_id: session.clone(),
-                                            block_id: bid,
-                                        },
-                                    );
+                                    emitter.emit(StreamEvent::TextStart {
+                                        session_id: session.clone(),
+                                        block_id: bid,
+                                    });
                                 }
                                 AnthropicBlockStart::ToolUse { id, name, input } => {
                                     let tool_block_id =
                                         if id.is_empty() { bid } else { id.clone() };
                                     active_block_id = Some(tool_block_id.clone());
-                                    crate::transcript::emit_stream_event(
-                                        app_handle,
-                                        StreamEvent::ToolCallStart {
-                                            session_id: session.clone(),
-                                            block_id: tool_block_id,
-                                            tool_name: name,
-                                            tool_input: input,
-                                        },
-                                    );
+                                    emitter.emit(StreamEvent::ToolCallStart {
+                                        session_id: session.clone(),
+                                        block_id: tool_block_id,
+                                        tool_name: name,
+                                        tool_input: input,
+                                    });
                                 }
                             }
                         }
 
                         if let Some(content) = update.thinking_chunk {
-                            crate::transcript::emit_stream_event(
-                                app_handle,
-                                StreamEvent::ThinkingChunk {
-                                    session_id: session.clone(),
-                                    block_id: active_block_id.clone().unwrap_or_default(),
-                                    content,
-                                },
-                            );
+                            emitter.emit(StreamEvent::ThinkingChunk {
+                                session_id: session.clone(),
+                                block_id: active_block_id.clone().unwrap_or_default(),
+                                content,
+                            });
                         }
 
                         if let Some(content) = update.text_chunk {
-                            crate::transcript::emit_stream_event(
-                                app_handle,
-                                StreamEvent::TextChunk {
-                                    session_id: session.clone(),
-                                    block_id: active_block_id.clone().unwrap_or_default(),
-                                    content,
-                                },
-                            );
+                            emitter.emit(StreamEvent::TextChunk {
+                                session_id: session.clone(),
+                                block_id: active_block_id.clone().unwrap_or_default(),
+                                content,
+                            });
                         }
 
                         if let Some(block_end) = update.block_end {
                             let bid = active_block_id.clone().unwrap_or_default();
                             match block_end {
                                 AnthropicBlockEnd::Thinking => {
-                                    crate::transcript::emit_stream_event(
-                                        app_handle,
-                                        StreamEvent::ThinkingEnd {
-                                            session_id: session.clone(),
-                                            block_id: bid,
-                                        },
-                                    );
+                                    emitter.emit(StreamEvent::ThinkingEnd {
+                                        session_id: session.clone(),
+                                        block_id: bid,
+                                    });
                                 }
                                 AnthropicBlockEnd::Text => {
-                                    crate::transcript::emit_stream_event(
-                                        app_handle,
-                                        StreamEvent::TextEnd {
-                                            session_id: session.clone(),
-                                            block_id: bid,
-                                        },
-                                    );
+                                    emitter.emit(StreamEvent::TextEnd {
+                                        session_id: session.clone(),
+                                        block_id: bid,
+                                    });
                                 }
                                 AnthropicBlockEnd::ToolUse => {
-                                    crate::transcript::emit_stream_event(
-                                        app_handle,
-                                        StreamEvent::ToolCallEnd {
-                                            session_id: session.clone(),
-                                            block_id: bid,
-                                        },
-                                    );
+                                    emitter.emit(StreamEvent::ToolCallEnd {
+                                        session_id: session.clone(),
+                                        block_id: bid,
+                                    });
                                 }
                             }
                             active_block_id = None;
@@ -524,27 +550,21 @@ impl AiAdapter for AnthropicAdapter {
 
                         if let Some((input_tokens, output_tokens)) = update.usage {
                             let cost = estimate_cost(&self.model, input_tokens, output_tokens);
-                            crate::transcript::emit_stream_event(
-                                app_handle,
-                                StreamEvent::Usage {
-                                    session_id: session.to_string(),
-                                    input_tokens,
-                                    output_tokens,
-                                    estimated_cost_usd: cost,
-                                },
-                            );
+                            emitter.emit(StreamEvent::Usage {
+                                session_id: session.to_string(),
+                                input_tokens,
+                                output_tokens,
+                                estimated_cost_usd: cost,
+                            });
                         }
 
                         if let Some(msg) = update.error {
-                            crate::transcript::emit_stream_event(
-                                app_handle,
-                                StreamEvent::Error {
-                                    session_id: session.clone(),
-                                    block_id: BlockId::new().to_string(),
-                                    message: msg,
-                                    code: "api_error".to_string(),
-                                },
-                            );
+                            emitter.emit(StreamEvent::Error {
+                                session_id: session.clone(),
+                                block_id: BlockId::new().to_string(),
+                                message: msg,
+                                code: "api_error".to_string(),
+                            });
                         }
                     }
                     Err(_) => {
