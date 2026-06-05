@@ -46,13 +46,15 @@ export type DoctorCheck = {
   message: string;
 };
 
+type CommandCheckName = "bun" | "cargo";
+
 const defaultIo = {
   stdout: (text: string) => process.stdout.write(text),
   stderr: (text: string) => process.stderr.write(text),
 };
 
 async function commandCheck(
-  name: DoctorCheck["name"],
+  name: CommandCheckName,
   command: string,
   spawn: SpawnRunner,
   cwd: string,
