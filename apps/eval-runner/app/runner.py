@@ -286,7 +286,10 @@ class ForgeAgentRunner:
     ) -> AgentTrace:
         ended_at = utc_now()
         tool_calls = TypeAdapter(list[ShellOutput]).validate_python(payload.get("tool_calls", []))
-        validation_outputs = run_validation_commands(task, workspace)
+        validation_outputs = [
+            *run_validation_commands(task, workspace),
+            *run_post_validation_commands(task, workspace),
+        ]
         shell_outputs = TypeAdapter(list[ShellOutput]).validate_python(
             [*setup_outputs, *payload.get("shell_outputs", []), *validation_outputs]
         )
@@ -297,7 +300,7 @@ class ForgeAgentRunner:
             else None
         )
         if validation_outputs:
-            last_validation = validation_outputs[-1]
+            last_validation = first_failed_output(validation_outputs) or validation_outputs[-1]
             verification_result = VerificationResult(
                 command=last_validation.command,
                 passed=last_validation.exit_code == 0,
@@ -509,6 +512,14 @@ def run_setup_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutpu
 
 def run_validation_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutput]:
     return run_shell_commands(task.validation_commands, workspace)
+
+
+def run_post_validation_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutput]:
+    return run_shell_commands(task.post_validation_commands, workspace)
+
+
+def first_failed_output(outputs: Sequence[ShellOutput]) -> ShellOutput | None:
+    return next((output for output in outputs if output.exit_code != 0), None)
 
 
 def normalize_failure_category(value: str | FailureCategory) -> FailureCategory:

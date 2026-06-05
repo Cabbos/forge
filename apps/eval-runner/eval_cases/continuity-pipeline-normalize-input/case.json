@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "continuity-pipeline-normalize-input",
+    "title": "Continuity pipeline: normalize input utility",
+    "prompt": "在当前 TypeScript 项目中新增输入规范化能力。新增 src/normalize.ts，导出 normalizeInput(input: string): string，要求去掉首尾空格、把连续空白合并成一个空格、空字符串返回空字符串，并保留中文、英文和数字。新增 src/normalize.test.ts，至少覆盖普通英文、中文、多个连续空格、空字符串、纯空格和中英数混合。更新 package.json 的 test script，让 npm test 能运行这个测试。最后运行 npm test 和 npx tsc --noEmit，并总结结果。不要访问网络之外的业务服务，不要修改 .env、.forge、package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/App.tsx",
+      "src/tasks.tsx",
+      "src/storage.ts"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [],
+    "post_validation_commands": [
+      "npm test",
+      "npx tsc --noEmit",
+      "python3 scripts/assert-continuity.py --min-experiences 1 --max-dirty-candidates 0 --require-formed-reflections --require-fts-match --require-event user_message --require-event reflection --require-event tool_execution --require-event file_change --require-experience-text src/normalize.ts --require-shell-success-clean --max-evidence-duplicates 0"
+    ],
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/normalize.ts",
+      "src/normalize.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "max_duration_seconds": 900,
+    "tags": [
+      "continuity-pipeline",
+      "typescript",
+      "utility",
+      "sqlite-assertions"
+    ]
+  }
+}

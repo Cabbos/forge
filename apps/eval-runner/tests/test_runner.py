@@ -317,6 +317,106 @@ json.dump(
     assert trace.shell_outputs[-1].command == task.validation_commands[0]
 
 
+def test_forge_runner_executes_post_validation_commands_after_headless_validation(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "src").mkdir(parents=True)
+    (fixture / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    script = tmp_path / "fake_with_continuity_db.py"
+    script.write_text(
+        """
+import json
+import pathlib
+import sys
+
+payload = json.loads(sys.stdin.read())
+workspace = pathlib.Path(payload["workspace_path"])
+(workspace / ".forge").mkdir(exist_ok=True)
+(workspace / ".forge" / "continuity.db").write_text("fake db")
+json.dump(
+    {
+        "changed_files": ["src/app.py"],
+        "verification_result": {
+            "command": "pytest",
+            "passed": True,
+            "stdout": "1 passed",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 120,
+        },
+        "final_answer": "Done.",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    post_command = (
+        f"{sys.executable} -c \"from pathlib import Path; "
+        "assert Path('.forge/continuity.db').exists(); print('continuity ok')\""
+    )
+    task = EvaluationTask(
+        id="continuity-post-validation",
+        title="Continuity post validation",
+        prompt="Modify src/app.py.",
+        fixture_path=str(fixture),
+        expected_files_changed=["src/app.py"],
+        validation_commands=[f"{sys.executable} -c \"print('app ok')\""],
+        post_validation_commands=[post_command],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.verification_result is not None
+    assert trace.verification_result.passed is True
+    assert trace.verification_result.command == post_command
+    assert [output.command for output in trace.shell_outputs[-2:]] == [
+        task.validation_commands[0],
+        post_command,
+    ]
+    assert trace.shell_outputs[-1].stdout == "continuity ok\n"
+
+
+def test_forge_runner_reports_first_failed_validation_command(tmp_path: Path) -> None:
+    script = tmp_path / "fake_success.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="failed-post-validation",
+        title="Failed post validation",
+        prompt="Modify src/app.py.",
+        expected_files_changed=["src/app.py"],
+        post_validation_commands=[
+            f"{sys.executable} -c \"import sys; print('app failed'); sys.exit(2)\"",
+            f"{sys.executable} -c \"print('continuity ok')\"",
+        ],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.verification_result is not None
+    assert trace.verification_result.passed is False
+    assert trace.verification_result.exit_code == 2
+    assert trace.verification_result.stdout == "app failed\n"
+    assert trace.error == "verification_failed"
+
+
 def test_forge_runner_clears_recovered_verification_failure_after_validation(
     tmp_path: Path,
 ) -> None:

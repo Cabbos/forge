@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "continuity-pipeline-search-parser",
+    "title": "Continuity pipeline: task search parser",
+    "prompt": "在当前 TypeScript 项目中新增任务搜索解析能力。新增 src/search.ts，导出类型 ParsedTaskSearch = { text: string; status?: \"todo\" | \"doing\" | \"done\"; tag?: string }，并导出 parseTaskSearch(input: string): ParsedTaskSearch。要求支持 status:todo、status:doing、status:done 和 tag:<value> 前缀；多个空格要合并；普通关键词进入 text；未知 status 值忽略；空 tag 值忽略；保留中文关键词。新增 src/search.test.ts，覆盖纯关键词、status、tag、status+tag+关键词、未知 status、空 tag、多空格、中文关键词。更新 package.json 的 test script，让 npm test 能运行这个测试。最后运行 npm test 和 npx tsc --noEmit，并总结结果。不要修改 .env、.forge、package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/storage.ts",
+      "src/tasks.tsx"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [],
+    "post_validation_commands": [
+      "npm test",
+      "npx tsc --noEmit",
+      "python3 scripts/assert-continuity.py --min-experiences 1 --max-dirty-candidates 0 --require-formed-reflections --require-fts-match --require-event user_message --require-event reflection --require-event tool_execution --require-event file_change --require-experience-text src/search.ts --require-shell-success-clean --max-evidence-duplicates 0"
+    ],
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/search.ts",
+      "src/search.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "max_duration_seconds": 900,
+    "tags": [
+      "continuity-pipeline",
+      "typescript",
+      "parser",
+      "sqlite-assertions"
+    ]
+  }
+}
