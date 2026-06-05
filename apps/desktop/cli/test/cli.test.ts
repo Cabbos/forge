@@ -26,6 +26,24 @@ describe("runCli", () => {
     expect(stdout.join("")).toContain("run");
   });
 
+  test("routes doctor command", async () => {
+    const { io, stdout } = createIo();
+
+    const code = await runCli(["doctor"], { io });
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("Forge doctor is not wired yet.");
+  });
+
+  test("routes run command", async () => {
+    const { io, stdout } = createIo();
+
+    const code = await runCli(["run"], { io });
+
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("Forge run is not wired yet.");
+  });
+
   test("returns non-zero for unknown commands", async () => {
     const { io, stderr } = createIo();
 

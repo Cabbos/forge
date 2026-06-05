@@ -21,6 +21,7 @@ const defaultIo: CliIo = {
 
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const io = deps.io ?? defaultIo;
+  const commandDeps: CliDeps = { ...deps, io };
   const [command, ...rest] = argv;
 
   if (!command || command === "--help" || command === "-h") {
@@ -29,11 +30,11 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   }
 
   if (command === "doctor") {
-    return runDoctor(rest, deps);
+    return runDoctor(rest, commandDeps);
   }
 
   if (command === "run") {
-    return runCommand(rest, deps);
+    return runCommand(rest, commandDeps);
   }
 
   io.stderr(`Unknown command: ${command}\n\n${helpText()}`);
