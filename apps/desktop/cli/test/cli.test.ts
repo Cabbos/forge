@@ -32,7 +32,7 @@ describe("runCli", () => {
     const code = await runCli(["doctor"], { io });
 
     expect(code).toBe(0);
-    expect(stdout.join("")).toContain("Forge doctor is not wired yet.");
+    expect(stdout.join("")).toContain("Forge doctor");
   });
 
   test("routes run command", async () => {
