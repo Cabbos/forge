@@ -16,6 +16,13 @@
     "check:precommit": "node scripts/pre-commit-check.mjs",
     "check:precommit:test": "node --test scripts/pre-commit-check.test.mjs",
     "check:prepush": "npm run build && npm run check:backend",
+    "eval:forge": "node scripts/run-forge-backtest.mjs",
+    "eval:forge:dry-run": "node scripts/run-forge-backtest.mjs --dry-run",
+    "eval:forge:mock": "node scripts/run-forge-backtest.mjs --provider mock",
+    "eval:continuity": "node scripts/run-forge-backtest.mjs --suite continuity",
+    "eval:continuity:dry-run": "node scripts/run-forge-backtest.mjs --suite continuity --dry-run",
+    "eval:continuity:smoke": "node scripts/run-forge-backtest.mjs --suite continuity --case continuity-pipeline-normalize-input",
+    "eval:forge:test": "node --test scripts/run-forge-backtest.test.mjs",
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"

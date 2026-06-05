@@ -480,6 +480,114 @@ mod tests {
     }
 
     #[test]
+    fn compiler_suppresses_recovered_edit_miss_and_keeps_real_goal() {
+        let episode = make_episode(
+            "我们现在继续在 /Users/cabbos/project/continuity-manual-test-app 这个测试项目里做一次 Forge Continuity 召回验证。\n\n请只修改这个测试项目：\n/Users/cabbos/project/continuity-manual-test-app\n\n不要修改 Forge 主仓库：\n/Users/cabbos/project/crusted-spinning-lynx-agent\n\n不要修改任何 .forge 目录，不要清理 SQLite，不要提交 git，不要 push。\n\n这次任务目标：\n扩展已有“任务搜索”能力，让搜索框支持按任务状态关键词过滤。\n\n具体行为：todo / doing / done 大小写不敏感。",
+            vec!["src/storage.ts", "src/search.test.ts"],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "storage-edit".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: Some("File edited: src/storage.ts".to_string()),
+                    is_error: false,
+                    affected_files: vec!["src/storage.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "test-edit-miss".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Failed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: Some("Error: old_string not found in file".to_string()),
+                    is_error: true,
+                    affected_files: vec!["src/search.test.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "test-edit-success".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 30,
+                    ended_at_ms: Some(40),
+                    result_summary: Some("File edited: src/search.test.ts".to_string()),
+                    is_error: false,
+                    affected_files: vec!["src/search.test.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "npm-test".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 40,
+                    ended_at_ms: Some(50),
+                    result_summary: Some("Exit code: 0 Stdout: 61 passed".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npm test".to_string()),
+                },
+                AgentToolTrace {
+                    tool_call_id: "tsc".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 50,
+                    ended_at_ms: Some(60),
+                    result_summary: Some("Exit code: 0 Stdout: EXIT CODE: 0".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npx tsc --noEmit 2>&1; echo \"EXIT CODE: $?\"".to_string()),
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::Passed,
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some("/repo"), 42);
+        assert!(
+            !experiences.is_empty(),
+            "verified state-search change should produce candidates"
+        );
+        assert!(
+            experiences
+                .iter()
+                .all(|experience| experience.kind != ExperienceKind::BugPattern),
+            "recovered edit miss should not produce bug-pattern candidates: {experiences:?}"
+        );
+        assert!(
+            experiences
+                .iter()
+                .all(|experience| !experience.tags.contains(&"has-failure".to_string())),
+            "recovered edit miss should not tag candidates as failure: {experiences:?}"
+        );
+
+        let joined = experiences
+            .iter()
+            .map(|experience| experience.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("任务状态关键词过滤"),
+            "body should keep the real task goal: {joined}"
+        );
+        assert!(
+            !joined.contains("请只修改这个测试项目") && !joined.contains("不要修改 Forge 主仓库"),
+            "body should not echo prompt constraints: {joined}"
+        );
+        assert!(
+            !joined.contains("old_string not found"),
+            "recovered edit miss should not be recorded as reusable experience: {joined}"
+        );
+    }
+
+    #[test]
     fn compiler_produces_failure_pattern_when_tools_fail() {
         let episode = make_episode(
             "Fix build error",

@@ -147,12 +147,7 @@ pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode
             episode.outcome, episode.tool_count, episode.failed_tools
         )
     } else {
-        let changes = episode
-            .file_changes
-            .iter()
-            .map(|fc| format!("{} ({} via {})", fc.path, fc.operation, fc.tool_name))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let changes = format_evidence_file_changes(episode);
         format!(
             "file_changes=[{changes}]; outcome={:?}; tools={}; failed={}",
             episode.outcome, episode.tool_count, episode.failed_tools
@@ -161,6 +156,22 @@ pub(crate) fn format_structured_body(episode: &Episode, mode: StructuredBodyMode
     lines.push(format!("Evidence: {evidence}"));
 
     lines.join(" ")
+}
+
+fn format_evidence_file_changes(episode: &Episode) -> String {
+    let mut seen = std::collections::HashSet::new();
+    episode
+        .file_changes
+        .iter()
+        .filter_map(|fc| {
+            if !seen.insert(fc.path.clone()) {
+                return None;
+            }
+            let label = format!("{} ({} via {})", fc.path, fc.operation, fc.tool_name);
+            Some(label)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn experience_goal_label(episode: &Episode) -> String {
@@ -564,6 +575,117 @@ mod tests {
         assert!(
             !tags.contains(&"verify-failed".to_string()),
             "passed verification tags should NOT contain 'verify-failed': {tags:?}"
+        );
+    }
+
+    #[test]
+    fn evidence_deduplicates_repeated_file_changes() {
+        let episode = make_episode(
+            "Add tag prefix search",
+            vec!["src/storage.ts", "src/search.test.ts"],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "t1".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/storage.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t2".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/storage.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t3".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 30,
+                    ended_at_ms: Some(40),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/search.test.ts".to_string()],
+                    command: None,
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::Passed,
+        );
+
+        let body = format_structured_body(&episode, StructuredBodyMode::Primary);
+
+        assert_eq!(
+            body.matches("src/storage.ts (modified via edit_file)")
+                .count(),
+            1,
+            "Evidence should list each file/tool change once: {body}"
+        );
+        assert_eq!(
+            body.matches("src/search.test.ts (modified via edit_file)")
+                .count(),
+            1,
+            "Evidence should keep distinct file changes: {body}"
+        );
+    }
+
+    #[test]
+    fn evidence_deduplicates_same_path_across_different_tools() {
+        let episode = make_episode(
+            "Add normalize utility",
+            vec!["src/normalize.ts"],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "t1".to_string(),
+                    name: "write_to_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/normalize.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "t2".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: None,
+                    is_error: false,
+                    affected_files: vec!["src/normalize.ts".to_string()],
+                    command: None,
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::Passed,
+        );
+
+        let body = format_structured_body(&episode, StructuredBodyMode::Primary);
+        let evidence = body
+            .split("Evidence:")
+            .nth(1)
+            .expect("body should contain evidence");
+
+        assert_eq!(
+            evidence.matches("src/normalize.ts").count(),
+            1,
+            "Evidence should list a changed file path once even if multiple tools touched it: {body}"
         );
     }
 

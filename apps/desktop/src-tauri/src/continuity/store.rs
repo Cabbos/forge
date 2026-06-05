@@ -5,7 +5,7 @@ use rusqlite::{params, Connection};
 
 use super::{
     should_reject_experience_lesson, ContinuityEvent, ExperienceKind, ExperienceMemory,
-    ExperienceStatus,
+    ExperienceStatus, ReflectionEvent,
 };
 
 pub struct ContinuityStore {
@@ -76,6 +76,72 @@ impl ContinuityStore {
             events.push(event);
         }
         Ok(events)
+    }
+
+    pub fn list_unformed_reflections_for_session(
+        &self,
+        project_path: &str,
+        session_id: &str,
+    ) -> Result<Vec<ReflectionEvent>, String> {
+        let conn = self.conn.lock().unwrap_or_else(|err| err.into_inner());
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.event_json
+                 FROM continuity_events e
+                 WHERE e.project_path = ?1
+                    AND e.session_id = ?2
+                    AND e.event_type = 'reflection'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM continuity_formed_reflections f
+                        WHERE f.project_path = e.project_path
+                           AND f.session_id = e.session_id
+                           AND f.timestamp_ms = e.timestamp_ms
+                    )
+                 ORDER BY e.timestamp_ms ASC, e.id ASC",
+            )
+            .map_err(|err| format!("Failed to prepare unformed reflection query: {err}"))?;
+
+        let rows = stmt
+            .query_map(params![project_path, session_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|err| format!("Failed to query unformed reflections: {err}"))?;
+
+        let mut reflections = Vec::new();
+        for row in rows {
+            let event_json =
+                row.map_err(|err| format!("Failed to read unformed reflection row: {err}"))?;
+            let event: ContinuityEvent = serde_json::from_str(&event_json)
+                .map_err(|err| format!("Failed to deserialize unformed reflection: {err}"))?;
+            if let ContinuityEvent::Reflection(reflection) = event {
+                reflections.push(reflection);
+            }
+        }
+        Ok(reflections)
+    }
+
+    pub fn mark_reflections_formed(
+        &self,
+        project_path: &str,
+        reflections: &[ReflectionEvent],
+    ) -> Result<(), String> {
+        if reflections.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.conn.lock().unwrap_or_else(|err| err.into_inner());
+        for reflection in reflections {
+            let timestamp_ms = to_i64_timestamp(reflection.timestamp_ms)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO continuity_formed_reflections
+                    (project_path, session_id, timestamp_ms)
+                 VALUES (?1, ?2, ?3)",
+                params![project_path, reflection.session_id, timestamp_ms],
+            )
+            .map_err(|err| format!("Failed to mark reflection as formed: {err}"))?;
+        }
+        Ok(())
     }
 
     pub fn upsert_experiences(
@@ -328,6 +394,15 @@ impl ContinuityStore {
 
     fn migrate(&self) -> Result<(), String> {
         let conn = self.conn.lock().unwrap_or_else(|err| err.into_inner());
+        let formed_reflections_table_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(1)
+                 FROM sqlite_master
+                 WHERE type = 'table' AND name = 'continuity_formed_reflections'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|err| format!("Failed to inspect continuity migrations: {err}"))?;
         conn.execute_batch(
             "
             PRAGMA journal_mode = WAL;
@@ -344,6 +419,15 @@ impl ContinuityStore {
                 ON continuity_events(project_path, session_id, timestamp_ms, id);
             CREATE INDEX IF NOT EXISTS idx_continuity_events_type
                 ON continuity_events(project_path, event_type, timestamp_ms);
+            CREATE TABLE IF NOT EXISTS continuity_formed_reflections (
+                project_path TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (project_path, session_id, timestamp_ms)
+            );
+            CREATE INDEX IF NOT EXISTS idx_continuity_formed_reflections_session
+                ON continuity_formed_reflections(project_path, session_id, timestamp_ms);
             CREATE TABLE IF NOT EXISTS continuity_experiences (
                 id TEXT PRIMARY KEY,
                 project_path TEXT,
@@ -375,10 +459,26 @@ impl ContinuityStore {
             ",
         )
         .map_err(|err| format!("Failed to migrate continuity database: {err}"))?;
+        if formed_reflections_table_exists == 0 {
+            backfill_formed_reflections(&conn)?;
+        }
         prune_low_quality_candidate_experiences(&conn)?;
         rebuild_experience_fts(&conn)?;
         Ok(())
     }
+}
+
+fn backfill_formed_reflections(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR IGNORE INTO continuity_formed_reflections
+            (project_path, session_id, timestamp_ms)
+         SELECT project_path, session_id, timestamp_ms
+         FROM continuity_events
+         WHERE event_type = 'reflection'",
+        [],
+    )
+    .map_err(|err| format!("Failed to backfill formed reflections: {err}"))?;
+    Ok(())
 }
 
 fn prune_low_quality_candidate_experiences(conn: &Connection) -> Result<(), String> {

@@ -8,6 +8,7 @@ src-tauri/target/
 # Test output
 test-results/
 playwright-report/
+artifacts/
 
 # IDE
 .vscode/

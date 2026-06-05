@@ -9,10 +9,14 @@ import {
 test("blocks generated artifacts from being committed", () => {
   const plan = buildPreCommitPlan([
     "test-results/latest/report.json",
+    "artifacts/eval-runs/latest.json",
     "src/store/index.ts",
   ]);
 
-  assert.deepEqual(plan.blockedFiles, ["test-results/latest/report.json"]);
+  assert.deepEqual(plan.blockedFiles, [
+    "test-results/latest/report.json",
+    "artifacts/eval-runs/latest.json",
+  ]);
 });
 
 test("plans frontend checks for staged TypeScript or style files", () => {

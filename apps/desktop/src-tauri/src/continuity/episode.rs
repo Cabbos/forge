@@ -119,6 +119,10 @@ fn build_file_changes(turn: &AgentTurnState) -> Vec<FileChangeRecord> {
 }
 
 fn tool_records_file_change(tool: &AgentToolTrace) -> bool {
+    if matches!(tool.category, AgentToolCategory::Write) && tool_is_failed(tool) {
+        return false;
+    }
+
     matches!(
         tool.category,
         AgentToolCategory::Write | AgentToolCategory::Shell
@@ -226,6 +230,10 @@ fn tool_is_actionable_failure(
         return false;
     }
 
+    if suppress_resolved_verification_failures && is_recoverable_edit_failure(tool) {
+        return false;
+    }
+
     true
 }
 
@@ -235,6 +243,27 @@ fn tool_is_failed(tool: &AgentToolTrace) -> bool {
             tool.status,
             AgentToolStatus::Failed | AgentToolStatus::Cancelled
         )
+}
+
+fn is_recoverable_edit_failure(tool: &AgentToolTrace) -> bool {
+    if !matches!(tool.category, AgentToolCategory::Write) {
+        return false;
+    }
+
+    let name = tool.name.to_lowercase();
+    if !name.contains("edit_file") {
+        return false;
+    }
+
+    let summary = tool
+        .result_summary
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase();
+
+    summary.contains("old_string not found")
+        || summary.contains("old string not found")
+        || summary.contains("string to replace not found")
 }
 
 fn build_verification_summary(
@@ -309,6 +338,9 @@ fn build_success_summary(turn: &AgentTurnState) -> Option<String> {
 }
 
 fn summarize_user_goal(goal: &str) -> String {
+    if let Some(extracted) = extract_goal_from_prompt(goal) {
+        return summarize_text(&extracted, 200);
+    }
     summarize_text(goal, 200)
 }
 
@@ -319,6 +351,71 @@ fn summarize_text(value: &str, limit: usize) -> String {
     }
     let truncated: String = normalized.chars().take(limit).collect();
     format!("{truncated}...")
+}
+
+fn extract_goal_from_prompt(goal: &str) -> Option<String> {
+    let normalized = goal.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let lower = normalized.to_lowercase();
+    for marker in [
+        "这次任务目标：",
+        "这次任务目标:",
+        "任务目标：",
+        "任务目标:",
+        "目标：",
+        "目标:",
+        "task goal:",
+        "task:",
+        "goal:",
+        "objective:",
+    ] {
+        if let Some(index) = lower.find(&marker.to_lowercase()) {
+            let fragment = clean_goal_fragment(&normalized[index + marker.len()..]);
+            if !fragment.is_empty() {
+                return Some(fragment);
+            }
+        }
+    }
+
+    None
+}
+
+fn clean_goal_fragment(value: &str) -> String {
+    let fragment = value
+        .split(['。', '；', ';', '\n'])
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .trim_matches(['"', '\'', '“', '”', '‘', '’', '.', ',', '，', ':', '：']);
+
+    strip_goal_prefix(fragment)
+        .trim()
+        .trim_matches(['"', '\'', '“', '”', '‘', '’', '.', ',', '，', ':', '：'])
+        .to_string()
+}
+
+fn strip_goal_prefix(value: &str) -> &str {
+    let lower = value.to_lowercase();
+    for prefix in [
+        "请严格",
+        "请先",
+        "请优先",
+        "请检查",
+        "帮我实现",
+        "帮我做",
+        "帮我写",
+        "please implement",
+        "please build",
+        "i want to",
+    ] {
+        if lower.starts_with(prefix) {
+            return value[prefix.len()..].trim();
+        }
+    }
+    value
 }
 
 fn turn_status_to_outcome(status: &AgentTurnStatus) -> ReflectionOutcome {
@@ -556,6 +653,120 @@ mod tests {
             "resolved verification retries should not become bug-pattern failures: {:?}",
             episode.notable_failures
         );
+    }
+
+    #[test]
+    fn episode_suppresses_recovered_edit_miss_after_final_success() {
+        let mut turn = test_turn_with_tools(vec![
+            AgentToolTrace {
+                tool_call_id: "storage-edit".to_string(),
+                name: "edit_file".to_string(),
+                category: AgentToolCategory::Write,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 10,
+                ended_at_ms: Some(20),
+                result_summary: Some("File edited: src/storage.ts".to_string()),
+                is_error: false,
+                affected_files: vec!["src/storage.ts".to_string()],
+                command: None,
+            },
+            AgentToolTrace {
+                tool_call_id: "test-edit-miss".to_string(),
+                name: "edit_file".to_string(),
+                category: AgentToolCategory::Write,
+                status: AgentToolStatus::Failed,
+                started_at_ms: 20,
+                ended_at_ms: Some(30),
+                result_summary: Some("Error: old_string not found in file".to_string()),
+                is_error: true,
+                affected_files: vec!["src/search.test.ts".to_string()],
+                command: None,
+            },
+            AgentToolTrace {
+                tool_call_id: "test-edit-success".to_string(),
+                name: "edit_file".to_string(),
+                category: AgentToolCategory::Write,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 30,
+                ended_at_ms: Some(40),
+                result_summary: Some("File edited: src/search.test.ts".to_string()),
+                is_error: false,
+                affected_files: vec!["src/search.test.ts".to_string()],
+                command: None,
+            },
+            AgentToolTrace {
+                tool_call_id: "verify".to_string(),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 40,
+                ended_at_ms: Some(50),
+                result_summary: Some("Exit code: 0 Stdout: EXIT CODE: 0".to_string()),
+                is_error: false,
+                affected_files: Vec::new(),
+                command: Some("npx tsc --noEmit 2>&1; echo \"EXIT CODE: $?\"".to_string()),
+            },
+        ]);
+        turn.verification = crate::agent::turn_state::AgentVerificationTrace {
+            status: AgentVerificationStatus::Passed,
+            command: Some("npx tsc --noEmit".to_string()),
+            exit_code: Some(0),
+            stdout_preview: Some("EXIT CODE: 0".to_string()),
+            stderr_preview: None,
+            duration_ms: Some(1000),
+            completed_at_ms: Some(50),
+        };
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let episode = build_episode_from_turn(&turn);
+
+        assert_eq!(episode.verification_status, AgentVerificationStatus::Passed);
+        assert_eq!(episode.failed_tools, 0);
+        assert!(
+            episode.notable_failures.is_empty(),
+            "recovered edit_file miss should not become a notable failure: {:?}",
+            episode.notable_failures
+        );
+        assert_eq!(
+            episode.changed_files,
+            vec![
+                "src/search.test.ts".to_string(),
+                "src/storage.ts".to_string()
+            ]
+        );
+        assert_eq!(
+            episode.file_changes.len(),
+            2,
+            "failed edit attempt must not be recorded as a file change"
+        );
+    }
+
+    #[test]
+    fn episode_does_not_record_failed_write_as_file_change() {
+        let turn = test_turn_with_tools(vec![AgentToolTrace {
+            tool_call_id: "edit-miss".to_string(),
+            name: "edit_file".to_string(),
+            category: AgentToolCategory::Write,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("Error: old_string not found in file".to_string()),
+            is_error: true,
+            affected_files: vec!["src/search.test.ts".to_string()],
+            command: None,
+        }]);
+
+        let episode = build_episode_from_turn(&turn);
+
+        assert!(
+            episode.changed_files.is_empty(),
+            "failed write attempts should not imply changed files"
+        );
+        assert!(
+            episode.file_changes.is_empty(),
+            "failed write attempts should not produce file change records"
+        );
+        assert_eq!(episode.failed_tools, 1);
     }
 
     #[test]

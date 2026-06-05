@@ -3,15 +3,22 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
 use crate::agent::session_guards::lock_unpoisoned;
+use crate::agent::time::now_ms;
 use crate::agent::turn_state::{
     AgentToolTrace, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
+    AgentVerificationTrace,
+};
+use crate::continuity::{
+    build_episode_from_turn, build_send_input_reflection_event, continuity_events_from_turn,
+    continuity_lessons_from_turn, ContinuityEvent, ContinuityService, ReflectionOutcome,
 };
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
+use crate::process_runner::{run_captured, ProcessRunOptions, ProcessSpec};
 use crate::protocol::events::StreamEvent;
 use crate::settings;
 
@@ -19,6 +26,10 @@ type PendingConfirms =
     Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>;
 const HEADLESS_CONFIRM_RETRY_ATTEMPTS: usize = 100;
 const HEADLESS_CONFIRM_RETRY_DELAY_MS: u64 = 10;
+const HEADLESS_DEFAULT_REPAIR_ATTEMPTS: usize = 1;
+const HEADLESS_MAX_REPAIR_ATTEMPTS: usize = 3;
+const HEADLESS_VALIDATION_TIMEOUT_SECS: u64 = 120;
+const HEADLESS_VALIDATION_OUTPUT_LIMIT: usize = 12_000;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EvalHeadlessRequest {
@@ -39,6 +50,12 @@ pub struct EvalHeadlessTask {
     pub id: Option<String>,
     #[serde(default)]
     pub prompt: Option<String>,
+    #[serde(default)]
+    pub validation_commands: Vec<String>,
+    #[serde(default)]
+    pub verification_command: Option<String>,
+    #[serde(default)]
+    pub max_repair_attempts: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +63,34 @@ pub struct HeadlessFileDiff {
     pub path: String,
     pub change_type: String,
     pub diff: String,
+}
+
+#[derive(Debug, Clone)]
+struct HeadlessValidationResult {
+    command: String,
+    status: AgentVerificationStatus,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    duration_ms: u64,
+}
+
+impl HeadlessValidationResult {
+    fn passed(&self) -> bool {
+        self.status == AgentVerificationStatus::Passed
+    }
+
+    fn to_trace(&self) -> AgentVerificationTrace {
+        AgentVerificationTrace {
+            status: self.status.clone(),
+            command: Some(self.command.clone()),
+            exit_code: self.exit_code,
+            stdout_preview: optional_text(&self.stdout),
+            stderr_preview: optional_text(&self.stderr),
+            duration_ms: Some(self.duration_ms),
+            completed_at_ms: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,7 +159,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     let pending_confirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
     let session_id = uuid::Uuid::now_v7().to_string();
     let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
-        session_id,
+        session_id: session_id.clone(),
         provider: agent_provider.clone(),
         model: agent_model.clone(),
         api_key: &credentials.api_key,
@@ -141,19 +186,63 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     }
 
     let emitter = Arc::new(HeadlessEventEmitter::new(pending_confirms));
-    let turn_guard = session.reserve_turn()?;
-    let run_result = session
-        .send_message_with_shared_emitter(
-            &prompt,
-            emitter.clone(),
-            Vec::new(),
-            None,
-            None,
-            turn_guard,
-        )
-        .await;
-    let raw_events = emitter.drain();
-    let latest_turn = lock_unpoisoned(&session.latest_turn).clone();
+    let validation_commands = validation_commands_from_task(request.task.as_ref());
+    let max_repair_attempts = max_repair_attempts_from_task(request.task.as_ref());
+    let mut raw_events = Vec::new();
+    let mut agent_error = send_headless_turn(&session, &prompt, emitter.clone())
+        .await
+        .err();
+    raw_events.extend(emitter.drain());
+    let mut validation_result = None;
+
+    if agent_error.is_none() && !validation_commands.is_empty() {
+        for attempt in 0..=max_repair_attempts {
+            let validation =
+                run_headless_validation_commands(&validation_commands, &workspace_path).await?;
+            raw_events.extend(validation_events(
+                &session_id,
+                &format!("headless-validation-{attempt}"),
+                &validation,
+            ));
+            validation_result = Some(validation.clone());
+
+            if validation.passed() || attempt == max_repair_attempts {
+                break;
+            }
+
+            let repair_prompt =
+                repair_prompt_from_validation_failure(&prompt, attempt + 1, &validation);
+            agent_error = send_headless_turn(&session, &repair_prompt, emitter.clone())
+                .await
+                .err();
+            raw_events.extend(emitter.drain());
+            if agent_error.is_some() {
+                break;
+            }
+        }
+    }
+
+    let mut latest_turn = lock_unpoisoned(&session.latest_turn).clone();
+    if let (Some(turn), Some(validation)) = (latest_turn.as_mut(), validation_result.as_ref()) {
+        turn.set_verification(validation.to_trace());
+    }
+    let continuity_outcome =
+        headless_reflection_outcome(agent_error.as_ref(), latest_turn.as_ref());
+    if let Err(error) = record_headless_continuity(
+        &ContinuityService::new(),
+        &workspace_path,
+        &session_id,
+        &prompt,
+        latest_turn.as_ref(),
+        continuity_outcome,
+        now_ms(),
+    ) {
+        crate::app_log!(
+            "WARN",
+            "[continuity] headless continuity record failed: {}",
+            error
+        );
+    }
     let after_snapshot = snapshot_workspace(&workspace_path)?;
     let (changed_files, file_diffs) = diff_workspace_snapshots(&before_snapshot, &after_snapshot);
     let final_answer = final_answer_from_events(&raw_events);
@@ -172,7 +261,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     });
     insert_agent_identity(&mut payload, &agent_provider, &agent_model);
 
-    if let Err(error) = run_result {
+    if let Some(error) = agent_error {
         insert_failure_fields(
             &mut payload,
             "agent_error",
@@ -223,6 +312,227 @@ impl EventEmitter for HeadlessEventEmitter {
         }
 
         self.collector.emit(event);
+    }
+}
+
+async fn send_headless_turn(
+    session: &crate::agent::session::AgentSession,
+    prompt: &str,
+    emitter: Arc<HeadlessEventEmitter>,
+) -> Result<(), String> {
+    let turn_guard = session.reserve_turn()?;
+    session
+        .send_message_with_shared_emitter(prompt, emitter, Vec::new(), None, None, turn_guard)
+        .await
+}
+
+fn headless_reflection_outcome(
+    agent_error: Option<&String>,
+    latest_turn: Option<&AgentTurnState>,
+) -> ReflectionOutcome {
+    if agent_error.is_some() {
+        return ReflectionOutcome::Failed;
+    }
+
+    let Some(turn) = latest_turn else {
+        return ReflectionOutcome::Failed;
+    };
+
+    if matches!(turn.status, AgentTurnStatus::Cancelled) {
+        return ReflectionOutcome::Cancelled;
+    }
+    if matches!(turn.status, AgentTurnStatus::Failed)
+        || matches!(
+            turn.verification.status,
+            AgentVerificationStatus::Failed | AgentVerificationStatus::Error
+        )
+    {
+        return ReflectionOutcome::Failed;
+    }
+
+    ReflectionOutcome::Completed
+}
+
+fn record_headless_continuity(
+    service: &ContinuityService,
+    project_path: &Path,
+    session_id: &str,
+    prompt: &str,
+    latest_turn: Option<&AgentTurnState>,
+    outcome: ReflectionOutcome,
+    timestamp_ms: u64,
+) -> Result<(), String> {
+    let project_path = project_path
+        .to_str()
+        .ok_or_else(|| "headless workspace path is not valid UTF-8".to_string())?;
+    service.record_event(
+        project_path,
+        &ContinuityEvent::UserMessage {
+            session_id: session_id.to_string(),
+            content: prompt.to_string(),
+            timestamp_ms,
+        },
+    )?;
+
+    let continuity_lessons = latest_turn
+        .map(continuity_lessons_from_turn)
+        .unwrap_or_default();
+    let episode = latest_turn.map(build_episode_from_turn);
+    service.record_event(
+        project_path,
+        &build_send_input_reflection_event(
+            session_id,
+            prompt,
+            outcome,
+            continuity_lessons,
+            episode,
+            timestamp_ms,
+        ),
+    )?;
+
+    if let Some(turn) = latest_turn {
+        for event in continuity_events_from_turn(turn) {
+            service.record_event(project_path, &event)?;
+        }
+    }
+
+    service.form_experiences_for_session(project_path, session_id, timestamp_ms)?;
+    Ok(())
+}
+
+fn validation_commands_from_task(task: Option<&EvalHeadlessTask>) -> Vec<String> {
+    let Some(task) = task else {
+        return Vec::new();
+    };
+    let commands = task
+        .validation_commands
+        .iter()
+        .map(|command| command.trim().to_string())
+        .filter(|command| !command.is_empty())
+        .collect::<Vec<_>>();
+    if !commands.is_empty() {
+        return commands;
+    }
+
+    task.verification_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+        .map(|command| vec![command.to_string()])
+        .unwrap_or_default()
+}
+
+fn max_repair_attempts_from_task(task: Option<&EvalHeadlessTask>) -> usize {
+    task.and_then(|task| task.max_repair_attempts)
+        .unwrap_or(HEADLESS_DEFAULT_REPAIR_ATTEMPTS)
+        .min(HEADLESS_MAX_REPAIR_ATTEMPTS)
+}
+
+async fn run_headless_validation_commands(
+    commands: &[String],
+    workspace_path: &Path,
+) -> Result<HeadlessValidationResult, String> {
+    let mut last_result = None;
+    for command in commands {
+        let result = run_headless_validation_command(command, workspace_path).await?;
+        if !result.passed() {
+            return Ok(result);
+        }
+        last_result = Some(result);
+    }
+
+    last_result.ok_or_else(|| "Forge headless validation has no commands.".to_string())
+}
+
+async fn run_headless_validation_command(
+    command: &str,
+    workspace_path: &Path,
+) -> Result<HeadlessValidationResult, String> {
+    let started = Instant::now();
+    let output = run_captured(
+        ProcessSpec::shell(command, workspace_path.to_path_buf()),
+        ProcessRunOptions {
+            timeout: Duration::from_secs(HEADLESS_VALIDATION_TIMEOUT_SECS),
+            cancel: None,
+            output_limit: HEADLESS_VALIDATION_OUTPUT_LIMIT,
+        },
+    )
+    .await?;
+    let duration_ms = started.elapsed().as_millis() as u64;
+    let status = if output.timed_out || output.cancelled {
+        AgentVerificationStatus::Error
+    } else if output.exit_code == Some(0) {
+        AgentVerificationStatus::Passed
+    } else {
+        AgentVerificationStatus::Failed
+    };
+
+    Ok(HeadlessValidationResult {
+        command: command.to_string(),
+        status,
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        duration_ms,
+    })
+}
+
+fn repair_prompt_from_validation_failure(
+    original_prompt: &str,
+    attempt: usize,
+    validation: &HeadlessValidationResult,
+) -> String {
+    let output = combined_validation_output(validation);
+    format!(
+        "The eval validation failed after attempt {attempt}. Continue in the same workspace and make the smallest fix needed.\n\nOriginal task:\n{original_prompt}\n\nFailed validation command:\n{command}\n\nExit code: {exit_code}\n\nValidation output:\n{output}\n\nAfter fixing, rerun the relevant check if needed. Do not change files outside the task scope.",
+        command = validation.command,
+        exit_code = validation
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+    )
+}
+
+fn validation_events(
+    session_id: &str,
+    block_id: &str,
+    validation: &HeadlessValidationResult,
+) -> Vec<StreamEvent> {
+    let mut events = vec![StreamEvent::ShellStart {
+        session_id: session_id.to_string(),
+        block_id: block_id.to_string(),
+        command: validation.command.clone(),
+    }];
+    let output = combined_validation_output(validation);
+    if !output.is_empty() {
+        events.push(StreamEvent::ShellOutput {
+            session_id: session_id.to_string(),
+            block_id: block_id.to_string(),
+            content: output,
+        });
+    }
+    events.push(StreamEvent::ShellEnd {
+        session_id: session_id.to_string(),
+        block_id: block_id.to_string(),
+        exit_code: validation.exit_code.unwrap_or(1),
+    });
+    events
+}
+
+fn combined_validation_output(validation: &HeadlessValidationResult) -> String {
+    [validation.stdout.trim_end(), validation.stderr.trim_end()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn optional_text(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
     }
 }
 
@@ -1133,6 +1443,77 @@ mod tests {
         assert_eq!(summary.model_rounds, 2);
     }
 
+    #[test]
+    fn validation_commands_prefer_case_commands_and_fall_back_to_verification_command() {
+        let task = EvalHeadlessTask {
+            id: Some("case-1".to_string()),
+            prompt: Some("Fix the code".to_string()),
+            validation_commands: vec!["npm test".to_string(), "npx tsc --noEmit".to_string()],
+            verification_command: Some("npm run check".to_string()),
+            max_repair_attempts: None,
+        };
+
+        assert_eq!(
+            validation_commands_from_task(Some(&task)),
+            vec!["npm test".to_string(), "npx tsc --noEmit".to_string()]
+        );
+
+        let fallback_task = EvalHeadlessTask {
+            id: Some("case-2".to_string()),
+            prompt: Some("Fix the code".to_string()),
+            validation_commands: Vec::new(),
+            verification_command: Some("npm run check".to_string()),
+            max_repair_attempts: None,
+        };
+
+        assert_eq!(
+            validation_commands_from_task(Some(&fallback_task)),
+            vec!["npm run check".to_string()]
+        );
+    }
+
+    #[test]
+    fn repair_prompt_includes_validation_failure_details_without_hiding_original_task() {
+        let validation = HeadlessValidationResult {
+            command: "npx tsc --noEmit".to_string(),
+            status: AgentVerificationStatus::Failed,
+            exit_code: Some(2),
+            stdout: String::new(),
+            stderr: "src/normalize.test.ts(3,32): error TS5097".to_string(),
+            duration_ms: 120,
+        };
+
+        let prompt =
+            repair_prompt_from_validation_failure("Add normalizeInput and tests.", 1, &validation);
+
+        assert!(prompt.contains("Add normalizeInput and tests."));
+        assert!(prompt.contains("npx tsc --noEmit"));
+        assert!(prompt.contains("TS5097"));
+        assert!(prompt.contains("attempt 1"));
+    }
+
+    #[test]
+    fn validation_result_events_are_visible_as_shell_outputs() {
+        let validation = HeadlessValidationResult {
+            command: "npm test".to_string(),
+            status: AgentVerificationStatus::Failed,
+            exit_code: Some(1),
+            stdout: "1 failed".to_string(),
+            stderr: "Expected true".to_string(),
+            duration_ms: 50,
+        };
+
+        let events = validation_events("session-1", "validation-1", &validation);
+        let summary = summarize_events(&events);
+
+        assert_eq!(summary.shell_outputs[0]["command"], "npm test");
+        assert_eq!(
+            summary.shell_outputs[0]["stdout"],
+            "1 failed\nExpected true"
+        );
+        assert_eq!(summary.shell_outputs[0]["exit_code"], 1);
+    }
+
     #[tokio::test]
     async fn headless_event_emitter_auto_resolves_confirm_requests() {
         let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
@@ -1274,6 +1655,81 @@ mod tests {
             std::fs::read_to_string(workspace.join("created.txt")).unwrap(),
             "created by headless test"
         );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn headless_continuity_records_turn_and_forms_experience() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-headless-continuity-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(workspace.join("src")).expect("workspace should be created");
+        let project_path = workspace.to_string_lossy().to_string();
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            project_path.clone(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Add normalizeInput and tests".to_string(),
+        );
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "edit_file".to_string(),
+            category: AgentToolCategory::Write,
+            status: AgentToolStatus::Completed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: Some("Edited src/normalize.ts".to_string()),
+            is_error: false,
+            affected_files: vec!["src/normalize.ts".to_string()],
+            command: None,
+        });
+        turn.verification.status = AgentVerificationStatus::Passed;
+        turn.verification.command = Some("npm test && npx tsc --noEmit".to_string());
+        turn.verification.exit_code = Some(0);
+        turn.verification.stdout_preview = Some("tests passed".to_string());
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let service = crate::continuity::ContinuityService::new();
+        record_headless_continuity(
+            &service,
+            &workspace,
+            "session-1",
+            "Add normalizeInput and tests",
+            Some(&turn),
+            crate::continuity::ReflectionOutcome::Completed,
+            42,
+        )
+        .expect("headless continuity should record");
+
+        let db_path = workspace.join(".forge").join("continuity.db");
+        let conn = rusqlite::Connection::open(&db_path).expect("continuity db should open");
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM continuity_events", [], |row| {
+                row.get(0)
+            })
+            .expect("event count should query");
+        let formed_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM continuity_formed_reflections",
+                [],
+                |row| row.get(0),
+            )
+            .expect("formed count should query");
+        let experience_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM continuity_experiences", [], |row| {
+                row.get(0)
+            })
+            .expect("experience count should query");
+
+        assert!(event_count >= 5, "expected turn events, got {event_count}");
+        assert_eq!(formed_count, 1);
+        assert!(experience_count >= 1, "expected formed experience");
+
         let _ = std::fs::remove_dir_all(workspace);
     }
 

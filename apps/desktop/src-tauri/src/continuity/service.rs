@@ -54,18 +54,18 @@ impl ContinuityService {
         now_ms: u64,
     ) -> Result<Vec<ExperienceMemory>, String> {
         let store = self.store_for_project(project_path)?;
-        let events = store.list_events_for_session(project_path, session_id)?;
+        let reflections = store.list_unformed_reflections_for_session(project_path, session_id)?;
         let mut candidates = Vec::new();
-        for event in events {
-            if let ContinuityEvent::Reflection(reflection) = event {
-                candidates.extend(form_experiences_from_reflection(
-                    &reflection,
-                    Some(project_path),
-                    now_ms,
-                ));
-            }
+        for reflection in &reflections {
+            candidates.extend(form_experiences_from_reflection(
+                reflection,
+                Some(project_path),
+                now_ms,
+            ));
         }
-        store.upsert_experiences(&candidates)
+        let inserted = store.upsert_experiences(&candidates)?;
+        store.mark_reflections_formed(project_path, &reflections)?;
+        Ok(inserted)
     }
 
     pub fn list_experiences_for_project(

@@ -445,6 +445,72 @@ fn service_forms_and_persists_experiences_from_recorded_reflections() {
 }
 
 #[test]
+fn service_does_not_replay_deleted_candidates_from_processed_reflections() {
+    let project = temp_project_path("service-no-replay-deleted");
+    let service = ContinuityService::new();
+    let project_path = project.to_string_lossy().to_string();
+    let stale_reflection = reflection_with_lessons(vec![
+        "Persisted deletion of low-value candidates should prevent old reflections from forming again.",
+    ]);
+
+    service
+        .record_event(
+            &project_path,
+            &ContinuityEvent::Reflection(stale_reflection),
+        )
+        .expect("record stale reflection");
+    let formed = service
+        .form_experiences_for_session(&project_path, "session-1", 100)
+        .expect("form stale experience");
+    assert_eq!(formed.len(), 1);
+
+    let db_path = project.join(".forge").join("continuity.db");
+    let conn = Connection::open(&db_path).expect("open continuity db for manual cleanup");
+    conn.execute(
+        "DELETE FROM continuity_experiences WHERE id = ?1",
+        params![formed[0].id],
+    )
+    .expect("delete stale experience");
+    conn.execute(
+        "DELETE FROM continuity_experiences_fts WHERE id = ?1",
+        params![formed[0].id],
+    )
+    .expect("delete stale experience index");
+    drop(conn);
+
+    let mut fresh_reflection = reflection_with_lessons(vec![
+        "Only the new status-prefix search experience should be formed after cleanup.",
+    ]);
+    fresh_reflection.timestamp_ms += 1_000;
+    service
+        .record_event(
+            &project_path,
+            &ContinuityEvent::Reflection(fresh_reflection),
+        )
+        .expect("record fresh reflection");
+
+    let formed_after_cleanup = service
+        .form_experiences_for_session(&project_path, "session-1", 200)
+        .expect("form after cleanup");
+    let stored = service
+        .list_experiences_for_project(&project_path)
+        .expect("list experiences");
+
+    assert_eq!(
+        formed_after_cleanup.len(),
+        1,
+        "old processed reflections should not be replayed after candidate cleanup"
+    );
+    assert_eq!(stored.len(), 1);
+    assert_eq!(
+        stored[0].body,
+        "Only the new status-prefix search experience should be formed after cleanup."
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
 fn service_searches_project_experiences_by_query_terms() {
     let project = temp_project_path("service-search");
     let service = ContinuityService::new();

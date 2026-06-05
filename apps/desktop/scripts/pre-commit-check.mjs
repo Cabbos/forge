@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 const BLOCKED_PREFIXES = [
   "test-results/",
   "playwright-report/",
+  "artifacts/",
   "dist/",
   "src-tauri/target/",
   ".forge/",
