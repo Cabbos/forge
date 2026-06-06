@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "continuity-pipeline-priority-labels",
+    "title": "Continuity pipeline: task priority labels",
+    "prompt": "在当前 TypeScript 项目中新增任务优先级工具。新增 src/priority.ts，导出类型 TaskPriority = \"low\" | \"medium\" | \"high\"，导出 parsePriority(input: string): TaskPriority | undefined 和 priorityLabel(priority: TaskPriority): string。parsePriority 需要支持 low/medium/high、p1/p2/p3、中文 高/中/低，大小写和首尾空格不敏感；未知值返回 undefined。priorityLabel 返回 低优先级/中优先级/高优先级。新增 src/priority.test.ts，覆盖英文、p1/p2/p3、中文、大小写、空白、未知值和 label。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/storage.ts",
+      "src/tasks.tsx"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [],
+    "post_validation_commands": [
+      "npm test",
+      "npx tsc --noEmit",
+      "python3 scripts/assert-continuity.py --min-experiences 1 --max-dirty-candidates 0 --require-formed-reflections --require-fts-match --require-event user_message --require-event reflection --require-event tool_execution --require-event file_change --require-experience-text src/priority.ts --require-shell-success-clean --max-evidence-duplicates 0"
+    ],
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/priority.ts",
+      "src/priority.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "max_duration_seconds": 900,
+    "tags": [
+      "continuity-pipeline",
+      "typescript",
+      "priority",
+      "sqlite-assertions"
+    ]
+  }
+}

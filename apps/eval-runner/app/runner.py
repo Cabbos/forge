@@ -1,6 +1,7 @@
 import json
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -310,6 +311,13 @@ class ForgeAgentRunner:
                 duration_ms=last_validation.duration_ms,
             )
         changed_files = list(payload.get("changed_files") or [diff.path for diff in file_diffs])
+        raw_events = list(payload.get("raw_events", []))
+        headless_continuity_diagnostic = headless_continuity_diagnostic_from_payload(payload)
+        if headless_continuity_diagnostic is not None:
+            raw_events.append(headless_continuity_diagnostic)
+        continuity_diagnostic = continuity_db_diagnostic(workspace)
+        if continuity_diagnostic is not None:
+            raw_events.append(continuity_diagnostic)
         scope_violations = scope_violations_for(task, changed_files)
         failure_category = normalize_failure_category(
             payload.get("failure_category", FailureCategory.NONE)
@@ -347,7 +355,7 @@ class ForgeAgentRunner:
             model=self.model,
             provider=self.provider,
             context_files=task.context_files,
-            raw_events=payload.get("raw_events", []),
+            raw_events=raw_events,
             tool_calls=tool_calls,
             shell_outputs=shell_outputs,
             file_diffs=file_diffs,
@@ -504,6 +512,133 @@ def prepare_workspace(task: EvaluationTask, temp_dir: Path) -> Path:
 
     shutil.copytree(fixture, workspace)
     return workspace
+
+
+def continuity_db_diagnostic(workspace: Path) -> dict[str, Any] | None:
+    db_path = workspace / ".forge" / "continuity.db"
+    if not db_path.exists():
+        return None
+
+    diagnostic: dict[str, Any] = {
+        "event_type": "eval_continuity_db_diagnostic",
+        "exists": True,
+        "db_path": ".forge/continuity.db",
+    }
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            diagnostic["event_counts"] = continuity_event_counts(conn)
+            diagnostic["experience_count"] = count_table_rows(
+                conn, "continuity_experiences"
+            )
+            diagnostic["fts_count"] = count_table_rows(
+                conn, "continuity_experiences_fts"
+            )
+            diagnostic["formed_reflection_count"] = count_table_rows(
+                conn, "continuity_formed_reflections"
+            )
+            diagnostic["reflection_episodes"] = continuity_reflection_episodes(conn)
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        diagnostic["error"] = str(exc)
+    return diagnostic
+
+
+def headless_continuity_diagnostic_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    formed_count = payload.get("headless_continuity_formed_count")
+    error = payload.get("headless_continuity_error")
+    if formed_count is None and error is None:
+        return None
+    return {
+        "event_type": "eval_headless_continuity_diagnostic",
+        "formed_count": formed_count,
+        "error": error,
+    }
+
+
+def continuity_event_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    if not sqlite_table_exists(conn, "continuity_events"):
+        return {}
+    rows = conn.execute(
+        "SELECT event_type, COUNT(*) FROM continuity_events GROUP BY event_type"
+    ).fetchall()
+    return {str(event_type): int(count) for event_type, count in rows}
+
+
+def continuity_reflection_episodes(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    if not sqlite_table_exists(conn, "continuity_events"):
+        return []
+    rows = conn.execute(
+        "SELECT event_json FROM continuity_events "
+        "WHERE event_type = 'reflection' LIMIT 5"
+    ).fetchall()
+    episodes: list[dict[str, Any]] = []
+    for (event_json,) in rows:
+        try:
+            payload = json.loads(event_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        reflection = payload.get("reflection") if isinstance(payload, dict) else None
+        if not isinstance(reflection, dict):
+            continue
+        episode = reflection.get("episode")
+        if not isinstance(episode, dict):
+            episodes.append({"has_episode": False})
+            continue
+        episodes.append(
+            {
+                "user_goal_summary": episode.get("user_goal_summary"),
+                "changed_files": list(episode.get("changed_files") or []),
+                "file_changes_count": len(episode.get("file_changes") or []),
+                "file_changes": [
+                    {
+                        "path": change.get("path"),
+                        "operation": change.get("operation"),
+                        "tool_name": change.get("tool_name"),
+                    }
+                    for change in (episode.get("file_changes") or [])[:5]
+                    if isinstance(change, dict)
+                ],
+                "tool_count": int(episode.get("tool_count") or 0),
+                "failed_tools": int(episode.get("failed_tools") or 0),
+                "notable_failures": [
+                    {
+                        "tool_name": failure.get("tool_name"),
+                        "command": failure.get("command"),
+                        "summary": text_preview(failure.get("summary"), 300),
+                    }
+                    for failure in (episode.get("notable_failures") or [])[:5]
+                    if isinstance(failure, dict)
+                ],
+                "outcome": episode.get("outcome"),
+                "verification_status": episode.get("verification_status"),
+            }
+        )
+    return episodes
+
+
+def text_preview(value: Any, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}..."
+
+
+def count_table_rows(conn: sqlite3.Connection, table: str) -> int | None:
+    if not sqlite_table_exists(conn, table):
+        return None
+    return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+
+def sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return bool(row and row[0])
 
 
 def run_setup_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutput]:

@@ -249,6 +249,8 @@ json.dump(
             "duration_ms": 120,
         },
         "final_answer": "Done.",
+        "headless_continuity_formed_count": 1,
+        "headless_continuity_error": None,
     },
     sys.stdout,
 )
@@ -328,12 +330,39 @@ def test_forge_runner_executes_post_validation_commands_after_headless_validatio
         """
 import json
 import pathlib
+import sqlite3
 import sys
 
 payload = json.loads(sys.stdin.read())
 workspace = pathlib.Path(payload["workspace_path"])
 (workspace / ".forge").mkdir(exist_ok=True)
-(workspace / ".forge" / "continuity.db").write_text("fake db")
+db_path = workspace / ".forge" / "continuity.db"
+conn = sqlite3.connect(db_path)
+conn.execute("CREATE TABLE continuity_events (event_type TEXT NOT NULL, event_json TEXT NOT NULL)")
+conn.execute("CREATE TABLE continuity_experiences (id TEXT PRIMARY KEY)")
+conn.execute("CREATE TABLE continuity_formed_reflections (session_id TEXT)")
+conn.execute(
+    "INSERT INTO continuity_events (event_type, event_json) VALUES (?, ?)",
+    (
+        "reflection",
+        json.dumps(
+            {
+                "reflection": {
+                    "session_id": "session-1",
+                    "episode": {
+                        "changed_files": ["src/app.py"],
+                        "tool_count": 2,
+                        "failed_tools": 0,
+                    },
+                }
+            }
+        ),
+    ),
+)
+conn.execute("INSERT INTO continuity_experiences (id) VALUES ('experience-1')")
+conn.execute("INSERT INTO continuity_formed_reflections (session_id) VALUES ('session-1')")
+conn.commit()
+conn.close()
 json.dump(
     {
         "changed_files": ["src/app.py"],
@@ -346,6 +375,8 @@ json.dump(
             "duration_ms": 120,
         },
         "final_answer": "Done.",
+        "headless_continuity_formed_count": 1,
+        "headless_continuity_error": None,
     },
     sys.stdout,
 )
@@ -380,6 +411,35 @@ json.dump(
         post_command,
     ]
     assert trace.shell_outputs[-1].stdout == "continuity ok\n"
+    headless_diagnostic = next(
+        event
+        for event in trace.raw_events
+        if event["event_type"] == "eval_headless_continuity_diagnostic"
+    )
+    assert headless_diagnostic["formed_count"] == 1
+    assert headless_diagnostic["error"] is None
+    diagnostic = next(
+        event
+        for event in trace.raw_events
+        if event["event_type"] == "eval_continuity_db_diagnostic"
+    )
+    assert diagnostic["exists"] is True
+    assert diagnostic["event_counts"] == {"reflection": 1}
+    assert diagnostic["experience_count"] == 1
+    assert diagnostic["formed_reflection_count"] == 1
+    assert diagnostic["reflection_episodes"] == [
+        {
+            "user_goal_summary": None,
+            "changed_files": ["src/app.py"],
+            "file_changes_count": 0,
+            "file_changes": [],
+            "tool_count": 2,
+            "failed_tools": 0,
+            "notable_failures": [],
+            "outcome": None,
+            "verification_status": None,
+        }
+    ]
 
 
 def test_forge_runner_reports_first_failed_validation_command(tmp_path: Path) -> None:

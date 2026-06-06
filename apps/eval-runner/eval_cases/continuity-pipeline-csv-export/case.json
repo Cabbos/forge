@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "continuity-pipeline-csv-export",
+    "title": "Continuity pipeline: CSV export",
+    "prompt": "在当前 TypeScript 项目中新增任务 CSV 导出工具。新增 src/export.ts，从 src/storage.ts 导入 Task，导出 exportTasksCsv(tasks: Task[]): string。第一行固定为 id,title,status,createdAt；每个任务一行；字段如果包含逗号、双引号或换行，需要用双引号包裹，内部双引号转义为两个双引号；空列表只返回表头。新增 src/export.test.ts，覆盖空列表、单任务、多任务、逗号、双引号、换行、中文标题。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/storage.ts",
+      "src/tasks.tsx"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [],
+    "post_validation_commands": [
+      "npm test",
+      "npx tsc --noEmit",
+      "python3 scripts/assert-continuity.py --min-experiences 1 --max-dirty-candidates 0 --require-formed-reflections --require-fts-match --require-event user_message --require-event reflection --require-event tool_execution --require-event file_change --require-experience-text src/export.ts --require-shell-success-clean --max-evidence-duplicates 0"
+    ],
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/export.ts",
+      "src/export.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "max_duration_seconds": 900,
+    "tags": [
+      "continuity-pipeline",
+      "typescript",
+      "export",
+      "sqlite-assertions"
+    ]
+  }
+}
