@@ -178,7 +178,8 @@ impl ExperienceCompiler {
 
 #[cfg(test)]
 mod tests {
-    use super::super::episode::build_episode_from_turn;
+    use super::super::episode::{build_episode_from_turn, FileChangeRecord};
+    use super::super::experience_lesson_reject_reason;
     use super::*;
     use crate::agent::turn_state::{
         AgentToolCategory, AgentToolStatus, AgentToolTrace, AgentTurnState, AgentTurnStatus,
@@ -584,6 +585,364 @@ mod tests {
         assert!(
             !joined.contains("old_string not found"),
             "recovered edit miss should not be recorded as reusable experience: {joined}"
+        );
+    }
+
+    #[test]
+    fn compiler_keeps_pre_summarized_eval_prompt_constraints() {
+        let workspace =
+            "/var/folders/23/kzpccc795dd3vk7c72qhscfw0000gn/T/forge-eval-task/workspace";
+        let prompt = "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts，从 src/storage.ts 导入 Task，导出类型 TaskSummary = { total: number; todo: number; doing: number; done: number; active: number }，并导出 summarizeTasks(tasks: Task[]): TaskSummary。active 等于 todo + doing。新增 src/task-summary.test.ts，覆盖空列表、只有 todo、混合状态、active 计算、不会改变输入数组。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。";
+        let episode = Episode {
+            project_path: Some(workspace.to_string()),
+            session_id: "session-1".to_string(),
+            user_goal_summary: prompt.to_string(),
+            changed_files: vec![
+                format!("{workspace}/package.json"),
+                format!("{workspace}/src/task-summary.test.ts"),
+                format!("{workspace}/src/task-summary.ts"),
+            ],
+            tool_count: 22,
+            failed_tools: 4,
+            file_changes: vec![
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.test.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/package.json"),
+                    operation: "modified".to_string(),
+                    tool_name: "edit_file".to_string(),
+                },
+            ],
+            verification_status: AgentVerificationStatus::Passed,
+            verification_command: Some("npx tsc --noEmit".to_string()),
+            verification_summary: Some("passed; cmd=npx tsc --noEmit; exit=0".to_string()),
+            outcome: ReflectionOutcome::Completed,
+            evidence_event_ids: vec!["write-impl".to_string(), "tsc".to_string()],
+            notable_failures: vec![],
+            final_result_summary: Some("3 file(s) changed".to_string()),
+            timestamp_ms: 1_778_688_000_000,
+        };
+        let body =
+            formatters::format_structured_body(&episode, formatters::StructuredBodyMode::Primary);
+
+        assert!(
+            !should_reject_experience_lesson(&body),
+            "structured eval body should not be rejected: {body}"
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some(workspace), 42);
+        assert!(
+            !experiences.is_empty(),
+            "structured eval episode should produce candidates; body={body}"
+        );
+    }
+
+    #[test]
+    fn compiler_keeps_truncated_eval_goal_summary() {
+        let workspace =
+            "/var/folders/23/kzpccc795dd3vk7c72qhscfw0000gn/T/forge-eval-continuity-pipeline-task-summary-0ccz9xhz/workspace";
+        let goal = "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts，从 src/storage.ts 导入 Task，导出类型 TaskSummary = { total: number; todo: number; doing: number; done: number; active: number }，并导出 summarizeTasks(tasks: T...";
+        let episode = Episode {
+            project_path: Some(workspace.to_string()),
+            session_id: "session-1".to_string(),
+            user_goal_summary: goal.to_string(),
+            changed_files: vec![
+                format!("{workspace}/package.json"),
+                format!("{workspace}/src/task-summary.test.ts"),
+                format!("{workspace}/src/task-summary.ts"),
+            ],
+            tool_count: 15,
+            failed_tools: 0,
+            file_changes: vec![
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.test.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/package.json"),
+                    operation: "modified".to_string(),
+                    tool_name: "edit_file".to_string(),
+                },
+            ],
+            verification_status: AgentVerificationStatus::Passed,
+            verification_command: Some("npx tsc --noEmit".to_string()),
+            verification_summary: Some("passed; cmd=npx tsc --noEmit; exit=0".to_string()),
+            outcome: ReflectionOutcome::Completed,
+            evidence_event_ids: vec!["write-impl".to_string(), "tsc".to_string()],
+            notable_failures: vec![],
+            final_result_summary: Some("3 file(s) changed".to_string()),
+            timestamp_ms: 1_778_688_000_000,
+        };
+        let body =
+            formatters::format_structured_body(&episode, formatters::StructuredBodyMode::Primary);
+
+        assert!(
+            !should_reject_experience_lesson(&body),
+            "truncated eval body should not be rejected; reason={:?}; body={body}",
+            experience_lesson_reject_reason(&body)
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some(workspace), 42);
+        assert!(
+            !experiences.is_empty(),
+            "truncated eval episode should produce candidates; body={body}"
+        );
+    }
+
+    #[test]
+    fn compiler_keeps_verified_success_even_when_prompt_ends_with_forbidden_files() {
+        let episode = make_episode(
+            "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts，从 src/storage.ts 导入 Task，导出类型 TaskSummary = { total: number; todo: number; doing: number; done: number; active: number }，并导出 summarizeTasks(tasks: Task[]): TaskSummary。active 等于 todo + doing。新增 src/task-summary.test.ts，覆盖空列表、只有 todo、混合状态、active 计算、不会改变输入数组。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。",
+            vec!["package.json", "src/task-summary.ts", "src/task-summary.test.ts"],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "write-impl".to_string(),
+                    name: "write_to_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: Some("File written: src/task-summary.ts".to_string()),
+                    is_error: false,
+                    affected_files: vec!["src/task-summary.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "write-test".to_string(),
+                    name: "write_to_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: Some("File written: src/task-summary.test.ts".to_string()),
+                    is_error: false,
+                    affected_files: vec!["src/task-summary.test.ts".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "edit-package".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 30,
+                    ended_at_ms: Some(40),
+                    result_summary: Some("File edited: package.json".to_string()),
+                    is_error: false,
+                    affected_files: vec!["package.json".to_string()],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "npm-test".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 40,
+                    ended_at_ms: Some(50),
+                    result_summary: Some("Exit code: 0 Stdout: 5 pass 0 fail".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npm test".to_string()),
+                },
+                AgentToolTrace {
+                    tool_call_id: "tsc".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 50,
+                    ended_at_ms: Some(60),
+                    result_summary: Some("Exit code: 0".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npx tsc --noEmit".to_string()),
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::Passed,
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some("/repo"), 42);
+        assert!(
+            !experiences.is_empty(),
+            "verified task-summary change should produce at least one candidate"
+        );
+
+        let joined = experiences
+            .iter()
+            .map(|experience| experience.body.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("src/task-summary.ts"),
+            "candidate should keep the implemented file as evidence: {joined}"
+        );
+    }
+
+    #[test]
+    fn compiler_keeps_workflow_candidate_when_sensitive_hook_failure_is_recovered() {
+        let workspace =
+            "/var/folders/23/kzpccc795dd3vk7c72qhscfw0000gn/T/forge-eval-task/workspace";
+        let episode = make_episode(
+            "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts 和 src/task-summary.test.ts，更新 package.json 的 test script。最后确认 npm test 和 npx tsc --noEmit 都通过。",
+            vec![],
+            vec![
+                AgentToolTrace {
+                    tool_call_id: "write-impl".to_string(),
+                    name: "write_to_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 10,
+                    ended_at_ms: Some(20),
+                    result_summary: Some("File written: src/task-summary.ts".to_string()),
+                    is_error: false,
+                    affected_files: vec![format!("{workspace}/src/task-summary.ts")],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "write-test".to_string(),
+                    name: "write_to_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 20,
+                    ended_at_ms: Some(30),
+                    result_summary: Some("File written: src/task-summary.test.ts".to_string()),
+                    is_error: false,
+                    affected_files: vec![format!("{workspace}/src/task-summary.test.ts")],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "edit-package".to_string(),
+                    name: "edit_file".to_string(),
+                    category: AgentToolCategory::Write,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 30,
+                    ended_at_ms: Some(40),
+                    result_summary: Some("File edited: package.json".to_string()),
+                    is_error: false,
+                    affected_files: vec![format!("{workspace}/package.json")],
+                    command: None,
+                },
+                AgentToolTrace {
+                    tool_call_id: "blocked-shell".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Failed,
+                    started_at_ms: 40,
+                    ended_at_ms: Some(45),
+                    result_summary: Some(
+                        "Tool execution blocked by hook: 已阻止：工具输入中疑似包含敏感信息，请移除密钥、令牌或私钥后再继续。"
+                            .to_string(),
+                    ),
+                    is_error: true,
+                    affected_files: vec![],
+                    command: Some("npm test && npx tsc --noEmit".to_string()),
+                },
+                AgentToolTrace {
+                    tool_call_id: "npm-test".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 50,
+                    ended_at_ms: Some(60),
+                    result_summary: Some("Exit code: 0 Stdout: 5 pass 0 fail".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npm test".to_string()),
+                },
+                AgentToolTrace {
+                    tool_call_id: "tsc".to_string(),
+                    name: "run_shell".to_string(),
+                    category: AgentToolCategory::Shell,
+                    status: AgentToolStatus::Completed,
+                    started_at_ms: 60,
+                    ended_at_ms: Some(70),
+                    result_summary: Some("Exit code: 0".to_string()),
+                    is_error: false,
+                    affected_files: vec![],
+                    command: Some("npx tsc --noEmit".to_string()),
+                },
+            ],
+            ReflectionOutcome::Completed,
+            AgentVerificationStatus::Passed,
+        );
+
+        let experiences = ExperienceCompiler::compile(&episode, Some("/repo"), 42);
+        assert!(
+            !experiences.is_empty(),
+            "a recovered sensitive-hook failure must not erase all verified change candidates"
+        );
+        assert!(
+            experiences
+                .iter()
+                .any(|experience| experience.body.contains("src/task-summary.ts")),
+            "candidate should retain changed-file evidence: {experiences:?}"
+        );
+    }
+
+    #[test]
+    fn compiler_keeps_truncated_typescript_goal_with_absolute_paths() {
+        let workspace =
+            "/var/folders/23/kzpccc795dd3vk7c72qhscfw0000gn/T/forge-eval-task/workspace";
+        let episode = Episode {
+            project_path: Some(workspace.to_string()),
+            session_id: "session-1".to_string(),
+            user_goal_summary: "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts，从 src/storage.ts 导入 Task，导出类型 TaskSummary = { total: number; todo: number; doing: number; done: number; active: number }，并导出 summarizeTasks(tasks: T...".to_string(),
+            changed_files: vec![
+                format!("{workspace}/package.json"),
+                format!("{workspace}/src/task-summary.test.ts"),
+                format!("{workspace}/src/task-summary.ts"),
+            ],
+            tool_count: 13,
+            failed_tools: 0,
+            file_changes: vec![
+                super::super::episode::FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                super::super::episode::FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.test.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                super::super::episode::FileChangeRecord {
+                    path: format!("{workspace}/package.json"),
+                    operation: "modified".to_string(),
+                    tool_name: "edit_file".to_string(),
+                },
+            ],
+            verification_status: AgentVerificationStatus::Passed,
+            verification_command: Some("npx tsc --noEmit".to_string()),
+            verification_summary: Some("passed; cmd=npx tsc --noEmit; exit=0".to_string()),
+            outcome: ReflectionOutcome::Completed,
+            evidence_event_ids: vec!["write-impl".to_string(), "tsc".to_string()],
+            notable_failures: vec![],
+            final_result_summary: Some("3 file(s) changed".to_string()),
+            timestamp_ms: 1_778_688_000_000,
+        };
+
+        let experiences = ExperienceCompiler::compile(&episode, Some(workspace), 42);
+        assert!(
+            !experiences.is_empty(),
+            "truncated TypeScript goal with absolute paths should still form"
+        );
+        assert!(
+            experiences[0].body.contains("src/task-summary.ts"),
+            "body should keep changed file evidence: {}",
+            experiences[0].body
         );
     }
 

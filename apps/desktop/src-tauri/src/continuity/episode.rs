@@ -234,6 +234,14 @@ fn tool_is_actionable_failure(
         return false;
     }
 
+    if suppress_resolved_verification_failures && is_recoverable_hook_block_failure(tool) {
+        return false;
+    }
+
+    if suppress_resolved_verification_failures && is_recoverable_read_only_probe_failure(tool) {
+        return false;
+    }
+
     true
 }
 
@@ -264,6 +272,42 @@ fn is_recoverable_edit_failure(tool: &AgentToolTrace) -> bool {
     summary.contains("old_string not found")
         || summary.contains("old string not found")
         || summary.contains("string to replace not found")
+}
+
+fn is_recoverable_hook_block_failure(tool: &AgentToolTrace) -> bool {
+    let summary = tool
+        .result_summary
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase();
+
+    summary.contains("tool execution blocked by hook")
+        && (summary.contains("敏感信息")
+            || summary.contains("密钥")
+            || summary.contains("令牌")
+            || summary.contains("私钥")
+            || summary.contains("sensitive"))
+}
+
+fn is_recoverable_read_only_probe_failure(tool: &AgentToolTrace) -> bool {
+    if !matches!(tool.category, AgentToolCategory::Shell) {
+        return false;
+    }
+    let Some(command) = tool.command.as_deref() else {
+        return false;
+    };
+    let lower = command.to_lowercase();
+    [
+        "cat", "grep", "head", "tail", "ls", "find", "pwd", "realpath", "wc", "which",
+    ]
+    .iter()
+    .any(|word| shell_command_contains_word(&lower, word))
+}
+
+fn shell_command_contains_word(command: &str, word: &str) -> bool {
+    command
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+        .any(|part| part == word)
 }
 
 fn build_verification_summary(
@@ -738,6 +782,136 @@ mod tests {
             episode.file_changes.len(),
             2,
             "failed edit attempt must not be recorded as a file change"
+        );
+    }
+
+    #[test]
+    fn episode_suppresses_recovered_hook_block_after_final_success() {
+        let mut turn = test_turn_with_tools(vec![
+            AgentToolTrace {
+                tool_call_id: "write-impl".to_string(),
+                name: "write_to_file".to_string(),
+                category: AgentToolCategory::Write,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 10,
+                ended_at_ms: Some(20),
+                result_summary: Some("File written: src/task-summary.ts".to_string()),
+                is_error: false,
+                affected_files: vec!["src/task-summary.ts".to_string()],
+                command: None,
+            },
+            AgentToolTrace {
+                tool_call_id: "hook-block".to_string(),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Failed,
+                started_at_ms: 20,
+                ended_at_ms: Some(30),
+                result_summary: Some(
+                    "Tool execution blocked by hook: 已阻止：工具输入中疑似包含敏感信息，请移除密钥、令牌或私钥后再继续。"
+                        .to_string(),
+                ),
+                is_error: true,
+                affected_files: Vec::new(),
+                command: Some("cat package.json".to_string()),
+            },
+            AgentToolTrace {
+                tool_call_id: "verify".to_string(),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 30,
+                ended_at_ms: Some(40),
+                result_summary: Some("Exit code: 0 Stdout: EXIT CODE: 0".to_string()),
+                is_error: false,
+                affected_files: Vec::new(),
+                command: Some("npx tsc --noEmit 2>&1; echo \"EXIT CODE: $?\"".to_string()),
+            },
+        ]);
+        turn.verification = crate::agent::turn_state::AgentVerificationTrace {
+            status: AgentVerificationStatus::Passed,
+            command: Some("npx tsc --noEmit".to_string()),
+            exit_code: Some(0),
+            stdout_preview: Some("EXIT CODE: 0".to_string()),
+            stderr_preview: None,
+            duration_ms: Some(1000),
+            completed_at_ms: Some(40),
+        };
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let episode = build_episode_from_turn(&turn);
+
+        assert_eq!(episode.verification_status, AgentVerificationStatus::Passed);
+        assert_eq!(episode.failed_tools, 0);
+        assert!(
+            episode.notable_failures.is_empty(),
+            "recovered hook block should not become a notable failure: {:?}",
+            episode.notable_failures
+        );
+    }
+
+    #[test]
+    fn episode_suppresses_recovered_read_only_probe_after_final_success() {
+        let mut turn = test_turn_with_tools(vec![
+            AgentToolTrace {
+                tool_call_id: "write-impl".to_string(),
+                name: "write_to_file".to_string(),
+                category: AgentToolCategory::Write,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 10,
+                ended_at_ms: Some(20),
+                result_summary: Some("File written: src/task-summary.ts".to_string()),
+                is_error: false,
+                affected_files: vec!["src/task-summary.ts".to_string()],
+                command: None,
+            },
+            AgentToolTrace {
+                tool_call_id: "probe".to_string(),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Failed,
+                started_at_ms: 20,
+                ended_at_ms: Some(30),
+                result_summary: Some(
+                    "Exit code: -1 Stdout: Stderr: ls: .bin/: No such file or directory"
+                        .to_string(),
+                ),
+                is_error: true,
+                affected_files: Vec::new(),
+                command: Some("ls .bin/".to_string()),
+            },
+            AgentToolTrace {
+                tool_call_id: "verify".to_string(),
+                name: "run_shell".to_string(),
+                category: AgentToolCategory::Shell,
+                status: AgentToolStatus::Completed,
+                started_at_ms: 30,
+                ended_at_ms: Some(40),
+                result_summary: Some("Exit code: 0 Stdout: EXIT CODE: 0".to_string()),
+                is_error: false,
+                affected_files: Vec::new(),
+                command: Some("npx tsc --noEmit 2>&1; echo \"EXIT CODE: $?\"".to_string()),
+            },
+        ]);
+        turn.verification = crate::agent::turn_state::AgentVerificationTrace {
+            status: AgentVerificationStatus::Passed,
+            command: Some("npx tsc --noEmit".to_string()),
+            exit_code: Some(0),
+            stdout_preview: Some("EXIT CODE: 0".to_string()),
+            stderr_preview: None,
+            duration_ms: Some(1000),
+            completed_at_ms: Some(40),
+        };
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let episode = build_episode_from_turn(&turn);
+
+        assert_eq!(episode.verification_status, AgentVerificationStatus::Passed);
+        assert_eq!(episode.failed_tools, 0);
+        assert!(
+            episode.notable_failures.is_empty(),
+            "recovered read-only probe should not become a notable failure: {:?}",
+            episode.notable_failures
         );
     }
 

@@ -215,14 +215,14 @@ fn clean_goal_summary(summary: &str) -> String {
         }
     }
 
-    let mut candidates = normalized
+    let candidates = normalized
         .split(['。', '；', ';', '\n'])
         .map(clean_goal_fragment)
         .filter(|part| !part.is_empty())
         .filter(|part| !looks_like_prompt_context(part))
         .collect::<Vec<_>>();
 
-    if let Some(candidate) = candidates.pop() {
+    if let Some(candidate) = candidates.into_iter().next() {
         return candidate;
     }
 
@@ -275,6 +275,9 @@ fn looks_like_prompt_context(value: &str) -> bool {
         "验证本地",
         "完整闭环",
         "观察候选",
+        "不要修改",
+        "do not modify",
+        "forbidden",
     ]
     .iter()
     .any(|marker| lower.contains(&marker.to_lowercase()))

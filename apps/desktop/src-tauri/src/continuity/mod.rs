@@ -238,12 +238,29 @@ pub fn form_continuity_experience_context(experiences: &[ExperienceMemory]) -> O
 
 pub(crate) fn should_reject_experience_lesson(body: &str) -> bool {
     let body = normalize_text(body);
-    body.is_empty()
-        || should_reject_persistent_memory(&body)
-        || is_prompt_echo_question(&body)
-        || is_low_value_continuation(&body)
-        || looks_like_raw_user_prompt(&body)
-        || is_too_short_for_lesson(&body)
+    experience_lesson_reject_reason(&body).is_some()
+}
+
+pub(crate) fn experience_lesson_reject_reason(body: &str) -> Option<&'static str> {
+    if body.is_empty() {
+        return Some("empty");
+    }
+    if should_reject_persistent_memory(body) {
+        return Some("persistent_memory_risk");
+    }
+    if is_prompt_echo_question(body) {
+        return Some("prompt_echo_question");
+    }
+    if is_low_value_continuation(body) {
+        return Some("low_value_continuation");
+    }
+    if looks_like_raw_user_prompt(body) {
+        return Some("raw_user_prompt");
+    }
+    if is_too_short_for_lesson(body) {
+        return Some("too_short");
+    }
+    None
 }
 
 fn is_too_short_for_lesson(body: &str) -> bool {

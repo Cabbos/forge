@@ -105,6 +105,8 @@ pub struct TracePayloadInput {
     pub changed_files: Vec<String>,
     pub final_answer: String,
     pub duration_ms: u64,
+    pub continuity_formed_count: Option<usize>,
+    pub continuity_error: Option<String>,
 }
 
 pub async fn run_stdin_json(input: &str) -> Result<serde_json::Value, String> {
@@ -228,7 +230,9 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     }
     let continuity_outcome =
         headless_reflection_outcome(agent_error.as_ref(), latest_turn.as_ref());
-    if let Err(error) = record_headless_continuity(
+    let mut continuity_formed_count = None;
+    let mut continuity_error = None;
+    match record_headless_continuity(
         &ContinuityService::new(),
         &workspace_path,
         &session_id,
@@ -237,11 +241,17 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         continuity_outcome,
         now_ms(),
     ) {
-        crate::app_log!(
-            "WARN",
-            "[continuity] headless continuity record failed: {}",
-            error
-        );
+        Ok(formed_count) => {
+            continuity_formed_count = Some(formed_count);
+        }
+        Err(error) => {
+            crate::app_log!(
+                "WARN",
+                "[continuity] headless continuity record failed: {}",
+                error
+            );
+            continuity_error = Some(error);
+        }
     }
     let after_snapshot = snapshot_workspace(&workspace_path)?;
     let (changed_files, file_diffs) = diff_workspace_snapshots(&before_snapshot, &after_snapshot);
@@ -258,6 +268,8 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         changed_files,
         final_answer,
         duration_ms: started.elapsed().as_millis() as u64,
+        continuity_formed_count,
+        continuity_error,
     });
     insert_agent_identity(&mut payload, &agent_provider, &agent_model);
 
@@ -361,7 +373,7 @@ fn record_headless_continuity(
     latest_turn: Option<&AgentTurnState>,
     outcome: ReflectionOutcome,
     timestamp_ms: u64,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let project_path = project_path
         .to_str()
         .ok_or_else(|| "headless workspace path is not valid UTF-8".to_string())?;
@@ -396,8 +408,8 @@ fn record_headless_continuity(
         }
     }
 
-    service.form_experiences_for_session(project_path, session_id, timestamp_ms)?;
-    Ok(())
+    let formed = service.form_experiences_for_session(project_path, session_id, timestamp_ms)?;
+    Ok(formed.len())
 }
 
 fn validation_commands_from_task(task: Option<&EvalHeadlessTask>) -> Vec<String> {
@@ -572,6 +584,8 @@ pub fn build_trace_payload(input: TracePayloadInput) -> serde_json::Value {
             .collect::<Vec<_>>(),
         "changed_files": input.changed_files,
         "verification_result": verification_result,
+        "headless_continuity_formed_count": input.continuity_formed_count,
+        "headless_continuity_error": input.continuity_error,
         "final_answer": input.final_answer,
         "model_rounds": event_summary.model_rounds,
         "confirm_requests": event_summary.confirm_requests,
@@ -611,6 +625,8 @@ fn build_setup_error_payload(input: SetupErrorPayloadInput) -> serde_json::Value
         changed_files: Vec::new(),
         final_answer: String::new(),
         duration_ms: input.duration_ms,
+        continuity_formed_count: None,
+        continuity_error: None,
     });
     insert_agent_identity(&mut payload, &input.agent_provider, &input.agent_model);
     insert_failure_fields(
@@ -1245,6 +1261,8 @@ mod tests {
             changed_files: vec!["src/calculator.py".to_string()],
             final_answer: "Completed.".to_string(),
             duration_ms: 250,
+            continuity_formed_count: Some(1),
+            continuity_error: None,
         });
 
         assert_eq!(payload["task_id"], "small-edit-success");
@@ -1416,6 +1434,8 @@ mod tests {
             changed_files: Vec::new(),
             final_answer: String::new(),
             duration_ms: 50,
+            continuity_formed_count: None,
+            continuity_error: None,
         });
 
         assert_eq!(

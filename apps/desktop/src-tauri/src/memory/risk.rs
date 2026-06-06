@@ -34,7 +34,7 @@ pub fn should_reject_persistent_memory(text: &str) -> bool {
     }
 
     let patterns = [
-        r"sk-[A-Za-z0-9_\-]{16,}",
+        r"(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9_\-]{16,}",
         r"ghp_[A-Za-z0-9_]{16,}",
         r"gho_[A-Za-z0-9_]{16,}",
         r"ghu_[A-Za-z0-9_]{16,}",
@@ -133,6 +133,16 @@ mod tests {
         assert!(!should_reject_persistent_memory("以后都用中文和我交流"));
         assert!(!should_reject_persistent_memory(
             "这个项目方向是小白优先，开发者也舒服"
+        ));
+    }
+
+    #[test]
+    fn allows_task_summary_paths_that_contain_sk_substring() {
+        assert!(!should_reject_persistent_memory(
+            "/tmp/forge-eval-continuity-pipeline-task-summary-0ccz9xhz/workspace/src/task-summary.ts"
+        ));
+        assert!(!should_reject_persistent_memory(
+            "Evidence: file_changes=[/tmp/task-summary-abcdefghijklmnop/src/task-summary.ts]"
         ));
     }
 }

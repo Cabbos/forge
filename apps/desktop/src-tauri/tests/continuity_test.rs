@@ -893,6 +893,190 @@ fn episode_formation_skips_no_file_changes() {
 }
 
 #[test]
+fn episode_formation_keeps_verified_changed_files_without_file_change_records() {
+    let workspace = temp_project_path("episode-changed-files-only");
+    let implementation_path = workspace.join("src").join("task-summary.ts");
+    let reflection = ReflectionEvent {
+        session_id: "session-1".to_string(),
+        user_goal: "Add task summary helper".to_string(),
+        execution_summary: "Updated task summary files and verified tests".to_string(),
+        outcome: ReflectionOutcome::Completed,
+        verification_summary: Some("npm test and tsc passed".to_string()),
+        lessons: vec![],
+        episode: Some(Episode {
+            project_path: Some(workspace.to_string_lossy().to_string()),
+            session_id: "session-1".to_string(),
+            user_goal_summary: "Add task summary helper".to_string(),
+            changed_files: vec![implementation_path.to_string_lossy().to_string()],
+            tool_count: 3,
+            failed_tools: 0,
+            file_changes: vec![],
+            verification_status: forge::continuity::AgentVerificationStatus::Passed,
+            verification_command: Some("npx tsc --noEmit".to_string()),
+            verification_summary: Some("passed; cmd=npx tsc --noEmit; exit=0".to_string()),
+            outcome: ReflectionOutcome::Completed,
+            evidence_event_ids: vec!["write-impl".to_string(), "tsc".to_string()],
+            notable_failures: vec![],
+            final_result_summary: Some("1 file(s) changed".to_string()),
+            timestamp_ms: 1_778_688_000_000,
+        }),
+        timestamp_ms: 1_778_688_000_000,
+    };
+
+    let experiences =
+        form_experiences_from_reflection(&reflection, Some(&workspace.to_string_lossy()), 42);
+
+    assert!(
+        !experiences.is_empty(),
+        "verified changed_files should still form even if file_changes records are absent"
+    );
+    assert!(
+        experiences[0].body.contains("src/task-summary.ts"),
+        "body should retain changed file evidence: {}",
+        experiences[0].body
+    );
+}
+
+#[test]
+fn service_forms_eval_style_episode_with_absolute_file_changes() {
+    let project = temp_project_path("service-eval-style-episode");
+    let workspace = project.to_string_lossy().to_string();
+    let service = ContinuityService::new();
+    let reflection = ReflectionEvent {
+        session_id: "session-1".to_string(),
+        user_goal: "Add task summary helper".to_string(),
+        execution_summary: "Updated task summary files and verified tests".to_string(),
+        outcome: ReflectionOutcome::Completed,
+        verification_summary: Some("npm test and tsc passed".to_string()),
+        lessons: vec![],
+        episode: Some(Episode {
+            project_path: Some(workspace.clone()),
+            session_id: "session-1".to_string(),
+            user_goal_summary: "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts，从 src/storage.ts 导入 Task，导出类型 TaskSummary = { total: number; todo: number; doing: number; done: number; active: number }，并导出 summarizeTasks(tasks: T...".to_string(),
+            changed_files: vec![
+                format!("{workspace}/package.json"),
+                format!("{workspace}/src/task-summary.test.ts"),
+                format!("{workspace}/src/task-summary.ts"),
+            ],
+            tool_count: 13,
+            failed_tools: 0,
+            file_changes: vec![
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.test.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/package.json"),
+                    operation: "modified".to_string(),
+                    tool_name: "edit_file".to_string(),
+                },
+            ],
+            verification_status: forge::continuity::AgentVerificationStatus::Passed,
+            verification_command: Some("npx tsc --noEmit".to_string()),
+            verification_summary: Some("passed; cmd=npx tsc --noEmit; exit=0".to_string()),
+            outcome: ReflectionOutcome::Completed,
+            evidence_event_ids: vec!["write-impl".to_string(), "tsc".to_string()],
+            notable_failures: vec![],
+            final_result_summary: Some("3 file(s) changed".to_string()),
+            timestamp_ms: 1_778_688_000_000,
+        }),
+        timestamp_ms: 1_778_688_000_000,
+    };
+
+    service
+        .record_event(&workspace, &ContinuityEvent::Reflection(reflection))
+        .expect("record reflection");
+
+    let formed = service
+        .form_experiences_for_session(&workspace, "session-1", 42)
+        .expect("form experiences");
+    let stored = service
+        .list_experiences_for_project(&workspace)
+        .expect("list experiences");
+
+    assert!(!formed.is_empty());
+    assert_eq!(stored.len(), formed.len());
+    assert!(
+        stored[0].body.contains("src/task-summary.ts"),
+        "stored body should retain file evidence: {}",
+        stored[0].body
+    );
+
+    let _ = std::fs::remove_dir_all(&project);
+}
+
+#[test]
+fn formation_keeps_eval_task_summary_prompt_with_recovered_false_failures() {
+    let workspace =
+        "/var/folders/23/kzpccc795dd3vk7c72qhscfw0000gn/T/forge-eval-task/workspace".to_string();
+    let prompt = "在当前 TypeScript 项目中新增任务状态汇总工具。新增 src/task-summary.ts，从 src/storage.ts 导入 Task，导出类型 TaskSummary = { total: number; todo: number; doing: number; done: number; active: number }，并导出 summarizeTasks(tasks: Task[]): TaskSummary。active 等于 todo + doing。新增 src/task-summary.test.ts，覆盖空列表、只有 todo、混合状态、active 计算、不会改变输入数组。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。";
+    let reflection = ReflectionEvent {
+        session_id: "session-1".to_string(),
+        user_goal: prompt.to_string(),
+        execution_summary: "Updated task summary files and verified tests".to_string(),
+        outcome: ReflectionOutcome::Completed,
+        verification_summary: Some("npm test and tsc passed".to_string()),
+        lessons: vec![],
+        episode: Some(Episode {
+            project_path: Some(workspace.clone()),
+            session_id: "session-1".to_string(),
+            user_goal_summary: prompt.to_string(),
+            changed_files: vec![
+                format!("{workspace}/package.json"),
+                format!("{workspace}/src/task-summary.test.ts"),
+                format!("{workspace}/src/task-summary.ts"),
+            ],
+            tool_count: 22,
+            failed_tools: 4,
+            file_changes: vec![
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/src/task-summary.test.ts"),
+                    operation: "modified".to_string(),
+                    tool_name: "write_to_file".to_string(),
+                },
+                FileChangeRecord {
+                    path: format!("{workspace}/package.json"),
+                    operation: "modified".to_string(),
+                    tool_name: "edit_file".to_string(),
+                },
+            ],
+            verification_status: forge::continuity::AgentVerificationStatus::Passed,
+            verification_command: Some("npx tsc --noEmit".to_string()),
+            verification_summary: Some("passed; cmd=npx tsc --noEmit; exit=0".to_string()),
+            outcome: ReflectionOutcome::Completed,
+            evidence_event_ids: vec!["write-impl".to_string(), "tsc".to_string()],
+            notable_failures: vec![],
+            final_result_summary: Some("3 file(s) changed".to_string()),
+            timestamp_ms: 1_778_688_000_000,
+        }),
+        timestamp_ms: 1_778_688_000_000,
+    };
+
+    let experiences = form_experiences_from_reflection(&reflection, Some(&workspace), 42);
+
+    assert!(
+        !experiences.is_empty(),
+        "task-summary eval prompt should still form after recovered false failures"
+    );
+    assert!(
+        experiences[0].body.contains("src/task-summary.ts"),
+        "body should retain implementation file evidence: {}",
+        experiences[0].body
+    );
+}
+
+#[test]
 fn episode_formation_produces_bug_pattern_for_failed_tools() {
     let reflection = ReflectionEvent {
         session_id: "session-1".to_string(),
