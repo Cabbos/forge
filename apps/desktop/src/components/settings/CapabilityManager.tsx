@@ -6,7 +6,11 @@ import { CapabilityContentViews } from "@/components/settings/CapabilityContentV
 import { CapabilityTabs } from "@/components/settings/CapabilityTabs";
 import { tabLabel, type CapabilityTab } from "@/components/settings/capabilityTypes";
 import { cn } from "@/lib/utils";
-import { listCapabilities, toggleCapability, type CapabilityInfo } from "@/lib/tauri";
+import { toggleCapability, type CapabilityInfo } from "@/lib/tauri";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/hooks/queries/queryKeys";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useCapabilitiesQuery } from "@/hooks/queries/useCapabilitiesQuery";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 export type { CapabilityTab } from "@/components/settings/capabilityTypes";
@@ -20,16 +24,18 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
   const managerRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<CapabilityTab>(initialTab);
   const [search, setSearch] = useState("");
-  const [capabilities, setCapabilities] = useState<CapabilityInfo[]>([]);
+  const queryClient = useQueryClient();
+  const {
+    data: capabilities = [],
+    isError: capabilitiesIsError,
+    error: capabilitiesError,
+  } = useCapabilitiesQuery();
+  const queryError = getQueryErrorMessage(capabilitiesIsError ? capabilitiesError : null);
 
   useEffect(() => {
     setTab(initialTab);
     setSearch("");
   }, [initialTab]);
-
-  useEffect(() => {
-    listCapabilities().then(setCapabilities).catch(console.error);
-  }, []);
 
   const tabCapabilities = useMemo<Record<CapabilityTab, CapabilityInfo[]>>(() => ({
     skills: capabilities.filter((c) => c.kind === "skill" || c.kind === "tool"),
@@ -95,7 +101,7 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
   const handleToggle = async (id: string, enabled: boolean) => {
     try {
       await toggleCapability(id, enabled);
-      setCapabilities((prev) => prev.map((c) => (c.id === id ? { ...c, enabled } : c)));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.capabilities });
     } catch (e) {
       console.error("Toggle failed:", e);
     }
@@ -130,6 +136,12 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
           />
         </label>
       </div>
+
+      {queryError && (
+        <div role="status" className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs leading-relaxed text-destructive">
+          能力列表读取失败：{queryError}
+        </div>
+      )}
 
       <CapabilityContentViews
         tab={tab}

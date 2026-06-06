@@ -21,7 +21,7 @@ test("TanStack Query pilot wiring exists for API key status", () => {
   assert.match(hook, /export function useApiKeyStatusQuery/);
   assert.match(hook, /useQuery\s*[<\(]/);
   assert.match(hook, /getApiKeyStatus/);
-  assert.match(hook, /queryKey:\s*\[\s*["']api-key-status["']\s*\]/);
+  assert.match(hook, /queryKeys\.apiKeyStatus/);
 
   const main = read("src/main.tsx");
   assert.match(main, /import\s+.*QueryClientProvider.*from\s*["']@tanstack\/react-query["']/);

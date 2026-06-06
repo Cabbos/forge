@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useActiveWorkspace, useStore } from "@/store";
 import {
   createProjectCheckpoint,
-  getApiKeyStatus,
-  getProjectCheckpointStatus,
-  getProjectRuntimeStatus,
   startProjectDevServer,
-  type KeyStatus,
-  type ProjectCheckpointStatus,
-  type ProjectRuntimeStatus,
 } from "@/lib/tauri";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/hooks/queries/queryKeys";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
+import { useProjectRuntimeStatusQuery } from "@/hooks/queries/useProjectRuntimeStatusQuery";
+import { useProjectCheckpointStatusQuery } from "@/hooks/queries/useProjectCheckpointStatusQuery";
 import { getProviderLabel } from "@/lib/providers";
 import { deriveStartReadiness, type ReadinessAction } from "@/lib/start-readiness";
 import { StartReadinessView } from "./StartReadinessView";
@@ -24,32 +24,41 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
   const activeWorkspace = useActiveWorkspace();
   const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
   const selectedProvider = useStore((s) => s.selectedProvider);
-  const [keys, setKeys] = useState<KeyStatus[]>([]);
-  const [runtime, setRuntime] = useState<ProjectRuntimeStatus | null>(null);
-  const [checkpoint, setCheckpoint] = useState<ProjectCheckpointStatus | null>(null);
-  const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<ReadinessAction>(null);
+  const queryClient = useQueryClient();
   const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [keyStatus, runtimeStatus, checkpointStatus] = await Promise.all([
-        getApiKeyStatus().catch(() => []),
-        getProjectRuntimeStatus(sessionId, workingDir).catch(() => null),
-        getProjectCheckpointStatus(sessionId, workingDir).catch(() => null),
-      ]);
-      setKeys(keyStatus);
-      setRuntime(runtimeStatus);
-      setCheckpoint(checkpointStatus);
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, workingDir]);
+  const {
+    data: keys = [],
+    isFetching: keysFetching,
+    isError: keysIsError,
+    error: keysError,
+    refetch: refetchKeys,
+  } = useApiKeyStatusQuery(true);
+  const {
+    data: runtime = null,
+    isFetching: runtimeFetching,
+    isError: runtimeIsError,
+    error: runtimeError,
+    refetch: refetchRuntime,
+  } = useProjectRuntimeStatusQuery(sessionId, workingDir, !!workingDir);
+  const {
+    data: checkpoint = null,
+    isFetching: checkpointFetching,
+    isError: checkpointIsError,
+    error: checkpointError,
+    refetch: refetchCheckpoint,
+  } = useProjectCheckpointStatusQuery(sessionId, workingDir, !!workingDir);
+  const loading = keysFetching || runtimeFetching || checkpointFetching;
+  const queryError = getQueryErrorMessage(
+    keysIsError ? keysError : null,
+    runtimeIsError ? runtimeError : null,
+    checkpointIsError ? checkpointError : null,
+  );
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refresh = useCallback(async () => {
+    await Promise.all([refetchKeys(), refetchRuntime(), refetchCheckpoint()]);
+  }, [refetchKeys, refetchRuntime, refetchCheckpoint]);
 
   const readiness = useMemo(() => deriveStartReadiness({
     workspace: activeWorkspace,
@@ -63,11 +72,13 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
   const primaryAction = readiness.rows.find((row) => row.action && row.actionLabel);
   const workspaceRow = readiness.rows.find((row) => row.label === "当前项目");
   const keyRow = readiness.rows.find((row) => row.label === "模型密钥");
-  const panelState = readiness.issueCount === 0 ? "ready" : primaryAction?.tone === "blocked" ? "blocked" : "attention";
-  const secondaryStatus = [
-    workspaceRow?.tone === "ready" ? workspaceRow.value.replace("当前项目：", "") : null,
-    keyRow?.tone === "blocked" ? keyRow.value : null,
-  ].filter(Boolean).join(" · ");
+  const panelState = queryError ? "attention" : readiness.issueCount === 0 ? "ready" : primaryAction?.tone === "blocked" ? "blocked" : "attention";
+  const secondaryStatus = queryError
+    ? `状态读取失败：${queryError}`
+    : [
+        workspaceRow?.tone === "ready" ? workspaceRow.value.replace("当前项目：", "") : null,
+        keyRow?.tone === "blocked" ? keyRow.value : null,
+      ].filter(Boolean).join(" · ");
 
   const runAction = async (action: ReadinessAction) => {
     if (!action || busyAction) return;
@@ -77,10 +88,10 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
         window.dispatchEvent(new Event("forge:open-settings"));
       } else if (action === "start_preview") {
         await startProjectDevServer(sessionId, workingDir);
-        await refresh();
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projectRuntimeStatus(sessionId, workingDir) });
       } else if (action === "create_checkpoint") {
         await createProjectCheckpoint(sessionId, workingDir);
-        await refresh();
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projectCheckpointStatus(sessionId, workingDir) });
       }
     } finally {
       setBusyAction(null);

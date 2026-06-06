@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   createProjectCheckpoint,
-  getProjectCheckpointStatus,
-  getProjectRuntimeStatus,
   openProjectPreview,
-  type ProjectCheckpointStatus,
-  type ProjectRuntimeStatus,
   startProjectDevServer,
 } from "@/lib/tauri";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/hooks/queries/queryKeys";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useProjectRuntimeStatusQuery } from "@/hooks/queries/useProjectRuntimeStatusQuery";
+import { useProjectCheckpointStatusQuery } from "@/hooks/queries/useProjectCheckpointStatusQuery";
 import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confidence";
 import { useActiveWorkspace, useStore } from "@/store";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
@@ -21,56 +22,57 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   const cardRef = useRef<HTMLElement>(null);
   const activeWorkspace = useActiveWorkspace();
   const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
-  const [runtime, setRuntime] = useState<ProjectRuntimeStatus | null>(null);
-  const [checkpoint, setCheckpoint] = useState<ProjectCheckpointStatus | null>(null);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [actionBusy, setActionBusy] = useState<DeliveryAction | null>(null);
   const [expanded, setExpanded] = useState(false);
   const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
 
+  const {
+    data: runtime = null,
+    isFetching: runtimeFetching,
+    isError: runtimeIsError,
+    error: runtimeError,
+    refetch: refetchRuntime,
+  } = useProjectRuntimeStatusQuery(sessionId, workingDir, !!workingDir);
+  const {
+    data: checkpoint = null,
+    isFetching: checkpointFetching,
+    isError: checkpointIsError,
+    error: checkpointError,
+    refetch: refetchCheckpoint,
+  } = useProjectCheckpointStatusQuery(sessionId, workingDir, !!workingDir);
+  const loading = runtimeFetching || checkpointFetching;
+  const queryError = getQueryErrorMessage(
+    runtimeIsError ? runtimeError : null,
+    checkpointIsError ? checkpointError : null,
+  );
+  const displayError = error || (queryError ? `状态读取失败：${queryError}` : "");
+
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [runtimeStatus, checkpointStatus] = await Promise.all([
-        getProjectRuntimeStatus(sessionId ?? undefined, workingDir),
-        getProjectCheckpointStatus(sessionId ?? undefined, workingDir),
-      ]);
-      setRuntime(runtimeStatus);
-      setCheckpoint(checkpointStatus);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, workingDir]);
+    await Promise.all([refetchRuntime(), refetchCheckpoint()]);
+  }, [refetchRuntime, refetchCheckpoint]);
 
   const runDeliveryAction = useCallback(async (action: DeliveryAction) => {
     setActionBusy(action);
     setError("");
     try {
       if (action === "start_preview") {
-        const runtimeStatus = await startProjectDevServer(sessionId ?? undefined, workingDir);
-        setRuntime(runtimeStatus);
+        await startProjectDevServer(sessionId ?? undefined, workingDir);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projectRuntimeStatus(sessionId, workingDir) });
       } else if (action === "open_preview") {
-        const runtimeStatus = await openProjectPreview(sessionId ?? undefined, workingDir);
-        setRuntime(runtimeStatus);
+        await openProjectPreview(sessionId ?? undefined, workingDir);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projectRuntimeStatus(sessionId, workingDir) });
       } else if (action === "create_checkpoint") {
-        const checkpointStatus = await createProjectCheckpoint(sessionId ?? undefined, workingDir);
-        setCheckpoint(checkpointStatus);
+        await createProjectCheckpoint(sessionId ?? undefined, workingDir);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.projectCheckpointStatus(sessionId, workingDir) });
       }
-      await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActionBusy(null);
     }
-  }, [refresh, sessionId, workingDir]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  }, [queryClient, sessionId, workingDir]);
 
   const projectName = useMemo(() => {
     const path = normalizeProjectPath(runtime?.working_dir || checkpoint?.working_dir || "");
@@ -113,7 +115,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     );
   }, {
     scope: cardRef,
-    dependencies: [delivery.preview.label, delivery.checkpoint.label, expanded, error],
+    dependencies: [delivery.preview.label, delivery.checkpoint.label, expanded, displayError],
   });
 
   return (
@@ -126,7 +128,7 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
       deliveryActions={deliveryActions}
       actionBusy={actionBusy}
       checkpoint={checkpoint}
-      error={error}
+      error={displayError}
       expanded={expanded}
       loading={loading}
       runtime={runtime}

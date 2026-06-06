@@ -6,7 +6,9 @@ import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
 import { deleteSession, setApiKey } from "@/lib/tauri";
-import { queryClient } from "@/lib/query-client";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/hooks/queries/queryKeys";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { useStore } from "@/store";
 
 interface UseSettingsDialogControllerOptions {
@@ -25,6 +27,7 @@ export function useSettingsDialogController({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
+  const queryClient = useQueryClient();
   const sessions = useStore((s) => s.sessions);
   const removeSession = useStore((s) => s.removeSession);
   const dialogOpen = open ?? internalOpen;
@@ -33,7 +36,12 @@ export function useSettingsDialogController({
     onOpenChange?.(nextOpen);
   }, [onOpenChange, open]);
   const dialogRef = useSettingsDialogMotion(dialogOpen);
-  const { data: keys = [] } = useApiKeyStatusQuery(dialogOpen);
+  const {
+    data: keys = [],
+    isError: keysIsError,
+    error: keysError,
+  } = useApiKeyStatusQuery(dialogOpen);
+  const queryError = getQueryErrorMessage(keysIsError ? keysError : null);
 
   useEffect(() => {
     const openSettings = () => setDialogOpen(true);
@@ -70,24 +78,24 @@ export function useSettingsDialogController({
       await setApiKey(editing, value);
       setEditing(null);
       setValue("");
-      await queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
     } catch (e) {
       setError(String(e));
     }
     setSaving(false);
-  }, [editing, value]);
+  }, [editing, queryClient, value]);
 
   const handleRemove = useCallback(async (provider: string) => {
     setSaving(true);
     setError(null);
     try {
       await setApiKey(provider, "");
-      await queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
     } catch (e) {
       setError(String(e));
     }
     setSaving(false);
-  }, []);
+  }, [queryClient]);
 
   const handleEdit = useCallback((provider: string) => {
     setEditing(provider);
@@ -131,7 +139,7 @@ export function useSettingsDialogController({
     configuredCount,
     providerTotal,
     sessionCount,
-    error,
+    error: error ?? (queryError ? `密钥状态读取失败：${queryError}` : null),
     providerRowsProps,
     localDataProps,
   };

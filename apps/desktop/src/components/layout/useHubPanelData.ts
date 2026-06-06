@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useActiveBlocks, useActiveWorkspace, useStore } from "@/store";
 import { deriveProjectArchiveOverview } from "@/lib/project-archive-overview";
 import { getActiveContextItems } from "@/lib/context-activation";
-import { getProjectRuntimeStatus, listMcpContextSources, type McpContextSources } from "@/lib/tauri";
+import { type McpContextSources } from "@/lib/tauri";
+import { useProjectRuntimeStatusQuery } from "@/hooks/queries/useProjectRuntimeStatusQuery";
+import { useMcpContextSourcesQuery } from "@/hooks/queries/useMcpContextSourcesQuery";
 import {
   buildContextMaterials,
   type ContextFile,
@@ -20,11 +22,12 @@ interface UseHubPanelDataOptions {
 
 export function useHubPanelData({ initialSection, open }: UseHubPanelDataOptions) {
   const [recordsRequestedOpen, setRecordsRequestedOpen] = useState(false);
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [mcpContextSources, setMcpContextSources] = useState<McpContextSources>(emptyMcpContextSources);
   const activeWorkspace = useActiveWorkspace();
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeSessionId);
+  const { data: runtimeStatus } = useProjectRuntimeStatusQuery(activeId, activeWorkspace?.path, open && !!activeId);
+  const projectPath = runtimeStatus?.working_dir ?? activeWorkspace?.path ?? null;
+  const { data: mcpContextSources = emptyMcpContextSources } = useMcpContextSourcesQuery(activeId, open && !!activeId);
   const workflow = useStore((s) => activeId ? s.workflowBySession.get(activeId) ?? null : null);
   const firstLoopDraft = useStore((s) => activeId ? s.firstLoopDraftBySession.get(activeId) ?? null : null);
   const deliverySummary = useStore((s) => activeId ? s.deliverySummaryBySession.get(activeId) ?? null : null);
@@ -54,46 +57,6 @@ export function useHubPanelData({ initialSection, open }: UseHubPanelDataOptions
   useEffect(() => {
     if (open && initialSection === "records") setRecordsRequestedOpen(true);
   }, [initialSection, open]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    setProjectPath(activeWorkspace?.path ?? null);
-    if (!open || !activeId) return;
-
-    getProjectRuntimeStatus(activeId, activeWorkspace?.path)
-      .then((status) => {
-        if (!cancelled) setProjectPath(status.working_dir || null);
-      })
-      .catch(() => {
-        if (!cancelled) setProjectPath(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeId, activeWorkspace?.path, open]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!open || !activeId) {
-      setMcpContextSources(emptyMcpContextSources);
-      return;
-    }
-
-    listMcpContextSources(activeId)
-      .then((sources) => {
-        if (!cancelled) setMcpContextSources(sources);
-      })
-      .catch(() => {
-        if (!cancelled) setMcpContextSources(emptyMcpContextSources);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeId, open]);
 
   return {
     activeContextItems,

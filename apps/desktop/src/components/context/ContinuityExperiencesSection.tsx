@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Archive, Check, Pin, Search, Trash2 } from "lucide-react";
 import { ForgeSurface } from "@/components/primitives/surface";
-import {
-  listContinuityExperiences,
-  searchContinuityExperiences,
-  updateContinuityExperienceStatus,
-  type ContinuityExperience,
-  type ContinuityExperienceStatus,
-} from "@/lib/tauri";
+import { updateContinuityExperienceStatus, type ContinuityExperience, type ContinuityExperienceStatus } from "@/lib/tauri";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/hooks/queries/queryKeys";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useContinuityExperiencesQuery } from "@/hooks/queries/useContinuityExperiencesQuery";
 import { EmptyState, IconButton, RowIntentLabel, SectionHeader } from "./WikiSectionChrome";
 
 interface ContinuityExperiencesSectionProps {
@@ -20,36 +18,33 @@ export function ContinuityExperiencesSection({
   sessionId,
 }: ContinuityExperiencesSectionProps) {
   const [query, setQuery] = useState("");
-  const [experiences, setExperiences] = useState<ContinuityExperience[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const trimmedQuery = query.trim();
+
+  const {
+    data: experiences = [],
+    isFetching: loading,
+    isError: experiencesIsError,
+    error: experiencesError,
+    refetch,
+  } = useContinuityExperiencesQuery(sessionId, currentProjectPath, trimmedQuery, !!currentProjectPath);
+  const queryError = getQueryErrorMessage(experiencesIsError ? experiencesError : null);
+  const displayError = error || (queryError ? `经验读取失败：${queryError}` : "");
 
   const loadExperiences = useCallback(async () => {
     if (!currentProjectPath) {
-      setExperiences([]);
       setError("");
       return;
     }
-
-    setLoading(true);
     setError("");
     try {
-      const nextExperiences = trimmedQuery
-        ? await searchContinuityExperiences(trimmedQuery, sessionId ?? undefined, currentProjectPath, 20)
-        : await listContinuityExperiences(sessionId ?? undefined, currentProjectPath);
-      setExperiences(nextExperiences ?? []);
+      await refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
     }
-  }, [currentProjectPath, sessionId, trimmedQuery]);
-
-  useEffect(() => {
-    loadExperiences();
-  }, [loadExperiences]);
+  }, [currentProjectPath, refetch]);
 
   const visibleExperiences = useMemo(
     () => (experiences ?? []).filter((experience) => experience.project_path === currentProjectPath),
@@ -67,14 +62,14 @@ export function ContinuityExperiencesSection({
           sessionId ?? undefined,
           currentProjectPath,
         );
-        await loadExperiences();
+        await queryClient.invalidateQueries({ queryKey: queryKeys.continuityExperiencesAll });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setBusyId(null);
       }
     },
-    [currentProjectPath, loadExperiences, sessionId],
+    [currentProjectPath, queryClient, sessionId],
   );
 
   return (
@@ -120,9 +115,9 @@ export function ContinuityExperiencesSection({
           </div>
         )}
       </ForgeSurface>
-      {error && (
+      {displayError && (
         <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
-          {error}
+          {displayError}
         </div>
       )}
     </section>
