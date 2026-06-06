@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ComponentProps } from "react";
+import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
-import { deleteSession, getApiKeyStatus, setApiKey, type KeyStatus } from "@/lib/tauri";
+import { deleteSession, setApiKey } from "@/lib/tauri";
+import { queryClient } from "@/lib/query-client";
 import { useStore } from "@/store";
 
 interface UseSettingsDialogControllerOptions {
@@ -17,7 +19,6 @@ export function useSettingsDialogController({
   onOpenChange,
 }: UseSettingsDialogControllerOptions = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
-  const [keys, setKeys] = useState<KeyStatus[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [value, setValue] = useState("");
   const [visible, setVisible] = useState(false);
@@ -32,19 +33,7 @@ export function useSettingsDialogController({
     onOpenChange?.(nextOpen);
   }, [onOpenChange, open]);
   const dialogRef = useSettingsDialogMotion(dialogOpen);
-
-  const refresh = useCallback(async () => {
-    try {
-      const status = await getApiKeyStatus();
-      setKeys(status);
-    } catch (e) {
-      console.error("Failed to get key status:", e);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (dialogOpen) void refresh();
-  }, [dialogOpen, refresh]);
+  const { data: keys = [] } = useApiKeyStatusQuery(dialogOpen);
 
   useEffect(() => {
     const openSettings = () => setDialogOpen(true);
@@ -81,24 +70,24 @@ export function useSettingsDialogController({
       await setApiKey(editing, value);
       setEditing(null);
       setValue("");
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
     } catch (e) {
       setError(String(e));
     }
     setSaving(false);
-  }, [editing, refresh, value]);
+  }, [editing, value]);
 
   const handleRemove = useCallback(async (provider: string) => {
     setSaving(true);
     setError(null);
     try {
       await setApiKey(provider, "");
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
     } catch (e) {
       setError(String(e));
     }
     setSaving(false);
-  }, [refresh]);
+  }, []);
 
   const handleEdit = useCallback((provider: string) => {
     setEditing(provider);
