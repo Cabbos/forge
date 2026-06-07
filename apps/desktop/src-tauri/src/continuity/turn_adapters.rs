@@ -336,6 +336,57 @@ mod tests {
     }
 
     #[test]
+    fn silent_tsc_false_failure_without_summary_records_non_error_event() {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/repo".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Run tsc".to_string(),
+        );
+        turn.record_tool(AgentToolTrace {
+            tool_call_id: "tool-1".to_string(),
+            name: "run_shell".to_string(),
+            category: AgentToolCategory::Shell,
+            status: AgentToolStatus::Failed,
+            started_at_ms: 10,
+            ended_at_ms: Some(20),
+            result_summary: None,
+            is_error: true,
+            affected_files: Vec::new(),
+            command: Some("npx tsc --noEmit".to_string()),
+        });
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let events = continuity_events_from_turn(&turn);
+        let tool_event = events
+            .iter()
+            .find_map(|event| match event {
+                ContinuityEvent::ToolExecution { is_error, .. } => Some(is_error),
+                _ => None,
+            })
+            .expect("tool execution event");
+        let assistant_summary = events
+            .iter()
+            .find_map(|event| match event {
+                ContinuityEvent::AssistantResponse {
+                    content_summary, ..
+                } => Some(content_summary),
+                _ => None,
+            })
+            .expect("assistant summary");
+
+        assert!(
+            !tool_event,
+            "silent tsc wrapper failure should not record as an error"
+        );
+        assert!(assistant_summary.contains("failed_tools=0"));
+    }
+
+    #[test]
     fn shell_false_failure_for_successful_inspection_does_not_form_lesson() {
         let mut turn = AgentTurnState::new(
             "turn-1".to_string(),

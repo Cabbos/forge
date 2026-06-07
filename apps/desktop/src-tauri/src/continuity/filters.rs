@@ -9,6 +9,15 @@ pub(crate) fn shell_failure_is_false_positive(
     result_summary: Option<&str>,
 ) -> bool {
     let Some(summary) = result_summary else {
+        return command
+            .is_some_and(|cmd| shell_failure_looks_like_silent_successful_typecheck(cmd, ""));
+    };
+    if summary.trim().is_empty() {
+        if let Some(cmd) = command {
+            if shell_failure_looks_like_silent_successful_typecheck(cmd, summary) {
+                return true;
+            }
+        }
         return false;
     };
     if shell_failure_summary_looks_successful(summary) {
@@ -458,6 +467,10 @@ mod tests {
         assert!(shell_failure_is_false_positive(
             Some("npx tsc --noEmit"),
             Some("Exit code: -1\nStdout:\n\nStderr:\n")
+        ));
+        assert!(shell_failure_is_false_positive(
+            Some("npx tsc --noEmit"),
+            None
         ));
         assert!(!shell_failure_is_false_positive(
             Some("npx tsc --noEmit"),
