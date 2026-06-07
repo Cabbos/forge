@@ -7,8 +7,10 @@ import {
   ForgeDialogHeader,
   ForgeDialogTitle,
 } from "@/components/primitives/dialog";
-import { previewFile, type FilePreview } from "@/lib/tauri";
+// FilePreview type used via usePreviewFileQuery return type inference
 import { useStore } from "@/store";
+import { usePreviewFileQuery } from "@/hooks/queries/usePreviewFileQuery";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { FilePreviewActions } from "@/components/messages/FilePreviewActions";
 import { FilePreviewBody } from "@/components/messages/FilePreviewBody";
 import { deriveFilePreviewView } from "@/components/messages/filePreviewPresentation";
@@ -26,35 +28,28 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
     [sessionId],
   );
   const workingDir = useStore(selectWorkingDir);
-  const [preview, setPreview] = useState<FilePreview | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!fileRef) return;
+    setActionError(null);
+  }, [fileRef?.path, fileRef?.line]);
 
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setPreview(null);
+  const {
+    data: preview,
+    isLoading: loading,
+    isError,
+    error: queryError,
+  } = usePreviewFileQuery(
+    fileRef?.path,
+    fileRef?.line,
+    sessionId,
+    workingDir,
+    !!fileRef,
+  );
 
-    previewFile(fileRef.path, fileRef.line, sessionId, workingDir)
-      .then((result) => {
-        if (!cancelled) setPreview(result);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fileRef, sessionId, workingDir]);
-
-  const view = deriveFilePreviewView({ fileRef, preview });
+  const queryErrorDisplay = isError ? getQueryErrorMessage(queryError) : null;
+  const error = queryErrorDisplay || actionError;
+  const view = deriveFilePreviewView({ fileRef, preview: preview ?? null });
 
   return (
     <ForgeDialog open={Boolean(fileRef)} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -79,7 +74,7 @@ export function FilePreviewSheet({ fileRef, onClose, sessionId }: FilePreviewShe
           fileRef={fileRef}
           sessionId={sessionId}
           workingDir={workingDir}
-          onError={(message) => setError(message)}
+          onError={setActionError}
         />
       </ForgeDialogContent>
     </ForgeDialog>

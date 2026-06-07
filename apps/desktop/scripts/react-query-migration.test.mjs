@@ -17,6 +17,8 @@ test("Query keys centralised and new query hooks exist", () => {
   assert.equal(existsSync(join(root, "src/hooks/queries/useCapabilitiesQuery.ts")), true);
   assert.equal(existsSync(join(root, "src/hooks/queries/useMcpContextSourcesQuery.ts")), true);
   assert.equal(existsSync(join(root, "src/hooks/queries/useContinuityExperiencesQuery.ts")), true);
+  assert.equal(existsSync(join(root, "src/hooks/queries/useSearchWorkspaceFilesQuery.ts")), true);
+  assert.equal(existsSync(join(root, "src/hooks/queries/usePreviewFileQuery.ts")), true);
 
   const qk = read("src/hooks/queries/queryKeys.ts");
   assert.match(qk, /apiKeyStatus/);
@@ -25,6 +27,8 @@ test("Query keys centralised and new query hooks exist", () => {
   assert.match(qk, /capabilities/);
   assert.match(qk, /mcpContextSources/);
   assert.match(qk, /continuityExperiences/);
+  assert.match(qk, /searchWorkspaceFiles/);
+  assert.match(qk, /previewFile/);
 });
 
 test("Project status queries use Query and query keys", () => {
@@ -60,6 +64,37 @@ test("Continuity experiences query uses Query and query keys", () => {
   assert.match(hook, /listContinuityExperiences/);
 });
 
+test("Search workspace files query uses Query and query keys", () => {
+  const hook = read("src/hooks/queries/useSearchWorkspaceFilesQuery.ts");
+  assert.match(hook, /useQuery\s*[<\(]/);
+  assert.match(hook, /queryKeys\.searchWorkspaceFiles/);
+  assert.match(hook, /searchWorkspaceFiles/);
+});
+
+test("Preview file query uses Query and query keys", () => {
+  const hook = read("src/hooks/queries/usePreviewFileQuery.ts");
+  assert.match(hook, /useQuery\s*[<\(]/);
+  assert.match(hook, /queryKeys\.previewFile/);
+  assert.match(hook, /previewFile/);
+});
+
+test("Composer file suggestions keep empty @ query enabled", () => {
+  const suggestions = read("src/components/session/useComposerSuggestions.ts");
+  assert.doesNotMatch(suggestions, /showSuggestions === ["']@["'] && searchTerm\.length > 0/);
+  assert.match(suggestions, /showSuggestions === ["']@["']/);
+
+  const hook = read("src/hooks/queries/useSearchWorkspaceFilesQuery.ts");
+  assert.doesNotMatch(hook, /enabled:\s*enabled\s*&&\s*query\.trim\(\)\.length > 0/);
+  assert.match(hook, /enabled,|enabled:\s*enabled/);
+});
+
+test("File preview clears action errors when switching targets", () => {
+  const sheet = read("src/components/messages/FilePreviewSheet.tsx");
+  assert.match(sheet, /import\s+\{[^}]*useEffect[^}]*\}\s+from\s+["']react["']/);
+  assert.match(sheet, /setActionError\(null\)/);
+  assert.match(sheet, /\[fileRef\?\.path,\s*fileRef\?\.line\]/);
+});
+
 test("Migrated components no longer directly call IPC read functions", () => {
   const startReadiness = read("src/components/session/StartReadinessCard.tsx");
   assert.doesNotMatch(startReadiness, /getProjectRuntimeStatus\(/);
@@ -79,6 +114,12 @@ test("Migrated components no longer directly call IPC read functions", () => {
   const continuity = read("src/components/context/ContinuityExperiencesSection.tsx");
   assert.doesNotMatch(continuity, /listContinuityExperiences\(/);
   assert.doesNotMatch(continuity, /searchContinuityExperiences\(/);
+
+  const composerSuggestions = read("src/components/session/useComposerSuggestions.ts");
+  assert.doesNotMatch(composerSuggestions, /searchWorkspaceFiles\(/);
+
+  const filePreview = read("src/components/messages/FilePreviewSheet.tsx");
+  assert.doesNotMatch(filePreview, /previewFile\(/);
 });
 
 test("Components use useQueryClient instead of importing global queryClient", () => {
@@ -117,6 +158,8 @@ test("Query hooks do not swallow errors into empty arrays or null", () => {
     "src/hooks/queries/useCapabilitiesQuery.ts",
     "src/hooks/queries/useMcpContextSourcesQuery.ts",
     "src/hooks/queries/useContinuityExperiencesQuery.ts",
+    "src/hooks/queries/useSearchWorkspaceFilesQuery.ts",
+    "src/hooks/queries/usePreviewFileQuery.ts",
   ];
   for (const path of hooks) {
     const content = read(path);
@@ -131,6 +174,7 @@ test("Migrated query consumers surface query errors", () => {
     "src/components/settings/CapabilityManager.tsx",
     "src/components/context/ContinuityExperiencesSection.tsx",
     "src/components/settings/useSettingsDialogController.ts",
+    "src/components/messages/FilePreviewSheet.tsx",
   ];
   for (const path of consumers) {
     const content = read(path);

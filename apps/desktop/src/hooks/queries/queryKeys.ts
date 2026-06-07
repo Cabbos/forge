@@ -13,4 +13,8 @@ export const queryKeys = {
     search?: string,
   ) => ["continuity-experiences", sessionId ?? "", projectPath ?? "", search ?? ""] as const,
   continuityExperiencesAll: ["continuity-experiences"] as const,
+  searchWorkspaceFiles: (query: string, sessionId?: string, workingDir?: string | null) =>
+    ["search-workspace-files", query, sessionId ?? "", workingDir ?? ""] as const,
+  previewFile: (path: string, line?: number, sessionId?: string, workingDir?: string | null) =>
+    ["preview-file", path, line ?? 0, sessionId ?? "", workingDir ?? ""] as const,
 };

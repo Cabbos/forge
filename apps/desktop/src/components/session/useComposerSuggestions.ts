@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { searchWorkspaceFiles } from "@/lib/tauri";
+import { useCallback, useEffect, useState } from "react";
+import { useSearchWorkspaceFilesQuery } from "@/hooks/queries/useSearchWorkspaceFilesQuery";
 import type { ComposerMenuMode } from "./composerTypes";
 
 interface UseComposerSuggestionsOptions {
@@ -17,23 +17,27 @@ export function useComposerSuggestions({
 }: UseComposerSuggestionsOptions) {
   const [showSuggestions, setShowSuggestions] = useState<ComposerMenuMode>(null);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
-  const [atResults, setAtResults] = useState<string[]>([]);
-  const atSearchRequestRef = useRef(0);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const {
+    data: searchResults = [],
+    isFetching: searchLoading,
+  } = useSearchWorkspaceFilesQuery(
+    searchTerm,
+    sessionId,
+    workingDir,
+    showSuggestions === "@",
+  );
+
+  const atResults = showSuggestions === "@" ? searchResults : [];
 
   useEffect(() => {
     setActiveSuggestionIndex(0);
   }, [showSuggestions, atResults.length]);
 
-  useEffect(() => {
-    return () => {
-      atSearchRequestRef.current += 1;
-    };
-  }, []);
-
   const closeSuggestions = useCallback(() => {
-    atSearchRequestRef.current += 1;
     setShowSuggestions(null);
-    setAtResults([]);
+    setSearchTerm("");
   }, []);
 
   const syncSuggestionsForInput = useCallback((inputValue: string, cursorPosition: number) => {
@@ -43,28 +47,19 @@ export function useComposerSuggestions({
     if (lastWord.startsWith("@") && lastWord.length >= 1) {
       onCloseModelMenu();
       setShowSuggestions("@");
-      const requestId = atSearchRequestRef.current + 1;
-      atSearchRequestRef.current = requestId;
-      searchWorkspaceFiles(lastWord.slice(1), sessionId, workingDir)
-        .then((results) => {
-          if (atSearchRequestRef.current === requestId) setAtResults(results);
-        })
-        .catch(() => {
-          if (atSearchRequestRef.current === requestId) setAtResults([]);
-        });
+      setSearchTerm(lastWord.slice(1));
       return;
     }
 
     if (lastWord === "/") {
       onCloseModelMenu();
-      atSearchRequestRef.current += 1;
-      setAtResults([]);
+      setSearchTerm("");
       setShowSuggestions("/");
       return;
     }
 
     closeSuggestions();
-  }, [closeSuggestions, onCloseModelMenu, sessionId, workingDir]);
+  }, [closeSuggestions, onCloseModelMenu]);
 
   const toggleSuggestion = useCallback((mode: Exclude<ComposerMenuMode, null>) => {
     onFocusTextarea();
@@ -72,8 +67,7 @@ export function useComposerSuggestions({
     setShowSuggestions((current) => {
       const next = current === mode ? null : mode;
       if (next !== "@") {
-        atSearchRequestRef.current += 1;
-        setAtResults([]);
+        setSearchTerm("");
       }
       return next;
     });
@@ -83,6 +77,7 @@ export function useComposerSuggestions({
     activeSuggestionIndex,
     atResults,
     closeSuggestions,
+    searchLoading,
     setActiveSuggestionIndex,
     showSuggestions,
     syncSuggestionsForInput,
