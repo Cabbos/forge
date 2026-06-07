@@ -147,3 +147,66 @@ test("plans Forge provider command with default headless binary", () => {
     "cargo run --manifest-path /repo/forge/src-tauri/Cargo.toml --bin forge_eval_agent --quiet",
   );
 });
+
+test("createSuiteCaseFile applies budget overrides to all tasks", () => {
+  const fixture = makeRunnerFixture();
+  const outputDir = mkdtempSync(join(tmpdir(), "forge-backtest-budget-"));
+  try {
+    writeCase(fixture.forgeCase, "task-a");
+    writeCase(fixture.portableCase, "task-b");
+
+    const suiteFile = createSuiteCaseFile(
+      selectCaseFiles(fixture.root, { suite: "all", caseIds: [] }),
+      outputDir,
+      { maxDurationSeconds: 120, maxModelRounds: 50 },
+    );
+    const payload = JSON.parse(readFileSync(suiteFile, "utf8"));
+
+    assert.equal(payload.tasks.length, 2);
+    for (const task of payload.tasks) {
+      assert.equal(task.max_duration_seconds, 120);
+      assert.equal(task.max_model_rounds, 50);
+    }
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("createSuiteCaseFile preserves existing budget when no override", () => {
+  const fixture = makeRunnerFixture();
+  const outputDir = mkdtempSync(join(tmpdir(), "forge-backtest-budget-"));
+  try {
+    writeFileSync(
+      join(fixture.forgeCase, "case.json"),
+      JSON.stringify(
+        {
+          schema_version: 1,
+          task: {
+            id: "forge-session-budget-task",
+            title: "budget-task",
+            prompt: "Run budget-task",
+            fixture_path: "../_fixtures/app",
+            max_duration_seconds: 30,
+            max_model_rounds: 10,
+            expected_success: true,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const suiteFile = createSuiteCaseFile(
+      selectCaseFiles(fixture.root, { suite: "forge-session", caseIds: [] }),
+      outputDir,
+    );
+    const payload = JSON.parse(readFileSync(suiteFile, "utf8"));
+
+    assert.equal(payload.tasks[0].max_duration_seconds, 30);
+    assert.equal(payload.tasks[0].max_model_rounds, 10);
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+});

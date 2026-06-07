@@ -52,13 +52,14 @@ export function selectCaseFiles(runnerRoot, { suite = "forge-session", caseIds =
   return selected;
 }
 
-export function createSuiteCaseFile(caseFiles, outputDir) {
+export function createSuiteCaseFile(caseFiles, outputDir, budgetOverrides = {}) {
   mkdirSync(outputDir, { recursive: true });
   const tasks = [];
   for (const caseFile of caseFiles) {
     const payload = readJson(caseFile);
     for (const task of extractTaskPayloads(payload)) {
-      tasks.push(resolveFixturePath(task, dirname(caseFile)));
+      const resolved = resolveFixturePath(task, dirname(caseFile));
+      tasks.push(applyBudgetOverrides(resolved, budgetOverrides));
     }
   }
 
@@ -172,6 +173,17 @@ function resolveFixturePath(task, baseDir) {
   };
 }
 
+function applyBudgetOverrides(task, overrides) {
+  const result = { ...task };
+  if (overrides.maxDurationSeconds !== undefined) {
+    result.max_duration_seconds = overrides.maxDurationSeconds;
+  }
+  if (overrides.maxModelRounds !== undefined) {
+    result.max_model_rounds = overrides.maxModelRounds;
+  }
+  return result;
+}
+
 function parseArgs(argv) {
   const options = {
     suite: "forge-session",
@@ -182,6 +194,8 @@ function parseArgs(argv) {
     casesPath: null,
     outputPath: null,
     dryRun: false,
+    maxDurationSeconds: undefined,
+    maxModelRounds: undefined,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -210,6 +224,10 @@ function parseArgs(argv) {
       options.outputPath = nextValue();
     } else if (arg === "--dry-run") {
       options.dryRun = true;
+    } else if (arg === "--timeout") {
+      options.maxDurationSeconds = Number(nextValue());
+    } else if (arg === "--max-model-rounds") {
+      options.maxModelRounds = Number(nextValue());
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -257,9 +275,16 @@ function runCli(argv) {
         suite: options.suite,
         caseIds: options.caseIds,
       });
+  const budgetOverrides = {};
+  if (options.maxDurationSeconds !== undefined) {
+    budgetOverrides.maxDurationSeconds = options.maxDurationSeconds;
+  }
+  if (options.maxModelRounds !== undefined) {
+    budgetOverrides.maxModelRounds = options.maxModelRounds;
+  }
   const suitePath = options.casesPath
     ? resolve(options.casesPath)
-    : createSuiteCaseFile(caseFiles, tempDir);
+    : createSuiteCaseFile(caseFiles, tempDir, budgetOverrides);
   const model =
     options.model ??
     (options.provider === "forge" ? DEFAULT_FORGE_MODEL : DEFAULT_MOCK_MODEL);
@@ -275,6 +300,14 @@ function runCli(argv) {
   const selectedCases = caseFiles.flatMap(readCaseIds);
 
   if (options.dryRun) {
+    const suiteTasks = options.casesPath
+      ? []
+      : readJson(suitePath).tasks ?? [];
+    const budgetSummary = suiteTasks.map((task) => ({
+      id: task.id,
+      timeout_secs: task.max_duration_seconds ?? null,
+      max_model_rounds: task.max_model_rounds ?? null,
+    }));
     console.log(
       JSON.stringify(
         {
@@ -282,6 +315,8 @@ function runCli(argv) {
           suitePath,
           outputPath,
           selectedCases,
+          budgetOverrides: Object.keys(budgetOverrides).length > 0 ? budgetOverrides : undefined,
+          budgetSummary,
           command: [plan.command, ...plan.args],
           cwd: plan.cwd,
           env: {
