@@ -52,6 +52,7 @@ export function useSession() {
       try {
         const result = await resumeSession(sessionId);
         updateSessionStatus(result.session_id, "running");
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
         if (result.missing_api_key) {
           const providerLabel = getProviderLabel(result.provider);
           dispatchOutputEvent({
@@ -68,7 +69,7 @@ export function useSession() {
         throw e;
       }
     },
-    [dispatchOutputEvent, updateSessionStatus]
+    [dispatchOutputEvent, queryClient, updateSessionStatus]
   );
 
   const send = useCallback(async (

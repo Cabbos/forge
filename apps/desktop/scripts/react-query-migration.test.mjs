@@ -232,7 +232,9 @@ test("Settings API key query pilot still intact", () => {
 
 test("Session mutations invalidate queryKeys.sessions", () => {
   const useSession = read("src/hooks/useSession.ts");
-  assert.match(useSession, /queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.sessions\s*\}\)/);
+  const sessionInvalidations = useSession.match(/queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.sessions\s*\}\)/g) ?? [];
+  assert.equal(sessionInvalidations.length, 3);
+  assert.match(useSession, /const resume = useCallback\([\s\S]*?resumeSession\(sessionId\)[\s\S]*?queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.sessions\s*\}\)/);
   assert.doesNotMatch(useSession, /invalidateQueries\(\{\s*queryKey:\s*\[/);
 
   const settingsController = read("src/components/settings/useSettingsDialogController.ts");

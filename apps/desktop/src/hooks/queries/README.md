@@ -55,6 +55,7 @@
 3. 需要级联更新时，invalidate 多个精确 key，而不是一个宽泛前缀
 4. **Session mutation 后必须 invalidate `queryKeys.sessions`**：
    - `createSession` → `queryClient.invalidateQueries({ queryKey: queryKeys.sessions })`
+   - `resumeSession` → `queryClient.invalidateQueries({ queryKey: queryKeys.sessions })`
    - `deleteSession` → `queryClient.invalidateQueries({ queryKey: queryKeys.sessions })`
    - 集中处理在 `useSession.ts` 和 `useSettingsDialogController.ts`
    - 不要在多个 UI 组件里散落重复 invalidate
