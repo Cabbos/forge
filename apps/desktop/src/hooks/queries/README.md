@@ -19,6 +19,9 @@
 - 不要把 Query 数据回写 Zustand store
 - `memories` 等已被 Zustand store 消费的状态不要直接迁到 Query，否则需要同时重构 store 和所有消费者
 
+**Store 级例外**：
+部分 app 级配置读取（如 `loadAppMetadata`）虽在 Zustand `hydrate` 流程中被消费，但仍可迁到 Query，由 `queryClient.fetchQuery()` 提供缓存和错误一致性。这类调用不通过 React Hook，而是使用 QueryClient 的命令式 API，并保持原有的错误兜底行为。
+
 ## queryKey 规则
 
 1. **所有 query key 必须集中到 `queryKeys.ts`**，禁止在组件里写硬编码数组
@@ -84,6 +87,7 @@ src/hooks/queries/
 ├── queryKeys.ts           # 集中 query key 定义
 ├── queryErrors.ts         # getQueryErrorMessage 辅助
 ├── useApiKeyStatusQuery.ts
+├── useAppMetadataQuery.ts
 ├── useCapabilitiesQuery.ts
 ├── useContinuityExperiencesQuery.ts
 ├── useForgeWikiStateQuery.ts

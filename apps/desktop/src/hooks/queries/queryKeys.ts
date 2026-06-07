@@ -19,4 +19,5 @@ export const queryKeys = {
     ["preview-file", path, line ?? 0, sessionId ?? "", workingDir ?? ""] as const,
   forgeWikiState: (projectPath: string, sessionId?: string | null) =>
     ["forge-wiki-state", projectPath, sessionId ?? ""] as const,
+  appMetadata: ["app-metadata"] as const,
 };

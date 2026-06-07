@@ -20,6 +20,7 @@ test("Query keys centralised and new query hooks exist", () => {
   assert.equal(existsSync(join(root, "src/hooks/queries/useSearchWorkspaceFilesQuery.ts")), true);
   assert.equal(existsSync(join(root, "src/hooks/queries/usePreviewFileQuery.ts")), true);
   assert.equal(existsSync(join(root, "src/hooks/queries/useForgeWikiStateQuery.ts")), true);
+  assert.equal(existsSync(join(root, "src/hooks/queries/useAppMetadataQuery.ts")), true);
 
   const qk = read("src/hooks/queries/queryKeys.ts");
   assert.match(qk, /apiKeyStatus/);
@@ -31,6 +32,7 @@ test("Query keys centralised and new query hooks exist", () => {
   assert.match(qk, /searchWorkspaceFiles/);
   assert.match(qk, /previewFile/);
   assert.match(qk, /forgeWikiState/);
+  assert.match(qk, /appMetadata/);
 });
 
 test("Project status queries use Query and query keys", () => {
@@ -87,6 +89,13 @@ test("Forge wiki state query uses Query and query keys", () => {
   assert.match(hook, /getForgeWikiState/);
 });
 
+test("App metadata query uses Query and query keys", () => {
+  const hook = read("src/hooks/queries/useAppMetadataQuery.ts");
+  assert.match(hook, /useQuery\s*[<\(]/);
+  assert.match(hook, /queryKeys\.appMetadata/);
+  assert.match(hook, /loadAppMetadata/);
+});
+
 test("Composer file suggestions keep empty @ query enabled", () => {
   const suggestions = read("src/components/session/useComposerSuggestions.ts");
   assert.doesNotMatch(suggestions, /showSuggestions === ["']@["'] && searchTerm\.length > 0/);
@@ -132,6 +141,10 @@ test("Migrated components no longer directly call IPC read functions", () => {
 
   const wikiSections = read("src/components/context/WikiSections.tsx");
   assert.doesNotMatch(wikiSections, /getForgeWikiState\(/);
+
+  const hydration = read("src/store/hydration.ts");
+  assert.doesNotMatch(hydration, /await\s+loadAppMetadata\(/);
+  assert.doesNotMatch(hydration, /loadAppMetadata\(\)\.catch/);
 });
 
 test("Components use useQueryClient instead of importing global queryClient", () => {
@@ -173,6 +186,7 @@ test("Query hooks do not swallow errors into empty arrays or null", () => {
     "src/hooks/queries/useSearchWorkspaceFilesQuery.ts",
     "src/hooks/queries/usePreviewFileQuery.ts",
     "src/hooks/queries/useForgeWikiStateQuery.ts",
+    "src/hooks/queries/useAppMetadataQuery.ts",
   ];
   for (const path of hooks) {
     const content = read(path);

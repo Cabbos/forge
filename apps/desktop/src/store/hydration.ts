@@ -1,5 +1,7 @@
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
 import type { DeliverySummary, SessionState, WorkflowState } from "../lib/protocol";
+import { queryClient } from "../lib/query-client";
+import { queryKeys } from "../hooks/queries/queryKeys";
 import {
   hasTauriRuntime,
   listSessions,
@@ -46,7 +48,9 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
   return async () => {
     try {
       const tauriRuntime = hasTauriRuntime();
-      const backendMetadata = tauriRuntime ? await loadAppMetadata().catch(() => null) : null;
+      const backendMetadata = tauriRuntime
+        ? await queryClient.fetchQuery({ queryKey: queryKeys.appMetadata, queryFn: () => loadAppMetadata() }).catch(() => null)
+        : null;
       const backendSessions = tauriRuntime ? await listSessions().catch(() => []) : [];
       const data = tauriRuntime
         ? backendSessions.map(persistedSessionFromBackend)
