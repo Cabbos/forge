@@ -184,6 +184,14 @@ function applyBudgetOverrides(task, overrides) {
   return result;
 }
 
+function parsePositiveIntegerArg(flag, value) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(`${flag} must be a positive integer.`);
+  }
+  return number;
+}
+
 function parseArgs(argv) {
   const options = {
     suite: "forge-session",
@@ -225,9 +233,9 @@ function parseArgs(argv) {
     } else if (arg === "--dry-run") {
       options.dryRun = true;
     } else if (arg === "--timeout") {
-      options.maxDurationSeconds = Number(nextValue());
+      options.maxDurationSeconds = parsePositiveIntegerArg(arg, nextValue());
     } else if (arg === "--max-model-rounds") {
-      options.maxModelRounds = Number(nextValue());
+      options.maxModelRounds = parsePositiveIntegerArg(arg, nextValue());
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }

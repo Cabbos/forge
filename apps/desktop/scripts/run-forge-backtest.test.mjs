@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -208,5 +209,23 @@ test("createSuiteCaseFile preserves existing budget when no override", () => {
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
     rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("CLI rejects invalid budget arguments before building a suite", () => {
+  const scriptPath = resolve("scripts/run-forge-backtest.mjs");
+
+  for (const [flag, value] of [
+    ["--timeout", "abc"],
+    ["--timeout", "0"],
+    ["--max-model-rounds", "-2"],
+  ]) {
+    const result = spawnSync(process.execPath, [scriptPath, "--dry-run", flag, value], {
+      cwd: resolve("."),
+      encoding: "utf8",
+    });
+
+    assert.notEqual(result.status, 0, `${flag} ${value} should fail`);
+    assert.match(result.stderr, /positive integer/);
   }
 });
