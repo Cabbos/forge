@@ -4,7 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SCRIPT = (
     Path(__file__).resolve().parents[1]
     / "eval_cases"
@@ -122,7 +121,10 @@ def create_continuity_db(db_path: Path, *, dirty_body: str | None = None) -> Non
             (project_path, session_id, event_type, event_json, timestamp_ms)
         VALUES ('/tmp/project', 'session-1', ?, ?, ?)
         """,
-        [(event_type, json.dumps(event_json), index + 1) for index, (event_type, event_json) in enumerate(events)],
+        [
+            (event_type, json.dumps(event_json), index + 1)
+            for index, (event_type, event_json) in enumerate(events)
+        ],
     )
     conn.execute(
         """

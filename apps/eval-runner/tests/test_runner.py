@@ -393,7 +393,7 @@ json.dump(
         encoding="utf-8",
     )
     post_command = (
-        f"{sys.executable} -c \"from pathlib import Path; "
+        f'{sys.executable} -c "from pathlib import Path; '
         "assert Path('.forge/continuity.db').exists(); print('continuity ok')\""
     )
     task = EvaluationTask(

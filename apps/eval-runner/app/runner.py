@@ -540,18 +540,14 @@ def continuity_db_diagnostic(workspace: Path) -> dict[str, Any] | None:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             diagnostic["event_counts"] = continuity_event_counts(conn)
-            diagnostic["experience_count"] = count_table_rows(
-                conn, "continuity_experiences"
-            )
+            diagnostic["experience_count"] = count_table_rows(conn, "continuity_experiences")
             diagnostic["experience_status_counts"] = count_table_column_values(
                 conn, "continuity_experiences", "status"
             )
             diagnostic["experience_kind_counts"] = count_table_column_values(
                 conn, "continuity_experiences", "kind"
             )
-            diagnostic["fts_count"] = count_table_rows(
-                conn, "continuity_experiences_fts"
-            )
+            diagnostic["fts_count"] = count_table_rows(conn, "continuity_experiences_fts")
             diagnostic["formed_reflection_count"] = count_table_rows(
                 conn, "continuity_formed_reflections"
             )
@@ -588,8 +584,7 @@ def continuity_reflection_episodes(conn: sqlite3.Connection) -> list[dict[str, A
     if not sqlite_table_exists(conn, "continuity_events"):
         return []
     rows = conn.execute(
-        "SELECT event_json FROM continuity_events "
-        "WHERE event_type = 'reflection' LIMIT 5"
+        "SELECT event_json FROM continuity_events WHERE event_type = 'reflection' LIMIT 5"
     ).fetchall()
     episodes: list[dict[str, Any]] = []
     for (event_json,) in rows:
@@ -651,9 +646,7 @@ def count_table_rows(conn: sqlite3.Connection, table: str) -> int | None:
     return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
-def count_table_column_values(
-    conn: sqlite3.Connection, table: str, column: str
-) -> dict[str, int]:
+def count_table_column_values(conn: sqlite3.Connection, table: str, column: str) -> dict[str, int]:
     if not sqlite_table_exists(conn, table) or not sqlite_column_exists(conn, table, column):
         return {}
     rows = conn.execute(

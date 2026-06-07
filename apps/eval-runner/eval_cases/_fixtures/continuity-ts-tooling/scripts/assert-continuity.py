@@ -10,7 +10,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_DIRTY_TERMS = [
     "我希望你",
     "我们现在在",
@@ -113,14 +112,12 @@ def main() -> int:
             f"{formed_reflection_count} != {reflection_count}"
         )
     if args.require_fts_match and fts_count != len(experiences):
-        errors.append(f"FTS row count does not match experiences: {fts_count} != {len(experiences)}")
-    if (
-        args.max_dirty_candidates is not None
-        and len(dirty_candidates) > args.max_dirty_candidates
-    ):
         errors.append(
-            f"dirty candidate count {len(dirty_candidates)} exceeds max "
-            f"{args.max_dirty_candidates}"
+            f"FTS row count does not match experiences: {fts_count} != {len(experiences)}"
+        )
+    if args.max_dirty_candidates is not None and len(dirty_candidates) > args.max_dirty_candidates:
+        errors.append(
+            f"dirty candidate count {len(dirty_candidates)} exceeds max {args.max_dirty_candidates}"
         )
     for required_text in args.require_experience_text:
         if not experience_text_exists(experiences, required_text):
@@ -149,7 +146,9 @@ def load_events(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def load_experiences(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT id, kind, status, title, body FROM continuity_experiences ORDER BY created_at_ms, id"
+        "SELECT id, kind, status, title, body "
+        "FROM continuity_experiences "
+        "ORDER BY created_at_ms, id"
     ).fetchall()
 
 
@@ -181,8 +180,7 @@ def shell_success_false_errors(event_rows: list[sqlite3.Row]) -> int:
         if not bool(event.get("is_error")):
             continue
         text = " ".join(
-            str(event.get(key, ""))
-            for key in ["tool_name", "input_summary", "output_summary"]
+            str(event.get(key, "")) for key in ["tool_name", "input_summary", "output_summary"]
         )
         if any(marker in text for marker in SUCCESS_MARKERS):
             false_errors += 1
