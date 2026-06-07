@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,8 @@ const HEADLESS_CONFIRM_RETRY_ATTEMPTS: usize = 100;
 const HEADLESS_CONFIRM_RETRY_DELAY_MS: u64 = 10;
 const HEADLESS_DEFAULT_REPAIR_ATTEMPTS: usize = 1;
 const HEADLESS_MAX_REPAIR_ATTEMPTS: usize = 3;
+const HEADLESS_DEFAULT_TIMEOUT_SECS: u64 = 600;
+const HEADLESS_DEFAULT_MAX_MODEL_ROUNDS: usize = 80;
 const HEADLESS_VALIDATION_TIMEOUT_SECS: u64 = 120;
 const HEADLESS_VALIDATION_OUTPUT_LIMIT: usize = 12_000;
 
@@ -56,6 +59,10 @@ pub struct EvalHeadlessTask {
     pub verification_command: Option<String>,
     #[serde(default)]
     pub max_repair_attempts: Option<usize>,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub max_model_rounds: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +114,8 @@ pub struct TracePayloadInput {
     pub duration_ms: u64,
     pub continuity_formed_count: Option<usize>,
     pub continuity_error: Option<String>,
+    pub repair_attempts_used: usize,
+    pub validation_attempts: usize,
 }
 
 pub async fn run_stdin_json(input: &str) -> Result<serde_json::Value, String> {
@@ -187,20 +196,51 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         }));
     }
 
+    let session = Arc::new(session);
     let emitter = Arc::new(HeadlessEventEmitter::new(pending_confirms));
     let validation_commands = validation_commands_from_task(request.task.as_ref());
     let max_repair_attempts = max_repair_attempts_from_task(request.task.as_ref());
+    let timeout_secs = resolve_timeout_secs(request.task.as_ref());
+    let max_model_rounds = resolve_max_model_rounds(request.task.as_ref());
     let mut raw_events = Vec::new();
-    let mut agent_error = send_headless_turn(&session, &prompt, emitter.clone())
-        .await
-        .err();
-    raw_events.extend(emitter.drain());
+    let mut agent_error: Option<String> = None;
     let mut validation_result = None;
+    let mut repair_attempts_used = 0;
+    let mut validation_attempts = 0;
 
+    // Initial agent turn
+    {
+        let watchdog =
+            spawn_timeout_watchdog(started, timeout_secs, session.clone(), emitter.clone());
+        let result = send_headless_turn(&session, &prompt, emitter.clone()).await;
+        watchdog.abort();
+        raw_events.extend(emitter.drain());
+
+        if started.elapsed().as_secs() >= timeout_secs {
+            agent_error = Some("timeout".to_string());
+        } else if emitter.model_rounds() >= max_model_rounds {
+            agent_error = Some("max_model_rounds_exceeded".to_string());
+        } else if let Err(error) = result {
+            agent_error = Some(error);
+        }
+    }
+
+    // Validation and repair loop
     if agent_error.is_none() && !validation_commands.is_empty() {
         for attempt in 0..=max_repair_attempts {
+            // Budget check before validation
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                break;
+            }
+
             let validation =
                 run_headless_validation_commands(&validation_commands, &workspace_path).await?;
+            validation_attempts += 1;
             raw_events.extend(validation_events(
                 &session_id,
                 &format!("headless-validation-{attempt}"),
@@ -212,13 +252,37 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
                 break;
             }
 
+            // Budget check before repair turn
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                repair_attempts_used = attempt + 1;
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                repair_attempts_used = attempt + 1;
+                break;
+            }
+
             let repair_prompt =
                 repair_prompt_from_validation_failure(&prompt, attempt + 1, &validation);
-            agent_error = send_headless_turn(&session, &repair_prompt, emitter.clone())
-                .await
-                .err();
+            let watchdog =
+                spawn_timeout_watchdog(started, timeout_secs, session.clone(), emitter.clone());
+            let result = send_headless_turn(&session, &repair_prompt, emitter.clone()).await;
+            watchdog.abort();
             raw_events.extend(emitter.drain());
-            if agent_error.is_some() {
+            repair_attempts_used = attempt + 1;
+
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                break;
+            }
+            if let Err(error) = result {
+                agent_error = Some(error);
                 break;
             }
         }
@@ -270,16 +334,32 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         duration_ms: started.elapsed().as_millis() as u64,
         continuity_formed_count,
         continuity_error,
+        repair_attempts_used,
+        validation_attempts,
     });
     insert_agent_identity(&mut payload, &agent_provider, &agent_model);
 
-    if let Some(error) = agent_error {
-        insert_failure_fields(
-            &mut payload,
-            "agent_error",
-            "agent_error",
-            &format!("Forge agent turn failed: {error}"),
-        );
+    if let Some(ref error) = agent_error {
+        let (error_code, failure_category, failure_reason) = if error == "timeout" {
+            (
+                "timeout",
+                "timeout",
+                "Forge headless eval exceeded the configured timeout.".to_string(),
+            )
+        } else if error == "max_model_rounds_exceeded" {
+            (
+                "max_model_rounds_exceeded",
+                "budget_exhausted",
+                "Forge headless eval exceeded the configured max model rounds.".to_string(),
+            )
+        } else {
+            (
+                "agent_error",
+                "agent_error",
+                format!("Forge agent turn failed: {error}"),
+            )
+        };
+        insert_failure_fields(&mut payload, error_code, failure_category, &failure_reason);
     }
 
     Ok(payload)
@@ -288,6 +368,8 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
 struct HeadlessEventEmitter {
     collector: CollectingEventEmitter,
     pending_confirms: PendingConfirms,
+    model_rounds: Arc<AtomicUsize>,
+    was_calling_model: AtomicBool,
 }
 
 impl HeadlessEventEmitter {
@@ -295,11 +377,17 @@ impl HeadlessEventEmitter {
         Self {
             collector: CollectingEventEmitter::new(),
             pending_confirms,
+            model_rounds: Arc::new(AtomicUsize::new(0)),
+            was_calling_model: AtomicBool::new(false),
         }
     }
 
     fn drain(&self) -> Vec<StreamEvent> {
         self.collector.drain()
+    }
+
+    fn model_rounds(&self) -> usize {
+        self.model_rounds.load(Ordering::SeqCst)
     }
 }
 
@@ -323,8 +411,38 @@ impl EventEmitter for HeadlessEventEmitter {
             });
         }
 
+        if let StreamEvent::AgentTurnUpdated { state, .. } = &event {
+            let is_calling_model = state.status == AgentTurnStatus::CallingModel;
+            let was_calling = self.was_calling_model.load(Ordering::SeqCst);
+            if is_calling_model && !was_calling {
+                self.model_rounds.fetch_add(1, Ordering::SeqCst);
+            }
+            self.was_calling_model
+                .store(is_calling_model, Ordering::SeqCst);
+        }
+
         self.collector.emit(event);
     }
+}
+
+fn spawn_timeout_watchdog(
+    started: Instant,
+    timeout_secs: u64,
+    session: Arc<crate::agent::session::AgentSession>,
+    emitter: Arc<HeadlessEventEmitter>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= timeout_secs {
+            session.kill_with_emitter(&*emitter);
+            return;
+        }
+        let remaining = timeout_secs - elapsed;
+        tokio::time::sleep(Duration::from_secs(remaining)).await;
+        if started.elapsed().as_secs() >= timeout_secs {
+            session.kill_with_emitter(&*emitter);
+        }
+    })
 }
 
 async fn send_headless_turn(
@@ -438,6 +556,16 @@ fn max_repair_attempts_from_task(task: Option<&EvalHeadlessTask>) -> usize {
     task.and_then(|task| task.max_repair_attempts)
         .unwrap_or(HEADLESS_DEFAULT_REPAIR_ATTEMPTS)
         .min(HEADLESS_MAX_REPAIR_ATTEMPTS)
+}
+
+fn resolve_timeout_secs(task: Option<&EvalHeadlessTask>) -> u64 {
+    task.and_then(|task| task.timeout_secs)
+        .unwrap_or(HEADLESS_DEFAULT_TIMEOUT_SECS)
+}
+
+fn resolve_max_model_rounds(task: Option<&EvalHeadlessTask>) -> usize {
+    task.and_then(|task| task.max_model_rounds)
+        .unwrap_or(HEADLESS_DEFAULT_MAX_MODEL_ROUNDS)
 }
 
 async fn run_headless_validation_commands(
@@ -594,6 +722,8 @@ pub fn build_trace_payload(input: TracePayloadInput) -> serde_json::Value {
         "compact_estimated_tokens_saved": event_summary.compact_estimated_tokens_saved,
         "input_tokens": event_summary.input_tokens,
         "output_tokens": event_summary.output_tokens,
+        "repair_attempts_used": input.repair_attempts_used,
+        "validation_attempts": input.validation_attempts,
         "error": error,
         "failure_reason": failure_reason,
         "failure_category": failure_category,
@@ -627,6 +757,8 @@ fn build_setup_error_payload(input: SetupErrorPayloadInput) -> serde_json::Value
         duration_ms: input.duration_ms,
         continuity_formed_count: None,
         continuity_error: None,
+        repair_attempts_used: 0,
+        validation_attempts: 0,
     });
     insert_agent_identity(&mut payload, &input.agent_provider, &input.agent_model);
     insert_failure_fields(
@@ -1263,6 +1395,8 @@ mod tests {
             duration_ms: 250,
             continuity_formed_count: Some(1),
             continuity_error: None,
+            repair_attempts_used: 0,
+            validation_attempts: 1,
         });
 
         assert_eq!(payload["task_id"], "small-edit-success");
@@ -1436,6 +1570,8 @@ mod tests {
             duration_ms: 50,
             continuity_formed_count: None,
             continuity_error: None,
+            repair_attempts_used: 0,
+            validation_attempts: 0,
         });
 
         assert_eq!(
@@ -1471,6 +1607,8 @@ mod tests {
             validation_commands: vec!["npm test".to_string(), "npx tsc --noEmit".to_string()],
             verification_command: Some("npm run check".to_string()),
             max_repair_attempts: None,
+            timeout_secs: None,
+            max_model_rounds: None,
         };
 
         assert_eq!(
@@ -1484,6 +1622,8 @@ mod tests {
             validation_commands: Vec::new(),
             verification_command: Some("npm run check".to_string()),
             max_repair_attempts: None,
+            timeout_secs: None,
+            max_model_rounds: None,
         };
 
         assert_eq!(
@@ -1750,6 +1890,92 @@ mod tests {
         assert_eq!(formed_count, 1);
         assert!(experience_count >= 1, "expected formed experience");
 
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn headless_event_emitter_tracks_model_rounds_from_agent_turn_updated() {
+        let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let emitter = HeadlessEventEmitter::new(pending_confirms);
+
+        assert_eq!(emitter.model_rounds(), 0);
+
+        // First transition to CallingModel counts
+        emitter.emit(agent_turn_event(
+            "session-1",
+            AgentTurnStatus::GatheringContext,
+        ));
+        assert_eq!(emitter.model_rounds(), 0);
+        emitter.emit(agent_turn_event("session-1", AgentTurnStatus::CallingModel));
+        assert_eq!(emitter.model_rounds(), 1);
+
+        // Repeated CallingModel without transition does not count
+        emitter.emit(agent_turn_event("session-1", AgentTurnStatus::CallingModel));
+        assert_eq!(emitter.model_rounds(), 1);
+
+        // Transition out and back in counts again
+        emitter.emit(agent_turn_event("session-1", AgentTurnStatus::RunningTools));
+        emitter.emit(agent_turn_event("session-1", AgentTurnStatus::CallingModel));
+        assert_eq!(emitter.model_rounds(), 2);
+    }
+
+    #[test]
+    fn resolve_timeout_and_budget_uses_defaults_and_task_values() {
+        assert_eq!(resolve_timeout_secs(None), HEADLESS_DEFAULT_TIMEOUT_SECS);
+        assert_eq!(
+            resolve_timeout_secs(Some(&EvalHeadlessTask {
+                timeout_secs: Some(120),
+                ..Default::default()
+            })),
+            120
+        );
+
+        assert_eq!(
+            resolve_max_model_rounds(None),
+            HEADLESS_DEFAULT_MAX_MODEL_ROUNDS
+        );
+        assert_eq!(
+            resolve_max_model_rounds(Some(&EvalHeadlessTask {
+                max_model_rounds: Some(20),
+                ..Default::default()
+            })),
+            20
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_watchdog_kills_session_after_sleep() {
+        let workspace =
+            std::env::temp_dir().join(format!("forge-headless-watchdog-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&workspace).expect("workspace should be created");
+        let pending_confirms: PendingConfirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let (session, _missing_key) = crate::ipc::session_builder::build_agent_session(
+            crate::ipc::session_builder::BuildAgentSessionRequest {
+                session_id: "watchdog-session".to_string(),
+                provider: "deepseek".to_string(),
+                model: "deepseek-v4-flash".to_string(),
+                api_key: "fake-key-for-test",
+                api_base: None,
+                working_dir: &workspace,
+                pending_confirms: pending_confirms.clone(),
+                existing_context_window_tokens: None,
+            },
+        )
+        .await
+        .expect("session should build");
+        let session = Arc::new(session);
+        let emitter = Arc::new(HeadlessEventEmitter::new(pending_confirms));
+        let started = Instant::now();
+
+        let watchdog = spawn_timeout_watchdog(started, 0, session.clone(), emitter.clone());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        watchdog.abort();
+
+        // Session should be stopped because timeout was 0 (immediate kill)
+        assert!(
+            !session.running.load(std::sync::atomic::Ordering::SeqCst),
+            "watchdog should have killed session with zero timeout"
+        );
         let _ = std::fs::remove_dir_all(workspace);
     }
 
