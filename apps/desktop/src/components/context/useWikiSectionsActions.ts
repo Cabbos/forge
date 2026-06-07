@@ -1,4 +1,5 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   acceptForgeWikiUpdateProposal,
   discardForgeWikiUpdateProposal,
@@ -7,11 +8,8 @@ import {
   pinMemory,
   updateMemory,
 } from "@/lib/tauri";
-import type {
-  ForgeWikiState,
-  ForgeWikiUpdateProposal,
-  WikiMemory,
-} from "@/lib/protocol";
+import type { ForgeWikiUpdateProposal, WikiMemory } from "@/lib/protocol";
+import { queryKeys } from "@/hooks/queries/queryKeys";
 import { FORGE_WIKI_INIT_OPERATION_ID, type DraftState } from "./WikiSectionTypes";
 
 interface UseWikiSectionsActionsOptions {
@@ -23,10 +21,9 @@ interface UseWikiSectionsActionsOptions {
   isCurrentRequest: (projectAtStart: string, sessionAtStart: string | null) => boolean;
   beginBusy: (id: string) => number;
   clearBusy: (token: number, id: string) => void;
-  setBusyId: Dispatch<SetStateAction<string | null>>;
-  setDraft: Dispatch<SetStateAction<DraftState | null>>;
-  setError: Dispatch<SetStateAction<string>>;
-  setForgeWikiState: Dispatch<SetStateAction<ForgeWikiState | null>>;
+  setBusyId: (value: React.SetStateAction<string | null>) => void;
+  setDraft: (value: React.SetStateAction<DraftState | null>) => void;
+  setError: (value: React.SetStateAction<string>) => void;
   upsertForgeWikiProposal: (sessionId: string, proposal: ForgeWikiUpdateProposal) => void;
 }
 
@@ -42,9 +39,9 @@ export function useWikiSectionsActions({
   setBusyId,
   setDraft,
   setError,
-  setForgeWikiState,
   upsertForgeWikiProposal,
 }: UseWikiSectionsActionsOptions) {
+  const queryClient = useQueryClient();
   const handleInitForgeWiki = useCallback(async () => {
     const projectAtStart = currentProjectPath;
     const sessionAtStart = sessionId;
@@ -54,9 +51,9 @@ export function useWikiSectionsActions({
     const busyToken = beginBusy(operationId);
     setError("");
     try {
-      const nextForgeWikiState = await initForgeWiki(projectAtStart, sessionAtStart);
+      await initForgeWiki(projectAtStart, sessionAtStart);
       if (!isCurrentRequest(projectAtStart, sessionAtStart)) return;
-      setForgeWikiState(nextForgeWikiState);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.forgeWikiState(projectAtStart, sessionAtStart) });
       await refresh();
     } catch (err) {
       if (isCurrentRequest(projectAtStart, sessionAtStart)) {
@@ -65,7 +62,7 @@ export function useWikiSectionsActions({
     } finally {
       clearBusy(busyToken, operationId);
     }
-  }, [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, refresh, sessionId, setError, setForgeWikiState]);
+  }, [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, queryClient, refresh, sessionId, setError]);
 
   const handleAcceptForgeWikiProposal = useCallback(
     async (proposal: ForgeWikiUpdateProposal) => {
@@ -81,6 +78,7 @@ export function useWikiSectionsActions({
         );
         if (sessionAtStart) upsertForgeWikiProposal(sessionAtStart, nextProposal);
         if (isCurrentRequest(projectAtStart, sessionAtStart)) {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.forgeWikiState(projectAtStart, sessionAtStart) });
           await refresh();
         }
       } catch (err) {
@@ -91,7 +89,7 @@ export function useWikiSectionsActions({
         clearBusy(busyToken, proposal.id);
       }
     },
-    [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, refresh, sessionId, setError, upsertForgeWikiProposal],
+    [beginBusy, clearBusy, currentProjectPath, isCurrentRequest, queryClient, refresh, sessionId, setError, upsertForgeWikiProposal],
   );
 
   const handleDiscardForgeWikiProposal = useCallback(

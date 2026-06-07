@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  getForgeWikiState,
-  listMemories,
-} from "@/lib/tauri";
-import type { ForgeWikiState } from "@/lib/protocol";
+import { useQueryClient } from "@tanstack/react-query";
+import { listMemories } from "@/lib/tauri";
 import { useStore } from "@/store";
+import { queryKeys } from "@/hooks/queries/queryKeys";
+import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useForgeWikiStateQuery } from "@/hooks/queries/useForgeWikiStateQuery";
 import {
   EMPTY_FORGE_WIKI_PROPOSALS,
   filterCandidateMemories,
@@ -25,6 +25,7 @@ interface WikiSectionsProps {
 }
 
 export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
+  const queryClient = useQueryClient();
   const memories = useStore((s) => s.memories);
   const forgeWikiProposals = useStore((s) =>
     sessionId ? s.forgeWikiProposalsBySession.get(sessionId) ?? EMPTY_FORGE_WIKI_PROPOSALS : EMPTY_FORGE_WIKI_PROPOSALS,
@@ -35,42 +36,53 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<DraftState | null>(null);
   const { busyId, setBusyId, beginBusy, clearBusy } = useWikiBusyState();
-  const [forgeWikiState, setForgeWikiState] = useState<ForgeWikiState | null>(null);
   const requestIdRef = useRef(0);
 
   const currentProjectPath = useMemo(() => normalizeProjectPath(projectPath), [projectPath]);
   const isCurrentRequest = useCurrentWikiRequest(currentProjectPath, sessionId);
 
-  const refresh = useCallback(async () => {
+  const {
+    data: forgeWikiState = null,
+    isFetching: wikiStateFetching,
+    isError: wikiStateIsError,
+    error: wikiStateError,
+  } = useForgeWikiStateQuery(currentProjectPath, sessionId, !!currentProjectPath);
+
+  const queryError = getQueryErrorMessage(wikiStateIsError ? wikiStateError : null);
+  const displayError = error || queryError;
+
+  const refresh = useCallback(async (options?: { refreshWikiState?: boolean }) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
     if (!currentProjectPath) {
       setLoading(false);
       setError("");
-      setForgeWikiState(null);
       return;
     }
 
     setLoading(true);
     setError("");
     try {
-      const [nextMemories, nextForgeWikiState] = await Promise.all([
-        listMemories(undefined, currentProjectPath, sessionId),
-        getForgeWikiState(currentProjectPath, sessionId),
-      ]);
-      if (requestIdRef.current === requestId) {
+      if (options?.refreshWikiState) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.forgeWikiState(currentProjectPath, sessionId) });
+      }
+      const nextMemories = await listMemories(undefined, currentProjectPath, sessionId);
+      if (requestIdRef.current === requestId && isCurrentRequest(currentProjectPath, sessionId)) {
         setMemories(nextMemories);
-        setForgeWikiState(nextForgeWikiState);
       }
     } catch (err) {
-      if (requestIdRef.current === requestId) {
+      if (requestIdRef.current === requestId && isCurrentRequest(currentProjectPath, sessionId)) {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (requestIdRef.current === requestId) setLoading(false);
+      if (requestIdRef.current === requestId && isCurrentRequest(currentProjectPath, sessionId)) setLoading(false);
     }
-  }, [currentProjectPath, setMemories]);
+  }, [currentProjectPath, isCurrentRequest, queryClient, sessionId, setMemories]);
+
+  const handleManualRefresh = useCallback(() => {
+    void refresh({ refreshWikiState: true });
+  }, [refresh]);
 
   useEffect(() => {
     refresh();
@@ -125,7 +137,6 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
     setBusyId,
     setDraft,
     setError,
-    setForgeWikiState,
     upsertForgeWikiProposal,
   });
 
@@ -134,15 +145,15 @@ export function WikiSections({ sessionId, projectPath }: WikiSectionsProps) {
       currentProjectPath={currentProjectPath}
       sessionId={sessionId}
       forgeWikiState={forgeWikiState}
-      loading={loading}
-      error={error}
+      loading={loading || wikiStateFetching}
+      error={displayError}
       draft={draft}
       busyId={busyId}
       candidateMemories={candidateMemories}
       projectMemories={projectMemories}
       visibleForgeWikiProposals={visibleForgeWikiProposals}
       pendingForgeWikiProposals={pendingForgeWikiProposals}
-      onRefresh={refresh}
+      onRefresh={handleManualRefresh}
       onInitForgeWiki={handleInitForgeWiki}
       onDraftChange={setDraft}
       onEditMemory={startEdit}

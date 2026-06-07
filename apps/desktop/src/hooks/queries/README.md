@@ -10,11 +10,14 @@
 | 归 Query | 归 Zustand |
 |---|---|
 | 从 Rust 后端读取的配置/状态（API keys、capabilities、project runtime） | sessions、blocks、streaming event 累积 |
-| 低频只读列表（continuity experiences、memories、wiki state） | composer 输入、active workspace、UI 面板展开态 |
+| 低频只读列表（continuity experiences、forge wiki state） | composer 输入、active workspace、UI 面板展开态 |
 | 需要跨组件共享缓存的 IPC 读取 | 需要瞬时响应的本地交互状态 |
 | 有明确 domain 生命周期、可被 invalidate 的数据 | transient UI state（loading spinner、modal open） |
 
-**红线**：不要把 streaming/session/transcript 累积链迁到 Query；不要把 Query 数据回写 Zustand store。
+**红线**：
+- 不要把 streaming/session/transcript 累积链迁到 Query
+- 不要把 Query 数据回写 Zustand store
+- `memories` 等已被 Zustand store 消费的状态不要直接迁到 Query，否则需要同时重构 store 和所有消费者
 
 ## queryKey 规则
 
@@ -83,6 +86,7 @@ src/hooks/queries/
 ├── useApiKeyStatusQuery.ts
 ├── useCapabilitiesQuery.ts
 ├── useContinuityExperiencesQuery.ts
+├── useForgeWikiStateQuery.ts
 ├── useMcpContextSourcesQuery.ts
 ├── usePreviewFileQuery.ts
 ├── useProjectCheckpointStatusQuery.ts

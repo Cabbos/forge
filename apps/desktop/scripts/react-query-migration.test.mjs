@@ -19,6 +19,7 @@ test("Query keys centralised and new query hooks exist", () => {
   assert.equal(existsSync(join(root, "src/hooks/queries/useContinuityExperiencesQuery.ts")), true);
   assert.equal(existsSync(join(root, "src/hooks/queries/useSearchWorkspaceFilesQuery.ts")), true);
   assert.equal(existsSync(join(root, "src/hooks/queries/usePreviewFileQuery.ts")), true);
+  assert.equal(existsSync(join(root, "src/hooks/queries/useForgeWikiStateQuery.ts")), true);
 
   const qk = read("src/hooks/queries/queryKeys.ts");
   assert.match(qk, /apiKeyStatus/);
@@ -29,6 +30,7 @@ test("Query keys centralised and new query hooks exist", () => {
   assert.match(qk, /continuityExperiences/);
   assert.match(qk, /searchWorkspaceFiles/);
   assert.match(qk, /previewFile/);
+  assert.match(qk, /forgeWikiState/);
 });
 
 test("Project status queries use Query and query keys", () => {
@@ -78,6 +80,13 @@ test("Preview file query uses Query and query keys", () => {
   assert.match(hook, /previewFile/);
 });
 
+test("Forge wiki state query uses Query and query keys", () => {
+  const hook = read("src/hooks/queries/useForgeWikiStateQuery.ts");
+  assert.match(hook, /useQuery\s*[<\(]/);
+  assert.match(hook, /queryKeys\.forgeWikiState/);
+  assert.match(hook, /getForgeWikiState/);
+});
+
 test("Composer file suggestions keep empty @ query enabled", () => {
   const suggestions = read("src/components/session/useComposerSuggestions.ts");
   assert.doesNotMatch(suggestions, /showSuggestions === ["']@["'] && searchTerm\.length > 0/);
@@ -120,6 +129,9 @@ test("Migrated components no longer directly call IPC read functions", () => {
 
   const filePreview = read("src/components/messages/FilePreviewSheet.tsx");
   assert.doesNotMatch(filePreview, /previewFile\(/);
+
+  const wikiSections = read("src/components/context/WikiSections.tsx");
+  assert.doesNotMatch(wikiSections, /getForgeWikiState\(/);
 });
 
 test("Components use useQueryClient instead of importing global queryClient", () => {
@@ -160,6 +172,7 @@ test("Query hooks do not swallow errors into empty arrays or null", () => {
     "src/hooks/queries/useContinuityExperiencesQuery.ts",
     "src/hooks/queries/useSearchWorkspaceFilesQuery.ts",
     "src/hooks/queries/usePreviewFileQuery.ts",
+    "src/hooks/queries/useForgeWikiStateQuery.ts",
   ];
   for (const path of hooks) {
     const content = read(path);
@@ -175,6 +188,7 @@ test("Migrated query consumers surface query errors", () => {
     "src/components/context/ContinuityExperiencesSection.tsx",
     "src/components/settings/useSettingsDialogController.ts",
     "src/components/messages/FilePreviewSheet.tsx",
+    "src/components/context/WikiSections.tsx",
   ];
   for (const path of consumers) {
     const content = read(path);
