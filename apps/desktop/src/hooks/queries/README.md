@@ -96,5 +96,49 @@ src/hooks/queries/
 ├── useProjectCheckpointStatusQuery.ts
 ├── useProjectRuntimeStatusQuery.ts
 ├── useSearchWorkspaceFilesQuery.ts
+├── useSessionsQuery.ts
 └── README.md              # 本文件
 ```
+
+## IPC Read 调用盘点
+
+基于 `src/lib/tauri.ts` 导出的 read-like IPC，按消费位置分类：
+
+| 函数 | 消费位置 | 状态 | 理由 |
+|---|---|---|---|
+| `getApiKeyStatus` | `useApiKeyStatusQuery` | **已迁 Query** | 纯配置读取 |
+| `loadAppMetadata` | `useAppMetadataQuery` + `hydration.ts` fetchQuery | **已迁 Query** | Store 级例外，命令式缓存 |
+| `listSessions` | `useSessionsQuery` + `hydration.ts` fetchQuery | **已迁 Query** | Store 级例外，命令式缓存 |
+| `listCapabilities` | `useCapabilitiesQuery` | **已迁 Query** | 纯配置读取 |
+| `getProjectRuntimeStatus` | `useProjectRuntimeStatusQuery` | **已迁 Query** | 状态读取 |
+| `getProjectCheckpointStatus` | `useProjectCheckpointStatusQuery` | **已迁 Query** | 状态读取 |
+| `listMcpContextSources` | `useMcpContextSourcesQuery` | **已迁 Query** | 低频只读列表 |
+| `listContinuityExperiences` | `useContinuityExperiencesQuery` | **已迁 Query** | 低频只读列表 |
+| `searchContinuityExperiences` | `useContinuityExperiencesQuery` | **已迁 Query** | 低频只读搜索 |
+| `searchWorkspaceFiles` | `useSearchWorkspaceFilesQuery` | **已迁 Query** | 搜索类读取 |
+| `previewFile` | `usePreviewFileQuery` | **已迁 Query** | 文件预览读取 |
+| `getForgeWikiState` | `useForgeWikiStateQuery` | **已迁 Query** | 低频状态读取 |
+| `loadSessionTranscript` | `src/store/persistence.ts` | **保留 Zustand** | 红线：session/transcript 累积链 |
+| `listMemories` | `src/components/context/WikiSections.tsx` → `setMemories` | **保留 Zustand** | 写入 store，迁 Query 需重构全链路 |
+| `getWorkflowState` | 无调用点 | **死代码** | 未使用，可清理 |
+| `getDefaultWorkingDir` | 无调用点 | **死代码** | 未使用，可清理 |
+| `listPlugins` | 无调用点 | **死代码** | 未使用，可清理 |
+| `discoverPlugins` | 无调用点 | **死代码** | 未使用，可清理 |
+| `listForgeWikiPages` | 无调用点 | **死代码** | 未使用，可清理 |
+| `readForgeWikiPage` | 无调用点 | **死代码** | 未使用，可清理 |
+| `selectForgeWikiContext` | 无调用点 | **死代码** | 未使用，可清理 |
+| `selectContextMemories` | 无调用点 | **死代码** | 未使用，可清理 |
+
+## 状态机（XState）评估备忘
+
+以下前端状态流未来可能适合 XState，但本阶段不落地：
+
+| 状态流 | 当前位置 | 复杂度 | XState 收益 | 迁移风险 |
+|---|---|---|---|---|
+| **composer submit / confirm / cancel** | `useComposerSubmit.ts` + `ConfirmCard.tsx` | 中 | 显式化 confirm 生命周期，防止竞态 | 高 — 涉及 streaming、pending confirm 跨组件协调 |
+| **session streaming lifecycle** | `store/index.ts` `dispatchOutputEvent` | 高 | 统一 stream_start → chunk → end → error 状态 | 极高 —  backbone 协议，牵一发而动全身 |
+| **command palette / modal flow** | `CommandPalette.tsx` + `ForgeCommandDialog` | 低 | 过度设计，当前 useState 足够 | 低 — 但收益不明显 |
+| **wiki memory proposal flow** | `WikiSections.tsx` + `useWikiSectionsActions.ts` | 中 | pending / accepted / discarded / busy 状态显式化 | 中 — 局部状态，边界清晰 |
+| **file preview loading** | `FilePreviewSheet.tsx` | 低 | loading / loaded / error / action-error 子状态 | 低 — 但当前 Query + useState 已足够 |
+
+**结论**：短期内 none 值得立即引入 XState。wiki proposal flow 是最有潜力的候选，但应在后续独立迭代中评估。

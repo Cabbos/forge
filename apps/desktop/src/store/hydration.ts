@@ -51,7 +51,9 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
       const backendMetadata = tauriRuntime
         ? await queryClient.fetchQuery({ queryKey: queryKeys.appMetadata, queryFn: () => loadAppMetadata() }).catch(() => null)
         : null;
-      const backendSessions = tauriRuntime ? await listSessions().catch(() => []) : [];
+      const backendSessions = tauriRuntime
+        ? await queryClient.fetchQuery({ queryKey: queryKeys.sessions, queryFn: () => listSessions() }).catch(() => [])
+        : [];
       const data = tauriRuntime
         ? backendSessions.map(persistedSessionFromBackend)
         : await idbGet<PersistedSession[]>(PERSIST_KEY);
