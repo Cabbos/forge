@@ -66,9 +66,10 @@ export function useSettingsDialogController({
       await deleteSession(id).catch(() => {});
       removeSession(id);
     }
+    await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
     setCleared(true);
     setTimeout(() => setCleared(false), 3000);
-  }, [removeSession, sessions]);
+  }, [removeSession, sessions, queryClient]);
 
   const handleSave = useCallback(async () => {
     if (!editing) return;

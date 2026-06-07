@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "../store";
 import {
   compactSessionContext,
@@ -10,6 +11,7 @@ import {
 } from "../lib/tauri";
 import type { ComposerCapabilitySelection, McpContextSelection } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
+import { queryKeys } from "@/hooks/queries/queryKeys";
 
 export function useSession() {
   const addSession = useStore((s) => s.addSession);
@@ -18,12 +20,14 @@ export function useSession() {
   const dispatchOutputEvent = useStore((s) => s.dispatchOutputEvent);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
+  const queryClient = useQueryClient();
 
   const create = useCallback(
     async (workingDir: string, provider = selectedProvider, model = selectedModel) => {
       try {
         const result = await createSession(workingDir, provider, model);
         addSession(result.session_id, result.provider ?? provider, result.model ?? model, workingDir);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
         if (result.missing_api_key) {
           const providerLabel = getProviderLabel(result.provider ?? provider);
           dispatchOutputEvent({
@@ -40,7 +44,7 @@ export function useSession() {
         throw e;
       }
     },
-    [addSession, dispatchOutputEvent, selectedModel, selectedProvider]
+    [addSession, dispatchOutputEvent, queryClient, selectedModel, selectedProvider]
   );
 
   const resume = useCallback(
@@ -136,9 +140,10 @@ export function useSession() {
         console.error("Failed to delete session:", e);
       } finally {
         removeSession(sessionId);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
       }
     },
-    [removeSession]
+    [removeSession, queryClient]
   );
 
   return { create, resume, send, stop, compact, deleteConversation };

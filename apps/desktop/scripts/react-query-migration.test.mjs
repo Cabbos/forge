@@ -229,3 +229,12 @@ test("Settings API key query pilot still intact", () => {
   assert.doesNotMatch(controller, /getApiKeyStatus\(/);
   assert.match(controller, /useApiKeyStatusQuery/);
 });
+
+test("Session mutations invalidate queryKeys.sessions", () => {
+  const useSession = read("src/hooks/useSession.ts");
+  assert.match(useSession, /queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.sessions\s*\}\)/);
+  assert.doesNotMatch(useSession, /invalidateQueries\(\{\s*queryKey:\s*\[/);
+
+  const settingsController = read("src/components/settings/useSettingsDialogController.ts");
+  assert.match(settingsController, /queryClient\.invalidateQueries\(\{\s*queryKey:\s*queryKeys\.sessions\s*\}\)/);
+});

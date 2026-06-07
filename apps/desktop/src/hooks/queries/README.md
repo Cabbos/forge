@@ -22,6 +22,11 @@
 **Store 级例外**：
 部分 app 级配置读取（如 `loadAppMetadata`）虽在 Zustand `hydrate` 流程中被消费，但仍可迁到 Query，由 `queryClient.fetchQuery()` 提供缓存和错误一致性。这类调用不通过 React Hook，而是使用 QueryClient 的命令式 API，并保持原有的错误兜底行为。
 
+`sessions` 同样是 Store 级例外：
+- `listSessions` 已迁到 Query（`useSessionsQuery` + `hydration.ts` fetchQuery）
+- 但 sessions 的 runtime 所有权仍在 Zustand（`addSession` / `removeSession`）
+- Query 只缓存后端 session list 读取，不做 session 状态累积
+
 ## queryKey 规则
 
 1. **所有 query key 必须集中到 `queryKeys.ts`**，禁止在组件里写硬编码数组
@@ -48,6 +53,11 @@
    await queryClient.invalidateQueries({ queryKey: queryKeys.capabilities });
    ```
 3. 需要级联更新时，invalidate 多个精确 key，而不是一个宽泛前缀
+4. **Session mutation 后必须 invalidate `queryKeys.sessions`**：
+   - `createSession` → `queryClient.invalidateQueries({ queryKey: queryKeys.sessions })`
+   - `deleteSession` → `queryClient.invalidateQueries({ queryKey: queryKeys.sessions })`
+   - 集中处理在 `useSession.ts` 和 `useSettingsDialogController.ts`
+   - 不要在多个 UI 组件里散落重复 invalidate
 
 ## 新增 Query Hook 模板
 
