@@ -56,6 +56,8 @@ def calculate_metrics(traces: list[AgentTrace]) -> MetricsSummary:
                 tool_calls=len(trace.tool_calls),
                 model_rounds=trace.model_rounds,
                 confirm_requests=trace.confirm_requests,
+                repair_attempts_used=trace.repair_attempts_used,
+                validation_attempts=trace.validation_attempts,
                 duration_ms=trace.duration_ms,
                 failure_category=category,
             )
@@ -73,6 +75,8 @@ def calculate_metrics(traces: list[AgentTrace]) -> MetricsSummary:
         average_tool_calls=sum(len(trace.tool_calls) for trace in traces) / total,
         average_model_rounds=sum(trace.model_rounds for trace in traces) / total,
         average_confirm_requests=sum(trace.confirm_requests for trace in traces) / total,
+        average_repair_attempts_used=sum(trace.repair_attempts_used for trace in traces) / total,
+        average_validation_attempts=sum(trace.validation_attempts for trace in traces) / total,
         average_duration_ms=sum(trace.duration_ms for trace in traces) / total,
         scope_violation_count=sum(len(trace.scope_violations) for trace in traces),
         failure_categories=dict(failures),

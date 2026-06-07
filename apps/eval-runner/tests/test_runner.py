@@ -1,8 +1,14 @@
+import sqlite3
 import sys
 from pathlib import Path
 
 from app.models import EvaluationTask, FailureCategory
-from app.runner import DeterministicMockRunner, ForgeAgentRunner, create_runner
+from app.runner import (
+    DeterministicMockRunner,
+    ForgeAgentRunner,
+    continuity_db_diagnostic,
+    create_runner,
+)
 
 
 def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
@@ -339,7 +345,7 @@ workspace = pathlib.Path(payload["workspace_path"])
 db_path = workspace / ".forge" / "continuity.db"
 conn = sqlite3.connect(db_path)
 conn.execute("CREATE TABLE continuity_events (event_type TEXT NOT NULL, event_json TEXT NOT NULL)")
-conn.execute("CREATE TABLE continuity_experiences (id TEXT PRIMARY KEY)")
+conn.execute("CREATE TABLE continuity_experiences (id TEXT PRIMARY KEY, status TEXT, kind TEXT)")
 conn.execute("CREATE TABLE continuity_formed_reflections (session_id TEXT)")
 conn.execute(
     "INSERT INTO continuity_events (event_type, event_json) VALUES (?, ?)",
@@ -359,7 +365,10 @@ conn.execute(
         ),
     ),
 )
-conn.execute("INSERT INTO continuity_experiences (id) VALUES ('experience-1')")
+conn.execute(
+    "INSERT INTO continuity_experiences (id, status, kind) VALUES (?, ?, ?)",
+    ("experience-1", "candidate", "workflow"),
+)
 conn.execute("INSERT INTO continuity_formed_reflections (session_id) VALUES ('session-1')")
 conn.commit()
 conn.close()
@@ -426,6 +435,8 @@ json.dump(
     assert diagnostic["exists"] is True
     assert diagnostic["event_counts"] == {"reflection": 1}
     assert diagnostic["experience_count"] == 1
+    assert diagnostic["experience_status_counts"] == {"candidate": 1}
+    assert diagnostic["experience_kind_counts"] == {"workflow": 1}
     assert diagnostic["formed_reflection_count"] == 1
     assert diagnostic["reflection_episodes"] == [
         {
@@ -440,6 +451,23 @@ json.dump(
             "verification_status": None,
         }
     ]
+
+
+def test_continuity_db_diagnostic_handles_legacy_experience_schema(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / ".forge").mkdir(parents=True)
+    conn = sqlite3.connect(workspace / ".forge" / "continuity.db")
+    conn.execute("CREATE TABLE continuity_experiences (id TEXT PRIMARY KEY)")
+    conn.execute("INSERT INTO continuity_experiences (id) VALUES ('legacy-1')")
+    conn.commit()
+    conn.close()
+
+    diagnostic = continuity_db_diagnostic(workspace)
+
+    assert diagnostic is not None
+    assert diagnostic["experience_count"] == 1
+    assert diagnostic["experience_status_counts"] == {}
+    assert diagnostic["experience_kind_counts"] == {}
 
 
 def test_forge_runner_reports_first_failed_validation_command(tmp_path: Path) -> None:
@@ -608,6 +636,86 @@ json.dump(
     assert trace.error == "agent_error"
     assert trace.failure_category == FailureCategory.RUNNER_ERROR
     assert trace.failure_reason == "Forge agent turn failed."
+
+
+def test_forge_runner_normalizes_budget_exhausted_failure_category(tmp_path: Path) -> None:
+    script = tmp_path / "fake_budget_exhausted.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "changed_files": ["src/app.py"],
+        "error": "max_model_rounds_exceeded",
+        "failure_category": "budget_exhausted",
+        "failure_reason": "Forge headless eval exceeded the configured max model rounds.",
+        "final_answer": "",
+        "model_rounds": 10,
+        "repair_attempts_used": 1,
+        "validation_attempts": 2,
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="budget-exhausted",
+        title="Budget exhausted",
+        prompt="Run Forge.",
+        expected_files_changed=["src/app.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "max_model_rounds_exceeded"
+    assert trace.failure_category == FailureCategory.BUDGET_EXHAUSTED
+    assert trace.failure_reason == "Forge headless eval exceeded the configured max model rounds."
+    assert trace.model_rounds == 10
+    assert trace.repair_attempts_used == 1
+    assert trace.validation_attempts == 2
+
+
+def test_forge_runner_maps_timeout_field_from_max_duration_seconds(tmp_path: Path) -> None:
+    script = tmp_path / "fake_timeout_field.py"
+    script.write_text(
+        """
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+task = payload.get("task", {})
+# Assert that runner mapped max_duration_seconds -> timeout_secs
+assert task.get("timeout_secs") == 42
+assert "max_duration_seconds" not in task
+assert task.get("max_model_rounds") == 5
+json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="timeout-field-mapping",
+        title="Timeout field mapping",
+        prompt="Run Forge.",
+        expected_files_changed=["src/app.py"],
+        max_duration_seconds=42,
+        max_model_rounds=5,
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error is None
+    assert trace.failure_category == FailureCategory.NONE
 
 
 def test_forge_runner_reports_invalid_stdout_as_contract_error(tmp_path: Path) -> None:

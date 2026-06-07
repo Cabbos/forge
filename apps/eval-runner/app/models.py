@@ -12,6 +12,7 @@ class FailureCategory(StrEnum):
     RUNNER_ERROR = "runner_error"
     TOOL_ERROR = "tool_error"
     TIMEOUT = "timeout"
+    BUDGET_EXHAUSTED = "budget_exhausted"
     SCOPE_VIOLATION = "scope_violation"
     FORGE_CONTRACT_ERROR = "forge_contract_error"
 
@@ -43,6 +44,7 @@ class EvaluationTask(EvalModel):
     expected_files_changed: list[str] = Field(default_factory=list)
     forbidden_files_changed: list[str] = Field(default_factory=list)
     max_duration_seconds: int | None = Field(default=None, ge=1)
+    max_model_rounds: int | None = Field(default=None, ge=1)
     tags: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -89,6 +91,8 @@ class AgentTrace(EvalModel):
     failure_category: FailureCategory = FailureCategory.NONE
     model_rounds: int = Field(default=0, ge=0)
     confirm_requests: int = Field(default=0, ge=0)
+    repair_attempts_used: int = Field(default=0, ge=0)
+    validation_attempts: int = Field(default=0, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     started_at: datetime
@@ -109,6 +113,8 @@ class TaskMetric(EvalModel):
     tool_calls: int
     model_rounds: int = 0
     confirm_requests: int = 0
+    repair_attempts_used: int = 0
+    validation_attempts: int = 0
     duration_ms: int
     failure_category: FailureCategory
 
@@ -122,6 +128,8 @@ class MetricsSummary(EvalModel):
     average_tool_calls: float
     average_model_rounds: float
     average_confirm_requests: float
+    average_repair_attempts_used: float = 0.0
+    average_validation_attempts: float = 0.0
     average_duration_ms: float
     scope_violation_count: int = 0
     failure_categories: dict[str, int] = Field(default_factory=dict)
@@ -137,9 +145,27 @@ class TraceSummary(EvalModel):
     duration_ms: int = Field(ge=0)
     model_rounds: int = Field(default=0, ge=0)
     confirm_requests: int = Field(default=0, ge=0)
+    repair_attempts_used: int = Field(default=0, ge=0)
+    validation_attempts: int = Field(default=0, ge=0)
     failure_category: FailureCategory
     failure_reason: str | None = None
     error: str | None = None
+
+
+class ContinuityReport(EvalModel):
+    tasks_with_db: int = 0
+    tasks_with_formed_experiences: int = 0
+    formation_rate: float = 0.0
+    recall_ready_rate: float = 0.0
+    total_experiences: int = 0
+    total_fts_rows: int = 0
+    total_formed_reflections: int = 0
+    total_reflection_episodes: int = 0
+    reflection_episode_rate: float = 0.0
+    reflection_coverage_rate: float = 0.0
+    notable_failure_count: int = 0
+    experience_status_counts: dict[str, int] = Field(default_factory=dict)
+    experience_kind_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class BacktestReport(EvalModel):
@@ -150,8 +176,11 @@ class BacktestReport(EvalModel):
     avg_duration_ms: float
     avg_model_rounds: float
     avg_confirm_requests: float
+    avg_repair_attempts_used: float = 0.0
+    avg_validation_attempts: float = 0.0
     failure_categories: dict[str, int] = Field(default_factory=dict)
     tasks: list[TraceSummary] = Field(default_factory=list)
+    continuity: ContinuityReport | None = None
 
 
 class EvalArtifact(EvalModel):

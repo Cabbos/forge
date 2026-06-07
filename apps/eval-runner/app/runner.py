@@ -78,6 +78,8 @@ class DeterministicMockRunner:
                 failure_category=failure_category,
                 model_rounds=int(mock.get("model_rounds", 0)),
                 confirm_requests=int(mock.get("confirm_requests", 0)),
+                repair_attempts_used=int(mock.get("repair_attempts_used", 0)),
+                validation_attempts=int(mock.get("validation_attempts", 0)),
                 input_tokens=mock.get("input_tokens"),
                 output_tokens=mock.get("output_tokens"),
                 started_at=started_at,
@@ -149,6 +151,8 @@ class DeterministicMockRunner:
             failure_category=failure_category,
             model_rounds=int(mock.get("model_rounds", 0)),
             confirm_requests=int(mock.get("confirm_requests", 0)),
+            repair_attempts_used=int(mock.get("repair_attempts_used", 0)),
+            validation_attempts=int(mock.get("validation_attempts", 0)),
             input_tokens=mock.get("input_tokens"),
             output_tokens=mock.get("output_tokens"),
             started_at=started_at,
@@ -204,8 +208,12 @@ class ForgeAgentRunner:
                     shell_outputs=setup_outputs,
                 )
 
+            task_dict = task.model_dump(mode="json")
+            # Map runner field names to Forge headless field names
+            if task_dict.get("max_duration_seconds") is not None:
+                task_dict["timeout_secs"] = task_dict.pop("max_duration_seconds")
             payload = {
-                "task": task.model_dump(mode="json"),
+                "task": task_dict,
                 "prompt": task.prompt,
                 "provider": self.provider,
                 "model": self.model,
@@ -368,6 +376,8 @@ class ForgeAgentRunner:
             failure_category=failure_category,
             model_rounds=payload.get("model_rounds", 0),
             confirm_requests=payload.get("confirm_requests", 0),
+            repair_attempts_used=payload.get("repair_attempts_used", 0),
+            validation_attempts=payload.get("validation_attempts", 0),
             input_tokens=payload.get("input_tokens"),
             output_tokens=payload.get("output_tokens"),
             started_at=started_at,
@@ -401,6 +411,8 @@ class ForgeAgentRunner:
             error=error,
             failure_reason=failure_reason,
             failure_category=failure_category,
+            repair_attempts_used=0,
+            validation_attempts=0,
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=duration_ms(started_at, ended_at),
@@ -531,6 +543,12 @@ def continuity_db_diagnostic(workspace: Path) -> dict[str, Any] | None:
             diagnostic["experience_count"] = count_table_rows(
                 conn, "continuity_experiences"
             )
+            diagnostic["experience_status_counts"] = count_table_column_values(
+                conn, "continuity_experiences", "status"
+            )
+            diagnostic["experience_kind_counts"] = count_table_column_values(
+                conn, "continuity_experiences", "kind"
+            )
             diagnostic["fts_count"] = count_table_rows(
                 conn, "continuity_experiences_fts"
             )
@@ -633,6 +651,23 @@ def count_table_rows(conn: sqlite3.Connection, table: str) -> int | None:
     return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
+def count_table_column_values(
+    conn: sqlite3.Connection, table: str, column: str
+) -> dict[str, int]:
+    if not sqlite_table_exists(conn, table) or not sqlite_column_exists(conn, table, column):
+        return {}
+    rows = conn.execute(
+        f"SELECT {column}, COUNT(*) FROM {table} "
+        f"WHERE {column} IS NOT NULL AND {column} != '' GROUP BY {column}"
+    ).fetchall()
+    return {str(value): int(count) for value, count in rows}
+
+
+def sqlite_column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row[1] == column for row in rows)
+
+
 def sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
     row = conn.execute(
         "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -669,6 +704,8 @@ def normalize_failure_category(value: str | FailureCategory) -> FailureCategory:
         "tool": FailureCategory.TOOL_ERROR,
         "tool_failed": FailureCategory.TOOL_ERROR,
         "verification": FailureCategory.VERIFICATION_FAILED,
+        "budget_exhausted": FailureCategory.BUDGET_EXHAUSTED,
+        "max_model_rounds_exceeded": FailureCategory.BUDGET_EXHAUSTED,
     }
     normalized = aliases.get(str(value))
     if normalized is not None:
