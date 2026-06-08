@@ -27,8 +27,20 @@ test("plans frontend checks for staged TypeScript or style files", () => {
 
   assert.deepEqual(plan.commands.map(describeCommand), [
     "npm run check:conversation-style",
+    "npm run check:desktop-boundary",
     "npx tsc --noEmit",
   ]);
+});
+
+test("does not trigger frontend checks for pure docs or root guidance files", () => {
+  const plan = buildPreCommitPlan([
+    "docs/product/forge-frontend-maintainability-plan.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+  ]);
+
+  // docs and root guidance are not frontend code; no commands should run.
+  assert.deepEqual(plan.commands, []);
 });
 
 test("plans Rust formatting and lint checks for staged backend files", () => {
@@ -52,6 +64,7 @@ test("keeps mixed frontend and backend plans deduplicated and ordered", () => {
 
   assert.deepEqual(plan.commands.map(describeCommand), [
     "npm run check:conversation-style",
+    "npm run check:desktop-boundary",
     "npx tsc --noEmit",
     "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",

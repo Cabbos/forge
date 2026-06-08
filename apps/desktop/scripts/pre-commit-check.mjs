@@ -47,6 +47,10 @@ const CHECKS = {
     command: "npm",
     args: ["run", "check:conversation-style"],
   },
+  desktopBoundary: {
+    command: "npm",
+    args: ["run", "check:desktop-boundary"],
+  },
   typescript: {
     command: "npx",
     args: ["tsc", "--noEmit"],
@@ -81,7 +85,7 @@ export function buildPreCommitPlan(stagedFiles) {
   const commands = [];
 
   if (touchesFrontend) {
-    commands.push(CHECKS.conversationStyle, CHECKS.typescript);
+    commands.push(CHECKS.conversationStyle, CHECKS.desktopBoundary, CHECKS.typescript);
   }
 
   if (touchesRust) {
