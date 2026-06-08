@@ -70,3 +70,20 @@ test("keeps mixed frontend and backend plans deduplicated and ordered", () => {
     "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
   ]);
 });
+
+test("normalizes monorepo-prefixed desktop paths from git hooks", () => {
+  const plan = buildPreCommitPlan([
+    "apps/desktop/scripts/desktop-product-boundary.test.mjs",
+    "apps/desktop/src-tauri/src/lib.rs",
+    "apps/desktop/artifacts/eval-runs/latest.json",
+  ]);
+
+  assert.deepEqual(plan.blockedFiles, ["artifacts/eval-runs/latest.json"]);
+  assert.deepEqual(plan.commands.map(describeCommand), [
+    "npm run check:conversation-style",
+    "npm run check:desktop-boundary",
+    "npx tsc --noEmit",
+    "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+  ]);
+});

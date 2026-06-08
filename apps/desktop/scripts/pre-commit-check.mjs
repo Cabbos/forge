@@ -41,6 +41,7 @@ const FRONTEND_EXTENSIONS = [
 ];
 
 const RUST_FILES = new Set(["src-tauri/Cargo.lock", "src-tauri/Cargo.toml"]);
+const DESKTOP_APP_PREFIX = "apps/desktop/";
 
 const CHECKS = {
   conversationStyle: {
@@ -96,7 +97,10 @@ export function buildPreCommitPlan(stagedFiles) {
 }
 
 function normalizePath(filePath) {
-  return filePath.replaceAll("\\", "/").replace(/^\.\//, "");
+  const normalized = filePath.replaceAll("\\", "/").replace(/^\.\//, "");
+  return normalized.startsWith(DESKTOP_APP_PREFIX)
+    ? normalized.slice(DESKTOP_APP_PREFIX.length)
+    : normalized;
 }
 
 function isBlockedArtifact(filePath) {
