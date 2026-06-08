@@ -138,6 +138,11 @@ pub enum StreamEvent {
     },
 
     // ── Context Management ──
+    #[serde(rename = "context_compact_start")]
+    ContextCompactStart {
+        session_id: String,
+        block_id: String,
+    },
     #[serde(rename = "context_compacted")]
     ContextCompacted {
         session_id: String,
@@ -273,6 +278,7 @@ impl StreamEvent {
             | ShellOutput { session_id, .. }
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
+            | ContextCompactStart { session_id, .. }
             | ContextCompacted { session_id, .. }
             | ContextCompactSkipped { session_id, .. }
             | MemorySelection { session_id, .. }
@@ -313,6 +319,7 @@ impl StreamEvent {
             ShellOutput { .. } => "shell_output",
             ShellEnd { .. } => "shell_end",
             ConfirmAsk { .. } => "confirm_ask",
+            ContextCompactStart { .. } => "context_compact_start",
             ContextCompacted { .. } => "context_compacted",
             ContextCompactSkipped { .. } => "context_compact_skipped",
             MemorySelection { .. } => "memory_selection",
@@ -465,6 +472,13 @@ mod tests {
                     boundary: None,
                 },
                 "confirm_ask",
+            ),
+            (
+                StreamEvent::ContextCompactStart {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                },
+                "context_compact_start",
             ),
             (
                 StreamEvent::ContextCompacted {

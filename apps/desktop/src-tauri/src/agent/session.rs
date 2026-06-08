@@ -432,6 +432,10 @@ impl AgentSession {
 
         if let Some(stats) = compacted.stats.as_ref() {
             self.apply_compaction_emitter(&compacted, stats, "auto_compact", emitter);
+        } else if compacted.attempted {
+            if let Some(reason) = compacted.skipped_reason.as_deref() {
+                emitter.emit(self.context_compact_skipped_event(reason, compacted.messages.len()));
+            }
         }
 
         let sp = lock_unpoisoned(&self.system_prompt).clone();
@@ -536,6 +540,13 @@ impl AgentSession {
                             self.record_context_metrics(&context_bundle);
                             msgs_with_context = repair_tool_use_adjacency(context_bundle.messages);
                             continue;
+                        } else if compacted.attempted {
+                            if let Some(reason) = compacted.skipped_reason.as_deref() {
+                                emitter.emit(self.context_compact_skipped_event(
+                                    reason,
+                                    compacted.messages.len(),
+                                ));
+                            }
                         }
                     }
 
@@ -1224,6 +1235,10 @@ impl AgentSession {
         session_events::session_stopped_event(&self.id, reason)
     }
 
+    pub(crate) fn context_compact_start_event(&self) -> StreamEvent {
+        session_events::context_compact_start_event(&self.id)
+    }
+
     pub(crate) fn context_compacted_event(&self, stats: &CompactStats) -> StreamEvent {
         session_events::context_compacted_event(&self.id, stats)
     }
@@ -1284,6 +1299,7 @@ impl AgentSession {
         &self,
         emitter: &dyn EventEmitter,
     ) -> Result<ManualCompactResult, String> {
+        emitter.emit(self.context_compact_start_event());
         let all_messages = lock_unpoisoned(&self.messages).clone();
         let existing_summary = lock_unpoisoned(&self.summary).clone();
         let compacted = match prepare_compaction_now(all_messages, existing_summary) {

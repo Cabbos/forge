@@ -233,6 +233,11 @@ export type StreamEvent =
     }
   // ── Context Management ──
   | {
+      event_type: "context_compact_start";
+      session_id: string;
+      block_id: string;
+    }
+  | {
       event_type: "context_compacted";
       session_id: string;
       block_id: string;

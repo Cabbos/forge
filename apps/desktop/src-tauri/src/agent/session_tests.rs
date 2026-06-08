@@ -589,6 +589,76 @@ async fn manual_compact_short_history_emits_skipped_event() {
     let _ = std::fs::remove_dir_all(workspace);
 }
 
+#[tokio::test]
+async fn manual_compact_emits_start_event_before_processing() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-manual-compact-start-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-manual-compact-start".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    {
+        let mut messages = lock_unpoisoned(&session.messages);
+        for index in 0..40 {
+            if index % 2 == 0 {
+                messages.push(ChatMessage::user(&format!("user message {index}")));
+            } else {
+                messages.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                    "assistant message {index}"
+                ))));
+            }
+        }
+    }
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    let result = session
+        .compact_now_with_emitter(&emitter)
+        .await
+        .expect("manual compact should be handled");
+
+    assert!(result.compacted);
+    let events = emitter.drain();
+
+    // The compact_start event must be emitted BEFORE the compacted event
+    let start_index = events.iter().position(|event| {
+        matches!(
+            event,
+            StreamEvent::ContextCompactStart { session_id, .. }
+                if session_id == "session-manual-compact-start"
+        )
+    });
+    let compacted_index = events.iter().position(|event| {
+        matches!(
+            event,
+            StreamEvent::ContextCompacted { session_id, .. }
+                if session_id == "session-manual-compact-start"
+        )
+    });
+
+    assert!(
+        start_index.is_some(),
+        "should emit context_compact_start event"
+    );
+    assert!(
+        compacted_index.is_some(),
+        "should emit context_compacted event"
+    );
+    assert!(
+        start_index.unwrap() < compacted_index.unwrap(),
+        "context_compact_start must come before context_compacted"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
 // ── FakeAdapter for full-turn testing ─────────────────────────
 
 use crate::adapters::base::{AdapterError, AiAdapter, StreamResult, ToolCall};
@@ -2419,6 +2489,78 @@ async fn auto_compact_uses_model_generated_summary_before_model_call() {
     )));
 
     let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
+async fn manual_compact_skipped_emits_both_start_and_skipped_events() {
+    // When manual compact is triggered but skipped (e.g., history too short),
+    // both context_compact_start and context_compact_skipped should be emitted
+    // so the frontend sees the full lifecycle.
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-manual-compact-start-skipped-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-manual-compact-start-skipped".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    {
+        let mut messages = lock_unpoisoned(&session.messages);
+        for index in 0..12 {
+            if index % 2 == 0 {
+                messages.push(ChatMessage::user(&format!("user message {index}")));
+            } else {
+                messages.push(ChatMessage::assistant(serde_json::Value::String(format!(
+                    "assistant message {index}"
+                ))));
+            }
+        }
+    }
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    let result = session
+        .compact_now_with_emitter(&emitter)
+        .await
+        .expect("manual compact should return skipped result");
+
+    assert!(!result.compacted);
+    let events = emitter.drain();
+
+    let start_index = events.iter().position(|event| {
+        matches!(
+            event,
+            StreamEvent::ContextCompactStart { session_id, .. }
+                if session_id == "session-manual-compact-start-skipped"
+        )
+    });
+    let skipped_index = events.iter().position(|event| {
+        matches!(
+            event,
+            StreamEvent::ContextCompactSkipped { session_id, .. }
+                if session_id == "session-manual-compact-start-skipped"
+        )
+    });
+
+    assert!(
+        start_index.is_some(),
+        "should emit context_compact_start before skipped"
+    );
+    assert!(
+        skipped_index.is_some(),
+        "should emit context_compact_skipped"
+    );
+    assert!(
+        start_index.unwrap() < skipped_index.unwrap(),
+        "compact_start must come before compact_skipped"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[tokio::test]

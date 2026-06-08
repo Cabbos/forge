@@ -29,6 +29,13 @@ pub(crate) fn session_stopped_event(session_id: &str, reason: &str) -> StreamEve
     }
 }
 
+pub(crate) fn context_compact_start_event(session_id: &str) -> StreamEvent {
+    StreamEvent::ContextCompactStart {
+        session_id: session_id.to_string(),
+        block_id: BlockId::new().to_string(),
+    }
+}
+
 pub(crate) fn context_compacted_event(session_id: &str, stats: &CompactStats) -> StreamEvent {
     StreamEvent::ContextCompacted {
         session_id: session_id.to_string(),
