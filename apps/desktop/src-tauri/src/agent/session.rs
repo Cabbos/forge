@@ -1414,7 +1414,16 @@ impl AgentSession {
             }
         };
         lock_unpoisoned(&self.turn_metrics).record_tool_calls(cumulative_total, cumulative_failed);
-        lock_unpoisoned(&self.loop_guard).record_tool_calls(batch_total);
+        {
+            let mut loop_guard = lock_unpoisoned(&self.loop_guard);
+            loop_guard.record_tool_calls(batch_total);
+            if batch_total > 0 {
+                loop_guard.record_tool_batch(
+                    tool_batch_signature(tool_calls),
+                    batch_failed < batch_total,
+                );
+            }
+        }
         self.emit_with_emitter(emitter);
     }
 
@@ -1712,6 +1721,44 @@ fn final_summary_text(assistant_content: &[serde_json::Value]) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn tool_batch_signature(tool_calls: &[crate::adapters::base::ToolCall]) -> String {
+    let mut parts = tool_calls
+        .iter()
+        .map(|tool_call| format!("{}:{}", tool_call.name, canonical_json(&tool_call.input)))
+        .collect::<Vec<_>>();
+    parts.sort();
+    parts.join("\n")
+}
+
+fn canonical_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Array(items) => {
+            let body = items
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("[{body}]")
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys = map.keys().collect::<Vec<_>>();
+            keys.sort();
+            let body = keys
+                .into_iter()
+                .map(|key| {
+                    let encoded_key =
+                        serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string());
+                    let encoded_value = canonical_json(&map[key]);
+                    format!("{encoded_key}:{encoded_value}")
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{{body}}}")
+        }
+        _ => serde_json::to_string(value).unwrap_or_else(|_| "null".to_string()),
+    }
 }
 
 fn compact_summary_was_cancelled(error: &str) -> bool {

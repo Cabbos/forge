@@ -740,6 +740,156 @@ async fn agent_turn_stops_with_model_round_limit_when_max_rounds_hit() {
 }
 
 #[tokio::test]
+async fn agent_turn_stops_with_tool_loop_detected_when_same_tool_repeats() {
+    let workspace = setup_test_workspace("forge-tool-loop-detected");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    let repeated_read = |id: &str| StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": id,
+            "name": "read_file",
+            "input": {"path": "src/main.rs"}
+        })],
+        tool_calls: vec![ToolCall {
+            id: id.to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "src/main.rs"}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        repeated_read("call-1"),
+        repeated_read("call-2"),
+        repeated_read("call-3"),
+        repeated_read("call-4"),
+        StreamResult {
+            assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]));
+
+    let session = AgentSession::new(
+        "session-tool-loop-detected".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    session
+        .send_message_with_emitter(
+            "keep reading the same file",
+            &emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        )
+        .await
+        .expect("turn should finish gracefully when tool loop is detected");
+
+    let turn = lock_unpoisoned(&session.latest_turn);
+    let turn = turn.as_ref().expect("latest turn");
+    assert_eq!(
+        turn.stop_reason,
+        Some("tool_loop_detected".to_string()),
+        "same tool and same input should stop before another model round"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
+async fn agent_turn_stops_with_repeated_no_progress_when_tools_keep_failing() {
+    let workspace = setup_test_workspace("forge-repeated-no-progress");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    let missing_read = |id: &str, path: &str| StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": id,
+            "name": "read_file",
+            "input": {"path": path}
+        })],
+        tool_calls: vec![ToolCall {
+            id: id.to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": path}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        missing_read("call-1", "missing-1.txt"),
+        missing_read("call-2", "missing-2.txt"),
+        missing_read("call-3", "missing-3.txt"),
+        missing_read("call-4", "missing-4.txt"),
+        StreamResult {
+            assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]));
+
+    let session = AgentSession::new(
+        "session-repeated-no-progress".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    session
+        .send_message_with_emitter(
+            "keep reading missing files",
+            &emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        )
+        .await
+        .expect("turn should finish gracefully when no progress repeats");
+
+    let turn = lock_unpoisoned(&session.latest_turn);
+    let turn = turn.as_ref().expect("latest turn");
+    assert_eq!(
+        turn.stop_reason,
+        Some("repeated_no_progress".to_string()),
+        "consecutive failed tool batches should stop as no progress"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn tool_batch_signature_ignores_call_id_and_object_key_order() {
+    let first = vec![ToolCall {
+        id: "call-1".to_string(),
+        name: "run_shell".to_string(),
+        input: serde_json::json!({"command": "npm test", "cwd": "."}),
+    }];
+    let second = vec![ToolCall {
+        id: "call-2".to_string(),
+        name: "run_shell".to_string(),
+        input: serde_json::json!({"cwd": ".", "command": "npm test"}),
+    }];
+
+    assert_eq!(tool_batch_signature(&first), tool_batch_signature(&second));
+}
+
+#[tokio::test]
 async fn loop_guard_resets_between_turns_so_budget_does_not_accumulate() {
     let workspace = setup_test_workspace("forge-loop-guard-reset");
     let harness = Arc::new(Harness::new(workspace.clone()));
@@ -1985,24 +2135,26 @@ async fn final_summary_tool_calls_are_kept_out_of_rendered_stream() {
 #[tokio::test]
 async fn agent_turn_allows_long_tool_loop_before_final_answer() {
     let workspace = setup_test_workspace("forge-many-tool-rounds");
-    std::fs::write(workspace.join("data.txt"), "test-data\n").expect("write data.txt");
     let harness = Arc::new(Harness::new(workspace.clone()));
 
     let mut responses = Vec::new();
     for idx in 0..30 {
         let id = format!("read-{idx}");
+        let path = format!("data-{idx}.txt");
+        std::fs::write(workspace.join(&path), format!("test-data-{idx}\n"))
+            .expect("write data file");
         responses.push(StreamResult {
             assistant_content: vec![
                 serde_json::json!({"type": "text", "text": format!("第 {idx} 轮读取")}),
                 serde_json::json!({
                     "type": "tool_use", "id": id, "name": "read_file",
-                    "input": {"path": "data.txt"}
+                    "input": {"path": path.clone()}
                 }),
             ],
             tool_calls: vec![ToolCall {
                 id: format!("read-{idx}"),
                 name: "read_file".to_string(),
-                input: serde_json::json!({"path": "data.txt"}),
+                input: serde_json::json!({"path": path}),
             }],
             stop_reason: Some("tool_use".to_string()),
         });

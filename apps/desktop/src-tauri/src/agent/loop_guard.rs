@@ -8,10 +8,15 @@ pub(crate) struct LoopGuard {
     max_tool_calls: usize,
     max_compact_attempts: usize,
     max_overflow_retries: usize,
+    max_repeated_tool_batches: usize,
+    max_no_progress_batches: usize,
     model_rounds: usize,
     tool_calls: usize,
     compact_attempts: usize,
     overflow_retries: usize,
+    repeated_tool_batches: usize,
+    no_progress_batches: usize,
+    last_tool_batch_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +25,8 @@ pub(crate) enum LoopStopReason {
     ToolCallLimit,
     CompactUnavailable,
     RepeatedOverflow,
+    ToolLoopDetected,
+    RepeatedNoProgress,
 }
 
 impl LoopGuard {
@@ -29,10 +36,15 @@ impl LoopGuard {
             max_tool_calls: 200,
             max_compact_attempts: 10,
             max_overflow_retries: 3,
+            max_repeated_tool_batches: 4,
+            max_no_progress_batches: 4,
             model_rounds: 0,
             tool_calls: 0,
             compact_attempts: 0,
             overflow_retries: 0,
+            repeated_tool_batches: 0,
+            no_progress_batches: 0,
+            last_tool_batch_signature: None,
         }
     }
 
@@ -43,6 +55,16 @@ impl LoopGuard {
 
     pub(crate) fn with_max_tool_calls(mut self, limit: usize) -> Self {
         self.max_tool_calls = limit;
+        self
+    }
+
+    pub(crate) fn with_max_repeated_tool_batches(mut self, limit: usize) -> Self {
+        self.max_repeated_tool_batches = limit;
+        self
+    }
+
+    pub(crate) fn with_max_no_progress_batches(mut self, limit: usize) -> Self {
+        self.max_no_progress_batches = limit;
         self
     }
 
@@ -62,6 +84,30 @@ impl LoopGuard {
         self.overflow_retries += 1;
     }
 
+    pub(crate) fn record_tool_batch(
+        &mut self,
+        tool_batch_signature: impl Into<String>,
+        made_progress: bool,
+    ) {
+        let tool_batch_signature = tool_batch_signature.into();
+        if self
+            .last_tool_batch_signature
+            .as_ref()
+            .is_some_and(|previous| previous == &tool_batch_signature)
+        {
+            self.repeated_tool_batches += 1;
+        } else {
+            self.last_tool_batch_signature = Some(tool_batch_signature);
+            self.repeated_tool_batches = 1;
+        }
+
+        if made_progress {
+            self.no_progress_batches = 0;
+        } else {
+            self.no_progress_batches += 1;
+        }
+    }
+
     /// Check whether the loop may continue.  If a budget is exhausted,
     /// return the stop reason that should be recorded on the turn.
     pub(crate) fn check(&self) -> Result<(), LoopStopReason> {
@@ -76,6 +122,12 @@ impl LoopGuard {
         }
         if self.overflow_retries >= self.max_overflow_retries {
             return Err(LoopStopReason::RepeatedOverflow);
+        }
+        if self.no_progress_batches >= self.max_no_progress_batches {
+            return Err(LoopStopReason::RepeatedNoProgress);
+        }
+        if self.repeated_tool_batches >= self.max_repeated_tool_batches {
+            return Err(LoopStopReason::ToolLoopDetected);
         }
         Ok(())
     }
@@ -97,6 +149,9 @@ impl LoopGuard {
         self.tool_calls = 0;
         self.compact_attempts = 0;
         self.overflow_retries = 0;
+        self.repeated_tool_batches = 0;
+        self.no_progress_batches = 0;
+        self.last_tool_batch_signature = None;
     }
 }
 
@@ -108,6 +163,8 @@ impl LoopStopReason {
             LoopStopReason::ToolCallLimit => "tool_call_limit",
             LoopStopReason::CompactUnavailable => "compact_unavailable",
             LoopStopReason::RepeatedOverflow => "repeated_overflow",
+            LoopStopReason::ToolLoopDetected => "tool_loop_detected",
+            LoopStopReason::RepeatedNoProgress => "repeated_no_progress",
         }
     }
 }
@@ -155,6 +212,39 @@ mod tests {
     }
 
     #[test]
+    fn repeated_tool_batch_stops_loop() {
+        let mut guard = LoopGuard::default_limits().with_max_repeated_tool_batches(3);
+        guard.record_tool_batch("read_file:{\"path\":\"data.txt\"}", true);
+        guard.record_tool_batch("read_file:{\"path\":\"data.txt\"}", true);
+        assert!(guard.check().is_ok());
+
+        guard.record_tool_batch("read_file:{\"path\":\"data.txt\"}", true);
+        assert_eq!(guard.check(), Err(LoopStopReason::ToolLoopDetected));
+    }
+
+    #[test]
+    fn repeated_no_progress_batches_stop_loop() {
+        let mut guard = LoopGuard::default_limits().with_max_no_progress_batches(3);
+        guard.record_tool_batch("read_file:{\"path\":\"missing-1.txt\"}", false);
+        guard.record_tool_batch("read_file:{\"path\":\"missing-2.txt\"}", false);
+        assert!(guard.check().is_ok());
+
+        guard.record_tool_batch("read_file:{\"path\":\"missing-3.txt\"}", false);
+        assert_eq!(guard.check(), Err(LoopStopReason::RepeatedNoProgress));
+    }
+
+    #[test]
+    fn progress_resets_no_progress_counter() {
+        let mut guard = LoopGuard::default_limits().with_max_no_progress_batches(3);
+        guard.record_tool_batch("read_file:{\"path\":\"missing-1.txt\"}", false);
+        guard.record_tool_batch("read_file:{\"path\":\"ok.txt\"}", true);
+        guard.record_tool_batch("read_file:{\"path\":\"missing-2.txt\"}", false);
+        guard.record_tool_batch("read_file:{\"path\":\"missing-3.txt\"}", false);
+
+        assert!(guard.check().is_ok());
+    }
+
+    #[test]
     fn compact_unavailable_stops_loop() {
         let mut guard = LoopGuard::default_limits().with_max_model_rounds(100);
         for _ in 0..9 {
@@ -181,6 +271,14 @@ mod tests {
             LoopStopReason::RepeatedOverflow.as_str(),
             "repeated_overflow"
         );
+        assert_eq!(
+            LoopStopReason::ToolLoopDetected.as_str(),
+            "tool_loop_detected"
+        );
+        assert_eq!(
+            LoopStopReason::RepeatedNoProgress.as_str(),
+            "repeated_no_progress"
+        );
     }
 
     #[test]
@@ -191,6 +289,7 @@ mod tests {
         guard.record_tool_calls(5);
         guard.record_compact_attempt();
         guard.record_overflow_retry();
+        guard.record_tool_batch("read_file:{\"path\":\"data.txt\"}", false);
 
         assert_eq!(guard.model_rounds(), 2);
         assert_eq!(guard.tool_calls(), 5);

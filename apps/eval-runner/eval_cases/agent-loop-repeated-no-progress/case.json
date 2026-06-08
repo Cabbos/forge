@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "agent-loop-repeated-no-progress",
+    "title": "Stop repeated no-progress tool failures",
+    "prompt": "Simulate an agent that keeps calling tools that fail without changing the workspace and must stop with a visible no-progress reason.",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "src/tasks.tsx"
+    ],
+    "verification_command": "npm test",
+    "expected_success": false,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "package-lock.json"
+    ],
+    "max_model_rounds": 8,
+    "tags": [
+      "agent-loop",
+      "budget",
+      "no-progress",
+      "stop-reason"
+    ],
+    "metadata": {
+      "mock": {
+        "error": "repeated_no_progress",
+        "failure_category": "budget_exhausted",
+        "failure_reason": "Forge stopped after consecutive failed tool batches made no progress.",
+        "changed_files": [],
+        "raw_events": [
+          {
+            "event_type": "agent_turn_updated",
+            "state": {
+              "status": "running_tools",
+              "failed_tool_count": 3,
+              "stop_reason": null
+            }
+          },
+          {
+            "event_type": "agent_turn_updated",
+            "state": {
+              "status": "completed",
+              "failed_tool_count": 4,
+              "stop_reason": "repeated_no_progress"
+            }
+          }
+        ],
+        "tool_commands": [
+          "read_file missing-1.txt",
+          "read_file missing-2.txt",
+          "read_file missing-3.txt",
+          "read_file missing-4.txt"
+        ],
+        "model_rounds": 4,
+        "confirm_requests": 0,
+        "duration_ms": 610,
+        "input_tokens": 390,
+        "output_tokens": 88
+      }
+    }
+  }
+}

@@ -109,3 +109,29 @@ def test_load_cases_includes_real_forge_session_backtests() -> None:
         assert task.setup_commands == ["npm install"]
         assert task.validation_commands
         assert "real-forge-session" in task.tags
+
+
+def test_load_cases_includes_agent_loop_stop_reason_backtests() -> None:
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    expected = {
+        "agent-loop-tool-loop-detected": "tool_loop_detected",
+        "agent-loop-repeated-no-progress": "repeated_no_progress",
+    }
+
+    assert expected.keys() <= task_by_id.keys()
+    for task_id, stop_reason in expected.items():
+        task = task_by_id[task_id]
+        mock = task.metadata["mock"]
+        raw_stop_reasons = {
+            event.get("stop_reason")
+            or (event.get("state") or {}).get("stop_reason")
+            for event in mock["raw_events"]
+        }
+
+        assert task.expected_success is False
+        assert "agent-loop" in task.tags
+        assert mock["failure_category"] == "budget_exhausted"
+        assert mock["error"] == stop_reason
+        assert stop_reason in raw_stop_reasons

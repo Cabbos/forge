@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "agent-loop-tool-loop-detected",
+    "title": "Stop repeated identical tool loop",
+    "prompt": "Simulate an agent that repeatedly reads the same file with the same input and must stop with a visible tool loop reason.",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "src/tasks.tsx"
+    ],
+    "verification_command": "npm test",
+    "expected_success": false,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "package-lock.json"
+    ],
+    "max_model_rounds": 8,
+    "tags": [
+      "agent-loop",
+      "budget",
+      "tool-loop",
+      "stop-reason"
+    ],
+    "metadata": {
+      "mock": {
+        "error": "tool_loop_detected",
+        "failure_category": "budget_exhausted",
+        "failure_reason": "Forge stopped a repeated tool loop after identical read_file calls.",
+        "changed_files": [],
+        "raw_events": [
+          {
+            "event_type": "agent_turn_updated",
+            "state": {
+              "status": "running_tools",
+              "tool_call_count": 3,
+              "stop_reason": null
+            }
+          },
+          {
+            "event_type": "agent_turn_updated",
+            "state": {
+              "status": "completed",
+              "tool_call_count": 4,
+              "stop_reason": "tool_loop_detected"
+            }
+          }
+        ],
+        "tool_commands": [
+          "read_file src/tasks.tsx",
+          "read_file src/tasks.tsx",
+          "read_file src/tasks.tsx",
+          "read_file src/tasks.tsx"
+        ],
+        "model_rounds": 4,
+        "confirm_requests": 0,
+        "duration_ms": 640,
+        "input_tokens": 420,
+        "output_tokens": 96
+      }
+    }
+  }
+}
