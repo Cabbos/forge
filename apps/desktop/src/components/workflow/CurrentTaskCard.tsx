@@ -1,0 +1,55 @@
+import type { WorkflowState } from "@/lib/protocol";
+import {
+  deriveTaskModeView,
+  taskGateCopy,
+  taskGateLabel,
+} from "@/lib/task-mode";
+import { ForgePill } from "@/components/primitives/pill";
+import { ForgeSurface } from "@/components/primitives/surface";
+
+export function CurrentTaskCard({ workflow }: { workflow: WorkflowState | null }) {
+  const mode = deriveTaskModeView(workflow);
+  const gateCopy = workflow ? taskGateCopy(workflow.gate) : null;
+
+  if (!workflow) {
+    return (
+      <section>
+        <div className="forge-section-head">
+          <h3 className="forge-section-title">当前任务</h3>
+          <span className="forge-section-meta">自动判断</span>
+        </div>
+        <div className="forge-empty">
+          发送消息后会显示当前任务判断。
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <div className="forge-section-head">
+        <h3 className="forge-section-title">当前任务</h3>
+        <span className="forge-section-meta">自动判断</span>
+      </div>
+      <ForgeSurface className="px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-xs font-medium text-foreground">{mode.label}</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{mode.title}</div>
+            <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">{workflow.reason || mode.description}</div>
+          </div>
+          <ForgePill>
+            {taskGateLabel(workflow.gate)}
+          </ForgePill>
+        </div>
+
+        {gateCopy && (
+          <div className="mt-2 rounded border border-[rgba(184,138,86,0.22)] bg-[rgba(184,138,86,0.06)] px-2 py-1.5 text-[11px] text-[var(--forge-warning-strong)]">
+            {gateCopy}
+          </div>
+        )}
+
+      </ForgeSurface>
+    </section>
+  );
+}

@@ -1,0 +1,47 @@
+@layer components {
+  .forge-answer-section-index {
+    display: flex;
+    min-height: 30px;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.625rem;
+    overflow: hidden;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-bg-raised);
+    padding: 0 0.625rem;
+    margin-bottom: var(--forge-markdown-tight-gap);
+    font-size: 11px;
+    line-height: 1rem;
+    color: var(--forge-text-faint);
+  }
+
+  .forge-answer-section-index > span {
+    flex-shrink: 0;
+  }
+
+  .forge-answer-section-index > div {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.375rem;
+    overflow: hidden;
+  }
+
+  .forge-answer-section-index a {
+    min-width: 0;
+    max-width: 10rem;
+    overflow: hidden;
+    border-radius: 4px;
+    padding: 0.125rem 0.375rem;
+    color: var(--forge-text-muted);
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-answer-section-index a:hover {
+    background: var(--forge-hover);
+    color: var(--forge-text-primary);
+  }
+}

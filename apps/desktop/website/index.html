@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Forge is a local-first desktop command center for AI coding agents."
+    />
+    <title>Forge - Desktop command center for AI coding agents</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"
+    ></script>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js"
+    ></script>
+    <script defer src="./main.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#" aria-label="Forge home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img">
+            <path d="M4.75 5.75h14.5v12.5H4.75z" />
+            <path d="m8.25 9 3 3-3 3" />
+            <path d="M12.75 15h3.5" />
+          </svg>
+        </span>
+        <span>Forge</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary navigation">
+        <a class="active" href="#product">Product</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#docs">Docs</a>
+        <a href="#github">GitHub</a>
+      </nav>
+      <a class="header-cta" href="#download">Download for Mac</a>
+    </header>
+
+    <main>
+      <section class="hero" id="product">
+        <div class="hero-copy">
+          <p class="trust-pill"><span></span>Private by default</p>
+          <h1>
+            <span>A desktop command center</span>
+            <span>for AI coding agents.</span>
+          </h1>
+          <p class="hero-subtitle">
+            Execute, monitor, and control autonomous development tasks with
+            local-first visibility, explicit approvals, and structured
+            execution traces.
+          </p>
+          <p class="trust-line">
+            <span>Tauri desktop app</span>
+            <span>Rust backend</span>
+            <span>explicit approvals</span>
+            <span>local sessions</span>
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" id="download" href="#">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M10 3v8m0 0 3.25-3.25M10 11 6.75 7.75" />
+                <path d="M5 14.5h10" />
+              </svg>
+              Download for Mac
+            </a>
+            <a class="button secondary" href="#docs">View Documentation</a>
+          </div>
+        </div>
+
+        <div class="product-window" aria-label="Forge workspace preview">
+          <div class="window-top">
+            <div class="traffic-lights" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <p>Forge Workspace</p>
+          </div>
+          <div class="workspace-grid">
+            <aside class="session-rail">
+              <div class="rail-header">
+                <span>Active Sessions</span>
+                <span aria-hidden="true">+</span>
+              </div>
+              <div class="session-row active">
+                <span class="session-dot"></span>
+                <span>refactor-auth-service</span>
+              </div>
+              <div class="session-row">
+                <span class="session-dot"></span>
+                <span>db-migration-v4</span>
+              </div>
+              <div class="session-row">
+                <span class="session-dot"></span>
+                <span>api-docs-update</span>
+              </div>
+            </aside>
+
+            <section class="execution-stack" aria-label="Execution stream">
+              <article class="stream-block reasoning">
+                <h2>
+                  <span class="stream-icon">◎</span>
+                  Agent Reasoning
+                </h2>
+                <p>
+                  Analyzing `schema.prisma`. Found legacy User table. Need to
+                  create a migration to split credentials into `AuthIdentity`. I
+                  will formulate the migration script and execute via prisma CLI.
+                </p>
+              </article>
+
+              <article class="stream-block shell">
+                <div class="stream-title-row">
+                  <h2>▣ Local Shell (zsh)</h2>
+                  <span>0.2s</span>
+                </div>
+                <code>$ npx prisma migrate dev --name init_auth_identity</code>
+              </article>
+
+              <article class="file-strip">
+                <span>▧ prisma/schema.prisma</span>
+                <span>pending write</span>
+              </article>
+
+              <article class="approval-card">
+                <h2>
+                  <span>⬟</span>
+                  Review Execution
+                </h2>
+                <p>
+                  The agent has requested a project-changing command. Review
+                  before execution.
+                </p>
+                <code>npm run migrate:local -- --write</code>
+                <div class="approval-actions">
+                  <button type="button">Reject</button>
+                  <button class="approve" type="button">Approve Execution</button>
+                </div>
+              </article>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="visibility-section" id="workflow">
+        <div class="section-heading">
+          <h2>Visibility at every level.</h2>
+          <p>
+            Forge replaces black-box AI magic with deterministic, inspectable
+            engineering tools. Monitor parallel threads, manage local resources,
+            and review deep execution traces.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-panel">
+            <div class="panel-copy">
+              <h3>Structured Traces</h3>
+              <p>Visualize multi-threaded agent execution in real time.</p>
+            </div>
+            <div class="trace-preview" aria-label="Structured trace preview">
+              <div class="trace-line"></div>
+              <div class="trace-node node-green"></div>
+              <div class="trace-card main">
+                <span>Main Thread</span>
+                <small>0k</small>
+                <p>Dispatched 2 sub-tasks for API generation.</p>
+              </div>
+              <div class="trace-node"></div>
+              <div class="trace-card sub">
+                <span>↳ Sub-agent: Generate Models</span>
+              </div>
+              <div class="trace-node node-cyan"></div>
+              <div class="trace-card sub active">
+                <span>◉ Sub-agent: Generate Controllers</span>
+                <div class="progress">
+                  <span></span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="feature-panel">
+            <div class="panel-copy">
+              <h3>Local Toolkit</h3>
+              <p>Provide isolated access to specialized development tools.</p>
+            </div>
+            <div class="toolkit-list" aria-label="Local toolkit preview">
+              <div class="tool-row">
+                <span class="tool-icon">▤</span>
+                <div>
+                  <strong>Postgres Reader</strong>
+                  <small>Read-only connection</small>
+                </div>
+                <em>Active</em>
+              </div>
+              <div class="tool-row">
+                <span class="tool-icon">✥</span>
+                <div>
+                  <strong>REST Client</strong>
+                  <small>Localhost routing</small>
+                </div>
+                <em>Active</em>
+              </div>
+              <div class="tool-row disabled">
+                <span class="tool-icon">▧</span>
+                <div>
+                  <strong>File System Access</strong>
+                  <small>Glob patterns</small>
+                </div>
+                <em>Disabled</em>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="footer-brand" href="#">Forge</a>
+      <p>TERMINAL-GRADE AGENTS. DESKTOP-GRADE CONTROL.</p>
+      <nav aria-label="Footer navigation">
+        <a href="#">Terms</a>
+        <a href="#">Privacy</a>
+        <a href="#">Status</a>
+        <a href="#">Security</a>
+      </nav>
+    </footer>
+  </body>
+</html>

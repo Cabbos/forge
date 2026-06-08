@@ -1,0 +1,79 @@
+import { useEffect, useRef } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { X } from "lucide-react";
+import { CapabilityManager, type CapabilityTab } from "@/components/settings/CapabilityManager";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
+
+interface CapabilityDrawerProps {
+  open: boolean;
+  initialTab: CapabilityTab;
+  title: string;
+  onClose: () => void;
+}
+
+export function CapabilityDrawer({ open, initialTab, title, onClose }: CapabilityDrawerProps) {
+  const drawerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, open]);
+
+  useGSAP(() => {
+    if (!open || prefersReducedMotion()) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+
+    gsap.fromTo(
+      drawer,
+      { autoAlpha: 0, x: -14 },
+      {
+        autoAlpha: 1,
+        x: 0,
+        duration: forgeMotion.surface.duration,
+        ease: forgeMotion.surface.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: drawerRef, dependencies: [open] });
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div className="forge-capability-overlay" onClick={onClose} />
+      <aside
+        ref={drawerRef}
+        aria-label={title}
+        data-testid="capability-drawer-surface"
+        data-forge-motion="capability-drawer"
+        className="forge-capability-drawer"
+      >
+        <div data-testid="capability-drawer-header" className="forge-titlebar forge-capability-drawer-header">
+          <span className="text-xs font-semibold text-foreground">{title}</span>
+          <ButtonPrimitive
+            type="button"
+            aria-label={`关闭${title}`}
+            onClick={onClose}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+            title="关闭"
+          >
+            <X className="size-4" />
+          </ButtonPrimitive>
+        </div>
+        <div className="min-h-0 flex-1 px-3 pb-3">
+          <CapabilityManager
+            initialTab={initialTab}
+            className="h-full min-h-0 rounded-none border-0 bg-transparent"
+          />
+        </div>
+      </aside>
+    </>
+  );
+}

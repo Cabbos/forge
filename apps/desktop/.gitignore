@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+src-tauri/target/
+
+# Test output
+test-results/
+playwright-report/
+artifacts/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# Local tool state
+.forge/
+.ai-studio/
+.agents/
+.claude/
+.playwright-cli/
+.superpowers/
+skills-lock.json
+docs/superpowers/
+
+# Local MCP config (contains API keys)
+.mcp.json
+.gitnexus
