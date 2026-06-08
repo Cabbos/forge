@@ -88,3 +88,53 @@ def test_worker_returns_none_when_no_pending_runs(tmp_path: Path) -> None:
     worker = EvalWorker(storage=storage, forge_command=None)
 
     assert worker.run_once() is None
+
+
+def test_worker_skips_cancelled_run(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_pending_run("run-1"))
+    storage.cancel_run("run-1")
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+    result = worker.run_once()
+
+    # Cancelled runs should not be claimed or processed
+    assert result is None
+    fetched = storage.get_run("run-1")
+    assert fetched.status == RunStatus.CANCELLED
+
+
+def test_worker_retries_failed_run_then_marks_terminal(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    # Create a run that will fail (no matching task will cause runner error)
+    bad_run = make_pending_run("run-1").model_copy(
+        update={"requested_task_ids": ["nonexistent-task"], "max_retries": 1}
+    )
+    storage.create_run(bad_run)
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+
+    # First attempt fails and retries back to pending
+    result1 = worker.run_once()
+    assert result1 is not None
+    assert result1.status == RunStatus.PENDING
+    assert result1.retry_count == 1
+
+    # Second attempt exhausts retry and marks FAILED
+    result2 = worker.run_once()
+    assert result2 is not None
+    assert result2.status == RunStatus.FAILED
+    assert result2.retry_count == 1
+    assert result2.failure_reason is not None

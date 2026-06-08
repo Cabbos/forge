@@ -214,7 +214,15 @@ class EvaluationRun(EvalModel):
     started_at: datetime
     ended_at: datetime
     duration_ms: int = Field(ge=0)
+    retry_count: int = Field(default=0, ge=0)
+    max_retries: int = Field(default=0, ge=0)
+    failure_reason: str | None = None
+    failure_category: FailureCategory = FailureCategory.NONE
+    worker_id: str | None = None
+    claimed_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    lease_expires_at: datetime | None = None
 
-    @field_serializer("started_at", "ended_at")
-    def serialize_datetime(self, value: datetime) -> str:
-        return value.isoformat()
+    @field_serializer("started_at", "ended_at", "claimed_at", "heartbeat_at", "lease_expires_at")
+    def serialize_datetime(self, value: datetime | None) -> str | None:
+        return value.isoformat() if value is not None else None

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import build_storage, create_app
+from app.models import FailureCategory, RunStatus
 from app.storage import InMemoryStorage, SQLiteStorage
 from app.worker import EvalWorker
 
@@ -285,3 +286,73 @@ def test_api_can_create_queued_run_for_worker_execution(
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "completed"
     assert fetched.json()["traces"][0]["task_id"] == "task-pass"
+
+
+def test_api_can_cancel_pending_run(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1"},
+    )
+    run_id = created.json()["run_id"]
+
+    cancel = client.post(f"/runs/{run_id}/cancel")
+
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "cancelled"
+    fetched = client.get(f"/runs/{run_id}")
+    assert fetched.json()["status"] == "cancelled"
+
+
+def test_api_can_cancel_running_run(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1"},
+    )
+    run_id = created.json()["run_id"]
+    storage.update_run_status(run_id, RunStatus.RUNNING)
+
+    cancel = client.post(f"/runs/{run_id}/cancel")
+
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "cancelled"
+
+
+def test_api_includes_failure_visibility_for_failed_run(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1"},
+    )
+    run_id = created.json()["run_id"]
+    failed_run = storage.get_run(run_id).model_copy(
+        update={
+            "status": RunStatus.FAILED,
+            "failure_reason": "Worker crashed",
+            "failure_category": FailureCategory.RUNNER_ERROR,
+            "retry_count": 2,
+            "max_retries": 2,
+        }
+    )
+    storage.save_run(failed_run)
+
+    fetched = client.get(f"/runs/{run_id}")
+    payload = fetched.json()
+    assert payload["status"] == "failed"
+    assert payload["failure_reason"] == "Worker crashed"
+    assert payload["failure_category"] == "runner_error"
+    assert payload["retry_count"] == 2
+    assert payload["max_retries"] == 2

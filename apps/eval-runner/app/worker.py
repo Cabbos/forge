@@ -4,7 +4,7 @@ import time
 from app.config import get_settings
 from app.main import build_storage
 from app.metrics import calculate_metrics
-from app.models import EvaluationRun, RunStatus
+from app.models import EvaluationRun, FailureCategory, RunStatus
 from app.runner import create_runner
 from app.storage import EvalStorage
 from app.trace import duration_ms, utc_now
@@ -18,17 +18,22 @@ class EvalWorker:
         *,
         storage: EvalStorage,
         forge_command: str | None,
+        worker_id: str = "local-worker",
+        heartbeat_interval_seconds: float = 30.0,
     ) -> None:
         self.storage = storage
         self.forge_command = forge_command
+        self.worker_id = worker_id
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
 
     def run_once(self) -> EvaluationRun | None:
-        run = self.storage.claim_pending_run()
+        run = self.storage.claim_pending_run(worker_id=self.worker_id)
         if run is None:
             return None
 
         started_at = utc_now()
         traces = []
+        last_heartbeat = time.time()
         try:
             runner = create_runner(
                 provider=run.provider,
@@ -36,6 +41,28 @@ class EvalWorker:
                 forge_command=self.forge_command,
             )
             for task in self.storage.get_tasks(run.requested_task_ids):
+                # Check cancellation at task boundary
+                current = self.storage.get_run(run.run_id)
+                if current is not None and current.status == RunStatus.CANCELLED:
+                    ended_at = utc_now()
+                    cancelled_run = run.model_copy(
+                        update={
+                            "status": RunStatus.CANCELLED,
+                            "traces": traces,
+                            "metrics": calculate_metrics(traces),
+                            "started_at": started_at,
+                            "ended_at": ended_at,
+                            "duration_ms": duration_ms(started_at, ended_at),
+                        }
+                    )
+                    self.storage.save_run(cancelled_run)
+                    return cancelled_run
+
+                # Periodic heartbeat
+                if time.time() - last_heartbeat > self.heartbeat_interval_seconds:
+                    self._heartbeat(run.run_id)
+                    last_heartbeat = time.time()
+
                 trace = runner.run_task(task)
                 traces.append(trace)
                 self.storage.save_task(run.run_id, trace)
@@ -53,8 +80,25 @@ class EvalWorker:
             )
             self.storage.save_run(completed_run)
             return completed_run
-        except Exception:
+        except Exception as exc:
             ended_at = utc_now()
+            failure_reason = f"{type(exc).__name__}: {exc}"
+            if run.retry_count < run.max_retries:
+                retry_run = run.model_copy(
+                    update={
+                        "status": RunStatus.PENDING,
+                        "traces": traces,
+                        "metrics": calculate_metrics(traces),
+                        "started_at": started_at,
+                        "ended_at": ended_at,
+                        "duration_ms": duration_ms(started_at, ended_at),
+                        "retry_count": run.retry_count + 1,
+                        "failure_reason": failure_reason,
+                        "failure_category": FailureCategory.RUNNER_ERROR,
+                    }
+                )
+                self.storage.save_run(retry_run)
+                return retry_run
             failed_run = run.model_copy(
                 update={
                     "status": RunStatus.FAILED,
@@ -63,10 +107,17 @@ class EvalWorker:
                     "started_at": started_at,
                     "ended_at": ended_at,
                     "duration_ms": duration_ms(started_at, ended_at),
+                    "failure_reason": failure_reason,
+                    "failure_category": FailureCategory.RUNNER_ERROR,
                 }
             )
             self.storage.save_run(failed_run)
-            raise
+            return failed_run
+
+    def _heartbeat(self, run_id: str) -> None:
+        from datetime import UTC, datetime, timedelta
+        expires = datetime.now(UTC) + timedelta(seconds=300)
+        self.storage.heartbeat_run(run_id, self.worker_id, expires)
 
 
 def main(argv: list[str] | None = None) -> int:

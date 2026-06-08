@@ -136,6 +136,14 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
         require_run(run_id)
         return get_storage().list_artifacts(run_id)
 
+    @app.post("/runs/{run_id}/cancel", response_model=EvaluationRun)
+    def cancel_run(run_id: str) -> EvaluationRun:
+        require_run(run_id)
+        cancelled = get_storage().cancel_run(run_id)
+        if cancelled is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+        return cancelled
+
     return app
 
 

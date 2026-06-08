@@ -209,3 +209,124 @@ def test_storage_contract_claims_only_pending_runs(
     assert claimed.status == RunStatus.RUNNING
     assert storage.get_run("pending-run").status == RunStatus.RUNNING
     assert storage.claim_pending_run() is None
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_cancels_pending_run(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    storage.create_run(make_run("pending-run").model_copy(update={"status": RunStatus.PENDING}))
+
+    cancelled = storage.cancel_run("pending-run")
+
+    assert cancelled is not None
+    assert cancelled.status == RunStatus.CANCELLED
+    assert storage.get_run("pending-run").status == RunStatus.CANCELLED
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_cancel_running_run_marks_cancellation_requested(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    storage.create_run(make_run("running-run").model_copy(update={"status": RunStatus.RUNNING}))
+
+    cancelled = storage.cancel_run("running-run")
+
+    assert cancelled is not None
+    assert cancelled.status == RunStatus.CANCELLED
+    assert storage.get_run("running-run").status == RunStatus.CANCELLED
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_claim_writes_lease(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    storage.create_run(make_run("pending-run").model_copy(update={"status": RunStatus.PENDING}))
+
+    claimed = storage.claim_pending_run(worker_id="worker-1")
+
+    assert claimed is not None
+    assert claimed.worker_id == "worker-1"
+    assert claimed.claimed_at is not None
+    assert claimed.lease_expires_at is not None
+    fetched = storage.get_run("pending-run")
+    assert fetched.worker_id == "worker-1"
+    assert fetched.claimed_at is not None
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_heartbeat_extends_lease(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    storage.create_run(make_run("running-run").model_copy(update={"status": RunStatus.RUNNING}))
+    future = datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+    storage.heartbeat_run("running-run", worker_id="worker-1", lease_expires_at=future)
+
+    fetched = storage.get_run("running-run")
+    assert fetched.heartbeat_at is not None
+    assert fetched.lease_expires_at is not None
+    assert fetched.lease_expires_at == future
+
+
+def test_sqlite_storage_can_reclaim_expired_lease_run(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    past = datetime(2000, 1, 1, 0, 0, 0, tzinfo=UTC)
+    storage.create_run(
+        make_run("stale-run").model_copy(
+            update={
+                "status": RunStatus.RUNNING,
+                "worker_id": "old-worker",
+                "lease_expires_at": past,
+            }
+        )
+    )
+
+    claimed = storage.claim_pending_run(worker_id="new-worker")
+
+    assert claimed is not None
+    assert claimed.run_id == "stale-run"
+    assert claimed.worker_id == "new-worker"
+    assert claimed.status == RunStatus.RUNNING

@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -14,6 +14,7 @@ from app.models import (
     EvalArtifact,
     EvaluationRun,
     EvaluationTask,
+    FailureCategory,
     MetricsSummary,
     RunStatus,
 )
@@ -31,11 +32,13 @@ class EvalStorage(Protocol):
     def save_run(self, run: EvaluationRun) -> EvaluationRun: ...
     def get_run(self, run_id: str) -> EvaluationRun | None: ...
     def list_runs(self) -> list[EvaluationRun]: ...
-    def claim_pending_run(self) -> EvaluationRun | None: ...
+    def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None: ...
     def save_task(self, run_id: str, trace: AgentTrace) -> None: ...
     def save_artifact(self, artifact: EvalArtifact) -> EvalArtifact: ...
     def list_artifacts(self, run_id: str) -> list[EvalArtifact]: ...
     def update_run_status(self, run_id: str, status: RunStatus) -> None: ...
+    def cancel_run(self, run_id: str) -> EvaluationRun | None: ...
+    def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None: ...
 
 
 class InMemoryStorage:
@@ -85,12 +88,32 @@ class InMemoryStorage:
     def list_runs(self) -> list[EvaluationRun]:
         return list(self._runs.values())
 
-    def claim_pending_run(self) -> EvaluationRun | None:
+    def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
+        now = datetime.now(UTC)
+        lease_expires = now + timedelta(seconds=300)
         for run in self._runs.values():
             if run.status == RunStatus.PENDING:
-                claimed = run.model_copy(update={"status": RunStatus.RUNNING})
+                claimed = run.model_copy(
+                    update={
+                        "status": RunStatus.RUNNING,
+                        "worker_id": worker_id,
+                        "claimed_at": now,
+                        "lease_expires_at": lease_expires,
+                    }
+                )
                 self._runs[run.run_id] = claimed
                 return claimed
+            if run.status == RunStatus.RUNNING and run.lease_expires_at is not None:
+                if datetime.now(UTC) > run.lease_expires_at:
+                    reclaimed = run.model_copy(
+                        update={
+                            "worker_id": worker_id,
+                            "claimed_at": now,
+                            "lease_expires_at": lease_expires,
+                        }
+                    )
+                    self._runs[run.run_id] = reclaimed
+                    return reclaimed
         return None
 
     def save_task(self, run_id: str, trace: AgentTrace) -> None:
@@ -119,6 +142,24 @@ class InMemoryStorage:
     def update_run_status(self, run_id: str, status: RunStatus) -> None:
         run = self._require_run(run_id)
         self._runs[run_id] = run.model_copy(update={"status": status})
+
+    def cancel_run(self, run_id: str) -> EvaluationRun | None:
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        cancelled = run.model_copy(update={"status": RunStatus.CANCELLED})
+        self._runs[run_id] = cancelled
+        return cancelled
+
+    def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None:
+        run = self._require_run(run_id)
+        self._runs[run_id] = run.model_copy(
+            update={
+                "worker_id": worker_id,
+                "heartbeat_at": datetime.now(UTC),
+                "lease_expires_at": lease_expires_at,
+            }
+        )
 
     def _require_run(self, run_id: str) -> EvaluationRun:
         run = self.get_run(run_id)
@@ -190,6 +231,13 @@ class SQLiteStorage:
             return None
 
         traces = self._read_trace_artifact(run_id)
+
+        def _row_val(key: str, default=None):
+            try:
+                return row[key]
+            except IndexError:
+                return default
+
         return EvaluationRun(
             run_id=row["id"],
             status=RunStatus(row["status"]),
@@ -199,6 +247,14 @@ class SQLiteStorage:
             started_at=datetime.fromisoformat(row["started_at"]),
             ended_at=datetime.fromisoformat(row["ended_at"]),
             duration_ms=row["duration_ms"],
+            retry_count=_row_val("retry_count", 0) or 0,
+            max_retries=_row_val("max_retries", 0) or 0,
+            failure_reason=_row_val("failure_reason"),
+            failure_category=FailureCategory(_row_val("failure_category") or "none"),
+            worker_id=_row_val("worker_id"),
+            claimed_at=_parse_datetime(_row_val("claimed_at")),
+            heartbeat_at=_parse_datetime(_row_val("heartbeat_at")),
+            lease_expires_at=_parse_datetime(_row_val("lease_expires_at")),
         )
 
     def list_runs(self) -> list[EvaluationRun]:
@@ -324,6 +380,79 @@ class SQLiteStorage:
                 """
             )
             ensure_column(connection, "eval_runs", "case_source", "TEXT")
+            ensure_column(connection, "eval_runs", "retry_count", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(connection, "eval_runs", "max_retries", "INTEGER NOT NULL DEFAULT 0")
+            ensure_column(connection, "eval_runs", "failure_reason", "TEXT")
+            ensure_column(connection, "eval_runs", "failure_category", "TEXT")
+            ensure_column(connection, "eval_runs", "worker_id", "TEXT")
+            ensure_column(connection, "eval_runs", "claimed_at", "TEXT")
+            ensure_column(connection, "eval_runs", "heartbeat_at", "TEXT")
+            ensure_column(connection, "eval_runs", "lease_expires_at", "TEXT")
+
+    def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
+        now = datetime.now(UTC)
+        lease_expires = now + timedelta(seconds=300)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # First try to claim a pending run
+            row = connection.execute(
+                """
+                SELECT id
+                FROM eval_runs
+                WHERE status = ?
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                """,
+                (RunStatus.PENDING.value,),
+            ).fetchone()
+            # Then try to reclaim a stale running run
+            if row is None:
+                row = connection.execute(
+                    """
+                    SELECT id
+                    FROM eval_runs
+                    WHERE status = ?
+                        AND (lease_expires_at IS NULL OR lease_expires_at < ?)
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT 1
+                    """,
+                    (RunStatus.RUNNING.value, now.isoformat()),
+                ).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                """
+                UPDATE eval_runs
+                SET status = ?, updated_at = ?, worker_id = ?, claimed_at = ?, lease_expires_at = ?
+                WHERE id = ?
+                """,
+                (RunStatus.RUNNING.value, utc_now_iso(), worker_id, now.isoformat(), lease_expires.isoformat(), row["id"]),
+            )
+            run_id = row["id"]
+        return self.get_run(run_id)
+
+    def cancel_run(self, run_id: str) -> EvaluationRun | None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE eval_runs
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (RunStatus.CANCELLED.value, utc_now_iso(), run_id),
+            )
+        return self.get_run(run_id)
+
+    def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE eval_runs
+                SET worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (worker_id, datetime.now(UTC).isoformat(), lease_expires_at.isoformat(), utc_now_iso(), run_id),
+            )
 
     def _upsert_run(self, run: EvaluationRun) -> None:
         report = build_report(run.traces)
@@ -342,9 +471,11 @@ class SQLiteStorage:
                     id, status, requested_task_ids_json, provider, model, success_rate,
                     case_source, verification_pass_rate, scope_violation_rate,
                     failure_categories_json, metrics_json, started_at, ended_at, duration_ms,
+                    retry_count, max_retries, failure_reason, failure_category,
+                    worker_id, claimed_at, heartbeat_at, lease_expires_at,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     status = excluded.status,
                     requested_task_ids_json = excluded.requested_task_ids_json,
@@ -359,6 +490,14 @@ class SQLiteStorage:
                     started_at = excluded.started_at,
                     ended_at = excluded.ended_at,
                     duration_ms = excluded.duration_ms,
+                    retry_count = excluded.retry_count,
+                    max_retries = excluded.max_retries,
+                    failure_reason = excluded.failure_reason,
+                    failure_category = excluded.failure_category,
+                    worker_id = excluded.worker_id,
+                    claimed_at = excluded.claimed_at,
+                    heartbeat_at = excluded.heartbeat_at,
+                    lease_expires_at = excluded.lease_expires_at,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -376,6 +515,14 @@ class SQLiteStorage:
                     run.started_at.isoformat(),
                     run.ended_at.isoformat(),
                     run.duration_ms,
+                    run.retry_count,
+                    run.max_retries,
+                    run.failure_reason,
+                    run.failure_category.value,
+                    run.worker_id,
+                    run.claimed_at.isoformat() if run.claimed_at is not None else None,
+                    run.heartbeat_at.isoformat() if run.heartbeat_at is not None else None,
+                    run.lease_expires_at.isoformat() if run.lease_expires_at is not None else None,
                     created_at,
                     now,
                 ),
@@ -534,6 +681,12 @@ def artifact_from_row(row: sqlite3.Row) -> EvalArtifact:
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def ensure_column(
