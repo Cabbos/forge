@@ -1,4 +1,5 @@
 import argparse
+import threading
 import time
 
 from app.config import get_settings
@@ -33,7 +34,7 @@ class EvalWorker:
 
         started_at = utc_now()
         traces = []
-        last_heartbeat = time.time()
+        heartbeat_stop = self._start_background_heartbeat(run.run_id)
         try:
             runner = create_runner(
                 provider=run.provider,
@@ -41,7 +42,7 @@ class EvalWorker:
                 forge_command=self.forge_command,
             )
             for task in self.storage.get_tasks(run.requested_task_ids):
-                # Check cancellation at task boundary
+                # Check cancellation at task boundary (before)
                 current = self.storage.get_run(run.run_id)
                 if current is not None and current.status == RunStatus.CANCELLED:
                     ended_at = utc_now()
@@ -58,12 +59,25 @@ class EvalWorker:
                     self.storage.save_run(cancelled_run)
                     return cancelled_run
 
-                # Periodic heartbeat
-                if time.time() - last_heartbeat > self.heartbeat_interval_seconds:
-                    self._heartbeat(run.run_id)
-                    last_heartbeat = time.time()
-
                 trace = runner.run_task(task)
+
+                # Check cancellation at task boundary (after task returns)
+                current = self.storage.get_run(run.run_id)
+                if current is not None and current.status == RunStatus.CANCELLED:
+                    ended_at = utc_now()
+                    cancelled_run = run.model_copy(
+                        update={
+                            "status": RunStatus.CANCELLED,
+                            "traces": traces,
+                            "metrics": calculate_metrics(traces),
+                            "started_at": started_at,
+                            "ended_at": ended_at,
+                            "duration_ms": duration_ms(started_at, ended_at),
+                        }
+                    )
+                    self.storage.save_run(cancelled_run)
+                    return cancelled_run
+
                 traces.append(trace)
                 self.storage.save_task(run.run_id, trace)
 
@@ -113,6 +127,25 @@ class EvalWorker:
             )
             self.storage.save_run(failed_run)
             return failed_run
+        finally:
+            heartbeat_stop.set()
+
+    def _start_background_heartbeat(self, run_id: str) -> threading.Event:
+        """Start a background thread that heartbeats until the event is set."""
+        stop_event = threading.Event()
+
+        def heartbeat_loop() -> None:
+            while not stop_event.wait(timeout=self.heartbeat_interval_seconds):
+                try:
+                    self._heartbeat(run_id)
+                except Exception:
+                    # Heartbeat failures are non-fatal; the lease may expire
+                    # and another worker can reclaim the run.
+                    pass
+
+        thread = threading.Thread(target=heartbeat_loop, daemon=True)
+        thread.start()
+        return stop_event
 
     def _heartbeat(self, run_id: str) -> None:
         from datetime import UTC, datetime, timedelta

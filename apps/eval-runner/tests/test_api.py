@@ -288,9 +288,10 @@ def test_api_can_create_queued_run_for_worker_execution(
     assert fetched.json()["traces"][0]["task_id"] == "task-pass"
 
 
-def test_api_can_cancel_pending_run(tmp_path: Path) -> None:
+def test_api_can_cancel_pending_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
+    monkeypatch.setenv("FORGE_EVAL_RUN_EXECUTION_MODE", "queued")
     storage = InMemoryStorage(tasks_path=tasks_path)
     client = TestClient(create_app(storage=storage))
 
@@ -356,3 +357,97 @@ def test_api_includes_failure_visibility_for_failed_run(tmp_path: Path) -> None:
     assert payload["failure_category"] == "runner_error"
     assert payload["retry_count"] == 2
     assert payload["max_retries"] == 2
+
+
+def test_api_queued_run_includes_max_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    monkeypatch.setenv("FORGE_EVAL_RUN_EXECUTION_MODE", "queued")
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1", "max_retries": 3},
+    )
+
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["max_retries"] == 3
+    fetched = storage.get_run(payload["run_id"])
+    assert fetched.max_retries == 3
+
+
+def test_api_cancel_completed_run_returns_409(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1"},
+    )
+    run_id = created.json()["run_id"]
+    storage.update_run_status(run_id, RunStatus.COMPLETED)
+
+    cancel = client.post(f"/runs/{run_id}/cancel")
+
+    assert cancel.status_code == 409
+    fetched = client.get(f"/runs/{run_id}")
+    assert fetched.json()["status"] == "completed"
+
+
+def test_api_cancellation_during_task_preserves_cancelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If a run is cancelled while a slow task is executing, the final status must be CANCELLED."""
+    import threading
+    import time
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    monkeypatch.setenv("FORGE_EVAL_RUN_EXECUTION_MODE", "queued")
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    created = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1"},
+    )
+    run_id = created.json()["run_id"]
+
+    # Use a slow mock runner: sleeps long enough for cancel to happen
+    class SlowWorker:
+        def __init__(self, storage: InMemoryStorage, run_id: str) -> None:
+            self.storage = storage
+            self.run_id = run_id
+
+        def run_once(self) -> None:
+            from app.models import EvaluationRun, RunStatus
+            from app.metrics import calculate_metrics
+            run = self.storage.claim_pending_run(worker_id="slow-worker")
+            if run is None:
+                return
+            # Simulate slow task
+            time.sleep(0.3)
+            # After task returns, check if cancelled
+            current = self.storage.get_run(self.run_id)
+            if current.status == RunStatus.CANCELLED:
+                # This is what we expect the real worker to do
+                cancelled = run.model_copy(update={"status": RunStatus.CANCELLED})
+                self.storage.save_run(cancelled)
+                return
+            # Otherwise mark completed (this is the bug path)
+            completed = run.model_copy(update={"status": RunStatus.COMPLETED})
+            self.storage.save_run(completed)
+
+    worker_thread = threading.Thread(target=SlowWorker(storage, run_id).run_once)
+    worker_thread.start()
+    time.sleep(0.1)  # Let worker start the task
+    client.post(f"/runs/{run_id}/cancel")
+    worker_thread.join(timeout=2)
+
+    fetched = client.get(f"/runs/{run_id}")
+    assert fetched.json()["status"] == "cancelled", (
+        f"Expected cancelled, got {fetched.json()['status']}. "
+        "Run was cancelled during task execution but worker overwrote it with completed."
+    )

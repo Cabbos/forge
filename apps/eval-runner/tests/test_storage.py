@@ -16,7 +16,7 @@ from app.models import (
     ShellOutput,
     VerificationResult,
 )
-from app.storage import InMemoryStorage, SQLiteStorage
+from app.storage import InMemoryStorage, RunAlreadyTerminalError, SQLiteStorage
 
 StorageFactory = Callable[[Path, Path, Path], object]
 
@@ -330,3 +330,27 @@ def test_sqlite_storage_can_reclaim_expired_lease_run(tmp_path: Path) -> None:
     assert claimed.run_id == "stale-run"
     assert claimed.worker_id == "new-worker"
     assert claimed.status == RunStatus.RUNNING
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_cancel_terminal_run_is_noop(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    for terminal_status in [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED]:
+        run_id = f"run-{terminal_status.value}"
+        storage.create_run(make_run(run_id).model_copy(update={"status": terminal_status}))
+
+        with pytest.raises(RunAlreadyTerminalError):
+            storage.cancel_run(run_id)
+
+        fetched = storage.get_run(run_id)
+        assert fetched.status == terminal_status

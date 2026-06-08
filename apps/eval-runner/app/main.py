@@ -16,7 +16,7 @@ from app.models import (
 )
 from app.reporting import build_report
 from app.runner import create_runner
-from app.storage import EvalStorage, InMemoryStorage, SQLiteStorage
+from app.storage import EvalStorage, InMemoryStorage, RunAlreadyTerminalError, SQLiteStorage
 from app.trace import duration_ms, utc_now
 
 
@@ -79,6 +79,7 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
                 started_at=started_at,
                 ended_at=started_at,
                 duration_ms=0,
+                max_retries=request.max_retries,
             )
             get_storage().create_run(run)
             return run
@@ -139,7 +140,13 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
     @app.post("/runs/{run_id}/cancel", response_model=EvaluationRun)
     def cancel_run(run_id: str) -> EvaluationRun:
         require_run(run_id)
-        cancelled = get_storage().cancel_run(run_id)
+        try:
+            cancelled = get_storage().cancel_run(run_id)
+        except RunAlreadyTerminalError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
         if cancelled is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
         return cancelled

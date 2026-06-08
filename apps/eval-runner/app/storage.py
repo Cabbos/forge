@@ -147,6 +147,8 @@ class InMemoryStorage:
         run = self.get_run(run_id)
         if run is None:
             return None
+        if run.status in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            raise RunAlreadyTerminalError(f"Run {run_id} is already {run.status.value}")
         cancelled = run.model_copy(update={"status": RunStatus.CANCELLED})
         self._runs[run_id] = cancelled
         return cancelled
@@ -263,32 +265,6 @@ class SQLiteStorage:
                 "SELECT id FROM eval_runs ORDER BY created_at ASC, id ASC"
             ).fetchall()
         return [run for row in rows if (run := self.get_run(row["id"])) is not None]
-
-    def claim_pending_run(self) -> EvaluationRun | None:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT id
-                FROM eval_runs
-                WHERE status = ?
-                ORDER BY created_at ASC, id ASC
-                LIMIT 1
-                """,
-                (RunStatus.PENDING.value,),
-            ).fetchone()
-            if row is None:
-                return None
-            connection.execute(
-                """
-                UPDATE eval_runs
-                SET status = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (RunStatus.RUNNING.value, utc_now_iso(), row["id"]),
-            )
-            run_id = row["id"]
-        return self.get_run(run_id)
 
     def save_task(self, run_id: str, trace: AgentTrace) -> None:
         run = self.get_run(run_id)
@@ -433,6 +409,17 @@ class SQLiteStorage:
 
     def cancel_run(self, run_id: str) -> EvaluationRun | None:
         with self._connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM eval_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            if row["status"] in {
+                RunStatus.COMPLETED.value,
+                RunStatus.FAILED.value,
+                RunStatus.CANCELLED.value,
+            }:
+                raise RunAlreadyTerminalError(f"Run {run_id} is already {row['status']}")
             connection.execute(
                 """
                 UPDATE eval_runs
@@ -681,6 +668,12 @@ def artifact_from_row(row: sqlite3.Row) -> EvalArtifact:
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+class RunAlreadyTerminalError(RuntimeError):
+    """Raised when attempting to cancel a run that is already in a terminal state."""
+
+    pass
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

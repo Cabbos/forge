@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.metrics import calculate_metrics
-from app.models import EvaluationRun, RunStatus
+from app.models import AgentTrace, EvaluationRun, RunStatus, VerificationResult
 from app.storage import SQLiteStorage
 from app.worker import EvalWorker
 
@@ -138,3 +138,125 @@ def test_worker_retries_failed_run_then_marks_terminal(tmp_path: Path) -> None:
     assert result2.status == RunStatus.FAILED
     assert result2.retry_count == 1
     assert result2.failure_reason is not None
+
+
+def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
+    """Background heartbeat should refresh lease while a long task is running."""
+    import threading
+    import time
+    from datetime import UTC, datetime
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_pending_run("run-1"))
+
+    heartbeats: list[datetime] = []
+    original_heartbeat = storage.heartbeat_run
+
+    def spy_heartbeat(run_id: str, worker_id: str, lease_expires_at: datetime) -> None:
+        heartbeats.append(datetime.now(UTC))
+        original_heartbeat(run_id, worker_id, lease_expires_at)
+
+    storage.heartbeat_run = spy_heartbeat  # type: ignore[method-assign]
+
+    # Monkey-patch runner to make task slow
+    import app.worker as worker_mod
+    original_create_runner = worker_mod.create_runner
+
+    class SlowRunner:
+        def run_task(self, _task):
+            time.sleep(0.5)
+            from app.models import AgentTrace, VerificationResult
+            return AgentTrace(
+                task_id="task-pass",
+                user_prompt="pass",
+                model="mock",
+                provider="mock",
+                final_answer="done",
+                verification_result=VerificationResult(
+                    command="pytest", passed=True, exit_code=0, duration_ms=10
+                ),
+                started_at=datetime.now(UTC),
+                ended_at=datetime.now(UTC),
+                duration_ms=10,
+            )
+
+    worker_mod.create_runner = lambda **kwargs: SlowRunner()  # type: ignore[assignment]
+
+    try:
+        worker = EvalWorker(
+            storage=storage,
+            forge_command=None,
+            heartbeat_interval_seconds=0.1,
+        )
+        worker.run_once()
+    finally:
+        worker_mod.create_runner = original_create_runner
+
+    assert len(heartbeats) >= 2, f"Expected at least 2 heartbeats during slow task, got {len(heartbeats)}"
+
+
+def test_worker_detects_cancellation_after_task_returns(tmp_path: Path) -> None:
+    """If a run is cancelled DURING task execution, worker must not overwrite with COMPLETED."""
+    import threading
+    import time
+    from datetime import UTC, datetime
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_pending_run("run-1"))
+
+    import app.worker as worker_mod
+    original_create_runner = worker_mod.create_runner
+
+    class SlowRunner:
+        def __init__(self, storage_ref) -> None:
+            self.storage_ref = storage_ref
+
+        def run_task(self, _task):
+            time.sleep(0.2)
+            return AgentTrace(
+                task_id="task-pass",
+                user_prompt="pass",
+                model="mock",
+                provider="mock",
+                final_answer="done",
+                verification_result=VerificationResult(
+                    command="pytest", passed=True, exit_code=0, duration_ms=10
+                ),
+                started_at=datetime.now(UTC),
+                ended_at=datetime.now(UTC),
+                duration_ms=10,
+            )
+
+    worker_mod.create_runner = lambda **kwargs: SlowRunner(storage)  # type: ignore[assignment]
+
+    worker = EvalWorker(
+        storage=storage,
+        forge_command=None,
+        heartbeat_interval_seconds=0.05,
+    )
+
+    # Start worker in background thread
+    worker_thread = threading.Thread(target=worker.run_once)
+    worker_thread.start()
+    time.sleep(0.1)  # Let worker start the slow task
+    storage.cancel_run("run-1")
+    worker_thread.join(timeout=3)
+
+    worker_mod.create_runner = original_create_runner
+
+    fetched = storage.get_run("run-1")
+    assert fetched.status == RunStatus.CANCELLED, (
+        f"Expected cancelled after task returned, got {fetched.status}"
+    )

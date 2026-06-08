@@ -200,6 +200,7 @@ class RunCreateRequest(EvalModel):
     task_ids: list[str] | None = None
     provider: str = "mock"
     model: str = "deterministic-agent-v1"
+    max_retries: int = Field(default=1, ge=0)
 
 
 class EvaluationRun(EvalModel):
