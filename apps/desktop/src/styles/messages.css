@@ -615,7 +615,7 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-conversation-turn + .forge-conversation-turn {
-    padding-top: 2rem;
+    padding-top: 1.5rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-block + .forge-message-block {

@@ -79,7 +79,9 @@ function summarizeToolInput(toolName: string, input: unknown) {
     return truncateMiddle(pick("url", "query") ?? "", 72);
   }
 
-  return truncateMiddle(JSON.stringify(data), 72);
+  const json = JSON.stringify(data);
+  if (json.length <= 2) return "";
+  return truncateMiddle(json, 72);
 }
 
 function hasRenderableToolInput(data: Record<string, unknown>) {
