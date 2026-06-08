@@ -1,6 +1,7 @@
 import type { StreamEvent } from "../lib/protocol";
 import { getModelContextWindow } from "../lib/providers";
 import {
+  applyCompactResultToBlocks,
   applyShellStartToBlocks,
   eventToBlock,
   findShellTargetBlockIndex,
@@ -249,6 +250,34 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       return;
     }
 
+    if (event_type === "context_compacted" || event_type === "context_compact_skipped") {
+      blocks = applyCompactResultToBlocks(
+        blocks,
+        event as Extract<StreamEvent, { event_type: "context_compacted" }> | Extract<StreamEvent, { event_type: "context_compact_skipped" }>,
+      );
+
+      const contextUsage = event_type === "context_compacted"
+        ? buildContextUsage(
+            (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_after,
+            session.contextWindowTokens ?? getModelContextWindow(session.model),
+            "local_estimate",
+            session.contextUsage,
+            {
+              from: (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_before,
+              to: (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_after,
+            },
+          )
+        : session.contextUsage;
+
+      sessions.set(session_id, touchSession(session, { blocks, contextUsage }));
+      set({ sessions });
+      if (event_type === "context_compacted") {
+        persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
+      }
+      persistBlocks(session_id, blocks);
+      return;
+    }
+
     if (event_type === "tool_call_result") {
       const resultEvent = event as Extract<StreamEvent, { event_type: "tool_call_result" }>;
       const existingIdx = findToolResultTargetBlockIndex(blocks, resultEvent.block_id);
@@ -340,24 +369,8 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       blocks.push(newBlock);
     }
 
-    const contextUsage = event_type === "context_compacted"
-      ? buildContextUsage(
-          (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_after,
-          session.contextWindowTokens ?? getModelContextWindow(session.model),
-          "local_estimate",
-          session.contextUsage,
-          {
-            from: (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_before,
-            to: (event as Extract<StreamEvent, { event_type: "context_compacted" }>).estimated_tokens_after,
-          },
-        )
-      : session.contextUsage;
-
-    sessions.set(session_id, touchSession(session, { blocks, contextUsage }));
+    sessions.set(session_id, touchSession(session, { blocks, contextUsage: session.contextUsage }));
     set({ sessions });
-    if (event_type === "context_compacted") {
-      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
-    }
     persistBlocks(session_id, blocks);
   };
 }
