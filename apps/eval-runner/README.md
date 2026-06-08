@@ -174,7 +174,7 @@ The CLI prints a JSON backtest report:
 Use the same command shape for the Forge contract once `FORGE_EVAL_FORGE_AGENT_COMMAND` points to the Forge headless binary:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
 ```
 
@@ -184,7 +184,7 @@ When debugging a real agent run, add `--output` to keep the full trace artifact
 while stdout remains the compact report:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli \
     --cases eval_cases/small-edit-success \
     --provider forge \
@@ -200,6 +200,63 @@ The output file contains:
   "traces": []
 }
 ```
+
+## Three Ways to Run
+
+The eval runner supports three execution modes, from fastest/most deterministic to slowest/most realistic:
+
+### a. Mock Offline Backtest
+
+Fully deterministic, no API keys, no network. Validates case loading, trace shaping, scope checks, and report aggregation:
+
+```bash
+uv run python -m app.cli --cases eval_cases --provider mock
+```
+
+### b. Forge Headless Local Real Backtest
+
+Runs a real Forge agent through the headless `forge_eval_agent` binary. Requires a valid API key and Rust toolchain:
+
+```bash
+# From the monorepo root
+npm run eval:forge:smoke:dry-run
+
+# Or run the real backtest
+npm run eval:forge:smoke
+```
+
+The `run-forge-backtest.mjs` script automatically resolves the eval-runner sibling directory and generates the correct `FORGE_EVAL_FORGE_AGENT_COMMAND` pointing to `apps/desktop/src-tauri/Cargo.toml`.
+
+### c. Queued Worker + SQLite Service Mode
+
+Start the FastAPI service with SQLite persistence and queued execution, then poll with the worker:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_RUN_EXECUTION_MODE=queued \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Run one pending job:
+
+```bash
+FORGE_EVAL_STORAGE_BACKEND=sqlite \
+FORGE_EVAL_DB_PATH=./forge_eval.db \
+FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
+uv run python -m app.worker --once
+```
+
+## Required Environment Variables
+
+| Variable | Required For | Description |
+|---|---|---|
+| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | Command to launch the Forge headless agent. Defaults to `cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet` when run from `apps/desktop/`. |
+| `FORGE_HEADLESS_PROVIDER` | `provider=forge` | LLM provider for the headless agent (e.g. `anthropic`, `openai`, `deepseek`). Defaults to `deepseek`. |
+| `FORGE_HEADLESS_MODEL` | `provider=forge` | Model ID for the headless agent. Defaults to `deepseek-v4-flash`. |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key for the chosen provider. Stored in `~/.forge/config.json` via Forge settings. |
+| `FORGE_EVAL_RUNNER_PATH` | Optional | Override the default eval-runner directory. Defaults to the sibling `eval-runner` of `apps/desktop/`. |
 
 ## Example Requests
 
@@ -286,7 +343,7 @@ Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id
 Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to the Forge headless binary, then create a run with `provider: "forge"`:
 
 ```bash
-export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
+export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
 
 curl -X POST http://localhost:8000/runs \
   -H "Content-Type: application/json" \

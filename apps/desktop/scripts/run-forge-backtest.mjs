@@ -246,7 +246,7 @@ function parseArgs(argv) {
 
 function defaultRunnerRoot(repoRoot) {
   return resolve(
-    process.env.FORGE_EVAL_RUNNER_PATH ?? join(repoRoot, "..", "forge-eval-runner"),
+    process.env.FORGE_EVAL_RUNNER_PATH ?? join(repoRoot, "..", "eval-runner"),
   );
 }
 

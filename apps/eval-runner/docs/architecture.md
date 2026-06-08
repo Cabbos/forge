@@ -201,7 +201,7 @@ flowchart LR
 本地真实 Forge 接入命令：
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../crusted-spinning-lynx-agent/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
 ```
 
@@ -286,6 +286,24 @@ FORGE_EVAL_DB_PATH=./forge_eval.db \
 FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
 uv run python -m app.worker --once
 ```
+
+## 三种运行方式
+
+| 模式 | 命令 | 特点 | 依赖 |
+|---|---|---|---|
+| a. Mock 离线回测 | `uv run python -m app.cli --cases eval_cases --provider mock` | 确定性、无 API key、最快 | 仅 Python/uv |
+| b. Forge headless 本地真实回测 | `npm run eval:forge:smoke` | 真实 Agent 执行、完整 trace | Rust + API key |
+| c. Queued worker + SQLite 服务 | `uv run uvicorn app.main:app` + `uv run python -m app.worker` | 持久化、队列、团队共享 | SQLite + worker |
+
+### 环境变量
+
+| Variable | 适用场景 | 说明 |
+|---|---|---|
+| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | 启动 Forge headless agent 的命令。默认从 `apps/desktop/` 解析为 `cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet`。 |
+| `FORGE_HEADLESS_PROVIDER` | `provider=forge` | LLM provider，如 `anthropic`、`openai`、`deepseek`。默认 `deepseek`。 |
+| `FORGE_HEADLESS_MODEL` | `provider=forge` | 模型 ID。默认 `deepseek-v4-flash`。 |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | 对应 provider 的 API key，Forge 从 `~/.forge/config.json` 读取。 |
+| `FORGE_EVAL_RUNNER_PATH` | 可选 | 覆盖 eval-runner 目录。默认与 `apps/desktop/` 同级的 `eval-runner`。 |
 
 ## 技术栈
 

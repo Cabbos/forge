@@ -229,3 +229,70 @@ test("CLI rejects invalid budget arguments before building a suite", () => {
     assert.match(result.stderr, /positive integer/);
   }
 });
+
+test("dry-run from apps/desktop resolves runnerRoot to sibling eval-runner", () => {
+  const scriptPath = resolve("scripts/run-forge-backtest.mjs");
+
+  const result = spawnSync(process.execPath, [scriptPath, "--dry-run"], {
+    cwd: resolve("."),
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, `dry-run should succeed: ${result.stderr}`);
+  const output = JSON.parse(result.stdout);
+  const runnerRoot = output.runnerRoot;
+  assert.ok(
+    runnerRoot.endsWith("/eval-runner") || runnerRoot.endsWith("\\eval-runner"),
+    `Expected runnerRoot to end with /eval-runner, got: ${runnerRoot}`,
+  );
+});
+
+test("generated FORGE_EVAL_FORGE_AGENT_COMMAND does not reference old repo", () => {
+  const scriptPath = resolve("scripts/run-forge-backtest.mjs");
+
+  const result = spawnSync(process.execPath, [scriptPath, "--dry-run"], {
+    cwd: resolve("."),
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, `dry-run should succeed: ${result.stderr}`);
+  const output = JSON.parse(result.stdout);
+  const command = output.env.FORGE_EVAL_FORGE_AGENT_COMMAND ?? "";
+  assert.ok(
+    !command.includes("crusted-spinning-lynx-agent"),
+    `Command must not reference old repo: ${command}`,
+  );
+  assert.ok(
+    command.includes("src-tauri/Cargo.toml"),
+    `Command must reference Cargo.toml: ${command}`,
+  );
+  assert.ok(
+    command.includes("forge_eval_agent"),
+    `Command must reference forge_eval_agent binary: ${command}`,
+  );
+});
+
+test("selects single forge-session case by id", () => {
+  const fixture = makeRunnerFixture();
+  const caseDirA = join(fixture.cases, "forge-session-capitalize");
+  const caseDirB = join(fixture.cases, "forge-session-date-utils");
+  mkdirSync(caseDirA, { recursive: true });
+  mkdirSync(caseDirB, { recursive: true });
+  try {
+    writeCase(caseDirA, "forge-session-capitalize");
+    writeCase(caseDirB, "forge-session-date-utils");
+    writeCase(fixture.portableCase, "small-edit-success");
+
+    const selected = selectCaseFiles(fixture.root, {
+      suite: "forge-session",
+      caseIds: ["forge-session-capitalize"],
+    });
+
+    assert.equal(selected.length, 1);
+    assert.equal(basename(dirname(selected[0])), "forge-session-capitalize");
+    const payload = JSON.parse(readFileSync(selected[0], "utf8"));
+    assert.equal(payload.task.id, "forge-session-capitalize");
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});

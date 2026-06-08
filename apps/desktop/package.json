@@ -19,6 +19,8 @@
     "eval:forge": "node scripts/run-forge-backtest.mjs",
     "eval:forge:dry-run": "node scripts/run-forge-backtest.mjs --dry-run",
     "eval:forge:mock": "node scripts/run-forge-backtest.mjs --provider mock",
+    "eval:forge:smoke": "node scripts/run-forge-backtest.mjs --case forge-session-capitalize",
+    "eval:forge:smoke:dry-run": "node scripts/run-forge-backtest.mjs --case forge-session-capitalize --dry-run",
     "eval:continuity": "node scripts/run-forge-backtest.mjs --suite continuity",
     "eval:continuity:dry-run": "node scripts/run-forge-backtest.mjs --suite continuity --dry-run",
     "eval:continuity:smoke": "node scripts/run-forge-backtest.mjs --suite continuity --case continuity-pipeline-normalize-input",
