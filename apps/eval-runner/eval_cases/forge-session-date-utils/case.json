@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "forge-session-date-utils",
+    "title": "Real Forge session: format task dates",
+    "prompt": "在当前 TypeScript/React 项目中做一个很小但完整的日期格式化闭环。新增 src/date-utils.ts，导出 formatDate(iso: string): string，把合法 ISO 日期格式化为 zh-CN 风格的 MM/DD HH:mm，并在非法日期、空字符串或 undefined 输入时返回“无效日期”。新增 src/date-utils.test.ts 覆盖合法日期、跨年日期、空字符串、非法字符串和 undefined。把 src/tasks.tsx 中任务列表的 createdAt 展示改为使用 formatDate，并更新 package.json 的 test script，让 npm test 能运行新增测试。不要修改 .env、.forge 或 package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/tasks.tsx",
+      "src/storage.ts"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "npm test && grep -q \"formatDate\" src/tasks.tsx && grep -q \"./date-utils\" src/tasks.tsx && npx tsc --noEmit"
+    ],
+    "verification_command": "npm test && grep -q \"formatDate\" src/tasks.tsx && grep -q \"./date-utils\" src/tasks.tsx && npx tsc --noEmit",
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/date-utils.ts",
+      "src/date-utils.test.ts",
+      "src/tasks.tsx"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/continuity.db",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "tags": [
+      "real-forge-session",
+      "typescript",
+      "react",
+      "tests"
+    ],
+    "metadata": {
+      "source": {
+        "forge_session_id": "019e8c50-ef72-74c0-854a-35b38aa619e2",
+        "source_project": "/Users/cabbos/project/continuity-manual-test-app"
+      },
+      "mock": {
+        "changed_files": [
+          "package.json",
+          "src/date-utils.ts",
+          "src/date-utils.test.ts",
+          "src/tasks.tsx"
+        ],
+        "tool_commands": [
+          "read_file src/tasks.tsx",
+          "write_file src/date-utils.ts",
+          "write_file src/date-utils.test.ts",
+          "edit_file src/tasks.tsx",
+          "edit_file package.json",
+          "shell npm test && npx tsc --noEmit"
+        ],
+        "model_rounds": 4,
+        "confirm_requests": 3,
+        "duration_ms": 780,
+        "input_tokens": 520,
+        "output_tokens": 230
+      }
+    }
+  }
+}

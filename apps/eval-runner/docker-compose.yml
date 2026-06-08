@@ -1,0 +1,8 @@
+services:
+  forge-eval-runner:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FORGE_EVAL_TASKS_PATH: tasks/sample_tasks.json
+

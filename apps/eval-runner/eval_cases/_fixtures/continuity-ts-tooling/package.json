@@ -1,0 +1,23 @@
+{
+  "name": "continuity-ts-tooling-fixture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "echo \"No focused test has been added yet.\" && exit 1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.1",
+    "@types/react-dom": "^19.2.1",
+    "tsx": "^4.20.6"
+  }
+}

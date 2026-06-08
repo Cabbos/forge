@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "multi-step-tool-use",
+    "title": "Capture multi-step tool use",
+    "prompt": "Inspect the workflow, update src/workflow.py, run validation, and summarize the changed file.",
+    "fixture_path": "fixture",
+    "context_files": [
+      "src/workflow.py",
+      "tests/test_workflow.py"
+    ],
+    "validation_commands": [
+      "python -m pytest tests/test_workflow.py"
+    ],
+    "verification_command": "python -m pytest tests/test_workflow.py",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/workflow.py"
+    ],
+    "forbidden_files_changed": [
+      ".env"
+    ],
+    "tags": [
+      "tool-use",
+      "trace",
+      "multi-step"
+    ],
+    "metadata": {
+      "mock": {
+        "changed_files": [
+          "src/workflow.py"
+        ],
+        "raw_events": [
+          {
+            "event_type": "model_round",
+            "round": 1
+          },
+          {
+            "event_type": "tool_call_start",
+            "tool_name": "read_file",
+            "path": "src/workflow.py"
+          },
+          {
+            "event_type": "tool_call_start",
+            "tool_name": "edit_file",
+            "path": "src/workflow.py"
+          },
+          {
+            "event_type": "tool_call_start",
+            "tool_name": "shell",
+            "command": "python -m pytest tests/test_workflow.py"
+          }
+        ],
+        "tool_commands": [
+          "read_file src/workflow.py",
+          "read_file tests/test_workflow.py",
+          "edit_file src/workflow.py",
+          "shell python -m pytest tests/test_workflow.py"
+        ],
+        "model_rounds": 4,
+        "confirm_requests": 2,
+        "duration_ms": 760,
+        "input_tokens": 360,
+        "output_tokens": 140
+      }
+    }
+  }
+}

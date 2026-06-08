@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "forge-session-normalize-input",
+    "title": "Real Forge session: add normalizeInput",
+    "prompt": "在当前 TypeScript 项目中新增输入规范化能力。新增 src/normalize.ts，导出 normalizeInput(input: string): string，要求去掉首尾空格、把连续空白合并成一个空格、空字符串返回空字符串，并保留中文、英文和数字。新增 src/normalize.test.ts，至少覆盖普通英文、中文、多个连续空格、空字符串、纯空格和中英数混合。更新 package.json 的 test script，让 npm test 能运行这个测试。最后运行验证命令并总结结果。不要访问网络之外的业务服务，不要修改 .env、.forge 或 package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/App.tsx",
+      "src/tasks.tsx",
+      "src/storage.ts"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "npm test && npx tsc --noEmit"
+    ],
+    "verification_command": "npm test && npx tsc --noEmit",
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/normalize.ts",
+      "src/normalize.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/continuity.db",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "tags": [
+      "real-forge-session",
+      "typescript",
+      "utility",
+      "tests"
+    ],
+    "metadata": {
+      "source": {
+        "forge_session_id": "019e86e1-ad5d-7e02-876a-4683c286dd66",
+        "source_project": "/Users/cabbos/project/continuity-manual-test-app"
+      },
+      "mock": {
+        "changed_files": [
+          "package.json",
+          "src/normalize.ts",
+          "src/normalize.test.ts"
+        ],
+        "tool_commands": [
+          "read_file package.json",
+          "write_file src/normalize.ts",
+          "write_file src/normalize.test.ts",
+          "edit_file package.json",
+          "shell npm test && npx tsc --noEmit"
+        ],
+        "model_rounds": 3,
+        "confirm_requests": 2,
+        "duration_ms": 620,
+        "input_tokens": 420,
+        "output_tokens": 180
+      }
+    }
+  }
+}

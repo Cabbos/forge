@@ -1,0 +1,5 @@
+{
+  "task_ids": ["python-cli-dry-run", "parser-regression-failure"],
+  "provider": "mock",
+  "model": "deterministic-agent-v1"
+}

@@ -1,0 +1,94 @@
+import json
+from pathlib import Path
+from typing import Any
+
+from pydantic import TypeAdapter, ValidationError
+
+from app.models import EvaluationTask
+
+CASE_FILE_NAMES = {"case.json", "task.json"}
+
+
+class CaseLoadError(RuntimeError):
+    pass
+
+
+def load_cases(path: Path | str) -> list[EvaluationTask]:
+    """Load eval case task definitions from a JSON file or case directory."""
+
+    case_path = Path(path)
+    if not case_path.exists():
+        return []
+
+    try:
+        tasks = (
+            _load_case_directory(case_path)
+            if case_path.is_dir()
+            else _load_case_file(case_path, case_path.parent)
+        )
+    except (OSError, json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+        raise CaseLoadError(f"Could not load eval cases from {case_path}") from exc
+
+    _raise_for_duplicate_ids(tasks)
+    return tasks
+
+
+def _load_case_directory(path: Path) -> list[EvaluationTask]:
+    case_files = sorted(file for file in path.rglob("*.json") if file.name in CASE_FILE_NAMES)
+    tasks: list[EvaluationTask] = []
+    for case_file in case_files:
+        tasks.extend(_load_case_file(case_file, case_file.parent))
+    return tasks
+
+
+def _load_case_file(path: Path, base_dir: Path) -> list[EvaluationTask]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw_tasks = _extract_task_payloads(payload)
+    prepared_tasks = [_resolve_fixture_path(raw_task, base_dir) for raw_task in raw_tasks]
+    return TypeAdapter(list[EvaluationTask]).validate_python(prepared_tasks)
+
+
+def _extract_task_payloads(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [_extract_single_task(item) for item in payload]
+    if isinstance(payload, dict) and "tasks" in payload:
+        tasks = payload["tasks"]
+        if not isinstance(tasks, list):
+            raise ValueError("tasks must be a list")
+        return [_extract_single_task(item) for item in tasks]
+    return [_extract_single_task(payload)]
+
+
+def _extract_single_task(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("case entries must be JSON objects")
+    task = payload.get("task", payload)
+    if not isinstance(task, dict):
+        raise ValueError("case task must be a JSON object")
+    return dict(task)
+
+
+def _resolve_fixture_path(raw_task: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    fixture_path = raw_task.get("fixture_path")
+    if fixture_path is None:
+        return raw_task
+
+    fixture = Path(str(fixture_path)).expanduser()
+    if not fixture.is_absolute():
+        fixture = base_dir / fixture
+
+    resolved_task = dict(raw_task)
+    resolved_task["fixture_path"] = str(fixture.resolve())
+    return resolved_task
+
+
+def _raise_for_duplicate_ids(tasks: list[EvaluationTask]) -> None:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for task in tasks:
+        if task.id in seen:
+            duplicates.append(task.id)
+        seen.add(task.id)
+    if duplicates:
+        duplicate_text = ", ".join(sorted(set(duplicates)))
+        raise CaseLoadError(f"Duplicate task id(s): {duplicate_text}")

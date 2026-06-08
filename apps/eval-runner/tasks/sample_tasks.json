@@ -1,0 +1,29 @@
+[
+  {
+    "id": "python-cli-dry-run",
+    "title": "Add a dry-run flag to a Python CLI",
+    "prompt": "Add a --dry-run flag to the CLI and verify that it avoids writes while still reporting planned changes.",
+    "context_files": ["src/cli.py", "tests/test_cli.py"],
+    "verification_command": "pytest tests/test_cli.py",
+    "expected_success": true,
+    "tags": ["python", "cli", "regression-test"]
+  },
+  {
+    "id": "fastapi-error-contract",
+    "title": "Stabilize FastAPI error response contract",
+    "prompt": "Ensure validation errors return a stable JSON shape and add tests for the API contract.",
+    "context_files": ["app/main.py", "tests/test_api.py"],
+    "verification_command": "pytest tests/test_api.py",
+    "expected_success": true,
+    "tags": ["fastapi", "api-contract", "pydantic"]
+  },
+  {
+    "id": "parser-regression-failure",
+    "title": "Simulate a parser regression that fails verification",
+    "prompt": "Fix the parser regression and run the parser test suite.",
+    "context_files": ["src/parser.py", "tests/test_parser.py"],
+    "verification_command": "pytest tests/test_parser.py",
+    "expected_success": false,
+    "tags": ["failure-analysis", "debugging", "trace"]
+  }
+]

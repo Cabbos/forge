@@ -1,0 +1,157 @@
+{
+    "run_id": "9c11999b-ac88-435c-9851-85e37d6f187b",
+    "status": "completed",
+    "requested_task_ids": [
+        "python-cli-dry-run",
+        "parser-regression-failure"
+    ],
+    "traces": [
+        {
+            "task_id": "python-cli-dry-run",
+            "user_prompt": "Add a --dry-run flag to the CLI and verify that it avoids writes while still reporting planned changes.",
+            "model": "deterministic-agent-v1",
+            "provider": "mock",
+            "context_files": [
+                "src/cli.py",
+                "tests/test_cli.py"
+            ],
+            "tool_calls": [
+                {
+                    "command": "read_context",
+                    "stdout": "Loaded 2 context file(s).",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration_ms": 25
+                },
+                {
+                    "command": "edit_files",
+                    "stdout": "Prepared deterministic patch for src/cli.py.",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration_ms": 35
+                }
+            ],
+            "shell_outputs": [
+                {
+                    "command": "pytest tests/test_cli.py",
+                    "stdout": "All verification checks passed.",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration_ms": 120
+                }
+            ],
+            "file_diffs": [
+                {
+                    "path": "src/cli.py",
+                    "change_type": "modified",
+                    "diff": "diff --git a/src/cli.py b/src/cli.py\n--- a/src/cli.py\n+++ b/src/cli.py\n@@ -1,3 +1,4 @@\n+# Deterministic mock change produced by forge-eval-runner\n"
+                }
+            ],
+            "final_answer": "Mock agent completed task python-cli-dry-run with deterministic trace data.",
+            "verification_result": {
+                "command": "pytest tests/test_cli.py",
+                "passed": true,
+                "stdout": "All verification checks passed.",
+                "stderr": "",
+                "exit_code": 0,
+                "duration_ms": 120
+            },
+            "error": null,
+            "failure_reason": null,
+            "failure_category": "none",
+            "started_at": "2026-05-29T06:41:27.966604+00:00",
+            "ended_at": "2026-05-29T06:41:27.966631+00:00",
+            "duration_ms": 0
+        },
+        {
+            "task_id": "parser-regression-failure",
+            "user_prompt": "Fix the parser regression and run the parser test suite.",
+            "model": "deterministic-agent-v1",
+            "provider": "mock",
+            "context_files": [
+                "src/parser.py",
+                "tests/test_parser.py"
+            ],
+            "tool_calls": [
+                {
+                    "command": "read_context",
+                    "stdout": "Loaded 2 context file(s).",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration_ms": 25
+                },
+                {
+                    "command": "edit_files",
+                    "stdout": "Prepared deterministic patch for src/parser.py.",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration_ms": 35
+                }
+            ],
+            "shell_outputs": [
+                {
+                    "command": "pytest tests/test_parser.py",
+                    "stdout": "1 test failed.",
+                    "stderr": "AssertionError: simulated failure",
+                    "exit_code": 1,
+                    "duration_ms": 120
+                }
+            ],
+            "file_diffs": [
+                {
+                    "path": "src/parser.py",
+                    "change_type": "modified",
+                    "diff": "diff --git a/src/parser.py b/src/parser.py\n--- a/src/parser.py\n+++ b/src/parser.py\n@@ -1,3 +1,4 @@\n+# Deterministic mock change produced by forge-eval-runner\n"
+                }
+            ],
+            "final_answer": "Mock agent attempted task parser-regression-failure, but evaluation did not pass.",
+            "verification_result": {
+                "command": "pytest tests/test_parser.py",
+                "passed": false,
+                "stdout": "1 test failed.",
+                "stderr": "AssertionError: simulated failure",
+                "exit_code": 1,
+                "duration_ms": 120
+            },
+            "error": "verification_failed",
+            "failure_reason": "Mock verification command returned a non-zero exit code.",
+            "failure_category": "verification_failed",
+            "started_at": "2026-05-29T06:41:27.966643+00:00",
+            "ended_at": "2026-05-29T06:41:27.966648+00:00",
+            "duration_ms": 0
+        }
+    ],
+    "metrics": {
+        "total_tasks": 2,
+        "passed_tasks": 1,
+        "failed_tasks": 1,
+        "success_rate": 0.5,
+        "verification_coverage": 1.0,
+        "average_tool_calls": 2.0,
+        "average_duration_ms": 0.0,
+        "failure_categories": {
+            "verification_failed": 1
+        },
+        "tasks": [
+            {
+                "task_id": "python-cli-dry-run",
+                "passed": true,
+                "verification_passed": true,
+                "tool_calls": 2,
+                "duration_ms": 0,
+                "failure_category": "none"
+            },
+            {
+                "task_id": "parser-regression-failure",
+                "passed": false,
+                "verification_passed": false,
+                "tool_calls": 2,
+                "duration_ms": 0,
+                "failure_category": "verification_failed"
+            }
+        ]
+    },
+    "started_at": "2026-05-29T06:41:27.966602+00:00",
+    "ended_at": "2026-05-29T06:41:27.966652+00:00",
+    "duration_ms": 0
+}
