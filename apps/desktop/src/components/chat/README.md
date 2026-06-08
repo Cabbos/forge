@@ -21,6 +21,6 @@
 
 ## Import boundaries
 
-- **May import from:** `messages/` (all block renderers), `primitives/`, `lib/*`, `store/`, `session/` (only `StartReadinessCard` — documented debt)
+- **May import from:** `messages/` (all block renderers), `primitives/`, `lib/*`, `store/`, `workbench/`
 - **Must NOT import from:** `settings/`
 - **Consumers:** `layout/AppShell.tsx`, `session/SessionView.tsx`

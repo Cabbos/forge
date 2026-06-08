@@ -28,12 +28,17 @@ function listTsFiles(dir, files = []) {
  */
 function parseImports(content) {
   const imports = [];
-  // Match both:
+  // Match:
   //   import { x } from "path"
   //   import type { x } from "path"
   //   import x from "path"
   //   import * as x from "path"
-  const regex = /import\s+(?:type\s+)?(?:[^'"]+?)\s+from\s+['"]([^'"]+)['"];?/g;
+  //   import "path"
+  //   export { x } from "path"
+  //   export type { x } from "path"
+  //   export * from "path"
+  const regex =
+    /\b(?:import\s+(?:type\s+)?(?:[^'"]+?\s+from\s+)?|export\s+(?:type\s+)?(?:\*\s+from\s+|[^'"]+?\s+from\s+))['"]([^'"]+)['"];?/g;
   let match;
   while ((match = regex.exec(content)) !== null) {
     imports.push({ source: match[1], raw: match[0] });
@@ -120,6 +125,29 @@ const RULES = [
 
 // ── Tests ────────────────────────────────────────────────────────────
 
+test("parseImports includes re-exports and side-effect imports", () => {
+  const imports = parseImports(`
+    import Button from "@/components/primitives/Button";
+    import type { MessageBlock } from "@/components/messages/types";
+    export { SessionView } from "@/components/session/SessionView";
+    export type { CapabilityTab } from "@/components/settings/capabilityTypes";
+    export * from "@/components/chat/BlockRenderer";
+    import "@/components/context/global.css";
+  `);
+
+  assert.deepEqual(
+    imports.map((imp) => imp.source),
+    [
+      "@/components/primitives/Button",
+      "@/components/messages/types",
+      "@/components/session/SessionView",
+      "@/components/settings/capabilityTypes",
+      "@/components/chat/BlockRenderer",
+      "@/components/context/global.css",
+    ]
+  );
+});
+
 for (const rule of RULES) {
   test(rule.name, () => {
     const dirPath = join(root, rule.sourceDir);
@@ -165,20 +193,6 @@ test("known cross-boundary imports are documented", () => {
   // These are documented architectural debts from the product layer map.
   // They do not fail the build but are tracked here so they do not silently multiply.
   const knownDebts = [
-    {
-      file: "src/components/chat/ConversationLane.tsx",
-      import: "@/components/session/StartReadinessCard",
-      reason:
-        "StartReadinessCard lives in session/ for historical reasons but is used " +
-        "by both chat/ConversationLane (empty state) and layout/EmptyWorkbench. " +
-        "TODO: Move StartReadinessCard to a shared location (e.g. primitives/ or a new shared/ dir).",
-    },
-    {
-      file: "src/components/layout/EmptyWorkbench.tsx",
-      import: "@/components/session/StartReadinessCard",
-      reason:
-        "Same StartReadinessCard debt as above. layout/ should not import from session/.",
-    },
     {
       file: "src/components/session/SessionView.tsx",
       import: "@/components/chat/ChatView",

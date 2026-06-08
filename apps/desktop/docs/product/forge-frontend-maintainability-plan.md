@@ -754,6 +754,7 @@ src/main.tsx
 | **Settings** | `src/components/settings/` | `SettingsDialog` (dialog shell), `SettingsCenterShell` (6-section nav + content), `CapabilityManager` + tabs/rows, provider & local-data sections |
 | **Context / Wiki** | `src/components/context/` | `WikiSections*` + `WikiRecord*`, `ActiveContextSection`, `ContinuityExperiencesSection`, `ProjectOverviewCard` |
 | **Workflow** | `src/components/workflow/` | `CurrentTaskCard` |
+| **Workbench** | `src/components/workbench/` | `StartReadinessCard`, `StartReadinessView` — workbench-level readiness indicator used by layout and chat surfaces |
 | **Primitives** | `src/components/primitives/` | Forge-specific thin wrappers over Radix/shadcn primitives: `ForgeButton`, `ForgeDialog`, `ForgeCommandDialog`, `ForgeControlButton`, etc. |
 | **UI (shadcn)** | `src/components/ui/` | Stock shadcn/ui components: button, dialog, command, input, textarea, tabs, tooltip, etc. |
 | **Styles** | `src/styles/*.css` | Domain-scoped CSS files (see CSS Modules By Responsibility above). `globals.css` is the import coordinator. |
@@ -768,10 +769,11 @@ These directories are stable at runtime. Any physical move must be a standalone 
 
 ### Import boundary rules
 
-- `layout/` may import from `chat/`, `session/`, `settings/`, and `primitives/`.
-- `chat/` may import from `messages/` and `primitives/`.
+- `layout/` may import from `chat/`, `session/`, `settings/`, `workbench/`, and `primitives/`.
+- `chat/` may import from `messages/`, `workbench/`, and `primitives/`.
 - `session/` may import from `chat/` (for `BlockRenderer` grouping helpers only) and `primitives/`.
 - `messages/` may import from `primitives/` and `lib/*` (protocol, motion, helpers). It must NOT import from `session/` or `settings/`.
 - `settings/` may import from `primitives/` and `lib/*`. It must NOT import from `messages/`.
+- `workbench/` may import from `primitives/` and `lib/*`. It must NOT import from `session/`, `chat/`, `messages/`, `settings/`, or `context/`.
 - `context/` may import from `primitives/` and `lib/*`.
 - `primitives/` must NOT import from any product surface directory.

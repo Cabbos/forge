@@ -4,9 +4,8 @@
 >
 > **Naming debt:** This directory is called `session/` for historical reasons, but
 > nearly every file here belongs to the **composer** product surface.
-> The only exceptions are `SessionView.tsx` (conversation shell) and
-> `StartReadinessCard.tsx` (setup readiness indicator, imported from `chat/` and
-> `layout/`). If you are looking for session *state* logic, see `src/store/`.
+> The only exception is `SessionView.tsx` (conversation shell).
+> If you are looking for session *state* logic, see `src/store/`.
 
 ## Files
 
@@ -39,11 +38,9 @@
 | `composerTurnState.ts` | Turn-in-flight / running / paused state machine |
 | `composerTypes.ts` | Shared composer type aliases |
 | `contextUsageView.ts` | Context-window usage indicator view model |
-| `StartReadinessCard.tsx` | ⚠️ **Cross-imported by `chat/` and `layout/`** — readiness indicator |
-| `StartReadinessView.tsx` | Visual layout for `StartReadinessCard` |
 
 ## Import boundaries
 
 - **May import from:** `chat/` (only `messageGrouping` helpers for block classification), `primitives/`, `lib/*`, `store/`
 - **Must NOT import from:** `messages/`, `settings/`
-- **Consumers:** `layout/AppShell.tsx`, `layout/EmptyWorkbench.tsx`, `chat/ConversationLane.tsx`
+- **Consumers:** `layout/AppShell.tsx`
