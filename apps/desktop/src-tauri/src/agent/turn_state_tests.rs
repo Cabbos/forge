@@ -911,7 +911,8 @@ fn projection_exposes_only_product_safe_turn_fields() {
             "model_rounds": 0,
             "tool_call_count": 0,
             "failed_tool_count": 0,
-            "estimated_context_tokens": 42
+            "estimated_context_tokens": 42,
+            "stop_reason": null
         })
     );
 }
@@ -998,6 +999,70 @@ fn turn_state_tracks_budget_counters_from_zero() {
     assert_eq!(turn.model_rounds, 0);
     assert_eq!(turn.tool_call_count, 0);
     assert_eq!(turn.failed_tool_count, 0);
+}
+
+#[test]
+fn turn_state_stop_reason_defaults_to_none() {
+    let turn = AgentTurnState::new(
+        "turn-1".to_string(),
+        "session-1".to_string(),
+        "/workspace".to_string(),
+        "openai".to_string(),
+        "gpt-5".to_string(),
+        "agent-core".to_string(),
+        "phase-1".to_string(),
+        "Stop reason test".to_string(),
+    );
+
+    assert_eq!(turn.stop_reason, None);
+}
+
+#[test]
+fn turn_state_set_stop_reason_persists_and_projects() {
+    let mut turn = AgentTurnState::new(
+        "turn-1".to_string(),
+        "session-1".to_string(),
+        "/workspace".to_string(),
+        "openai".to_string(),
+        "gpt-5".to_string(),
+        "agent-core".to_string(),
+        "phase-1".to_string(),
+        "Stop reason test".to_string(),
+    );
+
+    turn.set_stop_reason("model_round_limit");
+
+    assert_eq!(turn.stop_reason, Some("model_round_limit".to_string()));
+
+    let projection = turn.to_projection();
+    assert_eq!(
+        projection.stop_reason,
+        Some("model_round_limit".to_string())
+    );
+}
+
+#[test]
+fn old_turn_state_without_stop_reason_deserializes_with_none() {
+    let json = r#"{
+            "turn_id":"turn-1",
+            "session_id":"session-1",
+            "workspace_path":"/workspace",
+            "provider":"deepseek",
+            "model":"deepseek-v4",
+            "route":"direct",
+            "phase":"idle",
+            "user_goal":"继续",
+            "context":{"sources":[],"estimated_tokens":null,"budget_tokens":null,"omitted_sources":[]},
+            "tools":[],
+            "compact_events":[],
+            "verification":{"status":"not_needed","command":null,"exit_code":null,"stdout_preview":null,"stderr_preview":null,"duration_ms":null,"completed_at_ms":null},
+            "status":"started",
+            "created_at_ms":1,
+            "updated_at_ms":2
+        }"#;
+
+    let restored: AgentTurnState = serde_json::from_str(json).expect("deserialize old turn state");
+    assert_eq!(restored.stop_reason, None);
 }
 
 #[test]

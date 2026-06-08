@@ -253,6 +253,8 @@ pub struct AgentTurnState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transition_log: Vec<AgentTurnTransition>,
     pub status: AgentTurnStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
     #[serde(default)]
     pub model_rounds: usize,
     #[serde(default)]
@@ -275,6 +277,7 @@ pub struct AgentTurnProjection {
     pub tool_call_count: usize,
     pub failed_tool_count: usize,
     pub estimated_context_tokens: Option<u32>,
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,6 +366,7 @@ impl AgentTurnState {
                 created_at_ms: now,
             }],
             status: AgentTurnStatus::Started,
+            stop_reason: None,
             model_rounds: 0,
             tool_call_count: 0,
             failed_tool_count: 0,
@@ -393,6 +397,11 @@ impl AgentTurnState {
             reason,
             detail.map(ToString::to_string),
         );
+        self.touch();
+    }
+
+    pub fn set_stop_reason(&mut self, reason: impl Into<String>) {
+        self.stop_reason = Some(reason.into());
         self.touch();
     }
 
@@ -684,6 +693,7 @@ impl AgentTurnState {
             tool_call_count: self.tool_call_count,
             failed_tool_count: self.failed_tool_count,
             estimated_context_tokens: self.context.estimated_tokens,
+            stop_reason: self.stop_reason.clone(),
         }
     }
 

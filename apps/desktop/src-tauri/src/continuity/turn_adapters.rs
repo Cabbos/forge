@@ -474,6 +474,7 @@ mod tests {
             failure: None,
             transition_log: Vec::new(),
             status: AgentTurnStatus::Failed,
+            stop_reason: None,
             model_rounds: 0,
             tool_call_count: 1,
             failed_tool_count: 1,

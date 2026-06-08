@@ -199,6 +199,7 @@ export interface AgentTurnProjection {
   tool_call_count: number;
   failed_tool_count: number;
   estimated_context_tokens?: number | null;
+  stop_reason?: string | null;
 }
 
 export type StreamEvent =

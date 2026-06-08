@@ -4,6 +4,7 @@ pub(crate) mod compact_summary;
 pub(crate) mod context_builder;
 pub(crate) mod delivery_state;
 pub(crate) mod event_sink;
+pub(crate) mod loop_guard;
 pub(crate) mod manual_compact;
 pub(crate) mod provider_capabilities;
 pub(crate) mod recovery;

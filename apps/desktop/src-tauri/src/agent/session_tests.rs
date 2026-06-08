@@ -659,6 +659,86 @@ async fn manual_compact_emits_start_event_before_processing() {
     let _ = std::fs::remove_dir_all(workspace);
 }
 
+#[tokio::test]
+async fn agent_turn_stops_with_model_round_limit_when_max_rounds_hit() {
+    let workspace = setup_test_workspace("forge-model-round-limit");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    // Adapter always returns a tool_use, so the loop would continue forever
+    // without the guard.  We set max_model_rounds = 2.
+    let tool_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "read_file",
+            "input": {"path": "data.txt"}
+        })],
+        tool_calls: vec![ToolCall {
+            id: "call-1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "data.txt"}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    // Need 2 model responses + 1 final summary response.
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        tool_response.clone(),
+        tool_response.clone(),
+        StreamResult {
+            assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]));
+
+    let session = AgentSession::new(
+        "session-round-limit".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    // Override the loop guard to a very low limit for testing.
+    *lock_unpoisoned(&session.loop_guard) =
+        crate::agent::loop_guard::LoopGuard::default_limits().with_max_model_rounds(2);
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    session
+        .send_message_with_emitter(
+            "keep calling tools",
+            &emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        )
+        .await
+        .expect("turn should finish gracefully when limit hit");
+
+    // Verify the adapter was called 2 times in the loop + 1 final summary.
+    assert_eq!(
+        adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "should stop after 2 model rounds, then finalize_turn calls adapter once more"
+    );
+
+    // Verify the turn has the correct stop_reason.
+    let turn = lock_unpoisoned(&session.latest_turn);
+    let turn = turn.as_ref().expect("latest turn");
+    assert_eq!(
+        turn.stop_reason,
+        Some("model_round_limit".to_string()),
+        "stop_reason should be model_round_limit"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
 // ── FakeAdapter for full-turn testing ─────────────────────────
 
 use crate::adapters::base::{AdapterError, AiAdapter, StreamResult, ToolCall};

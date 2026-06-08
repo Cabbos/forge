@@ -16,6 +16,7 @@ use crate::agent::context_builder::{
     ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
 };
 use crate::agent::event_sink::EventEmitter;
+use crate::agent::loop_guard::LoopGuard;
 use crate::agent::provider_capabilities::is_context_overflow_error;
 use crate::agent::recovery::{
     api_failure_trace, build_recovery_context, verification_failure_trace,
@@ -86,6 +87,7 @@ pub struct AgentSession {
     pub(crate) latest_turn: Mutex<Option<AgentTurnState>>,
     pub(crate) turn_metrics: Arc<Mutex<TurnMetrics>>,
     pub(crate) auto_compact_guard: Mutex<AutoCompactGuard>,
+    pub(crate) loop_guard: Mutex<LoopGuard>,
     pub(crate) context_window_tokens: Option<u32>,
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
 }
@@ -153,6 +155,7 @@ impl AgentSession {
             latest_turn: Mutex::new(None),
             turn_metrics: Arc::new(Mutex::new(TurnMetrics::default())),
             auto_compact_guard: Mutex::new(AutoCompactGuard::default()),
+            loop_guard: Mutex::new(LoopGuard::default_limits()),
             context_window_tokens,
             cancel: Mutex::new(None),
         };
@@ -429,6 +432,9 @@ impl AgentSession {
             }
         };
         lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
+        if compacted.attempted {
+            lock_unpoisoned(&self.loop_guard).record_compact_attempt();
+        }
 
         if let Some(stats) = compacted.stats.as_ref() {
             self.apply_compaction_emitter(&compacted, stats, "auto_compact", emitter);
@@ -519,6 +525,7 @@ impl AgentSession {
                             Err(result) => *result,
                         };
                         lock_unpoisoned(&self.auto_compact_guard).record_result(&compacted);
+                        lock_unpoisoned(&self.loop_guard).record_overflow_retry();
 
                         if let Some(stats) = compacted.stats.as_ref() {
                             *overflow_retry_used = true;
@@ -978,7 +985,21 @@ impl AgentSession {
 
         let mut overflow_retry_used = false;
 
-        for _round in 0..MAX_AGENT_TOOL_ROUNDS {
+        loop {
+            if let Err(stop) = lock_unpoisoned(&self.loop_guard).check() {
+                crate::app_log!(
+                    "WARN",
+                    "Agent loop stopped for session {}: {:?}",
+                    self.id,
+                    stop
+                );
+                if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
+                    turn.set_stop_reason(stop.as_str());
+                }
+                self.emit_with_emitter(request.emitter);
+                break;
+            }
+
             match self
                 .execute_single_round(
                     &hidden_contexts,
@@ -1362,6 +1383,7 @@ impl AgentSession {
             turn.model_rounds += 1;
         }
         lock_unpoisoned(&self.turn_metrics).record_model_round();
+        lock_unpoisoned(&self.loop_guard).record_model_round();
         self.emit_with_emitter(emitter);
     }
 
@@ -1392,6 +1414,7 @@ impl AgentSession {
             }
         };
         lock_unpoisoned(&self.turn_metrics).record_tool_calls(cumulative_total, cumulative_failed);
+        lock_unpoisoned(&self.loop_guard).record_tool_calls(batch_total);
         self.emit_with_emitter(emitter);
     }
 
