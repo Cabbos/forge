@@ -907,7 +907,11 @@ fn projection_exposes_only_product_safe_turn_fields() {
             "step_label": "处理项目",
             "workspace_path": "/workspace",
             "compact_count": 1,
-            "verification_status": "passed"
+            "verification_status": "passed",
+            "model_rounds": 0,
+            "tool_call_count": 0,
+            "failed_tool_count": 0,
+            "estimated_context_tokens": 42
         })
     );
 }
@@ -979,6 +983,110 @@ fn turn_metadata_carries_hidden_input_intent_without_projecting_it() {
 }
 
 #[test]
+fn turn_state_tracks_budget_counters_from_zero() {
+    let turn = AgentTurnState::new(
+        "turn-1".to_string(),
+        "session-1".to_string(),
+        "/workspace".to_string(),
+        "openai".to_string(),
+        "gpt-5".to_string(),
+        "agent-core".to_string(),
+        "phase-1".to_string(),
+        "Budget test".to_string(),
+    );
+
+    assert_eq!(turn.model_rounds, 0);
+    assert_eq!(turn.tool_call_count, 0);
+    assert_eq!(turn.failed_tool_count, 0);
+}
+
+#[test]
+fn projection_exposes_budget_counters_and_context_tokens() {
+    let mut turn = sample_turn();
+    turn.model_rounds = 5;
+    turn.tool_call_count = 12;
+    turn.failed_tool_count = 2;
+
+    let projection = turn.to_projection();
+
+    assert_eq!(projection.model_rounds, 5);
+    assert_eq!(projection.tool_call_count, 12);
+    assert_eq!(projection.failed_tool_count, 2);
+    assert_eq!(projection.estimated_context_tokens, Some(42));
+}
+
+#[test]
+fn projection_budget_counters_default_to_zero() {
+    let turn = AgentTurnState::new(
+        "turn-1".to_string(),
+        "session-1".to_string(),
+        "/workspace".to_string(),
+        "openai".to_string(),
+        "gpt-5".to_string(),
+        "agent-core".to_string(),
+        "phase-1".to_string(),
+        "Default counter test".to_string(),
+    );
+
+    let projection = turn.to_projection();
+
+    assert_eq!(projection.model_rounds, 0);
+    assert_eq!(projection.tool_call_count, 0);
+    assert_eq!(projection.failed_tool_count, 0);
+    assert_eq!(projection.estimated_context_tokens, None);
+}
+
+#[test]
+fn old_turn_state_without_budget_counters_deserializes_with_defaults() {
+    let json = r#"{
+            "turn_id":"turn-1",
+            "session_id":"session-1",
+            "workspace_path":"/workspace",
+            "provider":"deepseek",
+            "model":"deepseek-v4",
+            "route":"direct",
+            "phase":"idle",
+            "user_goal":"继续",
+            "context":{"sources":[],"estimated_tokens":null,"budget_tokens":null,"omitted_sources":[]},
+            "tools":[],
+            "compact_events":[],
+            "verification":{"status":"not_needed","command":null,"exit_code":null,"stdout_preview":null,"stderr_preview":null,"duration_ms":null,"completed_at_ms":null},
+            "status":"started",
+            "created_at_ms":1,
+            "updated_at_ms":2
+        }"#;
+
+    let restored: AgentTurnState = serde_json::from_str(json).expect("deserialize old turn state");
+
+    assert_eq!(restored.model_rounds, 0);
+    assert_eq!(restored.tool_call_count, 0);
+    assert_eq!(restored.failed_tool_count, 0);
+}
+
+#[test]
+fn turn_state_budget_counters_serialize_and_deserialize() {
+    let mut turn = AgentTurnState::new(
+        "turn-1".to_string(),
+        "session-1".to_string(),
+        "/workspace".to_string(),
+        "openai".to_string(),
+        "gpt-5".to_string(),
+        "agent-core".to_string(),
+        "phase-1".to_string(),
+        "Budget serialization test".to_string(),
+    );
+    turn.model_rounds = 7;
+    turn.tool_call_count = 15;
+    turn.failed_tool_count = 3;
+
+    let json = serde_json::to_string(&turn).expect("serialize");
+    let restored: AgentTurnState = serde_json::from_str(&json).expect("deserialize");
+
+    assert_eq!(restored.model_rounds, 7);
+    assert_eq!(restored.tool_call_count, 15);
+    assert_eq!(restored.failed_tool_count, 3);
+}
+
 fn tool_category_matches_agent_core_buckets() {
     assert_eq!(classify_tool_category("read_file"), AgentToolCategory::Read);
     assert_eq!(

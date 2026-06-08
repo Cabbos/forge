@@ -38,8 +38,8 @@ use crate::agent::turn_outcome::{
     final_turn_transition_reason_for_current_turn, verification_has_failed,
 };
 use crate::agent::turn_state::{
-    completed_tool_trace, running_tool_trace, AgentCompactTrace, AgentFailureTrace,
-    AgentTurnMetadata, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
+    completed_tool_trace, is_errorish_tool_result, running_tool_trace, AgentCompactTrace,
+    AgentFailureTrace, AgentTurnMetadata, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
     AgentVerificationTrace,
 };
 use crate::agent::verification;
@@ -564,6 +564,8 @@ impl AgentSession {
             }
         };
 
+        self.record_model_round_emitter(emitter);
+
         if !self.running.load(Ordering::SeqCst) {
             self.mark_latest_turn_status_with_reason_emitter(
                 AgentTurnStatus::Cancelled,
@@ -839,6 +841,8 @@ impl AgentSession {
                 result_map.insert(tc.id.clone(), r);
             }
         }
+
+        self.record_tool_counts_emitter(tool_calls, &result_map, emitter);
 
         let model_tool_results = build_tool_result_message_for_model(&result_map, tool_calls);
         for resolved in &model_tool_results.results {
@@ -1335,6 +1339,44 @@ impl AgentSession {
         if let Some(event) = self.latest_turn_updated_event() {
             emitter.emit(event);
         }
+    }
+
+    fn record_model_round_emitter(&self, emitter: &dyn crate::agent::event_sink::EventEmitter) {
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
+            turn.model_rounds += 1;
+        }
+        lock_unpoisoned(&self.turn_metrics).record_model_round();
+        self.emit_with_emitter(emitter);
+    }
+
+    fn record_tool_counts_emitter(
+        &self,
+        tool_calls: &[crate::adapters::base::ToolCall],
+        result_map: &std::collections::HashMap<String, String>,
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
+    ) {
+        let batch_total = tool_calls.len();
+        let batch_failed = tool_calls
+            .iter()
+            .filter(|tc| {
+                result_map
+                    .get(&tc.id)
+                    .map(|r| is_errorish_tool_result(r))
+                    .unwrap_or(true)
+            })
+            .count();
+        let (cumulative_total, cumulative_failed) = {
+            let mut turn = lock_unpoisoned(&self.latest_turn);
+            if let Some(turn) = turn.as_mut() {
+                turn.tool_call_count += batch_total;
+                turn.failed_tool_count += batch_failed;
+                (turn.tool_call_count, turn.failed_tool_count)
+            } else {
+                (batch_total, batch_failed)
+            }
+        };
+        lock_unpoisoned(&self.turn_metrics).record_tool_calls(cumulative_total, cumulative_failed);
+        self.emit_with_emitter(emitter);
     }
 
     fn emit_final_summary_text_emitter(

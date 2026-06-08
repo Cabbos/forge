@@ -195,6 +195,10 @@ export interface AgentTurnProjection {
   workspace_path: string;
   compact_count: number;
   verification_status: AgentVerificationStatus;
+  model_rounds: number;
+  tool_call_count: number;
+  failed_tool_count: number;
+  estimated_context_tokens?: number | null;
 }
 
 export type StreamEvent =

@@ -1989,6 +1989,10 @@ mod tests {
                 workspace_path: "/tmp/workspace".to_string(),
                 compact_count: 0,
                 verification_status: AgentVerificationStatus::NotNeeded,
+                model_rounds: 0,
+                tool_call_count: 0,
+                failed_tool_count: 0,
+                estimated_context_tokens: None,
             },
         }
     }

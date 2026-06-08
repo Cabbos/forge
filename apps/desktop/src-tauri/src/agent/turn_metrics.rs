@@ -11,6 +11,9 @@ pub(crate) struct TurnUsageSnapshot {
     pub(crate) provider_output_tokens: Option<u32>,
     pub(crate) compact_count: usize,
     pub(crate) compact_saved_tokens: u32,
+    pub(crate) model_rounds: usize,
+    pub(crate) tool_call_count: usize,
+    pub(crate) failed_tool_count: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,6 +55,15 @@ impl TurnMetrics {
             .current
             .compact_saved_tokens
             .saturating_add(estimated_tokens_before.saturating_sub(estimated_tokens_after));
+    }
+
+    pub(crate) fn record_model_round(&mut self) {
+        self.current.model_rounds += 1;
+    }
+
+    pub(crate) fn record_tool_calls(&mut self, total: usize, failed: usize) {
+        self.current.tool_call_count = total;
+        self.current.failed_tool_count = failed;
     }
 
     pub(crate) fn snapshot(&self) -> TurnUsageSnapshot {
@@ -123,5 +135,44 @@ mod tests {
         metrics.begin_turn();
 
         assert_eq!(metrics.snapshot(), TurnUsageSnapshot::default());
+    }
+
+    #[test]
+    fn snapshot_tracks_model_rounds_and_tool_counts() {
+        let mut metrics = TurnMetrics::default();
+
+        metrics.begin_turn();
+        metrics.record_context_before_model_call(Some(42_000));
+        metrics.record_provider_usage(1_200, 340);
+        metrics.record_model_round();
+        metrics.record_model_round();
+        metrics.record_model_round();
+        metrics.record_tool_calls(10, 2);
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(
+            snapshot.estimated_context_tokens_before_model_call,
+            Some(42_000)
+        );
+        assert_eq!(snapshot.provider_input_tokens, Some(1_200));
+        assert_eq!(snapshot.provider_output_tokens, Some(340));
+        assert_eq!(snapshot.model_rounds, 3);
+        assert_eq!(snapshot.tool_call_count, 10);
+        assert_eq!(snapshot.failed_tool_count, 2);
+    }
+
+    #[test]
+    fn begin_turn_resets_budget_counters() {
+        let mut metrics = TurnMetrics::default();
+
+        metrics.begin_turn();
+        metrics.record_model_round();
+        metrics.record_tool_calls(5, 1);
+        metrics.begin_turn();
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.model_rounds, 0);
+        assert_eq!(snapshot.tool_call_count, 0);
+        assert_eq!(snapshot.failed_tool_count, 0);
     }
 }

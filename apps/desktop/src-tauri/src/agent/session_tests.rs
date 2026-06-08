@@ -1802,6 +1802,106 @@ async fn agent_turn_allows_long_tool_loop_before_final_answer() {
     let _ = std::fs::remove_dir_all(&workspace);
 }
 
+#[tokio::test]
+async fn agent_turn_tracks_budget_counters_through_multi_round_loop() {
+    let workspace = setup_test_workspace("forge-budget-counters");
+    std::fs::write(workspace.join("data.txt"), "test-data\n").expect("write data.txt");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    let response_1 = StreamResult {
+        assistant_content: vec![
+            serde_json::json!({"type": "text", "text": "读取中"}),
+            serde_json::json!({
+                "type": "tool_use", "id": "c1", "name": "read_file",
+                "input": {"path": "data.txt"}
+            }),
+        ],
+        tool_calls: vec![ToolCall {
+            id: "c1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "data.txt"}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    let response_2 = StreamResult {
+        assistant_content: vec![
+            serde_json::json!({"type": "text", "text": "再读一次"}),
+            serde_json::json!({
+                "type": "tool_use", "id": "c2", "name": "read_file",
+                "input": {"path": "data.txt"}
+            }),
+        ],
+        tool_calls: vec![ToolCall {
+            id: "c2".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "data.txt"}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    let response_3 = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text", "text": "完成"
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+
+    let adapter = Arc::new(FakeAdapter::new(vec![response_1, response_2, response_3]));
+    let session = AgentSession::new(
+        "session-budget".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    let emitter = crate::agent::event_sink::NoopEventEmitter;
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    session
+        .send_message_with_emitter("连续读取两次", &emitter, vec![], None, None, turn_guard)
+        .await
+        .expect("turn succeeds");
+
+    // Verify adapter called 3 times: 2 tool rounds + final answer
+    assert_eq!(
+        adapter.call_count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "2 tool rounds + 1 final answer"
+    );
+
+    // Verify budget counters on turn state
+    let turn = lock_unpoisoned(&session.latest_turn);
+    let turn = turn.as_ref().expect("latest turn");
+    assert_eq!(turn.status, AgentTurnStatus::Completed);
+    assert_eq!(
+        turn.model_rounds, 3,
+        "should count 3 model calls: 2 tool rounds + 1 final answer"
+    );
+    assert_eq!(turn.tool_call_count, 2, "should count 2 tool calls");
+    assert_eq!(turn.failed_tool_count, 0, "no tools failed");
+
+    // Verify metrics snapshot
+    let metrics = session.latest_turn_usage_snapshot();
+    assert_eq!(
+        metrics.model_rounds, 3,
+        "metrics should track 3 model rounds"
+    );
+    assert_eq!(
+        metrics.tool_call_count, 2,
+        "metrics should track 2 tool calls"
+    );
+    assert_eq!(
+        metrics.failed_tool_count, 0,
+        "metrics should track 0 failed tools"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
 // ── CancellableFakeAdapter for cancel mid-turn testing ─────────
 
 /// Adapter that returns tool_use on call 1, signals "ready" then waits for

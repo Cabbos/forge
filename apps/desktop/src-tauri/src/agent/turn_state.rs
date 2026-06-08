@@ -253,6 +253,12 @@ pub struct AgentTurnState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transition_log: Vec<AgentTurnTransition>,
     pub status: AgentTurnStatus,
+    #[serde(default)]
+    pub model_rounds: usize,
+    #[serde(default)]
+    pub tool_call_count: usize,
+    #[serde(default)]
+    pub failed_tool_count: usize,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -265,6 +271,10 @@ pub struct AgentTurnProjection {
     pub workspace_path: String,
     pub compact_count: usize,
     pub verification_status: AgentVerificationStatus,
+    pub model_rounds: usize,
+    pub tool_call_count: usize,
+    pub failed_tool_count: usize,
+    pub estimated_context_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,6 +363,9 @@ impl AgentTurnState {
                 created_at_ms: now,
             }],
             status: AgentTurnStatus::Started,
+            model_rounds: 0,
+            tool_call_count: 0,
+            failed_tool_count: 0,
             created_at_ms: now,
             updated_at_ms: now,
         }
@@ -667,6 +680,10 @@ impl AgentTurnState {
             workspace_path: self.workspace_path.clone(),
             compact_count: self.compact_events.len(),
             verification_status: self.verification.status.clone(),
+            model_rounds: self.model_rounds,
+            tool_call_count: self.tool_call_count,
+            failed_tool_count: self.failed_tool_count,
+            estimated_context_tokens: self.context.estimated_tokens,
         }
     }
 
@@ -1056,7 +1073,7 @@ fn shell_exit_code(result: &str) -> Option<i32> {
     })
 }
 
-fn is_errorish_tool_result(result: &str) -> bool {
+pub(crate) fn is_errorish_tool_result(result: &str) -> bool {
     result.starts_with("Error:")
         || result.starts_with("Denied:")
         || result.starts_with("Search blocked:")
