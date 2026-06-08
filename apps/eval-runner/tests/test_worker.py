@@ -260,3 +260,167 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path) -> None:
     assert fetched.status == RunStatus.CANCELLED, (
         f"Expected cancelled after task returned, got {fetched.status}"
     )
+
+
+def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
+    """If cancel happens between save_task and complete_run, final status must be CANCELLED."""
+    import time
+    from datetime import UTC, datetime
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_pending_run("run-1"))
+
+    import app.worker as worker_mod
+    original_create_runner = worker_mod.create_runner
+
+    class SlowRunner:
+        def run_task(self, _task):
+            time.sleep(0.05)
+            return AgentTrace(
+                task_id="task-pass",
+                user_prompt="pass",
+                model="mock",
+                provider="mock",
+                final_answer="done",
+                verification_result=VerificationResult(
+                    command="pytest", passed=True, exit_code=0, duration_ms=10
+                ),
+                started_at=datetime.now(UTC),
+                ended_at=datetime.now(UTC),
+                duration_ms=10,
+            )
+
+    worker_mod.create_runner = lambda **kwargs: SlowRunner()  # type: ignore[assignment]
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+
+    # Inject cancel inside save_task so it happens after task returns
+    # but before the worker reaches complete_run.
+    original_save_task = storage.save_task
+
+    def cancel_in_save_task(run_id: str, trace: AgentTrace) -> None:
+        original_save_task(run_id, trace)
+        storage.cancel_run(run_id)
+
+    storage.save_task = cancel_in_save_task  # type: ignore[method-assign]
+
+    try:
+        result = worker.run_once()
+    finally:
+        worker_mod.create_runner = original_create_runner
+        storage.save_task = original_save_task  # type: ignore[method-assign]
+
+    assert result is not None
+    assert result.status == RunStatus.CANCELLED, (
+        f"Expected CANCELLED when cancel races complete_run, got {result.status}"
+    )
+    fetched = storage.get_run("run-1")
+    assert fetched.status == RunStatus.CANCELLED
+
+
+def test_worker_exception_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
+    """If cancel happens before retry/fail write, final status must be CANCELLED."""
+    import time
+    from datetime import UTC, datetime
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    # No retries so we hit the fail branch
+    storage.create_run(make_pending_run("run-1").model_copy(update={"max_retries": 0}))
+
+    import app.worker as worker_mod
+    original_create_runner = worker_mod.create_runner
+
+    class FailingRunner:
+        def run_task(self, _task):
+            time.sleep(0.05)
+            raise RuntimeError("simulated failure")
+
+    worker_mod.create_runner = lambda **kwargs: FailingRunner()  # type: ignore[assignment]
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+
+    # Inject cancel inside fail_run so it happens right before the worker
+    # attempts to write FAILED.
+    original_fail_run = storage.fail_run
+
+    def cancel_then_fail(failed_run: EvaluationRun) -> EvaluationRun:
+        storage.cancel_run(failed_run.run_id)
+        return original_fail_run(failed_run)
+
+    storage.fail_run = cancel_then_fail  # type: ignore[method-assign]
+
+    try:
+        result = worker.run_once()
+    finally:
+        worker_mod.create_runner = original_create_runner
+        storage.fail_run = original_fail_run  # type: ignore[method-assign]
+
+    assert result is not None
+    assert result.status == RunStatus.CANCELLED, (
+        f"Expected CANCELLED when cancel races fail_run, got {result.status}"
+    )
+    fetched = storage.get_run("run-1")
+    assert fetched.status == RunStatus.CANCELLED
+
+
+def test_worker_retry_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
+    """If cancel happens before retry write, final status must be CANCELLED."""
+    import time
+    from datetime import UTC, datetime
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    # One retry so we hit the retry branch first
+    storage.create_run(make_pending_run("run-1").model_copy(update={"max_retries": 1}))
+
+    import app.worker as worker_mod
+    original_create_runner = worker_mod.create_runner
+
+    class FailingRunner:
+        def run_task(self, _task):
+            time.sleep(0.05)
+            raise RuntimeError("simulated failure")
+
+    worker_mod.create_runner = lambda **kwargs: FailingRunner()  # type: ignore[assignment]
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+
+    # Inject cancel inside retry_run so it happens right before the worker
+    # attempts to write PENDING.
+    original_retry_run = storage.retry_run
+
+    def cancel_then_retry(retry_run: EvaluationRun) -> EvaluationRun:
+        storage.cancel_run(retry_run.run_id)
+        return original_retry_run(retry_run)
+
+    storage.retry_run = cancel_then_retry  # type: ignore[method-assign]
+
+    try:
+        result = worker.run_once()
+    finally:
+        worker_mod.create_runner = original_create_runner
+        storage.retry_run = original_retry_run  # type: ignore[method-assign]
+
+    assert result is not None
+    assert result.status == RunStatus.CANCELLED, (
+        f"Expected CANCELLED when cancel races retry_run, got {result.status}"
+    )
+    fetched = storage.get_run("run-1")
+    assert fetched.status == RunStatus.CANCELLED

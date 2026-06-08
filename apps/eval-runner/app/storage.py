@@ -39,6 +39,9 @@ class EvalStorage(Protocol):
     def update_run_status(self, run_id: str, status: RunStatus) -> None: ...
     def cancel_run(self, run_id: str) -> EvaluationRun | None: ...
     def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None: ...
+    def complete_run(self, run: EvaluationRun) -> EvaluationRun: ...
+    def fail_run(self, run: EvaluationRun) -> EvaluationRun: ...
+    def retry_run(self, run: EvaluationRun) -> EvaluationRun: ...
 
 
 class InMemoryStorage:
@@ -162,6 +165,26 @@ class InMemoryStorage:
                 "lease_expires_at": lease_expires_at,
             }
         )
+
+    def complete_run(self, run: EvaluationRun) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.COMPLETED)
+
+    def fail_run(self, run: EvaluationRun) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.FAILED)
+
+    def retry_run(self, run: EvaluationRun) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.PENDING)
+
+    def _finalize_run(self, run: EvaluationRun, target_status: RunStatus) -> EvaluationRun:
+        current = self._runs.get(run.run_id)
+        if current is None:
+            raise KeyError(f"Unknown run id: {run.run_id}")
+        if current.status != RunStatus.RUNNING:
+            return current
+        finalized = run.model_copy(update={"status": target_status})
+        self._runs[run.run_id] = finalized
+        self._artifacts.setdefault(run.run_id, [])
+        return finalized
 
     def _require_run(self, run_id: str) -> EvaluationRun:
         run = self.get_run(run_id)
@@ -441,81 +464,115 @@ class SQLiteStorage:
                 (worker_id, datetime.now(UTC).isoformat(), lease_expires_at.isoformat(), utc_now_iso(), run_id),
             )
 
+    def complete_run(self, run: EvaluationRun) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.COMPLETED)
+
+    def fail_run(self, run: EvaluationRun) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.FAILED)
+
+    def retry_run(self, run: EvaluationRun) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.PENDING)
+
+    def _finalize_run(self, run: EvaluationRun, target_status: RunStatus) -> EvaluationRun:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM eval_runs WHERE id = ?", (run.run_id,)
+            ).fetchone()
+            if row is None:
+                connection.execute("ROLLBACK")
+                raise KeyError(f"Unknown run id: {run.run_id}")
+            current_status = RunStatus(row["status"])
+            if current_status != RunStatus.RUNNING:
+                connection.execute("ROLLBACK")
+                return self.get_run(run.run_id)
+            run = run.model_copy(update={"status": target_status})
+            self._write_run_artifacts(run, connection)
+            self._upsert_run_connection(connection, run)
+            connection.execute("DELETE FROM eval_run_tasks WHERE run_id = ?", (run.run_id,))
+            for trace in run.traces:
+                self._upsert_task(connection, run.run_id, trace)
+            connection.execute("COMMIT")
+        return self.get_run(run.run_id)
+
     def _upsert_run(self, run: EvaluationRun) -> None:
+        with self._connect() as connection:
+            self._upsert_run_connection(connection, run)
+
+    def _upsert_run_connection(self, connection: sqlite3.Connection, run: EvaluationRun) -> None:
         report = build_report(run.traces)
         provider = run.provider or first_trace_attr(run.traces, "provider")
         model = run.model or first_trace_attr(run.traces, "model")
         now = utc_now_iso()
-        with self._connect() as connection:
-            existing = connection.execute(
-                "SELECT created_at FROM eval_runs WHERE id = ?",
-                (run.run_id,),
-            ).fetchone()
-            created_at = existing["created_at"] if existing is not None else now
-            connection.execute(
-                """
-                INSERT INTO eval_runs (
-                    id, status, requested_task_ids_json, provider, model, success_rate,
-                    case_source, verification_pass_rate, scope_violation_rate,
-                    failure_categories_json, metrics_json, started_at, ended_at, duration_ms,
-                    retry_count, max_retries, failure_reason, failure_category,
-                    worker_id, claimed_at, heartbeat_at, lease_expires_at,
-                    created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    status = excluded.status,
-                    requested_task_ids_json = excluded.requested_task_ids_json,
-                    provider = excluded.provider,
-                    model = excluded.model,
-                    case_source = excluded.case_source,
-                    success_rate = excluded.success_rate,
-                    verification_pass_rate = excluded.verification_pass_rate,
-                    scope_violation_rate = excluded.scope_violation_rate,
-                    failure_categories_json = excluded.failure_categories_json,
-                    metrics_json = excluded.metrics_json,
-                    started_at = excluded.started_at,
-                    ended_at = excluded.ended_at,
-                    duration_ms = excluded.duration_ms,
-                    retry_count = excluded.retry_count,
-                    max_retries = excluded.max_retries,
-                    failure_reason = excluded.failure_reason,
-                    failure_category = excluded.failure_category,
-                    worker_id = excluded.worker_id,
-                    claimed_at = excluded.claimed_at,
-                    heartbeat_at = excluded.heartbeat_at,
-                    lease_expires_at = excluded.lease_expires_at,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    run.run_id,
-                    run.status.value,
-                    json.dumps(run.requested_task_ids),
-                    provider,
-                    model,
-                    report.success_rate,
-                    run.case_source,
-                    report.verification_pass_rate,
-                    report.scope_violation_rate,
-                    json.dumps(report.failure_categories),
-                    run.metrics.model_dump_json(),
-                    run.started_at.isoformat(),
-                    run.ended_at.isoformat(),
-                    run.duration_ms,
-                    run.retry_count,
-                    run.max_retries,
-                    run.failure_reason,
-                    run.failure_category.value,
-                    run.worker_id,
-                    run.claimed_at.isoformat() if run.claimed_at is not None else None,
-                    run.heartbeat_at.isoformat() if run.heartbeat_at is not None else None,
-                    run.lease_expires_at.isoformat() if run.lease_expires_at is not None else None,
-                    created_at,
-                    now,
-                ),
+        existing = connection.execute(
+            "SELECT created_at FROM eval_runs WHERE id = ?",
+            (run.run_id,),
+        ).fetchone()
+        created_at = existing["created_at"] if existing is not None else now
+        connection.execute(
+            """
+            INSERT INTO eval_runs (
+                id, status, requested_task_ids_json, provider, model, success_rate,
+                case_source, verification_pass_rate, scope_violation_rate,
+                failure_categories_json, metrics_json, started_at, ended_at, duration_ms,
+                retry_count, max_retries, failure_reason, failure_category,
+                worker_id, claimed_at, heartbeat_at, lease_expires_at,
+                created_at, updated_at
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                requested_task_ids_json = excluded.requested_task_ids_json,
+                provider = excluded.provider,
+                model = excluded.model,
+                case_source = excluded.case_source,
+                success_rate = excluded.success_rate,
+                verification_pass_rate = excluded.verification_pass_rate,
+                scope_violation_rate = excluded.scope_violation_rate,
+                failure_categories_json = excluded.failure_categories_json,
+                metrics_json = excluded.metrics_json,
+                started_at = excluded.started_at,
+                ended_at = excluded.ended_at,
+                duration_ms = excluded.duration_ms,
+                retry_count = excluded.retry_count,
+                max_retries = excluded.max_retries,
+                failure_reason = excluded.failure_reason,
+                failure_category = excluded.failure_category,
+                worker_id = excluded.worker_id,
+                claimed_at = excluded.claimed_at,
+                heartbeat_at = excluded.heartbeat_at,
+                lease_expires_at = excluded.lease_expires_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                run.run_id,
+                run.status.value,
+                json.dumps(run.requested_task_ids),
+                provider,
+                model,
+                report.success_rate,
+                run.case_source,
+                report.verification_pass_rate,
+                report.scope_violation_rate,
+                json.dumps(report.failure_categories),
+                run.metrics.model_dump_json(),
+                run.started_at.isoformat(),
+                run.ended_at.isoformat(),
+                run.duration_ms,
+                run.retry_count,
+                run.max_retries,
+                run.failure_reason,
+                run.failure_category.value,
+                run.worker_id,
+                run.claimed_at.isoformat() if run.claimed_at is not None else None,
+                run.heartbeat_at.isoformat() if run.heartbeat_at is not None else None,
+                run.lease_expires_at.isoformat() if run.lease_expires_at is not None else None,
+                created_at,
+                now,
+            ),
+        )
 
-    def _write_run_artifacts(self, run: EvaluationRun) -> None:
+    def _write_run_artifacts(self, run: EvaluationRun, connection: sqlite3.Connection | None = None) -> None:
         run_artifacts_path = self.artifacts_path / run.run_id
         run_artifacts_path.mkdir(parents=True, exist_ok=True)
         trace_path = run_artifacts_path / "trace.json"
@@ -528,7 +585,7 @@ class SQLiteStorage:
             build_report(run.traces).model_dump_json(indent=2),
             encoding="utf-8",
         )
-        with self._connect() as connection:
+        if connection is not None:
             self._upsert_artifact(
                 connection,
                 artifact_for_path(run.run_id, "trace", trace_path),
@@ -537,6 +594,16 @@ class SQLiteStorage:
                 connection,
                 artifact_for_path(run.run_id, "report", report_path),
             )
+        else:
+            with self._connect() as connection:
+                self._upsert_artifact(
+                    connection,
+                    artifact_for_path(run.run_id, "trace", trace_path),
+                )
+                self._upsert_artifact(
+                    connection,
+                    artifact_for_path(run.run_id, "report", report_path),
+                )
 
     def _read_trace_artifact(self, run_id: str) -> list[AgentTrace]:
         trace_artifacts = [

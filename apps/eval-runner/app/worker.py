@@ -92,8 +92,10 @@ class EvalWorker:
                     "duration_ms": duration_ms(started_at, ended_at),
                 }
             )
-            self.storage.save_run(completed_run)
-            return completed_run
+            result = self.storage.complete_run(completed_run)
+            if result.status == RunStatus.CANCELLED:
+                return result
+            return result
         except Exception as exc:
             ended_at = utc_now()
             failure_reason = f"{type(exc).__name__}: {exc}"
@@ -111,8 +113,10 @@ class EvalWorker:
                         "failure_category": FailureCategory.RUNNER_ERROR,
                     }
                 )
-                self.storage.save_run(retry_run)
-                return retry_run
+                result = self.storage.retry_run(retry_run)
+                if result.status == RunStatus.CANCELLED:
+                    return result
+                return result
             failed_run = run.model_copy(
                 update={
                     "status": RunStatus.FAILED,
@@ -125,8 +129,10 @@ class EvalWorker:
                     "failure_category": FailureCategory.RUNNER_ERROR,
                 }
             )
-            self.storage.save_run(failed_run)
-            return failed_run
+            result = self.storage.fail_run(failed_run)
+            if result.status == RunStatus.CANCELLED:
+                return result
+            return result
         finally:
             heartbeat_stop.set()
 

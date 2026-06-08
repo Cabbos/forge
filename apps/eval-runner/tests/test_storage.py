@@ -354,3 +354,96 @@ def test_storage_contract_cancel_terminal_run_is_noop(
 
         fetched = storage.get_run(run_id)
         assert fetched.status == terminal_status
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_complete_run_does_not_overwrite_cancelled(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    run = make_run("run-1").model_copy(update={"status": RunStatus.CANCELLED})
+    storage.create_run(run)
+
+    completed = make_run("run-1").model_copy(update={"status": RunStatus.COMPLETED})
+    result = storage.complete_run(completed)
+
+    assert result.status == RunStatus.CANCELLED
+    assert storage.get_run("run-1").status == RunStatus.CANCELLED
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_fail_run_does_not_overwrite_cancelled(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    run = make_run("run-1").model_copy(update={"status": RunStatus.CANCELLED})
+    storage.create_run(run)
+
+    failed = make_run("run-1").model_copy(update={"status": RunStatus.FAILED})
+    result = storage.fail_run(failed)
+
+    assert result.status == RunStatus.CANCELLED
+    assert storage.get_run("run-1").status == RunStatus.CANCELLED
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_retry_run_does_not_overwrite_cancelled(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    run = make_run("run-1").model_copy(update={"status": RunStatus.CANCELLED})
+    storage.create_run(run)
+
+    retry = make_run("run-1").model_copy(update={"status": RunStatus.PENDING})
+    result = storage.retry_run(retry)
+
+    assert result.status == RunStatus.CANCELLED
+    assert storage.get_run("run-1").status == RunStatus.CANCELLED
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_finalize_run_saves_when_running(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    run = make_run("run-1", [make_trace("task-pass")])
+    storage.create_run(run)
+
+    completed = run.model_copy(update={"status": RunStatus.COMPLETED})
+    result = storage.complete_run(completed)
+
+    assert result.status == RunStatus.COMPLETED
+    assert storage.get_run("run-1").status == RunStatus.COMPLETED
+    assert storage.get_run("run-1").traces[0].task_id == "task-pass"

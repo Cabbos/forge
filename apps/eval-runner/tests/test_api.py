@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import build_storage, create_app
-from app.models import FailureCategory, RunStatus
+from app.models import AgentTrace, FailureCategory, RunStatus, VerificationResult
 from app.storage import InMemoryStorage, SQLiteStorage
 from app.worker import EvalWorker
 
@@ -402,6 +402,7 @@ def test_api_cancellation_during_task_preserves_cancelled(tmp_path: Path, monkey
     """If a run is cancelled while a slow task is executing, the final status must be CANCELLED."""
     import threading
     import time
+    from datetime import UTC, datetime
 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
@@ -415,36 +416,36 @@ def test_api_cancellation_during_task_preserves_cancelled(tmp_path: Path, monkey
     )
     run_id = created.json()["run_id"]
 
-    # Use a slow mock runner: sleeps long enough for cancel to happen
-    class SlowWorker:
-        def __init__(self, storage: InMemoryStorage, run_id: str) -> None:
-            self.storage = storage
-            self.run_id = run_id
+    import app.worker as worker_mod
+    original_create_runner = worker_mod.create_runner
 
-        def run_once(self) -> None:
-            from app.models import EvaluationRun, RunStatus
-            from app.metrics import calculate_metrics
-            run = self.storage.claim_pending_run(worker_id="slow-worker")
-            if run is None:
-                return
-            # Simulate slow task
+    class SlowRunner:
+        def run_task(self, _task):
             time.sleep(0.3)
-            # After task returns, check if cancelled
-            current = self.storage.get_run(self.run_id)
-            if current.status == RunStatus.CANCELLED:
-                # This is what we expect the real worker to do
-                cancelled = run.model_copy(update={"status": RunStatus.CANCELLED})
-                self.storage.save_run(cancelled)
-                return
-            # Otherwise mark completed (this is the bug path)
-            completed = run.model_copy(update={"status": RunStatus.COMPLETED})
-            self.storage.save_run(completed)
+            return AgentTrace(
+                task_id="task-pass",
+                user_prompt="pass",
+                model="mock",
+                provider="mock",
+                final_answer="done",
+                verification_result=VerificationResult(
+                    command="pytest", passed=True, exit_code=0, duration_ms=10
+                ),
+                started_at=datetime.now(UTC),
+                ended_at=datetime.now(UTC),
+                duration_ms=10,
+            )
 
-    worker_thread = threading.Thread(target=SlowWorker(storage, run_id).run_once)
+    worker_mod.create_runner = lambda **kwargs: SlowRunner()  # type: ignore[assignment]
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+    worker_thread = threading.Thread(target=worker.run_once)
     worker_thread.start()
-    time.sleep(0.1)  # Let worker start the task
+    time.sleep(0.1)  # Let worker start the slow task
     client.post(f"/runs/{run_id}/cancel")
     worker_thread.join(timeout=2)
+
+    worker_mod.create_runner = original_create_runner
 
     fetched = client.get(f"/runs/{run_id}")
     assert fetched.json()["status"] == "cancelled", (
