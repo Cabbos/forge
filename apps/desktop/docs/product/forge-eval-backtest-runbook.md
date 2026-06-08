@@ -1,10 +1,10 @@
 # Forge Eval Backtest Runbook
 
-Forge uses the sibling `forge-eval-runner` project as the eval harness. Forge itself only provides the headless agent command; the runner owns fixtures, validation commands, scope checks, trace artifacts, metrics, and reports.
+Forge uses the `apps/eval-runner` project as the eval harness. Forge itself only provides the headless agent command; the runner owns fixtures, validation commands, scope checks, trace artifacts, metrics, and reports.
 
 ## Prerequisites
 
-- `forge-eval-runner` lives next to this repo at `../forge-eval-runner`, or set `FORGE_EVAL_RUNNER_PATH`.
+- `apps/eval-runner` lives in the same monorepo. The backtest script resolves it automatically as a sibling of `apps/desktop/`, or set `FORGE_EVAL_RUNNER_PATH` / `FORGE_EVAL_RUNNER_ROOT`.
 - Run commands from this Forge repo.
 - Real Forge runs require a configured provider API key in Forge settings or environment.
 
@@ -31,7 +31,13 @@ npm run eval:forge
 Run one smoke case before spending time on the full suite:
 
 ```bash
-npm run eval:forge -- --suite smoke
+npm run eval:forge:smoke
+```
+
+Preview the smoke case without spending model calls:
+
+```bash
+npm run eval:forge:smoke:dry-run
 ```
 
 Run a specific real-session case:
@@ -73,7 +79,7 @@ The SQLite assertion checks that `.forge/continuity.db` exists, required event t
 `npm run eval:forge` defaults to:
 
 ```text
-runner: ../forge-eval-runner
+runner: ../eval-runner
 suite: forge-session
 provider: forge
 model: local-forge

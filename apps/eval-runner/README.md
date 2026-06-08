@@ -73,7 +73,7 @@ forge-eval-runner/
 ## Run Locally
 
 ```bash
-cd forge-eval-runner
+cd apps/eval-runner
 uv sync
 uv run uvicorn app.main:app --reload --port 8000
 ```
@@ -401,7 +401,7 @@ For stronger backtests, put independent judge commands in `validation_commands`.
 ## Run With Docker
 
 ```bash
-cd forge-eval-runner
+cd apps/eval-runner
 docker compose up --build
 ```
 

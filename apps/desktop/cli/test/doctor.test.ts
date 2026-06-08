@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { runDoctor } from "../src/commands/doctor.ts";
 import {
@@ -72,6 +72,26 @@ describe("path helpers", () => {
     );
     expect(isForgeRepoRoot(forgeRoot)).toBe(true);
     expect(hasEvalRunner(evalRunnerRoot)).toBe(true);
+  });
+
+  test("FORGE_EVAL_RUNNER_PATH takes priority over FORGE_EVAL_RUNNER_ROOT", () => {
+    const forgeRoot = createForgeRoot();
+    const pathDir = createEvalRunnerRoot();
+    const rootDir = createEvalRunnerRoot();
+
+    expect(
+      defaultEvalRunnerRoot(forgeRoot, {
+        FORGE_EVAL_RUNNER_PATH: pathDir,
+        FORGE_EVAL_RUNNER_ROOT: rootDir,
+      }),
+    ).toBe(pathDir);
+  });
+
+  test("defaults to sibling eval-runner in monorepo", () => {
+    const forgeRoot = createForgeRoot();
+    const expected = resolve(forgeRoot, "..", "eval-runner");
+
+    expect(defaultEvalRunnerRoot(forgeRoot, {})).toBe(expected);
   });
 });
 

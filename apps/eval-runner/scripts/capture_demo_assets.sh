@@ -2,7 +2,7 @@
 # capture_demo_assets.sh — 重新生成 examples/ 目录下的示例 JSON 文件
 #
 # 用法：
-#   cd forge-eval-runner
+#   cd apps/eval-runner
 #   bash scripts/capture_demo_assets.sh
 #
 # 前置条件：

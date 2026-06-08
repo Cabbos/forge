@@ -5,7 +5,7 @@
 ## 前置条件
 
 ```bash
-cd forge-eval-runner
+cd apps/eval-runner
 uv sync
 uv run uvicorn app.main:app --port 8000
 ```

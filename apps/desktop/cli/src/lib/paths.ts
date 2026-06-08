@@ -16,10 +16,13 @@ export function defaultForgeRepoRoot(env: PathEnv = process.env): string {
 }
 
 export function defaultEvalRunnerRoot(forgeRepoRoot: string, env: PathEnv = process.env): string {
+  if (env.FORGE_EVAL_RUNNER_PATH) {
+    return resolve(env.FORGE_EVAL_RUNNER_PATH);
+  }
   if (env.FORGE_EVAL_RUNNER_ROOT) {
     return resolve(env.FORGE_EVAL_RUNNER_ROOT);
   }
-  return resolve(forgeRepoRoot, "..", "forge-eval-runner");
+  return resolve(forgeRepoRoot, "..", "eval-runner");
 }
 
 export function isForgeRepoRoot(path: string): boolean {
