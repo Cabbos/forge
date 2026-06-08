@@ -726,3 +726,52 @@ The long-term maintenance track is considered healthy when:
 - Playwright failures point to one UI domain instead of the entire app.
 - The user-facing app still feels like one calm desktop product.
 - No new product concept was introduced without explicit confirmation.
+
+---
+
+## Appendix: Desktop Product Layer Map
+
+> **Last updated:** 2026-06-08. This section maps the current `apps/desktop/src` directory layout to Forge product surfaces. Use it when deciding where a new visual slice belongs, or when assessing whether a directory rename is justified.
+
+### Entry chain
+
+```
+src/main.tsx
+  → src/App.tsx
+    → src/components/layout/AppShell.tsx
+      → Sidebar + main-workbench + CapabilityDrawer + CommandPalette + HubPanelHost
+```
+
+### Product surfaces ↔ source directories
+
+| Product surface | Current directory / files | What lives there |
+|-----------------|--------------------------|------------------|
+| **Workbench / Shell** | `src/components/layout/` | `AppShell`, `AppTitlebar`, `Sidebar` + actions/session-history/workspace-menu, `EmptyWorkbench`, `HubPanel` + `HubPanelHost` + `HubPanelContent`, `CapabilityDrawer`, `ProjectCockpit` + `ProjectStatus*` |
+| **Conversation** | `src/components/chat/` | `ChatView`, `MessageList`, `ConversationLane`, `BlockRenderer` (renderer entry), `messageGrouping.ts`, scroll & motion hooks |
+| **Composer** | `src/components/session/` | `InputBar` (orchestrator), `ComposerSurface`/`ComposerTextarea`/`ComposerToolbar`/`ComposerChipTray`/`ComposerMenuLayer`/`ComposerModelMenu`/`ComposerSuggestionMenu`/`ComposerResumeError`, ~20 `useComposer*` hooks, `composer*.ts` pure logic |
+| **Artifacts / Evidence** | `src/components/messages/` | Per-type renderers: `TextBlock`, `ThinkingBlock`, `UserMessage`, `ShellCard` + detail/header/output sections, `DiffCard` + `DiffBody`, `ConfirmCard` + actions/views, `DeliverySummaryCard`, `ToolCallCard`, `CodeBlock`, `DiagramBlock`, `FilePreviewSheet`, `ErrorCard`, `MissingApiKeyCard`, `PendingBlock`, `ContextCompactCard`, various `*Presentation.ts` |
+| **Search** | `src/components/CommandPalette.tsx` + `CommandPaletteContent.tsx` | Global command palette (Cmd+K), session switch, theme toggle, settings shortcut |
+| **Settings** | `src/components/settings/` | `SettingsDialog` (dialog shell), `SettingsCenterShell` (6-section nav + content), `CapabilityManager` + tabs/rows, provider & local-data sections |
+| **Context / Wiki** | `src/components/context/` | `WikiSections*` + `WikiRecord*`, `ActiveContextSection`, `ContinuityExperiencesSection`, `ProjectOverviewCard` |
+| **Workflow** | `src/components/workflow/` | `CurrentTaskCard` |
+| **Primitives** | `src/components/primitives/` | Forge-specific thin wrappers over Radix/shadcn primitives: `ForgeButton`, `ForgeDialog`, `ForgeCommandDialog`, `ForgeControlButton`, etc. |
+| **UI (shadcn)** | `src/components/ui/` | Stock shadcn/ui components: button, dialog, command, input, textarea, tabs, tooltip, etc. |
+| **Styles** | `src/styles/*.css` | Domain-scoped CSS files (see CSS Modules By Responsibility above). `globals.css` is the import coordinator. |
+
+### Naming debt (do not rename without explicit slice approval)
+
+- `components/session/` → should conceptually be `components/composer/` (most files are composer surface or hooks, not generic session logic).
+- `components/chat/` → should conceptually be `components/conversation/` (contains MessageList, grouping, scroll — not just "chat" UI).
+- `components/messages/` → should conceptually be `components/artifacts/` or `components/evidence/` (contains renderers for all backend event types, not just "messages").
+
+These directories are stable at runtime. Any physical move must be a standalone slice with characterization coverage and must not collide with open branches.
+
+### Import boundary rules
+
+- `layout/` may import from `chat/`, `session/`, `settings/`, and `primitives/`.
+- `chat/` may import from `messages/` and `primitives/`.
+- `session/` may import from `chat/` (for `BlockRenderer` grouping helpers only) and `primitives/`.
+- `messages/` may import from `primitives/` and `lib/*` (protocol, motion, helpers). It must NOT import from `session/` or `settings/`.
+- `settings/` may import from `primitives/` and `lib/*`. It must NOT import from `messages/`.
+- `context/` may import from `primitives/` and `lib/*`.
+- `primitives/` must NOT import from any product surface directory.

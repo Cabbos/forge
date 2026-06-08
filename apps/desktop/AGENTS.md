@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in the `apps/desktop` frontend.
 
 ## Build / Run
 
@@ -31,7 +31,7 @@ There are two kinds of sessions, both stored in `AppState.sessions: HashMap<Stri
 
 | Variant | Source | Use case |
 |---|---|---|
-| `Session::Agent(AgentSession)` | `agent/session.rs` | AI agent (Codex/Codex/Hermes) — API calls + tool execution loop |
+| `Session::Agent(AgentSession)` | `agent/session.rs` | AI agent (Claude/Codex/Hermes) — API calls + tool execution loop |
 | `Session::Cli(CliSession)` | `pty/session.rs` | Raw PTY bash session via `portable-pty` |
 
 ### Agent loop (`agent/session.rs`)
@@ -40,7 +40,7 @@ User message → add to history → API stream → collect `tool_calls` → exec
 
 ### AI adapters (`adapters/`)
 
-All providers implement the `AiAdapter` trait (`base.rs`), which has one key method: `stream_message()`. The trait uses `async_trait`. Three adapters: `AnthropicAdapter` (Codex), `OpenAiAdapter` (Codex), and the Codex adapter is reused for Hermes.
+All providers implement the `AiAdapter` trait (`base.rs`), which has one key method: `stream_message()`. The trait uses `async_trait`. Three adapters: `AnthropicAdapter` (Claude), `OpenAiAdapter` (Codex), and the Claude adapter is reused for Hermes.
 
 ### Tool execution & permission gate (`executor/`)
 
@@ -48,7 +48,7 @@ All providers implement the `AiAdapter` trait (`base.rs`), which has one key met
 
 ### Plugin system (`plugin_manager/`)
 
-Four plugin types: `McpServer`, `Hook`, `Skill`, `Extension`. Three agent targets: `Codex`, `Codex`, `Hermes`. Plugins are scanned locally and discovered from a registry. Installation is handled by `PluginInstaller`.
+Four plugin types: `McpServer`, `Hook`, `Skill`, `Extension`. Three agent targets: `Claude`, `Codex`, `Hermes`. Plugins are scanned locally and discovered from a registry. Installation is handled by `PluginInstaller`.
 
 ### Frontend state (`src/store/index.ts`)
 
@@ -60,7 +60,12 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 
 ### Component tree
 
-`App` → `AppShell` → `Sidebar` + `SessionView` + `StatusBar`. `SessionView` contains `ChatView` → `MessageList` (virtualized) → per-type block renderers in `components/messages/`.
+`App` → `AppShell` → `Sidebar` + `main-workbench` (`AppTitlebar` + `SessionView`/`EmptyWorkbench`) + `CapabilityDrawer` + `CommandPalette` + `HubPanelHost`.
+
+- `SessionView` → `ChatView` → `MessageList` (virtualized) → `ConversationLane` → per-type block renderers in `components/messages/`.
+- `SessionView` → `InputBar` → `ComposerSurface` + `ComposerMenuLayer` + `ComposerToolbar` + `ComposerChipTray`.
+- `SettingsDialog` wraps `SettingsCenterShell` with nav sections: models, workspace, tools, memory, data, about.
+- `CommandPalette` is the global search/switch surface (Cmd+K).
 
 ## Key patterns
 
@@ -72,7 +77,7 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **forge-v1** (8129 symbols, 18116 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **forge** (monorepo root: `/Users/cabbos/project/forge`). The desktop app lives under `apps/desktop`. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -95,10 +100,10 @@ This project is indexed by GitNexus as **forge-v1** (8129 symbols, 18116 relatio
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/forge-v1/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/forge-v1/clusters` | All functional areas |
-| `gitnexus://repo/forge-v1/processes` | All execution flows |
-| `gitnexus://repo/forge-v1/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/forge/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/forge/clusters` | All functional areas |
+| `gitnexus://repo/forge/processes` | All execution flows |
+| `gitnexus://repo/forge/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
