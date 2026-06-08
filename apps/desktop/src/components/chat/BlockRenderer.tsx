@@ -29,6 +29,7 @@ function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: st
     case "shell": return <ShellCard block={block} />;
     case "diff_view": return <DiffCard block={block} sessionId={sessionId} />;
     case "confirm_ask": return <ConfirmCard block={block} sessionId={sessionId} />;
+    case "context_compact_start":
     case "context_compacted":
     case "context_compact_skipped":
       return <ContextCompactCard block={block} />;

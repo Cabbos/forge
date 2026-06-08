@@ -65,6 +65,7 @@ function getMessageBlockRole(item: MessageItem) {
     case "tool_call":
     case "tool_call_result":
     case "shell":
+    case "context_compact_start":
     case "context_compacted":
     case "context_compact_skipped":
       return "trace";

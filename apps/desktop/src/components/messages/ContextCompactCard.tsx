@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, ChevronRight } from "lucide-react";
+import { Archive, ChevronRight, Loader2 } from "lucide-react";
 import { ForgeCollapsible, ForgeCollapsibleContent, ForgeCollapsibleTrigger } from "@/components/primitives/collapsible";
 import { ForgeIcon } from "@/components/primitives/icon";
 import type { BlockState } from "@/lib/protocol";
@@ -7,12 +7,25 @@ import { cn } from "@/lib/utils";
 
 export function ContextCompactCard({ block }: { block: BlockState }) {
   const [open, setOpen] = useState(false);
+  const running = block.event_type === "context_compact_start";
   const skipped = block.event_type === "context_compact_skipped";
   const compacted = numberMeta(block, "compacted_messages");
   const retained = numberMeta(block, "retained_messages");
   const before = numberMeta(block, "estimated_tokens_before");
   const after = numberMeta(block, "estimated_tokens_after");
   const reason = stringMeta(block, "reason");
+
+  if (running) {
+    return (
+      <div className="compact-spool">
+        <div className="forge-log-line forge-context-compact-trigger">
+          <Loader2 className="size-3 shrink-0 animate-spin" />
+          <ForgeIcon icon={Archive} tone="context" contained={false} className="size-3.5" />
+          <span className="shrink-0 font-medium">正在整理上下文…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="compact-spool">

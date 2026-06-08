@@ -32,6 +32,10 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     return applyShellStartToBlocks(blocks, event);
   }
 
+  if (event_type === "context_compacted" || event_type === "context_compact_skipped") {
+    return applyCompactResultToBlocks(blocks, event);
+  }
+
   if (event_type === "tool_call_result") {
     const next = [...blocks];
     const existingIdx = findToolResultTargetBlockIndex(next, event.block_id);
@@ -110,6 +114,46 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
 
   const block = eventToBlock(event);
   return block ? [...blocks, block] : blocks;
+}
+
+export function applyCompactResultToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "context_compacted" }> | Extract<StreamEvent, { event_type: "context_compact_skipped" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingIdx = next.findIndex((block) =>
+    block.block_id === event.block_id && block.event_type === "context_compact_start"
+  );
+  if (existingIdx >= 0) {
+    if (event.event_type === "context_compacted") {
+      next[existingIdx] = {
+        ...next[existingIdx],
+        event_type: "context_compacted",
+        content: event.summary,
+        isComplete: true,
+        metadata: {
+          retained_messages: event.retained_messages,
+          compacted_messages: event.compacted_messages,
+          estimated_tokens_before: event.estimated_tokens_before,
+          estimated_tokens_after: event.estimated_tokens_after,
+        },
+      };
+    } else {
+      next[existingIdx] = {
+        ...next[existingIdx],
+        event_type: "context_compact_skipped",
+        content: compactSkipMessage(event.reason),
+        isComplete: true,
+        metadata: {
+          reason: event.reason,
+          retained_messages: event.retained_messages,
+        },
+      };
+    }
+    return next;
+  }
+  const block = eventToBlock(event);
+  return block ? [...next, block] : next;
 }
 
 export function applyShellStartToBlocks(
@@ -288,6 +332,13 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
           kind: event.kind,
           boundary: event.boundary ?? null,
         },
+      };
+    case "context_compact_start":
+      return {
+        ...base,
+        event_type: "context_compact_start",
+        content: "",
+        metadata: {},
       };
     case "context_compacted":
       return {
