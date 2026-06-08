@@ -739,6 +739,108 @@ async fn agent_turn_stops_with_model_round_limit_when_max_rounds_hit() {
     let _ = std::fs::remove_dir_all(&workspace);
 }
 
+#[tokio::test]
+async fn loop_guard_resets_between_turns_so_budget_does_not_accumulate() {
+    let workspace = setup_test_workspace("forge-loop-guard-reset");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    let tool_response = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "read_file",
+            "input": {"path": "data.txt"}
+        })],
+        tool_calls: vec![ToolCall {
+            id: "call-1".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "data.txt"}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    // Sequence:
+    //   Turn 1 round 1: tool_use
+    //   Turn 1 round 2: tool_use (hits 2-round limit)
+    //   Turn 1 final summary: text
+    //   Turn 2 round 1: text (no tool calls — normal completion)
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        tool_response.clone(),
+        tool_response.clone(),
+        StreamResult {
+            assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+        StreamResult {
+            assistant_content: vec![serde_json::json!({"type": "text", "text": "second done"})],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]));
+
+    let session = AgentSession::new(
+        "session-loop-guard-reset".to_string(),
+        "deepseek".to_string(),
+        adapter.clone(),
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    // Override the loop guard to a very low limit for testing.
+    *lock_unpoisoned(&session.loop_guard) =
+        crate::agent::loop_guard::LoopGuard::default_limits().with_max_model_rounds(2);
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+
+    // First turn — hits the 2-round limit.
+    let turn_guard_1 = session.reserve_turn().expect("reserve turn 1");
+    session
+        .send_message_with_emitter(
+            "keep calling tools",
+            &emitter,
+            vec![],
+            None,
+            None,
+            turn_guard_1,
+        )
+        .await
+        .expect("first turn should finish");
+
+    {
+        let turn_1 = lock_unpoisoned(&session.latest_turn);
+        let turn_1 = turn_1.as_ref().expect("latest turn after first");
+        assert_eq!(
+            turn_1.stop_reason,
+            Some("model_round_limit".to_string()),
+            "first turn should hit model_round_limit"
+        );
+    }
+
+    // Second turn — if loop_guard is NOT reset, this will immediately fail
+    // with model_round_limit because the counter from turn 1 is still there.
+    let turn_guard_2 = session.reserve_turn().expect("reserve turn 2");
+    session
+        .send_message_with_emitter("second message", &emitter, vec![], None, None, turn_guard_2)
+        .await
+        .expect("second turn should finish, not be blocked by accumulated budget");
+
+    let turn_2 = lock_unpoisoned(&session.latest_turn);
+    let turn_2 = turn_2.as_ref().expect("latest turn after second");
+    assert_ne!(
+        turn_2.stop_reason,
+        Some("model_round_limit".to_string()),
+        "second turn should NOT hit model_round_limit; loop_guard must reset between turns"
+    );
+    assert_eq!(
+        turn_2.stop_reason, None,
+        "second turn should complete normally without any stop reason"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
 // ── FakeAdapter for full-turn testing ─────────────────────────
 
 use crate::adapters::base::{AdapterError, AiAdapter, StreamResult, ToolCall};

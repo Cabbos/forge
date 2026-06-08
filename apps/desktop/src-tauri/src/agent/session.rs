@@ -1470,6 +1470,7 @@ impl AgentSession {
         );
         *lock_unpoisoned(&self.latest_turn) = Some(turn);
         lock_unpoisoned(&self.turn_metrics).begin_turn();
+        lock_unpoisoned(&self.loop_guard).reset();
         self.emit_with_emitter(emitter);
     }
 

@@ -91,6 +91,13 @@ impl LoopGuard {
     pub(crate) fn overflow_retries(&self) -> usize {
         self.overflow_retries
     }
+
+    pub(crate) fn reset(&mut self) {
+        self.model_rounds = 0;
+        self.tool_calls = 0;
+        self.compact_attempts = 0;
+        self.overflow_retries = 0;
+    }
 }
 
 impl LoopStopReason {
@@ -174,5 +181,30 @@ mod tests {
             LoopStopReason::RepeatedOverflow.as_str(),
             "repeated_overflow"
         );
+    }
+
+    #[test]
+    fn reset_clears_all_counters() {
+        let mut guard = LoopGuard::default_limits().with_max_model_rounds(3);
+        guard.record_model_round();
+        guard.record_model_round();
+        guard.record_tool_calls(5);
+        guard.record_compact_attempt();
+        guard.record_overflow_retry();
+
+        assert_eq!(guard.model_rounds(), 2);
+        assert_eq!(guard.tool_calls(), 5);
+
+        guard.reset();
+
+        assert_eq!(guard.model_rounds(), 0);
+        assert_eq!(guard.tool_calls(), 0);
+        assert!(guard.check().is_ok());
+
+        // Should allow 3 more rounds after reset
+        guard.record_model_round();
+        guard.record_model_round();
+        guard.record_model_round();
+        assert_eq!(guard.check(), Err(LoopStopReason::ModelRoundLimit));
     }
 }
