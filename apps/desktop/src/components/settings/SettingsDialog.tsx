@@ -7,10 +7,12 @@ import {
   ForgeDialogTrigger,
 } from "@/components/primitives/dialog";
 import { ForgeButton } from "@/components/primitives/button";
-import { Settings, AlertCircle } from "lucide-react";
-import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
-import { SettingsProviderSection } from "@/components/settings/SettingsProviderSection";
-import { SettingsSummaryStrip } from "@/components/settings/SettingsSummaryStrip";
+import { Settings } from "lucide-react";
+import { useState } from "react";
+import {
+  SettingsCenterShell,
+  type SettingsSectionId,
+} from "@/components/settings/SettingsCenterShell";
 import { useSettingsDialogController } from "@/components/settings/useSettingsDialogController";
 
 interface SettingsDialogProps {
@@ -21,6 +23,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigger = false }: SettingsDialogProps = {}) {
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("models");
   const {
     dialogOpen,
     setDialogOpen,
@@ -29,6 +32,11 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
     providerTotal,
     sessionCount,
     error,
+    workspaceName,
+    workspacePath,
+    workspaceCount,
+    providerLabel,
+    modelLabel,
     providerRowsProps,
     localDataProps,
   } = useSettingsDialogController({ open, onOpenChange });
@@ -42,8 +50,8 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
           <Settings className="size-4" />
         </ForgeDialogTrigger>
       )}
-      <ForgeDialogContent ref={dialogRef} data-forge-motion="settings-dialog" className="forge-settings-dialog sm:max-w-[590px]">
-        <ForgeDialogHeader>
+      <ForgeDialogContent ref={dialogRef} data-forge-motion="settings-dialog" className="forge-settings-dialog sm:max-w-[860px]">
+        <ForgeDialogHeader className="forge-settings-header">
           <ForgeDialogTitle className="forge-settings-title">
             <Settings className="size-4" />
             设置
@@ -53,22 +61,21 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
           </ForgeDialogDescription>
         </ForgeDialogHeader>
 
-        <SettingsSummaryStrip
+        <SettingsCenterShell
+          activeSection={activeSection}
+          onSectionChange={setActiveSection}
           configuredCount={configuredCount}
           providerTotal={providerTotal}
           sessionCount={sessionCount}
+          workspaceName={workspaceName}
+          workspacePath={workspacePath}
+          workspaceCount={workspaceCount}
+          providerLabel={providerLabel}
+          modelLabel={modelLabel}
+          providerRowsProps={providerRowsProps}
+          localDataProps={localDataProps}
+          error={error}
         />
-
-        <SettingsProviderSection providerRowsProps={providerRowsProps} />
-
-        <SettingsLocalDataSection {...localDataProps} />
-
-        {error && (
-          <div className="flex items-center gap-1.5 text-xs text-destructive">
-            <AlertCircle className="size-3" />
-            {error}
-          </div>
-        )}
       </ForgeDialogContent>
     </ForgeDialog>
   );

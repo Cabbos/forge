@@ -9,6 +9,7 @@ import { deleteSession, setApiKey } from "@/lib/tauri";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { getModelLabel, getProviderLabel } from "@/lib/providers";
 import { useStore } from "@/store";
 
 interface UseSettingsDialogControllerOptions {
@@ -30,6 +31,10 @@ export function useSettingsDialogController({
   const queryClient = useQueryClient();
   const sessions = useStore((s) => s.sessions);
   const removeSession = useStore((s) => s.removeSession);
+  const activeWorkspace = useStore((s) => s.activeWorkspaceId ? s.workspaces.get(s.activeWorkspaceId) ?? null : null);
+  const workspaceCount = useStore((s) => s.workspaces.size);
+  const selectedProvider = useStore((s) => s.selectedProvider);
+  const selectedModel = useStore((s) => s.selectedModel);
   const dialogOpen = open ?? internalOpen;
   const setDialogOpen = useCallback((nextOpen: boolean) => {
     if (open === undefined) setInternalOpen(nextOpen);
@@ -112,6 +117,8 @@ export function useSettingsDialogController({
 
   const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys);
   const sessionCount = sessions.size;
+  const workspaceName = activeWorkspace?.name ?? "未选择项目";
+  const workspacePath = activeWorkspace?.path ?? "打开项目后绑定工作区设置";
 
   const providerRowsProps: ComponentProps<typeof SettingsProviderRows> = {
     keys: sortedKeys,
@@ -140,6 +147,11 @@ export function useSettingsDialogController({
     configuredCount,
     providerTotal,
     sessionCount,
+    workspaceName,
+    workspacePath,
+    workspaceCount,
+    providerLabel: getProviderLabel(selectedProvider),
+    modelLabel: getModelLabel(selectedModel),
     error: error ?? (queryError ? `密钥状态读取失败：${queryError}` : null),
     providerRowsProps,
     localDataProps,
