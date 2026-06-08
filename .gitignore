@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm-cache/
+.venv/
+
+# Build output
+dist/
+build/
+target/
+.next/
+
+# Local app state and secrets
+.env
+.env.*
+!.env.example
+.forge/*.db
+.forge/*.db-shm
+.forge/*.db-wal
+
+# Caches
+.DS_Store
+.cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Local eval output
+evals/artifacts/

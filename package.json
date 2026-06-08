@@ -1,0 +1,14 @@
+{
+  "name": "forge-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:desktop": "npm --prefix apps/desktop run dev",
+    "dev:website": "npm --prefix apps/website run dev",
+    "build:desktop": "npm --prefix apps/desktop run build",
+    "build:website": "npm --prefix apps/website run build",
+    "test:eval": "cd apps/eval-runner && uv run pytest",
+    "eval:forge:mock": "npm --prefix apps/desktop run eval:forge:mock",
+    "eval:continuity": "npm --prefix apps/desktop run eval:continuity"
+  }
+}
