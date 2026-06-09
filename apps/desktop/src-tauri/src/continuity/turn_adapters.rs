@@ -478,6 +478,7 @@ mod tests {
             model_rounds: 0,
             tool_call_count: 1,
             failed_tool_count: 1,
+            compact_saved_tokens: 0,
             created_at_ms: 1,
             updated_at_ms: 20,
         };

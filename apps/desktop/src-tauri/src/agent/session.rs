@@ -1527,8 +1527,14 @@ impl AgentSession {
     ) {
         *lock_unpoisoned(&self.summary) = compacted.summary.clone();
         *lock_unpoisoned(&self.messages) = compacted.messages.clone();
-        lock_unpoisoned(&self.turn_metrics)
-            .record_compaction(stats.estimated_tokens_before, stats.estimated_tokens_after);
+        let saved_tokens = {
+            let mut metrics = lock_unpoisoned(&self.turn_metrics);
+            metrics.record_compaction(stats.estimated_tokens_before, stats.estimated_tokens_after);
+            metrics.snapshot().compact_saved_tokens
+        };
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
+            turn.compact_saved_tokens = saved_tokens;
+        }
         emitter.emit(self.context_compacted_event(stats));
         self.record_latest_compact_emitter(
             AgentCompactTrace {

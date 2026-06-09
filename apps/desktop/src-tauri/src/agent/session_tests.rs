@@ -1366,6 +1366,16 @@ async fn agent_turn_records_context_usage_and_compaction_metrics() {
         .estimated_context_tokens_before_model_call
         .is_some_and(|tokens| tokens > 0));
 
+    // Verify compact_saved_tokens is projected to frontend events
+    let projection = session
+        .latest_turn_updated_event()
+        .and_then(|e| match e {
+            crate::protocol::events::StreamEvent::AgentTurnUpdated { state, .. } => Some(state),
+            _ => None,
+        })
+        .expect("turn updated event with projection");
+    assert_eq!(projection.compact_saved_tokens, metrics.compact_saved_tokens);
+
     let _ = std::fs::remove_dir_all(workspace);
 }
 

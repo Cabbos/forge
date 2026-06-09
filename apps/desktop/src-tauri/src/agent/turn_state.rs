@@ -261,6 +261,8 @@ pub struct AgentTurnState {
     pub tool_call_count: usize,
     #[serde(default)]
     pub failed_tool_count: usize,
+    #[serde(default)]
+    pub compact_saved_tokens: u32,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -278,6 +280,7 @@ pub struct AgentTurnProjection {
     pub failed_tool_count: usize,
     pub estimated_context_tokens: Option<u32>,
     pub stop_reason: Option<String>,
+    pub compact_saved_tokens: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -370,6 +373,7 @@ impl AgentTurnState {
             model_rounds: 0,
             tool_call_count: 0,
             failed_tool_count: 0,
+            compact_saved_tokens: 0,
             created_at_ms: now,
             updated_at_ms: now,
         }
@@ -694,6 +698,7 @@ impl AgentTurnState {
             failed_tool_count: self.failed_tool_count,
             estimated_context_tokens: self.context.estimated_tokens,
             stop_reason: self.stop_reason.clone(),
+            compact_saved_tokens: self.compact_saved_tokens,
         }
     }
 

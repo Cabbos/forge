@@ -907,6 +907,7 @@ fn projection_exposes_only_product_safe_turn_fields() {
             "step_label": "处理项目",
             "workspace_path": "/workspace",
             "compact_count": 1,
+            "compact_saved_tokens": 0,
             "verification_status": "passed",
             "model_rounds": 0,
             "tool_call_count": 0,

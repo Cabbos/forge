@@ -1993,6 +1993,7 @@ mod tests {
                 tool_call_count: 0,
                 failed_tool_count: 0,
                 estimated_context_tokens: None,
+                compact_saved_tokens: 0,
                 stop_reason: None,
             },
         }
