@@ -22,7 +22,7 @@
     "eval:forge:dry-run": "node scripts/run-forge-backtest.mjs --dry-run",
     "eval:forge:mock": "node scripts/run-forge-backtest.mjs --provider mock",
     "eval:forge:smoke": "node scripts/run-forge-backtest.mjs --case forge-session-capitalize",
-    "eval:forge:smoke:real": "node scripts/run-forge-backtest.mjs --case forge-session-capitalize --require-key",
+    "eval:forge:smoke:real": "node scripts/run-forge-backtest.mjs --case forge-session-capitalize --require-key --timeout 120 --max-model-rounds 20",
     "eval:forge:smoke:dry-run": "node scripts/run-forge-backtest.mjs --case forge-session-capitalize --dry-run",
     "eval:continuity": "node scripts/run-forge-backtest.mjs --suite continuity",
     "eval:continuity:dry-run": "node scripts/run-forge-backtest.mjs --suite continuity --dry-run",

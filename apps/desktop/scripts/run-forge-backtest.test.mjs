@@ -382,6 +382,7 @@ test("CLI --dry-run --require-key fails with clear error when no API key", () =>
 test("CLI --dry-run --require-key succeeds when API key is present", () => {
   const scriptPath = resolve("scripts/run-forge-backtest.mjs");
   const tmpDir = mkdtempSync(join(tmpdir(), "forge-api-key-cli-"));
+  const tmpHome = mkdtempSync(join(tmpdir(), "forge-api-key-cli-home-"));
   const configPath = join(tmpDir, "config.json");
   writeFileSync(configPath, JSON.stringify({ api_keys: { deepseek: "sk-test" } }));
   try {
@@ -393,6 +394,7 @@ test("CLI --dry-run --require-key succeeds when API key is present", () => {
         encoding: "utf8",
         env: {
           PATH: process.env.PATH,
+          HOME: tmpHome,
           FORGE_EVAL_CONFIG_PATH: configPath,
         },
       },
@@ -403,5 +405,20 @@ test("CLI --dry-run --require-key succeeds when API key is present", () => {
     assert.equal(output.selectedCases[0], "forge-session-capitalize");
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpHome, { recursive: true, force: true });
   }
+});
+
+test("real Forge smoke scripts are gated and budget bounded", () => {
+  const desktopPackage = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+  const rootPackage = JSON.parse(readFileSync(resolve("../../package.json"), "utf8"));
+
+  const script = desktopPackage.scripts["eval:forge:smoke:real"];
+  assert.match(script, /--require-key/);
+  assert.match(script, /--timeout 120/);
+  assert.match(script, /--max-model-rounds 20/);
+  assert.equal(
+    rootPackage.scripts["eval:forge:smoke:real"],
+    "npm --prefix apps/desktop run eval:forge:smoke:real --",
+  );
 });

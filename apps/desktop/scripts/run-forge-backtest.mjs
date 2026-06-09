@@ -74,7 +74,8 @@ export function createSuiteCaseFile(caseFiles, outputDir, budgetOverrides = {}) 
 
 export function checkApiKey({ configPath, env } = {}) {
   const environment = env ?? process.env;
-  const configFile = configPath ?? join(homedir(), ".forge", "config.json");
+  const configFile =
+    configPath ?? environment.FORGE_EVAL_CONFIG_PATH ?? join(homedir(), ".forge", "config.json");
 
   // 1. Check ~/.forge/config.json
   try {

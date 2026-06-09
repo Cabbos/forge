@@ -52,7 +52,7 @@ Worker 支持 `SIGTERM`/`SIGINT` 优雅停止。
 |---|---|---|---|
 | `npm run eval:forge:smoke:dry-run` | 干跑：验证命令规划、case 选择、fixture 路径 | 否 | 否 |
 | `npm run eval:forge:mock` | Mock provider：用确定性 mock runner 跑 case，不调用模型 | 否 | 否 |
-| `npm run eval:forge:smoke:real` | 真实 Forge provider：实际启动 `forge_eval_agent`，调用真实模型 | **是** | **是** |
+| `npm run eval:forge:smoke:real` | 真实 Forge provider：实际启动 `forge_eval_agent`，调用真实模型，并用小预算保护 smoke 成本 | **是** | **是** |
 
 #### Dry-run（命令规划验证）
 
@@ -85,6 +85,8 @@ npm run eval:forge:mock
 cd apps/desktop
 npm run eval:forge:smoke:real
 ```
+
+默认 smoke 只跑 `forge-session-capitalize`，并注入 `--timeout 120 --max-model-rounds 20`。如果超过预算，说明真实 agent loop 在这条最小 case 上已经不稳定，需要看 artifact 里的 `failure_category`、`model_rounds`、`scope_violations` 和 raw trace。
 
 实际执行以下完整链路：
 1. Bridge script → Python CLI (`app.cli`)
