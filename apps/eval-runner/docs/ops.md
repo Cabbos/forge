@@ -48,7 +48,7 @@ Worker 支持 `SIGTERM`/`SIGINT` 优雅停止。
 
 ### 3. 三种 Smoke 模式
 
-| 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` |
+| 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |
 |---|---|---|---|
 | `npm run eval:forge:smoke:dry-run` | 干跑：验证命令规划、case 选择、fixture 路径 | 否 | 否 |
 | `npm run eval:forge:mock` | Mock provider：用确定性 mock runner 跑 case，不调用模型 | 否 | 否 |
@@ -126,7 +126,40 @@ npm run eval:forge:smoke:real
 # →  To preview the command plan, use: npm run eval:forge:smoke:dry-run
 ```
 
-### 4. 清理
+### 4. 查看 Eval 质量报告
+
+```bash
+# 查看最近 10 次运行汇总 + 回归对比
+cd apps/desktop
+npm run eval:report
+
+# 只查看最新一次（不对比）
+npm run eval:report:latest
+```
+
+报告输出示例：
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║           Forge Eval Report                                  ║
+╚══════════════════════════════════════════════════════════════╝
+Total artifacts on disk: 8
+
+─ 2026-06-09T05-11-25Z  forge-session / forge ─
+  success_rate=1.00  verification=1.00  scope_violation=0.00
+  avg_model_rounds=24.0  avg_duration=59.9s  tasks=1
+
+⚠️  REGRESSIONS DETECTED
+  🔴 success_rate: 1.00 → 0.00 (Δ +1.00)
+  🔴 scope_violation_rate: 0.00 → 1.00 (Δ +1.00)
+  🟡 avg_model_rounds: 13.00 → 59.00 (Δ +46.00)
+```
+
+回归检测规则：
+- 🔴 **critical**: `success_rate` 下降 ≥ 0.5 或 `scope_violation_rate` 上升 ≥ 0.5
+- 🟡 **warning**: `avg_model_rounds` 暴涨 (>2x)、`avg_duration_ms` 暴涨 (>3x)、新增 failure category
+
+### 5. 清理
 
 ```bash
 cd apps/eval-runner
