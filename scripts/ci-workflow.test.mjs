@@ -27,9 +27,11 @@ test("CI workflow covers the monorepo quality gates", () => {
   assert.match(workflow, /npm run build/);
 
   assert.match(workflow, /desktop-backend:/);
-  assert.match(workflow, /cargo fmt --check/);
-  assert.match(workflow, /cargo clippy --all-targets -- -D warnings/);
-  assert.match(workflow, /cargo test/);
+  assert.match(workflow, /desktop-backend:[\s\S]*?runs-on:\s*macos-latest/);
+  assert.match(workflow, /desktop-backend:[\s\S]*?npm run build/);
+  assert.match(workflow, /cargo fmt[\s\S]*?--check/);
+  assert.match(workflow, /cargo clippy[\s\S]*?--all-targets -- -D warnings/);
+  assert.match(workflow, /cargo test[\s\S]*?src-tauri\/Cargo.toml/);
 
   assert.match(workflow, /eval-runner:/);
   assert.match(workflow, /uv sync --dev/);
