@@ -27,7 +27,7 @@ test("plans frontend checks for staged TypeScript or style files", () => {
 
   assert.deepEqual(plan.commands.map(describeCommand), [
     "npm run check:conversation-style",
-    "npm run check:desktop-boundary",
+    "npm run check:frontend-architecture",
     "npx tsc --noEmit",
   ]);
 });
@@ -64,7 +64,7 @@ test("keeps mixed frontend and backend plans deduplicated and ordered", () => {
 
   assert.deepEqual(plan.commands.map(describeCommand), [
     "npm run check:conversation-style",
-    "npm run check:desktop-boundary",
+    "npm run check:frontend-architecture",
     "npx tsc --noEmit",
     "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
@@ -81,7 +81,7 @@ test("normalizes monorepo-prefixed desktop paths from git hooks", () => {
   assert.deepEqual(plan.blockedFiles, ["artifacts/eval-runs/latest.json"]);
   assert.deepEqual(plan.commands.map(describeCommand), [
     "npm run check:conversation-style",
-    "npm run check:desktop-boundary",
+    "npm run check:frontend-architecture",
     "npx tsc --noEmit",
     "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",

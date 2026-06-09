@@ -16,6 +16,7 @@
     "check:backend": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:precommit": "node scripts/pre-commit-check.mjs",
     "check:precommit:test": "node --test scripts/pre-commit-check.test.mjs",
+    "check:frontend-architecture": "node --test scripts/react-query-pilot.test.mjs scripts/react-query-migration.test.mjs scripts/desktop-product-boundary.test.mjs",
     "check:prepush": "npm run build && npm run check:backend",
     "eval:forge": "node scripts/run-forge-backtest.mjs",
     "eval:forge:dry-run": "node scripts/run-forge-backtest.mjs --dry-run",

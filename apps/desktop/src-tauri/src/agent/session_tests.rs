@@ -1374,7 +1374,10 @@ async fn agent_turn_records_context_usage_and_compaction_metrics() {
             _ => None,
         })
         .expect("turn updated event with projection");
-    assert_eq!(projection.compact_saved_tokens, metrics.compact_saved_tokens);
+    assert_eq!(
+        projection.compact_saved_tokens,
+        metrics.compact_saved_tokens
+    );
 
     let _ = std::fs::remove_dir_all(workspace);
 }
