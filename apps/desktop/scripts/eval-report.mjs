@@ -190,6 +190,12 @@ export function formatTaskDetails(artifact, { failuresOnly = false } = {}) {
     }
     if (t.scope_violations?.length > 0) {
       lines.push(`      scope_violations: ${t.scope_violations.join(", ")}`);
+      if (t.expected_files_changed?.length > 0) {
+        lines.push(`      expected: ${t.expected_files_changed.join(", ")}`);
+      }
+      if (t.forbidden_files_changed?.length > 0) {
+        lines.push(`      forbidden: ${t.forbidden_files_changed.join(", ")}`);
+      }
     }
     if (t.changed_files?.length > 0) {
       lines.push(`      changed_files: ${t.changed_files.join(", ")}`);

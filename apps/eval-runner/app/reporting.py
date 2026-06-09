@@ -35,6 +35,8 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
             verification_passed=task_metric.verification_passed,
             scope_violations=trace.scope_violations,
             changed_files=trace.changed_files,
+            expected_files_changed=trace.expected_files_changed,
+            forbidden_files_changed=trace.forbidden_files_changed,
             duration_ms=trace.duration_ms,
             model_rounds=trace.model_rounds,
             confirm_requests=trace.confirm_requests,

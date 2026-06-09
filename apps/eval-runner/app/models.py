@@ -84,6 +84,8 @@ class AgentTrace(EvalModel):
     file_diffs: list[FileDiff] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
     scope_violations: list[str] = Field(default_factory=list)
+    expected_files_changed: list[str] = Field(default_factory=list)
+    forbidden_files_changed: list[str] = Field(default_factory=list)
     final_answer: str
     verification_result: VerificationResult | None = None
     error: str | None = None
@@ -142,6 +144,8 @@ class TraceSummary(EvalModel):
     verification_passed: bool | None
     scope_violations: list[str] = Field(default_factory=list)
     changed_files: list[str] = Field(default_factory=list)
+    expected_files_changed: list[str] = Field(default_factory=list)
+    forbidden_files_changed: list[str] = Field(default_factory=list)
     duration_ms: int = Field(ge=0)
     model_rounds: int = Field(default=0, ge=0)
     confirm_requests: int = Field(default=0, ge=0)
