@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   buildBacktestPlan,
+  checkApiKey,
   createSuiteCaseFile,
   selectCaseFiles,
 } from "./run-forge-backtest.mjs";
@@ -294,5 +295,113 @@ test("selects single forge-session case by id", () => {
     assert.equal(payload.task.id, "forge-session-capitalize");
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+// ── API Key Detection ──
+
+test("checkApiKey detects key from config file", () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "forge-api-key-test-"));
+  const configPath = join(tmpDir, "config.json");
+  writeFileSync(configPath, JSON.stringify({ api_keys: { deepseek: "sk-test" } }));
+  try {
+    const result = checkApiKey({ configPath, env: {} });
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "config:deepseek");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("checkApiKey detects key from environment variable", () => {
+  const result = checkApiKey({ configPath: "/nonexistent", env: { DEEPSEEK_API_KEY: "sk-test" } });
+  assert.equal(result.ok, true);
+  assert.equal(result.source, "env:DEEPSEEK_API_KEY");
+});
+
+test("checkApiKey returns false when no key anywhere", () => {
+  const result = checkApiKey({ configPath: "/nonexistent", env: {} });
+  assert.equal(result.ok, false);
+  assert.equal(result.source, null);
+});
+
+test("checkApiKey ignores empty or whitespace-only keys", () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "forge-api-key-empty-"));
+  const configPath = join(tmpDir, "config.json");
+  writeFileSync(configPath, JSON.stringify({ api_keys: { deepseek: "   " } }));
+  try {
+    const result = checkApiKey({ configPath, env: {} });
+    assert.equal(result.ok, false);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("checkApiKey prefers config over env when both present", () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "forge-api-key-pref-"));
+  const configPath = join(tmpDir, "config.json");
+  writeFileSync(configPath, JSON.stringify({ api_keys: { anthropic: "sk-ant" } }));
+  try {
+    const result = checkApiKey({
+      configPath,
+      env: { DEEPSEEK_API_KEY: "sk-deep" },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.source, "config:anthropic");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// ── CLI --require-key ──
+
+test("CLI --dry-run --require-key fails with clear error when no API key", () => {
+  const scriptPath = resolve("scripts/run-forge-backtest.mjs");
+  const tmpHome = mkdtempSync(join(tmpdir(), "forge-fake-home-"));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [scriptPath, "--dry-run", "--require-key"],
+      {
+        cwd: resolve("."),
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          HOME: tmpHome,
+        },
+      },
+    );
+
+    assert.notEqual(result.status, 0, "Should exit non-zero when no API key");
+    assert.match(result.stderr, /API key|api key/i, "Error should mention API key");
+  } finally {
+    rmSync(tmpHome, { recursive: true, force: true });
+  }
+});
+
+test("CLI --dry-run --require-key succeeds when API key is present", () => {
+  const scriptPath = resolve("scripts/run-forge-backtest.mjs");
+  const tmpDir = mkdtempSync(join(tmpdir(), "forge-api-key-cli-"));
+  const configPath = join(tmpDir, "config.json");
+  writeFileSync(configPath, JSON.stringify({ api_keys: { deepseek: "sk-test" } }));
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [scriptPath, "--dry-run", "--require-key"],
+      {
+        cwd: resolve("."),
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          FORGE_EVAL_CONFIG_PATH: configPath,
+        },
+      },
+    );
+
+    assert.equal(result.status, 0, `Should succeed with key: ${result.stderr}`);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.selectedCases[0], "forge-session-capitalize");
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 });

@@ -7,7 +7,7 @@ import {
   readdirSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   dirname,
   join,
@@ -70,6 +70,41 @@ export function createSuiteCaseFile(caseFiles, outputDir, budgetOverrides = {}) 
     "utf8",
   );
   return suitePath;
+}
+
+export function checkApiKey({ configPath, env } = {}) {
+  const environment = env ?? process.env;
+  const configFile = configPath ?? join(homedir(), ".forge", "config.json");
+
+  // 1. Check ~/.forge/config.json
+  try {
+    const config = JSON.parse(readFileSync(configFile, "utf8"));
+    const keys = config.api_keys ?? {};
+    for (const [provider, key] of Object.entries(keys)) {
+      if (typeof key === "string" && key.trim().length > 0) {
+        return { ok: true, source: `config:${provider}` };
+      }
+    }
+  } catch {
+    // Config file missing or unreadable
+  }
+
+  // 2. Check environment variables
+  const envKeys = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "DEEPSEEK_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+  ];
+  for (const key of envKeys) {
+    const value = environment[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return { ok: true, source: `env:${key}` };
+    }
+  }
+
+  return { ok: false, source: null };
 }
 
 export function buildBacktestPlan({
@@ -202,6 +237,7 @@ function parseArgs(argv) {
     casesPath: null,
     outputPath: null,
     dryRun: false,
+    requireKey: false,
     maxDurationSeconds: undefined,
     maxModelRounds: undefined,
   };
@@ -232,6 +268,8 @@ function parseArgs(argv) {
       options.outputPath = nextValue();
     } else if (arg === "--dry-run") {
       options.dryRun = true;
+    } else if (arg === "--require-key") {
+      options.requireKey = true;
     } else if (arg === "--timeout") {
       options.maxDurationSeconds = parsePositiveIntegerArg(arg, nextValue());
     } else if (arg === "--max-model-rounds") {
@@ -306,6 +344,22 @@ function runCli(argv) {
     env: process.env,
   });
   const selectedCases = caseFiles.flatMap(readCaseIds);
+
+  if (options.requireKey) {
+    const keyCheck = checkApiKey({});
+    if (!keyCheck.ok) {
+      console.error(
+        "[forge-backtest] ERROR: No API key found for Forge eval.\n" +
+          "  Real Forge provider smoke requires a configured API key.\n" +
+          "  Options:\n" +
+          "    1. Add a key to ~/.forge/config.json  (e.g. { \"api_keys\": { \"deepseek\": \"sk-...\" } })\n" +
+          "    2. Set an environment variable        (e.g. DEEPSEEK_API_KEY, ANTHROPIC_API_KEY)\n" +
+          "  To run without a real model, use: npm run eval:forge:mock\n" +
+          "  To preview the command plan, use: npm run eval:forge:smoke:dry-run",
+      );
+      return 1;
+    }
+  }
 
   if (options.dryRun) {
     const suiteTasks = options.casesPath
