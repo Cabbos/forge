@@ -13,6 +13,7 @@ function read(path) {
 
 test("CI workflow covers the monorepo quality gates", () => {
   const workflow = read(".github/workflows/ci.yml");
+  const rootPackage = JSON.parse(read("package.json"));
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /push:/);
@@ -43,6 +44,12 @@ test("CI workflow covers the monorepo quality gates", () => {
   assert.match(workflow, /nightly-eval:/);
   assert.match(workflow, /schedule:/);
   assert.match(workflow, /upload-artifact/);
+
+  assert.equal(rootPackage.scripts["eval:report"], "npm --prefix apps/desktop run eval:report");
+  assert.equal(
+    rootPackage.scripts["eval:report:latest"],
+    "npm --prefix apps/desktop run eval:report:latest",
+  );
 });
 
 test("Desktop release workflow is manual or tag gated", () => {
