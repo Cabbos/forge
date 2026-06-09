@@ -1420,6 +1420,7 @@ impl AgentSession {
             if batch_total > 0 {
                 loop_guard.record_tool_batch(
                     tool_batch_signature(tool_calls),
+                    tool_category_signature(tool_calls),
                     batch_failed < batch_total,
                 );
             }
@@ -1736,6 +1737,18 @@ fn tool_batch_signature(tool_calls: &[crate::adapters::base::ToolCall]) -> Strin
         .collect::<Vec<_>>();
     parts.sort();
     parts.join("\n")
+}
+
+/// Category-level signature that ignores file paths and command arguments,
+/// so reading different files or running different shell commands still
+/// counts as the same category batch.  Used to catch "keep exploring"
+/// loops where the exact tool input changes but the overall pattern
+/// (e.g. only read_file, only run_shell) repeats.
+fn tool_category_signature(tool_calls: &[crate::adapters::base::ToolCall]) -> String {
+    let mut names: Vec<String> = tool_calls.iter().map(|tc| tc.name.clone()).collect();
+    names.sort();
+    names.dedup();
+    names.join(",")
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {

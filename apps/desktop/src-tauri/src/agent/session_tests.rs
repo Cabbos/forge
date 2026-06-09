@@ -889,6 +889,39 @@ fn tool_batch_signature_ignores_call_id_and_object_key_order() {
     assert_eq!(tool_batch_signature(&first), tool_batch_signature(&second));
 }
 
+#[test]
+fn tool_category_signature_ignores_input_differences() {
+    let read_a = vec![ToolCall {
+        id: "call-1".to_string(),
+        name: "read_file".to_string(),
+        input: serde_json::json!({"path": "a.txt"}),
+    }];
+    let read_b = vec![ToolCall {
+        id: "call-2".to_string(),
+        name: "read_file".to_string(),
+        input: serde_json::json!({"path": "b.txt"}),
+    }];
+    let mixed = vec![
+        ToolCall {
+            id: "call-3".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": "c.txt"}),
+        },
+        ToolCall {
+            id: "call-4".to_string(),
+            name: "list_directory".to_string(),
+            input: serde_json::json!({"path": "src"}),
+        },
+    ];
+
+    assert_eq!(tool_category_signature(&read_a), "read_file");
+    assert_eq!(
+        tool_category_signature(&read_a),
+        tool_category_signature(&read_b)
+    );
+    assert_eq!(tool_category_signature(&mixed), "list_directory,read_file");
+}
+
 #[tokio::test]
 async fn loop_guard_resets_between_turns_so_budget_does_not_accumulate() {
     let workspace = setup_test_workspace("forge-loop-guard-reset");
@@ -2189,6 +2222,12 @@ async fn agent_turn_allows_long_tool_loop_before_final_answer() {
         "你是一个编程助手".to_string(),
         Some(128_000),
     );
+    // Allow many repeated read_file category batches for this exploration test
+    {
+        use crate::agent::session_guards::lock_unpoisoned;
+        let mut guard = lock_unpoisoned(&session.loop_guard);
+        *guard = guard.clone().with_max_repeated_category_batches(100);
+    }
 
     let emitter = crate::agent::event_sink::NoopEventEmitter;
     let turn_guard = session.reserve_turn().expect("reserve turn");
