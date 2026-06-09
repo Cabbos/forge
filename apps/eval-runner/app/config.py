@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     artifacts_path: Path = Path("artifacts")
     run_execution_mode: str = "sync"
     forge_agent_command: str | None = None
+    worker_id: str = "local-worker"
+    heartbeat_interval_seconds: float = 30.0
+    poll_interval_seconds: float = 5.0
 
     model_config = SettingsConfigDict(env_prefix="FORGE_EVAL_", env_file=".env", extra="ignore")
 

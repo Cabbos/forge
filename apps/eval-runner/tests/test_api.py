@@ -359,6 +359,48 @@ def test_api_includes_failure_visibility_for_failed_run(tmp_path: Path) -> None:
     assert payload["max_retries"] == 2
 
 
+def test_api_can_filter_runs_by_status(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage))
+
+    # Create three runs with different statuses
+    completed = client.post("/runs", json={"task_ids": ["task-pass"], "provider": "mock"})
+    run_completed = completed.json()["run_id"]
+
+    pending = client.post("/runs", json={"task_ids": ["task-pass"], "provider": "mock"})
+    run_pending = pending.json()["run_id"]
+    storage.update_run_status(run_pending, RunStatus.PENDING)
+
+    failed = client.post("/runs", json={"task_ids": ["task-pass"], "provider": "mock"})
+    run_failed = failed.json()["run_id"]
+    storage.update_run_status(run_failed, RunStatus.FAILED)
+
+    # Filter by completed
+    filtered = client.get("/runs?status=completed")
+    assert filtered.status_code == 200
+    ids = {r["run_id"] for r in filtered.json()}
+    assert ids == {run_completed}
+
+    # Filter by pending
+    filtered = client.get("/runs?status=pending")
+    assert filtered.status_code == 200
+    ids = {r["run_id"] for r in filtered.json()}
+    assert ids == {run_pending}
+
+    # Filter by failed
+    filtered = client.get("/runs?status=failed")
+    assert filtered.status_code == 200
+    ids = {r["run_id"] for r in filtered.json()}
+    assert ids == {run_failed}
+
+    # No filter returns all
+    all_runs = client.get("/runs")
+    assert all_runs.status_code == 200
+    assert len(all_runs.json()) == 3
+
+
 def test_api_queued_run_includes_max_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)

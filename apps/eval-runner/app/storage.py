@@ -31,7 +31,7 @@ class EvalStorage(Protocol):
     def create_run(self, run: EvaluationRun) -> EvaluationRun: ...
     def save_run(self, run: EvaluationRun) -> EvaluationRun: ...
     def get_run(self, run_id: str) -> EvaluationRun | None: ...
-    def list_runs(self) -> list[EvaluationRun]: ...
+    def list_runs(self, status_filter: str | None = None) -> list[EvaluationRun]: ...
     def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None: ...
     def save_task(self, run_id: str, trace: AgentTrace) -> None: ...
     def save_artifact(self, artifact: EvalArtifact) -> EvalArtifact: ...
@@ -88,8 +88,11 @@ class InMemoryStorage:
     def get_run(self, run_id: str) -> EvaluationRun | None:
         return self._runs.get(run_id)
 
-    def list_runs(self) -> list[EvaluationRun]:
-        return list(self._runs.values())
+    def list_runs(self, status_filter: str | None = None) -> list[EvaluationRun]:
+        runs = list(self._runs.values())
+        if status_filter:
+            runs = [r for r in runs if r.status.value == status_filter]
+        return runs
 
     def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
         now = datetime.now(UTC)
@@ -282,11 +285,17 @@ class SQLiteStorage:
             lease_expires_at=_parse_datetime(_row_val("lease_expires_at")),
         )
 
-    def list_runs(self) -> list[EvaluationRun]:
+    def list_runs(self, status_filter: str | None = None) -> list[EvaluationRun]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT id FROM eval_runs ORDER BY created_at ASC, id ASC"
-            ).fetchall()
+            if status_filter:
+                rows = connection.execute(
+                    "SELECT id FROM eval_runs WHERE status = ? ORDER BY created_at ASC, id ASC",
+                    (status_filter,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT id FROM eval_runs ORDER BY created_at ASC, id ASC"
+                ).fetchall()
         return [run for row in rows if (run := self.get_run(row["id"])) is not None]
 
     def save_task(self, run_id: str, trace: AgentTrace) -> None:

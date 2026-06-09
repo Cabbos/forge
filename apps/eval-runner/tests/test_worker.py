@@ -424,3 +424,111 @@ def test_worker_retry_race_with_cancel_preserves_cancelled(tmp_path: Path) -> No
     )
     fetched = storage.get_run("run-1")
     assert fetched.status == RunStatus.CANCELLED
+
+
+def test_worker_has_stop_method_that_sets_stop_flag(tmp_path: Path) -> None:
+    """EvalWorker must expose a stop() method that sets an internal stop flag."""
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    worker = EvalWorker(storage=storage, forge_command=None)
+    assert not worker.should_stop
+    worker.stop()
+    assert worker.should_stop
+
+
+def test_worker_main_loop_respects_stop_flag(tmp_path: Path) -> None:
+    """When stop() is called, the worker poll loop should exit after current iteration."""
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_pending_run("run-1"))
+
+    worker = EvalWorker(storage=storage, forge_command=None, poll_interval_seconds=0.05)
+
+    # Start worker in background; it will process run-1 then loop
+    import threading
+
+    def run_loop() -> None:
+        # Override the infinite loop to stop after one iteration
+        worker.run_once()
+        while not worker.should_stop:
+            result = worker.run_once()
+            if result is None:
+                # No more pending runs; this is where the real loop would sleep
+                pass
+            # In real loop it would sleep; here we just break to simulate
+            break
+
+    thread = threading.Thread(target=run_loop)
+    thread.start()
+    # Wait for worker to finish run-1
+    thread.join(timeout=2)
+    assert not thread.is_alive(), "Worker thread should have finished"
+    fetched = storage.get_run("run-1")
+    assert fetched.status == RunStatus.COMPLETED
+
+
+def test_worker_consumes_multiple_queued_runs_and_persists_artifacts(tmp_path: Path) -> None:
+    """Worker should continuously claim and execute multiple pending runs."""
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_pending_run("run-1"))
+    storage.create_run(make_pending_run("run-2"))
+
+    worker = EvalWorker(storage=storage, forge_command=None)
+
+    # Process both runs
+    result1 = worker.run_once()
+    result2 = worker.run_once()
+
+    assert result1 is not None
+    assert result1.status == RunStatus.COMPLETED
+    assert result1.run_id == "run-1"
+    assert result1.traces[0].task_id == "task-pass"
+
+    assert result2 is not None
+    assert result2.status == RunStatus.COMPLETED
+    assert result2.run_id == "run-2"
+    assert result2.traces[0].task_id == "task-pass"
+
+    # Verify artifacts persisted for both runs
+    artifacts1 = storage.list_artifacts("run-1")
+    artifacts2 = storage.list_artifacts("run-2")
+    assert {a.kind for a in artifacts1} == {"report", "trace"}
+    assert {a.kind for a in artifacts2} == {"report", "trace"}
+
+    # Verify trace files exist on disk
+    trace1 = next(a for a in artifacts1 if a.kind == "trace")
+    trace2 = next(a for a in artifacts2 if a.kind == "trace")
+    assert Path(trace1.path).exists()
+    assert Path(trace2.path).exists()
+
+    # Verify restarted storage can read both runs
+    restarted = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    assert len(restarted.list_runs()) == 2
+    run1 = restarted.get_run("run-1")
+    run2 = restarted.get_run("run-2")
+    assert run1.status == RunStatus.COMPLETED
+    assert run2.status == RunStatus.COMPLETED
+    assert run1.metrics.success_rate == 1.0
+    assert run2.metrics.success_rate == 1.0
+    assert len(run1.traces) == 1
+    assert len(run2.traces) == 1

@@ -1,4 +1,6 @@
 import argparse
+import signal
+import sys
 import threading
 import time
 
@@ -21,11 +23,22 @@ class EvalWorker:
         forge_command: str | None,
         worker_id: str = "local-worker",
         heartbeat_interval_seconds: float = 30.0,
+        poll_interval_seconds: float = 5.0,
     ) -> None:
         self.storage = storage
         self.forge_command = forge_command
         self.worker_id = worker_id
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.poll_interval_seconds = poll_interval_seconds
+        self._stop_event = threading.Event()
+
+    @property
+    def should_stop(self) -> bool:
+        return self._stop_event.is_set()
+
+    def stop(self) -> None:
+        """Signal the worker to stop after the current poll iteration."""
+        self._stop_event.set()
 
     def run_once(self) -> EvaluationRun | None:
         run = self.storage.claim_pending_run(worker_id=self.worker_id)
@@ -165,8 +178,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--poll-interval-seconds",
         type=float,
-        default=5.0,
-        help="Delay between polling attempts when not running with --once.",
+        default=None,
+        help="Delay between polling attempts when not running with --once. Overrides env config.",
     )
     args = parser.parse_args(argv)
 
@@ -174,15 +187,31 @@ def main(argv: list[str] | None = None) -> int:
     worker = EvalWorker(
         storage=build_storage(settings),
         forge_command=settings.forge_agent_command,
+        worker_id=settings.worker_id,
+        heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
+        poll_interval_seconds=args.poll_interval_seconds or settings.poll_interval_seconds,
     )
+
+    # Register graceful shutdown handlers
+    def _signal_handler(_signum: int, _frame: object) -> None:
+        print(f"[worker {worker.worker_id}] Received shutdown signal, stopping gracefully...", file=sys.stderr)
+        worker.stop()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
 
     if args.once:
         worker.run_once()
         return 0
 
-    while True:
+    while not worker.should_stop:
         worker.run_once()
-        time.sleep(args.poll_interval_seconds)
+        if worker.should_stop:
+            break
+        time.sleep(worker.poll_interval_seconds)
+
+    print(f"[worker {worker.worker_id}] Stopped.", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":
