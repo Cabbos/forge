@@ -29,6 +29,8 @@ pub(crate) fn context_window_tokens(provider: &str, model: &str) -> Option<u32> 
         "deepseek" if model.contains("[1m]") => Some(1_000_000),
         "deepseek" if model.contains("v4-pro") => Some(1_000_000),
         "deepseek" => Some(128_000),
+        "anthropic" => Some(200_000),
+        "openai" => Some(128_000),
         _ => None,
     }
 }
@@ -115,6 +117,23 @@ mod tests {
     fn deepseek_other_models_default_to_128k() {
         assert_eq!(
             context_window_tokens("deepseek", "deepseek-chat"),
+            Some(128_000)
+        );
+    }
+
+    #[test]
+    fn anthropic_and_openai_context_windows_are_defined() {
+        assert_eq!(
+            context_window_tokens("anthropic", "claude-sonnet-4-6"),
+            Some(200_000)
+        );
+        assert_eq!(
+            context_window_tokens("anthropic", "claude-opus-4-8"),
+            Some(200_000)
+        );
+        assert_eq!(context_window_tokens("openai", "gpt-4o"), Some(128_000));
+        assert_eq!(
+            context_window_tokens("openai", "gpt-4o-mini"),
             Some(128_000)
         );
     }
