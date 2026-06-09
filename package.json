@@ -14,7 +14,7 @@
     "eval:forge:smoke:real": "npm --prefix apps/desktop run eval:forge:smoke:real --",
     "eval:forge:smoke:dry-run": "npm --prefix apps/desktop run eval:forge:smoke:dry-run",
     "eval:continuity": "npm --prefix apps/desktop run eval:continuity",
-    "eval:report": "npm --prefix apps/desktop run eval:report",
-    "eval:report:latest": "npm --prefix apps/desktop run eval:report:latest"
+    "eval:report": "npm --prefix apps/desktop run eval:report --",
+    "eval:report:latest": "npm --prefix apps/desktop run eval:report:latest --"
   }
 }

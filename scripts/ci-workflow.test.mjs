@@ -56,10 +56,10 @@ test("CI workflow covers the monorepo quality gates", () => {
   assert.match(nightlySection, /ANTHROPIC_API_KEY/);
   assert.match(nightlySection, /Skipping real smoke/);
 
-  assert.equal(rootPackage.scripts["eval:report"], "npm --prefix apps/desktop run eval:report");
+  assert.equal(rootPackage.scripts["eval:report"], "npm --prefix apps/desktop run eval:report --");
   assert.equal(
     rootPackage.scripts["eval:report:latest"],
-    "npm --prefix apps/desktop run eval:report:latest",
+    "npm --prefix apps/desktop run eval:report:latest --",
   );
 });
 
