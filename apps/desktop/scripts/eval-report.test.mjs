@@ -13,6 +13,7 @@ import {
   compareReports,
   buildComparisons,
   formatReport,
+  formatTaskDetails,
 } from "./eval-report.mjs";
 
 function makeArtifact({ timestamp, suite, provider, report }) {
@@ -330,6 +331,89 @@ test("formatReport highlights regressions", () => {
   assert.match(text, /scope_violation_rate/);
 });
 
+// ── formatTaskDetails ──
+
+test("formatTaskDetails shows per-task metrics", () => {
+  const lines = formatTaskDetails({
+    report: {
+      tasks: [
+        {
+          task_id: "capitalize",
+          passed: true,
+          failure_category: "none",
+          failure_reason: null,
+          model_rounds: 16,
+          confirm_requests: 11,
+          repair_attempts_used: 1,
+          validation_attempts: 2,
+          scope_violations: [],
+          changed_files: ["src/capitalize.ts", "src/capitalize.test.ts"],
+          duration_ms: 71216,
+        },
+      ],
+    },
+  });
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /capitalize/);
+  assert.match(lines[0], /rounds=16/);
+  assert.match(lines[0], /confirms=11/);
+  assert.match(lines[0], /repairs=1/);
+  assert.match(lines[0], /validations=2/);
+  assert.match(lines[1], /changed_files:/);
+});
+
+test("formatTaskDetails highlights scope violations", () => {
+  const lines = formatTaskDetails({
+    report: {
+      tasks: [
+        {
+          task_id: "bad-scope",
+          passed: false,
+          failure_category: "scope_violation",
+          failure_reason: "Changed files violated eval scope",
+          model_rounds: 8,
+          confirm_requests: 3,
+          repair_attempts_used: 0,
+          validation_attempts: 1,
+          scope_violations: ["unexpected_change:package-lock.json"],
+          changed_files: ["package-lock.json"],
+          duration_ms: 12000,
+        },
+      ],
+    },
+  });
+  assert.equal(lines.length, 4);
+  assert.match(lines[0], /bad-scope/);
+  assert.match(lines[0], /❌/);
+  assert.match(lines[0], /scope_violation/);
+  assert.match(lines[1], /reason:/);
+  assert.match(lines[2], /scope_violations:/);
+  assert.match(lines[3], /changed_files:/);
+});
+
+test("formatTaskDetails filters to failures only when requested", () => {
+  const lines = formatTaskDetails(
+    {
+      report: {
+        tasks: [
+          { task_id: "ok", passed: true, failure_category: "none", model_rounds: 5, confirm_requests: 2, repair_attempts_used: 0, validation_attempts: 1, scope_violations: [], changed_files: ["a.ts"], duration_ms: 5000 },
+          { task_id: "bad", passed: false, failure_category: "verification_failed", model_rounds: 20, confirm_requests: 10, repair_attempts_used: 2, validation_attempts: 3, scope_violations: [], changed_files: ["b.ts"], duration_ms: 120000 },
+        ],
+      },
+    },
+    { failuresOnly: true }
+  );
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /bad/);
+  assert.doesNotMatch(lines[0], /ok/);
+  assert.match(lines[1], /changed_files:/);
+});
+
+test("formatTaskDetails returns empty for empty tasks", () => {
+  const lines = formatTaskDetails({ report: { tasks: [] } });
+  assert.equal(lines.length, 0);
+});
+
 // ── CLI integration ──
 
 test("CLI prints report for artifacts directory", () => {
@@ -389,6 +473,34 @@ test("CLI --latest prints only most recent run", () => {
     // Should only show the latest run
     const lines = result.stdout.split("\n").filter((l) => l.includes("success_rate="));
     assert.equal(lines.length, 1, "Should show only 1 run with --latest");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI --failures shows only failed tasks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-report-failures-"));
+  try {
+    writeArtifact(dir, "2026-06-09T01-00-00Z", "forge-session", "forge", {
+      success_rate: 0.5,
+      scope_violation_rate: 0.5,
+      avg_model_rounds: 20,
+      avg_duration_ms: 15000,
+      tasks: [
+        { task_id: "ok-task", passed: true, failure_category: "none", failure_reason: null, model_rounds: 5, confirm_requests: 2, repair_attempts_used: 0, validation_attempts: 1, scope_violations: [], changed_files: ["a.ts"], duration_ms: 5000 },
+        { task_id: "fail-task", passed: false, failure_category: "verification_failed", failure_reason: "npm test failed", model_rounds: 20, confirm_requests: 10, repair_attempts_used: 2, validation_attempts: 3, scope_violations: [], changed_files: ["b.ts"], duration_ms: 120000 },
+      ],
+    });
+
+    const scriptPath = join(process.cwd(), "scripts", "eval-report.mjs");
+    const result = spawnSync(process.execPath, [scriptPath, dir, "--failures"], {
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, `Should exit 0 (single artifact, no regression comparison): ${result.stderr}`);
+    assert.match(result.stdout, /fail-task/);
+    assert.doesNotMatch(result.stdout, /ok-task/);
+    assert.match(result.stdout, /verification_failed/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

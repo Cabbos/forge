@@ -163,7 +163,42 @@ export function buildComparisons(summaries) {
   return comparisons;
 }
 
-export function formatReport({ summaries, comparisons, totalCount }) {
+export function formatTaskDetails(artifact, { failuresOnly = false } = {}) {
+  const tasks = artifact.report?.tasks ?? [];
+  const lines = [];
+  for (const t of tasks) {
+    const isFailure = !t.passed || (t.failure_category && t.failure_category !== "none");
+    if (failuresOnly && !isFailure) continue;
+
+    const status = t.passed ? "✅" : "❌";
+    const category = t.failure_category && t.failure_category !== "none"
+      ? `category=${t.failure_category}`
+      : "";
+    const parts = [
+      `  ${status} ${t.task_id}`,
+      `rounds=${t.model_rounds ?? 0}`,
+      `confirms=${t.confirm_requests ?? 0}`,
+      `repairs=${t.repair_attempts_used ?? 0}`,
+      `validations=${t.validation_attempts ?? 0}`,
+    ];
+    if (category) parts.push(category);
+    if (t.scope_violations?.length > 0) parts.push(`scope_violations=${t.scope_violations.length}`);
+    lines.push(parts.join("  "));
+
+    if (t.failure_reason) {
+      lines.push(`      reason: ${t.failure_reason}`);
+    }
+    if (t.scope_violations?.length > 0) {
+      lines.push(`      scope_violations: ${t.scope_violations.join(", ")}`);
+    }
+    if (t.changed_files?.length > 0) {
+      lines.push(`      changed_files: ${t.changed_files.join(", ")}`);
+    }
+  }
+  return lines;
+}
+
+export function formatReport({ summaries, comparisons, totalCount, artifacts = [], failuresOnly = false }) {
   const lines = [];
   lines.push("╔══════════════════════════════════════════════════════════════╗");
   lines.push("║           Forge Eval Report                                  ║");
@@ -178,6 +213,18 @@ export function formatReport({ summaries, comparisons, totalCount }) {
     const fc = Object.entries(s.failureCategories);
     if (fc.length > 0) {
       lines.push(`  failures: ${fc.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+    }
+
+    // Per-task details
+    const artifact = artifacts.find(
+      (a) => a.timestamp === s.timestamp && a.suite === s.suite && a.provider === s.provider
+    );
+    if (artifact) {
+      const taskLines = formatTaskDetails(artifact, { failuresOnly });
+      if (taskLines.length > 0) {
+        lines.push(failuresOnly ? "  Failed tasks:" : "  Tasks:");
+        lines.push(...taskLines);
+      }
     }
     lines.push("");
   }
@@ -215,6 +262,7 @@ function defaultArtifactsDir() {
 function runCli(argv) {
   const args = argv.slice(2);
   const latestOnly = args.includes("--latest");
+  const failuresOnly = args.includes("--failures");
   const nonFlagArgs = args.filter((a) => !a.startsWith("-"));
   const artifactsDir = nonFlagArgs[0] ?? defaultArtifactsDir();
 
@@ -227,7 +275,7 @@ function runCli(argv) {
   const { summaries, totalCount } = summarizeArtifacts(artifacts, { limit: latestOnly ? 1 : 10 });
   const comparisons = buildComparisons(summaries);
 
-  console.log(formatReport({ summaries, comparisons, totalCount }));
+  console.log(formatReport({ summaries, comparisons, totalCount, artifacts, failuresOnly }));
   return comparisons.some((c) => c.hasRegression) ? 2 : 0;
 }
 
