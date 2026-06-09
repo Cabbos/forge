@@ -130,9 +130,23 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci
-      - run: npm run eval:forge:test
-      - run: npm run eval:forge:mock
-      - run: npm run eval:continuity:dry-run
+      - name: Eval unit tests and mock runs
+        run: npm run eval:forge:test
+      - name: Forge mock smoke
+        run: npm run eval:forge:mock
+      - name: Continuity dry-run
+        run: npm run eval:continuity:dry-run
+      - name: Eval report summary
+        run: npm run eval:report:latest || true
+      - name: Real Forge smoke (API key required)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "Skipping real smoke: ANTHROPIC_API_KEY not configured"
+            exit 0
+          fi
+          npm run eval:forge:smoke:real -- --timeout 120 --max-model-rounds 20
       - uses: actions/upload-artifact@v4
         if: always()
         with:

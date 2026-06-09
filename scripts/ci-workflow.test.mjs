@@ -45,6 +45,17 @@ test("CI workflow covers the monorepo quality gates", () => {
   assert.match(workflow, /schedule:/);
   assert.match(workflow, /upload-artifact/);
 
+  // Real smoke must not run on PR/push (only nightly / workflow_dispatch)
+  const nightlySection = workflow.slice(workflow.indexOf("nightly-eval:"));
+  const prPushSection = workflow.slice(0, workflow.indexOf("nightly-eval:"));
+  assert.doesNotMatch(prPushSection, /smoke:real/);
+  assert.match(nightlySection, /smoke:real/);
+
+  // Nightly should run eval report and have API-key-gated real smoke
+  assert.match(nightlySection, /eval:report:latest/);
+  assert.match(nightlySection, /ANTHROPIC_API_KEY/);
+  assert.match(nightlySection, /Skipping real smoke/);
+
   assert.equal(rootPackage.scripts["eval:report"], "npm --prefix apps/desktop run eval:report");
   assert.equal(
     rootPackage.scripts["eval:report:latest"],
