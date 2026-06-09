@@ -1,0 +1,42 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: Build macOS desktop
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - run: npm ci
+      - run: npm run check:frontend-architecture
+      - run: npm run build
+      - run: npm run tauri:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-macos-desktop
+          path: apps/desktop/src-tauri/target/release/bundle/**
+          if-no-files-found: error

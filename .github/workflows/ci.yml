@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci.yml"
+      - "package.json"
+      - "apps/desktop/**"
+      - "apps/eval-runner/**"
+      - "apps/website/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci.yml"
+      - "package.json"
+      - "apps/desktop/**"
+      - "apps/eval-runner/**"
+      - "apps/website/**"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-contract:
+    name: Workflow contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm run check:ci
+
+  desktop-frontend:
+    name: Desktop frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - run: npm run check:frontend-architecture
+      - run: npm run build
+
+  desktop-backend:
+    name: Desktop backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  eval-runner:
+    name: Eval runner
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/eval-runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run pytest
+
+  website:
+    name: Website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/website/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  nightly-eval:
+    name: Nightly eval
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs:
+      - desktop-frontend
+      - eval-runner
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - run: npm run eval:forge:test
+      - run: npm run eval:forge:mock
+      - run: npm run eval:continuity:dry-run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-eval-artifacts
+          path: |
+            apps/desktop/artifacts/eval-runs/**
+            apps/desktop/artifacts/eval-reports/**
+          if-no-files-found: ignore
