@@ -176,14 +176,55 @@ impl AgentA2ABus {
     }
 
     pub(crate) fn normalize_for_resume(&mut self, timestamp_ms: u64) {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
         let mut interrupted = Vec::new();
         for task in &mut self.tasks {
             if task.status == AgentTaskStatus::Running {
                 task.status = AgentTaskStatus::Interrupted;
-                task.resume_note =
-                    Some("child task was running when the session was restored".to_string());
                 task.updated_at_ms = timestamp_ms;
                 task.ended_at_ms = Some(timestamp_ms);
+
+                // For worktree workers, try to preserve the worktree path and
+                // attach a recovery artifact so the UI can guide the user.
+                let mut resume_note =
+                    "child task was running when the session was restored".to_string();
+                if task.execution_mode == AgentExecutionMode::WorktreeWorker {
+                    let worktree_path = task.artifacts.iter().rev().find_map(|a| {
+                        if a.kind == AgentArtifactKind::Evidence && a.title == "Worktree metadata" {
+                            serde_json::from_str::<serde_json::Value>(&a.content)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("worktree_path")
+                                        .and_then(|p| p.as_str().map(|s| s.to_string()))
+                                })
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(ref path) = worktree_path {
+                        resume_note.push_str(&format!(
+                            " — worktree may still exist at {}. \
+                                 Please inspect or re-run the task.",
+                            path
+                        ));
+                        task.artifacts.push(AgentArtifact {
+                            artifact_id: format!("interrupted-{}", task.task_id.as_str()),
+                            task_id: task.task_id.clone(),
+                            kind: AgentArtifactKind::Evidence,
+                            title: "Interrupted worktree worker".to_string(),
+                            content: serde_json::json!({
+                                "status": "interrupted",
+                                "worktree_path": path,
+                                "advice": "This worktree worker was interrupted. \
+                                           Please inspect the worktree or re-run the task.",
+                            })
+                            .to_string(),
+                            created_at_ms: timestamp_ms,
+                        });
+                    }
+                }
+                task.resume_note = Some(resume_note);
                 interrupted.push((task.task_id.clone(), task.agent_id.clone()));
             }
         }
@@ -212,6 +253,19 @@ impl AgentA2ABus {
                     AgentTaskStatus::Pending | AgentTaskStatus::Cancelled => {}
                 }
                 let latest_artifact = task.artifacts.last();
+                let mut worktree_meta: Option<serde_json::Value> = None;
+                // Search for the most recent worktree metadata artifact (Evidence with title "Worktree metadata").
+                for artifact in task.artifacts.iter().rev() {
+                    if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::Evidence
+                        && artifact.title == "Worktree metadata"
+                    {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&artifact.content)
+                        {
+                            worktree_meta = Some(v);
+                        }
+                        break;
+                    }
+                }
                 AgentA2ATaskProjection {
                     task_id: task.task_id.as_str().to_string(),
                     agent_id: task.agent_id.as_str().to_string(),
@@ -225,6 +279,37 @@ impl AgentA2ABus {
                     artifact_count: task.artifacts.len(),
                     latest_artifact_kind: latest_artifact.map(|a| a.kind.as_str().to_string()),
                     latest_artifact_title: latest_artifact.map(|a| a.title.clone()),
+                    needs_human_review: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("needs_human_review").and_then(|x| x.as_bool())),
+                    reason_codes: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("reason_codes"))
+                        .and_then(|arr| {
+                            arr.as_array().map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                        })
+                        .unwrap_or_default(),
+                    tests_passed: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("tests_passed").and_then(|x| x.as_bool())),
+                    diff_truncated: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("diff_truncated").and_then(|x| x.as_bool())),
+                    worktree_path: worktree_meta.as_ref().and_then(|v| {
+                        v.get("worktree_path")
+                            .and_then(|x| x.as_str().map(|s| s.to_string()))
+                    }),
+                    cleaned_up: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("cleaned_up").and_then(|x| x.as_bool())),
+                    suggested_action: worktree_meta.as_ref().and_then(|v| {
+                        v.get("suggested_action")
+                            .and_then(|x| x.as_str().map(|s| s.to_string()))
+                    }),
                 }
             })
             .collect();
@@ -355,6 +440,71 @@ mod tests {
     }
 
     #[test]
+    fn resume_preserves_worktree_path_for_interrupted_worker() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement auth",
+            "Add login flow",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        // Pre-populate a worktree metadata artifact as if the worker had started.
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/repo/.claude/worktrees/a2a-worktree-auth",
+                    "cleaned_up": false,
+                })
+                .to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+
+        bus.normalize_for_resume(30);
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(
+            task.status,
+            crate::agent::a2a::types::AgentTaskStatus::Interrupted
+        );
+        // Resume note should reference the worktree path.
+        let note = task.resume_note.as_deref().expect("resume_note");
+        assert!(
+            note.contains("worktree may still exist"),
+            "resume_note should mention worktree: {}",
+            note
+        );
+        assert!(
+            note.contains("/tmp/repo/.claude/worktrees/a2a-worktree-auth"),
+            "resume_note should contain path: {}",
+            note
+        );
+        // An interrupted artifact should have been added.
+        let interrupted_artifact = task
+            .artifacts
+            .iter()
+            .find(|a| a.title == "Interrupted worktree worker");
+        assert!(
+            interrupted_artifact.is_some(),
+            "should add interrupted artifact"
+        );
+        let content = interrupted_artifact.unwrap().content.clone();
+        assert!(content.contains("interrupted"));
+        assert!(content.contains("a2a-worktree-auth"));
+    }
+
+    #[test]
     fn bus_adds_artifact_and_projection_reflects_it() {
         use crate::agent::a2a::types::AgentArtifactKind;
 
@@ -425,5 +575,63 @@ mod tests {
         let task = bus.task(&task_id).expect("task");
         assert_eq!(task.artifacts.len(), 1);
         assert_eq!(task.status, AgentTaskStatus::Completed);
+    }
+
+    #[test]
+    fn projection_extracts_worktree_metadata_from_evidence_artifact() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement auth",
+            "Add login flow",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        let meta = serde_json::json!({
+            "worktree_path": "/tmp/repo/.claude/worktrees/a2a-worktree-auth",
+            "cleaned_up": false,
+            "diff_available": true,
+            "diff_truncated": true,
+            "tests_passed": false,
+            "needs_human_review": true,
+            "suggested_action": "Review before merge.",
+            "reason_codes": ["diff was truncated", "tests failed"],
+        });
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: meta.to_string(),
+                created_at_ms: 30,
+            },
+            30,
+        );
+        bus.complete_task(&task_id, "Done", 40);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.needs_human_review, Some(true));
+        assert_eq!(task_proj.tests_passed, Some(false));
+        assert_eq!(task_proj.diff_truncated, Some(true));
+        assert_eq!(
+            task_proj.worktree_path.as_deref(),
+            Some("/tmp/repo/.claude/worktrees/a2a-worktree-auth")
+        );
+        assert_eq!(task_proj.cleaned_up, Some(false));
+        assert_eq!(
+            task_proj.suggested_action.as_deref(),
+            Some("Review before merge.")
+        );
+        assert_eq!(
+            task_proj.reason_codes,
+            vec!["diff was truncated", "tests failed"]
+        );
     }
 }

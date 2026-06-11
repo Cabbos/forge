@@ -1,5 +1,6 @@
 use crate::agent::a2a::bus::AgentA2ABus;
 use crate::agent::a2a::types::{AgentExecutionMode, AgentRole, AgentTaskId, PatchProposal};
+use crate::agent::a2a::worktree::WorktreeWorkerSummary;
 
 pub(crate) fn delegate_result_for_model(raw: &str) -> String {
     serde_json::from_str::<serde_json::Value>(raw)
@@ -237,6 +238,191 @@ pub(crate) fn extract_worktree_artifacts(
     artifacts
 }
 
+/// Arbitration result when multiple worktree workers have completed.
+/// This is **always** conservative — never auto-merges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorktreeWorkerArbitration {
+    /// Whether the results meet the strict criteria for proposing an apply.
+    /// Always `false` in Phase 6 — manual review is mandatory.
+    pub can_propose_apply: bool,
+    /// Always `true` — human review is required.
+    pub needs_human_review: bool,
+    /// Human-readable suggested next step.
+    pub suggested_action: String,
+    /// Whether conflicting signals were detected across workers.
+    pub conflict_detected: bool,
+    /// Aggregated reason codes from all workers.
+    pub aggregated_reasons: Vec<String>,
+    pub worker_count: usize,
+    pub workers_with_tests_passed: usize,
+    pub workers_with_diff_truncated: usize,
+    pub workers_with_errors: usize,
+}
+
+/// Aggregate results from multiple worktree workers into a conservative
+/// arbitration decision. Never auto-merges.
+pub(crate) fn arbitrate_worktree_workers(
+    summaries: &[WorktreeWorkerSummary],
+) -> WorktreeWorkerArbitration {
+    let worker_count = summaries.len();
+
+    let workers_with_tests_passed = summaries
+        .iter()
+        .filter(|s| s.tests_passed == Some(true))
+        .count();
+    let workers_with_tests_failed = summaries
+        .iter()
+        .filter(|s| s.tests_passed == Some(false))
+        .count();
+    let workers_with_diff_truncated = summaries.iter().filter(|s| s.diff_truncated).count();
+    let workers_with_no_diff = summaries.iter().filter(|s| !s.diff_available).count();
+    let workers_with_errors = summaries
+        .iter()
+        .filter(|s| {
+            s.reason_codes
+                .iter()
+                .any(|r| r.contains("error") || r.contains("failed"))
+        })
+        .count();
+
+    let mut reasons = Vec::new();
+
+    if workers_with_tests_failed > 0 {
+        reasons.push(format!(
+            "{} worker(s) had failing tests",
+            workers_with_tests_failed
+        ));
+    }
+    if workers_with_diff_truncated > 0 {
+        reasons.push(format!(
+            "{} worker(s) had truncated diffs",
+            workers_with_diff_truncated
+        ));
+    }
+    if workers_with_errors > 0 {
+        reasons.push(format!("{} worker(s) reported errors", workers_with_errors));
+    }
+    if workers_with_no_diff > 0 {
+        reasons.push(format!(
+            "{} worker(s) produced no diff",
+            workers_with_no_diff
+        ));
+    }
+
+    // Detect conflicting outcomes across workers.
+    let mut conflict_detected = false;
+    if worker_count > 1 {
+        let distinct_pass_outcomes: std::collections::HashSet<_> =
+            summaries.iter().map(|s| s.tests_passed).collect();
+        if distinct_pass_outcomes.len() > 1 {
+            conflict_detected = true;
+            reasons.push("Workers report inconsistent test results".to_string());
+        }
+        let distinct_truncated: std::collections::HashSet<_> =
+            summaries.iter().map(|s| s.diff_truncated).collect();
+        if distinct_truncated.len() > 1 && workers_with_diff_truncated > 0 {
+            conflict_detected = true;
+            reasons.push("Workers have inconsistent diff coverage".to_string());
+        }
+    }
+
+    let suggested_action = if conflict_detected {
+        "HUMAN REVIEW REQUIRED — multiple workers produced conflicting results. \
+         Do not merge automatically."
+            .to_string()
+    } else if !reasons.is_empty() {
+        format!(
+            "HUMAN REVIEW REQUIRED — {}. Do not merge automatically.",
+            reasons.join("; ")
+        )
+    } else {
+        "HUMAN REVIEW REQUIRED — review all worker outputs before merging. \
+         Do not merge automatically."
+            .to_string()
+    };
+
+    WorktreeWorkerArbitration {
+        can_propose_apply: false, // Phase 6: never auto-apply
+        needs_human_review: true,
+        suggested_action,
+        conflict_detected,
+        aggregated_reasons: reasons,
+        worker_count,
+        workers_with_tests_passed,
+        workers_with_diff_truncated,
+        workers_with_errors,
+    }
+}
+
+/// Apply-proposal contract for a single WorktreeWorker result.
+///
+/// This function defines the strict criteria that must ALL be met before
+/// a worktree result can even be *proposed* for apply. In Phase 6 it
+/// always returns `can_propose: false` because automatic merge is not
+/// implemented — human confirmation is mandatory.
+///
+/// **Phase 7 roadmap (not yet implemented):**
+/// - User confirmation gate (frontend → backend RPC)
+/// - Three-way merge or patch application with rollback
+/// - Pre-merge workspace snapshot for recovery
+/// - Merge conflict detection and resolution strategy
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ApplyProposal {
+    pub can_propose: bool,
+    pub user_confirmation_required: bool,
+    pub blockers: Vec<String>,
+}
+
+pub(crate) fn can_propose_apply(summary: &WorktreeWorkerSummary) -> ApplyProposal {
+    let mut blockers = Vec::new();
+
+    // Criterion 1: tests must have passed.
+    if summary.tests_passed != Some(true) {
+        blockers.push("tests did not pass".to_string());
+    }
+
+    // Criterion 2: diff must be available and not truncated.
+    if !summary.diff_available {
+        blockers.push("no diff available".to_string());
+    }
+    if summary.diff_truncated {
+        blockers.push("diff was truncated".to_string());
+    }
+
+    // Criterion 3: no high-risk reason codes.
+    let high_risk_reasons = [
+        "tests failed",
+        "diff was truncated",
+        "sub-agent reported an error",
+        "no diff was produced",
+        "test report could not be parsed",
+    ];
+    for reason in &summary.reason_codes {
+        if high_risk_reasons.iter().any(|hr| reason.contains(hr)) {
+            blockers.push(format!("high-risk reason: {reason}"));
+        }
+    }
+
+    // Criterion 4: worktree must still exist (not cleaned up).
+    if summary.cleaned_up {
+        blockers.push("worktree was already cleaned up".to_string());
+    }
+
+    // Phase 6: always require human confirmation, even if all criteria pass.
+    let user_confirmation_required = true;
+
+    // In Phase 6 we never allow propose regardless of criteria.
+    // When Phase 7 implements the confirmation gate, this can become:
+    //   can_propose = blockers.is_empty() && !user_confirmation_required;
+    let can_propose = false;
+
+    ApplyProposal {
+        can_propose,
+        user_confirmation_required,
+        blockers,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,6 +650,171 @@ Analysis.
         assert!(meta.contains("tests_passed"));
         assert!(meta.contains("reason_codes"));
         assert!(meta.contains("diff was truncated"));
+    }
+
+    #[test]
+    fn arbitrate_single_worker_with_all_pass() {
+        let summaries = vec![WorktreeWorkerSummary {
+            result: "Done".to_string(),
+            diff: Some("diff".to_string()),
+            diff_available: true,
+            diff_truncated: false,
+            test_report: Some("5 passed".to_string()),
+            tests_passed: Some(true),
+            needs_human_review: true,
+            suggested_action: "Review".to_string(),
+            reason_codes: vec![],
+            worktree_path: "/tmp/wt".to_string(),
+            cleaned_up: true,
+        }];
+        let arb = arbitrate_worktree_workers(&summaries);
+        assert!(arb.needs_human_review);
+        assert!(!arb.can_propose_apply);
+        assert!(!arb.conflict_detected);
+        assert_eq!(arb.worker_count, 1);
+        assert_eq!(arb.workers_with_tests_passed, 1);
+        assert!(arb.suggested_action.contains("HUMAN REVIEW REQUIRED"));
+    }
+
+    #[test]
+    fn arbitrate_multiple_workers_detects_conflicts() {
+        let summaries = vec![
+            WorktreeWorkerSummary {
+                result: "Done".to_string(),
+                diff: Some("diff".to_string()),
+                diff_available: true,
+                diff_truncated: false,
+                test_report: Some("5 passed".to_string()),
+                tests_passed: Some(true),
+                needs_human_review: true,
+                suggested_action: "Review".to_string(),
+                reason_codes: vec![],
+                worktree_path: "/tmp/wt1".to_string(),
+                cleaned_up: true,
+            },
+            WorktreeWorkerSummary {
+                result: "Done".to_string(),
+                diff: Some("diff".to_string()),
+                diff_available: true,
+                diff_truncated: false,
+                test_report: Some("3 passed, 2 failed".to_string()),
+                tests_passed: Some(false),
+                needs_human_review: true,
+                suggested_action: "Review".to_string(),
+                reason_codes: vec!["tests failed".to_string()],
+                worktree_path: "/tmp/wt2".to_string(),
+                cleaned_up: true,
+            },
+        ];
+        let arb = arbitrate_worktree_workers(&summaries);
+        assert!(arb.conflict_detected);
+        assert!(arb
+            .aggregated_reasons
+            .contains(&"Workers report inconsistent test results".to_string()));
+        assert!(arb
+            .aggregated_reasons
+            .contains(&"1 worker(s) had failing tests".to_string()));
+        assert!(arb.suggested_action.contains("conflicting results"));
+        assert_eq!(arb.workers_with_tests_passed, 1);
+    }
+
+    #[test]
+    fn arbitrate_flags_truncated_and_no_diff() {
+        let summaries = vec![
+            WorktreeWorkerSummary {
+                result: "Done".to_string(),
+                diff: Some("truncated".to_string()),
+                diff_available: true,
+                diff_truncated: true,
+                test_report: None,
+                tests_passed: None,
+                needs_human_review: true,
+                suggested_action: "Review".to_string(),
+                reason_codes: vec!["diff was truncated".to_string()],
+                worktree_path: "/tmp/wt1".to_string(),
+                cleaned_up: false,
+            },
+            WorktreeWorkerSummary {
+                result: "Done".to_string(),
+                diff: None,
+                diff_available: false,
+                diff_truncated: false,
+                test_report: None,
+                tests_passed: None,
+                needs_human_review: true,
+                suggested_action: "Review".to_string(),
+                reason_codes: vec!["no diff was produced".to_string()],
+                worktree_path: "/tmp/wt2".to_string(),
+                cleaned_up: true,
+            },
+        ];
+        let arb = arbitrate_worktree_workers(&summaries);
+        assert!(!arb.can_propose_apply);
+        assert!(arb
+            .aggregated_reasons
+            .contains(&"1 worker(s) had truncated diffs".to_string()));
+        assert!(arb
+            .aggregated_reasons
+            .contains(&"1 worker(s) produced no diff".to_string()));
+    }
+
+    #[test]
+    fn apply_contract_blocks_everything_in_phase_6() {
+        let summary = WorktreeWorkerSummary {
+            result: "Done".to_string(),
+            diff: Some("diff".to_string()),
+            diff_available: true,
+            diff_truncated: false,
+            test_report: Some("5 passed".to_string()),
+            tests_passed: Some(true),
+            needs_human_review: true,
+            suggested_action: "Review".to_string(),
+            reason_codes: vec![],
+            worktree_path: "/tmp/wt".to_string(),
+            cleaned_up: false,
+        };
+        let proposal = can_propose_apply(&summary);
+        assert!(!proposal.can_propose, "Phase 6 should never allow propose");
+        assert!(proposal.user_confirmation_required);
+        assert!(
+            proposal.blockers.is_empty(),
+            "perfect summary has no blockers"
+        );
+    }
+
+    #[test]
+    fn apply_contract_detects_blockers() {
+        let summary = WorktreeWorkerSummary {
+            result: "Done".to_string(),
+            diff: Some("truncated".to_string()),
+            diff_available: true,
+            diff_truncated: true,
+            test_report: Some("3 passed, 2 failed".to_string()),
+            tests_passed: Some(false),
+            needs_human_review: true,
+            suggested_action: "Review".to_string(),
+            reason_codes: vec!["tests failed".to_string(), "diff was truncated".to_string()],
+            worktree_path: "/tmp/wt".to_string(),
+            cleaned_up: true,
+        };
+        let proposal = can_propose_apply(&summary);
+        assert!(!proposal.can_propose);
+        assert!(proposal
+            .blockers
+            .contains(&"tests did not pass".to_string()));
+        assert!(proposal
+            .blockers
+            .contains(&"diff was truncated".to_string()));
+        assert!(proposal
+            .blockers
+            .contains(&"worktree was already cleaned up".to_string()));
+        assert!(
+            proposal
+                .blockers
+                .iter()
+                .any(|b| b.contains("high-risk reason")),
+            "should flag high-risk reasons"
+        );
     }
 
     #[test]

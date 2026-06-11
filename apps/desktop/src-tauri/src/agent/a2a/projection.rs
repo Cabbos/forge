@@ -23,4 +23,12 @@ pub struct AgentA2ATaskProjection {
     pub artifact_count: usize,
     pub latest_artifact_kind: Option<String>,
     pub latest_artifact_title: Option<String>,
+    // WorktreeWorker-specific metadata (populated when the latest artifact is worktree metadata).
+    pub needs_human_review: Option<bool>,
+    pub reason_codes: Vec<String>,
+    pub tests_passed: Option<bool>,
+    pub diff_truncated: Option<bool>,
+    pub worktree_path: Option<String>,
+    pub cleaned_up: Option<bool>,
+    pub suggested_action: Option<String>,
 }

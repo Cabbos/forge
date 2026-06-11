@@ -216,6 +216,14 @@ export interface AgentA2ATaskProjection {
   artifact_count: number;
   latest_artifact_kind: string | null;
   latest_artifact_title: string | null;
+  // WorktreeWorker-specific metadata
+  needs_human_review: boolean | null;
+  reason_codes: string[];
+  tests_passed: boolean | null;
+  diff_truncated: boolean | null;
+  worktree_path: string | null;
+  cleaned_up: boolean | null;
+  suggested_action: string | null;
 }
 
 export interface AgentA2AProjection {
