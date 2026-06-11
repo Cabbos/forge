@@ -48,7 +48,7 @@ fn restore_state_normalizes_interrupted_turn_and_repairs_tool_history() {
         10,
     ));
 
-    session.restore_state(messages, Some("old summary".to_string()), Some(turn));
+    session.restore_state(messages, Some("old summary".to_string()), Some(turn), None);
 
     let snapshot = session.snapshot();
     assert_eq!(snapshot.messages.len(), 4);
@@ -110,7 +110,7 @@ fn restore_state_preserves_completed_turn_unchanged() {
     );
     turn.mark_status_with_reason(AgentTurnStatus::Completed, "final_answer", None);
 
-    session.restore_state(messages, None, Some(turn));
+    session.restore_state(messages, None, Some(turn), None);
 
     let restored_turn = lock_unpoisoned(&session.latest_turn);
     assert_eq!(
@@ -150,7 +150,7 @@ fn restore_state_preserves_cancelled_turn_unchanged() {
     );
     turn.mark_status_with_reason(AgentTurnStatus::Cancelled, "user_cancelled", Some("killed"));
 
-    session.restore_state(vec![ChatMessage::user("test")], None, Some(turn));
+    session.restore_state(vec![ChatMessage::user("test")], None, Some(turn), None);
 
     let restored_turn = lock_unpoisoned(&session.latest_turn);
     assert_eq!(
@@ -181,6 +181,7 @@ fn restore_state_with_no_latest_turn_preserves_none() {
     session.restore_state(
         vec![ChatMessage::user("hello")],
         Some("summary".to_string()),
+        None,
         None,
     );
 
@@ -260,7 +261,7 @@ fn restore_state_normalizes_only_active_turn_statuses() {
         );
         turn.mark_status_with_reason(input_status.clone(), "test_reason", None);
 
-        session.restore_state(vec![ChatMessage::user("x")], None, Some(turn));
+        session.restore_state(vec![ChatMessage::user("x")], None, Some(turn), None);
 
         let restored = lock_unpoisoned(&session.latest_turn);
         assert_eq!(
@@ -1469,7 +1470,7 @@ async fn agent_turn_records_context_usage_and_compaction_metrics() {
             ))));
         }
     }
-    session.restore_state(history, None, None);
+    session.restore_state(history, None, None, None);
 
     let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
     let turn_guard = session.reserve_turn().expect("reserve turn");
@@ -2638,7 +2639,7 @@ async fn kill_during_auto_compact_summary_cancels_without_model_call() {
             ))));
         }
     }
-    session.restore_state(history, None, None);
+    session.restore_state(history, None, None, None);
 
     let emitter = Arc::new(crate::agent::event_sink::CollectingEventEmitter::new());
     let turn_guard = session.reserve_turn().expect("reserve turn");
@@ -3966,4 +3967,184 @@ async fn kill_with_emitter_cancels_inflight_turn_and_recovery_succeeds() {
     }
 
     let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// -- Loop guard recovery detail tests ----------------------------
+
+#[test]
+fn loop_guard_recovery_detail_contains_specific_advice_per_stop_reason() {
+    use crate::agent::loop_guard::LoopStopReason;
+
+    // ModelRoundLimit
+    let detail = loop_guard_recovery_detail(&LoopStopReason::ModelRoundLimit);
+    assert!(detail.contains("model_round_limit"));
+    assert!(
+        detail.contains("narrow the task") || detail.contains("accept partial results"),
+        "model_round_limit should suggest narrowing or accepting partials: {detail}"
+    );
+
+    // ToolCallLimit
+    let detail = loop_guard_recovery_detail(&LoopStopReason::ToolCallLimit);
+    assert!(detail.contains("tool_call_limit"));
+    assert!(
+        detail.contains("reduce file scope") || detail.contains("limit tool actions"),
+        "tool_call_limit should suggest reducing scope: {detail}"
+    );
+
+    // RepeatedCategoryBatch
+    let detail = loop_guard_recovery_detail(&LoopStopReason::RepeatedCategoryBatch);
+    assert!(detail.contains("repeated_category_batch"));
+    assert!(
+        detail.contains("stop exploring") || detail.contains("synthesize conclusions"),
+        "repeated_category_batch should suggest synthesizing from existing reads: {detail}"
+    );
+
+    // RepeatedNoProgress
+    let detail = loop_guard_recovery_detail(&LoopStopReason::RepeatedNoProgress);
+    assert!(detail.contains("repeated_no_progress"));
+    assert!(
+        detail.contains("switch strategy") || detail.contains("ask for clarification"),
+        "repeated_no_progress should suggest switching strategy: {detail}"
+    );
+
+    // CompactUnavailable
+    let detail = loop_guard_recovery_detail(&LoopStopReason::CompactUnavailable);
+    assert!(detail.contains("compact_unavailable"));
+    assert!(
+        detail.contains("compact") || detail.contains("split task"),
+        "compact_unavailable should suggest compact or split: {detail}"
+    );
+
+    // RepeatedOverflow
+    let detail = loop_guard_recovery_detail(&LoopStopReason::RepeatedOverflow);
+    assert!(detail.contains("repeated_overflow"));
+    assert!(
+        detail.contains("compact") || detail.contains("reduce context"),
+        "repeated_overflow should suggest compact or reduce context: {detail}"
+    );
+
+    // ToolLoopDetected
+    let detail = loop_guard_recovery_detail(&LoopStopReason::ToolLoopDetected);
+    assert!(detail.contains("tool_loop_detected"));
+    assert!(
+        detail.contains("different approach"),
+        "tool_loop_detected should suggest a different approach: {detail}"
+    );
+}
+
+#[test]
+fn snapshot_includes_goal_ledger() {
+    use crate::agent::goal_state::{GoalLedger, GoalStatus, GoalTaskStatus};
+
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-goal-ledger-snapshot-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-goal".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+
+    let ledger = GoalLedger::new_active("goal-1", "Ship feature", vec!["Step 1".to_string()], 10);
+    session.set_goal_ledger(ledger);
+
+    let snapshot = session.snapshot();
+    let goal = snapshot
+        .goal_ledger
+        .as_ref()
+        .unwrap()
+        .current_goal()
+        .unwrap();
+    assert_eq!(goal.id, "goal-1");
+    assert_eq!(goal.status, GoalStatus::Active);
+    assert_eq!(goal.tasks[0].status, GoalTaskStatus::Pending);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
+fn restore_state_preserves_goal_ledger() {
+    use crate::agent::goal_state::{GoalLedger, GoalTaskStatus};
+
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-goal-ledger-restore-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-restore-goal".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+
+    let mut ledger = GoalLedger::new_active(
+        "goal-resume",
+        "Persist goal",
+        vec!["Task A".to_string(), "Task B".to_string()],
+        10,
+    );
+    ledger.update_task_status("task-2", GoalTaskStatus::Completed, 20);
+
+    session.restore_state(vec![ChatMessage::user("hello")], None, None, Some(ledger));
+
+    let current = session.current_goal().unwrap();
+    assert_eq!(current.id, "goal-resume");
+    assert_eq!(current.tasks[0].status, GoalTaskStatus::Pending);
+    assert_eq!(current.tasks[1].status, GoalTaskStatus::Completed);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[test]
+fn resume_normalizes_goal_ledger_in_progress_tasks() {
+    use crate::agent::goal_state::{GoalLedger, GoalStatus, GoalTaskStatus};
+
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-goal-ledger-resume-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat"));
+    let session = AgentSession::new(
+        "session-resume-norm".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+
+    let mut ledger = GoalLedger::new_active(
+        "goal-resume",
+        "Persist goal",
+        vec!["Task A".to_string(), "Task B".to_string()],
+        10,
+    );
+    ledger.update_task_status("task-1", GoalTaskStatus::InProgress, 20);
+    ledger.update_task_status("task-2", GoalTaskStatus::Completed, 20);
+    session.set_goal_ledger(ledger);
+
+    // Simulate what resume() does for the goal ledger without requiring an AppHandle
+    session.normalize_goal_ledger_for_resume();
+
+    let current = session.current_goal().unwrap();
+    assert_eq!(current.status, GoalStatus::Active);
+    assert_eq!(current.tasks[0].status, GoalTaskStatus::Pending);
+    assert_eq!(
+        current.tasks[0].resume_note.as_deref(),
+        Some("task was in progress when the session was restored")
+    );
+    assert_eq!(current.tasks[1].status, GoalTaskStatus::Completed);
+
+    let _ = std::fs::remove_dir_all(workspace);
 }
