@@ -137,7 +137,7 @@ jobs:
       - name: Continuity dry-run
         run: npm run eval:continuity:dry-run
       - name: Eval report summary
-        run: npm run eval:report:latest || true
+        run: npm run eval:report:latest -- --failures
       - name: Real Forge smoke (API key required)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

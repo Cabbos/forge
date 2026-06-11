@@ -120,7 +120,12 @@ pub(crate) async fn restore_session_from_snapshot(
         existing_context_window_tokens: snapshot.context_window_tokens,
     })
     .await?;
-    session.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
+    session.restore_state(
+        snapshot.messages,
+        snapshot.summary,
+        snapshot.latest_turn,
+        snapshot.goal_ledger,
+    );
     let session = Arc::new(session);
     register_and_dispatch_session_start(state, session.clone(), &snapshot.session_id).await;
     if let Err(error) = save_session_snapshot_with_workflow(state, &session).await {
@@ -241,7 +246,12 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
         system_prompt,
         snapshot.context_window_tokens,
     );
-    upgraded.restore_state(snapshot.messages, snapshot.summary, snapshot.latest_turn);
+    upgraded.restore_state(
+        snapshot.messages,
+        snapshot.summary,
+        snapshot.latest_turn,
+        snapshot.goal_ledger,
+    );
     let upgraded = Arc::new(upgraded);
     state
         .register_session(snapshot.session_id.clone(), upgraded.clone())
