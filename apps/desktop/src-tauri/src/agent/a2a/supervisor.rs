@@ -142,14 +142,14 @@ pub(crate) fn worktree_result_for_model(raw: &str) -> String {
         }
     }
     match summary.tests_passed {
-        Some(true) => lines.push("Tests: PASSED ✅".to_string()),
-        Some(false) => lines.push("Tests: FAILED ❌".to_string()),
+        Some(true) => lines.push("Tests: PASSED".to_string()),
+        Some(false) => lines.push("Tests: FAILED".to_string()),
         None => {}
     }
 
     // Review gate: explicit signal that merge is NOT automatic
     if summary.needs_human_review {
-        lines.push("⚠️  HUMAN REVIEW REQUIRED — do not merge automatically.".to_string());
+        lines.push("HUMAN REVIEW REQUIRED - do not merge automatically.".to_string());
     }
     if !summary.suggested_action.is_empty() {
         lines.push(format!("Suggested action: {}", summary.suggested_action));

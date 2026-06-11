@@ -748,7 +748,9 @@ impl AgentSession {
                 let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let wd = self.harness.working_dir.clone();
                 let sub_emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
-                    Arc::new(crate::agent::event_sink::NoopEventEmitter);
+                    tool_emitter_override
+                        .clone()
+                        .unwrap_or_else(|| Arc::new(crate::agent::event_sink::NoopEventEmitter));
                 {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
                     bus.start_task(&a2a_task_id, now_ms());
@@ -772,7 +774,7 @@ impl AgentSession {
                                     &task,
                                     adapter,
                                     harness,
-                                    &*sub_emitter,
+                                    sub_emitter,
                                     cancel,
                                     &wd,
                                 )
@@ -784,7 +786,7 @@ impl AgentSession {
                                     &task,
                                     adapter,
                                     harness,
-                                    &*sub_emitter,
+                                    sub_emitter,
                                     cancel,
                                     &wd,
                                 )
@@ -795,7 +797,7 @@ impl AgentSession {
                                     &task,
                                     adapter,
                                     harness,
-                                    &*sub_emitter,
+                                    sub_emitter,
                                     cancel,
                                     &wd,
                                 )

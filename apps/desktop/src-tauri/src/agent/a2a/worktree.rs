@@ -104,8 +104,8 @@ pub(crate) struct WorktreeWorkerSummary {
 impl WorktreeLease {
     /// Attempt to create a worktree for the given task.
     ///
-    /// * `working_dir` — the agent's current working directory (need not be repo root).
-    /// * `task_id` — used to build a unique, predictable worktree path.
+    /// * `working_dir` - the agent's current working directory (need not be repo root).
+    /// * `task_id` - used to build a unique, predictable worktree path.
     pub(crate) fn create(working_dir: &Path, task_id: &str) -> LeaseResult {
         let repo_root = match git_repo_root(working_dir) {
             Some(root) => root,
