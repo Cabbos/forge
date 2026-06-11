@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleDashed, XCircle, PauseCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, XCircle, PauseCircle, FileCode } from "lucide-react";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
 
 function iconFor(status: string) {
@@ -15,6 +15,12 @@ function TaskRow({ task }: { task: AgentA2ATaskProjection }) {
       <Icon className="size-3" />
       <span className="forge-a2a-task-title">{task.title}</span>
       <span className="forge-a2a-task-role">{task.role}</span>
+      {task.artifact_count > 0 && (
+        <span className="forge-a2a-task-artifact" data-kind={task.latest_artifact_kind ?? undefined}>
+          <FileCode className="size-3" />
+          {task.artifact_count}
+        </span>
+      )}
       {task.latest_message && (
         <span className="forge-a2a-task-message">{task.latest_message}</span>
       )}

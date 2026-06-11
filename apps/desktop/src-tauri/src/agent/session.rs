@@ -699,14 +699,30 @@ impl AgentSession {
                     .and_then(|v| v.as_str())
                     .unwrap_or("Investigate and report findings")
                     .to_string();
+                let mode = tc
+                    .input
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("research")
+                    .to_string();
+                let is_patch_proposal = mode == "patch_proposal";
                 let a2a_task_id = {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
-                    crate::agent::a2a::supervisor::assign_delegate_task(
-                        &mut bus,
-                        "Delegated research task",
-                        &task,
-                        started_at_ms,
-                    )
+                    if is_patch_proposal {
+                        crate::agent::a2a::supervisor::assign_patch_proposal_task(
+                            &mut bus,
+                            "Delegated patch proposal task",
+                            &task,
+                            started_at_ms,
+                        )
+                    } else {
+                        crate::agent::a2a::supervisor::assign_delegate_task(
+                            &mut bus,
+                            "Delegated research task",
+                            &task,
+                            started_at_ms,
+                        )
+                    }
                 };
                 self.emit_a2a_projection(emitter);
                 let adapter = self.adapter.clone();
@@ -731,26 +747,71 @@ impl AgentSession {
                     tc.input.clone(),
                     started_at_ms,
                     a2a_task_id,
+                    is_patch_proposal,
                     tokio::spawn(async move {
-                        let r = crate::agent::a2a::child::ChildAgentRuntime::run_read_only(
-                            &task,
-                            adapter,
-                            harness,
-                            &*sub_emitter,
-                            cancel,
-                            &wd,
-                        )
-                        .await;
+                        let r = if is_patch_proposal {
+                            crate::agent::a2a::child::ChildAgentRuntime::run_patch_proposal(
+                                &task,
+                                adapter,
+                                harness,
+                                &*sub_emitter,
+                                cancel,
+                                &wd,
+                            )
+                            .await
+                        } else {
+                            crate::agent::a2a::child::ChildAgentRuntime::run_read_only(
+                                &task,
+                                adapter,
+                                harness,
+                                &*sub_emitter,
+                                cancel,
+                                &wd,
+                            )
+                            .await
+                        };
                         (idx, r)
                     }),
                 ));
             }
-            for (fallback_idx, id, name, input, started_at_ms, a2a_task_id, handle) in handles {
+            for (
+                fallback_idx,
+                id,
+                name,
+                input,
+                started_at_ms,
+                a2a_task_id,
+                is_patch_proposal,
+                handle,
+            ) in handles
+            {
                 match handle.await {
                     Ok((idx, r)) => {
                         let api_text: String =
                             crate::agent::a2a::supervisor::delegate_result_for_model(&r);
-                        {
+                        if is_patch_proposal {
+                            if let Some(proposal) =
+                                crate::agent::a2a::supervisor::extract_patch_proposal(&r)
+                            {
+                                let artifact = crate::agent::a2a::types::AgentArtifact {
+                                    artifact_id: format!("proposal-{}", a2a_task_id.as_str()),
+                                    task_id: a2a_task_id.clone(),
+                                    kind:
+                                        crate::agent::a2a::types::AgentArtifactKind::PatchProposal,
+                                    title: format!("Patch: {}", proposal.file_path),
+                                    content: serde_json::to_string(&proposal).unwrap_or_default(),
+                                    created_at_ms: now_ms(),
+                                };
+                                {
+                                    let mut bus = lock_unpoisoned(&self.a2a_bus);
+                                    bus.add_artifact(&a2a_task_id, artifact, now_ms());
+                                    bus.complete_task(&a2a_task_id, &api_text, now_ms());
+                                }
+                            } else {
+                                let mut bus = lock_unpoisoned(&self.a2a_bus);
+                                bus.complete_task(&a2a_task_id, &api_text, now_ms());
+                            }
+                        } else {
                             let mut bus = lock_unpoisoned(&self.a2a_bus);
                             bus.complete_task(&a2a_task_id, &api_text, now_ms());
                         }

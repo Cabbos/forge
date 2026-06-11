@@ -27,4 +27,23 @@ impl ChildAgentRuntime {
         )
         .await
     }
+
+    pub(crate) async fn run_patch_proposal(
+        task: &str,
+        adapter: Arc<dyn AiAdapter>,
+        harness: Arc<Harness>,
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+        working_dir: &Path,
+    ) -> String {
+        crate::agent::sub::SubAgent::run_patch_proposal(
+            task,
+            adapter,
+            harness,
+            emitter,
+            cancel,
+            working_dir,
+        )
+        .await
+    }
 }

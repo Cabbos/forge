@@ -20,4 +20,7 @@ pub struct AgentA2ATaskProjection {
     pub latest_message: Option<String>,
     pub failure_message: Option<String>,
     pub updated_at_ms: u64,
+    pub artifact_count: usize,
+    pub latest_artifact_kind: Option<String>,
+    pub latest_artifact_title: Option<String>,
 }
