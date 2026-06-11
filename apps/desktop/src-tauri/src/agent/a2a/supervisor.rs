@@ -45,12 +45,30 @@ pub(crate) fn assign_patch_proposal_task(
 
 pub(crate) fn extract_patch_proposal(raw: &str) -> Option<PatchProposal> {
     // Try to find a JSON block containing patch_proposal.
-    // Look for ```json ... ``` code blocks first, then fall back to raw JSON.
-    let json_text = extract_json_block(raw).unwrap_or(raw);
+    // Prefer raw JSON first because wrapped sub-agent results may contain escaped
+    // fenced blocks inside their "result" field.
+    extract_patch_proposal_from_json_text(raw).or_else(|| {
+        let json_text = extract_json_block(raw)?;
+        extract_patch_proposal_from_json_text(json_text)
+    })
+}
 
-    serde_json::from_str::<serde_json::Value>(json_text)
-        .ok()
-        .and_then(|value| value.get("patch_proposal").cloned())
+fn extract_patch_proposal_from_json_text(json_text: &str) -> Option<PatchProposal> {
+    let value = serde_json::from_str::<serde_json::Value>(json_text).ok()?;
+    if let Some(proposal) = patch_proposal_from_value(&value) {
+        return Some(proposal);
+    }
+
+    let result = value.get("result").and_then(|result| result.as_str())?;
+    extract_json_block(result)
+        .and_then(extract_patch_proposal_from_json_text)
+        .or_else(|| extract_patch_proposal_from_json_text(result))
+}
+
+fn patch_proposal_from_value(value: &serde_json::Value) -> Option<PatchProposal> {
+    value
+        .get("patch_proposal")
+        .cloned()
         .and_then(|proposal| serde_json::from_value::<PatchProposal>(proposal).ok())
 }
 
@@ -155,6 +173,42 @@ Here is my analysis.
             crate::agent::a2a::types::PatchRiskLevel::Low
         );
         assert!((proposal.confidence - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn extract_patch_proposal_from_wrapped_sub_agent_result() {
+        let result = r#"
+Analysis.
+
+```json
+{
+  "result": "Review only",
+  "patch_proposal": {
+    "file_path": "src/lib.rs",
+    "intent": "Avoid duplicate artifact loss",
+    "diff_summary": "Parse nested patch proposal output",
+    "original_snippet": "extract_patch_proposal(&raw)",
+    "proposed_snippet": "extract_patch_proposal(&delegate_result_for_model(&raw))",
+    "risk_level": "medium",
+    "test_suggestion": "Run patch proposal extraction tests",
+    "confidence": 0.8
+  }
+}
+```
+"#;
+        let raw = serde_json::json!({
+            "result": result,
+            "steps": []
+        })
+        .to_string();
+
+        let proposal = extract_patch_proposal(&raw).expect("should extract from wrapped result");
+        assert_eq!(proposal.file_path, "src/lib.rs");
+        assert_eq!(
+            proposal.risk_level,
+            crate::agent::a2a::types::PatchRiskLevel::Medium
+        );
+        assert!((proposal.confidence - 0.8).abs() < f32::EPSILON);
     }
 
     #[test]
