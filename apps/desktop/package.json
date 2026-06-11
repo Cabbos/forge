@@ -28,7 +28,7 @@
     "eval:continuity": "node scripts/run-forge-backtest.mjs --suite continuity",
     "eval:continuity:dry-run": "node scripts/run-forge-backtest.mjs --suite continuity --dry-run",
     "eval:continuity:smoke": "node scripts/run-forge-backtest.mjs --suite continuity --case continuity-pipeline-normalize-input",
-    "eval:forge:test": "node --test scripts/run-forge-backtest.test.mjs scripts/eval-report.test.mjs",
+    "eval:forge:test": "node --test scripts/run-forge-backtest.test.mjs scripts/eval-report.test.mjs scripts/smoke-worktree-worker.test.mjs",
     "eval:report": "node scripts/eval-report.mjs",
     "eval:report:latest": "node scripts/eval-report.mjs --latest",
     "hooks:install": "node scripts/install-git-hooks.mjs",

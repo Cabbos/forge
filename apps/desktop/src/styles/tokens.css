@@ -33,10 +33,14 @@
     --forge-accent-foreground-strong: #12110F;
     --forge-accent-hover-strong: #C79A69;
     --forge-pass: #9BB987;
+    --forge-success-muted: #9BB987;
     --forge-warning: #D2A653;
     --forge-warning-strong: #C4913E;
     --forge-warning-bright: #E0B767;
+    --forge-amber-muted: #C4913E;
+    --forge-amber-rgb: 196, 145, 62;
     --forge-danger: #C67563;
+    --forge-danger-rgb: 198, 117, 99;
     --forge-danger-muted: #D58B7B;
     --forge-danger-soft: #E0A194;
     --forge-danger-hover: #B85C4B;
