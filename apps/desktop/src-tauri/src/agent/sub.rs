@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
+use crate::agent::event_sink::EventEmitter;
 use crate::harness::Harness;
 
 const MAX_ROUNDS: usize = 20;
@@ -229,14 +230,11 @@ impl SubAgent {
     }
 
     /// Run a sub-agent using an abstract event emitter.
-    /// Currently delegates to `run` — the emitter path is only used when the
-    /// parent session itself runs with an emitter (tests), and delegate_task
-    /// calls are not produced by test adapters.
     pub async fn run_with_emitter(
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        emitter: &dyn crate::agent::event_sink::EventEmitter,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
     ) -> String {
@@ -256,7 +254,7 @@ impl SubAgent {
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        emitter: &dyn crate::agent::event_sink::EventEmitter,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
     ) -> String {
@@ -276,7 +274,7 @@ impl SubAgent {
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        emitter: &dyn crate::agent::event_sink::EventEmitter,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
     ) -> String {
@@ -296,7 +294,7 @@ impl SubAgent {
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        _emitter: &dyn crate::agent::event_sink::EventEmitter,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
         mode: SubAgentMode,
@@ -336,8 +334,6 @@ impl SubAgent {
                 return build_result_json(&text, &[]);
             }
 
-            let emitter_arc: Arc<dyn crate::agent::event_sink::EventEmitter> =
-                Arc::new(crate::agent::event_sink::NoopEventEmitter);
             let mut result_map = std::collections::HashMap::new();
             for tc in &stream_result.tool_calls {
                 let is_blocked = match mode {
@@ -364,7 +360,7 @@ impl SubAgent {
                             "sub",
                             &tc.name,
                             &tc.input,
-                            emitter_arc.clone(),
+                            emitter.clone(),
                             Some(&tc.id),
                             Some(cancel.clone()),
                         )

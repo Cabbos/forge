@@ -13,7 +13,7 @@ impl ChildAgentRuntime {
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        emitter: &dyn EventEmitter,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &Path,
     ) -> String {
@@ -32,7 +32,7 @@ impl ChildAgentRuntime {
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        emitter: &dyn EventEmitter,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &Path,
     ) -> String {
@@ -57,8 +57,8 @@ impl ChildAgentRuntime {
         worktree_id: &str,
         task: &str,
         adapter: Arc<dyn AiAdapter>,
-        _parent_harness: Arc<Harness>,
-        emitter: &dyn EventEmitter,
+        parent_harness: Arc<Harness>,
+        emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &Path,
     ) -> String {
@@ -126,7 +126,10 @@ impl ChildAgentRuntime {
 
         // Create a fresh harness for the worktree so the worker has full
         // tool access inside the isolated directory.
-        let worktree_harness = Arc::new(Harness::new(worktree_path.clone()));
+        let worktree_harness = Arc::new(Harness::new_with_pending(
+            worktree_path.clone(),
+            parent_harness.pending_confirms.clone(),
+        ));
 
         // Run the sub-agent in worktree-worker mode.
         let sub_result = crate::agent::sub::SubAgent::run_worktree_worker(
@@ -228,7 +231,7 @@ fn extract_structured_test_report(raw: &str) -> Option<crate::agent::a2a::worktr
     // Look for an explicit structured test_report object.
     if let Some(obj) = value.get("test_report") {
         if let Some(report) = obj.as_str() {
-            // Plain text test report — try to parse counts heuristically.
+            // Plain text test report: try to parse counts heuristically.
             return parse_test_counts(report);
         }
         // Try to read a structured JSON test report.
@@ -308,7 +311,7 @@ fn parse_test_counts(text: &str) -> Option<crate::agent::a2a::worktree::TestRepo
     }
 }
 
-/// Legacy heuristic extraction — kept as fallback when structured parsing yields nothing.
+/// Legacy heuristic extraction, kept as fallback when structured parsing yields nothing.
 fn extract_test_report_heuristic(raw: &str) -> Option<String> {
     let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
     // If the result contains an explicit test_report field, use it.
@@ -424,13 +427,50 @@ mod tests {
         assert!(parse_test_counts("Just plain text").is_none());
     }
 
-    // ── Integration test: full worktree worker end-to-end ─────────────────
+    // Integration test: full worktree worker end-to-end.
 
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockAdapter {
         calls: AtomicUsize,
+    }
+
+    struct AutoApprovePendingEmitter {
+        pending_confirms: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        >,
+    }
+
+    impl AutoApprovePendingEmitter {
+        fn new(
+            pending_confirms: Arc<
+                tokio::sync::RwLock<
+                    std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+                >,
+            >,
+        ) -> Self {
+            Self { pending_confirms }
+        }
+    }
+
+    impl EventEmitter for AutoApprovePendingEmitter {
+        fn emit(&self, event: crate::protocol::events::StreamEvent) {
+            if let crate::protocol::events::StreamEvent::ConfirmAsk { block_id, .. } = event {
+                let pending_confirms = self.pending_confirms.clone();
+                tokio::spawn(async move {
+                    for _ in 0..100 {
+                        if let Some(sender) = pending_confirms.write().await.remove(&block_id) {
+                            let _ = sender.send(true);
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                });
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -523,8 +563,13 @@ mod tests {
         let adapter: Arc<dyn AiAdapter> = Arc::new(MockAdapter {
             calls: AtomicUsize::new(0),
         });
-        let harness = Arc::new(Harness::new(tmp.clone()));
-        let emitter = crate::agent::event_sink::NoopEventEmitter;
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            tmp.clone(),
+            pending_confirms.clone(),
+        ));
+        let emitter: Arc<dyn EventEmitter> =
+            Arc::new(AutoApprovePendingEmitter::new(pending_confirms));
         let cancel = Arc::new(Notify::new());
 
         let raw = ChildAgentRuntime::run_worktree_worker(
@@ -532,7 +577,7 @@ mod tests {
             "Write output.txt and run tests",
             adapter,
             harness,
-            &emitter,
+            emitter,
             cancel,
             &tmp,
         )
