@@ -114,9 +114,8 @@ impl ChildAgentRuntime {
                     diff_truncated: false,
                     test_report: None,
                     tests_passed: None,
-                    needs_human_review: false,
-                    suggested_action:
-                        "Wait for the other worker to finish or use a unique task id.".to_string(),
+                    needs_human_review: true,
+                    suggested_action: "HUMAN REVIEW REQUIRED - wait for the other worker to finish or use a unique task id.".to_string(),
                     reason_codes: vec!["already_in_use".to_string()],
                     worktree_path: working_dir.to_string_lossy().to_string(),
                     cleaned_up: true,
@@ -437,6 +436,40 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    fn init_test_repo(prefix: &str) -> std::path::PathBuf {
+        let tmp = std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let init = Command::new("git")
+            .args(["init"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git init");
+        assert!(init.status.success());
+
+        std::fs::write(tmp.join("README.md"), "# test").unwrap();
+        let add = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&tmp)
+            .output()
+            .expect("git add");
+        assert!(add.status.success());
+        let commit = Command::new("git")
+            .args(["commit", "-m", "init", "--no-gpg-sign"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success());
+
+        tmp
+    }
+
     struct AutoApprovePendingEmitter {
         pending_confirms: Arc<
             tokio::sync::RwLock<
@@ -532,34 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_worktree_worker_creates_worktree_collects_diff_and_returns_summary() {
-        let tmp = std::env::temp_dir().join(format!(
-            "forge-test-wt-integration-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&tmp).unwrap();
-
-        // Init a git repo with an initial commit.
-        let init = Command::new("git")
-            .args(["init"])
-            .current_dir(&tmp)
-            .output()
-            .expect("git init");
-        assert!(init.status.success());
-
-        std::fs::write(tmp.join("README.md"), "# test").unwrap();
-        let _ = Command::new("git")
-            .args(["add", "."])
-            .current_dir(&tmp)
-            .output();
-        let commit = Command::new("git")
-            .args(["commit", "-m", "init", "--no-gpg-sign"])
-            .current_dir(&tmp)
-            .output()
-            .expect("git commit");
-        assert!(commit.status.success());
+        let tmp = init_test_repo("forge-test-wt-integration");
 
         let adapter: Arc<dyn AiAdapter> = Arc::new(MockAdapter {
             calls: AtomicUsize::new(0),
@@ -624,6 +630,56 @@ mod tests {
             summary.worktree_path
         );
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn run_worktree_worker_already_in_use_requires_human_review() {
+        let tmp = init_test_repo("forge-test-wt-already-in-use");
+        let mut existing_lease =
+            match crate::agent::a2a::worktree::WorktreeLease::create(&tmp, "busy-task") {
+                crate::agent::a2a::worktree::LeaseResult::Ok(lease) => lease,
+                other => panic!("expected initial lease, got {other:?}"),
+            };
+
+        let adapter: Arc<dyn AiAdapter> = Arc::new(MockAdapter {
+            calls: AtomicUsize::new(0),
+        });
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            tmp.clone(),
+            pending_confirms.clone(),
+        ));
+        let emitter: Arc<dyn EventEmitter> =
+            Arc::new(AutoApprovePendingEmitter::new(pending_confirms));
+        let cancel = Arc::new(Notify::new());
+
+        let raw = ChildAgentRuntime::run_worktree_worker(
+            "busy-task",
+            "Try to reuse an active worktree",
+            adapter,
+            harness,
+            emitter,
+            cancel,
+            &tmp,
+        )
+        .await;
+
+        let summary: crate::agent::a2a::worktree::WorktreeWorkerSummary =
+            serde_json::from_str(&raw).expect("should parse WorktreeWorkerSummary");
+        assert!(
+            summary.needs_human_review,
+            "busy worktree should not be reported as a safe automatic outcome"
+        );
+        assert!(
+            summary.suggested_action.contains("HUMAN REVIEW REQUIRED"),
+            "should give parent model an explicit review signal, got: {}",
+            summary.suggested_action
+        );
+        assert_eq!(summary.reason_codes, vec!["already_in_use".to_string()]);
+
+        existing_lease.preserve();
+        drop(existing_lease);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
