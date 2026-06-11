@@ -54,6 +54,7 @@ impl ChildAgentRuntime {
     /// On completion we collect the git diff (and any test output) and return
     /// a structured summary to the parent model.
     pub(crate) async fn run_worktree_worker(
+        worktree_id: &str,
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         _parent_harness: Arc<Harness>,
@@ -63,7 +64,7 @@ impl ChildAgentRuntime {
     ) -> String {
         use crate::agent::a2a::worktree::{LeaseResult, WorktreeLease, WorktreeWorkerSummary};
 
-        let mut lease = match WorktreeLease::create(working_dir, task) {
+        let mut lease = match WorktreeLease::create(working_dir, worktree_id) {
             LeaseResult::Ok(l) => l,
             LeaseResult::NotAGitRepo { path } => {
                 return serde_json::to_string(&WorktreeWorkerSummary {

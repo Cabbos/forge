@@ -69,6 +69,7 @@ impl WorktreeLease {
         // Clean up any stale worktree at the same path before creating.
         let _ = remove_worktree(&repo_root, &worktree_path);
         let _ = std::fs::remove_dir_all(&worktree_path);
+        let _ = delete_branch(&repo_root, &branch_name);
 
         // Create the worktree on a new detached branch so the worker has a clean HEAD.
         let output = Command::new("git")
@@ -174,10 +175,7 @@ impl WorktreeLease {
         remove_worktree(&self.repo_root, &self.worktree_path)?;
 
         // Delete the branch from the main repo.
-        let _ = Command::new("git")
-            .args(["branch", "-D", &self.branch_name])
-            .current_dir(&self.repo_root)
-            .output();
+        let _ = delete_branch(&self.repo_root, &self.branch_name);
 
         Ok(())
     }
@@ -232,16 +230,44 @@ fn remove_worktree(repo_root: &Path, worktree_path: &Path) -> Result<(), String>
 }
 
 fn sanitize_task_id(task_id: &str) -> String {
-    task_id
+    let sanitized = task_id
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '-' {
+            if c.is_ascii_alphanumeric() || c == '-' {
                 c
             } else {
                 '-'
             }
         })
         .collect::<String>()
+        .trim_matches('-')
+        .chars()
+        .take(64)
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "task".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn delete_branch(repo_root: &Path, branch_name: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(["branch", "-D", branch_name])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| format!("git branch delete failed: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("branch") && stderr.contains("not found") {
+            Ok(())
+        } else {
+            Err(format!("git branch delete failed: {stderr}"))
+        }
+    }
 }
 
 fn is_path_inside(path: &Path, base: &Path) -> bool {
@@ -269,6 +295,14 @@ mod tests {
         assert_eq!(sanitize_task_id("task/1"), "task-1");
         assert_eq!(sanitize_task_id("task.1"), "task-1");
         assert_eq!(sanitize_task_id("task__1"), "task--1");
+        assert_eq!(sanitize_task_id("中文 task"), "task");
+        assert_eq!(sanitize_task_id("///"), "task");
+    }
+
+    #[test]
+    fn sanitize_limits_branch_component_length() {
+        let long = "a".repeat(200);
+        assert_eq!(sanitize_task_id(&long).len(), 64);
     }
 
     #[test]

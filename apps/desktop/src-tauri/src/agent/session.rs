@@ -756,6 +756,7 @@ impl AgentSession {
                 self.sync_goal_task_for_a2a(crate::agent::goal_state::GoalTaskStatus::InProgress);
                 self.emit_a2a_projection(emitter);
                 let execution_mode_clone = execution_mode.clone();
+                let worktree_id = a2a_task_id.as_str().to_string();
                 handles.push((
                     idx,
                     tc.id.clone(),
@@ -779,6 +780,7 @@ impl AgentSession {
                             }
                             crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
                                 crate::agent::a2a::child::ChildAgentRuntime::run_worktree_worker(
+                                    &worktree_id,
                                     &task,
                                     adapter,
                                     harness,
@@ -817,8 +819,12 @@ impl AgentSession {
             {
                 match handle.await {
                     Ok((idx, r)) => {
-                        let api_text: String =
-                            crate::agent::a2a::supervisor::delegate_result_for_model(&r);
+                        let api_text: String = match execution_mode {
+                            crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
+                                crate::agent::a2a::supervisor::worktree_result_for_model(&r)
+                            }
+                            _ => crate::agent::a2a::supervisor::delegate_result_for_model(&r),
+                        };
                         match execution_mode {
                             crate::agent::a2a::types::AgentExecutionMode::PatchProposal => {
                                 if let Some(proposal) =

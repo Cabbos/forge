@@ -121,15 +121,25 @@ pub(crate) fn record_child_failure(
 /// Extract a human-readable summary string from a worktree-worker JSON result
 /// for the parent model's tool_result.
 pub(crate) fn worktree_result_for_model(raw: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("result")
-                .and_then(|result| result.as_str())
-                .map(|result| result.to_string())
-        })
-        .unwrap_or_else(|| raw.to_string())
+    let Ok(summary) =
+        serde_json::from_str::<crate::agent::a2a::worktree::WorktreeWorkerSummary>(raw)
+    else {
+        return delegate_result_for_model(raw);
+    };
+
+    let mut lines = Vec::new();
+    lines.push(delegate_result_for_model(&summary.result));
+    lines.push(format!("Diff available: {}", summary.diff_available));
+    lines.push(format!("Worktree cleaned up: {}", summary.cleaned_up));
+    if let Some(report) = summary.test_report {
+        if !report.trim().is_empty() {
+            lines.push(format!("Test report: {report}"));
+        }
+    }
+    if !summary.cleaned_up {
+        lines.push(format!("Worktree preserved: {}", summary.worktree_path));
+    }
+    lines.join("\n")
 }
 
 /// Extract structured worktree artifacts from the worker JSON result.
@@ -348,14 +358,26 @@ Analysis.
 
     #[test]
     fn worktree_result_for_model_extracts_json_result() {
-        let raw = serde_json::json!({
+        let worker_result = serde_json::json!({
             "result": "Implemented login flow",
+            "steps": []
+        })
+        .to_string();
+        let raw = serde_json::json!({
+            "result": worker_result,
             "diff": "diff --git a/src/auth.rs",
+            "diff_available": true,
+            "test_report": "2 passed",
+            "worktree_path": "/tmp/wt",
             "cleaned_up": true
         })
         .to_string();
 
-        assert_eq!(worktree_result_for_model(&raw), "Implemented login flow");
+        let result = worktree_result_for_model(&raw);
+        assert!(result.contains("Implemented login flow"));
+        assert!(result.contains("Diff available: true"));
+        assert!(result.contains("Worktree cleaned up: true"));
+        assert!(result.contains("Test report: 2 passed"));
     }
 
     #[test]
