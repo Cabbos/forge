@@ -42,6 +42,7 @@ function selectorBlock(source, selector) {
 }
 
 const files = {
+  tokens: read("src/styles/tokens.css"),
   globals: read("src/styles/globals.css"),
   sidebar: read("src/styles/sidebar.css"),
   titlebar: read("src/styles/titlebar.css"),
@@ -77,6 +78,11 @@ assertIncludes(files.sidebarComponent, 'data-tauri-drag-region="true"', "sidebar
 assertIncludes(files.tauriConfig, '"titleBarStyle": "Overlay"', "macOS overlay titlebar");
 assertIncludes(files.tauriConfig, '"hiddenTitle": true', "macOS hidden native title");
 assertIncludes(files.tauriConfig, '"trafficLightPosition": { "x": 16, "y": 15 }', "macOS native traffic light placement");
+
+assertIncludes(files.tokens, "--forge-success-muted:", "A2A success status token");
+assertIncludes(files.tokens, "--forge-amber-muted:", "A2A warning status token");
+assertIncludes(files.tokens, "--forge-amber-rgb:", "A2A warning rgb token");
+assertIncludes(files.tokens, "--forge-danger-rgb:", "A2A danger rgb token");
 
 assertIncludes(files.globals, '.forge-app-shell[data-design-version="v3-light-workbench"],', "app shell light theme scope");
 assertIncludes(files.globals, 'body:has(.forge-app-shell[data-design-version="v3-light-workbench"])', "body portal light theme scope");
