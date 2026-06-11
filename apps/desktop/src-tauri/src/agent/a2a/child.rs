@@ -69,12 +69,18 @@ impl ChildAgentRuntime {
             LeaseResult::NotAGitRepo { path } => {
                 return serde_json::to_string(&WorktreeWorkerSummary {
                     result: format!(
-                        "Cannot create worktree: {} is not inside a git repository",
+                        "Cannot create worktree: {} is not inside a git repository. \
+                         Falling back to patch_proposal mode is recommended.",
                         path.display()
                     ),
                     diff: None,
                     diff_available: false,
+                    diff_truncated: false,
                     test_report: None,
+                    tests_passed: None,
+                    needs_human_review: true,
+                    suggested_action: "Use patch_proposal mode or manually apply changes."
+                        .to_string(),
                     worktree_path: path.to_string_lossy().to_string(),
                     cleaned_up: true,
                 })
@@ -85,7 +91,30 @@ impl ChildAgentRuntime {
                     result: format!("Worktree creation failed: {message}"),
                     diff: None,
                     diff_available: false,
+                    diff_truncated: false,
                     test_report: None,
+                    tests_passed: None,
+                    needs_human_review: true,
+                    suggested_action: "Check git status and retry.".to_string(),
+                    worktree_path: working_dir.to_string_lossy().to_string(),
+                    cleaned_up: true,
+                })
+                .unwrap_or_else(|_| "Worktree creation failed".to_string());
+            }
+            LeaseResult::AlreadyInUse { branch_name } => {
+                return serde_json::to_string(&WorktreeWorkerSummary {
+                    result: format!(
+                        "Worktree creation failed: branch {branch_name} is already in use. \
+                         Another worktree worker may be running for the same task."
+                    ),
+                    diff: None,
+                    diff_available: false,
+                    diff_truncated: false,
+                    test_report: None,
+                    tests_passed: None,
+                    needs_human_review: false,
+                    suggested_action:
+                        "Wait for the other worker to finish or use a unique task id.".to_string(),
                     worktree_path: working_dir.to_string_lossy().to_string(),
                     cleaned_up: true,
                 })
@@ -110,16 +139,56 @@ impl ChildAgentRuntime {
         )
         .await;
 
-        // Collect diff from the worktree.
-        let diff = lease.diff().ok();
-        let diff_available = diff.as_ref().is_some_and(|d| !d.trim().is_empty());
+        // Collect diff from the worktree (with size protection).
+        let (diff, diff_truncated) = match lease.diff_truncated() {
+            Ok(d) => {
+                let truncated = d.contains("[diff truncated:");
+                (Some(d), truncated)
+            }
+            Err(e) => (Some(format!("Diff extraction failed: {e}")), false),
+        };
+        let diff_available = diff
+            .as_ref()
+            .is_some_and(|d| !d.trim().is_empty() && !d.starts_with("Diff extraction failed"));
 
-        // Extract a test report from the sub-agent result if present.
-        let test_report = extract_test_report(&sub_result);
+        // Extract structured test report from the sub-agent result.
+        let structured_report = extract_structured_test_report(&sub_result);
+        let test_report = structured_report
+            .as_ref()
+            .map(|r| r.summary.clone())
+            .or_else(|| extract_test_report_heuristic(&sub_result));
+
+        // Determine whether the sub-agent itself signalled failure.
+        let sub_has_error = sub_result.contains("error") || sub_result.contains("Error");
+        let tests_passed = structured_report
+            .as_ref()
+            .map(|r| r.failed == 0 && r.exit_code.is_none_or(|ec| ec == 0))
+            .or_else(|| {
+                test_report.as_ref().map(|tr| {
+                    !tr.contains("failed") && !tr.contains("FAIL")
+                        || tr.contains("0 failed")
+                        || tr.contains("all passed")
+                })
+            });
+
+        // Review gate: always require human review for worktree workers.
+        // The worker only produces artifacts; it never auto-merges.
+        let needs_human_review = true;
+        let suggested_action = if diff_available {
+            if tests_passed == Some(true) {
+                "Diff is available and tests pass. Please review before merging."
+            } else if tests_passed == Some(false) {
+                "Diff is available but tests failed. Review and fix before merging."
+            } else {
+                "Diff is available. Please review before merging."
+            }
+        } else {
+            "No diff produced. Review the worker result before deciding next steps."
+        }
+        .to_string();
 
         // Preserve the worktree on failure so the user can inspect.
-        let sub_success = !sub_result.contains("error") && !sub_result.contains("Error");
-        if !sub_success {
+        if sub_has_error || tests_passed == Some(false) {
             lease.preserve();
         }
 
@@ -133,7 +202,11 @@ impl ChildAgentRuntime {
             result: sub_result,
             diff,
             diff_available,
+            diff_truncated,
             test_report,
+            tests_passed,
+            needs_human_review,
+            suggested_action,
             worktree_path: worktree_path.to_string_lossy().to_string(),
             cleaned_up,
         };
@@ -148,8 +221,95 @@ impl ChildAgentRuntime {
     }
 }
 
-/// Try to extract test-report content from a sub-agent JSON result.
-fn extract_test_report(raw: &str) -> Option<String> {
+/// Structured test report with numeric fields.
+fn extract_structured_test_report(raw: &str) -> Option<crate::agent::a2a::worktree::TestReport> {
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+
+    // Look for an explicit structured test_report object.
+    if let Some(obj) = value.get("test_report") {
+        if let Some(report) = obj.as_str() {
+            // Plain text test report — try to parse counts heuristically.
+            return parse_test_counts(report);
+        }
+        // Try to read a structured JSON test report.
+        let passed = obj.get("passed").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let failed = obj.get("failed").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let skipped = obj.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let exit_code = obj
+            .get("exit_code")
+            .and_then(|v| v.as_i64())
+            .map(|v| v as i32);
+        let summary = obj
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if passed > 0 || failed > 0 || skipped > 0 || !summary.is_empty() {
+            return Some(crate::agent::a2a::worktree::TestReport {
+                passed,
+                failed,
+                skipped,
+                exit_code,
+                summary: if summary.is_empty() {
+                    format!("{passed} passed, {failed} failed, {skipped} skipped")
+                } else {
+                    summary
+                },
+            });
+        }
+    }
+
+    // Fallback: if the overall result text contains test output, try parsing it.
+    let result = value.get("result").and_then(|v| v.as_str())?;
+    parse_test_counts(result)
+}
+
+/// Heuristic parser for "X passed, Y failed" style test output.
+fn parse_test_counts(text: &str) -> Option<crate::agent::a2a::worktree::TestReport> {
+    let text_lower = text.to_lowercase();
+
+    // Try common patterns: "3 passed, 0 failed", "5 failed, 10 passed", etc.
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+    let mut skipped = 0u32;
+
+    // Scan adjacent tokens for NUMBER + KEYWORD pairs.
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    for window in tokens.windows(2) {
+        let num_part = window[0].trim_end_matches(|c: char| !c.is_ascii_digit());
+        if let Ok(n) = num_part.parse::<u32>() {
+            let rest = window[1].to_lowercase();
+            if rest.starts_with("passed") || rest.starts_with("pass") {
+                passed = n;
+            } else if rest.starts_with("failed") || rest.starts_with("fail") {
+                failed = n;
+            } else if rest.starts_with("skipped") || rest.starts_with("skip") {
+                skipped = n;
+            }
+        }
+    }
+
+    // If we found no counts but the text looks like test output, still return a report.
+    let is_test_output = text_lower.contains("test")
+        || text_lower.contains("cargo test")
+        || text_lower.contains("npm test")
+        || text_lower.contains("pytest");
+
+    if passed > 0 || failed > 0 || skipped > 0 || is_test_output {
+        Some(crate::agent::a2a::worktree::TestReport {
+            passed,
+            failed,
+            skipped,
+            exit_code: None,
+            summary: text.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// Legacy heuristic extraction — kept as fallback when structured parsing yields nothing.
+fn extract_test_report_heuristic(raw: &str) -> Option<String> {
     let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
     // If the result contains an explicit test_report field, use it.
     if let Some(report) = value.get("test_report").and_then(|v| v.as_str()) {
@@ -177,31 +337,241 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extract_test_report_from_json_field() {
+    fn extract_structured_test_report_from_json_object() {
+        let raw = r#"{"result": "Done", "test_report": {"passed": 3, "failed": 1, "skipped": 0, "exit_code": 0, "summary": "3 passed, 1 failed"}}"#;
+        let report = extract_structured_test_report(raw).expect("should parse");
+        assert_eq!(report.passed, 3);
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.skipped, 0);
+        assert_eq!(report.exit_code, Some(0));
+        assert_eq!(report.summary, "3 passed, 1 failed");
+    }
+
+    #[test]
+    fn extract_structured_test_report_from_text_field() {
+        let raw = r#"{"result": "Done", "test_report": "5 passed, 0 failed, 1 skipped"}"#;
+        let report = extract_structured_test_report(raw).expect("should parse");
+        assert_eq!(report.passed, 5);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.skipped, 1);
+    }
+
+    #[test]
+    fn extract_structured_test_report_from_result_heuristic() {
+        let raw = r#"{"result": "Ran cargo test. 5 passed, 1 failed."}"#;
+        let report = extract_structured_test_report(raw).expect("should parse");
+        assert_eq!(report.passed, 5);
+        assert_eq!(report.failed, 1);
+    }
+
+    #[test]
+    fn extract_structured_test_report_returns_none_when_no_tests() {
+        let raw = r#"{"result": "Fixed typo in README"}"#;
+        assert!(extract_structured_test_report(raw).is_none());
+    }
+
+    #[test]
+    fn extract_test_report_heuristic_from_json_field() {
         let raw = r#"{"result": "Done", "test_report": "3 passed, 0 failed"}"#;
         assert_eq!(
-            extract_test_report(raw),
+            extract_test_report_heuristic(raw),
             Some("3 passed, 0 failed".to_string())
         );
     }
 
     #[test]
-    fn extract_test_report_from_result_heuristic() {
+    fn extract_test_report_heuristic_from_result_heuristic() {
         let raw = r#"{"result": "Ran cargo test. 5 passed, 1 failed."}"#;
         assert_eq!(
-            extract_test_report(raw),
+            extract_test_report_heuristic(raw),
             Some("Ran cargo test. 5 passed, 1 failed.".to_string())
         );
     }
 
     #[test]
-    fn extract_test_report_returns_none_when_no_tests() {
+    fn extract_test_report_heuristic_returns_none_when_no_tests() {
         let raw = r#"{"result": "Fixed typo in README"}"#;
-        assert_eq!(extract_test_report(raw), None);
+        assert_eq!(extract_test_report_heuristic(raw), None);
     }
 
     #[test]
-    fn extract_test_report_returns_none_for_plain_text() {
-        assert_eq!(extract_test_report("Just plain text"), None);
+    fn parse_test_counts_handles_various_formats() {
+        let cases = [
+            ("3 passed, 0 failed", 3, 0, 0),
+            ("10 failed, 5 passed", 5, 10, 0),
+            ("1 skipped, 2 passed, 3 failed", 2, 3, 1),
+            ("cargo test: 7 passed; 2 failed", 7, 2, 0),
+        ];
+        for (text, expected_passed, expected_failed, expected_skipped) in cases {
+            let report = parse_test_counts(text).expect("should parse");
+            assert_eq!(
+                report.passed, expected_passed,
+                "passed mismatch for '{text}'"
+            );
+            assert_eq!(
+                report.failed, expected_failed,
+                "failed mismatch for '{text}'"
+            );
+            assert_eq!(
+                report.skipped, expected_skipped,
+                "skipped mismatch for '{text}'"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_test_counts_returns_none_for_plain_text() {
+        assert!(parse_test_counts("Just plain text").is_none());
+    }
+
+    // ── Integration test: full worktree worker end-to-end ─────────────────
+
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct MockAdapter {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl AiAdapter for MockAdapter {
+        async fn call(
+            &self,
+            _messages: &[crate::adapters::base::ChatMessage],
+            _cancel: Arc<Notify>,
+        ) -> Result<crate::adapters::base::StreamResult, crate::adapters::base::AdapterError>
+        {
+            let idx = self.calls.fetch_add(1, Ordering::SeqCst);
+            match idx {
+                0 => {
+                    // Round 1: request a shell command to create a file in the worktree.
+                    Ok(crate::adapters::base::StreamResult {
+                        assistant_content: vec![serde_json::json!({
+                            "type": "text",
+                            "text": "Creating file..."
+                        })],
+                        tool_calls: vec![crate::adapters::base::ToolCall {
+                            id: "call_1".to_string(),
+                            name: "run_shell".to_string(),
+                            input: serde_json::json!({
+                                "command": "echo 'hello from worktree worker' > output.txt",
+                                "timeout": 5
+                            }),
+                        }],
+                        stop_reason: Some("tool_use".to_string()),
+                    })
+                }
+                1 => {
+                    // Round 2: final answer with test report.
+                    Ok(crate::adapters::base::StreamResult {
+                        assistant_content: vec![serde_json::json!({
+                            "type": "text",
+                            "text": "Done. Added output.txt and ran tests."
+                        })],
+                        tool_calls: vec![],
+                        stop_reason: Some("end_turn".to_string()),
+                    })
+                }
+                _ => Ok(crate::adapters::base::StreamResult {
+                    assistant_content: vec![],
+                    tool_calls: vec![],
+                    stop_reason: Some("end_turn".to_string()),
+                }),
+            }
+        }
+
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+
+        fn model_name(&self) -> &str {
+            "Mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn run_worktree_worker_creates_worktree_collects_diff_and_returns_summary() {
+        let tmp = std::env::temp_dir().join(format!(
+            "forge-test-wt-integration-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Init a git repo with an initial commit.
+        let init = Command::new("git")
+            .args(["init"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git init");
+        assert!(init.status.success());
+
+        std::fs::write(tmp.join("README.md"), "# test").unwrap();
+        let _ = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&tmp)
+            .output();
+        let commit = Command::new("git")
+            .args(["commit", "-m", "init", "--no-gpg-sign"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success());
+
+        let adapter: Arc<dyn AiAdapter> = Arc::new(MockAdapter {
+            calls: AtomicUsize::new(0),
+        });
+        let harness = Arc::new(Harness::new(tmp.clone()));
+        let emitter = crate::agent::event_sink::NoopEventEmitter;
+        let cancel = Arc::new(Notify::new());
+
+        let raw = ChildAgentRuntime::run_worktree_worker(
+            "integration-task",
+            "Write output.txt and run tests",
+            adapter,
+            harness,
+            &emitter,
+            cancel,
+            &tmp,
+        )
+        .await;
+
+        // Parse the returned summary.
+        let summary: crate::agent::a2a::worktree::WorktreeWorkerSummary =
+            serde_json::from_str(&raw).expect("should parse WorktreeWorkerSummary");
+
+        // Worktree should have been created. On success it should be cleaned up.
+        assert!(
+            summary.cleaned_up,
+            "worktree should be cleaned up on success, got: {}",
+            raw
+        );
+        // Diff may contain the new file or just untracked files from Harness.
+        assert!(
+            summary.diff_available,
+            "diff should be available (either tracked changes or untracked files), got: {}",
+            raw
+        );
+        assert!(
+            summary.needs_human_review,
+            "should always require human review"
+        );
+        assert!(
+            summary.suggested_action.contains("review"),
+            "should suggest review, got: {}",
+            summary.suggested_action
+        );
+        // The worktree path should be inside the temp repo.
+        assert!(
+            summary
+                .worktree_path
+                .contains("a2a-worktree-integration-task"),
+            "worktree path should contain task id, got: {}",
+            summary.worktree_path
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

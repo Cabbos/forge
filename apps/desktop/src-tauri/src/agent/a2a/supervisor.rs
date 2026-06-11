@@ -130,12 +130,31 @@ pub(crate) fn worktree_result_for_model(raw: &str) -> String {
     let mut lines = Vec::new();
     lines.push(delegate_result_for_model(&summary.result));
     lines.push(format!("Diff available: {}", summary.diff_available));
+    if summary.diff_truncated {
+        lines.push("Diff was truncated to avoid context overflow.".to_string());
+    }
     lines.push(format!("Worktree cleaned up: {}", summary.cleaned_up));
-    if let Some(report) = summary.test_report {
+
+    // Test report with pass/fail status
+    if let Some(report) = &summary.test_report {
         if !report.trim().is_empty() {
             lines.push(format!("Test report: {report}"));
         }
     }
+    match summary.tests_passed {
+        Some(true) => lines.push("Tests: PASSED ✅".to_string()),
+        Some(false) => lines.push("Tests: FAILED ❌".to_string()),
+        None => {}
+    }
+
+    // Review gate: explicit signal that merge is NOT automatic
+    if summary.needs_human_review {
+        lines.push("⚠️  HUMAN REVIEW REQUIRED — do not merge automatically.".to_string());
+    }
+    if !summary.suggested_action.is_empty() {
+        lines.push(format!("Suggested action: {}", summary.suggested_action));
+    }
+
     if !summary.cleaned_up {
         lines.push(format!("Worktree preserved: {}", summary.worktree_path));
     }
@@ -185,7 +204,7 @@ pub(crate) fn extract_worktree_artifacts(
         }
     }
 
-    // Worktree metadata artifact (path, cleanup status)
+    // Worktree metadata artifact (path, cleanup status, review gate)
     if let Ok(summary) =
         serde_json::from_str::<crate::agent::a2a::worktree::WorktreeWorkerSummary>(raw)
     {
@@ -193,6 +212,10 @@ pub(crate) fn extract_worktree_artifacts(
             "worktree_path": summary.worktree_path,
             "cleaned_up": summary.cleaned_up,
             "diff_available": summary.diff_available,
+            "diff_truncated": summary.diff_truncated,
+            "tests_passed": summary.tests_passed,
+            "needs_human_review": summary.needs_human_review,
+            "suggested_action": summary.suggested_action,
         });
         artifacts.push(AgentArtifact {
             artifact_id: format!("meta-{}", task_id.as_str()),
@@ -367,7 +390,11 @@ Analysis.
             "result": worker_result,
             "diff": "diff --git a/src/auth.rs",
             "diff_available": true,
+            "diff_truncated": false,
             "test_report": "2 passed",
+            "tests_passed": true,
+            "needs_human_review": true,
+            "suggested_action": "Please review before merging.",
             "worktree_path": "/tmp/wt",
             "cleaned_up": true
         })
@@ -378,6 +405,8 @@ Analysis.
         assert!(result.contains("Diff available: true"));
         assert!(result.contains("Worktree cleaned up: true"));
         assert!(result.contains("Test report: 2 passed"));
+        assert!(result.contains("HUMAN REVIEW REQUIRED"));
+        assert!(result.contains("Tests: PASSED"));
     }
 
     #[test]
@@ -392,10 +421,14 @@ Analysis.
         let raw = serde_json::json!({
             "result": "Done",
             "diff": "diff --git a/src/lib.rs",
+            "diff_available": true,
+            "diff_truncated": false,
             "test_report": "5 passed, 0 failed",
+            "tests_passed": true,
+            "needs_human_review": true,
+            "suggested_action": "Review before merge.",
             "worktree_path": "/tmp/wt",
-            "cleaned_up": true,
-            "diff_available": true
+            "cleaned_up": true
         })
         .to_string();
 
@@ -416,7 +449,10 @@ Analysis.
             artifacts[2].kind,
             crate::agent::a2a::types::AgentArtifactKind::Evidence
         );
-        assert!(artifacts[2].content.contains("worktree_path"));
+        let meta = &artifacts[2].content;
+        assert!(meta.contains("worktree_path"));
+        assert!(meta.contains("needs_human_review"));
+        assert!(meta.contains("tests_passed"));
     }
 
     #[test]
