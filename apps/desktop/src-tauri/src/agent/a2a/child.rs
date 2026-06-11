@@ -81,6 +81,7 @@ impl ChildAgentRuntime {
                     needs_human_review: true,
                     suggested_action: "Use patch_proposal mode or manually apply changes."
                         .to_string(),
+                    reason_codes: vec!["not_a_git_repo".to_string()],
                     worktree_path: path.to_string_lossy().to_string(),
                     cleaned_up: true,
                 })
@@ -96,6 +97,7 @@ impl ChildAgentRuntime {
                     tests_passed: None,
                     needs_human_review: true,
                     suggested_action: "Check git status and retry.".to_string(),
+                    reason_codes: vec!["git_error".to_string()],
                     worktree_path: working_dir.to_string_lossy().to_string(),
                     cleaned_up: true,
                 })
@@ -115,6 +117,7 @@ impl ChildAgentRuntime {
                     needs_human_review: false,
                     suggested_action:
                         "Wait for the other worker to finish or use a unique task id.".to_string(),
+                    reason_codes: vec!["already_in_use".to_string()],
                     worktree_path: working_dir.to_string_lossy().to_string(),
                     cleaned_up: true,
                 })
@@ -174,24 +177,17 @@ impl ChildAgentRuntime {
                 })
             });
 
-        // Review gate: always require human review for worktree workers.
-        // The worker only produces artifacts; it never auto-merges.
-        let needs_human_review = true;
-        let suggested_action = if diff_available {
-            if tests_passed == Some(true) {
-                "Diff is available and tests pass. Please review before merging."
-            } else if tests_passed == Some(false) {
-                "Diff is available but tests failed. Review and fix before merging."
-            } else {
-                "Diff is available. Please review before merging."
-            }
-        } else {
-            "No diff produced. Review the worker result before deciding next steps."
-        }
-        .to_string();
+        // Review gate: compute explicit safety decision.
+        let gate = crate::agent::a2a::review_gate::compute_review_gate(
+            diff_available,
+            diff_truncated,
+            structured_report.as_ref(),
+            tests_passed,
+            sub_has_error,
+            &sub_result,
+        );
 
-        // Preserve the worktree on failure so the user can inspect.
-        if sub_has_error || tests_passed == Some(false) {
+        if gate.preserve_worktree {
             lease.preserve();
         }
 
@@ -208,8 +204,13 @@ impl ChildAgentRuntime {
             diff_truncated,
             test_report,
             tests_passed,
-            needs_human_review,
-            suggested_action,
+            needs_human_review: gate.needs_human_review,
+            suggested_action: gate.suggested_action,
+            reason_codes: gate
+                .reason_codes
+                .iter()
+                .map(|r| r.description().to_string())
+                .collect(),
             worktree_path: worktree_path.to_string_lossy().to_string(),
             cleaned_up,
         };
@@ -604,9 +605,15 @@ mod tests {
             "should always require human review"
         );
         assert!(
-            summary.suggested_action.contains("review"),
-            "should suggest review, got: {}",
+            summary.suggested_action.contains("HUMAN REVIEW REQUIRED"),
+            "should require human review, got: {}",
             summary.suggested_action
+        );
+        // Happy path should have no failure reason codes.
+        assert!(
+            summary.reason_codes.is_empty(),
+            "happy path should have empty reason codes, got: {:?}",
+            summary.reason_codes
         );
         // The worktree path should be inside the temp repo.
         assert!(

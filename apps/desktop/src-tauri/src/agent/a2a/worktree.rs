@@ -97,6 +97,8 @@ pub(crate) struct WorktreeWorkerSummary {
     pub tests_passed: Option<bool>,
     pub needs_human_review: bool,
     pub suggested_action: String,
+    /// Human-readable reason codes for why review is required (e.g. "diff was truncated").
+    pub reason_codes: Vec<String>,
     pub worktree_path: String,
     pub cleaned_up: bool,
 }
