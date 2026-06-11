@@ -261,6 +261,8 @@
     color: var(--forge-text-faint);
     font-size: 10px;
     line-height: 1rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 

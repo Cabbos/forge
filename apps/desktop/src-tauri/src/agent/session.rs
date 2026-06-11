@@ -16,7 +16,7 @@ use crate::agent::context_builder::{
     ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
 };
 use crate::agent::event_sink::EventEmitter;
-use crate::agent::loop_guard::LoopGuard;
+use crate::agent::loop_guard::{LoopGuard, LoopStopReason};
 use crate::agent::provider_capabilities::is_context_overflow_error;
 use crate::agent::recovery::{
     api_failure_trace, build_recovery_context, verification_failure_trace,
@@ -993,10 +993,7 @@ impl AgentSession {
                     self.id,
                     stop
                 );
-                if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
-                    turn.set_stop_reason(stop.as_str());
-                }
-                self.emit_with_emitter(request.emitter);
+                self.record_loop_guard_stop_emitter(&stop, request.emitter);
                 break;
             }
 
@@ -1497,6 +1494,19 @@ impl AgentSession {
         self.emit_with_emitter(emitter);
     }
 
+    fn record_loop_guard_stop_emitter(
+        &self,
+        stop: &LoopStopReason,
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
+    ) {
+        let detail = loop_guard_recovery_detail(stop);
+        if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
+            turn.set_stop_reason(stop.as_str());
+            turn.mark_status_with_reason(turn.status.clone(), "loop_guard_stopped", Some(&detail));
+        }
+        self.emit_with_emitter(emitter);
+    }
+
     fn record_latest_turn_failure_emitter(
         &self,
         trace: AgentFailureTrace,
@@ -1728,6 +1738,34 @@ fn final_summary_text(assistant_content: &[serde_json::Value]) -> String {
         })
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn loop_guard_recovery_detail(stop: &LoopStopReason) -> String {
+    let advice = match stop {
+        LoopStopReason::ModelRoundLimit => {
+            "the model used too many consecutive rounds without reaching a final answer"
+        }
+        LoopStopReason::ToolCallLimit => "the turn used too many tool calls",
+        LoopStopReason::CompactUnavailable => {
+            "context compaction could not make enough room to continue safely"
+        }
+        LoopStopReason::RepeatedOverflow => {
+            "context overflow repeated after retry and compaction attempts"
+        }
+        LoopStopReason::ToolLoopDetected => "the same tool request repeated and looked like a loop",
+        LoopStopReason::RepeatedNoProgress => {
+            "multiple tool batches completed without useful progress"
+        }
+        LoopStopReason::RepeatedCategoryBatch => {
+            "the same category of tool requests repeated with changing inputs"
+        }
+    };
+
+    format!(
+        "stop_reason={}; {}; try a smaller next action before continuing.",
+        stop.as_str(),
+        advice
+    )
 }
 
 fn tool_batch_signature(tool_calls: &[crate::adapters::base::ToolCall]) -> String {

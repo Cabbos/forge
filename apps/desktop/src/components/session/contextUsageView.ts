@@ -26,7 +26,11 @@ export function buildComposerContextUsageView({
 }: BuildComposerContextUsageViewOptions): ComposerContextUsageView {
   const usedTokens = usage?.usedTokens ?? null;
   const contextWindowTokens = usage?.contextWindowTokens ?? fallbackContextWindowTokens ?? null;
-  const label = formatComposerContextUsage(usedTokens, contextWindowTokens);
+  const label = formatComposerContextUsage(usedTokens, contextWindowTokens, {
+    isCompacting,
+    isStreaming,
+    usage,
+  });
   const title = formatComposerContextUsageTitle(usage, contextWindowTokens);
   const compactButton = buildCompactButtonView({
     isCompacting,
@@ -59,16 +63,44 @@ function buildCompactButtonView({
     };
   }
 
+  if (isStreaming) {
+    return {
+      ariaLabel: "生成中，暂不能压缩上下文",
+      disabled: true,
+      title: `生成中，完成后可手动压缩 · ${usageTitle || "压缩当前上下文"}`,
+    };
+  }
+
   return {
     ariaLabel: "压缩上下文",
-    disabled: isStreaming,
+    disabled: false,
     title: usageTitle || "压缩当前上下文",
   };
 }
 
-function formatComposerContextUsage(usedTokens?: number | null, contextWindowTokens?: number | null) {
-  if (!usedTokens || !contextWindowTokens) return "";
-  return `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}`;
+function formatComposerContextUsage(
+  usedTokens: number | null | undefined,
+  contextWindowTokens: number | null | undefined,
+  {
+    isCompacting,
+    isStreaming,
+    usage,
+  }: {
+    isCompacting: boolean;
+    isStreaming: boolean;
+    usage?: ContextUsageState | null;
+  },
+) {
+  const baseLabel = usedTokens && contextWindowTokens
+    ? `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}`
+    : "";
+
+  if (isCompacting) return baseLabel ? `压缩中 · ${baseLabel}` : "压缩中";
+  if (isStreaming) return baseLabel ? `生成中 · ${baseLabel}` : "生成中";
+  if (!baseLabel || !usedTokens || !contextWindowTokens) return baseLabel;
+  if (usage?.compactedFromTokens && usage.compactedToTokens) return `${baseLabel} · 已压缩`;
+
+  return `${baseLabel} · ${formatAutoCompactLabel(usedTokens, contextWindowTokens)}`;
 }
 
 function formatComposerContextUsageTitle(
@@ -98,8 +130,15 @@ function formatTokenCount(tokens: number) {
 function formatAutoCompactDistance(usedTokens: number, contextWindowTokens: number) {
   const threshold = autoCompactThreshold(contextWindowTokens);
   const remaining = threshold - usedTokens;
-  if (remaining <= 0) return " · 已达到自动压缩阈值";
-  return ` · 距离自动压缩还有约 ${formatTokenCount(remaining)} tokens`;
+  const thresholdLabel = ` · 自动压缩阈值 ${formatTokenCount(threshold)}`;
+  if (remaining <= 0) return `${thresholdLabel} · 已达到自动压缩阈值`;
+  return `${thresholdLabel} · 距离自动压缩还有约 ${formatTokenCount(remaining)} tokens`;
+}
+
+function formatAutoCompactLabel(usedTokens: number, contextWindowTokens: number) {
+  const remaining = autoCompactThreshold(contextWindowTokens) - usedTokens;
+  if (remaining <= 0) return "可压缩";
+  return `余 ${formatTokenCount(remaining)}`;
 }
 
 function autoCompactThreshold(contextWindowTokens: number) {

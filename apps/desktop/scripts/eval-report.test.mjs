@@ -478,6 +478,65 @@ test("CLI --latest prints only most recent run", () => {
   }
 });
 
+test("CLI --latest exits non-zero when latest run failed its quality gate", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-report-latest-gate-"));
+  try {
+    writeArtifact(dir, "2026-06-09T02-00-00Z", "forge-session", "forge", {
+      success_rate: 0.5,
+      verification_pass_rate: 0.5,
+      scope_violation_rate: 0.25,
+      avg_model_rounds: 12,
+      avg_duration_ms: 6000,
+    });
+
+    const scriptPath = join(process.cwd(), "scripts", "eval-report.mjs");
+    const result = spawnSync(process.execPath, [scriptPath, dir, "--latest"], {
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 2, "Latest report should fail the gate when the current run failed");
+    assert.match(result.stdout, /CURRENT EVAL QUALITY GATE FAILED/);
+    assert.match(result.stdout, /success_rate/);
+    assert.match(result.stdout, /verification_pass_rate/);
+    assert.match(result.stdout, /scope_violation_rate/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI --latest compares latest run to previous same suite and provider", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-report-latest-history-"));
+  try {
+    writeArtifact(dir, "2026-06-09T01-00-00Z", "forge-session", "forge", {
+      success_rate: 1.0,
+      verification_pass_rate: 1.0,
+      scope_violation_rate: 0.0,
+      avg_model_rounds: 4,
+      avg_duration_ms: 5000,
+    });
+    writeArtifact(dir, "2026-06-09T02-00-00Z", "forge-session", "forge", {
+      success_rate: 1.0,
+      verification_pass_rate: 1.0,
+      scope_violation_rate: 0.0,
+      avg_model_rounds: 12,
+      avg_duration_ms: 6000,
+    });
+
+    const scriptPath = join(process.cwd(), "scripts", "eval-report.mjs");
+    const result = spawnSync(process.execPath, [scriptPath, dir, "--latest"], {
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 2, "Latest report should fail on historical regression");
+    const summaryLines = result.stdout.split("\n").filter((l) => l.includes("success_rate="));
+    assert.equal(summaryLines.length, 1, "Should still show only 1 run with --latest");
+    assert.match(result.stdout, /HISTORICAL REGRESSIONS DETECTED/);
+    assert.match(result.stdout, /avg_model_rounds/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("CLI --failures shows only failed tasks", () => {
   const dir = mkdtempSync(join(tmpdir(), "eval-report-failures-"));
   try {
