@@ -1,5 +1,5 @@
 use crate::agent::a2a::bus::AgentA2ABus;
-use crate::agent::a2a::types::{AgentExecutionMode, AgentRole, AgentTaskId};
+use crate::agent::a2a::types::{AgentExecutionMode, AgentRole, AgentTaskId, PatchProposal};
 
 pub(crate) fn delegate_result_for_model(raw: &str) -> String {
     serde_json::from_str::<serde_json::Value>(raw)
@@ -26,6 +26,53 @@ pub(crate) fn assign_delegate_task(
         prompt,
         timestamp_ms,
     )
+}
+
+pub(crate) fn assign_patch_proposal_task(
+    bus: &mut AgentA2ABus,
+    title: &str,
+    prompt: &str,
+    timestamp_ms: u64,
+) -> AgentTaskId {
+    bus.assign_task(
+        AgentRole::Implementer,
+        AgentExecutionMode::PatchProposal,
+        title,
+        prompt,
+        timestamp_ms,
+    )
+}
+
+pub(crate) fn extract_patch_proposal(raw: &str) -> Option<PatchProposal> {
+    // Try to find a JSON block containing patch_proposal.
+    // Look for ```json ... ``` code blocks first, then fall back to raw JSON.
+    let json_text = extract_json_block(raw).unwrap_or(raw);
+
+    serde_json::from_str::<serde_json::Value>(json_text)
+        .ok()
+        .and_then(|value| value.get("patch_proposal").cloned())
+        .and_then(|proposal| serde_json::from_value::<PatchProposal>(proposal).ok())
+}
+
+fn extract_json_block(text: &str) -> Option<&str> {
+    // Find ```json ... ``` or ``` ... ``` block
+    if let Some(start) = text.find("```json") {
+        let after_marker = &text[start + 7..];
+        if let Some(end) = after_marker.find("```") {
+            return Some(after_marker[..end].trim());
+        }
+    }
+    if let Some(start) = text.find("```") {
+        let after_marker = &text[start + 3..];
+        if let Some(end) = after_marker.find("```") {
+            let block = after_marker[..end].trim();
+            // Only return if it looks like JSON (starts with {)
+            if block.starts_with('{') {
+                return Some(block);
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn record_child_failure(
@@ -75,6 +122,63 @@ mod tests {
         assert_eq!(
             projection.tasks[0].failure_message.as_deref(),
             Some("subagent panicked")
+        );
+    }
+
+    #[test]
+    fn extract_patch_proposal_from_json_block() {
+        let raw = r#"
+Here is my analysis.
+
+```json
+{
+  "result": "Add null check",
+  "patch_proposal": {
+    "file_path": "src/main.rs",
+    "intent": "Prevent panic on null input",
+    "diff_summary": "Add early return for null",
+    "original_snippet": "fn handle(x: Option<T>) { x.unwrap() }",
+    "proposed_snippet": "fn handle(x: Option<T>) { x? }",
+    "risk_level": "low",
+    "test_suggestion": "Test with None",
+    "confidence": 0.9
+  }
+}
+```
+"#;
+
+        let proposal = extract_patch_proposal(raw).expect("should extract");
+        assert_eq!(proposal.file_path, "src/main.rs");
+        assert_eq!(proposal.intent, "Prevent panic on null input");
+        assert_eq!(
+            proposal.risk_level,
+            crate::agent::a2a::types::PatchRiskLevel::Low
+        );
+        assert!((proposal.confidence - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn extract_patch_proposal_returns_none_for_missing_block() {
+        let raw = "Just plain text result without any JSON.";
+        assert!(extract_patch_proposal(raw).is_none());
+    }
+
+    #[test]
+    fn extract_patch_proposal_returns_none_for_json_without_patch_proposal_key() {
+        let raw = r#"{"result": "nothing here"}"#;
+        assert!(extract_patch_proposal(raw).is_none());
+    }
+
+    #[test]
+    fn assign_patch_proposal_task_uses_implementer_role() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = assign_patch_proposal_task(&mut bus, "Fix bug", "Handle null", 10);
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.role, crate::agent::a2a::types::AgentRole::Implementer);
+        assert_eq!(
+            task.execution_mode,
+            crate::agent::a2a::types::AgentExecutionMode::PatchProposal
         );
     }
 }

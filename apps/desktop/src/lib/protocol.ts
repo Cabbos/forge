@@ -213,6 +213,9 @@ export interface AgentA2ATaskProjection {
   latest_message: string | null;
   failure_message: string | null;
   updated_at_ms: number;
+  artifact_count: number;
+  latest_artifact_kind: string | null;
+  latest_artifact_title: string | null;
 }
 
 export interface AgentA2AProjection {

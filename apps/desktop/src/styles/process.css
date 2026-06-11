@@ -537,6 +537,23 @@
     color: var(--forge-danger-muted);
   }
 
+  .forge-a2a-task-artifact {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 10px;
+    color: var(--forge-text-faint);
+    background: var(--forge-material-sunken);
+    border-radius: calc(var(--radius) - 4px);
+    padding: 0 0.25rem;
+  }
+
+  .forge-a2a-task-artifact[data-kind="patch_proposal"] {
+    color: var(--forge-accent-muted);
+    background: rgba(var(--forge-accent-rgb), 0.08);
+  }
+
   .forge-sub-agent-trace {
     margin-top: 0.25rem;
     max-width: 100%;

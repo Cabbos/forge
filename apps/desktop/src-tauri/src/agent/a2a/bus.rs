@@ -1,7 +1,7 @@
 use crate::agent::a2a::projection::{AgentA2AProjection, AgentA2ATaskProjection};
 use crate::agent::a2a::types::{
-    AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole, AgentTaskFailure,
-    AgentTaskId, AgentTaskRecord, AgentTaskStatus,
+    AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole,
+    AgentTaskFailure, AgentTaskId, AgentTaskRecord, AgentTaskStatus,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -94,10 +94,21 @@ impl AgentA2ABus {
         result: impl Into<String>,
         timestamp_ms: u64,
     ) {
+        self.complete_task_with_artifacts(task_id, result, Vec::new(), timestamp_ms);
+    }
+
+    pub(crate) fn complete_task_with_artifacts(
+        &mut self,
+        task_id: &AgentTaskId,
+        result: impl Into<String>,
+        artifacts: Vec<AgentArtifact>,
+        timestamp_ms: u64,
+    ) {
         let result = result.into();
         let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
             task.status = AgentTaskStatus::Completed;
             task.ended_at_ms = Some(timestamp_ms);
+            task.artifacts.extend(artifacts);
             task.agent_id.clone()
         }) else {
             return;
@@ -107,6 +118,27 @@ impl AgentA2ABus {
             agent_id,
             AgentMessageKind::FinalResult,
             result,
+            timestamp_ms,
+        );
+    }
+
+    pub(crate) fn add_artifact(
+        &mut self,
+        task_id: &AgentTaskId,
+        artifact: AgentArtifact,
+        timestamp_ms: u64,
+    ) {
+        let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
+            task.artifacts.push(artifact.clone());
+            task.agent_id.clone()
+        }) else {
+            return;
+        };
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::ArtifactCreated,
+            artifact.title.clone(),
             timestamp_ms,
         );
     }
@@ -179,6 +211,7 @@ impl AgentA2ABus {
                     AgentTaskStatus::Interrupted => projection.interrupted_count += 1,
                     AgentTaskStatus::Pending | AgentTaskStatus::Cancelled => {}
                 }
+                let latest_artifact = task.artifacts.last();
                 AgentA2ATaskProjection {
                     task_id: task.task_id.as_str().to_string(),
                     agent_id: task.agent_id.as_str().to_string(),
@@ -189,6 +222,9 @@ impl AgentA2ABus {
                     latest_message: self.latest_message_for(&task.task_id),
                     failure_message: task.failure.as_ref().map(|failure| failure.message.clone()),
                     updated_at_ms: task.updated_at_ms,
+                    artifact_count: task.artifacts.len(),
+                    latest_artifact_kind: latest_artifact.map(|a| a.kind.as_str().to_string()),
+                    latest_artifact_title: latest_artifact.map(|a| a.title.clone()),
                 }
             })
             .collect();
@@ -292,5 +328,78 @@ mod tests {
             task.resume_note.as_deref(),
             Some("child task was running when the session was restored")
         );
+    }
+
+    #[test]
+    fn bus_adds_artifact_and_projection_reflects_it() {
+        use crate::agent::a2a::types::AgentArtifactKind;
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::PatchProposal,
+            "Propose fix",
+            "Fix error handling",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "art-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::PatchProposal,
+                title: "Add null check".to_string(),
+                content: "{\"file_path\":\"src/main.rs\"}".to_string(),
+                created_at_ms: 30,
+            },
+            30,
+        );
+
+        bus.complete_task(&task_id, "Done", 40);
+
+        let projection = bus.projection();
+        assert_eq!(projection.tasks[0].artifact_count, 1);
+        assert_eq!(
+            projection.tasks[0].latest_artifact_kind.as_deref(),
+            Some("patch_proposal")
+        );
+        assert_eq!(
+            projection.tasks[0].latest_artifact_title.as_deref(),
+            Some("Add null check")
+        );
+    }
+
+    #[test]
+    fn complete_task_with_artifacts_stores_them() {
+        use crate::agent::a2a::types::AgentArtifactKind;
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::PatchProposal,
+            "Propose fix",
+            "Fix error handling",
+            10,
+        );
+
+        bus.complete_task_with_artifacts(
+            &task_id,
+            "Done",
+            vec![AgentArtifact {
+                artifact_id: "art-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::PatchProposal,
+                title: "Proposal".to_string(),
+                content: "{}".to_string(),
+                created_at_ms: 20,
+            }],
+            30,
+        );
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.artifacts.len(), 1);
+        assert_eq!(task.status, AgentTaskStatus::Completed);
     }
 }

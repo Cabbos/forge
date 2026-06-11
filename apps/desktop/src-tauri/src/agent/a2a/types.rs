@@ -92,12 +92,44 @@ impl AgentTaskStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum PatchRiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PatchProposal {
+    pub file_path: String,
+    pub intent: String,
+    pub diff_summary: String,
+    pub original_snippet: String,
+    pub proposed_snippet: String,
+    pub risk_level: PatchRiskLevel,
+    pub test_suggestion: String,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum AgentArtifactKind {
     Evidence,
     PatchProposal,
     TestReport,
     DiffSummary,
     Commit,
+}
+
+impl AgentArtifactKind {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Evidence => "evidence",
+            Self::PatchProposal => "patch_proposal",
+            Self::TestReport => "test_report",
+            Self::DiffSummary => "diff_summary",
+            Self::Commit => "commit",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,5 +305,36 @@ mod tests {
         assert!(!record.permissions.allow_workspace_write);
         assert!(!record.permissions.allow_shell);
         assert!(!record.permissions.allow_delegate);
+    }
+
+    #[test]
+    fn patch_proposal_serializes_and_roundtrips() {
+        let proposal = PatchProposal {
+            file_path: "src/main.rs".to_string(),
+            intent: "Add error handling".to_string(),
+            diff_summary: "Wrap handle() with Result".to_string(),
+            original_snippet: "fn handle() {}".to_string(),
+            proposed_snippet: "fn handle() -> Result<()> {}".to_string(),
+            risk_level: PatchRiskLevel::Medium,
+            test_suggestion: "Test error propagation".to_string(),
+            confidence: 0.85,
+        };
+
+        let json = serde_json::to_string(&proposal).expect("serialize");
+        assert!(json.contains("\"risk_level\":\"medium\""));
+        assert!(json.contains("\"confidence\":0.85"));
+
+        let restored: PatchProposal = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.file_path, "src/main.rs");
+        assert_eq!(restored.risk_level, PatchRiskLevel::Medium);
+        assert!((restored.confidence - 0.85).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn patch_risk_level_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&PatchRiskLevel::High).unwrap(),
+            r#""high""#
+        );
     }
 }

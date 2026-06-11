@@ -261,8 +261,8 @@ impl AnthropicAdapter {
         },
         ToolDef {
             name: "delegate_task".to_string(),
-            description: "Dispatch an independent research subtask that runs in parallel with other subtasks. The sub-agent has read-only access (read_file, search_content, search_files, list_directory, web_search, web_fetch) and returns a text answer. Use this when you need to investigate multiple areas simultaneously — for example, searching for different patterns across the codebase, or reading multiple related files at once. Each delegate_task runs concurrently. Input: a clear, focused task description.".to_string(),
-            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to find or investigate."}},"required":["task"]}),
+            description: "Dispatch an independent subtask that runs in parallel with other subtasks. The sub-agent has read-only access (read_file, search_content, search_files, list_directory, web_search, web_fetch, git_diff) and returns a structured answer. Use 'research' mode when you need to investigate multiple areas simultaneously — for example, searching for different patterns across the codebase, or reading multiple related files at once. Use 'patch_proposal' mode when you want the sub-agent to analyze code and produce a structured improvement proposal without writing files. Each delegate_task runs concurrently.".to_string(),
+            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to analyze or investigate."},"mode":{"type":"string","enum":["research","patch_proposal"],"description":"Execution mode. 'research' (default) — read-only investigation returning text findings. 'patch_proposal' — code analysis that produces a structured patch proposal artifact without modifying files."}},"required":["task"]}),
         },
     ];
         tools.extend(

@@ -31,6 +31,12 @@ struct SubAgentResult {
     steps: Vec<RoundTrace>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubAgentMode {
+    Research,
+    PatchProposal,
+}
+
 /// A lightweight ephemeral agent for read-only subtasks.
 /// Runs in parallel with other sub-agents via tokio::spawn.
 /// Returns JSON with full conversation trace for frontend rendering.
@@ -229,13 +235,51 @@ impl SubAgent {
         task: &str,
         adapter: Arc<dyn AiAdapter>,
         harness: Arc<Harness>,
-        _emitter: &dyn crate::agent::event_sink::EventEmitter,
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
     ) -> String {
-        // Sub-agents only use adapter.call() (no AppHandle needed) and
-        // harness.execute_tool_with_emitter for tools.
-        // For now, use adapter.call() directly and build a minimal loop.
+        Self::run_with_mode(
+            task,
+            adapter,
+            harness,
+            emitter,
+            cancel,
+            working_dir,
+            SubAgentMode::Research,
+        )
+        .await
+    }
+
+    pub async fn run_patch_proposal(
+        task: &str,
+        adapter: Arc<dyn AiAdapter>,
+        harness: Arc<Harness>,
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
+        cancel: Arc<Notify>,
+        working_dir: &std::path::Path,
+    ) -> String {
+        Self::run_with_mode(
+            task,
+            adapter,
+            harness,
+            emitter,
+            cancel,
+            working_dir,
+            SubAgentMode::PatchProposal,
+        )
+        .await
+    }
+
+    async fn run_with_mode(
+        task: &str,
+        adapter: Arc<dyn AiAdapter>,
+        harness: Arc<Harness>,
+        _emitter: &dyn crate::agent::event_sink::EventEmitter,
+        cancel: Arc<Notify>,
+        working_dir: &std::path::Path,
+        mode: SubAgentMode,
+    ) -> String {
         let project_ctx = crate::harness::read_project_context(working_dir).unwrap_or_default();
         let context_section = if project_ctx.is_empty() {
             format!("Working directory: {}\n", working_dir.display())
@@ -247,15 +291,7 @@ impl SubAgent {
             )
         };
 
-        let system = ChatMessage::system(&format!(
-            "You are a focused research sub-agent. Your task is to investigate a specific \
-            question and return a concise answer.\n\
-            You have read-only tools: read_file, search_content, search_files, list_directory, \
-            web_search, web_fetch, git_diff.\n\
-            Do NOT use write_to_file, edit_file, run_shell, or delegate_task.\n\
-            Be thorough but concise. Return your findings as plain text.\n\n\
-            {context_section}"
-        ));
+        let system = ChatMessage::system(&build_system_prompt(mode, &context_section));
 
         let task_msg = ChatMessage::user(task);
         let mut messages: Vec<ChatMessage> = vec![system, task_msg];
@@ -320,6 +356,48 @@ impl SubAgent {
         }
 
         build_error_json("Max rounds reached", &[])
+    }
+}
+
+fn build_system_prompt(mode: SubAgentMode, context_section: &str) -> String {
+    match mode {
+        SubAgentMode::Research => format!(
+            "You are a focused research sub-agent. Your task is to investigate a specific \
+            question and return a concise answer.\n\
+            You have read-only tools: read_file, search_content, search_files, list_directory, \
+            web_search, web_fetch, git_diff.\n\
+            Do NOT use write_to_file, edit_file, run_shell, or delegate_task.\n\
+            Be thorough but concise. Return your findings as plain text.\n\n\
+            {context_section}"
+        ),
+        SubAgentMode::PatchProposal => format!(
+            "You are a code analysis sub-agent. Your task is to analyze code and produce a \
+            structured patch proposal WITHOUT modifying any files.\n\
+            You have read-only tools: read_file, search_content, search_files, list_directory, \
+            web_search, web_fetch, git_diff.\n\
+            Do NOT use write_to_file, edit_file, run_shell, or delegate_task.\n\
+            You are NOT writing files — you are producing a proposal that will be reviewed.\n\n\
+            Workflow:\n\
+            1. Read relevant files to understand the codebase and the issue.\n\
+            2. Analyze the problem and design a minimal, safe fix.\n\
+            3. At the end of your response, output a JSON block (inside ```json) with:\n\n\
+            ```json\n\
+            {{\n\
+              \"result\": \"Textual analysis of the problem and your reasoning\",\n\
+              \"patch_proposal\": {{\n\
+                \"file_path\": \"path/to/file.ext\",\n\
+                \"intent\": \"Clear description of what this change does and why\",\n\
+                \"diff_summary\": \"One-line summary of the change\",\n\
+                \"original_snippet\": \"The original code that will be changed\",\n\
+                \"proposed_snippet\": \"Your proposed replacement code\",\n\
+                \"risk_level\": \"low|medium|high\",\n\
+                \"test_suggestion\": \"How to test this change\",\n\
+                \"confidence\": 0.85\n\
+              }}\n\
+            }}\n\
+            ```\n\n\
+            {context_section}"
+        ),
     }
 }
 
