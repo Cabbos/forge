@@ -35,6 +35,7 @@ struct SubAgentResult {
 pub(crate) enum SubAgentMode {
     Research,
     PatchProposal,
+    WorktreeWorker,
 }
 
 /// A lightweight ephemeral agent for read-only subtasks.
@@ -271,6 +272,26 @@ impl SubAgent {
         .await
     }
 
+    pub async fn run_worktree_worker(
+        task: &str,
+        adapter: Arc<dyn AiAdapter>,
+        harness: Arc<Harness>,
+        emitter: &dyn crate::agent::event_sink::EventEmitter,
+        cancel: Arc<Notify>,
+        working_dir: &std::path::Path,
+    ) -> String {
+        Self::run_with_mode(
+            task,
+            adapter,
+            harness,
+            emitter,
+            cancel,
+            working_dir,
+            SubAgentMode::WorktreeWorker,
+        )
+        .await
+    }
+
     async fn run_with_mode(
         task: &str,
         adapter: Arc<dyn AiAdapter>,
@@ -319,17 +340,22 @@ impl SubAgent {
                 Arc::new(crate::agent::event_sink::NoopEventEmitter);
             let mut result_map = std::collections::HashMap::new();
             for tc in &stream_result.tool_calls {
-                let is_blocked = matches!(
-                    tc.name.as_str(),
-                    "run_shell"
-                        | "shell_command"
-                        | "run_command"
-                        | "run_shell_command"
-                        | "write_to_file"
-                        | "edit_file"
-                        | "bash"
-                        | "delegate_task"
-                );
+                let is_blocked = match mode {
+                    SubAgentMode::Research | SubAgentMode::PatchProposal => matches!(
+                        tc.name.as_str(),
+                        "run_shell"
+                            | "shell_command"
+                            | "run_command"
+                            | "run_shell_command"
+                            | "write_to_file"
+                            | "edit_file"
+                            | "bash"
+                            | "delegate_task"
+                    ),
+                    SubAgentMode::WorktreeWorker => {
+                        matches!(tc.name.as_str(), "delegate_task")
+                    }
+                };
                 let result = if is_blocked {
                     format!("Tool '{}' is blocked for sub-agents", tc.name)
                 } else {
@@ -396,6 +422,24 @@ fn build_system_prompt(mode: SubAgentMode, context_section: &str) -> String {
               }}\n\
             }}\n\
             ```\n\n\
+            {context_section}"
+        ),
+        SubAgentMode::WorktreeWorker => format!(
+            "You are an implementation sub-agent running in an isolated git worktree.\n\
+            You have FULL tool access: read_file, write_to_file, edit_file, run_shell, \
+            search_content, search_files, list_directory, web_search, web_fetch, git_diff.\n\
+            Do NOT use delegate_task — you are the worker, do not spawn further sub-agents.\n\n\
+            Your workspace is ISOLATED from the main branch. You can safely write files and \
+            run commands. Your changes will be reviewed as a diff before any merge decision.\n\n\
+            Workflow:\n\
+            1. Read relevant files to understand the task.\n\
+            2. Make the necessary changes (write files, run tests, etc.).\n\
+            3. Run tests or verification commands to confirm your changes work.\n\
+            4. Report what you changed and the test results concisely.\n\n\
+            Return your findings as plain text with a clear summary of:\n\
+            - What files you modified\n\
+            - What tests you ran and their outcomes\n\
+            - Any issues or follow-up needed\n\n\
             {context_section}"
         ),
     }

@@ -705,23 +705,38 @@ impl AgentSession {
                     .and_then(|v| v.as_str())
                     .unwrap_or("research")
                     .to_string();
-                let is_patch_proposal = mode == "patch_proposal";
+                let execution_mode = match mode.as_str() {
+                    "patch_proposal" => crate::agent::a2a::types::AgentExecutionMode::PatchProposal,
+                    "worktree_worker" => {
+                        crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker
+                    }
+                    _ => crate::agent::a2a::types::AgentExecutionMode::ReadOnly,
+                };
                 let a2a_task_id = {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
-                    if is_patch_proposal {
-                        crate::agent::a2a::supervisor::assign_patch_proposal_task(
-                            &mut bus,
-                            "Delegated patch proposal task",
-                            &task,
-                            started_at_ms,
-                        )
-                    } else {
-                        crate::agent::a2a::supervisor::assign_delegate_task(
+                    match execution_mode {
+                        crate::agent::a2a::types::AgentExecutionMode::PatchProposal => {
+                            crate::agent::a2a::supervisor::assign_patch_proposal_task(
+                                &mut bus,
+                                "Delegated patch proposal task",
+                                &task,
+                                started_at_ms,
+                            )
+                        }
+                        crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
+                            crate::agent::a2a::supervisor::assign_worktree_worker_task(
+                                &mut bus,
+                                "Delegated worktree worker task",
+                                &task,
+                                started_at_ms,
+                            )
+                        }
+                        _ => crate::agent::a2a::supervisor::assign_delegate_task(
                             &mut bus,
                             "Delegated research task",
                             &task,
                             started_at_ms,
-                        )
+                        ),
                     }
                 };
                 self.emit_a2a_projection(emitter);
@@ -740,6 +755,7 @@ impl AgentSession {
                 }
                 self.sync_goal_task_for_a2a(crate::agent::goal_state::GoalTaskStatus::InProgress);
                 self.emit_a2a_projection(emitter);
+                let execution_mode_clone = execution_mode.clone();
                 handles.push((
                     idx,
                     tc.id.clone(),
@@ -747,28 +763,42 @@ impl AgentSession {
                     tc.input.clone(),
                     started_at_ms,
                     a2a_task_id,
-                    is_patch_proposal,
+                    execution_mode,
                     tokio::spawn(async move {
-                        let r = if is_patch_proposal {
-                            crate::agent::a2a::child::ChildAgentRuntime::run_patch_proposal(
-                                &task,
-                                adapter,
-                                harness,
-                                &*sub_emitter,
-                                cancel,
-                                &wd,
-                            )
-                            .await
-                        } else {
-                            crate::agent::a2a::child::ChildAgentRuntime::run_read_only(
-                                &task,
-                                adapter,
-                                harness,
-                                &*sub_emitter,
-                                cancel,
-                                &wd,
-                            )
-                            .await
+                        let r = match execution_mode_clone {
+                            crate::agent::a2a::types::AgentExecutionMode::PatchProposal => {
+                                crate::agent::a2a::child::ChildAgentRuntime::run_patch_proposal(
+                                    &task,
+                                    adapter,
+                                    harness,
+                                    &*sub_emitter,
+                                    cancel,
+                                    &wd,
+                                )
+                                .await
+                            }
+                            crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
+                                crate::agent::a2a::child::ChildAgentRuntime::run_worktree_worker(
+                                    &task,
+                                    adapter,
+                                    harness,
+                                    &*sub_emitter,
+                                    cancel,
+                                    &wd,
+                                )
+                                .await
+                            }
+                            _ => {
+                                crate::agent::a2a::child::ChildAgentRuntime::run_read_only(
+                                    &task,
+                                    adapter,
+                                    harness,
+                                    &*sub_emitter,
+                                    cancel,
+                                    &wd,
+                                )
+                                .await
+                            }
                         };
                         (idx, r)
                     }),
@@ -781,7 +811,7 @@ impl AgentSession {
                 input,
                 started_at_ms,
                 a2a_task_id,
-                is_patch_proposal,
+                execution_mode,
                 handle,
             ) in handles
             {
@@ -789,31 +819,48 @@ impl AgentSession {
                     Ok((idx, r)) => {
                         let api_text: String =
                             crate::agent::a2a::supervisor::delegate_result_for_model(&r);
-                        if is_patch_proposal {
-                            if let Some(proposal) =
-                                crate::agent::a2a::supervisor::extract_patch_proposal(&r)
-                            {
-                                let artifact = crate::agent::a2a::types::AgentArtifact {
-                                    artifact_id: format!("proposal-{}", a2a_task_id.as_str()),
-                                    task_id: a2a_task_id.clone(),
-                                    kind:
-                                        crate::agent::a2a::types::AgentArtifactKind::PatchProposal,
-                                    title: format!("Patch: {}", proposal.file_path),
-                                    content: serde_json::to_string(&proposal).unwrap_or_default(),
-                                    created_at_ms: now_ms(),
-                                };
+                        match execution_mode {
+                            crate::agent::a2a::types::AgentExecutionMode::PatchProposal => {
+                                if let Some(proposal) =
+                                    crate::agent::a2a::supervisor::extract_patch_proposal(&r)
                                 {
+                                    let artifact = crate::agent::a2a::types::AgentArtifact {
+                                        artifact_id: format!("proposal-{}", a2a_task_id.as_str()),
+                                        task_id: a2a_task_id.clone(),
+                                        kind:
+                                            crate::agent::a2a::types::AgentArtifactKind::PatchProposal,
+                                        title: format!("Patch: {}", proposal.file_path),
+                                        content: serde_json::to_string(&proposal).unwrap_or_default(),
+                                        created_at_ms: now_ms(),
+                                    };
+                                    {
+                                        let mut bus = lock_unpoisoned(&self.a2a_bus);
+                                        bus.add_artifact(&a2a_task_id, artifact, now_ms());
+                                        bus.complete_task(&a2a_task_id, &api_text, now_ms());
+                                    }
+                                } else {
                                     let mut bus = lock_unpoisoned(&self.a2a_bus);
-                                    bus.add_artifact(&a2a_task_id, artifact, now_ms());
                                     bus.complete_task(&a2a_task_id, &api_text, now_ms());
                                 }
-                            } else {
+                            }
+                            crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
+                                let artifacts =
+                                    crate::agent::a2a::supervisor::extract_worktree_artifacts(
+                                        &r,
+                                        &a2a_task_id,
+                                    );
+                                {
+                                    let mut bus = lock_unpoisoned(&self.a2a_bus);
+                                    for artifact in artifacts {
+                                        bus.add_artifact(&a2a_task_id, artifact, now_ms());
+                                    }
+                                    bus.complete_task(&a2a_task_id, &api_text, now_ms());
+                                }
+                            }
+                            _ => {
                                 let mut bus = lock_unpoisoned(&self.a2a_bus);
                                 bus.complete_task(&a2a_task_id, &api_text, now_ms());
                             }
-                        } else {
-                            let mut bus = lock_unpoisoned(&self.a2a_bus);
-                            bus.complete_task(&a2a_task_id, &api_text, now_ms());
                         }
                         self.sync_goal_task_for_a2a(
                             crate::agent::goal_state::GoalTaskStatus::Completed,

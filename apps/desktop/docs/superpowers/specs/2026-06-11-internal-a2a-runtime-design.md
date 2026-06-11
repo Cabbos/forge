@@ -311,6 +311,51 @@ After Phase 1:
 - Add isolated `WorktreeWorker`.
 - Add supervisor review and merge recommendations.
 
+## Phase 3 Update (2026-06-11)
+
+`WorktreeWorker` MVP 已落地，补充到上述预留位置：
+
+### 新增模块
+
+- `agent/a2a/worktree.rs`：`WorktreeLease` 管理 git worktree 生命周期。
+  - `create(working_dir, task_id)`：在 `.claude/worktrees/` 下新建隔离工作树。
+  - `diff()`：收集 `git diff HEAD` + untracked 文件列表。
+  - `cleanup()` / `Drop`：自动回收；`preserve()` 保留诊断现场。
+  - 路径安全检查防止逃逸 repo root。
+
+- `agent/a2a/child.rs`：`ChildAgentRuntime::run_worktree_worker`：
+  - 创建 worktree lease → 新建 Harness → 运行 `SubAgent::run_worktree_worker`。
+  - 收集 diff 和 test report → 失败时 preserve → 返回 `WorktreeWorkerSummary` JSON。
+
+- `agent/sub.rs`：`SubAgentMode::WorktreeWorker`：
+  - 系统 prompt 告知子 agent 拥有完整工具权限（write/shell），但禁止 `delegate_task`。
+  - 工具拦截只阻止 `delegate_task`，放行其余所有工具。
+
+- `agent/a2a/supervisor.rs`：
+  - `assign_worktree_worker_task`：分配 Implementer + WorktreeWorker 模式。
+  - `worktree_result_for_model`：提取人类可读 summary。
+  - `extract_worktree_artifacts`：产出 DiffSummary、TestReport、Evidence  artifact。
+
+- `agent/session.rs`：
+  - `delegate_task` 读取 `mode`，新增 `"worktree_worker"` 分支。
+  - 默认 `"research"` 不变；`"patch_proposal"` 不变；旧路径无破坏。
+
+### 验证
+
+- `cargo test --lib agent::a2a`：31 passed（新增 10 个测试）。
+- `cargo fmt`、`cargo clippy --all-targets -- -D warnings`：通过。
+- `npm --prefix apps/desktop run check:backend`：全部通过。
+- `npm run check:ci`：通过。
+- GitNexus `detect_changes`：LOW（7 changed symbols，0 affected processes）。
+
+### 剩余风险
+
+- 非 git 项目仅返回错误，未来可降级为 temp dir copy。
+- Test report 是启发式提取，未来可固定测试命令后读取输出文件。
+- Worktree 分支名并发可能 race。
+- Diff 大小未限制，未来应加 truncation。
+- Resume 不会自动重启 worktree worker。
+
 ## Open Decisions
 
 - Whether `AgentA2AProjection` should live inside `AgentTurnState` or as a separate store map. Recommendation: separate event/store map in Phase 1 to minimize churn, then optionally fold into `AgentTurnState`.
