@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adapters::base::ChatMessage;
+use crate::agent::a2a::bus::AgentA2ABus;
 use crate::agent::goal_state::GoalLedger;
 use crate::agent::turn_state::AgentTurnState;
 use crate::protocol::events::DeliverySummary;
@@ -27,6 +28,8 @@ pub struct AgentSessionSnapshot {
     pub latest_delivery: Option<DeliverySummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_ledger: Option<GoalLedger>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub a2a_state: Option<AgentA2ABus>,
     #[serde(default = "now_ms")]
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -55,6 +58,7 @@ impl AgentSessionSnapshot {
             latest_workflow: None,
             latest_delivery: None,
             goal_ledger: None,
+            a2a_state: None,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
         }
@@ -80,6 +84,12 @@ impl AgentSessionSnapshot {
 
     pub fn with_goal_ledger(mut self, goal_ledger: GoalLedger) -> Self {
         self.goal_ledger = Some(goal_ledger);
+        self.updated_at_ms = now_ms();
+        self
+    }
+
+    pub fn with_a2a_state(mut self, a2a_state: AgentA2ABus) -> Self {
+        self.a2a_state = Some(a2a_state);
         self.updated_at_ms = now_ms();
         self
     }
@@ -767,5 +777,48 @@ mod tests {
         assert_eq!(goal.status, GoalStatus::Completed);
         assert_eq!(goal.closed_at_ms, Some(20));
         assert_eq!(goal.tasks[0].status, GoalTaskStatus::Completed);
+    }
+
+    #[test]
+    fn old_snapshot_json_without_a2a_state_deserializes() {
+        let json = r#"{
+          "session_id":"s1",
+          "provider":"anthropic",
+          "model":"claude",
+          "working_dir":"/tmp/project",
+          "messages":[],
+          "summary":null,
+          "context_window_tokens":200000,
+          "updated_at_ms":10
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("old snapshot should deserialize without a2a_state");
+
+        assert!(restored.a2a_state.is_none());
+    }
+
+    #[test]
+    fn snapshot_with_a2a_state_roundtrips() {
+        use crate::agent::a2a::bus::AgentA2ABus;
+        use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Inspect A2A",
+            "Read A2A files",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.complete_task(&task_id, "done", 30);
+
+        let snapshot = snapshot().with_a2a_state(bus);
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(&json).expect("deserialize snapshot");
+
+        assert_eq!(restored.a2a_state.expect("a2a state").tasks.len(), 1);
     }
 }

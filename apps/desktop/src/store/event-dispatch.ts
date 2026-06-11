@@ -51,6 +51,13 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       return;
     }
 
+    if (event_type === "agent_a2a_updated") {
+      const agentA2ABySession = new Map(get().agentA2ABySession);
+      agentA2ABySession.set(session_id, event.state);
+      set({ agentA2ABySession });
+      return;
+    }
+
     if (event_type === "delivery_summary") {
       const sessionBlocks = get().sessions.get(session_id)?.blocks ?? [];
       const shouldDedupeReplay = isSameAsLastDeliveryBlock(sessionBlocks, event.summary);

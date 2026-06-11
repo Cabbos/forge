@@ -203,6 +203,26 @@ export interface AgentTurnProjection {
   compact_saved_tokens: number;
 }
 
+export interface AgentA2ATaskProjection {
+  task_id: string;
+  agent_id: string;
+  role: string;
+  execution_mode: string;
+  status: string;
+  title: string;
+  latest_message: string | null;
+  failure_message: string | null;
+  updated_at_ms: number;
+}
+
+export interface AgentA2AProjection {
+  running_count: number;
+  completed_count: number;
+  failed_count: number;
+  interrupted_count: number;
+  tasks: AgentA2ATaskProjection[];
+}
+
 export type StreamEvent =
   // ── Transcript ──
   | { event_type: "user_message"; session_id: string; block_id: string; content: string }
@@ -267,6 +287,7 @@ export type StreamEvent =
   | { event_type: "mcp_context_status"; session_id: string; source_id: string; status: "ready" | "failed"; message?: string | null }
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
+  | { event_type: "agent_a2a_updated"; session_id: string; state: AgentA2AProjection }
   | { event_type: "delivery_summary"; session_id: string; block_id: string; summary: DeliverySummary }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }

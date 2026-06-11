@@ -48,7 +48,13 @@ fn restore_state_normalizes_interrupted_turn_and_repairs_tool_history() {
         10,
     ));
 
-    session.restore_state(messages, Some("old summary".to_string()), Some(turn), None);
+    session.restore_state(
+        messages,
+        Some("old summary".to_string()),
+        Some(turn),
+        None,
+        None,
+    );
 
     let snapshot = session.snapshot();
     assert_eq!(snapshot.messages.len(), 4);
@@ -110,7 +116,7 @@ fn restore_state_preserves_completed_turn_unchanged() {
     );
     turn.mark_status_with_reason(AgentTurnStatus::Completed, "final_answer", None);
 
-    session.restore_state(messages, None, Some(turn), None);
+    session.restore_state(messages, None, Some(turn), None, None);
 
     let restored_turn = lock_unpoisoned(&session.latest_turn);
     assert_eq!(
@@ -150,7 +156,13 @@ fn restore_state_preserves_cancelled_turn_unchanged() {
     );
     turn.mark_status_with_reason(AgentTurnStatus::Cancelled, "user_cancelled", Some("killed"));
 
-    session.restore_state(vec![ChatMessage::user("test")], None, Some(turn), None);
+    session.restore_state(
+        vec![ChatMessage::user("test")],
+        None,
+        Some(turn),
+        None,
+        None,
+    );
 
     let restored_turn = lock_unpoisoned(&session.latest_turn);
     assert_eq!(
@@ -181,6 +193,7 @@ fn restore_state_with_no_latest_turn_preserves_none() {
     session.restore_state(
         vec![ChatMessage::user("hello")],
         Some("summary".to_string()),
+        None,
         None,
         None,
     );
@@ -261,7 +274,7 @@ fn restore_state_normalizes_only_active_turn_statuses() {
         );
         turn.mark_status_with_reason(input_status.clone(), "test_reason", None);
 
-        session.restore_state(vec![ChatMessage::user("x")], None, Some(turn), None);
+        session.restore_state(vec![ChatMessage::user("x")], None, Some(turn), None, None);
 
         let restored = lock_unpoisoned(&session.latest_turn);
         assert_eq!(
@@ -1470,7 +1483,7 @@ async fn agent_turn_records_context_usage_and_compaction_metrics() {
             ))));
         }
     }
-    session.restore_state(history, None, None, None);
+    session.restore_state(history, None, None, None, None);
 
     let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
     let turn_guard = session.reserve_turn().expect("reserve turn");
@@ -2639,7 +2652,7 @@ async fn kill_during_auto_compact_summary_cancels_without_model_call() {
             ))));
         }
     }
-    session.restore_state(history, None, None, None);
+    session.restore_state(history, None, None, None, None);
 
     let emitter = Arc::new(crate::agent::event_sink::CollectingEventEmitter::new());
     let turn_guard = session.reserve_turn().expect("reserve turn");
@@ -4095,7 +4108,13 @@ fn restore_state_preserves_goal_ledger() {
     );
     ledger.update_task_status("task-2", GoalTaskStatus::Completed, 20);
 
-    session.restore_state(vec![ChatMessage::user("hello")], None, None, Some(ledger));
+    session.restore_state(
+        vec![ChatMessage::user("hello")],
+        None,
+        None,
+        Some(ledger),
+        None,
+    );
 
     let current = session.current_goal().unwrap();
     assert_eq!(current.id, "goal-resume");

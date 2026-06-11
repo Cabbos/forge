@@ -1,3 +1,4 @@
+use crate::agent::a2a::projection::AgentA2AProjection;
 use crate::agent::turn_state::AgentTurnProjection;
 use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
 use crate::harness::write_boundary::WriteBoundary;
@@ -219,6 +220,13 @@ pub enum StreamEvent {
         state: AgentTurnProjection,
     },
 
+    // ── Agent A2A Projection ──
+    #[serde(rename = "agent_a2a_updated")]
+    AgentA2AUpdated {
+        session_id: String,
+        state: AgentA2AProjection,
+    },
+
     // ── Delivery Summary ──
     #[serde(rename = "delivery_summary")]
     DeliverySummary {
@@ -290,6 +298,7 @@ impl StreamEvent {
             | McpContextStatus { session_id, .. }
             | WorkflowUpdated { session_id, .. }
             | AgentTurnUpdated { session_id, .. }
+            | AgentA2AUpdated { session_id, .. }
             | DeliverySummary { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
@@ -331,6 +340,7 @@ impl StreamEvent {
             McpContextStatus { .. } => "mcp_context_status",
             WorkflowUpdated { .. } => "workflow_updated",
             AgentTurnUpdated { .. } => "agent_turn_updated",
+            AgentA2AUpdated { .. } => "agent_a2a_updated",
             DeliverySummary { .. } => "delivery_summary",
             SessionStarted { .. } => "session_started",
             SessionStatus { .. } => "session_status",
@@ -696,6 +706,13 @@ mod tests {
                     code: "c".into(),
                 },
                 "error",
+            ),
+            (
+                StreamEvent::AgentA2AUpdated {
+                    session_id: "s".into(),
+                    state: AgentA2AProjection::default(),
+                },
+                "agent_a2a_updated",
             ),
             (
                 StreamEvent::Usage {
