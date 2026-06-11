@@ -16,6 +16,7 @@ use crate::agent::context_builder::{
     ContextBuilder, ContextBundle, ContextSourceKind, HiddenContextPart,
 };
 use crate::agent::event_sink::EventEmitter;
+use crate::agent::goal_state::GoalLedger;
 use crate::agent::loop_guard::{LoopGuard, LoopStopReason};
 use crate::agent::provider_capabilities::is_context_overflow_error;
 use crate::agent::recovery::{
@@ -40,8 +41,8 @@ use crate::agent::turn_outcome::{
 };
 use crate::agent::turn_state::{
     completed_tool_trace, is_errorish_tool_result, running_tool_trace, AgentCompactTrace,
-    AgentFailureTrace, AgentTurnMetadata, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
-    AgentVerificationTrace,
+    AgentFailureTrace, AgentRecoveryAdvice, AgentTurnMetadata, AgentTurnState, AgentTurnStatus,
+    AgentVerificationStatus, AgentVerificationTrace,
 };
 use crate::agent::verification;
 use crate::consts::{AGENT_LOOP_SETTLE_DELAY, AGENT_OVERFLOW_RETRY_DELAY};
@@ -90,6 +91,7 @@ pub struct AgentSession {
     pub(crate) loop_guard: Mutex<LoopGuard>,
     pub(crate) context_window_tokens: Option<u32>,
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
+    pub(crate) goal_ledger: Mutex<Option<GoalLedger>>,
 }
 
 // Lock discipline for AgentSession:
@@ -158,6 +160,7 @@ impl AgentSession {
             loop_guard: Mutex::new(LoopGuard::default_limits()),
             context_window_tokens,
             cancel: Mutex::new(None),
+            goal_ledger: Mutex::new(None),
         };
 
         *lock_unpoisoned(&session.status) = SessionStatus::Running;
@@ -177,6 +180,7 @@ impl AgentSession {
         messages: Vec<ChatMessage>,
         summary: Option<String>,
         latest_turn: Option<AgentTurnState>,
+        goal_ledger: Option<GoalLedger>,
     ) {
         *lock_unpoisoned(&self.messages) = repair_tool_use_adjacency(messages);
         *lock_unpoisoned(&self.summary) = summary;
@@ -184,12 +188,13 @@ impl AgentSession {
             turn.normalize_for_session_resume();
             turn
         });
+        *lock_unpoisoned(&self.goal_ledger) = goal_ledger;
     }
 
     pub fn snapshot(&self) -> AgentSessionSnapshot {
         let messages = lock_unpoisoned(&self.messages).clone();
         let summary = lock_unpoisoned(&self.summary).clone();
-        let snapshot = AgentSessionSnapshot::new(
+        let mut snapshot = AgentSessionSnapshot::new(
             self.id.clone(),
             self.agent_type.clone(),
             self.model_id.clone(),
@@ -199,9 +204,27 @@ impl AgentSession {
             self.context_window_tokens,
         );
         if let Some(latest_turn) = lock_unpoisoned(&self.latest_turn).clone() {
-            snapshot.with_latest_turn(latest_turn)
-        } else {
-            snapshot
+            snapshot = snapshot.with_latest_turn(latest_turn);
+        }
+        if let Some(goal_ledger) = lock_unpoisoned(&self.goal_ledger).clone() {
+            snapshot = snapshot.with_goal_ledger(goal_ledger);
+        }
+        snapshot
+    }
+
+    pub fn set_goal_ledger(&self, ledger: GoalLedger) {
+        *lock_unpoisoned(&self.goal_ledger) = Some(ledger);
+    }
+
+    pub fn current_goal(&self) -> Option<crate::agent::goal_state::GoalState> {
+        lock_unpoisoned(&self.goal_ledger)
+            .as_ref()
+            .and_then(|ledger| ledger.current_goal().cloned())
+    }
+
+    pub(crate) fn normalize_goal_ledger_for_resume(&self) {
+        if let Some(ledger) = lock_unpoisoned(&self.goal_ledger).as_mut() {
+            ledger.normalize_for_resume(now_ms());
         }
     }
 
@@ -1045,6 +1068,7 @@ impl AgentSession {
         if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.normalize_for_session_resume();
         }
+        self.normalize_goal_ledger_for_resume();
         self.emit_latest_turn_projection(app_handle);
     }
 
@@ -1740,31 +1764,68 @@ fn final_summary_text(assistant_content: &[serde_json::Value]) -> String {
         .join("")
 }
 
-fn loop_guard_recovery_detail(stop: &LoopStopReason) -> String {
-    let advice = match stop {
-        LoopStopReason::ModelRoundLimit => {
-            "the model used too many consecutive rounds without reaching a final answer"
-        }
-        LoopStopReason::ToolCallLimit => "the turn used too many tool calls",
-        LoopStopReason::CompactUnavailable => {
-            "context compaction could not make enough room to continue safely"
-        }
-        LoopStopReason::RepeatedOverflow => {
-            "context overflow repeated after retry and compaction attempts"
-        }
-        LoopStopReason::ToolLoopDetected => "the same tool request repeated and looked like a loop",
-        LoopStopReason::RepeatedNoProgress => {
-            "multiple tool batches completed without useful progress"
-        }
-        LoopStopReason::RepeatedCategoryBatch => {
-            "the same category of tool requests repeated with changing inputs"
-        }
-    };
+fn loop_guard_recovery_advice(stop: &LoopStopReason) -> AgentRecoveryAdvice {
+    match stop {
+        LoopStopReason::ModelRoundLimit => AgentRecoveryAdvice {
+            action: "narrow the task or accept partial results".to_string(),
+            reason: "the model used too many consecutive rounds without reaching a final answer"
+                .to_string(),
+            instruction: "Summarize the current state and ask the user to narrow the scope or accept the阶段性成果 before continuing.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+        LoopStopReason::ToolCallLimit => AgentRecoveryAdvice {
+            action: "reduce file scope or limit tool actions".to_string(),
+            reason: "the turn used too many tool calls".to_string(),
+            instruction: "Reduce the number of files touched in each batch, or constrain the tool actions to a smaller surface area.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+        LoopStopReason::RepeatedCategoryBatch => AgentRecoveryAdvice {
+            action: "stop exploring and synthesize conclusions".to_string(),
+            reason: "the same category of tool requests repeated with changing inputs".to_string(),
+            instruction: "Stop further exploration. Synthesize conclusions from the information already read, or ask the user to clarify the next concrete step.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+        LoopStopReason::RepeatedNoProgress => AgentRecoveryAdvice {
+            action: "switch strategy or ask for user clarification".to_string(),
+            reason: "multiple tool batches completed without useful progress".to_string(),
+            instruction: "Switch strategy: check why tools are failing, or ask the user to provide missing context or clarify the goal.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+        LoopStopReason::CompactUnavailable => AgentRecoveryAdvice {
+            action: "compact manually, split the task, or reduce context".to_string(),
+            reason: "context compaction could not make enough room to continue safely".to_string(),
+            instruction: "Try a manual compact, break the remaining work into smaller sub-tasks, or reduce the amount of context injected into the session.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+        LoopStopReason::RepeatedOverflow => AgentRecoveryAdvice {
+            action: "compact, split task, or reduce context".to_string(),
+            reason: "context overflow repeated after retry and compaction attempts".to_string(),
+            instruction: "Context keeps overflowing. Compact the session history, split the remaining work into smaller pieces, or ask the user to focus on a narrower scope.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+        LoopStopReason::ToolLoopDetected => AgentRecoveryAdvice {
+            action: "use a different approach".to_string(),
+            reason: "the same tool request repeated and looked like a loop".to_string(),
+            instruction: "The agent is stuck in a tool loop. Suggest a different approach or ask the user to provide more specific guidance.".to_string(),
+            safe_to_auto_retry: false,
+            requires_user_action: true,
+        },
+    }
+}
 
+fn loop_guard_recovery_detail(stop: &LoopStopReason) -> String {
+    let advice = loop_guard_recovery_advice(stop);
     format!(
-        "stop_reason={}; {}; try a smaller next action before continuing.",
+        "stop_reason={}; {}; advice={}; try a smaller next action before continuing.",
         stop.as_str(),
-        advice
+        advice.reason,
+        advice.action,
     )
 }
 

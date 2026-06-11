@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::adapters::base::ChatMessage;
+use crate::agent::goal_state::GoalLedger;
 use crate::agent::turn_state::AgentTurnState;
 use crate::protocol::events::DeliverySummary;
 use crate::workflow::WorkflowState;
@@ -24,6 +25,8 @@ pub struct AgentSessionSnapshot {
     pub latest_workflow: Option<WorkflowState>,
     #[serde(default)]
     pub latest_delivery: Option<DeliverySummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_ledger: Option<GoalLedger>,
     #[serde(default = "now_ms")]
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -51,6 +54,7 @@ impl AgentSessionSnapshot {
             latest_turn: None,
             latest_workflow: None,
             latest_delivery: None,
+            goal_ledger: None,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
         }
@@ -70,6 +74,12 @@ impl AgentSessionSnapshot {
 
     pub fn with_latest_delivery(mut self, latest_delivery: DeliverySummary) -> Self {
         self.latest_delivery = Some(latest_delivery);
+        self.updated_at_ms = now_ms();
+        self
+    }
+
+    pub fn with_goal_ledger(mut self, goal_ledger: GoalLedger) -> Self {
+        self.goal_ledger = Some(goal_ledger);
         self.updated_at_ms = now_ms();
         self
     }
@@ -685,5 +695,77 @@ mod tests {
         assert_eq!(latest_delivery.record_label, None);
         assert_eq!(latest_delivery.record_status, None);
         assert!(latest_delivery.record_target_pages.is_empty());
+    }
+
+    #[test]
+    fn old_snapshot_json_without_goal_ledger_deserializes() {
+        let json = r#"{
+            "session_id": "session-1",
+            "provider": "openai",
+            "model": "gpt-5",
+            "working_dir": "/workspace",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "updated_at_ms": 123
+        }"#;
+
+        let restored: AgentSessionSnapshot = serde_json::from_str(json)
+            .expect("old snapshot should deserialize without goal_ledger");
+
+        assert_eq!(restored.session_id, "session-1");
+        assert!(restored.goal_ledger.is_none());
+    }
+
+    #[test]
+    fn snapshot_with_goal_ledger_roundtrips() {
+        use crate::agent::goal_state::{GoalLedger, GoalStatus, GoalTaskStatus};
+
+        let ledger = GoalLedger::new_active(
+            "goal-1",
+            "Ship feature",
+            vec!["Task A".to_string(), "Task B".to_string()],
+            10,
+        );
+        let snapshot = snapshot().with_goal_ledger(ledger);
+
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(&json).expect("deserialize snapshot");
+
+        let goal = restored
+            .goal_ledger
+            .as_ref()
+            .unwrap()
+            .current_goal()
+            .unwrap();
+        assert_eq!(goal.id, "goal-1");
+        assert_eq!(goal.objective, "Ship feature");
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert_eq!(goal.tasks.len(), 2);
+        assert_eq!(goal.tasks[0].status, GoalTaskStatus::Pending);
+    }
+
+    #[test]
+    fn snapshot_goal_ledger_preserves_completed_and_blocked_goals() {
+        use crate::agent::goal_state::{GoalLedger, GoalStatus, GoalTaskStatus};
+
+        let mut completed_ledger =
+            GoalLedger::new_active("goal-done", "Done goal", vec!["Step 1".to_string()], 10);
+        completed_ledger.complete_active(20);
+
+        let snapshot = snapshot().with_goal_ledger(completed_ledger);
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        let restored: AgentSessionSnapshot = serde_json::from_str(&json).expect("deserialize");
+
+        let goal = restored
+            .goal_ledger
+            .as_ref()
+            .unwrap()
+            .current_goal()
+            .unwrap();
+        assert_eq!(goal.status, GoalStatus::Completed);
+        assert_eq!(goal.closed_at_ms, Some(20));
+        assert_eq!(goal.tasks[0].status, GoalTaskStatus::Completed);
     }
 }
