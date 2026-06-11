@@ -554,6 +554,118 @@
     background: rgba(var(--forge-accent-rgb), 0.08);
   }
 
+  .forge-a2a-task-row-wrapper {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .forge-a2a-worktree-panel {
+    margin-top: 0.25rem;
+    margin-left: 1.25rem;
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--forge-material-border);
+    border-radius: calc(var(--radius) - 4px);
+    background: var(--forge-material-sunken);
+    padding: 0.375rem 0.5rem;
+    font-size: 10.5px;
+    line-height: 1rem;
+    color: var(--forge-text-muted);
+  }
+
+  .forge-a2a-worktree-panel[data-review-required="true"] {
+    border-color: var(--forge-amber-muted);
+    background: rgba(var(--forge-amber-rgb), 0.04);
+  }
+
+  .forge-a2a-worktree-header {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .forge-a2a-worktree-badge {
+    font-weight: 600;
+    color: var(--forge-amber-muted);
+  }
+
+  .forge-a2a-worktree-not-merged {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--forge-danger-muted);
+    background: rgba(var(--forge-danger-rgb), 0.08);
+    border-radius: calc(var(--radius) - 4px);
+    padding: 0 0.375rem;
+  }
+
+  .forge-a2a-worktree-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .forge-a2a-worktree-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 10px;
+    color: var(--forge-text-faint);
+  }
+
+  .forge-a2a-worktree-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .forge-a2a-worktree-reason-tag {
+    font-size: 10px;
+    color: var(--forge-amber-muted);
+    background: rgba(var(--forge-amber-rgb), 0.08);
+    border-radius: calc(var(--radius) - 4px);
+    padding: 0 0.375rem;
+  }
+
+  .forge-a2a-worktree-path {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .forge-a2a-worktree-path-code {
+    font-family: "Geist Mono", "SF Mono", monospace;
+    font-size: 10px;
+    color: var(--forge-text-faint);
+    background: var(--forge-material-raised);
+    border-radius: calc(var(--radius) - 4px);
+    padding: 0 0.25rem;
+  }
+
+  .forge-a2a-worktree-action {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .forge-a2a-worktree-label {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--forge-text-faint);
+  }
+
+  .forge-a2a-worktree-action-text {
+    font-size: 10px;
+    color: var(--forge-text-muted);
+    white-space: pre-wrap;
+  }
+
   .forge-sub-agent-trace {
     margin-top: 0.25rem;
     max-width: 100%;
