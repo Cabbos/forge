@@ -151,6 +151,12 @@ pub(crate) fn worktree_result_for_model(raw: &str) -> String {
     if summary.needs_human_review {
         lines.push("HUMAN REVIEW REQUIRED - do not merge automatically.".to_string());
     }
+    if !summary.reason_codes.is_empty() {
+        lines.push(format!(
+            "Review reasons: {}",
+            summary.reason_codes.join(", ")
+        ));
+    }
     if !summary.suggested_action.is_empty() {
         lines.push(format!("Suggested action: {}", summary.suggested_action));
     }
@@ -216,6 +222,7 @@ pub(crate) fn extract_worktree_artifacts(
             "tests_passed": summary.tests_passed,
             "needs_human_review": summary.needs_human_review,
             "suggested_action": summary.suggested_action,
+            "reason_codes": summary.reason_codes,
         });
         artifacts.push(AgentArtifact {
             artifact_id: format!("meta-{}", task_id.as_str()),
@@ -395,6 +402,7 @@ Analysis.
             "tests_passed": true,
             "needs_human_review": true,
             "suggested_action": "Please review before merging.",
+            "reason_codes": [],
             "worktree_path": "/tmp/wt",
             "cleaned_up": true
         })
@@ -427,6 +435,7 @@ Analysis.
             "tests_passed": true,
             "needs_human_review": true,
             "suggested_action": "Review before merge.",
+            "reason_codes": ["diff was truncated"],
             "worktree_path": "/tmp/wt",
             "cleaned_up": true
         })
@@ -453,6 +462,8 @@ Analysis.
         assert!(meta.contains("worktree_path"));
         assert!(meta.contains("needs_human_review"));
         assert!(meta.contains("tests_passed"));
+        assert!(meta.contains("reason_codes"));
+        assert!(meta.contains("diff was truncated"));
     }
 
     #[test]
