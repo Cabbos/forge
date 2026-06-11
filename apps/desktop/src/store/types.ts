@@ -33,6 +33,7 @@ export interface AppStore {
   agentTurnBySession: Map<string, AgentTurnProjection>;
   firstLoopDraftBySession: Map<string, FirstLoopDraft>;
   deliverySummaryBySession: Map<string, DeliverySummary>;
+  agentA2ABySession: Map<string, import("../lib/protocol").AgentA2AProjection>;
 
   selectedProvider: ProviderId;
   setSelectedProvider: (p: string) => void;

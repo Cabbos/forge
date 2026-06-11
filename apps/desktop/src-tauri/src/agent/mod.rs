@@ -1,3 +1,4 @@
+pub(crate) mod a2a;
 pub(crate) mod auto_compact;
 pub(crate) mod capability_context;
 pub(crate) mod compact_summary;

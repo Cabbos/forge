@@ -28,6 +28,7 @@ export const useStore = create<AppStore>((set, get) => ({
   agentTurnBySession: new Map(),
   firstLoopDraftBySession: new Map(),
   deliverySummaryBySession: new Map(),
+  agentA2ABySession: new Map(),
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
   selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),

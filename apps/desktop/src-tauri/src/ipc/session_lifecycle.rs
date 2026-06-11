@@ -125,6 +125,7 @@ pub(crate) async fn restore_session_from_snapshot(
         snapshot.summary,
         snapshot.latest_turn,
         snapshot.goal_ledger,
+        snapshot.a2a_state,
     );
     let session = Arc::new(session);
     register_and_dispatch_session_start(state, session.clone(), &snapshot.session_id).await;
@@ -251,6 +252,7 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
         snapshot.summary,
         snapshot.latest_turn,
         snapshot.goal_ledger,
+        snapshot.a2a_state,
     );
     let upgraded = Arc::new(upgraded);
     state

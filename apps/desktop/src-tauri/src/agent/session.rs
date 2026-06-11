@@ -92,6 +92,7 @@ pub struct AgentSession {
     pub(crate) context_window_tokens: Option<u32>,
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
     pub(crate) goal_ledger: Mutex<Option<GoalLedger>>,
+    pub(crate) a2a_bus: Mutex<crate::agent::a2a::bus::AgentA2ABus>,
 }
 
 // Lock discipline for AgentSession:
@@ -161,6 +162,7 @@ impl AgentSession {
             context_window_tokens,
             cancel: Mutex::new(None),
             goal_ledger: Mutex::new(None),
+            a2a_bus: Mutex::new(crate::agent::a2a::bus::AgentA2ABus::default()),
         };
 
         *lock_unpoisoned(&session.status) = SessionStatus::Running;
@@ -181,6 +183,7 @@ impl AgentSession {
         summary: Option<String>,
         latest_turn: Option<AgentTurnState>,
         goal_ledger: Option<GoalLedger>,
+        a2a_state: Option<crate::agent::a2a::bus::AgentA2ABus>,
     ) {
         *lock_unpoisoned(&self.messages) = repair_tool_use_adjacency(messages);
         *lock_unpoisoned(&self.summary) = summary;
@@ -189,6 +192,7 @@ impl AgentSession {
             turn
         });
         *lock_unpoisoned(&self.goal_ledger) = goal_ledger;
+        *lock_unpoisoned(&self.a2a_bus) = a2a_state.unwrap_or_default();
     }
 
     pub fn snapshot(&self) -> AgentSessionSnapshot {
@@ -208,6 +212,10 @@ impl AgentSession {
         }
         if let Some(goal_ledger) = lock_unpoisoned(&self.goal_ledger).clone() {
             snapshot = snapshot.with_goal_ledger(goal_ledger);
+        }
+        let a2a_state = lock_unpoisoned(&self.a2a_bus).clone();
+        if !a2a_state.tasks.is_empty() || !a2a_state.messages.is_empty() {
+            snapshot = snapshot.with_a2a_state(a2a_state);
         }
         snapshot
     }
@@ -691,6 +699,16 @@ impl AgentSession {
                     .and_then(|v| v.as_str())
                     .unwrap_or("Investigate and report findings")
                     .to_string();
+                let a2a_task_id = {
+                    let mut bus = lock_unpoisoned(&self.a2a_bus);
+                    crate::agent::a2a::supervisor::assign_delegate_task(
+                        &mut bus,
+                        "Delegated research task",
+                        &task,
+                        started_at_ms,
+                    )
+                };
+                self.emit_a2a_projection(emitter);
                 let adapter = self.adapter.clone();
                 let harness = self.harness.clone();
                 let cancel = lock_unpoisoned(&self.cancel)
@@ -700,14 +718,21 @@ impl AgentSession {
                 let wd = self.harness.working_dir.clone();
                 let sub_emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
                     Arc::new(crate::agent::event_sink::NoopEventEmitter);
+                {
+                    let mut bus = lock_unpoisoned(&self.a2a_bus);
+                    bus.start_task(&a2a_task_id, now_ms());
+                }
+                self.sync_goal_task_for_a2a(crate::agent::goal_state::GoalTaskStatus::InProgress);
+                self.emit_a2a_projection(emitter);
                 handles.push((
                     idx,
                     tc.id.clone(),
                     tc.name.clone(),
                     tc.input.clone(),
                     started_at_ms,
+                    a2a_task_id,
                     tokio::spawn(async move {
-                        let r = crate::agent::sub::SubAgent::run_with_emitter(
+                        let r = crate::agent::a2a::child::ChildAgentRuntime::run_read_only(
                             &task,
                             adapter,
                             harness,
@@ -720,17 +745,19 @@ impl AgentSession {
                     }),
                 ));
             }
-            for (fallback_idx, id, name, input, started_at_ms, handle) in handles {
+            for (fallback_idx, id, name, input, started_at_ms, a2a_task_id, handle) in handles {
                 match handle.await {
                     Ok((idx, r)) => {
-                        let api_text: String = serde_json::from_str::<serde_json::Value>(&r)
-                            .ok()
-                            .and_then(|v| {
-                                v.get("result")
-                                    .and_then(|r| r.as_str())
-                                    .map(|s| s.to_string())
-                            })
-                            .unwrap_or_else(|| r.clone());
+                        let api_text: String =
+                            crate::agent::a2a::supervisor::delegate_result_for_model(&r);
+                        {
+                            let mut bus = lock_unpoisoned(&self.a2a_bus);
+                            bus.complete_task(&a2a_task_id, &api_text, now_ms());
+                        }
+                        self.sync_goal_task_for_a2a(
+                            crate::agent::goal_state::GoalTaskStatus::Completed,
+                        );
+                        self.emit_a2a_projection(emitter);
                         emitter.emit(self.tool_call_result_event(&id, &r, false, 0));
                         self.record_latest_tool_emitter(
                             completed_tool_trace(
@@ -747,6 +774,17 @@ impl AgentSession {
                     }
                     Err(err) => {
                         let message = sub_agent_join_error_message(&err);
+                        {
+                            let mut bus = lock_unpoisoned(&self.a2a_bus);
+                            crate::agent::a2a::supervisor::record_child_failure(
+                                &mut bus,
+                                &a2a_task_id,
+                                "join_error",
+                                &message,
+                                now_ms(),
+                            );
+                        }
+                        self.emit_a2a_projection(emitter);
                         emitter.emit(self.tool_call_result_event(&id, &message, true, 0));
                         self.record_latest_tool_emitter(
                             completed_tool_trace(
@@ -1046,6 +1084,39 @@ impl AgentSession {
         Ok(())
     }
 
+    pub(crate) fn sync_goal_task_for_a2a(
+        &self,
+        target_status: crate::agent::goal_state::GoalTaskStatus,
+    ) {
+        let task_id = {
+            let ledger_guard = lock_unpoisoned(&self.goal_ledger);
+            let Some(ledger) = ledger_guard.as_ref() else {
+                return;
+            };
+            let Some(goal) = ledger.active_goal() else {
+                return;
+            };
+            match target_status {
+                crate::agent::goal_state::GoalTaskStatus::InProgress => goal
+                    .tasks
+                    .iter()
+                    .find(|t| t.status == crate::agent::goal_state::GoalTaskStatus::Pending)
+                    .map(|t| t.id.clone()),
+                crate::agent::goal_state::GoalTaskStatus::Completed => goal
+                    .tasks
+                    .iter()
+                    .find(|t| t.status == crate::agent::goal_state::GoalTaskStatus::InProgress)
+                    .map(|t| t.id.clone()),
+                _ => None,
+            }
+        };
+        if let Some(task_id) = task_id {
+            if let Some(ledger) = lock_unpoisoned(&self.goal_ledger).as_mut() {
+                ledger.update_task_status(&task_id, target_status, now_ms());
+            }
+        }
+    }
+
     pub fn kill(&self, app_handle: &tauri::AppHandle) {
         self.running.store(false, Ordering::SeqCst);
         *lock_unpoisoned(&self.status) = SessionStatus::Stopped;
@@ -1069,6 +1140,7 @@ impl AgentSession {
             turn.normalize_for_session_resume();
         }
         self.normalize_goal_ledger_for_resume();
+        lock_unpoisoned(&self.a2a_bus).normalize_for_resume(now_ms());
         self.emit_latest_turn_projection(app_handle);
     }
 
@@ -1397,6 +1469,14 @@ impl AgentSession {
         if let Some(event) = self.latest_turn_updated_event() {
             emitter.emit(event);
         }
+    }
+
+    fn emit_a2a_projection(&self, emitter: &dyn crate::agent::event_sink::EventEmitter) {
+        let state = lock_unpoisoned(&self.a2a_bus).projection();
+        emitter.emit(crate::protocol::events::StreamEvent::AgentA2AUpdated {
+            session_id: self.id.clone(),
+            state,
+        });
     }
 
     fn record_model_round_emitter(&self, emitter: &dyn crate::agent::event_sink::EventEmitter) {

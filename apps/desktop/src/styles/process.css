@@ -468,6 +468,75 @@
     white-space: nowrap;
   }
 
+  .forge-a2a-timeline {
+    margin-top: 0.25rem;
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--forge-material-border);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-material-raised);
+    padding: 0.5rem 0.625rem;
+  }
+
+  .forge-a2a-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    font-size: 10.5px;
+    line-height: 1rem;
+    color: var(--forge-text-faint);
+    margin-bottom: 0.25rem;
+  }
+
+  .forge-a2a-task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .forge-a2a-task-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    font-size: 10.5px;
+    line-height: 1rem;
+    color: var(--forge-text-muted);
+  }
+
+  .forge-a2a-task-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--forge-text-secondary);
+    font-weight: 500;
+  }
+
+  .forge-a2a-task-role {
+    flex-shrink: 0;
+    color: var(--forge-text-faint);
+    font-family: "Geist Mono", "SF Mono", monospace;
+    font-size: 10px;
+  }
+
+  .forge-a2a-task-message,
+  .forge-a2a-task-failure {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-a2a-task-message {
+    color: var(--forge-text-faint);
+  }
+
+  .forge-a2a-task-failure {
+    color: var(--forge-danger-muted);
+  }
+
   .forge-sub-agent-trace {
     margin-top: 0.25rem;
     max-width: 100%;
