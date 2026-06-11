@@ -1,5 +1,57 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+
+/// Maximum diff size to return to the parent model (chars). Larger diffs are
+/// truncated with a marker so they do not explode the context window.
+const MAX_DIFF_CHARS: usize = 50_000;
+
+/// Process-level registry that prevents concurrent creation of worktrees with
+/// the same branch name. Each lease holds a guard that releases the entry on
+/// drop so the path remains diagnostic-friendly.
+#[derive(Debug)]
+pub(crate) struct WorktreeLeaseRegistry {
+    active: Mutex<HashSet<String>>,
+}
+
+impl WorktreeLeaseRegistry {
+    pub(crate) fn global() -> &'static Self {
+        static INSTANCE: OnceLock<WorktreeLeaseRegistry> = OnceLock::new();
+        INSTANCE.get_or_init(|| Self {
+            active: Mutex::new(HashSet::new()),
+        })
+    }
+
+    /// Try to reserve a branch name. Returns `None` if already held.
+    pub(crate) fn try_acquire(&self, branch_name: &str) -> Option<WorktreeLeaseGuard> {
+        let mut active = self.active.lock().expect("worktree registry lock poisoned");
+        if active.contains(branch_name) {
+            return None;
+        }
+        active.insert(branch_name.to_string());
+        Some(WorktreeLeaseGuard {
+            branch_name: branch_name.to_string(),
+        })
+    }
+
+    fn release(&self, branch_name: &str) {
+        let mut active = self.active.lock().expect("worktree registry lock poisoned");
+        active.remove(branch_name);
+    }
+}
+
+/// Guard that releases the branch name from the global registry when dropped.
+#[derive(Debug)]
+pub(crate) struct WorktreeLeaseGuard {
+    branch_name: String,
+}
+
+impl Drop for WorktreeLeaseGuard {
+    fn drop(&mut self) {
+        WorktreeLeaseRegistry::global().release(&self.branch_name);
+    }
+}
 
 /// Lease for an isolated git worktree used by a WorktreeWorker A2A child agent.
 ///
@@ -12,6 +64,7 @@ pub(crate) struct WorktreeLease {
     branch_name: String,
     preserve: bool,
     cleaned_up: bool,
+    _registry_guard: WorktreeLeaseGuard,
 }
 
 /// Outcome of attempting to create a worktree lease.
@@ -20,6 +73,17 @@ pub(crate) enum LeaseResult {
     Ok(WorktreeLease),
     NotAGitRepo { path: PathBuf },
     GitError { message: String },
+    AlreadyInUse { branch_name: String },
+}
+
+/// Structured test report extracted from the worker result.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TestReport {
+    pub passed: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub exit_code: Option<i32>,
+    pub summary: String,
 }
 
 /// Summary of what a WorktreeWorker produced, returned to the parent model.
@@ -28,7 +92,11 @@ pub(crate) struct WorktreeWorkerSummary {
     pub result: String,
     pub diff: Option<String>,
     pub diff_available: bool,
+    pub diff_truncated: bool,
     pub test_report: Option<String>,
+    pub tests_passed: Option<bool>,
+    pub needs_human_review: bool,
+    pub suggested_action: String,
     pub worktree_path: String,
     pub cleaned_up: bool,
 }
@@ -54,6 +122,14 @@ impl WorktreeLease {
             .join(".claude")
             .join("worktrees")
             .join(&branch_name);
+
+        // Acquire process-level lock to prevent concurrent creation of the same branch.
+        let registry = WorktreeLeaseRegistry::global();
+        let Some(registry_guard) = registry.try_acquire(&branch_name) else {
+            return LeaseResult::AlreadyInUse {
+                branch_name: branch_name.clone(),
+            };
+        };
 
         // Safety: ensure the resolved path stays inside the repo.
         if !is_path_inside(&worktree_path, &repo_root) {
@@ -90,6 +166,7 @@ impl WorktreeLease {
                 branch_name,
                 preserve: false,
                 cleaned_up: false,
+                _registry_guard: registry_guard,
             }),
             Ok(out) => LeaseResult::GitError {
                 message: format!(
@@ -163,6 +240,24 @@ impl WorktreeLease {
         }
 
         Ok(result)
+    }
+
+    /// Compute a diff and truncate if it exceeds the context-window-safe limit.
+    /// The truncation marker includes the original size so the caller knows
+    /// how much was elided.
+    pub(crate) fn diff_truncated(&self) -> Result<String, String> {
+        let full = self.diff()?;
+        if full.len() <= MAX_DIFF_CHARS {
+            Ok(full)
+        } else {
+            let mut truncated = full.chars().take(MAX_DIFF_CHARS).collect::<String>();
+            truncated.push_str(&format!(
+                "\n\n[diff truncated: {} total chars, {} shown]",
+                full.len(),
+                MAX_DIFF_CHARS
+            ));
+            Ok(truncated)
+        }
     }
 
     /// Remove the worktree and the temporary branch.
@@ -497,6 +592,131 @@ mod tests {
 
         // Clean up manually.
         let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn diff_truncated_when_too_large() {
+        let tmp = std::env::temp_dir().join(format!(
+            "forge-test-worktree-trunc-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let init = Command::new("git")
+            .args(["init"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git init");
+        assert!(init.status.success());
+
+        std::fs::write(tmp.join("README.md"), "# test").unwrap();
+        let _ = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&tmp)
+            .output();
+        let commit = Command::new("git")
+            .args(["commit", "-m", "init", "--no-gpg-sign"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success());
+
+        let mut lease = match WorktreeLease::create(&tmp, "trunc-task") {
+            LeaseResult::Ok(l) => l,
+            other => panic!("expected Ok lease, got {:?}", other),
+        };
+
+        // Modify an existing tracked file with very large content so the diff exceeds the limit.
+        let big_content = "a\n".repeat(MAX_DIFF_CHARS + 1000);
+        std::fs::write(lease.path().join("README.md"), big_content).unwrap();
+
+        let diff = lease
+            .diff_truncated()
+            .expect("diff_truncated should succeed");
+        assert!(
+            diff.contains("[diff truncated:"),
+            "diff should contain truncation marker, got {} chars",
+            diff.len()
+        );
+        assert!(
+            diff.len() <= MAX_DIFF_CHARS + 200,
+            "diff should be near the limit, got {} chars",
+            diff.len()
+        );
+
+        // Non-truncated diff should still return full content.
+        let full = lease.diff().expect("diff should succeed");
+        assert!(
+            full.len() > MAX_DIFF_CHARS,
+            "full diff should exceed limit, got {} chars",
+            full.len()
+        );
+
+        let _ = lease.cleanup();
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn lease_registry_prevents_duplicate_branch() {
+        let tmp = std::env::temp_dir().join(format!(
+            "forge-test-worktree-registry-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let init = Command::new("git")
+            .args(["init"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git init");
+        assert!(init.status.success());
+
+        std::fs::write(tmp.join("README.md"), "# test").unwrap();
+        let _ = Command::new("git")
+            .args(["add", "."])
+            .current_dir(&tmp)
+            .output();
+        let commit = Command::new("git")
+            .args(["commit", "-m", "init", "--no-gpg-sign"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success());
+
+        // Create first lease.
+        let lease1 = match WorktreeLease::create(&tmp, "registry-task") {
+            LeaseResult::Ok(l) => l,
+            other => panic!("expected Ok lease, got {:?}", other),
+        };
+        assert!(lease1.path().exists());
+
+        // Second creation with the same task id should fail with AlreadyInUse.
+        let result2 = WorktreeLease::create(&tmp, "registry-task");
+        assert!(
+            matches!(result2, LeaseResult::AlreadyInUse { .. }),
+            "expected AlreadyInUse, got {:?}",
+            result2
+        );
+
+        // After dropping the first lease, creation should succeed again.
+        let path1 = lease1.path().to_path_buf();
+        drop(lease1);
+        assert!(!path1.exists(), "worktree should be cleaned up on drop");
+
+        let mut lease2 = match WorktreeLease::create(&tmp, "registry-task") {
+            LeaseResult::Ok(l) => l,
+            other => panic!("expected Ok lease after drop, got {:?}", other),
+        };
+        assert!(lease2.path().exists());
+
+        let _ = lease2.cleanup();
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
