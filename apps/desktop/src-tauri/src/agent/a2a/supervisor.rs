@@ -43,6 +43,21 @@ pub(crate) fn assign_patch_proposal_task(
     )
 }
 
+pub(crate) fn assign_worktree_worker_task(
+    bus: &mut AgentA2ABus,
+    title: &str,
+    prompt: &str,
+    timestamp_ms: u64,
+) -> AgentTaskId {
+    bus.assign_task(
+        AgentRole::Implementer,
+        AgentExecutionMode::WorktreeWorker,
+        title,
+        prompt,
+        timestamp_ms,
+    )
+}
+
 pub(crate) fn extract_patch_proposal(raw: &str) -> Option<PatchProposal> {
     // Try to find a JSON block containing patch_proposal.
     // Prefer raw JSON first because wrapped sub-agent results may contain escaped
@@ -101,6 +116,85 @@ pub(crate) fn record_child_failure(
     timestamp_ms: u64,
 ) {
     bus.fail_task(task_id, kind, message, true, timestamp_ms);
+}
+
+/// Extract a human-readable summary string from a worktree-worker JSON result
+/// for the parent model's tool_result.
+pub(crate) fn worktree_result_for_model(raw: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("result")
+                .and_then(|result| result.as_str())
+                .map(|result| result.to_string())
+        })
+        .unwrap_or_else(|| raw.to_string())
+}
+
+/// Extract structured worktree artifacts from the worker JSON result.
+pub(crate) fn extract_worktree_artifacts(
+    raw: &str,
+    task_id: &AgentTaskId,
+) -> Vec<crate::agent::a2a::types::AgentArtifact> {
+    use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+    let value = match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut artifacts = Vec::new();
+    let now = crate::agent::time::now_ms();
+
+    // DiffSummary artifact
+    if let Some(diff) = value.get("diff").and_then(|d| d.as_str()) {
+        if !diff.is_empty() {
+            artifacts.push(AgentArtifact {
+                artifact_id: format!("diff-{}", task_id.as_str()),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::DiffSummary,
+                title: "Worktree diff".to_string(),
+                content: diff.to_string(),
+                created_at_ms: now,
+            });
+        }
+    }
+
+    // TestReport artifact
+    if let Some(report) = value.get("test_report").and_then(|r| r.as_str()) {
+        if !report.is_empty() {
+            artifacts.push(AgentArtifact {
+                artifact_id: format!("test-{}", task_id.as_str()),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::TestReport,
+                title: "Test report".to_string(),
+                content: report.to_string(),
+                created_at_ms: now,
+            });
+        }
+    }
+
+    // Worktree metadata artifact (path, cleanup status)
+    if let Ok(summary) =
+        serde_json::from_str::<crate::agent::a2a::worktree::WorktreeWorkerSummary>(raw)
+    {
+        let meta = serde_json::json!({
+            "worktree_path": summary.worktree_path,
+            "cleaned_up": summary.cleaned_up,
+            "diff_available": summary.diff_available,
+        });
+        artifacts.push(AgentArtifact {
+            artifact_id: format!("meta-{}", task_id.as_str()),
+            task_id: task_id.clone(),
+            kind: AgentArtifactKind::Evidence,
+            title: "Worktree metadata".to_string(),
+            content: meta.to_string(),
+            created_at_ms: now,
+        });
+    }
+
+    artifacts
 }
 
 #[cfg(test)]
@@ -234,5 +328,78 @@ Analysis.
             task.execution_mode,
             crate::agent::a2a::types::AgentExecutionMode::PatchProposal
         );
+    }
+
+    #[test]
+    fn assign_worktree_worker_task_uses_worktree_mode() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = assign_worktree_worker_task(&mut bus, "Implement feature", "Add auth", 10);
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.role, crate::agent::a2a::types::AgentRole::Implementer);
+        assert_eq!(
+            task.execution_mode,
+            crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker
+        );
+        assert!(task.permissions.allow_workspace_write);
+        assert!(task.permissions.allow_shell);
+        assert!(!task.permissions.allow_delegate);
+    }
+
+    #[test]
+    fn worktree_result_for_model_extracts_json_result() {
+        let raw = serde_json::json!({
+            "result": "Implemented login flow",
+            "diff": "diff --git a/src/auth.rs",
+            "cleaned_up": true
+        })
+        .to_string();
+
+        assert_eq!(worktree_result_for_model(&raw), "Implemented login flow");
+    }
+
+    #[test]
+    fn worktree_result_for_model_fallback_to_raw() {
+        let raw = "Plain text result without JSON";
+        assert_eq!(worktree_result_for_model(raw), raw);
+    }
+
+    #[test]
+    fn extract_worktree_artifacts_produces_diff_and_test_report() {
+        let task_id = AgentTaskId::new("wt-1");
+        let raw = serde_json::json!({
+            "result": "Done",
+            "diff": "diff --git a/src/lib.rs",
+            "test_report": "5 passed, 0 failed",
+            "worktree_path": "/tmp/wt",
+            "cleaned_up": true,
+            "diff_available": true
+        })
+        .to_string();
+
+        let artifacts = extract_worktree_artifacts(&raw, &task_id);
+
+        assert_eq!(artifacts.len(), 3);
+        assert_eq!(
+            artifacts[0].kind,
+            crate::agent::a2a::types::AgentArtifactKind::DiffSummary
+        );
+        assert!(artifacts[0].content.contains("diff --git"));
+        assert_eq!(
+            artifacts[1].kind,
+            crate::agent::a2a::types::AgentArtifactKind::TestReport
+        );
+        assert_eq!(artifacts[1].content, "5 passed, 0 failed");
+        assert_eq!(
+            artifacts[2].kind,
+            crate::agent::a2a::types::AgentArtifactKind::Evidence
+        );
+        assert!(artifacts[2].content.contains("worktree_path"));
+    }
+
+    #[test]
+    fn extract_worktree_artifacts_returns_empty_for_invalid_json() {
+        let task_id = AgentTaskId::new("wt-2");
+        assert!(extract_worktree_artifacts("not json", &task_id).is_empty());
     }
 }

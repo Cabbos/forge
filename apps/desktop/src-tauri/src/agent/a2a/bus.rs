@@ -331,6 +331,30 @@ mod tests {
     }
 
     #[test]
+    fn resume_normalization_interrupts_worktree_worker_tasks() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement auth",
+            "Add login flow",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        bus.normalize_for_resume(30);
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(
+            task.status,
+            crate::agent::a2a::types::AgentTaskStatus::Interrupted
+        );
+        let projection = bus.projection();
+        assert_eq!(projection.interrupted_count, 1);
+        assert_eq!(projection.tasks[0].execution_mode, "worktree_worker");
+    }
+
+    #[test]
     fn bus_adds_artifact_and_projection_reflects_it() {
         use crate::agent::a2a::types::AgentArtifactKind;
 
