@@ -53,8 +53,28 @@ test("CI workflow covers the monorepo quality gates", () => {
 
   // Nightly should run eval report and have API-key-gated real smoke
   assert.match(nightlySection, /eval:report:latest/);
+  assert.match(nightlySection, /npm run eval:report:latest -- --failures/);
+  assert.doesNotMatch(nightlySection, /eval:report:latest[^\n]*\|\|\s*true/);
   assert.match(nightlySection, /ANTHROPIC_API_KEY/);
   assert.match(nightlySection, /Skipping real smoke/);
+
+  const forwardedRootScripts = [
+    "eval:forge:mock",
+    "eval:forge:smoke",
+    "eval:forge:smoke:real",
+    "eval:forge:smoke:dry-run",
+    "eval:continuity",
+    "eval:report",
+    "eval:report:latest",
+  ];
+  for (const scriptName of forwardedRootScripts) {
+    const script = rootPackage.scripts[scriptName];
+    assert.match(
+      script,
+      /npm --prefix apps\/desktop run [^ ]+ --$/,
+      `${scriptName} should forward root npm arguments to the desktop script`,
+    );
+  }
 
   assert.equal(rootPackage.scripts["eval:report"], "npm --prefix apps/desktop run eval:report --");
   assert.equal(

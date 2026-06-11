@@ -873,6 +873,94 @@ async fn agent_turn_stops_with_repeated_no_progress_when_tools_keep_failing() {
     let _ = std::fs::remove_dir_all(&workspace);
 }
 
+#[tokio::test]
+async fn loop_guard_stop_records_recovery_trace_for_repeated_category_batch() {
+    let workspace = setup_test_workspace("forge-repeated-category-recovery");
+    let harness = Arc::new(Harness::new(workspace.clone()));
+
+    let varied_read = |id: &str, path: &str| StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": id,
+            "name": "read_file",
+            "input": {"path": path}
+        })],
+        tool_calls: vec![ToolCall {
+            id: id.to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"path": path}),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        varied_read("call-1", "first.txt"),
+        varied_read("call-2", "second.txt"),
+        varied_read("call-3", "third.txt"),
+        StreamResult {
+            assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]));
+
+    let session = AgentSession::new(
+        "session-repeated-category-recovery".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        harness,
+        "你是一个编程助手".to_string(),
+        Some(128_000),
+    );
+
+    *lock_unpoisoned(&session.loop_guard) = crate::agent::loop_guard::LoopGuard::default_limits()
+        .with_max_repeated_category_batches(3)
+        .with_max_repeated_tool_batches(100);
+
+    let emitter = crate::agent::event_sink::CollectingEventEmitter::new();
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    session
+        .send_message_with_emitter(
+            "keep reading related files",
+            &emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        )
+        .await
+        .expect("turn should finish gracefully when category loop is detected");
+
+    let turn = lock_unpoisoned(&session.latest_turn);
+    let turn = turn.as_ref().expect("latest turn");
+    assert_eq!(
+        turn.stop_reason,
+        Some("repeated_category_batch".to_string()),
+        "turn should preserve the machine-readable guard stop reason"
+    );
+
+    let recovery_transition = turn
+        .transition_log
+        .iter()
+        .find(|transition| transition.reason == "loop_guard_stopped")
+        .expect("should record a loop guard recovery transition");
+    let detail = recovery_transition
+        .detail
+        .as_deref()
+        .expect("loop guard transition should explain recovery");
+    assert!(
+        detail.contains("repeated_category_batch"),
+        "detail should include the stop reason: {detail}"
+    );
+    assert!(
+        detail.contains("smaller next action"),
+        "detail should suggest a smaller next action: {detail}"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
 #[test]
 fn tool_batch_signature_ignores_call_id_and_object_key_order() {
     let first = vec![ToolCall {

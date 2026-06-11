@@ -9,11 +9,11 @@
     "build:website": "npm --prefix apps/website run build",
     "check:ci": "node --test scripts/ci-workflow.test.mjs",
     "test:eval": "cd apps/eval-runner && uv run pytest",
-    "eval:forge:mock": "npm --prefix apps/desktop run eval:forge:mock",
-    "eval:forge:smoke": "npm --prefix apps/desktop run eval:forge:smoke",
+    "eval:forge:mock": "npm --prefix apps/desktop run eval:forge:mock --",
+    "eval:forge:smoke": "npm --prefix apps/desktop run eval:forge:smoke --",
     "eval:forge:smoke:real": "npm --prefix apps/desktop run eval:forge:smoke:real --",
-    "eval:forge:smoke:dry-run": "npm --prefix apps/desktop run eval:forge:smoke:dry-run",
-    "eval:continuity": "npm --prefix apps/desktop run eval:continuity",
+    "eval:forge:smoke:dry-run": "npm --prefix apps/desktop run eval:forge:smoke:dry-run --",
+    "eval:continuity": "npm --prefix apps/desktop run eval:continuity --",
     "eval:report": "npm --prefix apps/desktop run eval:report --",
     "eval:report:latest": "npm --prefix apps/desktop run eval:report:latest --"
   }

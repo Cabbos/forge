@@ -64,6 +64,43 @@ export function summarizeArtifacts(artifacts, { limit = 10 } = {}) {
   return { summaries, totalCount: artifacts.length };
 }
 
+export function evaluateQualityGate(summary) {
+  const failures = [];
+  if (summary.totalTasks <= 0) {
+    failures.push({
+      metric: "total_tasks",
+      expected: ">0",
+      current: summary.totalTasks,
+      severity: "critical",
+    });
+  }
+  if (summary.successRate < 1) {
+    failures.push({
+      metric: "success_rate",
+      expected: 1,
+      current: summary.successRate,
+      severity: "critical",
+    });
+  }
+  if (summary.verificationPassRate < 1) {
+    failures.push({
+      metric: "verification_pass_rate",
+      expected: 1,
+      current: summary.verificationPassRate,
+      severity: "critical",
+    });
+  }
+  if (summary.scopeViolationRate > 0) {
+    failures.push({
+      metric: "scope_violation_rate",
+      expected: 0,
+      current: summary.scopeViolationRate,
+      severity: "critical",
+    });
+  }
+  return failures;
+}
+
 export function compareReports(current, previous) {
   if (!previous) {
     return { hasRegression: false, changes: [], message: "No previous run to compare." };
@@ -163,6 +200,20 @@ export function buildComparisons(summaries) {
   return comparisons;
 }
 
+export function buildLatestComparisons(allSummaries, latestSummaries) {
+  const comparisons = [];
+  for (const latest of latestSummaries) {
+    const runs = allSummaries.filter(
+      (s) => s.suite === latest.suite && s.provider === latest.provider
+    );
+    const latestIndex = runs.findIndex(
+      (s) => s.timestamp === latest.timestamp && s.filename === latest.filename
+    );
+    comparisons.push(compareReports(latest, latestIndex > 0 ? runs[latestIndex - 1] : null));
+  }
+  return comparisons;
+}
+
 export function formatTaskDetails(artifact, { failuresOnly = false } = {}) {
   const tasks = artifact.report?.tasks ?? [];
   const lines = [];
@@ -204,7 +255,14 @@ export function formatTaskDetails(artifact, { failuresOnly = false } = {}) {
   return lines;
 }
 
-export function formatReport({ summaries, comparisons, totalCount, artifacts = [], failuresOnly = false }) {
+export function formatReport({
+  summaries,
+  comparisons,
+  totalCount,
+  artifacts = [],
+  failuresOnly = false,
+  qualityGateFailures = null,
+}) {
   const lines = [];
   lines.push("╔══════════════════════════════════════════════════════════════╗");
   lines.push("║           Forge Eval Report                                  ║");
@@ -235,9 +293,21 @@ export function formatReport({ summaries, comparisons, totalCount, artifacts = [
     lines.push("");
   }
 
+  if (Array.isArray(qualityGateFailures)) {
+    if (qualityGateFailures.length > 0) {
+      lines.push("❌ CURRENT EVAL QUALITY GATE FAILED");
+      for (const failure of qualityGateFailures) {
+        lines.push(`  🔴 ${failure.metric}: ${formatQualityGateFailure(failure)}`);
+      }
+    } else {
+      lines.push("✅ Current eval quality gate passed.");
+    }
+    lines.push("");
+  }
+
   const anyRegression = comparisons.some((c) => c.hasRegression);
   if (anyRegression) {
-    lines.push("⚠️  REGRESSIONS DETECTED");
+    lines.push("⚠️  HISTORICAL REGRESSIONS DETECTED");
     for (const comp of comparisons) {
       for (const ch of comp.changes) {
         const emoji = ch.severity === "critical" ? "🔴" : "🟡";
@@ -249,6 +319,12 @@ export function formatReport({ summaries, comparisons, totalCount, artifacts = [
   }
 
   return lines.join("\n");
+}
+
+function formatQualityGateFailure(failure) {
+  const expected = typeof failure.expected === "number" ? failure.expected.toFixed(2) : failure.expected;
+  const current = typeof failure.current === "number" ? failure.current.toFixed(2) : failure.current;
+  return `expected ${expected}, got ${current}`;
 }
 
 function formatChange(change) {
@@ -278,11 +354,26 @@ function runCli(argv) {
     return 0;
   }
 
-  const { summaries, totalCount } = summarizeArtifacts(artifacts, { limit: latestOnly ? 1 : 10 });
-  const comparisons = buildComparisons(summaries);
+  const { summaries: allSummaries, totalCount } = summarizeArtifacts(artifacts, {
+    limit: artifacts.length,
+  });
+  const summaries = latestOnly ? allSummaries.slice(-1) : allSummaries.slice(-10);
+  const comparisons = latestOnly
+    ? buildLatestComparisons(allSummaries, summaries)
+    : buildComparisons(summaries);
+  const qualityGateFailures = latestOnly
+    ? summaries.flatMap((summary) => evaluateQualityGate(summary))
+    : null;
 
-  console.log(formatReport({ summaries, comparisons, totalCount, artifacts, failuresOnly }));
-  return comparisons.some((c) => c.hasRegression) ? 2 : 0;
+  console.log(formatReport({
+    summaries,
+    comparisons,
+    totalCount,
+    artifacts,
+    failuresOnly,
+    qualityGateFailures,
+  }));
+  return comparisons.some((c) => c.hasRegression) || qualityGateFailures?.length > 0 ? 2 : 0;
 }
 
 if (import.meta.url === new URL(process.argv[1], "file:").href) {
