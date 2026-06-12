@@ -164,7 +164,7 @@ impl MemoryFactStore {
         let id = input
             .id
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| new_fact_id());
+            .unwrap_or_else(new_fact_id);
 
         let fact = MemoryFact {
             id,

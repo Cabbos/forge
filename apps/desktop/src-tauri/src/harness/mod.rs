@@ -6,10 +6,10 @@ pub mod capability;
 pub mod db;
 pub mod event_bus;
 pub mod hooks;
-pub mod mcp;
-pub mod permissions;
 #[cfg(test)]
 mod hooks_test;
+pub mod mcp;
+pub mod permissions;
 #[cfg(test)]
 mod permissions_test;
 pub mod registry;

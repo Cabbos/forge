@@ -57,11 +57,27 @@ test("plans Rust formatting and lint checks for staged backend files", () => {
   ]);
 });
 
-test("keeps mixed frontend and backend plans deduplicated and ordered", () => {
+test("plans frontend and Rust checks for mixed changes including protocol files", () => {
   const plan = buildPreCommitPlan([
     "src/lib/protocol.ts",
     "src/components/chat/ConversationLane.tsx",
     "src-tauri/src/protocol/events.rs",
+  ]);
+
+  assert.deepEqual(plan.commands.map(describeCommand), [
+    "npm run check:conversation-style",
+    "npm run check:frontend-architecture",
+    "npx tsc --noEmit",
+    "npm run check:protocol",
+    "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+  ]);
+});
+
+test("keeps mixed frontend and backend plans deduplicated and ordered", () => {
+  const plan = buildPreCommitPlan([
+    "src/components/chat/ConversationLane.tsx",
+    "src-tauri/src/agent/session.rs",
   ]);
 
   assert.deepEqual(plan.commands.map(describeCommand), [

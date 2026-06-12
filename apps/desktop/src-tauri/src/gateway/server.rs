@@ -37,6 +37,12 @@ pub struct GatewayState {
     pub trigger_store: Arc<TriggerStore>,
 }
 
+impl Default for GatewayState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GatewayState {
     pub fn new() -> Self {
         Self {
@@ -322,7 +328,7 @@ mod tests {
                 let health: HealthResult =
                     serde_json::from_value(resp.result).expect("parse health result");
                 assert!(health.ok);
-                assert!(health.uptime_seconds == 0 || health.uptime_seconds > 0);
+                // uptime_seconds is u64, so non-negativity is guaranteed
                 assert_eq!(health.active_sessions, 0);
             }
             _ => panic!("expected Ok reply"),

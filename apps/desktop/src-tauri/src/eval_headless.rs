@@ -2094,7 +2094,7 @@ mod tests {
         // We need to test the resolution logic without relying on default_path.
         // Use a store that we control.
         let store = ProfileStore::new(path.clone());
-        let (provider, model) = if let Some(ref pid) = Some(profile.id.as_str()) {
+        let (provider, model) = if let Some(pid) = Some(profile.id.as_str()) {
             let p = store.get(pid).expect("profile exists");
             let prov = p.default_provider.unwrap_or_else(|| "deepseek".to_string());
             let modl = p
@@ -2127,7 +2127,7 @@ mod tests {
             .expect("create profile");
 
         let store = ProfileStore::new(path.clone());
-        let (provider, model) = if let Some(ref pid) = Some(profile.id.as_str()) {
+        let (provider, model) = if let Some(pid) = Some(profile.id.as_str()) {
             let p = store.get(pid).expect("profile exists");
             let prov = p.default_provider.unwrap_or_else(|| "deepseek".to_string());
             let modl = p

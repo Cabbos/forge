@@ -45,6 +45,13 @@ const FRONTEND_EXTENSIONS = [
 ];
 
 const RUST_FILES = new Set(["src-tauri/Cargo.lock", "src-tauri/Cargo.toml"]);
+const PROTOCOL_FILES = new Set([
+  "src-tauri/src/protocol/events.rs",
+  "src/lib/protocol.ts",
+  "src/store/event-dispatch.ts",
+  "src/store/blocks.ts",
+  "scripts/check-protocol-sync.mjs",
+]);
 const DESKTOP_APP_PREFIX = "apps/desktop/";
 
 const CHECKS = {
@@ -59,6 +66,10 @@ const CHECKS = {
   typescript: {
     command: "npx",
     args: ["tsc", "--noEmit"],
+  },
+  protocolSync: {
+    command: "npm",
+    args: ["run", "check:protocol"],
   },
   rustfmt: {
     command: "cargo",
@@ -87,10 +98,15 @@ export function buildPreCommitPlan(stagedFiles) {
   const blockedFiles = normalizedFiles.filter(isBlockedArtifact);
   const touchesFrontend = normalizedFiles.some(isFrontendFile);
   const touchesRust = normalizedFiles.some(isRustFile);
+  const touchesProtocol = normalizedFiles.some(isProtocolFile);
   const commands = [];
 
   if (touchesFrontend) {
     commands.push(CHECKS.conversationStyle, CHECKS.frontendArchitecture, CHECKS.typescript);
+  }
+
+  if (touchesProtocol) {
+    commands.push(CHECKS.protocolSync);
   }
 
   if (touchesRust) {
@@ -105,6 +121,12 @@ function normalizePath(filePath) {
   return normalized.startsWith(DESKTOP_APP_PREFIX)
     ? normalized.slice(DESKTOP_APP_PREFIX.length)
     : normalized;
+}
+
+function isProtocolFile(filePath) {
+  return (
+    PROTOCOL_FILES.has(filePath) || filePath.startsWith("src-tauri/src/protocol/")
+  );
 }
 
 function isBlockedArtifact(filePath) {

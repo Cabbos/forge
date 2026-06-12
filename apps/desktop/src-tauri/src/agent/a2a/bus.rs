@@ -279,7 +279,7 @@ impl AgentA2ABus {
                     }
                 });
                 let all_diff_files = diff_text
-                    .map(|text| extract_files_from_diff_text(text))
+                    .map(extract_files_from_diff_text)
                     .unwrap_or_default();
                 // Limit to a small safe number (first 8 unique paths).
                 let changed_files: Vec<String> = all_diff_files.iter().take(8).cloned().collect();
@@ -949,7 +949,7 @@ mod tests {
         assert!(task_proj
             .resume_note
             .as_ref()
-            .map_or(false, |n| n.contains("session was restored")));
+            .is_some_and(|n| n.contains("session was restored")));
     }
 
     #[test]

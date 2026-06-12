@@ -152,12 +152,9 @@ impl ProfileStore {
 
     /// Returns the active profile, if set and it exists.
     pub fn get_active_profile(&self) -> Option<ForgeProfile> {
-        let active_id = self.active_profile_id();
-        let Some(ref id) = active_id else {
-            return None;
-        };
+        let id = self.active_profile_id()?;
         let profiles = self.profiles.lock().unwrap_or_else(|e| e.into_inner());
-        profiles.iter().find(|p| p.id == *id).cloned()
+        profiles.iter().find(|p| p.id == id).cloned()
     }
 
     /// Builds the combined list payload for IPC.
@@ -247,7 +244,7 @@ impl ProfileStore {
             .id
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| new_profile_id());
+            .unwrap_or_else(new_profile_id);
 
         let profile = ForgeProfile {
             id,

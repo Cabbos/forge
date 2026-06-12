@@ -354,7 +354,10 @@ pub(crate) fn looks_like_secret(text: &str) -> bool {
     })
 }
 
-pub(crate) fn ensure_path_in_workspace(working_dir: &std::path::Path, path: &str) -> Result<(), String> {
+pub(crate) fn ensure_path_in_workspace(
+    working_dir: &std::path::Path,
+    path: &str,
+) -> Result<(), String> {
     let requested = std::path::Path::new(path);
     let resolved = if requested.is_absolute() {
         requested.to_path_buf()

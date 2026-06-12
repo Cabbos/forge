@@ -237,7 +237,7 @@ impl SchedulerStore {
             .id
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| new_task_id());
+            .unwrap_or_else(new_task_id);
 
         let next_run_at_ms = compute_next_run(now_ms, input.interval_seconds, None);
 
@@ -289,15 +289,14 @@ impl SchedulerStore {
             task.updated_at_ms = now_ms;
 
             // When re-enabled, re-compute next_run if it's in the past.
-            if enabled {
-                if task
+            if enabled
+                && (task
                     .last_run_at_ms
                     .is_some_and(|t| task.next_run_at_ms <= t)
-                    || task.next_run_at_ms <= now_ms
-                {
-                    task.next_run_at_ms =
-                        compute_next_run(now_ms, task.interval_seconds, task.last_run_at_ms);
-                }
+                    || task.next_run_at_ms <= now_ms)
+            {
+                task.next_run_at_ms =
+                    compute_next_run(now_ms, task.interval_seconds, task.last_run_at_ms);
             }
         }
         drop(tasks);

@@ -246,11 +246,18 @@ mod tests {
     fn matches_same_event_type() {
         assert!(matches_event(
             &EventType::SessionStart,
-            &Event::SessionStart { session_id: "s1".into(), working_dir: "/tmp".into() }
+            &Event::SessionStart {
+                session_id: "s1".into(),
+                working_dir: "/tmp".into()
+            }
         ));
         assert!(matches_event(
             &EventType::PreTool,
-            &Event::PreTool { session_id: "s1".into(), tool_name: "write".into(), input: serde_json::json!({}) }
+            &Event::PreTool {
+                session_id: "s1".into(),
+                tool_name: "write".into(),
+                input: serde_json::json!({})
+            }
         ));
     }
 
@@ -258,22 +265,59 @@ mod tests {
     fn mismatched_event_types_return_false() {
         assert!(!matches_event(
             &EventType::SessionStart,
-            &Event::PreTool { session_id: "s1".into(), tool_name: "write".into(), input: serde_json::json!({}) }
+            &Event::PreTool {
+                session_id: "s1".into(),
+                tool_name: "write".into(),
+                input: serde_json::json!({})
+            }
         ));
         assert!(!matches_event(
             &EventType::PreTool,
-            &Event::SessionStop { session_id: "s1".into() }
+            &Event::SessionStop {
+                session_id: "s1".into()
+            }
         ));
     }
 
     #[test]
     fn all_event_types_match_correctly() {
         let pairs = [
-            (EventType::SessionStart, Event::SessionStart { session_id: "s".into(), working_dir: "/tmp".into() }),
-            (EventType::SessionStop, Event::SessionStop { session_id: "s".into() }),
-            (EventType::PreTool, Event::PreTool { session_id: "s".into(), tool_name: "t".into(), input: serde_json::json!({}) }),
-            (EventType::PostTool, Event::PostTool { session_id: "s".into(), tool_name: "t".into(), result: "ok".into() }),
-            (EventType::CapabilityChanged, Event::CapabilityChanged { capability_id: "c".into(), action: "enabled".into() }),
+            (
+                EventType::SessionStart,
+                Event::SessionStart {
+                    session_id: "s".into(),
+                    working_dir: "/tmp".into(),
+                },
+            ),
+            (
+                EventType::SessionStop,
+                Event::SessionStop {
+                    session_id: "s".into(),
+                },
+            ),
+            (
+                EventType::PreTool,
+                Event::PreTool {
+                    session_id: "s".into(),
+                    tool_name: "t".into(),
+                    input: serde_json::json!({}),
+                },
+            ),
+            (
+                EventType::PostTool,
+                Event::PostTool {
+                    session_id: "s".into(),
+                    tool_name: "t".into(),
+                    result: "ok".into(),
+                },
+            ),
+            (
+                EventType::CapabilityChanged,
+                Event::CapabilityChanged {
+                    capability_id: "c".into(),
+                    action: "enabled".into(),
+                },
+            ),
         ];
         for (et, ev) in &pairs {
             assert!(matches_event(et, ev), "should match: {et:?} ↔ {ev:?}");

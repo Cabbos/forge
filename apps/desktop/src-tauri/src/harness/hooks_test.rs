@@ -92,7 +92,10 @@ mod tests {
 
     #[test]
     fn collects_string_values() {
-        assert_eq!(collect_json_strings(&serde_json::json!("hello")), vec!["hello"]);
+        assert_eq!(
+            collect_json_strings(&serde_json::json!("hello")),
+            vec!["hello"]
+        );
     }
 
     #[test]
@@ -153,10 +156,8 @@ mod tests {
 
     #[test]
     fn empty_for_unknown_tool() {
-        let texts = sensitive_tool_text(
-            "read_file",
-            &serde_json::json!({"path": "/tmp/secret.txt"}),
-        );
+        let texts =
+            sensitive_tool_text("read_file", &serde_json::json!({"path": "/tmp/secret.txt"}));
         assert!(texts.is_empty());
     }
 
@@ -217,7 +218,9 @@ mod tests {
     #[tokio::test]
     async fn fs_audit_hook_passes_through_result() {
         let hook = FileSystemAuditHook;
-        let result = hook.on_post_tool("s1", "write_to_file", "written".into()).await;
+        let result = hook
+            .on_post_tool("s1", "write_to_file", "written".into())
+            .await;
         assert_eq!(result, "written");
     }
 
@@ -309,7 +312,9 @@ mod tests {
         struct BlockingHook;
         #[async_trait::async_trait]
         impl Hook for BlockingHook {
-            fn name(&self) -> &str { "blocker" }
+            fn name(&self) -> &str {
+                "blocker"
+            }
             fn triggers(&self) -> Vec<HookTrigger> {
                 vec![HookTrigger::PreTool]
             }
@@ -336,7 +341,9 @@ mod tests {
         struct WriteOnlyHook;
         #[async_trait::async_trait]
         impl Hook for WriteOnlyHook {
-            fn name(&self) -> &str { "write-only" }
+            fn name(&self) -> &str {
+                "write-only"
+            }
             fn triggers(&self) -> Vec<HookTrigger> {
                 vec![HookTrigger::PreTool]
             }
@@ -358,7 +365,11 @@ mod tests {
 
         // Should NOT block read_file (filtered out)
         let decision = engine
-            .run_pre_tool("s1", "read_file", &serde_json::json!({"path": "/tmp/test.txt"}))
+            .run_pre_tool(
+                "s1",
+                "read_file",
+                &serde_json::json!({"path": "/tmp/test.txt"}),
+            )
             .await;
         assert!(
             matches!(decision, HookDecision::Proceed(_)),
@@ -367,7 +378,11 @@ mod tests {
 
         // Should block write_to_file (matches filter)
         let decision = engine
-            .run_pre_tool("s1", "write_to_file", &serde_json::json!({"path": "/tmp/test.txt"}))
+            .run_pre_tool(
+                "s1",
+                "write_to_file",
+                &serde_json::json!({"path": "/tmp/test.txt"}),
+            )
             .await;
         assert!(matches!(decision, HookDecision::Block(_)));
     }
@@ -377,7 +392,9 @@ mod tests {
         struct AlwaysBlockHook;
         #[async_trait::async_trait]
         impl Hook for AlwaysBlockHook {
-            fn name(&self) -> &str { "always-block" }
+            fn name(&self) -> &str {
+                "always-block"
+            }
             fn triggers(&self) -> Vec<HookTrigger> {
                 vec![HookTrigger::PreTool]
             }
@@ -413,16 +430,13 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl Hook for AppendHook {
-            fn name(&self) -> &str { "append" }
+            fn name(&self) -> &str {
+                "append"
+            }
             fn triggers(&self) -> Vec<HookTrigger> {
                 vec![HookTrigger::PostTool]
             }
-            async fn on_post_tool(
-                &self,
-                _session_id: &str,
-                _tool: &str,
-                result: String,
-            ) -> String {
+            async fn on_post_tool(&self, _session_id: &str, _tool: &str, result: String) -> String {
                 format!("{result} {}", self.suffix)
             }
         }
@@ -440,16 +454,13 @@ mod tests {
         struct AppendHook;
         #[async_trait::async_trait]
         impl Hook for AppendHook {
-            fn name(&self) -> &str { "append" }
+            fn name(&self) -> &str {
+                "append"
+            }
             fn triggers(&self) -> Vec<HookTrigger> {
                 vec![HookTrigger::PostTool]
             }
-            async fn on_post_tool(
-                &self,
-                _session_id: &str,
-                _tool: &str,
-                result: String,
-            ) -> String {
+            async fn on_post_tool(&self, _session_id: &str, _tool: &str, result: String) -> String {
                 format!("{result} modified")
             }
         }
