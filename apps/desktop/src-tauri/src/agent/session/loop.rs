@@ -70,7 +70,7 @@ impl AgentSession {
     /// Tauri events and test/headless emitters.
     /// Phase 1 — set up the turn: recovery context, system prompt, user message,
     /// cancel token, and initial status.
-    async fn setup_turn(
+    pub(crate) async fn setup_turn(
         &self,
         text: &str,
         mut hidden_contexts: Vec<HiddenContextPart>,

@@ -35,7 +35,11 @@ pub(crate) mod a2a;
 pub(crate) mod compact;
 pub(crate) mod lifecycle;
 pub(crate) mod r#loop;
+#[cfg(test)]
+mod loop_test;
 pub(crate) mod tools;
+#[cfg(test)]
+mod tools_test;
 
 const MAX_AGENT_TOOL_ROUNDS: usize = 80;
 /// Max times the agent may auto-continue when the model returns no tool calls
