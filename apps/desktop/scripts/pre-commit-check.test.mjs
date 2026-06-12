@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   buildPreCommitPlan,
@@ -86,4 +88,12 @@ test("normalizes monorepo-prefixed desktop paths from git hooks", () => {
     "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
   ]);
+});
+
+test("protocol sync check passes", () => {
+  const output = execFileSync("npm", ["run", "check:protocol"], {
+    encoding: "utf-8",
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
+  });
+  assert.match(output, /OK: all \d+ Rust StreamEvent types are handled/);
 });

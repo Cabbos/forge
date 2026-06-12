@@ -117,9 +117,9 @@ for (const arrayName of knownArrayNames) {
 //      objects. Events that the dispatcher does not explicitly match fall through
 //      to `eventToBlock(event)`. If `eventToBlock` returns null, the event is
 //      silently dropped. This means an event CAN be "handled" (not missing) even
-//    when event-dispatch.ts has no explicit branch for it, as long as
-//    eventToBlock knows about it. Scanning blocks.ts ensures we do not flag
-//    these fallback-handled events as unhandled.
+//      when event-dispatch.ts has no explicit branch for it, as long as
+//      eventToBlock knows about it. Scanning blocks.ts ensures we do not flag
+//      these fallback-handled events as unhandled.
 //
 //    This is intentional defensive coverage beyond the spec — it accounts for
 //    the actual frontend architecture rather than an idealized single-dispatcher
