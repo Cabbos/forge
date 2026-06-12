@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod executor_test;
 pub mod files;
 #[cfg(test)]
 mod files_test;
