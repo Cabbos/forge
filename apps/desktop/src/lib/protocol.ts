@@ -210,6 +210,7 @@ export interface AgentA2ATaskProjection {
   execution_mode: string;
   status: string;
   title: string;
+  messages: AgentA2AMessageProjection[];
   latest_message: string | null;
   failure_message: string | null;
   updated_at_ms: number;
@@ -224,6 +225,13 @@ export interface AgentA2ATaskProjection {
   worktree_path: string | null;
   cleaned_up: boolean | null;
   suggested_action: string | null;
+}
+
+export interface AgentA2AMessageProjection {
+  message_id: string;
+  kind: string;
+  content: string;
+  created_at_ms: number;
 }
 
 export interface AgentA2AProjection {

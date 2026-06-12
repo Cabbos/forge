@@ -31,6 +31,7 @@ import {
   persistWorkspaces,
 } from "./persistence";
 import {
+  closeInterruptedConfirmBlocks,
   latestDeliverySummaryFromBlocks,
   transcriptEventsToBlocks,
 } from "./blocks";
@@ -102,7 +103,8 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
         const deliverySummaryBySession = new Map<string, DeliverySummary>();
         const hydratedAt = Date.now();
         for (const s of data) {
-          const blocks = await loadBlocks(s.id, transcriptEventsToBlocks);
+          const loadedBlocks = await loadBlocks(s.id, transcriptEventsToBlocks);
+          const blocks = closeInterruptedConfirmBlocks(loadedBlocks, "session_restored");
           const workingDir = normalizeWorkspacePath(s.workingDir ?? "");
           const workspaceId = s.workspaceId && workspaces.has(s.workspaceId)
             ? s.workspaceId

@@ -1,4 +1,6 @@
-use crate::agent::a2a::projection::{AgentA2AProjection, AgentA2ATaskProjection};
+use crate::agent::a2a::projection::{
+    AgentA2AMessageProjection, AgentA2AProjection, AgentA2ATaskProjection,
+};
 use crate::agent::a2a::types::{
     AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole,
     AgentTaskFailure, AgentTaskId, AgentTaskRecord, AgentTaskStatus,
@@ -273,6 +275,7 @@ impl AgentA2ABus {
                     execution_mode: task.execution_mode.as_str().to_string(),
                     status: task.status.as_str().to_string(),
                     title: task.title.clone(),
+                    messages: self.messages_for(&task.task_id),
                     latest_message: self.latest_message_for(&task.task_id),
                     failure_message: task.failure.as_ref().map(|failure| failure.message.clone()),
                     updated_at_ms: task.updated_at_ms,
@@ -324,6 +327,19 @@ impl AgentA2ABus {
             .map(|message| message.content.clone())
     }
 
+    fn messages_for(&self, task_id: &AgentTaskId) -> Vec<AgentA2AMessageProjection> {
+        self.messages
+            .iter()
+            .filter(|message| message.task_id == *task_id)
+            .map(|message| AgentA2AMessageProjection {
+                message_id: message.message_id.clone(),
+                kind: message_kind_for_projection(&message.kind).to_string(),
+                content: message.content.clone(),
+                created_at_ms: message.created_at_ms,
+            })
+            .collect()
+    }
+
     fn update_task<T>(
         &mut self,
         task_id: &AgentTaskId,
@@ -358,6 +374,20 @@ impl AgentA2ABus {
     }
 }
 
+fn message_kind_for_projection(kind: &AgentMessageKind) -> &'static str {
+    match kind {
+        AgentMessageKind::TaskAssigned => "task_assigned",
+        AgentMessageKind::Started => "started",
+        AgentMessageKind::Progress => "progress",
+        AgentMessageKind::Evidence => "evidence",
+        AgentMessageKind::ArtifactCreated => "artifact_created",
+        AgentMessageKind::FinalResult => "final_result",
+        AgentMessageKind::Failed => "failed",
+        AgentMessageKind::Cancelled => "cancelled",
+        AgentMessageKind::Interrupted => "interrupted",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +417,19 @@ mod tests {
         assert_eq!(
             projection.tasks[0].latest_message.as_deref(),
             Some("delegate_task is split before regular tools")
+        );
+        let message_kinds = projection.tasks[0]
+            .messages
+            .iter()
+            .map(|message| message.kind.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            message_kinds,
+            vec!["task_assigned", "started", "progress", "final_result"]
+        );
+        assert_eq!(
+            projection.tasks[0].messages[2].content,
+            "Reading session.rs"
         );
     }
 

@@ -1407,6 +1407,41 @@ fn setup_test_workspace(prefix: &str) -> std::path::PathBuf {
     workspace
 }
 
+fn setup_git_test_workspace(prefix: &str) -> std::path::PathBuf {
+    let workspace = setup_test_workspace(prefix);
+    let init = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(&workspace)
+        .output()
+        .expect("git init");
+    assert!(init.status.success(), "git init failed: {init:?}");
+
+    let add = std::process::Command::new("git")
+        .args(["add", "src/main.rs"])
+        .current_dir(&workspace)
+        .output()
+        .expect("git add");
+    assert!(add.status.success(), "git add failed: {add:?}");
+
+    let commit = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=Forge Test",
+            "-c",
+            "user.email=forge-test@example.com",
+            "commit",
+            "-m",
+            "init",
+            "--no-gpg-sign",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .expect("git commit");
+    assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+    workspace
+}
+
 #[tokio::test]
 async fn agent_turn_records_usage_from_streaming_event_sink() {
     let workspace = setup_test_workspace("forge-streaming-turn-metrics");
@@ -1808,6 +1843,127 @@ async fn shared_emitter_resolves_headless_write_permission_during_agent_turn() {
     assert_eq!(
         std::fs::read_to_string(&created_path).expect("created file should exist"),
         "created through shared emitter"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn worktree_worker_delegate_uses_shared_emitter_for_child_tool_confirmations() {
+    let workspace = setup_git_test_workspace("forge-session-worktree-worker-emitter");
+    let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let harness = Arc::new(Harness::new_with_pending(
+        workspace.clone(),
+        pending_confirms.clone(),
+    ));
+
+    let parent_delegates = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": "call-delegate-1",
+            "name": "delegate_task",
+            "input": {
+                "mode": "worktree_worker",
+                "task": "Create subagent_smoke.txt with the text ok, then report the result."
+            }
+        })],
+        tool_calls: vec![ToolCall {
+            id: "call-delegate-1".to_string(),
+            name: "delegate_task".to_string(),
+            input: serde_json::json!({
+                "mode": "worktree_worker",
+                "task": "Create subagent_smoke.txt with the text ok, then report the result."
+            }),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+    let child_writes = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "tool_use",
+            "id": "call-child-shell-1",
+            "name": "run_shell",
+            "input": {
+                "command": "printf 'ok\\n' > subagent_smoke.txt",
+                "timeout": 5
+            }
+        })],
+        tool_calls: vec![ToolCall {
+            id: "call-child-shell-1".to_string(),
+            name: "run_shell".to_string(),
+            input: serde_json::json!({
+                "command": "printf 'ok\\n' > subagent_smoke.txt",
+                "timeout": 5
+            }),
+        }],
+        stop_reason: Some("tool_use".to_string()),
+    };
+    let child_finishes = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "Created subagent_smoke.txt and verified the command completed."
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+    let parent_finishes = StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "Subagent task completed and is ready for review."
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    };
+
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        parent_delegates,
+        child_writes,
+        child_finishes,
+        parent_finishes,
+    ]));
+    let session = AgentSession::new(
+        "session-worktree-worker-emitter".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        harness,
+        "system".to_string(),
+        Some(128_000),
+    );
+    let emitter: Arc<dyn EventEmitter> = Arc::new(AutoApprovePendingEmitter::new(pending_confirms));
+    let turn_guard = session.reserve_turn().expect("reserve turn");
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        session.send_message_with_shared_emitter(
+            "delegate an isolated worker",
+            emitter,
+            vec![],
+            None,
+            None,
+            turn_guard,
+        ),
+    )
+    .await
+    .expect("worktree worker child confirmation should not hang")
+    .expect("agent turn should succeed");
+
+    let snapshot = session.snapshot();
+    let a2a = snapshot.a2a_state.expect("a2a state should be persisted");
+    assert_eq!(a2a.tasks.len(), 1);
+    let task = &a2a.tasks[0];
+    assert_eq!(
+        task.status,
+        crate::agent::a2a::types::AgentTaskStatus::Completed
+    );
+    assert_eq!(
+        task.execution_mode,
+        crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker
+    );
+    assert!(
+        task.artifacts.iter().any(|artifact| artifact.kind
+            == crate::agent::a2a::types::AgentArtifactKind::DiffSummary
+            && artifact.content.contains("subagent_smoke.txt")),
+        "completed worktree task should expose a diff artifact, got: {:?}",
+        task.artifacts
     );
 
     let _ = std::fs::remove_dir_all(workspace);

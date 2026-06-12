@@ -212,14 +212,19 @@ impl WorktreeLease {
             .output()
             .map_err(|e| format!("git diff failed: {e}"))?;
 
-        if !tracked.status.success() {
-            return Err(format!(
-                "git diff failed: {}",
-                String::from_utf8_lossy(&tracked.stderr)
-            ));
-        }
-
-        let mut result = String::from_utf8_lossy(&tracked.stdout).to_string();
+        let mut result = if tracked.status.success() {
+            String::from_utf8_lossy(&tracked.stdout).to_string()
+        } else {
+            let stderr = String::from_utf8_lossy(&tracked.stderr);
+            if stderr.contains("ambiguous argument 'HEAD'")
+                || stderr.contains("bad revision 'HEAD'")
+                || stderr.contains("unknown revision")
+            {
+                String::new()
+            } else {
+                return Err(format!("git diff failed: {stderr}"));
+            }
+        };
 
         // List untracked files.
         let untracked = Command::new("git")
@@ -500,6 +505,41 @@ mod tests {
         // Second cleanup should be a no-op.
         assert!(lease.cleanup().is_ok());
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn worktree_diff_reports_untracked_files_when_repo_has_no_initial_commit() {
+        let tmp = std::env::temp_dir().join(format!(
+            "forge-test-worktree-unborn-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let init = Command::new("git")
+            .args(["init"])
+            .current_dir(&tmp)
+            .output()
+            .expect("git init");
+        assert!(init.status.success(), "git init failed");
+
+        let mut lease = match WorktreeLease::create(&tmp, "unborn-task") {
+            LeaseResult::Ok(l) => l,
+            other => panic!("expected Ok lease, got {:?}", other),
+        };
+
+        std::fs::write(lease.path().join("subagent_smoke.txt"), "ok\n").unwrap();
+
+        let diff = lease.diff().expect("diff should succeed for unborn repo");
+        assert!(
+            diff.contains("subagent_smoke.txt"),
+            "diff should list child-created untracked file, got: {diff}"
+        );
+
+        let _ = lease.cleanup();
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

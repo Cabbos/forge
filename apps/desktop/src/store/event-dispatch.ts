@@ -3,6 +3,7 @@ import { getModelContextWindow } from "../lib/providers";
 import {
   applyCompactResultToBlocks,
   applyShellStartToBlocks,
+  closeInterruptedConfirmBlocks,
   eventToBlock,
   findShellTargetBlockIndex,
   findToolResultTargetBlockIndex,
@@ -170,6 +171,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
     }
 
     if (event_type === "session_stopped") {
+      blocks = closeInterruptedConfirmBlocks(blocks, "session_stopped");
       sessions.set(session_id, {
         ...session,
         status: "stopped",

@@ -17,6 +17,7 @@ pub struct AgentA2ATaskProjection {
     pub execution_mode: String,
     pub status: String,
     pub title: String,
+    pub messages: Vec<AgentA2AMessageProjection>,
     pub latest_message: Option<String>,
     pub failure_message: Option<String>,
     pub updated_at_ms: u64,
@@ -31,4 +32,12 @@ pub struct AgentA2ATaskProjection {
     pub worktree_path: Option<String>,
     pub cleaned_up: Option<bool>,
     pub suggested_action: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentA2AMessageProjection {
+    pub message_id: String,
+    pub kind: String,
+    pub content: String,
+    pub created_at_ms: u64,
 }

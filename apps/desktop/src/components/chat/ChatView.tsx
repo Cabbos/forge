@@ -1,5 +1,5 @@
 import { useActiveBlocks, useStore } from "@/store";
-import { AgentA2ATimeline } from "@/components/messages/AgentA2ATimeline";
+import { AgentA2AInlineSummary } from "@/components/messages/AgentA2ATimeline";
 import { MessageList } from "./MessageList";
 
 export function ChatView() {
@@ -11,7 +11,7 @@ export function ChatView() {
     <div className="flex flex-col flex-1 min-h-0">
       {agentA2A && agentA2A.tasks.length > 0 && (
         <div className="shrink-0 px-3 pt-2">
-          <AgentA2ATimeline state={agentA2A} />
+          <AgentA2AInlineSummary state={agentA2A} />
         </div>
       )}
       <MessageList blocks={blocks} sessionId={sessionId} />
