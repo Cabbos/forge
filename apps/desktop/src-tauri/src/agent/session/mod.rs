@@ -34,7 +34,7 @@ pub(crate) use crate::agent::session::r#loop::{
 };
 #[cfg(test)]
 pub(crate) use crate::agent::session::tools::{
-    canonical_json, tool_batch_signature, tool_category_signature,
+    tool_batch_signature, tool_category_signature,
 };
 use crate::harness::Harness;
 use crate::protocol::events::StreamEvent;
