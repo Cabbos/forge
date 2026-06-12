@@ -201,6 +201,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_agent_turn_executes_read_tool_and_continues() {
+        let workspace = temp_workspace("run-read-tool");
+        std::fs::write(workspace.join("file.txt"), "tool payload").expect("write");
+
+        let adapter = Arc::new(QueuedAdapter::new(vec![
+            Ok(StreamResult {
+                assistant_content: vec![serde_json::json!({
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "read_file",
+                    "input": {"path": "file.txt"}
+                })],
+                tool_calls: vec![crate::adapters::base::ToolCall {
+                    id: "tu_1".to_string(),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({"path": "file.txt"}),
+                }],
+                stop_reason: Some("tool_use".to_string()),
+            }),
+            Ok(no_tool_result("I read the file.")),
+            Ok(no_tool_result("Done.")),
+        ]));
+        let session = make_session(&workspace, adapter);
+        let emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
+            Arc::new(CollectingEventEmitter::new());
+
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        let request = AgentTurnRunRequest {
+            text: "read the file",
+            hidden_contexts: vec![],
+            turn_metadata: None,
+            activation_text: None,
+            _turn_guard: guard,
+            emitter: &*emitter,
+            tool_emitter: Some(emitter.clone()),
+            app_handle: None,
+        };
+
+        session.run_agent_turn(request).await.expect("turn ok");
+
+        let messages = session.messages.lock().clone();
+        // Should contain user prompt, assistant tool_use, tool_result, final assistant.
+        let has_tool_result = messages.iter().any(|m| {
+            m.role == "user"
+                && m.content.as_array().is_some_and(|arr| {
+                    arr.iter()
+                        .any(|b| b.get("type").and_then(|v| v.as_str()) == Some("tool_result"))
+                })
+        });
+        assert!(has_tool_result, "tool_result should be in history");
+
+        let latest = session.latest_turn.lock().clone().expect("turn exists");
+        assert!(
+            matches!(latest.status, AgentTurnStatus::Completed),
+            "expected Completed, got {:?}",
+            latest.status
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
     async fn run_agent_turn_stops_when_session_not_running() {
         let workspace = temp_workspace("not-running");
         let adapter = Arc::new(QueuedAdapter::new(vec![]));
