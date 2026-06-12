@@ -5,6 +5,8 @@ export const queryKeys = {
   projectCheckpointStatus: (sessionId: string | undefined | null, workingDir: string | null | undefined) =>
     ["project-checkpoint-status", sessionId ?? "", workingDir ?? ""] as const,
   capabilities: ["capabilities"] as const,
+  ecosystemItems: ["ecosystem-items"] as const,
+  toolInventory: ["tool-inventory"] as const,
   mcpContextSources: (sessionId: string | undefined | null) =>
     ["mcp-context-sources", sessionId ?? ""] as const,
   continuityExperiences: (
@@ -21,4 +23,9 @@ export const queryKeys = {
     ["forge-wiki-state", projectPath, sessionId ?? ""] as const,
   appMetadata: ["app-metadata"] as const,
   sessions: ["sessions"] as const,
+  diagnosticsReport: ["diagnostics-report"] as const,
+  memoryFactsAll: ["memory-facts"] as const,
+  memoryFacts: (query?: string) => ["memory-facts", query ?? ""] as const,
+  profilesAll: ["profiles"] as const,
+  schedulerAll: ["scheduler"] as const,
 };

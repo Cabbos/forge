@@ -39,6 +39,15 @@ pub fn append_stream_event(event: &StreamEvent) -> Result<(), String> {
 }
 
 pub fn emit_stream_event(app_handle: &tauri::AppHandle, event: StreamEvent) {
+    // Phase 1.2: schedule a debounced snapshot save for significant events
+    // (done before append/emit so the save task captures the latest state).
+    crate::autosave::schedule_autosave(app_handle, &event);
+
+    // Phase 2.4: record the event timestamp for the session watchdog.
+    // Minimal no-throw call — if the tracker isn't initialized or the lock
+    // is poisoned, we silently skip.
+    crate::diagnostics::watchdog::record_session_event(&event);
+
     if let Err(error) = append_stream_event(&event) {
         crate::app_log!("WARN", "[transcript] {}", error);
     }

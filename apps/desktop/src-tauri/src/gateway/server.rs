@@ -1,0 +1,380 @@
+//! Gateway server — Unix-domain-socket listener, request dispatch, and
+//! response serialization.
+
+use crate::gateway::protocol::{
+    serialize_reply, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse,
+    HealthResult, PingResult, GATEWAY_VERSION,
+};
+use crate::gateway::webhook::TriggerStore;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+
+// ── Session info ─────────────────────────────────────────────────────────────
+
+/// Lightweight session record tracked by the gateway.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewaySessionInfo {
+    pub session_id: String,
+    pub provider: String,
+    pub model: String,
+    pub workspace_path: String,
+    pub created_at_ms: u64,
+}
+
+// ── Server state ────────────────────────────────────────────────────────────
+
+/// Shared state accessible to all request handlers.
+#[derive(Debug)]
+pub struct GatewayState {
+    pub started_at: Instant,
+    pub active_sessions: Arc<std::sync::atomic::AtomicUsize>,
+    sessions: Mutex<HashMap<String, GatewaySessionInfo>>,
+    pub trigger_store: Arc<TriggerStore>,
+}
+
+impl GatewayState {
+    pub fn new() -> Self {
+        Self {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(TriggerStore::new()),
+        }
+    }
+
+    pub fn uptime_seconds(&self) -> u64 {
+        self.started_at.elapsed().as_secs()
+    }
+
+    pub fn active_sessions(&self) -> usize {
+        self.active_sessions
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Register a new session (called by desktop app / CLI when a session is created).
+    pub fn register_session(&self, info: GatewaySessionInfo) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.insert(info.session_id.clone(), info);
+        }
+        self.active_sessions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Unregister a session (called when a session ends).
+    pub fn unregister_session(&self, session_id: &str) {
+        if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.remove(session_id);
+        }
+        self.active_sessions
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// List all registered sessions.
+    pub fn list_sessions(&self) -> Vec<GatewaySessionInfo> {
+        self.sessions
+            .lock()
+            .map(|s| s.values().cloned().collect())
+            .unwrap_or_default()
+    }
+}
+
+/// Socket path for the gateway.
+pub fn default_socket_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".forge").join("gateway.sock")
+}
+
+// ── Request dispatch ────────────────────────────────────────────────────────
+
+/// Dispatch a single `GatewayRequest` to the appropriate handler and
+/// return a `GatewayReply`.
+pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    match request.method.as_str() {
+        "ping" => handle_ping(request.id),
+        "health" => handle_health(state, request.id),
+        "list_sessions" => handle_list_sessions(state, request.id),
+        "register_session" => handle_register_session(state, request),
+        "unregister_session" => handle_unregister_session(state, request),
+        "list_pending_triggers" => handle_list_triggers(state, request.id),
+        "drain_pending_triggers" => handle_drain_triggers(state, request.id),
+        _ => GatewayReply::Err(GatewayError {
+            id: request.id,
+            error: GatewayErrorBody {
+                code: -32601,
+                message: format!("unknown method: {}", request.method),
+            },
+        }),
+    }
+}
+
+fn handle_ping(id: String) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(PingResult {
+            ok: true,
+            gateway_version: GATEWAY_VERSION.to_string(),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_health(state: &GatewayState, id: String) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(HealthResult {
+            ok: true,
+            uptime_seconds: state.uptime_seconds(),
+            active_sessions: state.active_sessions(),
+            gateway_version: GATEWAY_VERSION.to_string(),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_list_sessions(state: &GatewayState, id: String) -> GatewayReply {
+    let sessions = state.list_sessions();
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(sessions).unwrap(),
+    })
+}
+
+fn handle_register_session(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    match request.params {
+        Some(params) => match serde_json::from_value::<GatewaySessionInfo>(params) {
+            Ok(info) => {
+                state.register_session(info);
+                GatewayReply::Ok(GatewayResponse {
+                    id: request.id,
+                    result: serde_json::json!({"ok": true}),
+                })
+            }
+            Err(e) => GatewayReply::Err(GatewayError {
+                id: request.id,
+                error: GatewayErrorBody {
+                    code: -32602,
+                    message: format!("invalid params: {e}"),
+                },
+            }),
+        },
+        None => GatewayReply::Err(GatewayError {
+            id: request.id,
+            error: GatewayErrorBody {
+                code: -32602,
+                message: "missing params".to_string(),
+            },
+        }),
+    }
+}
+
+fn handle_list_triggers(state: &GatewayState, id: String) -> GatewayReply {
+    let triggers = state.trigger_store.list();
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(triggers).unwrap(),
+    })
+}
+
+fn handle_drain_triggers(state: &GatewayState, id: String) -> GatewayReply {
+    let triggers = state.trigger_store.drain();
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(triggers).unwrap(),
+    })
+}
+
+fn handle_unregister_session(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    match request.params {
+        Some(params) => {
+            if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
+                state.unregister_session(session_id);
+                GatewayReply::Ok(GatewayResponse {
+                    id: request.id,
+                    result: serde_json::json!({"ok": true}),
+                })
+            } else {
+                GatewayReply::Err(GatewayError {
+                    id: request.id,
+                    error: GatewayErrorBody {
+                        code: -32602,
+                        message: "missing session_id".to_string(),
+                    },
+                })
+            }
+        }
+        None => GatewayReply::Err(GatewayError {
+            id: request.id,
+            error: GatewayErrorBody {
+                code: -32602,
+                message: "missing params".to_string(),
+            },
+        }),
+    }
+}
+
+// ── Connection handling ─────────────────────────────────────────────────────
+
+/// Handle a single client connection: read requests line by line, dispatch,
+/// and write replies.
+pub async fn handle_connection(state: Arc<GatewayState>, stream: UnixStream) {
+    let (reader, mut writer) = stream.into_split();
+    let buf_reader = BufReader::new(reader);
+    let mut lines = buf_reader.lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let reply = match serde_json::from_str::<GatewayRequest>(&line) {
+            Ok(req) => dispatch(&state, req),
+            Err(e) => GatewayReply::Err(GatewayError {
+                id: "".to_string(),
+                error: GatewayErrorBody {
+                    code: -32700,
+                    message: format!("parse error: {e}"),
+                },
+            }),
+        };
+        if let Ok(json) = serialize_reply(&reply) {
+            let _ = writer.write_all(json.as_bytes()).await;
+        }
+    }
+}
+
+/// Start the gateway server on the default socket path.
+/// Returns immediately; call `.await` on the returned future to block.
+pub async fn serve(state: Arc<GatewayState>, socket_path: PathBuf) -> Result<(), String> {
+    // Remove stale socket file if it exists.
+    if socket_path.exists() {
+        std::fs::remove_file(&socket_path).map_err(|e| format!("remove stale socket: {e}"))?;
+    }
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+    }
+
+    let listener = UnixListener::bind(&socket_path).map_err(|e| format!("bind socket: {e}"))?;
+
+    log::info!("Gateway listening on {}", socket_path.display());
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    handle_connection(state, stream).await;
+                });
+            }
+            Err(e) => {
+                log::error!("accept error: {e}");
+            }
+        }
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    // ── dispatch ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn dispatch_ping_returns_ok() {
+        let state = GatewayState::new();
+        let req = GatewayRequest {
+            id: "1".into(),
+            method: "ping".into(),
+            params: None,
+        };
+        let reply = dispatch(&state, req);
+        match reply {
+            GatewayReply::Ok(resp) => {
+                assert_eq!(resp.id, "1");
+                let ping: PingResult =
+                    serde_json::from_value(resp.result).expect("parse ping result");
+                assert!(ping.ok);
+                assert!(!ping.gateway_version.is_empty());
+            }
+            _ => panic!("expected Ok reply, got Err"),
+        }
+    }
+
+    #[test]
+    fn dispatch_health_returns_state() {
+        let state = GatewayState::new();
+        std::thread::sleep(Duration::from_millis(10));
+        let req = GatewayRequest {
+            id: "2".into(),
+            method: "health".into(),
+            params: None,
+        };
+        let reply = dispatch(&state, req);
+        match reply {
+            GatewayReply::Ok(resp) => {
+                assert_eq!(resp.id, "2");
+                let health: HealthResult =
+                    serde_json::from_value(resp.result).expect("parse health result");
+                assert!(health.ok);
+                assert!(health.uptime_seconds == 0 || health.uptime_seconds > 0);
+                assert_eq!(health.active_sessions, 0);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn dispatch_unknown_method_returns_error() {
+        let state = GatewayState::new();
+        let req = GatewayRequest {
+            id: "3".into(),
+            method: "nonexistent".into(),
+            params: None,
+        };
+        let reply = dispatch(&state, req);
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.id, "3");
+                assert_eq!(err.error.code, -32601);
+                assert!(err.error.message.contains("unknown method"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+    }
+
+    // ── GatewayState ────────────────────────────────────────────────────
+
+    #[test]
+    fn gateway_state_starts_with_zero_sessions() {
+        let state = GatewayState::new();
+        assert_eq!(state.active_sessions(), 0);
+    }
+
+    #[test]
+    fn gateway_state_increments_session_count() {
+        let state = GatewayState::new();
+        state
+            .active_sessions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(state.active_sessions(), 1);
+        state
+            .active_sessions
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(state.active_sessions(), 0);
+    }
+
+    // ── default_socket_path ─────────────────────────────────────────────
+
+    #[test]
+    fn default_socket_path_ends_with_gateway_sock() {
+        let path = default_socket_path();
+        assert!(path.ends_with("gateway.sock"));
+        assert!(path.to_string_lossy().contains(".forge"));
+    }
+}

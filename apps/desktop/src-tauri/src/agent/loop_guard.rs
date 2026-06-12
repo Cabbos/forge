@@ -20,6 +20,7 @@ pub(crate) struct LoopGuard {
     no_progress_batches: usize,
     last_tool_batch_signature: Option<String>,
     last_tool_category_signature: Option<String>,
+    auto_continuation_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,9 +41,9 @@ impl LoopGuard {
             max_tool_calls: 200,
             max_compact_attempts: 10,
             max_overflow_retries: 3,
-            max_repeated_tool_batches: 4,
-            max_repeated_category_batches: 5,
-            max_no_progress_batches: 4,
+            max_repeated_tool_batches: 6,
+            max_repeated_category_batches: 8,
+            max_no_progress_batches: 6,
             model_rounds: 0,
             tool_calls: 0,
             compact_attempts: 0,
@@ -52,6 +53,7 @@ impl LoopGuard {
             no_progress_batches: 0,
             last_tool_batch_signature: None,
             last_tool_category_signature: None,
+            auto_continuation_count: 0,
         }
     }
 
@@ -172,6 +174,14 @@ impl LoopGuard {
         self.overflow_retries
     }
 
+    pub(crate) fn auto_continuation_count(&self) -> usize {
+        self.auto_continuation_count
+    }
+
+    pub(crate) fn record_auto_continuation(&mut self) {
+        self.auto_continuation_count += 1;
+    }
+
     pub(crate) fn reset(&mut self) {
         self.model_rounds = 0;
         self.tool_calls = 0;
@@ -182,6 +192,7 @@ impl LoopGuard {
         self.no_progress_batches = 0;
         self.last_tool_batch_signature = None;
         self.last_tool_category_signature = None;
+        self.auto_continuation_count = 0;
     }
 }
 
@@ -339,6 +350,30 @@ mod tests {
             LoopStopReason::RepeatedCategoryBatch.as_str(),
             "repeated_category_batch"
         );
+    }
+
+    #[test]
+    fn auto_continuation_tracks_count() {
+        let mut guard = LoopGuard::default_limits();
+        assert_eq!(guard.auto_continuation_count(), 0);
+
+        guard.record_auto_continuation();
+        assert_eq!(guard.auto_continuation_count(), 1);
+
+        guard.record_auto_continuation();
+        guard.record_auto_continuation();
+        assert_eq!(guard.auto_continuation_count(), 3);
+    }
+
+    #[test]
+    fn auto_continuation_resets_with_reset() {
+        let mut guard = LoopGuard::default_limits();
+        guard.record_auto_continuation();
+        guard.record_auto_continuation();
+        assert_eq!(guard.auto_continuation_count(), 2);
+
+        guard.reset();
+        assert_eq!(guard.auto_continuation_count(), 0);
     }
 
     #[test]

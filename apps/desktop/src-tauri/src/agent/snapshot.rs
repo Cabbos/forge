@@ -6,10 +6,21 @@ use crate::adapters::base::ChatMessage;
 use crate::agent::a2a::bus::AgentA2ABus;
 use crate::agent::goal_state::GoalLedger;
 use crate::agent::turn_state::AgentTurnState;
+use crate::harness::write_boundary::WriteBoundary;
 use crate::protocol::events::DeliverySummary;
 use crate::workflow::WorkflowState;
 
 const MAX_LISTED_SESSION_SNAPSHOTS: usize = 200;
+const CURRENT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+const LEGACY_SNAPSHOT_SCHEMA_VERSION: u32 = 0;
+
+fn current_schema_version() -> u32 {
+    CURRENT_SNAPSHOT_SCHEMA_VERSION
+}
+
+fn legacy_schema_version() -> u32 {
+    LEGACY_SNAPSHOT_SCHEMA_VERSION
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentSessionSnapshot {
@@ -33,6 +44,86 @@ pub struct AgentSessionSnapshot {
     #[serde(default = "now_ms")]
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+    #[serde(default = "legacy_schema_version")]
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_confirms: Vec<PendingConfirmDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_tool_calls: Vec<ActiveToolCallDescriptor>,
+}
+
+/// Serializable descriptor for a pending confirmation that was interrupted
+/// before the user responded. Stored in the snapshot so a resumed session can
+/// replay the confirm prompt in the UI.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingConfirmDescriptor {
+    pub block_id: String,
+    pub question: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundary: Option<WriteBoundary>,
+    pub created_at_ms: u64,
+}
+
+impl PendingConfirmDescriptor {
+    pub fn new(block_id: String, question: String, kind: String, created_at_ms: u64) -> Self {
+        Self {
+            block_id,
+            question,
+            kind,
+            boundary: None,
+            created_at_ms,
+        }
+    }
+
+    pub fn with_boundary(mut self, boundary: WriteBoundary) -> Self {
+        self.boundary = Some(boundary);
+        self
+    }
+}
+
+/// Minimal status for an active tool call captured in a snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActiveToolCallStatus {
+    Started,
+    AwaitingResult,
+    TimedOut,
+    Cancelled,
+}
+
+/// Serializable descriptor for a tool call that was in flight when the snapshot
+/// was taken. Stored so a resumed session can decide whether to re-associate a
+/// late result, time out, or cancel the call.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ActiveToolCallDescriptor {
+    pub block_id: String,
+    pub tool_name: String,
+    pub tool_input: serde_json::Value,
+    pub started_at_ms: u64,
+    pub status: ActiveToolCallStatus,
+}
+
+impl ActiveToolCallDescriptor {
+    pub fn new(
+        block_id: String,
+        tool_name: String,
+        tool_input: serde_json::Value,
+        started_at_ms: u64,
+    ) -> Self {
+        Self {
+            block_id,
+            tool_name,
+            tool_input,
+            started_at_ms,
+            status: ActiveToolCallStatus::Started,
+        }
+    }
+
+    pub fn with_status(mut self, status: ActiveToolCallStatus) -> Self {
+        self.status = status;
+        self
+    }
 }
 
 impl AgentSessionSnapshot {
@@ -61,6 +152,9 @@ impl AgentSessionSnapshot {
             a2a_state: None,
             created_at_ms: timestamp,
             updated_at_ms: timestamp,
+            schema_version: CURRENT_SNAPSHOT_SCHEMA_VERSION,
+            pending_confirms: Vec::new(),
+            active_tool_calls: Vec::new(),
         }
     }
 
@@ -90,6 +184,24 @@ impl AgentSessionSnapshot {
 
     pub fn with_a2a_state(mut self, a2a_state: AgentA2ABus) -> Self {
         self.a2a_state = Some(a2a_state);
+        self.updated_at_ms = now_ms();
+        self
+    }
+
+    pub fn with_pending_confirms(
+        mut self,
+        pending_confirms: Vec<PendingConfirmDescriptor>,
+    ) -> Self {
+        self.pending_confirms = pending_confirms;
+        self.updated_at_ms = now_ms();
+        self
+    }
+
+    pub fn with_active_tool_calls(
+        mut self,
+        active_tool_calls: Vec<ActiveToolCallDescriptor>,
+    ) -> Self {
+        self.active_tool_calls = active_tool_calls;
         self.updated_at_ms = now_ms();
         self
     }
@@ -820,5 +932,587 @@ mod tests {
             serde_json::from_str(&json).expect("deserialize snapshot");
 
         assert_eq!(restored.a2a_state.expect("a2a state").tasks.len(), 1);
+    }
+
+    #[test]
+    fn new_snapshot_serializes_current_schema_version() {
+        let snapshot = snapshot();
+        assert_eq!(snapshot.schema_version, CURRENT_SNAPSHOT_SCHEMA_VERSION);
+
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot json");
+        assert_eq!(
+            value
+                .get("schema_version")
+                .and_then(serde_json::Value::as_u64),
+            Some(u64::from(CURRENT_SNAPSHOT_SCHEMA_VERSION))
+        );
+    }
+
+    #[test]
+    fn old_snapshot_json_without_schema_version_deserializes_to_legacy_version() {
+        let json = r#"{
+            "session_id": "session-1",
+            "provider": "openai",
+            "model": "gpt-5",
+            "working_dir": "/workspace",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "updated_at_ms": 123
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("old snapshot should deserialize");
+
+        assert_eq!(restored.schema_version, LEGACY_SNAPSHOT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn pending_confirm_descriptor_roundtrips_without_boundary() {
+        let descriptor = PendingConfirmDescriptor::new(
+            "confirm-1".to_string(),
+            "Allow write?".to_string(),
+            "file_write".to_string(),
+            42,
+        );
+        let snapshot = snapshot().with_pending_confirms(vec![descriptor]);
+
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(&json).expect("deserialize snapshot");
+
+        assert_eq!(restored.pending_confirms.len(), 1);
+        let restored_descriptor = &restored.pending_confirms[0];
+        assert_eq!(restored_descriptor.block_id, "confirm-1");
+        assert_eq!(restored_descriptor.question, "Allow write?");
+        assert_eq!(restored_descriptor.kind, "file_write");
+        assert_eq!(restored_descriptor.created_at_ms, 42);
+        assert!(restored_descriptor.boundary.is_none());
+    }
+
+    #[test]
+    fn pending_confirm_descriptor_roundtrips_with_boundary() {
+        let boundary = WriteBoundary {
+            title: "准备修改项目".to_string(),
+            target_label: Some("target".to_string()),
+            workspace_name: "workspace".to_string(),
+            workspace_path: "/workspace".to_string(),
+            operation: "写入文件".to_string(),
+            affected_files: vec!["file.txt".to_string()],
+            command: Some("cmd".to_string()),
+            impact: "将修改 1 个文件".to_string(),
+            risk: crate::harness::write_boundary::WriteBoundaryRisk::Caution,
+            recovery: "可恢复".to_string(),
+            checkpoint_status: Some("ready".to_string()),
+            warning: Some("注意".to_string()),
+        };
+        let descriptor = PendingConfirmDescriptor::new(
+            "confirm-2".to_string(),
+            "Allow dangerous command?".to_string(),
+            "dangerous_cmd".to_string(),
+            100,
+        )
+        .with_boundary(boundary.clone());
+        let snapshot = snapshot().with_pending_confirms(vec![descriptor]);
+
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(&json).expect("deserialize snapshot");
+
+        let restored_descriptor = restored.pending_confirms.first().expect("pending confirm");
+        assert_eq!(restored_descriptor.block_id, "confirm-2");
+        assert_eq!(
+            restored_descriptor
+                .boundary
+                .as_ref()
+                .unwrap()
+                .workspace_name,
+            "workspace"
+        );
+        assert_eq!(
+            restored_descriptor.boundary.as_ref().unwrap().risk,
+            crate::harness::write_boundary::WriteBoundaryRisk::Caution
+        );
+    }
+
+    #[test]
+    fn active_tool_call_descriptor_roundtrips() {
+        let tool_input = serde_json::json!({"path": "file.txt", "content": "hello"});
+        let descriptor = ActiveToolCallDescriptor::new(
+            "tool-1".to_string(),
+            "write_to_file".to_string(),
+            tool_input.clone(),
+            200,
+        )
+        .with_status(ActiveToolCallStatus::AwaitingResult);
+        let snapshot = snapshot().with_active_tool_calls(vec![descriptor]);
+
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(&json).expect("deserialize snapshot");
+
+        assert_eq!(restored.active_tool_calls.len(), 1);
+        let restored_descriptor = &restored.active_tool_calls[0];
+        assert_eq!(restored_descriptor.block_id, "tool-1");
+        assert_eq!(restored_descriptor.tool_name, "write_to_file");
+        assert_eq!(restored_descriptor.tool_input, tool_input);
+        assert_eq!(restored_descriptor.started_at_ms, 200);
+        assert_eq!(
+            restored_descriptor.status,
+            ActiveToolCallStatus::AwaitingResult
+        );
+    }
+
+    #[test]
+    fn old_snapshot_json_without_descriptor_fields_defaults_empty() {
+        let json = r#"{
+            "session_id": "session-1",
+            "provider": "openai",
+            "model": "gpt-5",
+            "working_dir": "/workspace",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "updated_at_ms": 123
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("old snapshot should deserialize");
+
+        assert!(restored.pending_confirms.is_empty());
+        assert!(restored.active_tool_calls.is_empty());
+    }
+
+    // ── Phase 1.8: Agent snapshot shape roundtrip ──────────────────────
+
+    /// Helper: build a realistic snapshot that exercises every field including
+    /// multi-role ChatMessage history (user, assistant with tool_use blocks,
+    /// system, tool), workflow, delivery, goal ledger, and A2A state.
+    fn realistic_agent_snapshot() -> AgentSessionSnapshot {
+        let messages = vec![
+            ChatMessage::system("你是一个编程助手"),
+            ChatMessage::user("帮我读取文件"),
+            ChatMessage::assistant(serde_json::json!([
+                {"type": "text", "text": "让我读取文件内容"},
+                {"type": "tool_use", "id": "call-1", "name": "read_file", "input": {"path": "src/main.rs"}}
+            ])),
+            ChatMessage::tool("call-1", "fn main() { println!(\"hello\"); }"),
+            ChatMessage::user("再写一个测试"),
+            ChatMessage::assistant(serde_json::json!([
+                {"type": "text", "text": "好的，我来写测试"},
+                {"type": "tool_use", "id": "call-2", "name": "write_to_file", "input": {"path": "test.rs", "content": "#[test]\nfn it_works() {}"}}
+            ])),
+            ChatMessage::tool("call-2", "File written: test.rs"),
+        ];
+
+        let mut turn = turn_state();
+        turn.mark_status(AgentTurnStatus::Completed);
+
+        let workflow = classify_workflow("session-agent-roundtrip", "实现新功能", 42);
+
+        let delivery = crate::protocol::events::DeliverySummary {
+            project_path: Some("/workspace".to_string()),
+            preview_label: "预览运行中".to_string(),
+            checkpoint_label: "检查点已就绪".to_string(),
+            next_action: "下一步：交付状态可以继续验收。".to_string(),
+            verification_label: Some("检查已通过".to_string()),
+            verification_status: Some("passed".to_string()),
+            verification_command: Some("npm run build".to_string()),
+            record_label: Some("建议更新项目记录".to_string()),
+            record_status: Some("pending".to_string()),
+            record_target_pages: vec!["tasks.md".to_string()],
+        };
+
+        use crate::agent::goal_state::GoalLedger;
+        let ledger = GoalLedger::new_active(
+            "goal-1",
+            "实现新功能",
+            vec!["任务 A".to_string(), "任务 B".to_string()],
+            10,
+        );
+
+        use crate::agent::a2a::bus::AgentA2ABus;
+        use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "调研 A2A",
+            "阅读 A2A 文件",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        AgentSessionSnapshot::new(
+            "session-agent-roundtrip".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash[1m]".to_string(),
+            "/workspace".to_string(),
+            messages,
+            Some("摘要：已完成文件读取和测试编写".to_string()),
+            Some(1_000_000),
+        )
+        .with_latest_turn(turn)
+        .with_latest_workflow(workflow)
+        .with_latest_delivery(delivery)
+        .with_goal_ledger(ledger)
+        .with_a2a_state(bus)
+    }
+
+    #[test]
+    fn realistic_agent_snapshot_survives_save_load_roundtrip() {
+        let snapshot = realistic_agent_snapshot();
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-agent-roundtrip-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        save_session_snapshot_at(&root, &snapshot).expect("save snapshot");
+        let restored =
+            load_session_snapshot_at(&root, "session-agent-roundtrip").expect("load snapshot");
+
+        // ── Identity fields ──
+        assert_eq!(restored.session_id, "session-agent-roundtrip");
+        assert_eq!(restored.provider, "deepseek");
+        assert_eq!(restored.model, "deepseek-v4-flash[1m]");
+        assert_eq!(restored.working_dir, "/workspace");
+        assert_eq!(restored.schema_version, CURRENT_SNAPSHOT_SCHEMA_VERSION);
+
+        // ── Messages preserve roles and content shape ──
+        assert_eq!(restored.messages.len(), 7);
+        assert_eq!(restored.messages[0].role, "system");
+        assert_eq!(restored.messages[1].role, "user");
+        assert_eq!(restored.messages[2].role, "assistant");
+        // assistant message should have structured content blocks
+        let blocks = restored.messages[2]
+            .content
+            .as_array()
+            .expect("structured blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "tool_use");
+        assert_eq!(blocks[1]["id"], "call-1");
+        assert_eq!(blocks[1]["name"], "read_file");
+
+        assert_eq!(restored.messages[3].role, "tool");
+        let tool_content = &restored.messages[3].content;
+        assert_eq!(tool_content["tool_call_id"].as_str(), Some("call-1"));
+        assert!(tool_content["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("hello"));
+
+        assert_eq!(restored.messages[4].role, "user");
+        assert_eq!(restored.messages[5].role, "assistant");
+        assert_eq!(restored.messages[6].role, "tool");
+
+        // ── Summary and context ──
+        assert_eq!(
+            restored.summary.as_deref(),
+            Some("摘要：已完成文件读取和测试编写")
+        );
+        assert_eq!(restored.context_window_tokens, Some(1_000_000));
+
+        // ── Turn state ──
+        let latest_turn = restored.latest_turn.expect("latest turn");
+        assert_eq!(latest_turn.turn_id, "turn-1");
+        assert_eq!(latest_turn.status, AgentTurnStatus::Completed);
+
+        // ── Workflow ──
+        let latest_workflow = restored.latest_workflow.expect("latest workflow");
+        assert_eq!(latest_workflow.session_id, "session-agent-roundtrip");
+        assert!(
+            matches!(
+                latest_workflow.route,
+                WorkflowRoute::Workflow | WorkflowRoute::Direct | WorkflowRoute::Recovery
+            ),
+            "workflow route should be preserved: {:?}",
+            latest_workflow.route
+        );
+
+        // ── Delivery ──
+        let latest_delivery = restored.latest_delivery.expect("latest delivery");
+        assert_eq!(latest_delivery.preview_label, "预览运行中");
+        assert_eq!(latest_delivery.record_target_pages, vec!["tasks.md"]);
+
+        // ── Goal ledger ──
+        let goal = restored
+            .goal_ledger
+            .as_ref()
+            .expect("goal ledger")
+            .current_goal()
+            .expect("current goal");
+        assert_eq!(goal.id, "goal-1");
+        assert_eq!(goal.objective, "实现新功能");
+
+        // ── A2A state ──
+        assert_eq!(restored.a2a_state.expect("a2a state").tasks.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── Phase 1.8: Provider alias snapshot compatibility ───────────────
+
+    #[test]
+    fn snapshot_preserves_raw_provider_without_normalizing_aliases() {
+        // Snapshots store the provider as-written. Normalisation (e.g.
+        // "claude" → "anthropic") is applied during session creation/restore
+        // in session_lifecycle and handlers, NOT by the snapshot layer.
+        let raw_providers = vec!["claude", "anthropic", "gpt", "openai", "deepseek", "custom"];
+
+        for raw_provider in &raw_providers {
+            let mut snapshot = snapshot();
+            snapshot.session_id = format!("provider-{}", sanitize_provider_key(raw_provider));
+            snapshot.provider = raw_provider.to_string();
+
+            let json = serde_json::to_string(&snapshot).expect("serialize");
+            let restored: AgentSessionSnapshot = serde_json::from_str(&json).expect("deserialize");
+
+            assert_eq!(
+                restored.provider, *raw_provider,
+                "snapshot must preserve raw provider '{raw_provider}' without normalisation"
+            );
+        }
+    }
+
+    fn sanitize_provider_key(provider: &str) -> String {
+        provider
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    // ── Phase 1.8: Multi-descriptor pending confirm list ────────────────
+
+    #[test]
+    fn pending_confirm_descriptor_list_preserves_ordering_and_mixed_boundaries() {
+        let boundary = || WriteBoundary {
+            title: "确认写入".to_string(),
+            target_label: Some("target.txt".to_string()),
+            workspace_name: "workspace".to_string(),
+            workspace_path: "/workspace".to_string(),
+            operation: "写入文件".to_string(),
+            affected_files: vec!["target.txt".to_string()],
+            command: None,
+            impact: "将会写入 1 个文件".to_string(),
+            risk: crate::harness::write_boundary::WriteBoundaryRisk::Caution,
+            recovery: "可通过 git 回滚".to_string(),
+            checkpoint_status: Some("ready".to_string()),
+            warning: None,
+        };
+
+        let descriptors = vec![
+            PendingConfirmDescriptor::new(
+                "confirm-1".to_string(),
+                "First question?".to_string(),
+                "file_write".to_string(),
+                10,
+            )
+            .with_boundary(boundary()),
+            PendingConfirmDescriptor::new(
+                "confirm-2".to_string(),
+                "Second question?".to_string(),
+                "dangerous_cmd".to_string(),
+                20,
+            ), // no boundary
+            PendingConfirmDescriptor::new(
+                "confirm-3".to_string(),
+                "Third question?".to_string(),
+                "file_write".to_string(),
+                30,
+            )
+            .with_boundary(boundary()),
+            PendingConfirmDescriptor::new(
+                "confirm-4".to_string(),
+                "Fourth question?".to_string(),
+                "ask_user".to_string(),
+                40,
+            ), // no boundary
+        ];
+
+        let snapshot = snapshot().with_pending_confirms(descriptors);
+
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        let restored: AgentSessionSnapshot = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(
+            restored.pending_confirms.len(),
+            4,
+            "all four confirm descriptors should survive roundtrip"
+        );
+
+        // Verify ordering is preserved
+        let ids: Vec<&str> = restored
+            .pending_confirms
+            .iter()
+            .map(|d| d.block_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["confirm-1", "confirm-2", "confirm-3", "confirm-4"]
+        );
+
+        // Verify boundary presence / absence
+        assert!(restored.pending_confirms[0].boundary.is_some());
+        assert!(restored.pending_confirms[1].boundary.is_none());
+        assert!(restored.pending_confirms[2].boundary.is_some());
+        assert!(restored.pending_confirms[3].boundary.is_none());
+
+        // Verify boundary content for a bounded descriptor
+        let b0 = restored.pending_confirms[0].boundary.as_ref().unwrap();
+        assert_eq!(b0.workspace_name, "workspace");
+        assert_eq!(
+            b0.risk,
+            crate::harness::write_boundary::WriteBoundaryRisk::Caution
+        );
+
+        // Verify the unbounded descriptor still has correct fields
+        let d1 = &restored.pending_confirms[1];
+        assert_eq!(d1.question, "Second question?");
+        assert_eq!(d1.kind, "dangerous_cmd");
+        assert_eq!(d1.created_at_ms, 20);
+    }
+
+    // ── Phase 1.8: Corruption rejection ─────────────────────────────────
+
+    #[test]
+    fn load_session_snapshot_at_rejects_corrupted_json() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-corrupted-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        // Truncated JSON
+        fs::write(
+            sessions_dir.join("broken.json"),
+            "{ \"session_id\": \"broken\", \"prov",
+        )
+        .expect("write truncated json");
+
+        let err =
+            load_session_snapshot_at(&root, "broken").expect_err("corrupted JSON should fail");
+        assert!(
+            err.contains("corrupted"),
+            "error should mention corruption: {err}"
+        );
+
+        // Malformed JSON with extra trailing garbage
+        fs::write(
+            sessions_dir.join("garbage.json"),
+            r#"{"session_id":"garbage","provider":"x"}}}"#,
+        )
+        .expect("write garbage json");
+
+        let err2 =
+            load_session_snapshot_at(&root, "garbage").expect_err("garbage JSON should fail");
+        assert!(
+            err2.contains("corrupted"),
+            "error should mention corruption: {err2}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── Phase 1.8: Unsafe session ID rejection pre-filesystem ───────────
+
+    #[test]
+    fn load_session_snapshot_at_rejects_unsafe_session_id_before_filesystem_access() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-unsafe-id-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        // Don't create sessions dir — rejection should happen before any
+        // filesystem traversal.
+        let err = load_session_snapshot_at(&root, "../etc-passwd")
+            .expect_err("unsafe session id should be rejected");
+        assert!(
+            err.contains("session id") || err.contains("Invalid"),
+            "error should mention invalid session id: {err}"
+        );
+
+        let err2 =
+            load_session_snapshot_at(&root, "").expect_err("empty session id should be rejected");
+        assert!(
+            err2.contains("session id") || err2.contains("Invalid"),
+            "error should mention invalid session id: {err2}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── Phase 1.8: Future/unknown schema version behavior ───────────────
+
+    #[test]
+    fn snapshot_with_future_schema_version_is_accepted_and_preserves_version() {
+        // Current implementation accepts future schema versions without
+        // rejection — it is the caller's responsibility (startup restore,
+        // list) to decide whether to skip or fall back. This test documents
+        // that behaviour so future maintainers know the contract.
+        let json = r#"{
+            "session_id": "session-future",
+            "provider": "deepseek",
+            "model": "deepseek-future",
+            "working_dir": "/workspace",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "schema_version": 999,
+            "updated_at_ms": 123
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("future schema should deserialize");
+
+        assert_eq!(restored.schema_version, 999);
+        assert_eq!(restored.session_id, "session-future");
+    }
+
+    // ── Phase 1.8: Legacy schema without all optional fields ────────────
+
+    #[test]
+    fn legacy_schema_without_any_optional_fields_deserializes_with_defaults() {
+        let json = r#"{
+            "session_id": "legacy-1",
+            "provider": "openai",
+            "model": "gpt-4",
+            "working_dir": "/tmp",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "updated_at_ms": 100
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("legacy snapshot should deserialize");
+
+        assert_eq!(restored.schema_version, LEGACY_SNAPSHOT_SCHEMA_VERSION);
+        assert!(restored.latest_turn.is_none());
+        assert!(restored.latest_workflow.is_none());
+        assert!(restored.latest_delivery.is_none());
+        assert!(restored.goal_ledger.is_none());
+        assert!(restored.a2a_state.is_none());
+        assert!(restored.pending_confirms.is_empty());
+        assert!(restored.active_tool_calls.is_empty());
+        assert!(restored.created_at_ms > 0); // defaulted to now
     }
 }

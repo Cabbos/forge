@@ -1,5 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = join(SCRIPT_DIR, "..");
 
 const BLOCKED_PREFIXES = [
   "test-results/",
@@ -136,7 +140,7 @@ function readStagedFiles() {
 }
 
 function runCommand(command) {
-  execFileSync(command.command, command.args, { stdio: "inherit" });
+  execFileSync(command.command, command.args, { stdio: "inherit", cwd: PROJECT_ROOT });
 }
 
 function runCli() {

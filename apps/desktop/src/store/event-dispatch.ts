@@ -1,4 +1,4 @@
-import type { StreamEvent } from "../lib/protocol";
+import type { SessionState, StreamEvent } from "../lib/protocol";
 import { getModelContextWindow } from "../lib/providers";
 import {
   applyCompactResultToBlocks,
@@ -7,6 +7,7 @@ import {
   eventToBlock,
   findShellTargetBlockIndex,
   findToolResultTargetBlockIndex,
+  interruptedToolResultMetadata,
   isSameAsLastDeliveryBlock,
 } from "./blocks";
 import {
@@ -19,6 +20,8 @@ import {
   touchSession,
 } from "./session-utils";
 import type { AppStore } from "./types";
+import { upsertRecoveryNotice } from "./recovery-notices";
+import { upsertHealthAlert } from "./health-alerts";
 
 type StoreSet = (partial: Partial<AppStore>) => void;
 type StoreGet = () => AppStore;
@@ -39,6 +42,41 @@ const END_TYPES = [
 export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
   return (event: StreamEvent) => {
     const { session_id, event_type } = event;
+
+    // Phase 1.7: recovery notice — handled before session lookup so it works
+    // even when no session is active (e.g. at startup before restore completes).
+    if (event_type === "recovery_notice") {
+      const notice = event as Extract<StreamEvent, { event_type: "recovery_notice" }>;
+      set({
+        recoveryNotices: upsertRecoveryNotice(get().recoveryNotices, notice),
+      });
+      return;
+    }
+
+    // Phase 2: diagnostics_update — no-op for now; future UI panels
+    // will consume these to surface runtime health in a diagnostics panel.
+    // We return early to avoid falling through to block creation.
+    if (event_type === "diagnostics_update") {
+      return;
+    }
+
+    // Phase 2: health_alert — handled globally before session lookup so
+    // watchdog alerts surface even without an active session. Deduped by alert_id.
+    if (event_type === "health_alert") {
+      const ha = event as Extract<StreamEvent, { event_type: "health_alert" }>;
+      const alert: import("./types").RuntimeHealthAlert = {
+        alert_id: ha.alert_id,
+        session_id: ha.session_id,
+        level: ha.level as "info" | "warn" | "critical",
+        title: ha.title,
+        message: ha.message,
+        remediation: ha.remediation ?? null,
+      };
+      set({
+        healthAlerts: upsertHealthAlert(get().healthAlerts, alert),
+      });
+      return;
+    }
 
     if (event_type === "workflow_updated") {
       get().setWorkflowState(session_id, event.state);
@@ -207,7 +245,14 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
 
     if (event_type === "session_status") {
       const statusEvent = event as Extract<StreamEvent, { event_type: "session_status" }>;
-      const status = statusEvent.status === "error" ? "error" : "running";
+      let status: SessionState["status"];
+      if (statusEvent.status === "error") {
+        status = "error";
+      } else if (statusEvent.status === "resuming") {
+        status = "resuming";
+      } else {
+        status = "running";
+      }
       sessions.set(session_id, {
         ...session,
         status,
@@ -299,6 +344,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
             ...blocks[existingIdx].metadata,
             is_error: resultEvent.is_error,
             duration_ms: resultEvent.duration_ms,
+            ...interruptedToolResultMetadata(resultEvent.result, resultEvent.is_error),
           },
         };
       } else {
@@ -311,12 +357,39 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
             is_error: resultEvent.is_error,
             duration_ms: resultEvent.duration_ms,
             tool_name: "Tool",
+            ...interruptedToolResultMetadata(resultEvent.result, resultEvent.is_error),
           },
         });
       }
       sessions.set(session_id, touchSession(session, { blocks }));
       set({ sessions });
       persistBlocksNow(session_id, blocks);
+      return;
+    }
+
+    // Phase 1.6: dedupe tool_call_start in live dispatch — if a block with
+    // the same block_id already exists (e.g. from transcript load), update
+    // its tool_name/tool_input metadata instead of appending a duplicate.
+    if (event_type === "tool_call_start") {
+      const tsEvent = event as Extract<StreamEvent, { event_type: "tool_call_start" }>;
+      const existingIdx = blocks.findIndex((block) => block.block_id === tsEvent.block_id);
+      if (existingIdx >= 0) {
+        blocks[existingIdx] = {
+          ...blocks[existingIdx],
+          event_type: "tool_call",
+          metadata: {
+            ...blocks[existingIdx].metadata,
+            tool_name: tsEvent.tool_name,
+            tool_input: tsEvent.tool_input,
+          },
+        };
+      } else {
+        const newBlock = eventToBlock(event);
+        if (newBlock) blocks.push(newBlock);
+      }
+      sessions.set(session_id, touchSession(session, { blocks }));
+      set({ sessions });
+      persistBlocks(session_id, blocks);
       return;
     }
 
@@ -370,6 +443,24 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       sessions.set(session_id, touchSession(session, { blocks }));
       set({ sessions });
       persistBlocksNow(session_id, blocks);
+      return;
+    }
+
+    // Phase 1.5: dedupe replayed confirm_ask — if a replayed confirm_ask
+    // arrives with a block_id already present, replace instead of appending.
+    if (event_type === "confirm_ask" && (event as { replayed_interrupted?: boolean }).replayed_interrupted) {
+      const newBlock = eventToBlock(event);
+      if (newBlock) {
+        const existingIdx = blocks.findIndex((block) => block.block_id === newBlock.block_id);
+        if (existingIdx >= 0) {
+          blocks[existingIdx] = newBlock;
+        } else {
+          blocks.push(newBlock);
+        }
+        sessions.set(session_id, touchSession(session, { blocks }));
+        set({ sessions });
+        persistBlocks(session_id, blocks);
+      }
       return;
     }
 

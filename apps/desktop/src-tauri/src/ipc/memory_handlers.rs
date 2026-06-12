@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::ipc::workspace::resolve_bound_working_dir;
+use crate::memory::facts::{MemoryFact, UpsertMemoryFactInput, UpsertMemoryFactOutput};
 use crate::memory::{
     MemoryListFilter, MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory,
 };
@@ -135,6 +136,32 @@ fn emit_memory_updated(
             },
         );
     }
+}
+
+// ── Memory Facts IPC (Phase 5-A) ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn list_memory_facts(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: Option<String>,
+) -> Result<Vec<MemoryFact>, String> {
+    Ok(state.memory_facts.list(query.as_deref()))
+}
+
+#[tauri::command]
+pub async fn upsert_memory_fact(
+    state: tauri::State<'_, Arc<AppState>>,
+    input: UpsertMemoryFactInput,
+) -> Result<UpsertMemoryFactOutput, String> {
+    state.memory_facts.upsert(input)
+}
+
+#[tauri::command]
+pub async fn delete_memory_fact(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<bool, String> {
+    state.memory_facts.delete(&id)
 }
 
 #[cfg(test)]

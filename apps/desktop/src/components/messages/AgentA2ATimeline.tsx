@@ -7,11 +7,13 @@ import {
   GitBranch,
   PanelRightOpen,
   PauseCircle,
+  RefreshCw,
   ShieldAlert,
   TestTube,
   XCircle,
 } from "lucide-react";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
+import { deriveWorkbenchSummary, normalizeA2ATaskProjection } from "@/lib/workbenchSummary";
 
 function iconFor(status: string) {
   if (status === "completed") return CheckCircle2;
@@ -36,6 +38,30 @@ function statusLabel(status: string) {
   return status;
 }
 
+function failureKindLabel(kind: string): string {
+  switch (kind) {
+    case "tool_error": return "工具错误";
+    case "smoke_failure": return "冒烟测试失败";
+    case "review_rejection": return "审阅拒绝";
+    case "arbitration_timeout": return "仲裁超时";
+    case "user_cancelled": return "用户取消";
+    default: return kind;
+  }
+}
+
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return "";
+  if (ms <= 0) return "<1s";
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${secs}s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
+}
+
 function messageKindLabel(kind: string) {
   if (kind === "task_assigned") return "已分派";
   if (kind === "started") return "已启动";
@@ -48,7 +74,8 @@ function messageKindLabel(kind: string) {
   return "记录";
 }
 
-function WorktreeReviewPanel({ task }: { task: AgentA2ATaskProjection }) {
+function WorktreeReviewPanel({ task: rawTask }: { task: AgentA2ATaskProjection }) {
+  const task = normalizeA2ATaskProjection(rawTask);
   const isReviewRequired = task.needs_human_review === true;
 
   return (
@@ -100,6 +127,32 @@ function WorktreeReviewPanel({ task }: { task: AgentA2ATaskProjection }) {
         </div>
       )}
 
+      {task.changed_files.length > 0 && (
+        <div className="forge-a2a-worktree-files">
+          <span className="forge-a2a-worktree-label">
+            <FileCode className="size-3" />
+            Diff 变更文件
+            {task.changed_file_count != null && task.changed_file_count > task.changed_files.length && (
+              <span className="forge-a2a-worktree-files-total">({task.changed_file_count} 总计)</span>
+            )}
+          </span>
+          <div className="forge-a2a-worktree-file-chips">
+            {task.changed_files.map((file) => (
+              <span key={file} className="forge-a2a-worktree-file-chip" title={file}>
+                {file}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {task.test_report_excerpt && (
+        <div className="forge-a2a-worktree-test-excerpt">
+          <TestTube className="size-3" />
+          <span>{task.test_report_excerpt}</span>
+        </div>
+      )}
+
       {task.suggested_action && (
         <div className="forge-a2a-worktree-action">
           <span className="forge-a2a-worktree-label">建议:</span>
@@ -129,19 +182,28 @@ function TaskProcess({ task }: { task: AgentA2ATaskProjection }) {
 }
 
 function TaskRow({
-  task,
+  task: rawTask,
   mode = "compact",
 }: {
   task: AgentA2ATaskProjection;
   mode?: "compact" | "panel";
 }) {
+  const task = normalizeA2ATaskProjection(rawTask);
   const Icon = iconFor(task.status);
   const isWorktree = task.execution_mode === "worktree_worker";
   const hasMeta =
     isWorktree &&
     (task.needs_human_review !== null ||
       task.reason_codes.length > 0 ||
-      task.tests_passed !== null);
+      task.tests_passed !== null ||
+      task.diff_available !== null ||
+      task.changed_files.length > 0 ||
+      task.test_report_excerpt !== null);
+  const duration = formatDuration(task.duration_ms);
+  const runningElapsed = task.status === "running" && task.started_at_ms != null
+    ? formatDuration(Date.now() - task.started_at_ms)
+    : null;
+  const hasRetryable = task.retryable === true && task.status === "failed";
 
   return (
     <div className="forge-a2a-task-row-wrapper" data-mode={mode}>
@@ -150,6 +212,11 @@ function TaskRow({
         <span className="forge-a2a-task-title">{task.title}</span>
         <span className="forge-a2a-task-role">{task.role}</span>
         <span className="forge-a2a-task-status">{statusLabel(task.status)}</span>
+        {task.parent_task_id && (
+          <span className="forge-a2a-task-lineage" title={`Parent: ${task.parent_task_id}`}>
+            <GitBranch className="size-3" />
+          </span>
+        )}
         {task.artifact_count > 0 && (
           <span
             className="forge-a2a-task-artifact"
@@ -159,13 +226,42 @@ function TaskRow({
             {task.artifact_count}
           </span>
         )}
+        {duration && task.status !== "running" && (
+          <span className="forge-a2a-task-duration">{duration}</span>
+        )}
+        {runningElapsed && (
+          <span className="forge-a2a-task-duration forge-a2a-task-duration--running">
+            {runningElapsed}
+          </span>
+        )}
+        {task.latest_progress && task.status === "running" && (
+          <span className="forge-a2a-task-progress">{task.latest_progress}</span>
+        )}
         {task.latest_message && (
           <span className="forge-a2a-task-message">{task.latest_message}</span>
         )}
         {task.failure_message && (
-          <span className="forge-a2a-task-failure">{task.failure_message}</span>
+          <span className="forge-a2a-task-failure">
+            {task.failure_kind && (
+              <span className="forge-a2a-task-failure-kind">
+                {failureKindLabel(task.failure_kind)}
+              </span>
+            )}
+            {task.failure_message}
+            {hasRetryable && (
+              <span className="forge-a2a-task-retryable" title="可重试">
+                <RefreshCw className="size-3" />
+              </span>
+            )}
+          </span>
         )}
       </div>
+      {task.resume_note && (
+        <div className="forge-a2a-task-resume-note" title={task.resume_note}>
+          <PauseCircle className="size-3" />
+          <span>{task.resume_note}</span>
+        </div>
+      )}
       {mode === "panel" && <TaskProcess task={task} />}
       {hasMeta && <WorktreeReviewPanel task={task} />}
     </div>
@@ -214,6 +310,8 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
     );
   }
 
+  const summary = deriveWorkbenchSummary(state);
+
   return (
     <section className="forge-a2a-workspace" aria-label="子任务">
       <div className="forge-a2a-workspace-header">
@@ -224,8 +322,11 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
         <div className="forge-a2a-workspace-stats" aria-label="子任务统计">
           <span data-tone={state.running_count > 0 ? "running" : "idle"}>{state.running_count} 运行</span>
           <span>{state.completed_count} 完成</span>
-          {state.failed_count > 0 && <span data-tone="failed">{state.failed_count} 失败</span>}
-          {state.interrupted_count > 0 && <span data-tone="interrupted">{state.interrupted_count} 中断</span>}
+          {summary.failed > 0 && <span data-tone="failed">{summary.failed} 失败</span>}
+          {summary.interrupted > 0 && <span data-tone="interrupted">{summary.interrupted} 中断</span>}
+          {summary.reviewNeeded > 0 && <span data-tone="review">{summary.reviewNeeded} 待审阅</span>}
+          {summary.retainedWorktrees > 0 && <span data-tone="retained">{summary.retainedWorktrees} 保留工作树</span>}
+          {summary.tasksWithDiff > 0 && <span data-tone="diff">{summary.tasksWithDiff} 有变更</span>}
         </div>
       </div>
 

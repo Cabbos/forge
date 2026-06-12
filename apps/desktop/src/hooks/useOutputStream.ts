@@ -5,13 +5,16 @@ import type { StreamEvent } from "../lib/protocol";
 
 export function useOutputStream(sessionId: string | null) {
   useEffect(() => {
-    if (!sessionId) return;
-
     let unlisten: UnlistenFn | null = null;
     let disposed = false;
 
     const setup = async () => {
       const cleanup = await listen<StreamEvent>("session-output", (event) => {
+        if (event.payload.event_type === "recovery_notice") {
+          useStore.getState().dispatchOutputEvent(event.payload);
+          return;
+        }
+        if (!sessionId) return;
         if (event.payload.session_id !== sessionId) return;
         useStore.getState().dispatchOutputEvent(event.payload);
       });

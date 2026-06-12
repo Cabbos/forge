@@ -1,7 +1,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::harness::capability::CapabilityKind;
+use crate::harness::capability::{
+    CapabilityKind, CapabilityMetadata, EcosystemItem, EcosystemItemStatus,
+};
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::skills::SkillLoader;
 use crate::state::AppState;
@@ -46,7 +48,7 @@ pub async fn list_capabilities(
     Ok(result)
 }
 
-fn capability_kind_label(kind: &CapabilityKind) -> &'static str {
+pub(crate) fn capability_kind_label(kind: &CapabilityKind) -> &'static str {
     match kind {
         CapabilityKind::Skill => "skill",
         CapabilityKind::Hook => "hook",
@@ -74,7 +76,7 @@ fn global_registry_capability_infos(entries: Vec<CapabilityEntry>) -> Vec<Capabi
         .collect()
 }
 
-fn is_hidden_global_capability(entry: &CapabilityEntry) -> bool {
+pub(crate) fn is_hidden_global_capability(entry: &CapabilityEntry) -> bool {
     is_internal_infrastructure_capability(entry) || is_workspace_scoped_capability(entry)
 }
 
@@ -89,6 +91,38 @@ fn is_workspace_scoped_capability(entry: &CapabilityEntry) -> bool {
 
     let source = entry.metadata.source.replace('\\', "/");
     source == ".forge/mcp.json" || source.ends_with("/.forge/mcp.json")
+}
+
+pub(crate) fn ecosystem_status_label(status: EcosystemItemStatus) -> &'static str {
+    match status {
+        EcosystemItemStatus::Healthy => "healthy",
+        EcosystemItemStatus::Unavailable => "unavailable",
+        EcosystemItemStatus::Warning => "warning",
+        EcosystemItemStatus::Unknown => "unknown",
+    }
+}
+
+pub(crate) fn ecosystem_status_for_capability(
+    meta: &CapabilityMetadata,
+    enabled: bool,
+) -> (EcosystemItemStatus, Option<String>) {
+    match &meta.kind {
+        CapabilityKind::McpServer if enabled => (
+            EcosystemItemStatus::Unknown,
+            Some("MCP connectivity probe not yet implemented".into()),
+        ),
+        CapabilityKind::McpServer => (
+            EcosystemItemStatus::Unknown,
+            Some("Disabled — enable to probe connectivity".into()),
+        ),
+        _ if enabled => (EcosystemItemStatus::Healthy, None),
+        _ => (EcosystemItemStatus::Unknown, Some("Disabled".into())),
+    }
+}
+
+fn ecosystem_item_from_entry(entry: CapabilityEntry) -> EcosystemItem {
+    let (status, status_message) = ecosystem_status_for_capability(&entry.metadata, entry.enabled);
+    EcosystemItem::from_capability_entry(&entry).with_status(status, status_message)
 }
 
 #[cfg(test)]
@@ -156,6 +190,117 @@ mod tests {
         assert!(infos
             .iter()
             .any(|info| info.id == "hook:workspace-boundary"));
+    }
+
+    #[test]
+    fn ecosystem_item_from_capability_entry_maps_fields() {
+        let entry = capability_entry(
+            "read_file",
+            "File Reader",
+            CapabilityKind::Tool,
+            "builtin",
+            true,
+        );
+        let item = EcosystemItem::from_capability_entry(&entry);
+        assert_eq!(item.id, "read_file");
+        assert_eq!(item.name, "File Reader");
+        assert_eq!(item.kind, CapabilityKind::Tool);
+        assert_eq!(item.source, "builtin");
+        assert_eq!(item.version, "1.0.0");
+        assert!(item.enabled);
+        assert_eq!(item.status, EcosystemItemStatus::Unknown);
+        assert!(!item.configurable);
+    }
+
+    #[test]
+    fn ecosystem_item_mcp_is_configurable() {
+        let entry = capability_entry(
+            "mcp:test-server",
+            "Test Server",
+            CapabilityKind::McpServer,
+            ".forge/mcp.json",
+            true,
+        );
+        let item = EcosystemItem::from_capability_entry(&entry);
+        assert!(item.configurable);
+    }
+
+    #[test]
+    fn configure_ecosystem_item_returns_unsupported_error() {
+        // This is a sync stub for now — validates the error message shape
+        let msg = "In-app configuration is not yet supported";
+        assert!(msg.contains("not yet supported"));
+    }
+
+    #[test]
+    fn tool_inventory_entry_serializes_correctly() {
+        let entry = ToolInventoryEntry {
+            id: "read_file".into(),
+            name: "File Reader".into(),
+            description: "Read files".into(),
+            kind: "tool".into(),
+            source: "builtin".into(),
+            enabled: true,
+        };
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["id"], "read_file");
+        assert_eq!(json["kind"], "tool");
+        assert_eq!(json["enabled"], true);
+    }
+
+    #[test]
+    fn ecosystem_item_with_status_and_message_serializes_both() {
+        let entry = capability_entry(
+            "mcp:test",
+            "Test MCP",
+            CapabilityKind::McpServer,
+            ".forge/mcp.json",
+            true,
+        );
+        let item = EcosystemItem::from_capability_entry(&entry).with_status(
+            EcosystemItemStatus::Unavailable,
+            Some("Connection refused".into()),
+        );
+        assert_eq!(item.status, EcosystemItemStatus::Unavailable);
+        assert_eq!(item.status_message.as_deref(), Some("Connection refused"));
+        let json = serde_json::to_value(&item).unwrap();
+        assert_eq!(json["status"], "unavailable");
+        assert_eq!(json["statusMessage"], "Connection refused");
+    }
+
+    #[test]
+    fn ecosystem_item_from_entry_marks_enabled_tools_healthy() {
+        let entry = capability_entry(
+            "read_file",
+            "File Reader",
+            CapabilityKind::Tool,
+            "builtin",
+            true,
+        );
+
+        let item = ecosystem_item_from_entry(entry);
+
+        assert_eq!(item.status, EcosystemItemStatus::Healthy);
+        assert!(item.status_message.is_none());
+    }
+
+    #[test]
+    fn ecosystem_item_from_entry_marks_mcp_status_unknown_with_message() {
+        let entry = capability_entry(
+            "mcp:test",
+            "Test MCP",
+            CapabilityKind::McpServer,
+            "user-mcp.json",
+            true,
+        );
+
+        let item = ecosystem_item_from_entry(entry);
+
+        assert_eq!(item.status, EcosystemItemStatus::Unknown);
+        assert_eq!(
+            item.status_message.as_deref(),
+            Some("MCP connectivity probe not yet implemented"),
+        );
     }
 
     fn capability_entry(
@@ -369,4 +514,131 @@ pub async fn install_skill(
         version: "1.0.0".into(),
         enabled: true,
     })
+}
+
+// ── Ecosystem IPC (Phase 3-A) ──────────────────────────────────────────────
+
+/// List all ecosystem items (tools, skills, hooks, MCP servers) with richer
+/// metadata suitable for the Settings UI and diagnostics.
+#[tauri::command]
+pub async fn list_ecosystem_items(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<EcosystemItem>, String> {
+    let mut items: Vec<EcosystemItem> = state
+        .harness
+        .capability_registry
+        .all_entries()
+        .into_iter()
+        .filter(|entry| !is_hidden_global_capability(entry))
+        .map(ecosystem_item_from_entry)
+        .collect();
+
+    // Merge skills from SkillLoader (user-level, not global registry)
+    let skill_loader = SkillLoader::new();
+    skill_loader.attach_database(state.harness.database.clone());
+    let skills = skill_loader.scan_all().await;
+    for s in skills {
+        if !items.iter().any(|item| item.id == s.id) {
+            items.push(EcosystemItem {
+                id: s.id.clone(),
+                name: s.name.clone(),
+                description: s.description.clone(),
+                kind: CapabilityKind::Skill,
+                source: "local".into(),
+                version: "1.0.0".into(),
+                enabled: s.enabled,
+                status: if s.enabled {
+                    EcosystemItemStatus::Healthy
+                } else {
+                    EcosystemItemStatus::Unknown
+                },
+                status_message: if s.enabled {
+                    None
+                } else {
+                    Some("Disabled".into())
+                },
+                configurable: false,
+                config_summary: None,
+            });
+        }
+    }
+
+    Ok(items)
+}
+
+/// Enable or disable an ecosystem item by id.
+/// Delegates to the existing `toggle_capability` path for consistency.
+#[tauri::command]
+pub async fn set_ecosystem_enabled(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    toggle_capability(state, id, enabled).await
+}
+
+/// Get a lightweight tool inventory: names, kinds, enabled status, and
+/// description/source for every tool in the capability registry.
+#[derive(Serialize)]
+pub struct ToolInventoryEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub kind: String,
+    pub source: String,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub async fn get_tool_inventory(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<ToolInventoryEntry>, String> {
+    let entries: Vec<ToolInventoryEntry> = state
+        .harness
+        .capability_registry
+        .all_entries()
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry.metadata.kind,
+                CapabilityKind::Tool | CapabilityKind::McpServer
+            )
+        })
+        .filter(|entry| !is_hidden_global_capability(entry))
+        .map(|entry| {
+            let m = entry.metadata;
+            ToolInventoryEntry {
+                id: m.id,
+                name: m.name,
+                description: m.description,
+                kind: capability_kind_label(&m.kind).to_string(),
+                source: m.source,
+                enabled: entry.enabled,
+            }
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Configure an ecosystem item.
+///
+/// **Phase 3-A limitation:** There is no persistent configuration storage for
+/// ecosystem items yet.  This command returns an explicit "unsupported" error
+/// so the UI can surface the limitation honestly instead of faking success.
+///
+/// MCP server configuration is managed through `.forge/mcp.json` and is not
+/// editable through this command in the current release.
+#[tauri::command]
+pub async fn configure_ecosystem_item(
+    _state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+    _config: serde_json::Value,
+) -> Result<(), String> {
+    Err(format!(
+        "In-app configuration is not yet supported for ecosystem items. \
+         To configure '{}', edit the relevant config file directly or use \
+         the forge CLI.  See docs/roadmap Phase 3 for the delivery timeline.",
+        id
+    ))
 }

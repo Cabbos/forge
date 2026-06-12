@@ -10,9 +10,7 @@ pub(crate) fn set_goal_ledger(session: &AgentSession, ledger: GoalLedger) {
     *lock_unpoisoned(&session.goal_ledger) = Some(ledger);
 }
 
-pub(crate) fn current_goal(
-    session: &AgentSession,
-) -> Option<crate::agent::goal_state::GoalState> {
+pub(crate) fn current_goal(session: &AgentSession) -> Option<crate::agent::goal_state::GoalState> {
     lock_unpoisoned(&session.goal_ledger)
         .as_ref()
         .and_then(|ledger| ledger.current_goal().cloned())
@@ -189,11 +187,9 @@ pub(crate) fn record_latest_delivery_summary(
     if let Some(turn) = lock_unpoisoned(&session.latest_turn).as_mut() {
         turn.record_delivery_summary(summary);
     }
-    session.emit_with_emitter(
-        &crate::agent::event_sink::TauriEventEmitter::new(
-            app_handle.clone(),
-        ),
-    );
+    session.emit_with_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+        app_handle.clone(),
+    ));
 }
 
 pub(crate) fn record_latest_preview_status(
@@ -211,11 +207,9 @@ pub(crate) fn record_latest_preview_status(
             update.url,
         );
     }
-    session.emit_with_emitter(
-        &crate::agent::event_sink::TauriEventEmitter::new(
-            app_handle.clone(),
-        ),
-    );
+    session.emit_with_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+        app_handle.clone(),
+    ));
 }
 
 pub(crate) fn record_latest_checkpoint_status(
@@ -229,11 +223,9 @@ pub(crate) fn record_latest_checkpoint_status(
     if let Some(turn) = lock_unpoisoned(&session.latest_turn).as_mut() {
         turn.record_checkpoint_status(is_git_repo, dirty, has_checkpoint, label);
     }
-    session.emit_with_emitter(
-        &crate::agent::event_sink::TauriEventEmitter::new(
-            app_handle.clone(),
-        ),
-    );
+    session.emit_with_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+        app_handle.clone(),
+    ));
 }
 
 pub(crate) async fn verify_latest_turn(
@@ -241,11 +233,9 @@ pub(crate) async fn verify_latest_turn(
     app_handle: &tauri::AppHandle,
 ) -> Option<crate::agent::turn_state::AgentVerificationTrace> {
     session
-        .verify_latest_turn_emitter(
-            &crate::agent::event_sink::TauriEventEmitter::new(
-                app_handle.clone(),
-            ),
-        )
+        .verify_latest_turn_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+            app_handle.clone(),
+        ))
         .await
 }
 
@@ -276,9 +266,7 @@ pub(crate) fn record_latest_context(
 }
 
 pub(crate) fn emit_latest_turn_projection(session: &AgentSession, app_handle: &tauri::AppHandle) {
-    session.emit_with_emitter(
-        &crate::agent::event_sink::TauriEventEmitter::new(
-            app_handle.clone(),
-        ),
-    );
+    session.emit_with_emitter(&crate::agent::event_sink::TauriEventEmitter::new(
+        app_handle.clone(),
+    ));
 }

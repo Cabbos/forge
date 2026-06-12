@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use crate::adapters::build_adapter;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
-use crate::agent::session::AgentSession;
+use crate::agent::session::{AgentSession, SessionStatus};
+use crate::agent::session_events;
+use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
-    AgentSessionSnapshot,
+    ActiveToolCallDescriptor, AgentSessionSnapshot, PendingConfirmDescriptor,
 };
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::emit_delivery_summary;
@@ -41,6 +43,12 @@ pub(crate) fn emit_session_started(
     model: &str,
     context_window_tokens: Option<u32>,
 ) {
+    crate::log_store::log_event(
+        "INFO",
+        "session",
+        &format!("session '{session_id}' created (provider={provider}, model={model})"),
+        Some(session_id),
+    );
     crate::transcript::emit_stream_event(
         app_handle,
         StreamEvent::SessionStarted {
@@ -95,6 +103,8 @@ pub(crate) struct RestoredSession {
     pub(crate) missing_api_key: bool,
     pub(crate) latest_workflow: Option<WorkflowState>,
     pub(crate) latest_delivery: Option<DeliverySummary>,
+    pub(crate) pending_confirms: Vec<PendingConfirmDescriptor>,
+    pub(crate) active_tool_calls: Vec<ActiveToolCallDescriptor>,
 }
 
 pub(crate) async fn restore_session_from_snapshot(
@@ -106,6 +116,8 @@ pub(crate) async fn restore_session_from_snapshot(
     let credentials = settings::detect_credentials(&provider);
     let latest_workflow = snapshot.latest_workflow.clone();
     let latest_delivery = snapshot.latest_delivery.clone();
+    let pending_confirms = snapshot.pending_confirms.clone();
+    let active_tool_calls = snapshot.active_tool_calls.clone();
 
     let model_str = snapshot.model.clone();
     let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
@@ -127,6 +139,9 @@ pub(crate) async fn restore_session_from_snapshot(
         snapshot.goal_ledger,
         snapshot.a2a_state,
     );
+    // Mark as Resuming before registering so list_sessions can report "resuming"
+    // during restore; emit_restored_session_startup will promote to Running.
+    *lock_unpoisoned(&session.status) = SessionStatus::Resuming;
     let session = Arc::new(session);
     register_and_dispatch_session_start(state, session.clone(), &snapshot.session_id).await;
     if let Err(error) = save_session_snapshot_with_workflow(state, &session).await {
@@ -140,6 +155,8 @@ pub(crate) async fn restore_session_from_snapshot(
         missing_api_key,
         latest_workflow,
         latest_delivery,
+        pending_confirms,
+        active_tool_calls,
     })
 }
 
@@ -180,6 +197,34 @@ pub(crate) async fn emit_restored_session_startup(
         &restored.model,
         restored.session.context_window_tokens,
     );
+    // Phase 1.4: stream "resuming" after session_started so the frontend has
+    // a session row to update while projections replay.
+    crate::transcript::emit_stream_event(
+        app_handle,
+        session_events::session_status_event(session_id, "resuming"),
+    );
+    // Phase 1.5: replay pending confirmation descriptors as non-interactive
+    // interrupted blocks so the user can see what was pending before the
+    // app was closed. These use replayed_interrupted=true so the frontend
+    // renders them the same way as closeInterruptedConfirmBlocks with reason
+    // "session_restored".
+    for descriptor in &restored.pending_confirms {
+        crate::transcript::emit_stream_event(
+            app_handle,
+            session_events::pending_confirm_replay_event(session_id, descriptor),
+        );
+    }
+    // Phase 1.6: replay active tool-call descriptors as interrupted/completed
+    // blocks. Each descriptor produces a ToolCallStart followed by an error
+    // ToolCallResult so the user sees which tool was in-flight and that it
+    // was terminated by session restore. The restored session's harness
+    // active_tool_call_descriptors registry stays empty — these are only
+    // visual markers, not re-associated tool processes.
+    for descriptor in &restored.active_tool_calls {
+        for event in session_events::active_tool_call_replay_events(session_id, descriptor) {
+            crate::transcript::emit_stream_event(app_handle, event);
+        }
+    }
     if let Some(workflow) = &restored.latest_workflow {
         state
             .workflow_states
@@ -206,6 +251,12 @@ pub(crate) async fn emit_restored_session_startup(
     if restored.missing_api_key {
         emit_missing_api_key_notice(app_handle, session_id, &restored.provider);
     }
+    // Replay complete — promote the session to Running and stream the transition.
+    *lock_unpoisoned(&restored.session.status) = SessionStatus::Running;
+    crate::transcript::emit_stream_event(
+        app_handle,
+        session_events::session_status_event(session_id, "running"),
+    );
 }
 
 pub(crate) async fn upgrade_missing_key_session_if_possible(
@@ -288,6 +339,18 @@ pub(crate) async fn session_snapshot_with_workflow_state(
 ) -> AgentSessionSnapshot {
     let latest_workflow = state.workflow_states.read().await.get(&session.id).cloned();
     let latest_delivery = state.delivery_states.read().await.get(&session.id).cloned();
+    let pending_confirms = session
+        .harness
+        .pending_confirm_descriptors
+        .read()
+        .await
+        .clone();
+    let active_tool_calls = session
+        .harness
+        .active_tool_call_descriptors
+        .read()
+        .await
+        .clone();
     let mut snapshot = session.snapshot();
     if let Some(workflow) = latest_workflow {
         snapshot = snapshot.with_latest_workflow(workflow);
@@ -295,6 +358,8 @@ pub(crate) async fn session_snapshot_with_workflow_state(
     if let Some(delivery) = latest_delivery {
         snapshot = snapshot.with_latest_delivery(delivery);
     }
+    snapshot = snapshot.with_pending_confirms(pending_confirms);
+    snapshot = snapshot.with_active_tool_calls(active_tool_calls);
     snapshot
 }
 
@@ -382,6 +447,12 @@ pub async fn kill_session(
             crate::app_log!("WARN", "[session_snapshot] {}", error);
         }
     }
+    crate::log_store::log_event(
+        "INFO",
+        "session",
+        &format!("session '{session_id}' killed"),
+        Some(&session_id),
+    );
     Ok(())
 }
 
@@ -404,7 +475,201 @@ pub async fn delete_session(
     if let Err(error) = crate::transcript::delete_transcript(&session_id) {
         crate::app_log!("WARN", "[transcript] {}", error);
     }
+    crate::log_store::log_event(
+        "INFO",
+        "session",
+        &format!("session '{session_id}' deleted"),
+        Some(&session_id),
+    );
     Ok(())
+}
+
+/// Pure selection strategy: picks which snapshot to restore at startup.
+///
+/// 1. If `active_session_id` matches a snapshot that isn't already live, use it.
+/// 2. Otherwise, pick the most-recent non-live snapshot.
+/// 3. Returns `None` when snapshots is empty or every candidate is already live.
+///
+/// Snapshots are expected to be sorted by `updated_at_ms` descending (as
+/// returned by `list_session_snapshots`).
+pub(crate) fn choose_startup_snapshot<'a>(
+    active_session_id: Option<&str>,
+    snapshots: &'a [AgentSessionSnapshot],
+    live_session_ids: &std::collections::HashSet<String>,
+) -> Option<&'a AgentSessionSnapshot> {
+    if snapshots.is_empty() {
+        return None;
+    }
+
+    if let Some(active_id) = active_session_id {
+        if let Some(snapshot) = snapshots.iter().find(|s| s.session_id == active_id) {
+            if !live_session_ids.contains(&snapshot.session_id) {
+                return Some(snapshot);
+            }
+        }
+    }
+
+    snapshots
+        .iter()
+        .find(|s| !live_session_ids.contains(&s.session_id))
+}
+
+/// Called once at app startup. Restores the active session (or the most
+/// recent session) from its snapshot.  Never blocks startup — failures are
+/// logged and swallowed.
+///
+/// Phase 1.7: if the active snapshot is corrupted/unreadable, or if an active
+/// restore fails, surface a user-visible recovery notice and attempt fallback
+/// to another snapshot before starting fresh.
+pub(crate) async fn startup_restore_active_session(
+    state: &Arc<AppState>,
+    app_handle: &tauri::AppHandle,
+) {
+    let metadata = match crate::app_metadata::load_app_metadata() {
+        Ok(m) => m,
+        Err(e) => {
+            crate::app_log!("WARN", "[startup_restore] failed to load app metadata: {e}");
+            crate::app_metadata::AppMetadata::default()
+        }
+    };
+
+    let snapshots = match list_session_snapshots() {
+        Ok(s) => s,
+        Err(e) => {
+            crate::app_log!(
+                "WARN",
+                "[startup_restore] failed to list session snapshots: {e}"
+            );
+            return;
+        }
+    };
+
+    let live_ids: std::collections::HashSet<String> =
+        state.sessions.read().await.keys().cloned().collect();
+
+    // Phase 1.7: detect if the active session snapshot was skipped by
+    // list_session_snapshots (corrupted/unreadable/unsafe). The snapshot
+    // file exists on disk but could not be deserialized or validated.
+    let active_corrupted = match &metadata.active_session_id {
+        Some(active_id) if !live_ids.contains(active_id) => {
+            !snapshots.iter().any(|s| s.session_id == *active_id)
+        }
+        _ => false,
+    };
+
+    if active_corrupted {
+        if let Some(ref active_id) = metadata.active_session_id {
+            crate::app_log!(
+                "WARN",
+                "[startup_restore] active session {active_id} snapshot is corrupted or unreadable — choosing fallback"
+            );
+            crate::transcript::emit_stream_event(
+                app_handle,
+                session_events::recovery_notice_event(
+                    active_id,
+                    &format!("notice-corrupt-{active_id}"),
+                    "Session data was unreadable",
+                    "Forge could not restore your last session because its saved data was corrupted or unreadable.",
+                    "snapshot_corrupted",
+                    true,
+                ),
+            );
+        }
+    }
+
+    let chosen =
+        choose_startup_snapshot(metadata.active_session_id.as_deref(), &snapshots, &live_ids);
+
+    let Some(snapshot) = chosen else {
+        return;
+    };
+
+    let session_id = snapshot.session_id.clone();
+    let is_fallback = active_corrupted && Some(&session_id) != metadata.active_session_id.as_ref();
+
+    match restore_session_from_snapshot(state, &session_id).await {
+        Ok(restored) => {
+            emit_restored_session_startup(state, app_handle, &session_id, &restored).await;
+            if is_fallback {
+                crate::transcript::emit_stream_event(
+                    app_handle,
+                    session_events::recovery_notice_event(
+                        &session_id,
+                        &format!("notice-fallback-{session_id}"),
+                        "Recovered with a previous session",
+                        "Forge started with a different saved session because the last one could not be restored.",
+                        "snapshot_fallback_used",
+                        true,
+                    ),
+                );
+            }
+        }
+        Err(e) => {
+            crate::app_log!(
+                "WARN",
+                "[startup_restore] failed to restore session {session_id}: {e}"
+            );
+
+            // Phase 1.7: if the failed session was the active one, try a fallback.
+            let active_id_matches = metadata
+                .active_session_id
+                .as_ref()
+                .is_some_and(|id| id == &session_id);
+            let fallback = if active_id_matches {
+                snapshots
+                    .iter()
+                    .find(|s| s.session_id != session_id && !live_ids.contains(&s.session_id))
+            } else {
+                None
+            };
+
+            if let Some(fallback_snapshot) = fallback {
+                let fallback_id = fallback_snapshot.session_id.clone();
+                match restore_session_from_snapshot(state, &fallback_id).await {
+                    Ok(fallback_restored) => {
+                        emit_restored_session_startup(
+                            state,
+                            app_handle,
+                            &fallback_id,
+                            &fallback_restored,
+                        )
+                        .await;
+                        crate::transcript::emit_stream_event(
+                            app_handle,
+                            session_events::recovery_notice_event(
+                                &fallback_id,
+                                &format!("notice-fallback-{fallback_id}"),
+                                "Recovered with a previous session",
+                                "Forge started with a different saved session because the last one could not be restored.",
+                                "snapshot_fallback_used",
+                                true,
+                            ),
+                        );
+                        return;
+                    }
+                    Err(fallback_err) => {
+                        crate::app_log!(
+                            "WARN",
+                            "[startup_restore] fallback restore of {fallback_id} also failed: {fallback_err}"
+                        );
+                    }
+                }
+            }
+
+            // No fallback (or fallback also failed) — surface notice and start fresh.
+            crate::transcript::emit_stream_event(
+                app_handle,
+                session_events::recovery_notice_event(
+                    &session_id,
+                    &format!("notice-restore-fail-{session_id}"),
+                    "Session restore failed",
+                    "Forge could not restore your last session and started fresh. Your data is safe.",
+                    "snapshot_restore_failed",
+                    false,
+                ),
+            );
+        }
+    }
 }
 
 #[cfg(test)]

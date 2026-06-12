@@ -19,7 +19,11 @@ mod tests {
         let executor = ShellExecutor::new(workspace.clone());
         let result = executor.execute("echo hello-world").await.expect("execute");
         assert_eq!(result.command, "echo hello-world");
-        assert!(result.stdout.contains("hello-world"), "stdout: {}", result.stdout);
+        assert!(
+            result.stdout.contains("hello-world"),
+            "stdout: {}",
+            result.stdout
+        );
         let _ = std::fs::remove_dir_all(&workspace);
     }
 
@@ -30,13 +34,27 @@ mod tests {
         // Use a shell compound command that writes to stderr
         #[cfg(unix)]
         {
-            let result = executor.execute("/bin/sh -c 'echo error-msg >&2'").await.expect("execute");
-            assert!(result.stderr.contains("error-msg"), "stderr: {}", result.stderr);
+            let result = executor
+                .execute("/bin/sh -c 'echo error-msg >&2'")
+                .await
+                .expect("execute");
+            assert!(
+                result.stderr.contains("error-msg"),
+                "stderr: {}",
+                result.stderr
+            );
         }
         #[cfg(windows)]
         {
-            let result = executor.execute("cmd /c 'echo error-msg 1>&2'").await.expect("execute");
-            assert!(result.stderr.contains("error-msg"), "stderr: {}", result.stderr);
+            let result = executor
+                .execute("cmd /c 'echo error-msg 1>&2'")
+                .await
+                .expect("execute");
+            assert!(
+                result.stderr.contains("error-msg"),
+                "stderr: {}",
+                result.stderr
+            );
         }
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -50,14 +68,20 @@ mod tests {
             let result = executor.execute("exit 42").await.expect("execute");
             // The process runner may return -1 when the process is killed by signal
             // or when the exit code is not captured properly. We just verify it returns.
-            assert!(result.exit_code == 42 || result.exit_code == -1,
-                "exit code should be 42 or -1 (signal), got: {}", result.exit_code);
+            assert!(
+                result.exit_code == 42 || result.exit_code == -1,
+                "exit code should be 42 or -1 (signal), got: {}",
+                result.exit_code
+            );
         }
         #[cfg(windows)]
         {
             let result = executor.execute("cmd /c exit 42").await.expect("execute");
-            assert!(result.exit_code == 42 || result.exit_code == -1,
-                "exit code should be 42 or -1, got: {}", result.exit_code);
+            assert!(
+                result.exit_code == 42 || result.exit_code == -1,
+                "exit code should be 42 or -1, got: {}",
+                result.exit_code
+            );
         }
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -70,12 +94,20 @@ mod tests {
         #[cfg(unix)]
         {
             let result = executor.execute("pwd").await.expect("execute");
-            assert!(result.stdout.contains("subdir"), "should run in subdir: {}", result.stdout);
+            assert!(
+                result.stdout.contains("subdir"),
+                "should run in subdir: {}",
+                result.stdout
+            );
         }
         #[cfg(windows)]
         {
             let result = executor.execute("cd").await.expect("execute");
-            assert!(result.stdout.contains("subdir"), "should run in subdir: {}", result.stdout);
+            assert!(
+                result.stdout.contains("subdir"),
+                "should run in subdir: {}",
+                result.stdout
+            );
         }
         let _ = std::fs::remove_dir_all(&workspace);
     }
@@ -163,11 +195,7 @@ mod tests {
 
         let task = tokio::spawn(async move {
             executor
-                .execute_streaming_with_cancel(
-                    "sleep 5",
-                    cancel_for_task,
-                    |_line, _is_stderr| {},
-                )
+                .execute_streaming_with_cancel("sleep 5", cancel_for_task, |_line, _is_stderr| {})
                 .await
         });
 

@@ -2,23 +2,36 @@ import type { ComponentProps, ComponentType, ReactNode } from "react";
 import {
   AlertCircle,
   Brain,
+  Clock,
   Database,
   FolderOpen,
   Info,
   KeyRound,
+  Settings,
+  Stethoscope,
+  UserRound,
   Wrench,
 } from "lucide-react";
 import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { SettingsProviderSection } from "@/components/settings/SettingsProviderSection";
 import { SettingsSummaryStrip } from "@/components/settings/SettingsSummaryStrip";
+import { DiagnosticsPanel } from "@/components/settings/DiagnosticsPanel";
+import { MemoryPanel } from "@/components/settings/MemoryPanel";
+import { ProfilesPanel } from "@/components/settings/ProfilesPanel";
+import { GeneralSettings } from "@/components/settings/GeneralSettings";
+import { SchedulerPanel } from "@/components/settings/SchedulerPanel";
 
 export type SettingsSectionId =
+  | "general"
   | "models"
   | "workspace"
   | "tools"
   | "memory"
+  | "profiles"
+  | "scheduler"
   | "data"
+  | "diagnostics"
   | "about";
 
 type SettingsIcon = ComponentType<{ className?: string }>;
@@ -45,11 +58,15 @@ const SETTINGS_SECTIONS: Array<{
   caption: string;
   icon: SettingsIcon;
 }> = [
+  { id: "general", title: "通用", caption: "服务与自启", icon: Settings },
   { id: "models", title: "模型服务", caption: "密钥与默认服务", icon: KeyRound },
   { id: "workspace", title: "工作区", caption: "当前项目环境", icon: FolderOpen },
   { id: "tools", title: "工具", caption: "本机执行通道", icon: Wrench },
   { id: "memory", title: "记忆", caption: "上下文与经验", icon: Brain },
+  { id: "profiles", title: "资料", caption: "服务与工作区预设", icon: UserRound },
+  { id: "scheduler", title: "调度", caption: "定时任务", icon: Clock },
   { id: "data", title: "本机数据", caption: "对话与缓存", icon: Database },
+  { id: "diagnostics", title: "诊断", caption: "系统健康检查", icon: Stethoscope },
   { id: "about", title: "关于", caption: "Forge Workbench", icon: Info },
 ];
 
@@ -118,6 +135,8 @@ export function SettingsCenterShell({
         </div>
 
         <div className="forge-settings-panel-stack">
+          {activeSection === "general" && <GeneralSettings />}
+
           {activeSection === "models" && (
             <>
               <SettingsReadOnlyPanel>
@@ -157,15 +176,11 @@ export function SettingsCenterShell({
             </SettingsReadOnlyPanel>
           )}
 
-          {activeSection === "memory" && (
-            <SettingsReadOnlyPanel title="上下文状态" description="记忆内容从本机和项目记录取用，对话仍由当前模型服务处理。">
-              <SettingsInfoList>
-                <SettingsInfoRow label="本机对话" value={`${sessionCount} 个`} />
-                <SettingsInfoRow label="Continuity" value="按项目检索经验" />
-                <SettingsInfoRow label="Forge Wiki" value="在上下文面板选择" />
-              </SettingsInfoList>
-            </SettingsReadOnlyPanel>
-          )}
+          {activeSection === "memory" && <MemoryPanel />}
+
+          {activeSection === "profiles" && <ProfilesPanel />}
+
+          {activeSection === "scheduler" && <SchedulerPanel />}
 
           {activeSection === "data" && (
             <>
@@ -177,6 +192,10 @@ export function SettingsCenterShell({
               </SettingsReadOnlyPanel>
               <SettingsLocalDataSection {...localDataProps} showHeading={false} />
             </>
+          )}
+
+          {activeSection === "diagnostics" && (
+            <DiagnosticsPanel />
           )}
 
           {activeSection === "about" && (

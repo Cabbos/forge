@@ -354,6 +354,61 @@ export async function toggleCapability(id: string, enabled: boolean): Promise<vo
   return invoke("toggle_capability", { capabilityId: id, enabled });
 }
 
+// ── Ecosystem IPC (Phase 3-A) ─────────────────────────────────────────────
+
+export type EcosystemItemStatus = "healthy" | "unavailable" | "warning" | "unknown";
+
+export interface EcosystemItem {
+  id: string;
+  name: string;
+  description: string;
+  kind: string; // "skill" | "hook" | "mcp_server" | "tool"
+  source: string;
+  version: string;
+  enabled: boolean;
+  status: EcosystemItemStatus;
+  statusMessage?: string | null;
+  configurable: boolean;
+  configSummary?: string | null;
+}
+
+export interface ToolInventoryEntry {
+  id: string;
+  name: string;
+  description: string;
+  kind: string;
+  source: string;
+  enabled: boolean;
+}
+
+export async function listEcosystemItems(): Promise<EcosystemItem[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("list_ecosystem_items");
+}
+
+export async function setEcosystemEnabled(id: string, enabled: boolean): Promise<void> {
+  return invoke("set_ecosystem_enabled", { id, enabled });
+}
+
+export async function getToolInventory(): Promise<ToolInventoryEntry[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("get_tool_inventory");
+}
+
+/**
+ * Configure an ecosystem item.
+ *
+ * **Phase 3-A limitation:** In-app configuration is not yet supported.
+ * This will return an error with a clear message.  The UI should display the
+ * error honestly rather than implying configuration is possible.
+ */
+export async function configureEcosystemItem(
+  id: string,
+  config: unknown,
+): Promise<void> {
+  return invoke("configure_ecosystem_item", { id, config });
+}
+
 /** Search workspace files for @ autocomplete */
 export async function searchWorkspaceFiles(query: string, sessionId?: string, workingDir?: string | null): Promise<string[]> {
   if (!hasTauriRuntime()) return [];
@@ -550,6 +605,250 @@ export async function discardForgeWikiUpdateProposal(
   sessionId?: string | null,
 ): Promise<ForgeWikiUpdateProposal> {
   return invoke("discard_forge_wiki_update_proposal", { projectPath, proposalId, sessionId: sessionId ?? null });
+}
+
+// ── Memory Facts (Phase 5-A) ────────────────────────────────────────────────
+
+export interface MemoryFact {
+  id: string;
+  text: string;
+  tags: string[];
+  profile_id?: string | null;
+  source?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface UpsertMemoryFactInput {
+  id?: string | null;
+  text: string;
+  tags?: string[];
+  profile_id?: string | null;
+  source?: string | null;
+}
+
+export interface UpsertMemoryFactOutput {
+  fact: MemoryFact;
+  was_update: boolean;
+}
+
+export async function listMemoryFacts(query?: string): Promise<MemoryFact[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("list_memory_facts", { query: query ?? null });
+}
+
+export async function upsertMemoryFact(
+  input: UpsertMemoryFactInput,
+): Promise<UpsertMemoryFactOutput> {
+  return invoke("upsert_memory_fact", { input });
+}
+
+export async function deleteMemoryFact(id: string): Promise<boolean> {
+  return invoke("delete_memory_fact", { id });
+}
+
+// ── Profiles (Phase 5-B) ──────────────────────────────────────────────────
+
+export interface ForgeProfile {
+  id: string;
+  name: string;
+  default_provider?: string | null;
+  default_model?: string | null;
+  default_workspace?: string | null;
+  api_key_overrides?: Record<string, string> | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface UpsertProfileInput {
+  id?: string | null;
+  name: string;
+  default_provider?: string | null;
+  default_model?: string | null;
+  default_workspace?: string | null;
+  api_key_overrides?: Record<string, string> | null;
+}
+
+export interface ProfileListPayload {
+  profiles: ForgeProfile[];
+  active_profile_id: string | null;
+}
+
+export async function listProfiles(): Promise<ProfileListPayload> {
+  if (!hasTauriRuntime()) {
+    return { profiles: [], active_profile_id: null };
+  }
+  return invoke<ProfileListPayload>("list_profiles");
+}
+
+export async function upsertProfile(
+  input: UpsertProfileInput,
+): Promise<ForgeProfile> {
+  return invoke<ForgeProfile>("upsert_profile", { input });
+}
+
+export async function deleteProfile(id: string): Promise<boolean> {
+  return invoke<boolean>("delete_profile", { id });
+}
+
+export async function setActiveProfile(
+  id: string,
+): Promise<ProfileListPayload> {
+  return invoke<ProfileListPayload>("set_active_profile", { id });
+}
+
+// ── Diagnostics / Doctor ──────────────────────────────────────────────────
+
+export type CheckStatus = "pass" | "warn" | "fail";
+
+export interface DiagnosticCheck {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  message: string;
+  detail?: unknown | null;
+  remediation?: string | null;
+}
+
+export interface DiagnosticsReport {
+  ok: boolean;
+  generatedAtMs: number;
+  checks: DiagnosticCheck[];
+}
+
+// ── Scheduler (Phase 5-C) ──────────────────────────────────────────────────
+
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  text: string;
+  enabled: boolean;
+  interval_seconds: number;
+  next_run_at_ms: number;
+  last_run_at_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  tags: string[];
+  profile_id?: string | null;
+  last_error?: string | null;
+}
+
+export interface RunHistoryEntry {
+  id: string;
+  task_id: string;
+  started_at_ms: number;
+  ended_at_ms: number;
+  status: string; // "completed" | "skipped" | "error"
+  message: string;
+}
+
+export interface SchedulerListPayload {
+  tasks: ScheduledTask[];
+  recent_history: RunHistoryEntry[];
+  load_error?: string | null;
+}
+
+export interface UpsertScheduledTaskInput {
+  id?: string | null;
+  title: string;
+  text: string;
+  tags?: string[];
+  interval_seconds?: number;
+  profile_id?: string | null;
+}
+
+export async function listScheduledTasks(): Promise<SchedulerListPayload> {
+  if (!hasTauriRuntime()) {
+    return { tasks: [], recent_history: [], load_error: null };
+  }
+  return invoke<SchedulerListPayload>("list_scheduled_tasks");
+}
+
+export async function upsertScheduledTask(
+  input: UpsertScheduledTaskInput,
+): Promise<ScheduledTask> {
+  return invoke<ScheduledTask>("upsert_scheduled_task", { input });
+}
+
+export async function deleteScheduledTask(id: string): Promise<boolean> {
+  return invoke<boolean>("delete_scheduled_task", { id });
+}
+
+export async function setScheduledTaskEnabled(
+  id: string,
+  enabled: boolean,
+): Promise<boolean> {
+  return invoke<boolean>("set_scheduled_task_enabled", { id, enabled });
+}
+
+export async function runScheduledTaskNow(
+  id: string,
+): Promise<ScheduledTask> {
+  return invoke<ScheduledTask>("run_scheduled_task_now", { id });
+}
+
+// ── Service / autostart ──────────────────────────────────────────────────────
+
+/** Payload returned by `get_service_status` IPC. */
+export type ServiceStatus = {
+  installed: boolean;
+  running: boolean;
+  message: string;
+  supported: boolean;
+};
+
+/** Get the current gateway service status. */
+export async function getServiceStatus(): Promise<ServiceStatus> {
+  if (!hasTauriRuntime()) {
+    return {
+      installed: false,
+      running: false,
+      message: "Service status not available outside Tauri runtime.",
+      supported: false,
+    };
+  }
+  return invoke<ServiceStatus>("get_service_status");
+}
+
+/** Enable or disable autostart (install/uninstall the launchd service). */
+export async function setAutostart(enabled: boolean): Promise<ServiceStatus> {
+  return invoke<ServiceStatus>("set_autostart", { enabled });
+}
+
+/** A structured log entry. Mirrors Rust `LogEntry`. */
+export type LogEntry = {
+  timestamp_ms: number;
+  level: string;
+  source: string;
+  message: string;
+  session_id?: string;
+};
+
+/** Read recent log entries from the global log store. */
+export async function getRecentLogs(
+  limit?: number,
+  level?: string,
+): Promise<LogEntry[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke<LogEntry[]>("get_recent_logs", { limit, level });
+}
+
+export async function getDiagnosticsReport(): Promise<DiagnosticsReport> {
+  if (!hasTauriRuntime()) {
+    return {
+      ok: false,
+      generatedAtMs: Date.now(),
+      checks: [
+        {
+          id: "runtime",
+          label: "Tauri runtime",
+          status: "warn",
+          message: "Diagnostics report not available outside Tauri runtime.",
+        },
+      ],
+    };
+  }
+  return invoke<DiagnosticsReport>("get_diagnostics_report");
 }
 
 export function hasTauriRuntime(): boolean {
