@@ -326,15 +326,17 @@ impl AgentSession {
         activation_text: Option<&str>,
         _turn_guard: TurnInflightGuard,
     ) -> Result<(), String> {
-        let emitter = crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone());
+        let emitter: Arc<dyn crate::agent::event_sink::EventEmitter> = Arc::new(
+            crate::agent::event_sink::TauriEventEmitter::new(app_handle.clone()),
+        );
         self.run_agent_turn(AgentTurnRunRequest {
             text,
             hidden_contexts,
             turn_metadata,
             activation_text,
             _turn_guard,
-            emitter: &emitter,
-            tool_emitter: None,
+            emitter: &*emitter,
+            tool_emitter: Some(emitter.clone()),
             app_handle: Some(app_handle),
         })
         .await
@@ -748,9 +750,15 @@ impl AgentSession {
                 let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let wd = self.harness.working_dir.clone();
                 let sub_emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
-                    tool_emitter_override
-                        .clone()
-                        .unwrap_or_else(|| Arc::new(crate::agent::event_sink::NoopEventEmitter));
+                    if let Some(app) = app_handle {
+                        Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                            app.clone(),
+                        ))
+                    } else if let Some(shared) = tool_emitter_override.clone() {
+                        shared
+                    } else {
+                        Arc::new(crate::agent::event_sink::NoopEventEmitter)
+                    };
                 {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
                     bus.start_task(&a2a_task_id, now_ms());

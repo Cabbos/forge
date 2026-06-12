@@ -4,8 +4,10 @@ import { confirmResponse } from "@/lib/tauri";
 import { parseWriteBoundary } from "@/lib/write-boundary";
 import { useStore } from "@/store";
 import {
+  ConfirmBoundaryInterruptedView,
   ConfirmBoundaryPendingView,
   ConfirmBoundaryResolvedView,
+  ConfirmPromptInterruptedView,
   ConfirmPromptView,
 } from "@/components/messages/ConfirmViews";
 import {
@@ -14,6 +16,7 @@ import {
 
 export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId?: string }) {
   const updateBlock = useStore((s) => s.updateBlock);
+  const interrupted = block.metadata.confirm_interrupted === true;
   const alreadyResolved = block.metadata.confirmed === true;
   const savedAnswer = block.metadata.answer as boolean | undefined;
   const [responded, setResponded] = useState(alreadyResolved);
@@ -42,11 +45,19 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
   };
 
   if (boundary) {
+    if (interrupted) {
+      return <ConfirmBoundaryInterruptedView boundary={boundary} />;
+    }
+
     if (responded) {
       return <ConfirmBoundaryResolvedView boundary={boundary} answer={answer} />;
     }
 
     return <ConfirmBoundaryPendingView boundary={boundary} onResponse={handleResponse} />;
+  }
+
+  if (interrupted) {
+    return <ConfirmPromptInterruptedView prompt={promptView} />;
   }
 
   return (

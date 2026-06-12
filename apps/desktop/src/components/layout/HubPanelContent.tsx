@@ -4,6 +4,7 @@ import { ActiveContextSection } from "@/components/context/ActiveContextSection"
 import { FirstLoopCard } from "@/components/context/FirstLoopCard";
 import { ProjectOverviewCard } from "@/components/context/ProjectOverviewCard";
 import { WikiSections } from "@/components/context/WikiSections";
+import { AgentA2AWorkspace } from "@/components/messages/AgentA2ATimeline";
 import { CurrentTaskCard } from "@/components/workflow/CurrentTaskCard";
 import type { McpContextSelection } from "@/lib/tauri";
 import { ProjectStatusCard } from "./ProjectStatusCard";
@@ -17,6 +18,7 @@ type ArchiveSummaryProps = ComponentProps<typeof ArchiveSummaryStrip>;
 export interface HubPanelContentProps {
   activeContextItems: ComponentProps<typeof ActiveContextSection>["items"];
   activeId: string | null;
+  agentA2A: ComponentProps<typeof AgentA2AWorkspace>["state"];
   contextMaterials: ComponentProps<typeof ContextFilesSection>["files"];
   deliverySummary: ArchiveSummaryProps["deliverySummary"];
   firstLoopDraft: ComponentProps<typeof FirstLoopCard>["draft"];
@@ -30,6 +32,7 @@ export interface HubPanelContentProps {
 export function HubPanelContent({
   activeContextItems,
   activeId,
+  agentA2A,
   contextMaterials,
   deliverySummary,
   firstLoopDraft,
@@ -53,6 +56,12 @@ export function HubPanelContent({
         <div data-forge-motion="archive-section">
           <ProjectOverviewCard overview={overview} />
         </div>
+
+        {agentA2A && agentA2A.tasks.length > 0 && (
+          <div data-forge-motion="archive-section">
+            <AgentA2AWorkspace state={agentA2A} />
+          </div>
+        )}
 
         <div data-forge-motion="archive-section">
           <CurrentTaskCard workflow={workflow} />

@@ -10,7 +10,7 @@ import {
   type ContextFile,
 } from "./archive/contextMaterialMapper";
 
-export type HubPanelSection = "records";
+export type HubPanelSection = "agents" | "records";
 
 const contextFiles: ContextFile[] = [];
 const emptyMcpContextSources: McpContextSources = { resources: [], prompts: [] };
@@ -29,6 +29,7 @@ export function useHubPanelData({ initialSection, open }: UseHubPanelDataOptions
   const projectPath = runtimeStatus?.working_dir ?? activeWorkspace?.path ?? null;
   const { data: mcpContextSources = emptyMcpContextSources } = useMcpContextSourcesQuery(activeId, open && !!activeId);
   const workflow = useStore((s) => activeId ? s.workflowBySession.get(activeId) ?? null : null);
+  const agentA2A = useStore((s) => activeId ? s.agentA2ABySession.get(activeId) ?? null : null);
   const firstLoopDraft = useStore((s) => activeId ? s.firstLoopDraftBySession.get(activeId) ?? null : null);
   const deliverySummary = useStore((s) => activeId ? s.deliverySummaryBySession.get(activeId) ?? null : null);
   const selectedMemories = useStore((s) => activeId ? s.selectedContextBySession.get(activeId) ?? [] : []);
@@ -61,6 +62,7 @@ export function useHubPanelData({ initialSection, open }: UseHubPanelDataOptions
   return {
     activeContextItems,
     activeId,
+    agentA2A,
     contextMaterials,
     deliverySummary,
     firstLoopDraft,

@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { eventToBlock, applyTranscriptEventToBlocks } from "./blocks";
-import type { StreamEvent } from "../lib/protocol";
+import {
+  applyTranscriptEventToBlocks,
+  closeInterruptedConfirmBlocks,
+  eventToBlock,
+} from "./blocks.ts";
+import type { StreamEvent } from "../lib/protocol.ts";
 
 describe("eventToBlock", () => {
   it("context_compact_start returns a running block", () => {
@@ -121,5 +125,39 @@ describe("applyTranscriptEventToBlocks compact lifecycle", () => {
     const blocks = applyTranscriptEventToBlocks([], compactedEvent);
     assert.strictEqual(blocks.length, 1);
     assert.strictEqual(blocks[0].event_type, "context_compacted");
+  });
+});
+
+describe("closeInterruptedConfirmBlocks", () => {
+  it("marks pending confirmation blocks as interrupted", () => {
+    const blocks = closeInterruptedConfirmBlocks([
+      {
+        block_id: "confirm-1",
+        event_type: "confirm_ask",
+        content: "Continue?",
+        isComplete: false,
+        metadata: { kind: "shell_cmd" },
+      },
+    ], "session_restored");
+
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.confirmed, true);
+    assert.strictEqual(blocks[0].metadata.answer, null);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted, true);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted_reason, "session_restored");
+  });
+
+  it("keeps already resolved confirmation blocks unchanged", () => {
+    const original = {
+      block_id: "confirm-1",
+      event_type: "confirm_ask",
+      content: "Continue?",
+      isComplete: true,
+      metadata: { kind: "shell_cmd", confirmed: true, answer: true },
+    };
+
+    const blocks = closeInterruptedConfirmBlocks([original], "session_stopped");
+
+    assert.deepStrictEqual(blocks[0], original);
   });
 });

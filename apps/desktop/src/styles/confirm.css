@@ -139,7 +139,17 @@
     max-width: 640px;
   }
 
+  .forge-confirm-card[data-confirm-state="interrupted"] {
+    max-width: 720px;
+  }
+
   .forge-confirm-card[data-confirm-state="resolved"] .forge-message-panel-header {
+    min-height: 1.75rem;
+    padding: 0.125rem 0.625rem;
+    background: var(--forge-bg-surface);
+  }
+
+  .forge-confirm-card[data-confirm-state="interrupted"] .forge-message-panel-header {
     min-height: 1.75rem;
     padding: 0.125rem 0.625rem;
     background: var(--forge-bg-surface);
@@ -201,6 +211,29 @@
     color: var(--forge-danger);
   }
 
+  .forge-confirm-interrupted {
+    display: inline-flex;
+    height: 1.25rem;
+    align-items: center;
+    border: 1px solid rgba(135, 132, 126, 0.2);
+    border-radius: calc(var(--radius) - 3px);
+    background: rgba(135, 132, 126, 0.06);
+    padding: 0 0.4375rem;
+    color: var(--forge-text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1rem;
+  }
+
+  .forge-confirm-interrupted-note {
+    border-top: 1px solid var(--forge-border-subtle);
+    background: var(--forge-bg-raised);
+    padding: 0.5rem 0.625rem;
+    color: var(--forge-text-muted);
+    font-size: 11px;
+    line-height: 1.125rem;
+  }
+
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card {
     max-width: min(820px, 100%);
     border-color: #E1D8CC !important;
@@ -209,6 +242,11 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card[data-confirm-state="pending"] {
     border-color: #E3D1C7 !important;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card[data-confirm-state="interrupted"] {
+    border-color: #DDD6CB !important;
+    background: #FBF7EF !important;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-boundary-grid {
@@ -262,5 +300,16 @@
     border-color: #E7C5B9;
     background: #FFF0EA;
     color: #994731;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-interrupted {
+    border-color: #D9D2C7;
+    background: #F4EFE6;
+    color: var(--forge-text-muted);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-interrupted-note {
+    border-top-color: #E8E1D7;
+    background: #F7F2E9;
   }
 }

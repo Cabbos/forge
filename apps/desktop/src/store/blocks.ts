@@ -8,6 +8,29 @@ export function transcriptEventsToBlocks(events: StreamEvent[]): BlockState[] {
   return blocks.filter((block) => block.event_type !== "pending");
 }
 
+export function closeInterruptedConfirmBlocks(
+  blocks: BlockState[],
+  reason: "session_stopped" | "session_restored",
+): BlockState[] {
+  return blocks.map((block) => {
+    if (block.event_type !== "confirm_ask") return block;
+    if (block.metadata.confirmed === true || block.metadata.confirm_interrupted === true) {
+      return block;
+    }
+    return {
+      ...block,
+      isComplete: true,
+      metadata: {
+        ...block.metadata,
+        confirmed: true,
+        answer: null,
+        confirm_interrupted: true,
+        confirm_interrupted_reason: reason,
+      },
+    };
+  });
+}
+
 export function applyTranscriptEventToBlocks(blocks: BlockState[], event: StreamEvent): BlockState[] {
   const event_type = event.event_type;
 

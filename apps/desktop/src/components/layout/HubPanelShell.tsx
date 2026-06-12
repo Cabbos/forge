@@ -24,7 +24,7 @@ export function HubPanelShell({
       <div className="forge-inspector-header">
         <div className="forge-inspector-title-block">
           <span className="forge-inspector-title">项目档案</span>
-          <span className="forge-inspector-subtitle">状态、上下文与交付</span>
+          <span className="forge-inspector-subtitle">状态、子任务、上下文与交付</span>
         </div>
         <ForgeIconButton
           aria-label="关闭项目档案"
