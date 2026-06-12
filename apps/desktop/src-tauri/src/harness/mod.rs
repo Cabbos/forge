@@ -9,6 +9,8 @@ pub mod hooks;
 pub mod mcp;
 pub mod permissions;
 #[cfg(test)]
+mod hooks_test;
+#[cfg(test)]
 mod permissions_test;
 pub mod registry;
 pub mod shell_policy;
