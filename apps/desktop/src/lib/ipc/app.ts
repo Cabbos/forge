@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { hasTauriRuntime, isMissingTauriRuntimeError } from "./core";
 import type { AppMetadata, SessionInfo } from "./types";
@@ -24,24 +25,20 @@ export async function loadAppMetadata(): Promise<AppMetadata> {
       selectedModel: null,
     };
   }
-  const { invoke } = await import("@tauri-apps/api/core");
   return invoke("load_app_metadata");
 }
 
 export async function saveAppMetadata(metadata: AppMetadata): Promise<void> {
   if (!hasTauriRuntime()) return;
-  const { invoke } = await import("@tauri-apps/api/core");
   return invoke("save_app_metadata", { metadata });
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
-  const { invoke } = await import("@tauri-apps/api/core");
   return invoke("list_sessions");
 }
 
 export async function getDefaultWorkingDir(): Promise<string> {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
     return await invoke("get_default_working_dir");
   } catch (error) {
     if (!isMissingTauriRuntimeError(error)) throw error;
