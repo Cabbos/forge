@@ -1,0 +1,371 @@
+import type {
+  DeliverySummary,
+  ForgeWikiPage,
+  ForgeWikiState,
+  ForgeWikiUpdateProposal,
+  MemoryPatch,
+  MemoryScope,
+  SelectedContextMemory,
+  SelectedForgeWikiPage,
+  StreamEvent,
+  WikiMemory,
+  WorkflowOverrideAction,
+  WorkflowState,
+} from "../protocol";
+
+export type {
+  DeliverySummary,
+  ForgeWikiPage,
+  ForgeWikiState,
+  ForgeWikiUpdateProposal,
+  MemoryPatch,
+  MemoryScope,
+  SelectedContextMemory,
+  SelectedForgeWikiPage,
+  StreamEvent,
+  WikiMemory,
+  WorkflowOverrideAction,
+  WorkflowState,
+};
+
+export interface SessionCreated {
+  session_id: string;
+  provider?: string;
+  model?: string;
+  missing_api_key?: boolean;
+}
+
+export interface SessionInfo {
+  id: string;
+  provider: string;
+  model: string;
+  status: string;
+  created_at: string;
+  working_dir?: string | null;
+  created_at_ms?: number | null;
+  updated_at_ms?: number | null;
+  context_window_tokens?: number | null;
+  latest_workflow?: WorkflowState | null;
+  latest_delivery?: DeliverySummary | null;
+}
+
+export interface AppWorkspaceMetadata {
+  id: string;
+  name: string;
+  path: string;
+  lastOpenedAt: number;
+}
+
+export interface AppMetadata {
+  workspaces: AppWorkspaceMetadata[];
+  activeWorkspaceId?: string | null;
+  activeSessionId?: string | null;
+  selectedProvider?: string | null;
+  selectedModel?: string | null;
+}
+
+export interface FilePreviewLine {
+  number: number;
+  content: string;
+  is_target: boolean;
+}
+
+export interface FilePreview {
+  path: string;
+  display_path: string;
+  requested_line: number | null;
+  start_line: number;
+  total_lines: number;
+  lines: FilePreviewLine[];
+}
+
+export interface ProjectRuntimeStatus {
+  working_dir: string;
+  has_package_json: boolean;
+  package_manager: string;
+  dev_script: string | null;
+  command: string | null;
+  port: number;
+  url: string;
+  running: boolean;
+  managed: boolean;
+  pid: number | null;
+  can_start: boolean;
+  can_stop: boolean;
+  can_open: boolean;
+  message: string;
+  logs: string[];
+}
+
+export interface ProjectCheckpoint {
+  id: string;
+  created_at: number;
+  head: string;
+  status: string;
+  restorable: boolean;
+  untracked_file_count: number;
+  skipped_untracked_file_count: number;
+}
+
+export interface ProjectCheckpointStatus {
+  working_dir: string;
+  is_git_repo: boolean;
+  dirty: boolean;
+  last_checkpoint: ProjectCheckpoint | null;
+  restorable: boolean;
+  snapshot_warning?: string | null;
+  message: string;
+}
+
+export type ContinuityExperienceKind =
+  | "lesson"
+  | "bug_pattern"
+  | "workflow"
+  | "decision"
+  | "preference"
+  | "project_fact";
+
+export type ContinuityExperienceStatus =
+  | "candidate"
+  | "accepted"
+  | "pinned"
+  | "forgotten"
+  | "archived";
+
+export interface ContinuityExperience {
+  id: string;
+  kind: ContinuityExperienceKind;
+  status: ContinuityExperienceStatus;
+  title: string;
+  body: string;
+  project_path?: string | null;
+  source_session_id?: string | null;
+  confidence: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  tags: string[];
+}
+
+export interface McpContextResource {
+  server_id: string;
+  uri: string;
+  name: string;
+  description: string;
+  mime_type: string | null;
+}
+
+export interface McpContextPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface McpContextPrompt {
+  server_id: string;
+  name: string;
+  description: string;
+  arguments: McpContextPromptArgument[];
+}
+
+export interface McpContextSources {
+  resources: McpContextResource[];
+  prompts: McpContextPrompt[];
+}
+
+export type McpContextSelection =
+  | {
+      kind: "resource";
+      server_id: string;
+      uri: string;
+      name: string;
+      description?: string;
+      mime_type?: string | null;
+    }
+  | {
+      kind: "prompt";
+      server_id: string;
+      name: string;
+      description?: string;
+      arguments?: Record<string, string>;
+    };
+
+export type ComposerCapabilitySelection =
+  | { kind: "slash_command"; command: string }
+  | { kind: "file_reference"; path: string };
+
+export interface ManualCompactResult {
+  compacted: boolean;
+  skipped_reason?: string | null;
+  retained_messages: number;
+  compacted_messages: number;
+  estimated_tokens_before: number;
+  estimated_tokens_after: number;
+}
+
+export interface PluginEntry {
+  id: string;
+  name: string;
+  description: string;
+  plugin_type: string;
+  agent: string;
+  category: string;
+  status: unknown;
+  config_schema?: unknown;
+  current_config?: unknown;
+  homepage?: string;
+  author?: string;
+}
+
+export interface CapabilityInfo {
+  id: string;
+  name: string;
+  description: string;
+  kind: string;
+  source: string;
+  version: string;
+  enabled: boolean;
+}
+
+export type EcosystemItemStatus = "healthy" | "unavailable" | "warning" | "unknown";
+
+export interface EcosystemItem {
+  id: string;
+  name: string;
+  description: string;
+  kind: string; // "skill" | "hook" | "mcp_server" | "tool"
+  source: string;
+  version: string;
+  enabled: boolean;
+  status: EcosystemItemStatus;
+  statusMessage?: string | null;
+  configurable: boolean;
+  configSummary?: string | null;
+}
+
+export interface ToolInventoryEntry {
+  id: string;
+  name: string;
+  description: string;
+  kind: string;
+  source: string;
+  enabled: boolean;
+}
+
+export interface MemoryFact {
+  id: string;
+  text: string;
+  tags: string[];
+  profile_id?: string | null;
+  source?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface UpsertMemoryFactInput {
+  id?: string | null;
+  text: string;
+  tags?: string[];
+  profile_id?: string | null;
+  source?: string | null;
+}
+
+export interface UpsertMemoryFactOutput {
+  fact: MemoryFact;
+  was_update: boolean;
+}
+
+export interface ForgeProfile {
+  id: string;
+  name: string;
+  default_provider?: string | null;
+  default_model?: string | null;
+  default_workspace?: string | null;
+  api_key_overrides?: Record<string, string> | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface UpsertProfileInput {
+  id?: string | null;
+  name: string;
+  default_provider?: string | null;
+  default_model?: string | null;
+  default_workspace?: string | null;
+  api_key_overrides?: Record<string, string> | null;
+}
+
+export interface ProfileListPayload {
+  profiles: ForgeProfile[];
+  active_profile_id: string | null;
+}
+
+export type CheckStatus = "pass" | "warn" | "fail";
+
+export interface DiagnosticCheck {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  message: string;
+  detail?: unknown | null;
+  remediation?: string | null;
+}
+
+export interface DiagnosticsReport {
+  ok: boolean;
+  generatedAtMs: number;
+  checks: DiagnosticCheck[];
+}
+
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  text: string;
+  enabled: boolean;
+  interval_seconds: number;
+  next_run_at_ms: number;
+  last_run_at_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  tags: string[];
+  profile_id?: string | null;
+  last_error?: string | null;
+}
+
+export interface RunHistoryEntry {
+  id: string;
+  task_id: string;
+  started_at_ms: number;
+  ended_at_ms: number;
+  status: string; // "completed" | "skipped" | "error"
+  message: string;
+}
+
+export interface SchedulerListPayload {
+  tasks: ScheduledTask[];
+  recent_history: RunHistoryEntry[];
+  load_error?: string | null;
+}
+
+export interface UpsertScheduledTaskInput {
+  id?: string | null;
+  title: string;
+  text: string;
+  tags?: string[];
+  interval_seconds?: number;
+  profile_id?: string | null;
+}
+
+export type ServiceStatus = {
+  installed: boolean;
+  running: boolean;
+  message: string;
+  supported: boolean;
+};
+
+export type LogEntry = {
+  timestamp_ms: number;
+  level: string;
+  source: string;
+  message: string;
+  session_id?: string;
+};
