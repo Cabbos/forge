@@ -5,6 +5,7 @@ use crate::gateway::protocol::{
     serialize_reply, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse,
     HealthResult, PingResult, GATEWAY_VERSION,
 };
+use crate::gateway::runner::TriggerRunStore;
 use crate::gateway::webhook::TriggerStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -35,6 +36,7 @@ pub struct GatewayState {
     pub active_sessions: Arc<std::sync::atomic::AtomicUsize>,
     sessions: Mutex<HashMap<String, GatewaySessionInfo>>,
     pub trigger_store: Arc<TriggerStore>,
+    pub trigger_run_store: Arc<TriggerRunStore>,
 }
 
 impl Default for GatewayState {
@@ -50,6 +52,7 @@ impl GatewayState {
             active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sessions: Mutex::new(HashMap::new()),
             trigger_store: Arc::new(TriggerStore::persistent_default()),
+            trigger_run_store: Arc::new(TriggerRunStore::persistent_default()),
         }
     }
 
@@ -108,6 +111,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "unregister_session" => handle_unregister_session(state, request),
         "list_pending_triggers" => handle_list_triggers(state, request.id),
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
+        "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         _ => GatewayReply::Err(GatewayError {
             id: request.id,
             error: GatewayErrorBody {
@@ -191,6 +195,14 @@ fn handle_drain_triggers(state: &GatewayState, id: String) -> GatewayReply {
     GatewayReply::Ok(GatewayResponse {
         id,
         result: serde_json::to_value(triggers).unwrap(),
+    })
+}
+
+fn handle_list_trigger_runs(state: &GatewayState, id: String) -> GatewayReply {
+    let runs = state.trigger_run_store.list();
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(runs).unwrap(),
     })
 }
 
@@ -287,7 +299,9 @@ pub async fn serve(state: Arc<GatewayState>, socket_path: PathBuf) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     // ── dispatch ──────────────────────────────────────────────────────────
 
@@ -351,6 +365,46 @@ mod tests {
                 assert!(err.error.message.contains("unknown method"));
             }
             _ => panic!("expected Err reply"),
+        }
+    }
+
+    #[test]
+    fn dispatch_list_trigger_runs_returns_records() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-1".into(),
+                trigger_id: "trigger-1".into(),
+                attempt: 1,
+                status: "completed".into(),
+                message: "ledger ok".into(),
+                started_at_ms: 1,
+                ended_at_ms: 2,
+            });
+
+        let req = GatewayRequest {
+            id: "runs".into(),
+            method: "list_trigger_runs".into(),
+            params: None,
+        };
+        let reply = dispatch(&state, req);
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let runs: Vec<crate::gateway::runner::TriggerRunRecord> =
+                    serde_json::from_value(resp.result).expect("parse trigger runs");
+                assert_eq!(runs.len(), 1);
+                assert_eq!(runs[0].trigger_id, "trigger-1");
+                assert_eq!(runs[0].status, "completed");
+            }
+            _ => panic!("expected Ok reply"),
         }
     }
 

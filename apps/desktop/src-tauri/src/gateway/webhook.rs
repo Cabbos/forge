@@ -25,7 +25,13 @@ pub struct PendingTrigger {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub attempt_count: u32,
     pub received_at_ms: u64,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// Thread-safe store for pending triggers.
@@ -222,6 +228,7 @@ async fn handle_webhook_connection(
                         .get("workspace_path")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
+                    attempt_count: 0,
                     received_at_ms: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
@@ -263,6 +270,7 @@ mod tests {
             provider: None,
             model: None,
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 1000,
         });
 
@@ -286,6 +294,7 @@ mod tests {
             provider: None,
             model: None,
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 1,
         });
         store.push(PendingTrigger {
@@ -295,6 +304,7 @@ mod tests {
             provider: None,
             model: None,
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 2,
         });
 
@@ -316,6 +326,7 @@ mod tests {
             provider: Some("codex".into()),
             model: Some("gpt-5".into()),
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 10,
         });
 
@@ -340,6 +351,7 @@ mod tests {
             provider: None,
             model: None,
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 20,
         });
 
@@ -364,6 +376,7 @@ mod tests {
             provider: None,
             model: None,
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 10,
         });
         scheduler_store.push(PendingTrigger {
@@ -373,6 +386,7 @@ mod tests {
             provider: None,
             model: None,
             workspace_path: None,
+            attempt_count: 0,
             received_at_ms: 20,
         });
 
@@ -395,6 +409,7 @@ mod tests {
             provider: Some("deepseek".into()),
             model: Some("deepseek-chat".into()),
             workspace_path: Some("/tmp/forge-workspace".into()),
+            attempt_count: 0,
             received_at_ms: 1718123456789,
         };
         let json = serde_json::to_string(&trigger).expect("serialize");

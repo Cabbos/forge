@@ -7,7 +7,7 @@
 //! ## Current limitations
 //!
 //! - Scheduler firing queues gateway triggers; the gateway runner owns
-//!   headless execution and currently reports results through gateway logs.
+//!   headless execution and records attempt results in the gateway run ledger.
 //! - No background tick yet; the frontend drives `run_scheduled_task_now` and
 //!   can poll `list_scheduled_tasks` for next-run display.
 
@@ -434,6 +434,7 @@ impl SchedulerStore {
             provider: None,
             model: None,
             workspace_path: workspace_path.map(|path| path.to_string_lossy().to_string()),
+            attempt_count: 0,
             received_at_ms: ended_ms,
         };
         trigger_store.push(trigger);

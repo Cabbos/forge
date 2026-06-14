@@ -33,9 +33,14 @@ async fn main() {
     // Spawn trigger consumer in background. The runner converts queued
     // webhook/scheduler triggers into headless Forge requests.
     let trigger_runner_state = state.trigger_store.clone();
+    let trigger_run_state = state.trigger_run_store.clone();
     let fallback_workspace =
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    forge::gateway::runner::spawn_trigger_runner(trigger_runner_state, fallback_workspace);
+    forge::gateway::runner::spawn_trigger_runner(
+        trigger_runner_state,
+        trigger_run_state,
+        fallback_workspace,
+    );
 
     // Block on the Unix socket listener.
     match forge::gateway::server::serve(state, socket_path).await {
