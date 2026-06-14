@@ -6,15 +6,15 @@
 //!
 //! ## Current limitations
 //!
-//! - Scheduler firing queues gateway triggers, but the agent/headless worker
-//!   that consumes those triggers is delivered separately.
+//! - Scheduler firing queues gateway triggers; the gateway runner owns
+//!   headless execution and currently reports results through gateway logs.
 //! - No background tick yet; the frontend drives `run_scheduled_task_now` and
 //!   can poll `list_scheduled_tasks` for next-run display.
 
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -384,6 +384,18 @@ impl SchedulerStore {
         id: &str,
         trigger_store: &TriggerStore,
     ) -> Result<ScheduledTask, String> {
+        self.run_task_now_with_trigger_store_at_workspace(id, trigger_store, None)
+    }
+
+    /// Queue a task for execution through the gateway trigger store with an
+    /// optional workspace hint that the gateway runner can use for headless
+    /// execution.
+    pub fn run_task_now_with_trigger_store_at_workspace(
+        &self,
+        id: &str,
+        trigger_store: &TriggerStore,
+        workspace_path: Option<&Path>,
+    ) -> Result<ScheduledTask, String> {
         let started_ms = now_millis();
 
         let (mut task, enabled) = {
@@ -421,6 +433,7 @@ impl SchedulerStore {
             profile_id: task.profile_id.clone(),
             provider: None,
             model: None,
+            workspace_path: workspace_path.map(|path| path.to_string_lossy().to_string()),
             received_at_ms: ended_ms,
         };
         trigger_store.push(trigger);
@@ -486,6 +499,16 @@ impl SchedulerStore {
         &self,
         trigger_store: &TriggerStore,
     ) -> Result<Vec<String>, String> {
+        self.run_due_tasks_with_trigger_store_at_workspace(trigger_store, None)
+    }
+
+    /// Queue all due tasks into the gateway trigger store with an optional
+    /// workspace hint for the downstream runner.
+    pub fn run_due_tasks_with_trigger_store_at_workspace(
+        &self,
+        trigger_store: &TriggerStore,
+        workspace_path: Option<&Path>,
+    ) -> Result<Vec<String>, String> {
         let now_ms = now_millis();
         let due_ids: Vec<String> = {
             let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
@@ -497,7 +520,11 @@ impl SchedulerStore {
         };
 
         for id in &due_ids {
-            let _ = self.run_task_now_with_trigger_store(id, trigger_store);
+            let _ = self.run_task_now_with_trigger_store_at_workspace(
+                id,
+                trigger_store,
+                workspace_path,
+            );
         }
 
         Ok(due_ids)

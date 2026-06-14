@@ -56,5 +56,9 @@ pub async fn run_scheduled_task_now(
 ) -> Result<ScheduledTask, String> {
     let store = &state.scheduler;
     let trigger_store = TriggerStore::persistent_default();
-    store.run_task_now_with_trigger_store(&id, &trigger_store)
+    store.run_task_now_with_trigger_store_at_workspace(
+        &id,
+        &trigger_store,
+        Some(state.harness.working_dir.as_path()),
+    )
 }

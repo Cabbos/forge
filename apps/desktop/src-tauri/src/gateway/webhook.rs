@@ -23,6 +23,8 @@ pub struct PendingTrigger {
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     pub received_at_ms: u64,
 }
 
@@ -216,6 +218,10 @@ async fn handle_webhook_connection(
                         .get("model")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
+                    workspace_path: json
+                        .get("workspace_path")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     received_at_ms: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
@@ -256,6 +262,7 @@ mod tests {
             profile_id: None,
             provider: None,
             model: None,
+            workspace_path: None,
             received_at_ms: 1000,
         });
 
@@ -278,6 +285,7 @@ mod tests {
             profile_id: None,
             provider: None,
             model: None,
+            workspace_path: None,
             received_at_ms: 1,
         });
         store.push(PendingTrigger {
@@ -286,6 +294,7 @@ mod tests {
             profile_id: Some("work".into()),
             provider: None,
             model: None,
+            workspace_path: None,
             received_at_ms: 2,
         });
 
@@ -306,6 +315,7 @@ mod tests {
             profile_id: Some("ops".into()),
             provider: Some("codex".into()),
             model: Some("gpt-5".into()),
+            workspace_path: None,
             received_at_ms: 10,
         });
 
@@ -329,6 +339,7 @@ mod tests {
             profile_id: None,
             provider: None,
             model: None,
+            workspace_path: None,
             received_at_ms: 20,
         });
 
@@ -352,6 +363,7 @@ mod tests {
             profile_id: None,
             provider: None,
             model: None,
+            workspace_path: None,
             received_at_ms: 10,
         });
         scheduler_store.push(PendingTrigger {
@@ -360,6 +372,7 @@ mod tests {
             profile_id: Some("ops".into()),
             provider: None,
             model: None,
+            workspace_path: None,
             received_at_ms: 20,
         });
 
@@ -381,11 +394,13 @@ mod tests {
             profile_id: Some("work".into()),
             provider: Some("deepseek".into()),
             model: Some("deepseek-chat".into()),
+            workspace_path: Some("/tmp/forge-workspace".into()),
             received_at_ms: 1718123456789,
         };
         let json = serde_json::to_string(&trigger).expect("serialize");
         assert!(json.contains("\"message\":\"ship it\""));
         assert!(json.contains("\"profile_id\":\"work\""));
         assert!(json.contains("\"provider\":\"deepseek\""));
+        assert!(json.contains("\"workspace_path\":\"/tmp/forge-workspace\""));
     }
 }

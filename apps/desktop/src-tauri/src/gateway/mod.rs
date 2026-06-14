@@ -7,5 +7,6 @@
 
 pub mod client;
 pub mod protocol;
+pub mod runner;
 pub mod server;
 pub mod webhook;
