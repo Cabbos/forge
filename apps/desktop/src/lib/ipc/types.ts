@@ -336,7 +336,7 @@ export interface RunHistoryEntry {
   task_id: string;
   started_at_ms: number;
   ended_at_ms: number;
-  status: string; // "completed" | "skipped" | "error"
+  status: string; // "queued" | "completed" | "skipped" | "error"
   message: string;
 }
 

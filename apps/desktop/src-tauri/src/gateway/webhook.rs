@@ -55,6 +55,8 @@ impl TriggerStore {
     /// Push a new trigger.
     pub fn push(&self, trigger: PendingTrigger) {
         if let Ok(mut list) = self.triggers.lock() {
+            self.refresh_locked(&mut list);
+            list.retain(|existing| existing.id != trigger.id);
             list.push(trigger);
             self.save_locked(&list);
         }
@@ -65,6 +67,7 @@ impl TriggerStore {
         self.triggers
             .lock()
             .map(|mut list| {
+                self.refresh_locked(&mut list);
                 let drained = std::mem::take(&mut *list);
                 self.save_locked(&list);
                 drained
@@ -76,8 +79,18 @@ impl TriggerStore {
     pub fn list(&self) -> Vec<PendingTrigger> {
         self.triggers
             .lock()
-            .map(|list| list.clone())
+            .map(|mut list| {
+                self.refresh_locked(&mut list);
+                list.clone()
+            })
             .unwrap_or_default()
+    }
+
+    fn refresh_locked(&self, list: &mut Vec<PendingTrigger>) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        merge_triggers(list, load_triggers(path));
     }
 
     fn save_locked(&self, list: &[PendingTrigger]) {
@@ -86,6 +99,14 @@ impl TriggerStore {
         };
         if let Err(error) = save_triggers(path, list) {
             log::warn!("failed to persist gateway triggers: {error}");
+        }
+    }
+}
+
+fn merge_triggers(target: &mut Vec<PendingTrigger>, incoming: Vec<PendingTrigger>) {
+    for trigger in incoming {
+        if !target.iter().any(|existing| existing.id == trigger.id) {
+            target.push(trigger);
         }
     }
 }
@@ -316,6 +337,40 @@ mod tests {
 
         let restored = TriggerStore::persistent_at(path);
         assert!(restored.list().is_empty());
+    }
+
+    #[test]
+    fn persistent_trigger_store_merges_external_writes_before_drain() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pending-triggers.json");
+        let gateway_store = TriggerStore::persistent_at(path.clone());
+        let scheduler_store = TriggerStore::persistent_at(path);
+
+        gateway_store.push(PendingTrigger {
+            id: "webhook-trigger".into(),
+            message: "from webhook".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            received_at_ms: 10,
+        });
+        scheduler_store.push(PendingTrigger {
+            id: "scheduler-trigger".into(),
+            message: "from scheduler".into(),
+            profile_id: Some("ops".into()),
+            provider: None,
+            model: None,
+            received_at_ms: 20,
+        });
+
+        let drained = gateway_store.drain();
+        let ids = drained
+            .iter()
+            .map(|trigger| trigger.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"webhook-trigger"));
+        assert!(ids.contains(&"scheduler-trigger"));
     }
 
     #[test]

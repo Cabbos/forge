@@ -5,8 +5,9 @@
 //! - `upsert_scheduled_task` — create or update a scheduled task.
 //! - `delete_scheduled_task` — delete a scheduled task by id.
 //! - `set_scheduled_task_enabled` — enable/disable a scheduled task.
-//! - `run_scheduled_task_now` — run a task immediately (MVP: records history).
+//! - `run_scheduled_task_now` — queue a task into the gateway trigger store.
 
+use crate::gateway::webhook::TriggerStore;
 use crate::scheduler::{ScheduledTask, SchedulerListPayload, UpsertScheduledTaskInput};
 use crate::state::AppState;
 use std::sync::Arc;
@@ -54,5 +55,6 @@ pub async fn run_scheduled_task_now(
     id: String,
 ) -> Result<ScheduledTask, String> {
     let store = &state.scheduler;
-    store.run_task_now(&id)
+    let trigger_store = TriggerStore::persistent_default();
+    store.run_task_now_with_trigger_store(&id, &trigger_store)
 }

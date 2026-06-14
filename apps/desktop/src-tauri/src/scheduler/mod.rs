@@ -1,18 +1,17 @@
 //! Local scheduled task store — CRUD for declarative cron-like tasks.
 //!
-//! Persisted as JSON at `~/.forge/scheduler.json`.  No agent session creation
-//! or gateway invocation yet; the MVP runner records deterministic history
-//! entries so next-run / run-now / history surfaces are honest.
+//! Persisted as JSON at `~/.forge/scheduler.json`.  The store owns the task
+//! model and history; IPC can pair it with the gateway trigger queue so run-now
+//! and due tasks are picked up by the background runtime.
 //!
-//! ## MVP limitations (intentional)
+//! ## Current limitations
 //!
-//! - Does NOT create agent sessions or invoke any gateway.
-//! - When a task is due (via `run_due_tasks` or `run_task_now`), the runner
-//!   writes a `completed` or `skipped` history entry with a message explaining
-//!   that the task was recorded by the local scheduler MVP.
-//! - No background tick; the frontend drives `run_scheduled_task_now` and can
-//!   poll `list_scheduled_tasks` for next-run display.
+//! - Scheduler firing queues gateway triggers, but the agent/headless worker
+//!   that consumes those triggers is delivered separately.
+//! - No background tick yet; the frontend drives `run_scheduled_task_now` and
+//!   can poll `list_scheduled_tasks` for next-run display.
 
+use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -57,7 +56,7 @@ pub struct RunHistoryEntry {
     pub task_id: String,
     pub started_at_ms: u64,
     pub ended_at_ms: u64,
-    /// "completed" | "skipped" | "error"
+    /// "queued" | "completed" | "skipped" | "error"
     pub status: String,
     /// Short message / log excerpt (≤ 200 chars in practice).
     pub message: String,
@@ -378,6 +377,82 @@ impl SchedulerStore {
         Ok(task)
     }
 
+    /// Queue a task for execution through the gateway trigger store and record
+    /// a run-history entry.
+    pub fn run_task_now_with_trigger_store(
+        &self,
+        id: &str,
+        trigger_store: &TriggerStore,
+    ) -> Result<ScheduledTask, String> {
+        let started_ms = now_millis();
+
+        let (mut task, enabled) = {
+            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            let t = tasks
+                .iter()
+                .find(|t| t.id == id)
+                .ok_or_else(|| format!("Task '{id}' not found."))?
+                .clone();
+            (t.clone(), t.enabled)
+        };
+
+        if !enabled {
+            let ended_ms = now_millis();
+            let entry = RunHistoryEntry {
+                id: new_history_id(),
+                task_id: id.to_string(),
+                started_at_ms: started_ms,
+                ended_at_ms: ended_ms,
+                status: "skipped".to_string(),
+                message: "Task is disabled — Gateway trigger was not queued.".to_string(),
+            };
+            self.push_history(entry);
+            self.save()?;
+            task.last_run_at_ms = Some(ended_ms);
+            task.next_run_at_ms = compute_next_run(ended_ms, task.interval_seconds, Some(ended_ms));
+            task.last_error = Some("Task is disabled — cannot run.".to_string());
+            return Ok(task);
+        }
+
+        let ended_ms = now_millis();
+        let trigger = PendingTrigger {
+            id: new_history_id(),
+            message: task.text.clone(),
+            profile_id: task.profile_id.clone(),
+            provider: None,
+            model: None,
+            received_at_ms: ended_ms,
+        };
+        trigger_store.push(trigger);
+
+        let entry = RunHistoryEntry {
+            id: new_history_id(),
+            task_id: id.to_string(),
+            started_at_ms: started_ms,
+            ended_at_ms: ended_ms,
+            status: "queued".to_string(),
+            message: format!(
+                "Queued Gateway trigger for task \"{}\": \"{}\".",
+                task.title,
+                truncate_str(&task.text, 120)
+            ),
+        };
+        self.push_history(entry);
+
+        {
+            let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
+                t.last_run_at_ms = Some(ended_ms);
+                t.next_run_at_ms = compute_next_run(ended_ms, t.interval_seconds, Some(ended_ms));
+                t.last_error = None;
+                t.updated_at_ms = ended_ms;
+                task = t.clone();
+            }
+        }
+        self.save()?;
+        Ok(task)
+    }
+
     // -- run due helper (tick) -------------------------------------------------
 
     /// Run all enabled tasks whose `next_run_at_ms` ≤ now.
@@ -400,6 +475,29 @@ impl SchedulerStore {
             // Best-effort: if a task was deleted between listing and running,
             // just skip it.
             let _ = self.run_task_now(id);
+        }
+
+        Ok(due_ids)
+    }
+
+    /// Queue all enabled tasks whose `next_run_at_ms` ≤ now into the gateway
+    /// trigger store.
+    pub fn run_due_tasks_with_trigger_store(
+        &self,
+        trigger_store: &TriggerStore,
+    ) -> Result<Vec<String>, String> {
+        let now_ms = now_millis();
+        let due_ids: Vec<String> = {
+            let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            tasks
+                .iter()
+                .filter(|t| t.enabled && t.next_run_at_ms <= now_ms)
+                .map(|t| t.id.clone())
+                .collect()
+        };
+
+        for id in &due_ids {
+            let _ = self.run_task_now_with_trigger_store(id, trigger_store);
         }
 
         Ok(due_ids)
@@ -826,6 +924,40 @@ mod tests {
         assert_eq!(entry.task_id, task.id);
         assert_eq!(entry.status, "completed");
         assert!(entry.message.contains("Scheduler MVP"));
+        assert_cleanup(&path);
+    }
+
+    #[test]
+    fn run_task_now_with_trigger_store_queues_gateway_trigger() {
+        let path = temp_path("run-now-trigger");
+        let store = SchedulerStore::new(path.clone());
+        let task = store
+            .upsert(UpsertScheduledTaskInput {
+                id: None,
+                title: "Morning review".into(),
+                text: "summarize overnight changes".into(),
+                tags: vec!["ops".into()],
+                interval_seconds: 3600,
+                profile_id: Some("ops".into()),
+            })
+            .expect("upsert");
+        let triggers = crate::gateway::webhook::TriggerStore::new();
+
+        let result = store
+            .run_task_now_with_trigger_store(&task.id, &triggers)
+            .expect("run");
+
+        assert_eq!(result.last_error, None);
+        let queued = triggers.list();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].message, "summarize overnight changes");
+        assert_eq!(queued[0].profile_id.as_deref(), Some("ops"));
+
+        let payload = store.list_payload();
+        let entry = &payload.recent_history[0];
+        assert_eq!(entry.task_id, task.id);
+        assert_eq!(entry.status, "queued");
+        assert!(entry.message.contains("Gateway"));
         assert_cleanup(&path);
     }
 
