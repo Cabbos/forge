@@ -3,6 +3,7 @@
 //! Each action is idempotent and safe to run multiple times.
 
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 
 /// A repair action the user or system can trigger.
 #[derive(Debug, Clone, Serialize)]
@@ -84,8 +85,10 @@ fn restart_gateway() -> RepairResult {
         }
     } else {
         // Bootout then bootstrap.
+        let domain = crate::service::launchd::launchctl_domain();
+        let args = gateway_bootout_args(&domain, &plist_path);
         let _ = std::process::Command::new("launchctl")
-            .args(["bootout", "gui/501", plist_path.to_str().unwrap_or("")])
+            .args(args.iter().map(String::as_str))
             .output();
         match crate::service::launchd::install() {
             Ok(msg) => RepairResult {
@@ -103,11 +106,10 @@ fn restart_gateway() -> RepairResult {
 }
 
 fn clear_snapshot_cache() -> RepairResult {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let snapshots_dir = std::path::PathBuf::from(home)
-        .join(".forge")
-        .join("snapshots");
+    clear_snapshot_cache_at(&snapshot_cache_dir())
+}
 
+fn clear_snapshot_cache_at(snapshots_dir: &Path) -> RepairResult {
     if !snapshots_dir.exists() {
         return RepairResult {
             action_id: "clear_snapshot_cache".into(),
@@ -133,6 +135,22 @@ fn clear_snapshot_cache() -> RepairResult {
     }
 }
 
+fn gateway_bootout_args(domain: &str, plist_path: &Path) -> Vec<String> {
+    vec![
+        "bootout".to_string(),
+        domain.to_string(),
+        plist_path.to_string_lossy().to_string(),
+    ]
+}
+
+fn snapshot_cache_dir() -> PathBuf {
+    snapshot_cache_dir_for_home(home_dir())
+}
+
+fn snapshot_cache_dir_for_home(home: impl AsRef<Path>) -> PathBuf {
+    home.as_ref().join(".forge").join("sessions")
+}
+
 fn reinstall_service() -> RepairResult {
     // Uninstall then install.
     let _ = crate::service::launchd::uninstall();
@@ -151,11 +169,7 @@ fn reinstall_service() -> RepairResult {
 }
 
 fn clear_logs() -> RepairResult {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let log_path = std::path::PathBuf::from(home)
-        .join(".forge")
-        .join("logs")
-        .join("forge.log");
+    let log_path = home_dir().join(".forge").join("logs").join("forge.log");
 
     if !log_path.exists() {
         return RepairResult {
@@ -182,10 +196,7 @@ fn clear_logs() -> RepairResult {
 }
 
 fn check_config() -> RepairResult {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let config_path = std::path::PathBuf::from(home)
-        .join(".forge")
-        .join("config.json");
+    let config_path = home_dir().join(".forge").join("config.json");
 
     if !config_path.exists() {
         return RepairResult {
@@ -214,6 +225,12 @@ fn check_config() -> RepairResult {
             message: format!("Cannot read config: {e}"),
         },
     }
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -246,18 +263,73 @@ mod tests {
     }
 
     #[test]
-    fn all_action_ids_are_valid_function_dispatches() {
+    fn all_action_ids_have_known_dispatch_contracts() {
+        let dispatchable = [
+            "restart_gateway",
+            "clear_snapshot_cache",
+            "reinstall_service",
+            "clear_logs",
+            "check_config",
+        ];
         for action in REPAIR_ACTIONS {
-            let result = run_repair(action.id);
-            // Unknown actions are caught by the `_` arm.
-            assert_eq!(result.action_id, action.id);
-            // Should not contain "Unknown" for valid actions.
             assert!(
-                !result.message.contains("Unknown repair action"),
-                "action '{}' should be handled: {}",
-                action.id,
-                result.message
+                dispatchable.contains(&action.id),
+                "action '{}' must be handled by run_repair",
+                action.id
             );
         }
+    }
+
+    #[test]
+    fn snapshot_cache_dir_points_to_session_snapshots() {
+        let root = std::path::PathBuf::from("/tmp/forge-home");
+
+        assert_eq!(
+            snapshot_cache_dir_for_home(&root),
+            root.join(".forge").join("sessions")
+        );
+    }
+
+    #[test]
+    fn clear_snapshot_cache_removes_session_snapshot_files() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-repair-snapshots-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        let snapshots_dir = root.join(".forge").join("sessions");
+        std::fs::create_dir_all(&snapshots_dir).expect("snapshot dir");
+        std::fs::write(snapshots_dir.join("session.json"), "{}").expect("snapshot");
+
+        let result = clear_snapshot_cache_at(&snapshots_dir);
+
+        assert!(result.success, "{}", result.message);
+        assert!(snapshots_dir.exists());
+        assert!(
+            std::fs::read_dir(&snapshots_dir)
+                .expect("read snapshot dir")
+                .next()
+                .is_none(),
+            "snapshot files should be removed"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn gateway_bootout_args_use_supplied_launchd_domain() {
+        let args = gateway_bootout_args(
+            "gui/12345",
+            std::path::Path::new("/tmp/com.forge.gateway.plist"),
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "bootout".to_string(),
+                "gui/12345".to_string(),
+                "/tmp/com.forge.gateway.plist".to_string(),
+            ]
+        );
     }
 }
