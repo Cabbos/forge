@@ -26,6 +26,11 @@ pub const REPAIR_ACTIONS: &[RepairAction] = &[
         description: "删除所有会话快照文件，下次启动将重新开始",
     },
     RepairAction {
+        id: "clear_a2a_ledger_cache",
+        label: "清除 A2A 任务账本",
+        description: "删除所有持久化子任务状态，下次启动将重新建立",
+    },
+    RepairAction {
         id: "reinstall_service",
         label: "重新安装服务",
         description: "卸载并重新安装 launchd 服务",
@@ -55,6 +60,7 @@ pub fn run_repair(action_id: &str) -> RepairResult {
     match action_id {
         "restart_gateway" => restart_gateway(),
         "clear_snapshot_cache" => clear_snapshot_cache(),
+        "clear_a2a_ledger_cache" => clear_a2a_ledger_cache(),
         "reinstall_service" => reinstall_service(),
         "clear_logs" => clear_logs(),
         "check_config" => check_config(),
@@ -135,6 +141,36 @@ fn clear_snapshot_cache_at(snapshots_dir: &Path) -> RepairResult {
     }
 }
 
+fn clear_a2a_ledger_cache() -> RepairResult {
+    clear_a2a_ledger_cache_at(&a2a_ledger_cache_dir())
+}
+
+fn clear_a2a_ledger_cache_at(ledger_dir: &Path) -> RepairResult {
+    if !ledger_dir.exists() {
+        return RepairResult {
+            action_id: "clear_a2a_ledger_cache".into(),
+            success: true,
+            message: "No A2A ledger cache to clear.".into(),
+        };
+    }
+
+    match std::fs::remove_dir_all(ledger_dir) {
+        Ok(()) => {
+            let _ = std::fs::create_dir_all(ledger_dir);
+            RepairResult {
+                action_id: "clear_a2a_ledger_cache".into(),
+                success: true,
+                message: "A2A ledger cache cleared.".into(),
+            }
+        }
+        Err(e) => RepairResult {
+            action_id: "clear_a2a_ledger_cache".into(),
+            success: false,
+            message: format!("Failed: {e}"),
+        },
+    }
+}
+
 fn gateway_bootout_args(domain: &str, plist_path: &Path) -> Vec<String> {
     vec![
         "bootout".to_string(),
@@ -149,6 +185,14 @@ fn snapshot_cache_dir() -> PathBuf {
 
 fn snapshot_cache_dir_for_home(home: impl AsRef<Path>) -> PathBuf {
     home.as_ref().join(".forge").join("sessions")
+}
+
+fn a2a_ledger_cache_dir() -> PathBuf {
+    a2a_ledger_cache_dir_for_home(home_dir())
+}
+
+fn a2a_ledger_cache_dir_for_home(home: impl AsRef<Path>) -> PathBuf {
+    home.as_ref().join(".forge").join("a2a")
 }
 
 fn reinstall_service() -> RepairResult {
@@ -267,6 +311,7 @@ mod tests {
         let dispatchable = [
             "restart_gateway",
             "clear_snapshot_cache",
+            "clear_a2a_ledger_cache",
             "reinstall_service",
             "clear_logs",
             "check_config",
@@ -311,6 +356,42 @@ mod tests {
                 .next()
                 .is_none(),
             "snapshot files should be removed"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a2a_ledger_cache_dir_points_to_a2a_ledgers() {
+        let root = std::path::PathBuf::from("/tmp/forge-home");
+
+        assert_eq!(
+            a2a_ledger_cache_dir_for_home(&root),
+            root.join(".forge").join("a2a")
+        );
+    }
+
+    #[test]
+    fn clear_a2a_ledger_cache_removes_ledger_files() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-repair-a2a-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
+        let ledger_dir = root.join(".forge").join("a2a");
+        std::fs::create_dir_all(&ledger_dir).expect("ledger dir");
+        std::fs::write(ledger_dir.join("session.json"), "{}").expect("ledger");
+
+        let result = clear_a2a_ledger_cache_at(&ledger_dir);
+
+        assert!(result.success, "{}", result.message);
+        assert!(ledger_dir.exists());
+        assert!(
+            std::fs::read_dir(&ledger_dir)
+                .expect("read ledger dir")
+                .next()
+                .is_none(),
+            "A2A ledger files should be removed"
         );
 
         let _ = std::fs::remove_dir_all(&root);

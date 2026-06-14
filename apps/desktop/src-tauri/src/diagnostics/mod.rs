@@ -129,6 +129,7 @@ pub fn run_diagnostics(capabilities: Option<Vec<CapabilitySummary>>) -> Diagnost
     let checks: Vec<DiagnosticCheck> = vec![
         check_config_key_presence(),
         check_session_snapshots(),
+        check_a2a_ledgers(),
         check_app_metadata(),
         check_log_directory(),
         check_gateway_service_status(),
@@ -332,6 +333,115 @@ pub fn check_session_snapshots() -> DiagnosticCheck {
             format!(
                 "{snapshot_count} snapshot{} readable.",
                 if snapshot_count == 1 { "" } else { "s" }
+            ),
+        )
+        .with_detail(detail)
+    }
+}
+
+/// Check that persisted A2A task ledgers are readable and summarize task state.
+pub fn check_a2a_ledgers() -> DiagnosticCheck {
+    check_a2a_ledgers_at(&forge_data_dir())
+}
+
+fn check_a2a_ledgers_at(data_dir: &Path) -> DiagnosticCheck {
+    let a2a_dir = data_dir.join("a2a");
+    let list = match crate::agent::a2a::ledger::list_session_projections_at(data_dir) {
+        Ok(list) => list,
+        Err(error) => {
+            return DiagnosticCheck::fail(
+                "a2a_ledger",
+                "A2A task ledger",
+                format!("Cannot read A2A ledger directory: {error}"),
+            )
+            .with_detail(serde_json::json!({
+                "path": a2a_dir.to_string_lossy(),
+            }))
+            .with_remediation(
+                "Check file permissions on ~/.forge/a2a or remove the unreadable directory.",
+            );
+        }
+    };
+
+    let readable_count = list.states.len();
+    let corrupt_count = list.load_errors.len();
+    let total_files = readable_count + corrupt_count;
+    let total_tasks: usize = list
+        .states
+        .iter()
+        .map(|state| state.projection.tasks.len())
+        .sum();
+    let running_count: usize = list
+        .states
+        .iter()
+        .map(|state| state.projection.running_count)
+        .sum();
+    let failed_count: usize = list
+        .states
+        .iter()
+        .map(|state| state.projection.failed_count)
+        .sum();
+    let interrupted_count: usize = list
+        .states
+        .iter()
+        .map(|state| state.projection.interrupted_count)
+        .sum();
+
+    let detail = serde_json::json!({
+        "path": a2a_dir.to_string_lossy(),
+        "total_ledgers": readable_count,
+        "corrupt_ledgers": corrupt_count,
+        "total_json_files": total_files,
+        "total_tasks": total_tasks,
+        "running_tasks": running_count,
+        "failed_tasks": failed_count,
+        "interrupted_tasks": interrupted_count,
+        "load_errors": list.load_errors,
+    });
+
+    if total_files == 0 {
+        DiagnosticCheck::pass(
+            "a2a_ledger",
+            "A2A task ledger",
+            "No A2A ledgers found (no subagent tasks have been persisted yet).",
+        )
+        .with_detail(detail)
+    } else if corrupt_count > 0 && readable_count == 0 {
+        DiagnosticCheck::fail(
+            "a2a_ledger",
+            "A2A task ledger",
+            format!(
+                "All {total_files} A2A ledger file{} are corrupted.",
+                if total_files == 1 { "" } else { "s" }
+            ),
+        )
+        .with_detail(detail)
+        .with_remediation(
+            "Corrupted A2A ledgers cannot be used for task recovery. Inspect or delete the files in ~/.forge/a2a.",
+        )
+        .with_repair_action_id("clear_a2a_ledger_cache")
+    } else if corrupt_count > 0 {
+        DiagnosticCheck::warn(
+            "a2a_ledger",
+            "A2A task ledger",
+            format!(
+                "{readable_count} readable A2A ledger{}, {corrupt_count} corrupted.",
+                if readable_count == 1 { "" } else { "s" }
+            ),
+        )
+        .with_detail(detail)
+        .with_remediation(
+            "Corrupted A2A ledgers are skipped. Delete or repair the affected files in ~/.forge/a2a.",
+        )
+        .with_repair_action_id("clear_a2a_ledger_cache")
+    } else {
+        DiagnosticCheck::pass(
+            "a2a_ledger",
+            "A2A task ledger",
+            format!(
+                "{readable_count} A2A ledger{} readable with {total_tasks} task{}.",
+                if readable_count == 1 { "" } else { "s" },
+                if total_tasks == 1 { "" } else { "s" }
             ),
         )
         .with_detail(detail)
@@ -782,6 +892,7 @@ mod tests {
             vec![
                 "config_settings",
                 "session_snapshots",
+                "a2a_ledger",
                 "app_metadata",
                 "log_directory",
                 "gateway_service",
@@ -943,6 +1054,74 @@ mod tests {
 
         let check = check_session_snapshots_isolated(&root);
         assert_eq!(check.status, CheckStatus::Fail);
+        assert!(check.message.contains("corrupted"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // ── A2A ledger check shape ───────────────────────────────────────────
+
+    #[test]
+    fn a2a_ledger_check_with_no_ledgers_reports_pass() {
+        let root = temp_root("a2a-empty");
+        fs::create_dir_all(&root).unwrap();
+
+        let check = check_a2a_ledgers_isolated(&root);
+
+        assert_eq!(check.id, "a2a_ledger");
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert!(check.message.contains("No A2A ledgers"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a2a_ledger_check_reports_corrupt_count_without_dropping_valid_ledgers() {
+        use crate::agent::a2a::bus::AgentA2ABus;
+        use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+
+        let root = temp_root("a2a-corrupt");
+        let forge_dir = root.join(".forge");
+        let a2a_dir = forge_dir.join("a2a");
+        fs::create_dir_all(&a2a_dir).unwrap();
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Inspect worker",
+            "Read A2A state",
+            10,
+        );
+        bus.complete_task(&task_id, "done", 20);
+        crate::agent::a2a::ledger::save_session_ledger_at(&forge_dir, "session-ok", &bus)
+            .expect("save valid ledger");
+        fs::write(a2a_dir.join("session-bad.json"), "{ nope").unwrap();
+
+        let check = check_a2a_ledgers_isolated(&root);
+
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(check.message.contains("1 readable A2A ledger"));
+        assert!(check.message.contains("1 corrupted"));
+        let detail = check.detail.unwrap();
+        assert_eq!(detail["total_ledgers"], 1);
+        assert_eq!(detail["corrupt_ledgers"], 1);
+        assert_eq!(detail["total_tasks"], 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a2a_ledger_check_with_all_corrupt_reports_fail() {
+        let root = temp_root("a2a-all-corrupt");
+        let a2a_dir = root.join(".forge").join("a2a");
+        fs::create_dir_all(&a2a_dir).unwrap();
+        fs::write(a2a_dir.join("session-bad.json"), "{ nope").unwrap();
+
+        let check = check_a2a_ledgers_isolated(&root);
+
+        assert_eq!(check.status, CheckStatus::Fail);
+        assert!(check.message.contains("A2A ledger"));
         assert!(check.message.contains("corrupted"));
 
         let _ = fs::remove_dir_all(&root);
@@ -1253,6 +1432,10 @@ mod tests {
         isolated_forge_check(root, |_| check_session_snapshots_inner(root))
     }
 
+    fn check_a2a_ledgers_isolated(root: &std::path::Path) -> DiagnosticCheck {
+        isolated_forge_check(root, |_| check_a2a_ledgers_inner(root))
+    }
+
     fn check_app_metadata_isolated(root: &std::path::Path) -> DiagnosticCheck {
         isolated_forge_check(root, |_| check_app_metadata_inner(root))
     }
@@ -1395,6 +1578,10 @@ mod tests {
             )
             .with_detail(detail)
         }
+    }
+
+    fn check_a2a_ledgers_inner(root: &std::path::Path) -> DiagnosticCheck {
+        check_a2a_ledgers_at(&root.join(".forge"))
     }
 
     fn check_app_metadata_inner(root: &std::path::Path) -> DiagnosticCheck {

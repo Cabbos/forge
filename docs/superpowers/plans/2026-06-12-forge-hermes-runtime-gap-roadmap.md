@@ -172,6 +172,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [x] 2.9 Eval-runner integration: `npm run test:eval` includes a doctor health pre-check.
   - Files: `scripts/eval-doctor-precheck.mjs`, `package.json` (root test:eval script).
   - Completed 2026-06-12: pre-check runs CLI doctor in JSON mode before pytest. Fresh install (missing ~/.forge or log file) is classified as soft-fail and does not block eval. Hard failures (corrupted config, unreadable files) warn but do not block — keeping apps/eval-runner independently runnable.
+- [x] 2.10 Add A2A ledger diagnostics and repair action.
+  - Files: `diagnostics/mod.rs`, `diagnostics/repair.rs`.
+  - Completed 2026-06-15: diagnostics now checks `~/.forge/a2a` sidecars, reports readable/corrupt ledger counts, total task counts, and running/failed/interrupted task totals. Corrupt sidecars warn when at least one valid ledger remains and fail when all ledger files are corrupt. Added `clear_a2a_ledger_cache` repair action so Settings > Diagnostics can clear persisted subagent state without manual filesystem work.
 
 **Acceptance gate:**
 
@@ -341,6 +344,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Live A2A query surface | ✅ Done | `AgentSession::a2a_projection()` exposes current bus state without touching the agent loop |
 | Tauri IPC | ✅ Done | `get_agent_a2a_state` and `list_agent_a2a_states`; live session state overrides ledger state for the same session |
 | TypeScript IPC wrapper | ✅ Done | `getAgentA2AState` and `listAgentA2AStates` exported from `src/lib/tauri.ts` |
+| Diagnostics integration | ✅ Done | `a2a_ledger` diagnostic summarizes readable/corrupt sidecars and links corrupt state to `clear_a2a_ledger_cache` |
 | CRITICAL paths touched | 🚫 None | Zero edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, session loop |
 
 **Known deferred items (Phase 4-B):**
