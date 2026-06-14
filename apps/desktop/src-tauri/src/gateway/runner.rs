@@ -95,7 +95,7 @@ fn merge_trigger_runs(target: &mut Vec<TriggerRunRecord>, incoming: Vec<TriggerR
             target.push(record);
         }
     }
-    target.sort_by(|a, b| b.started_at_ms.cmp(&a.started_at_ms));
+    target.sort_by_key(|record| std::cmp::Reverse(record.started_at_ms));
     if target.len() > MAX_TRIGGER_RUN_RECORDS {
         target.truncate(MAX_TRIGGER_RUN_RECORDS);
     }

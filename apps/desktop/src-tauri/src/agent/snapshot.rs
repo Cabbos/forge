@@ -231,6 +231,7 @@ fn save_session_snapshot_at(
     let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("Failed to serialize session snapshot: {e}"))?;
     fs::write(&path, json).map_err(|e| format!("Failed to write session snapshot: {e}"))?;
+    sync_a2a_ledger_at(root, &snapshot)?;
     Ok(())
 }
 
@@ -245,7 +246,7 @@ fn load_session_snapshot_at(
     let path = snapshot_path_at(root, session_id)?;
     let json = fs::read_to_string(&path)
         .map_err(|e| format!("Cannot read saved session '{}': {e}", session_id))?;
-    let snapshot: AgentSessionSnapshot = serde_json::from_str(&json)
+    let mut snapshot: AgentSessionSnapshot = serde_json::from_str(&json)
         .map_err(|e| format!("Saved session '{}' is corrupted: {e}", session_id))?;
     if snapshot.session_id != session_id {
         return Err(format!(
@@ -253,16 +254,36 @@ fn load_session_snapshot_at(
             session_id
         ));
     }
+    if snapshot.a2a_state.is_none() {
+        match crate::agent::a2a::ledger::load_session_ledger_at(root, session_id) {
+            Ok(Some(bus)) => snapshot.a2a_state = Some(bus),
+            Ok(None) => {}
+            Err(error) => crate::app_log!("WARN", "[a2a_ledger] {error}"),
+        }
+    }
     Ok(snapshot)
 }
 
 pub fn delete_session_snapshot(session_id: &str) -> Result<(), String> {
-    let path = snapshot_path(session_id)?;
+    delete_session_snapshot_at(&app_data_dir(), session_id)
+}
+
+fn delete_session_snapshot_at(root: &Path, session_id: &str) -> Result<(), String> {
+    let path = snapshot_path_at(root, session_id)?;
     if path.exists() {
         fs::remove_file(&path)
             .map_err(|e| format!("Failed to delete saved session '{}': {e}", session_id))?;
     }
+    crate::agent::a2a::ledger::delete_session_ledger_at(root, session_id)?;
     Ok(())
+}
+
+fn sync_a2a_ledger_at(root: &Path, snapshot: &AgentSessionSnapshot) -> Result<(), String> {
+    if let Some(bus) = &snapshot.a2a_state {
+        crate::agent::a2a::ledger::save_session_ledger_at(root, &snapshot.session_id, bus)
+    } else {
+        crate::agent::a2a::ledger::delete_session_ledger_at(root, &snapshot.session_id)
+    }
 }
 
 pub fn list_session_snapshots() -> Result<Vec<AgentSessionSnapshot>, String> {
@@ -932,6 +953,109 @@ mod tests {
             serde_json::from_str(&json).expect("deserialize snapshot");
 
         assert_eq!(restored.a2a_state.expect("a2a state").tasks.len(), 1);
+    }
+
+    #[test]
+    fn save_session_snapshot_writes_a2a_ledger_sidecar() {
+        use crate::agent::a2a::bus::AgentA2ABus;
+        use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-a2a-ledger-save-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("sessions")).expect("sessions dir");
+
+        let mut bus = AgentA2ABus::default();
+        bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement diagnostics",
+            "Wire doctor repair action",
+            10,
+        );
+        let snapshot = snapshot().with_a2a_state(bus);
+
+        save_session_snapshot_at(&root, &snapshot).expect("save snapshot");
+
+        let ledger_path = root.join("a2a").join("session-1.json");
+        assert!(ledger_path.exists(), "a2a ledger sidecar should be saved");
+        let ledger: AgentA2ABus =
+            serde_json::from_str(&fs::read_to_string(&ledger_path).expect("read ledger"))
+                .expect("parse ledger");
+        assert_eq!(ledger.tasks.len(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_session_snapshot_recovers_a2a_state_from_ledger_sidecar() {
+        use crate::agent::a2a::bus::AgentA2ABus;
+        use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-a2a-ledger-load-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("sessions")).expect("sessions dir");
+        fs::create_dir_all(root.join("a2a")).expect("a2a dir");
+
+        let snapshot = snapshot();
+        fs::write(
+            root.join("sessions").join("session-1.json"),
+            serde_json::to_string_pretty(&snapshot).expect("serialize snapshot"),
+        )
+        .expect("write snapshot");
+
+        let mut bus = AgentA2ABus::default();
+        bus.assign_task(
+            AgentRole::Reviewer,
+            AgentExecutionMode::ReadOnly,
+            "Review A2A ledger",
+            "Check restore behavior",
+            10,
+        );
+        fs::write(
+            root.join("a2a").join("session-1.json"),
+            serde_json::to_string_pretty(&bus).expect("serialize ledger"),
+        )
+        .expect("write ledger");
+
+        let restored = load_session_snapshot_at(&root, "session-1").expect("load snapshot");
+
+        let restored_bus = restored.a2a_state.expect("a2a state from ledger");
+        assert_eq!(restored_bus.tasks.len(), 1);
+        assert_eq!(restored_bus.messages.len(), 1);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_session_snapshot_removes_a2a_ledger_sidecar() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-a2a-ledger-delete-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("sessions")).expect("sessions dir");
+        fs::create_dir_all(root.join("a2a")).expect("a2a dir");
+        fs::write(root.join("sessions").join("session-1.json"), "{}").expect("write snapshot");
+        fs::write(root.join("a2a").join("session-1.json"), "{}").expect("write ledger");
+
+        delete_session_snapshot_at(&root, "session-1").expect("delete snapshot");
+
+        assert!(!root.join("sessions").join("session-1.json").exists());
+        assert!(!root.join("a2a").join("session-1.json").exists());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

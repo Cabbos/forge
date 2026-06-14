@@ -118,9 +118,9 @@ fn clear_snapshot_cache_at(snapshots_dir: &Path) -> RepairResult {
         };
     }
 
-    match std::fs::remove_dir_all(&snapshots_dir) {
+    match std::fs::remove_dir_all(snapshots_dir) {
         Ok(()) => {
-            let _ = std::fs::create_dir_all(&snapshots_dir);
+            let _ = std::fs::create_dir_all(snapshots_dir);
             RepairResult {
                 action_id: "clear_snapshot_cache".into(),
                 success: true,
