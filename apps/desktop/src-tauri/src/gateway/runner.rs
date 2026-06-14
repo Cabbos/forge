@@ -11,6 +11,7 @@ use crate::workspace_safety::resolve_session_workspace_path;
 use serde::{Deserialize, Serialize};
 
 const TRIGGER_POLL_INTERVAL_SECS: u64 = 5;
+const TRIGGER_LEASE_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 const MAX_TRIGGER_ATTEMPTS: u32 = 3;
 const MAX_TRIGGER_RUN_RECORDS: usize = 1000;
 
@@ -167,7 +168,7 @@ where
     F: FnMut(EvalHeadlessRequest) -> Fut,
     Fut: Future<Output = Result<serde_json::Value, String>>,
 {
-    let triggers = store.drain();
+    let triggers = store.claim_available(now_millis(), TRIGGER_LEASE_TIMEOUT_MS);
     let mut records = Vec::with_capacity(triggers.len());
 
     for trigger in triggers {
@@ -200,6 +201,7 @@ where
                     ));
                 } else {
                     records.push(record_trigger_success(
+                        store,
                         run_store,
                         trigger,
                         status,
@@ -222,12 +224,14 @@ where
 }
 
 fn record_trigger_success(
+    store: &TriggerStore,
     run_store: &TriggerRunStore,
     trigger: PendingTrigger,
     status: &str,
     message: String,
     started_at_ms: u64,
 ) -> TriggerRunRecord {
+    let trigger_id = trigger.id.clone();
     let record = TriggerRunRecord {
         id: new_trigger_run_id(),
         trigger_id: trigger.id,
@@ -238,6 +242,7 @@ fn record_trigger_success(
         ended_at_ms: now_millis(),
     };
     run_store.push(record.clone());
+    store.complete(&trigger_id);
     record
 }
 
@@ -251,9 +256,10 @@ fn record_trigger_failure(
     let next_attempt = trigger.attempt_count.saturating_add(1);
     trigger.attempt_count = next_attempt;
     let status = if next_attempt < MAX_TRIGGER_ATTEMPTS {
-        store.push(trigger.clone());
+        store.release(trigger.clone());
         "retrying"
     } else {
+        store.complete(&trigger.id);
         "dead_letter"
     };
 
@@ -369,6 +375,7 @@ mod tests {
             model: Some("gpt-5".into()),
             workspace_path: Some(workspace.path().to_string_lossy().to_string()),
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 10,
         };
 
@@ -402,6 +409,7 @@ mod tests {
             model: None,
             workspace_path: Some(workspace.path().to_string_lossy().to_string()),
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 20,
         });
 
@@ -444,6 +452,7 @@ mod tests {
             model: None,
             workspace_path: Some(workspace.path().to_string_lossy().to_string()),
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 30,
         });
 
@@ -493,6 +502,7 @@ mod tests {
             model: None,
             workspace_path: Some(workspace.path().to_string_lossy().to_string()),
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 40,
         });
 
@@ -513,5 +523,48 @@ mod tests {
         assert_eq!(persisted[0].attempt, 1);
         assert_eq!(persisted[0].message, "ledger ok");
         assert!(persisted[0].started_at_ms <= persisted[0].ended_at_ms);
+    }
+
+    #[tokio::test]
+    async fn run_pending_triggers_once_leases_trigger_during_execution() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let trigger_path = workspace.path().join("pending-triggers.json");
+        let store = TriggerStore::persistent_at(trigger_path.clone());
+        let run_store = super::TriggerRunStore::new();
+        store.push(PendingTrigger {
+            id: "trigger-5".into(),
+            message: "run leased work".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: Some(workspace.path().to_string_lossy().to_string()),
+            attempt_count: 0,
+            claimed_at_ms: None,
+            received_at_ms: 50,
+        });
+
+        let observed_claim = Arc::new(Mutex::new(None));
+        let observed_claim_for_executor = observed_claim.clone();
+        let trigger_path_for_executor = trigger_path.clone();
+        let records = super::run_pending_triggers_once(
+            &store,
+            &run_store,
+            workspace.path(),
+            move |_request| {
+                let observed_claim = observed_claim_for_executor.clone();
+                let trigger_path = trigger_path_for_executor.clone();
+                async move {
+                    let persisted = TriggerStore::persistent_at(trigger_path).list();
+                    *observed_claim.lock().unwrap() =
+                        persisted.first().and_then(|trigger| trigger.claimed_at_ms);
+                    Ok(serde_json::json!({"final_answer": "lease ok"}))
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(records[0].status, "completed");
+        assert!(observed_claim.lock().unwrap().is_some());
+        assert!(TriggerStore::persistent_at(trigger_path).list().is_empty());
     }
 }

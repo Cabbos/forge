@@ -27,6 +27,8 @@ pub struct PendingTrigger {
     pub workspace_path: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attempt_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_at_ms: Option<u64>,
     pub received_at_ms: u64,
 }
 
@@ -83,6 +85,53 @@ impl TriggerStore {
             .unwrap_or_default()
     }
 
+    /// Claim available triggers without removing them from durable storage.
+    ///
+    /// A claimed trigger remains persisted with `claimed_at_ms` set so a
+    /// gateway crash can recover it after the lease expires.
+    pub fn claim_available(&self, now_ms: u64, lease_timeout_ms: u64) -> Vec<PendingTrigger> {
+        self.triggers
+            .lock()
+            .map(|mut list| {
+                self.refresh_locked(&mut list);
+                let mut claimed = Vec::new();
+
+                for trigger in list.iter_mut() {
+                    if trigger_is_claimable(trigger, now_ms, lease_timeout_ms) {
+                        trigger.claimed_at_ms = Some(now_ms);
+                        claimed.push(trigger.clone());
+                    }
+                }
+
+                self.save_locked(&list);
+                claimed
+            })
+            .unwrap_or_default()
+    }
+
+    /// Mark a trigger as fully handled and remove it from durable storage.
+    pub fn complete(&self, trigger_id: &str) -> bool {
+        self.triggers
+            .lock()
+            .map(|mut list| {
+                self.refresh_locked(&mut list);
+                let len_before = list.len();
+                list.retain(|trigger| trigger.id != trigger_id);
+                let removed = list.len() < len_before;
+                if removed {
+                    self.save_locked(&list);
+                }
+                removed
+            })
+            .unwrap_or(false)
+    }
+
+    /// Return a claimed trigger to the available queue for a future attempt.
+    pub fn release(&self, mut trigger: PendingTrigger) {
+        trigger.claimed_at_ms = None;
+        self.push(trigger);
+    }
+
     /// Peek at pending triggers without removing them.
     pub fn list(&self) -> Vec<PendingTrigger> {
         self.triggers
@@ -113,9 +162,18 @@ impl TriggerStore {
 
 fn merge_triggers(target: &mut Vec<PendingTrigger>, incoming: Vec<PendingTrigger>) {
     for trigger in incoming {
-        if !target.iter().any(|existing| existing.id == trigger.id) {
+        if let Some(existing) = target.iter_mut().find(|existing| existing.id == trigger.id) {
+            *existing = trigger;
+        } else {
             target.push(trigger);
         }
+    }
+}
+
+fn trigger_is_claimable(trigger: &PendingTrigger, now_ms: u64, lease_timeout_ms: u64) -> bool {
+    match trigger.claimed_at_ms {
+        None => true,
+        Some(claimed_at_ms) => claimed_at_ms.saturating_add(lease_timeout_ms) <= now_ms,
     }
 }
 
@@ -229,6 +287,7 @@ async fn handle_webhook_connection(
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                     attempt_count: 0,
+                    claimed_at_ms: None,
                     received_at_ms: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
@@ -271,6 +330,7 @@ mod tests {
             model: None,
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 1000,
         });
 
@@ -295,6 +355,7 @@ mod tests {
             model: None,
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 1,
         });
         store.push(PendingTrigger {
@@ -305,6 +366,7 @@ mod tests {
             model: None,
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 2,
         });
 
@@ -327,6 +389,7 @@ mod tests {
             model: Some("gpt-5".into()),
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 10,
         });
 
@@ -352,6 +415,7 @@ mod tests {
             model: None,
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 20,
         });
 
@@ -360,6 +424,44 @@ mod tests {
 
         let restored = TriggerStore::persistent_at(path);
         assert!(restored.list().is_empty());
+    }
+
+    #[test]
+    fn persistent_trigger_store_claims_without_removing_until_completed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pending-triggers.json");
+        let store = TriggerStore::persistent_at(path.clone());
+
+        store.push(PendingTrigger {
+            id: "lease-1".into(),
+            message: "durable work".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: None,
+            attempt_count: 0,
+            claimed_at_ms: None,
+            received_at_ms: 30,
+        });
+
+        let claimed = store.claim_available(1_000, 60_000);
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].claimed_at_ms, Some(1_000));
+
+        let restored = TriggerStore::persistent_at(path.clone());
+        let persisted = restored.list();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].claimed_at_ms, Some(1_000));
+
+        let blocked = restored.claim_available(1_500, 60_000);
+        assert!(blocked.is_empty());
+
+        let reclaimed = restored.claim_available(61_001, 60_000);
+        assert_eq!(reclaimed.len(), 1);
+        assert_eq!(reclaimed[0].claimed_at_ms, Some(61_001));
+
+        restored.complete("lease-1");
+        assert!(TriggerStore::persistent_at(path).list().is_empty());
     }
 
     #[test]
@@ -377,6 +479,7 @@ mod tests {
             model: None,
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 10,
         });
         scheduler_store.push(PendingTrigger {
@@ -387,6 +490,7 @@ mod tests {
             model: None,
             workspace_path: None,
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 20,
         });
 
@@ -410,6 +514,7 @@ mod tests {
             model: Some("deepseek-chat".into()),
             workspace_path: Some("/tmp/forge-workspace".into()),
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: 1718123456789,
         };
         let json = serde_json::to_string(&trigger).expect("serialize");

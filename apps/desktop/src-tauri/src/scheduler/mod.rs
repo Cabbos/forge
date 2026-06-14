@@ -436,6 +436,7 @@ impl SchedulerStore {
             model: None,
             workspace_path: workspace_path.map(|path| path.to_string_lossy().to_string()),
             attempt_count: 0,
+            claimed_at_ms: None,
             received_at_ms: ended_ms,
         };
         trigger_store.push(trigger);
