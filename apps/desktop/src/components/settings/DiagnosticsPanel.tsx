@@ -1,8 +1,15 @@
 import { RefreshCw, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
+import { useGatewayRuntimeStatusQuery } from "@/hooks/queries/useGatewayRuntimeStatusQuery";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
-import type { DiagnosticCheck, DiagnosticsReport } from "@/lib/tauri";
+import type {
+  DiagnosticCheck,
+  DiagnosticsReport,
+  GatewayRuntimeStatus,
+  GatewayTriggerRunRecord,
+} from "@/lib/tauri";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { buildGatewayRuntimeSummary } from "./diagnosticsRuntimeView";
 
 const STATUS_ICON: Record<string, typeof CheckCircle> = {
   pass: CheckCircle,
@@ -31,8 +38,21 @@ export function DiagnosticsPanel() {
     refetch,
     isFetching,
   } = useDiagnosticsReportQuery();
+  const {
+    data: runtimeStatus,
+    isLoading: isRuntimeLoading,
+    isError: isRuntimeError,
+    error: runtimeError,
+    refetch: refetchRuntime,
+    isFetching: isRuntimeFetching,
+  } = useGatewayRuntimeStatusQuery();
 
   const queryError = getQueryErrorMessage(isError ? error : null);
+  const runtimeQueryError = getQueryErrorMessage(isRuntimeError ? runtimeError : null);
+  const refreshAll = () => {
+    void refetch();
+    void refetchRuntime();
+  };
 
   return (
     <div className="forge-settings-panel-stack">
@@ -45,13 +65,21 @@ export function DiagnosticsPanel() {
         ) : report ? (
           <DiagnosticsContent
             report={report}
-            isRefreshing={isFetching}
-            onRefresh={() => refetch()}
+            isRefreshing={isFetching || isRuntimeFetching}
+            onRefresh={refreshAll}
           />
         ) : (
-          <DiagnosticsEmpty onRefresh={() => refetch()} />
+          <DiagnosticsEmpty onRefresh={refreshAll} />
         )}
       </div>
+
+      <GatewayRuntimePanel
+        status={runtimeStatus}
+        isLoading={isRuntimeLoading}
+        isRefreshing={isRuntimeFetching}
+        queryError={runtimeQueryError}
+        onRefresh={() => refetchRuntime()}
+      />
 
       {/* ── Check list ── */}
       {report && report.checks.length > 0 && (
@@ -66,6 +94,117 @@ export function DiagnosticsPanel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function GatewayRuntimePanel({
+  status,
+  isLoading,
+  isRefreshing,
+  queryError,
+  onRefresh,
+}: {
+  status?: GatewayRuntimeStatus;
+  isLoading: boolean;
+  isRefreshing: boolean;
+  queryError: string | null;
+  onRefresh: () => void;
+}) {
+  if (isLoading && !status) {
+    return (
+      <div className="forge-settings-readonly-panel">
+        <div className="forge-settings-readonly-heading">
+          <h4>后台运行时</h4>
+          <p>正在读取 gateway runtime 状态。</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (queryError && !status) {
+    return (
+      <div className="forge-settings-readonly-panel">
+        <DiagnosticsError message={queryError} onRetry={onRefresh} />
+      </div>
+    );
+  }
+
+  const runtime = status ?? {
+    ok: false,
+    message: "暂无 gateway runtime 状态。",
+    uptime_seconds: 0,
+    active_sessions: 0,
+    pending_triggers: 0,
+    claimed_triggers: 0,
+    dead_letter_runs: 0,
+    recent_runs: [],
+  };
+  const summary = buildGatewayRuntimeSummary(runtime);
+  const Icon = STATUS_ICON[summary.tone] ?? CheckCircle;
+  const cls = STATUS_CLASS[summary.tone] ?? STATUS_CLASS.pass;
+
+  return (
+    <div className="forge-settings-readonly-panel">
+      <div className="forge-settings-readonly-heading">
+        <h4>
+          <span className={`inline-flex items-center gap-1.5 ${cls}`}>
+            <Icon className="size-4" />
+            后台运行时 · {summary.statusText}
+          </span>
+        </h4>
+        <p>{runtime.message}</p>
+      </div>
+      <div className="forge-settings-info-list">
+        <div className="forge-settings-info-row">
+          <dt>队列</dt>
+          <dd>{summary.counts}</dd>
+        </div>
+        <div className="forge-settings-info-row">
+          <dt>会话</dt>
+          <dd>
+            {runtime.active_sessions} active · uptime {formatDuration(runtime.uptime_seconds)}
+          </dd>
+        </div>
+        <div className="forge-settings-info-row">
+          <dt>最近运行</dt>
+          <dd>
+            <GatewayRuntimeRuns runs={runtime.recent_runs} />
+          </dd>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <ButtonPrimitive
+          type="button"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          className="forge-settings-nav-button"
+          aria-label="Refresh gateway runtime status"
+        >
+          <span className="forge-settings-nav-icon" aria-hidden="true">
+            <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+          </span>
+          <span className="forge-settings-nav-copy">
+            <span className="forge-settings-nav-title">刷新运行时</span>
+          </span>
+        </ButtonPrimitive>
+      </div>
+    </div>
+  );
+}
+
+function GatewayRuntimeRuns({ runs }: { runs: GatewayTriggerRunRecord[] }) {
+  if (runs.length === 0) {
+    return <span className="text-xs text-muted-foreground">暂无运行记录</span>;
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {runs.slice(0, 3).map((run) => (
+        <span key={run.id} className="truncate text-xs text-muted-foreground">
+          {run.status} · attempt {run.attempt} · {run.message}
+        </span>
+      ))}
     </div>
   );
 }
@@ -167,6 +306,14 @@ function formatDetailValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.length}]`;
   if (value && typeof value === "object") return "{...}";
   return String(value);
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h`;
 }
 
 function DiagnosticsLoading() {

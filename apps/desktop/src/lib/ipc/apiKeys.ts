@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { hasTauriRuntime } from "./core.ts";
 
 export interface KeyStatus {
   provider: string;
@@ -7,6 +8,7 @@ export interface KeyStatus {
 }
 
 export async function getApiKeyStatus(): Promise<KeyStatus[]> {
+  if (!hasTauriRuntime()) return [];
   return invoke("get_api_key_status");
 }
 

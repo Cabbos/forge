@@ -1,10 +1,14 @@
 import { useEffect } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { hasTauriRuntime } from "../lib/tauri";
 import { useStore } from "../store";
 import type { StreamEvent } from "../lib/protocol";
+import { shouldSubscribeToTauriOutputStream } from "./outputStreamRuntime";
 
 export function useOutputStream(sessionId: string | null) {
   useEffect(() => {
+    if (!shouldSubscribeToTauriOutputStream(hasTauriRuntime())) return;
+
     let unlisten: UnlistenFn | null = null;
     let disposed = false;
 

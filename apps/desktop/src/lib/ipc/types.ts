@@ -316,6 +316,27 @@ export interface DiagnosticsReport {
   checks: DiagnosticCheck[];
 }
 
+export interface GatewayTriggerRunRecord {
+  id: string;
+  trigger_id: string;
+  attempt: number;
+  status: string;
+  message: string;
+  started_at_ms: number;
+  ended_at_ms: number;
+}
+
+export interface GatewayRuntimeStatus {
+  ok: boolean;
+  message: string;
+  uptime_seconds: number;
+  active_sessions: number;
+  pending_triggers: number;
+  claimed_triggers: number;
+  dead_letter_runs: number;
+  recent_runs: GatewayTriggerRunRecord[];
+}
+
 export interface ScheduledTask {
   id: string;
   title: string;

@@ -31,6 +31,7 @@ pub struct GatewaySessionInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GatewayRuntimeStatus {
     pub ok: bool,
+    pub message: String,
     pub uptime_seconds: u64,
     pub active_sessions: usize,
     pub pending_triggers: usize,
@@ -241,6 +242,7 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
 
     GatewayRuntimeStatus {
         ok: true,
+        message: "Gateway runtime is reachable.".to_string(),
         uptime_seconds: state.uptime_seconds(),
         active_sessions: state.active_sessions(),
         pending_triggers,

@@ -24,6 +24,7 @@ export const queryKeys = {
   appMetadata: ["app-metadata"] as const,
   sessions: ["sessions"] as const,
   diagnosticsReport: ["diagnostics-report"] as const,
+  gatewayRuntimeStatus: ["gateway-runtime-status"] as const,
   memoryFactsAll: ["memory-facts"] as const,
   memoryFacts: (query?: string) => ["memory-facts", query ?? ""] as const,
   profilesAll: ["profiles"] as const,

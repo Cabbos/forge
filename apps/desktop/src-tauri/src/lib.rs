@@ -134,6 +134,7 @@ pub fn run() {
             ipc::forge_wiki_handlers::discard_forge_wiki_update_proposal,
             transcript::load_session_transcript,
             ipc::diagnostics_handlers::get_diagnostics_report,
+            ipc::diagnostics_handlers::get_gateway_runtime_status,
             ipc::diagnostics_handlers::get_recent_logs,
             ipc::diagnostics_handlers::run_repair_action,
             ipc::diagnostics_handlers::list_repair_actions,

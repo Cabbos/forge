@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { hasTauriRuntime } from "./core";
-import type { DiagnosticsReport, LogEntry, ServiceStatus } from "./types";
+import type {
+  DiagnosticsReport,
+  GatewayRuntimeStatus,
+  LogEntry,
+  ServiceStatus,
+} from "./types";
 
 export async function getServiceStatus(): Promise<ServiceStatus> {
   if (!hasTauriRuntime()) {
@@ -42,4 +47,20 @@ export async function getDiagnosticsReport(): Promise<DiagnosticsReport> {
     };
   }
   return invoke<DiagnosticsReport>("get_diagnostics_report");
+}
+
+export async function getGatewayRuntimeStatus(): Promise<GatewayRuntimeStatus> {
+  if (!hasTauriRuntime()) {
+    return {
+      ok: false,
+      message: "Gateway runtime status is not available outside Tauri runtime.",
+      uptime_seconds: 0,
+      active_sessions: 0,
+      pending_triggers: 0,
+      claimed_triggers: 0,
+      dead_letter_runs: 0,
+      recent_runs: [],
+    };
+  }
+  return invoke<GatewayRuntimeStatus>("get_gateway_runtime_status");
 }
