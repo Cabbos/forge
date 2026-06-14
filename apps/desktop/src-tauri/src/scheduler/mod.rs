@@ -8,15 +8,15 @@
 //!
 //! - Scheduler firing queues gateway triggers; the gateway runner owns
 //!   headless execution and records attempt results in the gateway run ledger.
-//! - No background tick yet; the frontend drives `run_scheduled_task_now` and
-//!   can poll `list_scheduled_tasks` for next-run display.
+//! - The gateway daemon owns the background tick; the frontend can still drive
+//!   `run_scheduled_task_now` and poll `list_scheduled_tasks` for display.
 
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // ── Schema ───────────────────────────────────────────────────────────────────
 
@@ -102,6 +102,7 @@ pub struct SchedulerListPayload {
 // ── Store ────────────────────────────────────────────────────────────────────
 
 const MAX_HISTORY: usize = 500;
+const SCHEDULER_TICK_INTERVAL_SECS: u64 = 60;
 
 pub struct SchedulerStore {
     path: PathBuf,
@@ -568,6 +569,39 @@ impl SchedulerStore {
 
         Ok(())
     }
+}
+
+pub fn run_scheduler_tick_once(
+    store: &SchedulerStore,
+    trigger_store: &TriggerStore,
+    workspace_path: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    store.run_due_tasks_with_trigger_store_at_workspace(trigger_store, workspace_path)
+}
+
+pub fn spawn_scheduler_tick(
+    store: Arc<SchedulerStore>,
+    trigger_store: Arc<TriggerStore>,
+    workspace_path: PathBuf,
+) {
+    tokio::spawn(async move {
+        loop {
+            match run_scheduler_tick_once(&store, &trigger_store, Some(workspace_path.as_path())) {
+                Ok(triggered) if !triggered.is_empty() => {
+                    log::info!(
+                        "scheduler tick queued {} gateway trigger(s)",
+                        triggered.len()
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("scheduler tick failed: {error}");
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(SCHEDULER_TICK_INTERVAL_SECS)).await;
+        }
+    });
 }
 
 // ── File I/O ─────────────────────────────────────────────────────────────────
@@ -1102,6 +1136,32 @@ mod tests {
         let triggered = store.run_due_tasks().expect("run_due");
         // Disabled tasks should not be in the triggered list.
         assert!(!triggered.contains(&task.id));
+        assert_cleanup(&path);
+    }
+
+    #[test]
+    fn scheduler_tick_once_queues_due_tasks_through_gateway_trigger_store() {
+        let path = temp_path("tick-once");
+        let store = SchedulerStore::new(path.clone());
+        let task = store.upsert(sample_input("tick-due")).expect("upsert");
+        {
+            let mut tasks = store.tasks.lock().unwrap_or_else(|e| e.into_inner());
+            let t = tasks.iter_mut().find(|t| t.id == task.id).unwrap();
+            t.next_run_at_ms = 0;
+        }
+        let trigger_store = crate::gateway::webhook::TriggerStore::new();
+        let workspace = tempfile::tempdir().expect("workspace");
+
+        let triggered =
+            run_scheduler_tick_once(&store, &trigger_store, Some(workspace.path())).expect("tick");
+
+        assert_eq!(triggered, vec![task.id]);
+        let queued = trigger_store.list();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(
+            queued[0].workspace_path.as_deref(),
+            Some(workspace.path().to_string_lossy().as_ref())
+        );
         assert_cleanup(&path);
     }
 

@@ -39,6 +39,17 @@ async fn main() {
     forge::gateway::runner::spawn_trigger_runner(
         trigger_runner_state,
         trigger_run_state,
+        fallback_workspace.clone(),
+    );
+
+    // Spawn scheduler tick in background. Due tasks are queued into the same
+    // trigger store, then picked up by the trigger runner above.
+    let scheduler_store = Arc::new(forge::scheduler::SchedulerStore::new(
+        forge::scheduler::SchedulerStore::default_path(),
+    ));
+    forge::scheduler::spawn_scheduler_tick(
+        scheduler_store,
+        state.trigger_store.clone(),
         fallback_workspace,
     );
 
