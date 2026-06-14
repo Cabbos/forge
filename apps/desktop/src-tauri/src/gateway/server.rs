@@ -66,18 +66,18 @@ impl GatewayState {
     pub fn register_session(&self, info: GatewaySessionInfo) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.insert(info.session_id.clone(), info);
+            self.active_sessions
+                .store(sessions.len(), std::sync::atomic::Ordering::Relaxed);
         }
-        self.active_sessions
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Unregister a session (called when a session ends).
     pub fn unregister_session(&self, session_id: &str) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.remove(session_id);
+            self.active_sessions
+                .store(sessions.len(), std::sync::atomic::Ordering::Relaxed);
         }
-        self.active_sessions
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// List all registered sessions.
@@ -363,15 +363,34 @@ mod tests {
     }
 
     #[test]
-    fn gateway_state_increments_session_count() {
+    fn gateway_state_registers_and_unregisters_session_count() {
         let state = GatewayState::new();
-        state
-            .active_sessions
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        state.register_session(test_session("session-1", "claude"));
         assert_eq!(state.active_sessions(), 1);
-        state
-            .active_sessions
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(state.list_sessions().len(), 1);
+
+        state.unregister_session("session-1");
+        assert_eq!(state.active_sessions(), 0);
+        assert!(state.list_sessions().is_empty());
+    }
+
+    #[test]
+    fn gateway_state_replacing_session_does_not_double_count() {
+        let state = GatewayState::new();
+        state.register_session(test_session("session-1", "claude"));
+        state.register_session(test_session("session-1", "codex"));
+
+        let sessions = state.list_sessions();
+        assert_eq!(state.active_sessions(), 1);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].provider, "codex");
+    }
+
+    #[test]
+    fn gateway_state_unregistering_missing_session_keeps_count_at_zero() {
+        let state = GatewayState::new();
+        state.unregister_session("missing-session");
+
         assert_eq!(state.active_sessions(), 0);
     }
 
@@ -382,5 +401,15 @@ mod tests {
         let path = default_socket_path();
         assert!(path.ends_with("gateway.sock"));
         assert!(path.to_string_lossy().contains(".forge"));
+    }
+
+    fn test_session(session_id: &str, provider: &str) -> GatewaySessionInfo {
+        GatewaySessionInfo {
+            session_id: session_id.to_string(),
+            provider: provider.to_string(),
+            model: "test-model".to_string(),
+            workspace_path: "/tmp/forge-workspace".to_string(),
+            created_at_ms: 1,
+        }
     }
 }
