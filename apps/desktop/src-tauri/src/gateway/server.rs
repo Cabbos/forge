@@ -5,7 +5,7 @@ use crate::gateway::protocol::{
     serialize_reply, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse,
     HealthResult, PingResult, GATEWAY_VERSION,
 };
-use crate::gateway::runner::TriggerRunStore;
+use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::TriggerStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,6 +25,18 @@ pub struct GatewaySessionInfo {
     pub model: String,
     pub workspace_path: String,
     pub created_at_ms: u64,
+}
+
+/// Gateway runtime snapshot for diagnostics/status surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayRuntimeStatus {
+    pub ok: bool,
+    pub uptime_seconds: u64,
+    pub active_sessions: usize,
+    pub pending_triggers: usize,
+    pub claimed_triggers: usize,
+    pub dead_letter_runs: usize,
+    pub recent_runs: Vec<TriggerRunRecord>,
 }
 
 // ── Server state ────────────────────────────────────────────────────────────
@@ -112,6 +124,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "list_pending_triggers" => handle_list_triggers(state, request.id),
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
+        "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
             id: request.id,
             error: GatewayErrorBody {
@@ -204,6 +217,37 @@ fn handle_list_trigger_runs(state: &GatewayState, id: String) -> GatewayReply {
         id,
         result: serde_json::to_value(runs).unwrap(),
     })
+}
+
+fn handle_runtime_status(state: &GatewayState, id: String) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(build_runtime_status(state)).unwrap(),
+    })
+}
+
+fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
+    let triggers = state.trigger_store.list();
+    let runs = state.trigger_run_store.list();
+    let pending_triggers = triggers
+        .iter()
+        .filter(|trigger| trigger.claimed_at_ms.is_none())
+        .count();
+    let claimed_triggers = triggers.len().saturating_sub(pending_triggers);
+    let dead_letter_runs = runs
+        .iter()
+        .filter(|run| run.status == "dead_letter")
+        .count();
+
+    GatewayRuntimeStatus {
+        ok: true,
+        uptime_seconds: state.uptime_seconds(),
+        active_sessions: state.active_sessions(),
+        pending_triggers,
+        claimed_triggers,
+        dead_letter_runs,
+        recent_runs: runs.into_iter().take(20).collect(),
+    }
 }
 
 fn handle_unregister_session(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
@@ -408,6 +452,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn dispatch_runtime_status_returns_queue_and_run_summary() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state.trigger_store.push(test_trigger("pending-1", None));
+        state
+            .trigger_store
+            .push(test_trigger("claimed-1", Some(1234)));
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-dead".into(),
+                trigger_id: "claimed-1".into(),
+                attempt: 3,
+                status: "dead_letter".into(),
+                message: "provider offline".into(),
+                started_at_ms: 10,
+                ended_at_ms: 11,
+            });
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-ok".into(),
+                trigger_id: "pending-1".into(),
+                attempt: 1,
+                status: "completed".into(),
+                message: "ok".into(),
+                started_at_ms: 20,
+                ended_at_ms: 21,
+            });
+
+        let req = GatewayRequest {
+            id: "runtime".into(),
+            method: "runtime_status".into(),
+            params: None,
+        };
+        let reply = dispatch(&state, req);
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let status: GatewayRuntimeStatus =
+                    serde_json::from_value(resp.result).expect("parse runtime status");
+                assert_eq!(status.pending_triggers, 1);
+                assert_eq!(status.claimed_triggers, 1);
+                assert_eq!(status.dead_letter_runs, 1);
+                assert_eq!(status.recent_runs.len(), 2);
+                assert_eq!(status.recent_runs[0].id, "run-ok");
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
     // ── GatewayState ────────────────────────────────────────────────────
 
     #[test]
@@ -464,6 +565,23 @@ mod tests {
             model: "test-model".to_string(),
             workspace_path: "/tmp/forge-workspace".to_string(),
             created_at_ms: 1,
+        }
+    }
+
+    fn test_trigger(
+        id: &str,
+        claimed_at_ms: Option<u64>,
+    ) -> crate::gateway::webhook::PendingTrigger {
+        crate::gateway::webhook::PendingTrigger {
+            id: id.to_string(),
+            message: "work".to_string(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: None,
+            attempt_count: 0,
+            claimed_at_ms,
+            received_at_ms: 1,
         }
     }
 }
