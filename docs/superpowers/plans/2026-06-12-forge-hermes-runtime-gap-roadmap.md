@@ -332,6 +332,17 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | New dependencies | 🚫 None | No new packages |
 | CRITICAL paths touched | 🚫 None | Zero edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, session.rs |
 
+**Phase 4-C summary (2026-06-15):** Backend A2A state query surface.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| A2A ledger projection query | ✅ Done | `load_session_projection(_at)` maps persisted `AgentA2ABus` sidecars into `AgentA2AProjection` |
+| A2A ledger list query | ✅ Done | Lists `~/.forge/a2a/*.json`, keeps valid sessions, reports corrupt sidecars as `load_errors` |
+| Live A2A query surface | ✅ Done | `AgentSession::a2a_projection()` exposes current bus state without touching the agent loop |
+| Tauri IPC | ✅ Done | `get_agent_a2a_state` and `list_agent_a2a_states`; live session state overrides ledger state for the same session |
+| TypeScript IPC wrapper | ✅ Done | `getAgentA2AState` and `listAgentA2AStates` exported from `src/lib/tauri.ts` |
+| CRITICAL paths touched | 🚫 None | Zero edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, session loop |
+
 **Known deferred items (Phase 4-B):**
 - True live file IO stream — requires executor/ToolExecutor hooks (CRITICAL risk path)
 - Token/cost per-task streaming — requires adapter trait changes

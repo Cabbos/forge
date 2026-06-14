@@ -3,6 +3,7 @@ import type {
   ForgeWikiPage,
   ForgeWikiState,
   ForgeWikiUpdateProposal,
+  AgentA2AProjection,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
@@ -18,6 +19,7 @@ export type {
   ForgeWikiPage,
   ForgeWikiState,
   ForgeWikiUpdateProposal,
+  AgentA2AProjection,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
@@ -200,6 +202,24 @@ export interface ManualCompactResult {
   compacted_messages: number;
   estimated_tokens_before: number;
   estimated_tokens_after: number;
+}
+
+export type AgentA2AStateSource = "live" | "ledger";
+
+export interface AgentA2ASessionState {
+  session_id: string;
+  source: AgentA2AStateSource;
+  state: AgentA2AProjection;
+}
+
+export interface AgentA2ALedgerLoadError {
+  session_id: string;
+  message: string;
+}
+
+export interface AgentA2AStatesPayload {
+  states: AgentA2ASessionState[];
+  load_errors: AgentA2ALedgerLoadError[];
 }
 
 export interface PluginEntry {

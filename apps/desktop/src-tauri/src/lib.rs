@@ -77,6 +77,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ipc::handlers::create_session,
+            ipc::a2a_handlers::get_agent_a2a_state,
+            ipc::a2a_handlers::list_agent_a2a_states,
             ipc::mcp_context::list_mcp_context_sources,
             ipc::handlers::resume_session,
             ipc::handlers::send_input,

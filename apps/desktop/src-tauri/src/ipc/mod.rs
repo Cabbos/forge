@@ -1,3 +1,4 @@
+pub mod a2a_handlers;
 pub mod capability_handlers;
 pub mod confirmations;
 pub mod continuity_experiences;
