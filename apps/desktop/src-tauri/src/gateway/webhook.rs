@@ -6,6 +6,7 @@
 //! via `list_pending_triggers`.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -29,12 +30,25 @@ pub struct PendingTrigger {
 #[derive(Debug, Default)]
 pub struct TriggerStore {
     triggers: Mutex<Vec<PendingTrigger>>,
+    path: Option<PathBuf>,
 }
 
 impl TriggerStore {
     pub fn new() -> Self {
         Self {
             triggers: Mutex::new(Vec::new()),
+            path: None,
+        }
+    }
+
+    pub fn persistent_default() -> Self {
+        Self::persistent_at(default_trigger_store_path())
+    }
+
+    pub fn persistent_at(path: PathBuf) -> Self {
+        Self {
+            triggers: Mutex::new(load_triggers(&path)),
+            path: Some(path),
         }
     }
 
@@ -42,6 +56,7 @@ impl TriggerStore {
     pub fn push(&self, trigger: PendingTrigger) {
         if let Ok(mut list) = self.triggers.lock() {
             list.push(trigger);
+            self.save_locked(&list);
         }
     }
 
@@ -49,7 +64,11 @@ impl TriggerStore {
     pub fn drain(&self) -> Vec<PendingTrigger> {
         self.triggers
             .lock()
-            .map(|mut list| std::mem::take(&mut *list))
+            .map(|mut list| {
+                let drained = std::mem::take(&mut *list);
+                self.save_locked(&list);
+                drained
+            })
             .unwrap_or_default()
     }
 
@@ -60,6 +79,47 @@ impl TriggerStore {
             .map(|list| list.clone())
             .unwrap_or_default()
     }
+
+    fn save_locked(&self, list: &[PendingTrigger]) {
+        let Some(path) = &self.path else {
+            return;
+        };
+        if let Err(error) = save_triggers(path, list) {
+            log::warn!("failed to persist gateway triggers: {error}");
+        }
+    }
+}
+
+fn default_trigger_store_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".forge")
+        .join("pending-triggers.json")
+}
+
+fn load_triggers(path: &Path) -> Vec<PendingTrigger> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Vec<PendingTrigger>>(&raw) {
+        Ok(triggers) => triggers,
+        Err(error) => {
+            log::warn!("failed to load gateway triggers from disk: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn save_triggers(path: &Path, triggers: &[PendingTrigger]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create trigger dir: {e}"))?;
+    }
+    let json =
+        serde_json::to_string_pretty(triggers).map_err(|e| format!("serialize triggers: {e}"))?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, json.as_bytes()).map_err(|e| format!("write trigger tmp: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("replace trigger store: {e}"))?;
+    Ok(())
 }
 
 /// Default TCP port for the webhook endpoint.
@@ -211,6 +271,51 @@ mod tests {
         let drained = store.drain();
         assert_eq!(drained.len(), 2);
         assert_eq!(drained[1].profile_id.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn persistent_trigger_store_reloads_pending_triggers_from_disk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pending-triggers.json");
+        let store = TriggerStore::persistent_at(path.clone());
+
+        store.push(PendingTrigger {
+            id: "persisted-1".into(),
+            message: "run the morning check".into(),
+            profile_id: Some("ops".into()),
+            provider: Some("codex".into()),
+            model: Some("gpt-5".into()),
+            received_at_ms: 10,
+        });
+
+        let restored = TriggerStore::persistent_at(path);
+        let triggers = restored.list();
+
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].id, "persisted-1");
+        assert_eq!(triggers[0].profile_id.as_deref(), Some("ops"));
+    }
+
+    #[test]
+    fn persistent_trigger_store_drain_clears_disk_snapshot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("pending-triggers.json");
+        let store = TriggerStore::persistent_at(path.clone());
+
+        store.push(PendingTrigger {
+            id: "persisted-2".into(),
+            message: "ship digest".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            received_at_ms: 20,
+        });
+
+        let drained = store.drain();
+        assert_eq!(drained.len(), 1);
+
+        let restored = TriggerStore::persistent_at(path);
+        assert!(restored.list().is_empty());
     }
 
     #[test]

@@ -49,7 +49,7 @@ impl GatewayState {
             started_at: Instant::now(),
             active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(TriggerStore::new()),
+            trigger_store: Arc::new(TriggerStore::persistent_default()),
         }
     }
 
