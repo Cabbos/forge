@@ -381,6 +381,11 @@ export type ServiceStatus = {
   running: boolean;
   message: string;
   supported: boolean;
+  label: string;
+  launch_domain: string;
+  plist_path: string;
+  log_path: string;
+  error_log_path: string;
 };
 
 export type LogEntry = {
