@@ -121,6 +121,7 @@ pub fn run_diagnostics(capabilities: Option<Vec<CapabilitySummary>>) -> Diagnost
         check_session_snapshots(),
         check_app_metadata(),
         check_log_directory(),
+        check_gateway_service_status(),
         check_capability_inventory(capabilities),
         check_project_runtime(),
     ];
@@ -431,6 +432,114 @@ pub fn check_log_directory() -> DiagnosticCheck {
     }
 }
 
+/// Check whether the Forge Gateway launchd service is installed and running.
+pub fn check_gateway_service_status() -> DiagnosticCheck {
+    gateway_service_check_from_snapshot(gateway_service_snapshot())
+}
+
+#[derive(Debug, Clone)]
+struct GatewayServiceSnapshot {
+    supported: bool,
+    installed: bool,
+    running: bool,
+    status_message: String,
+    label: String,
+    launch_domain: String,
+    plist_path: String,
+    log_path: String,
+    error_log_path: String,
+}
+
+fn gateway_service_snapshot() -> GatewayServiceSnapshot {
+    if !cfg!(target_os = "macos") {
+        return GatewayServiceSnapshot {
+            supported: false,
+            installed: false,
+            running: false,
+            status_message: "Service management is only supported on macOS.".to_string(),
+            label: crate::service::launchd::SERVICE_LABEL.to_string(),
+            launch_domain: "unsupported".to_string(),
+            plist_path: String::new(),
+            log_path: String::new(),
+            error_log_path: String::new(),
+        };
+    }
+
+    let plist_path = crate::service::launchd::plist_path();
+    let installed = plist_path.exists();
+    let status_message = crate::service::launchd::status()
+        .unwrap_or_else(|error| format!("Gateway service status unavailable: {error}"));
+    let running = status_message.contains(" is running.");
+
+    GatewayServiceSnapshot {
+        supported: true,
+        installed,
+        running,
+        status_message,
+        label: crate::service::launchd::SERVICE_LABEL.to_string(),
+        launch_domain: crate::service::launchd::launchctl_domain(),
+        plist_path: plist_path.display().to_string(),
+        log_path: crate::service::launchd::gateway_log_path()
+            .display()
+            .to_string(),
+        error_log_path: crate::service::launchd::gateway_error_log_path()
+            .display()
+            .to_string(),
+    }
+}
+
+fn gateway_service_check_from_snapshot(snapshot: GatewayServiceSnapshot) -> DiagnosticCheck {
+    let detail = serde_json::json!({
+        "supported": snapshot.supported,
+        "installed": snapshot.installed,
+        "running": snapshot.running,
+        "label": snapshot.label,
+        "launch_domain": snapshot.launch_domain,
+        "plist_path": snapshot.plist_path,
+        "log_path": snapshot.log_path,
+        "error_log_path": snapshot.error_log_path,
+        "status_message": snapshot.status_message,
+    });
+
+    if !snapshot.supported {
+        return DiagnosticCheck::pass(
+            "gateway_service",
+            "Gateway service",
+            "Gateway service management is not supported on this platform.",
+        )
+        .with_detail(detail);
+    }
+
+    if snapshot.installed && snapshot.running {
+        DiagnosticCheck::pass(
+            "gateway_service",
+            "Gateway service",
+            "Gateway service is installed and running.",
+        )
+        .with_detail(detail)
+    } else if snapshot.installed {
+        DiagnosticCheck::warn(
+            "gateway_service",
+            "Gateway service",
+            "Gateway service is installed but not running.",
+        )
+        .with_detail(detail)
+        .with_remediation(
+            "Restart Gateway from Settings → General or run the restart_gateway repair action.",
+        )
+    } else {
+        DiagnosticCheck::warn(
+            "gateway_service",
+            "Gateway service",
+            "Gateway service is not installed.",
+        )
+        .with_detail(detail)
+        .with_remediation(
+            "Enable autostart in Settings → General or run the reinstall_service repair action.",
+        )
+    }
+}
+
 /// Summary of a tool/capability for the diagnostics report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilitySummary {
@@ -654,7 +763,7 @@ mod tests {
     fn basic_report_has_stable_check_order_and_generated_timestamp() {
         let report = run_diagnostics_basic();
         assert!(report.generated_at_ms > 0);
-        // The 6 checks must appear in a stable order
+        // The checks must appear in a stable order
         let ids: Vec<&str> = report.checks.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(
             ids,
@@ -663,6 +772,7 @@ mod tests {
                 "session_snapshots",
                 "app_metadata",
                 "log_directory",
+                "gateway_service",
                 "capability_inventory",
                 "project_runtime",
             ]
@@ -861,6 +971,63 @@ mod tests {
         assert_eq!(check.status, CheckStatus::Pass);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // ── Gateway service check ─────────────────────────────────────────────
+
+    #[test]
+    fn gateway_service_check_passes_when_installed_and_running() {
+        let check = gateway_service_check_from_snapshot(GatewayServiceSnapshot {
+            supported: true,
+            installed: true,
+            running: true,
+            status_message: "Service 'com.forge.gateway' is running.".into(),
+            label: "com.forge.gateway".into(),
+            launch_domain: "gui/123".into(),
+            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
+            log_path: "/Users/test/.forge/logs/gateway.log".into(),
+            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
+        });
+
+        assert_eq!(check.id, "gateway_service");
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert_eq!(check.detail.as_ref().unwrap()["launch_domain"], "gui/123");
+    }
+
+    #[test]
+    fn gateway_service_check_warns_when_installed_but_not_running() {
+        let check = gateway_service_check_from_snapshot(GatewayServiceSnapshot {
+            supported: true,
+            installed: true,
+            running: false,
+            status_message: "Service 'com.forge.gateway' is installed but not running.".into(),
+            label: "com.forge.gateway".into(),
+            launch_domain: "gui/123".into(),
+            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
+            log_path: "/Users/test/.forge/logs/gateway.log".into(),
+            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
+        });
+
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(check.remediation.as_deref().unwrap().contains("Restart"));
+    }
+
+    #[test]
+    fn gateway_service_check_passes_on_unsupported_platforms() {
+        let check = gateway_service_check_from_snapshot(GatewayServiceSnapshot {
+            supported: false,
+            installed: false,
+            running: false,
+            status_message: "Service management is only supported on macOS.".into(),
+            label: "com.forge.gateway".into(),
+            launch_domain: "unsupported".into(),
+            plist_path: "".into(),
+            log_path: "".into(),
+            error_log_path: "".into(),
+        });
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert_eq!(check.detail.as_ref().unwrap()["supported"], false);
     }
 
     // ── Capability inventory check shape ──────────────────────────────────
