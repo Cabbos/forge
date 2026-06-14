@@ -396,6 +396,47 @@
     line-height: 1.25rem;
   }
 
+  .forge-settings-success {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid rgba(86, 143, 104, 0.2);
+    border-radius: 10px;
+    background: rgba(86, 143, 104, 0.06);
+    padding: 0.5rem 0.625rem;
+    color: #2f7d45;
+    font-size: 12px;
+    line-height: 1.25rem;
+  }
+
+  .forge-diagnostic-repair-btn {
+    display: inline-flex;
+    width: fit-content;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.25rem;
+    border: 1px solid var(--forge-border-muted);
+    border-radius: 6px;
+    background: var(--forge-bg-elevated);
+    padding: 0.25rem 0.5rem;
+    color: var(--forge-text-secondary);
+    font-size: 10px;
+    line-height: 1rem;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+
+  .forge-diagnostic-repair-btn:hover:not(:disabled) {
+    border-color: var(--forge-border-strong);
+    background: var(--forge-bg-surface);
+    color: var(--forge-text-primary);
+  }
+
+  .forge-diagnostic-repair-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+
   .forge-settings-summary-strip {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

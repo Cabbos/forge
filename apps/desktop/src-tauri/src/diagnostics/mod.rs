@@ -40,6 +40,8 @@ pub struct DiagnosticCheck {
     pub detail: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remediation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair_action_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +67,7 @@ impl DiagnosticCheck {
             message: message.into(),
             detail: None,
             remediation: None,
+            repair_action_id: None,
         }
     }
 
@@ -80,6 +83,7 @@ impl DiagnosticCheck {
             message: message.into(),
             detail: None,
             remediation: None,
+            repair_action_id: None,
         }
     }
 
@@ -95,6 +99,7 @@ impl DiagnosticCheck {
             message: message.into(),
             detail: None,
             remediation: None,
+            repair_action_id: None,
         }
     }
 
@@ -105,6 +110,11 @@ impl DiagnosticCheck {
 
     pub fn with_remediation(mut self, remediation: impl Into<String>) -> Self {
         self.remediation = Some(remediation.into());
+        self
+    }
+
+    pub fn with_repair_action_id(mut self, repair_action_id: impl Into<String>) -> Self {
+        self.repair_action_id = Some(repair_action_id.into());
         self
     }
 }
@@ -527,6 +537,7 @@ fn gateway_service_check_from_snapshot(snapshot: GatewayServiceSnapshot) -> Diag
         .with_remediation(
             "Restart Gateway from Settings → General or run the restart_gateway repair action.",
         )
+        .with_repair_action_id("restart_gateway")
     } else {
         DiagnosticCheck::warn(
             "gateway_service",
@@ -537,6 +548,7 @@ fn gateway_service_check_from_snapshot(snapshot: GatewayServiceSnapshot) -> Diag
         .with_remediation(
             "Enable autostart in Settings → General or run the reinstall_service repair action.",
         )
+        .with_repair_action_id("reinstall_service")
     }
 }
 
@@ -840,6 +852,15 @@ mod tests {
         assert_eq!(json["remediation"], "Try restarting.");
     }
 
+    #[test]
+    fn diagnostic_check_with_repair_action_serializes_camelcase() {
+        let check = DiagnosticCheck::warn("gateway_service", "Gateway service", "Needs attention.")
+            .with_repair_action_id("restart_gateway");
+        let json = serde_json::to_value(&check).unwrap();
+
+        assert_eq!(json["repairActionId"], "restart_gateway");
+    }
+
     // ── Config check shape ────────────────────────────────────────────────
 
     #[test]
@@ -1010,6 +1031,30 @@ mod tests {
 
         assert_eq!(check.status, CheckStatus::Warn);
         assert!(check.remediation.as_deref().unwrap().contains("Restart"));
+        assert_eq!(check.repair_action_id.as_deref(), Some("restart_gateway"));
+    }
+
+    #[test]
+    fn gateway_service_check_warns_when_not_installed() {
+        let check = gateway_service_check_from_snapshot(GatewayServiceSnapshot {
+            supported: true,
+            installed: false,
+            running: false,
+            status_message: "Service 'com.forge.gateway' is not installed.".into(),
+            label: "com.forge.gateway".into(),
+            launch_domain: "gui/123".into(),
+            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
+            log_path: "/Users/test/.forge/logs/gateway.log".into(),
+            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
+        });
+
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(check
+            .remediation
+            .as_deref()
+            .unwrap()
+            .contains("reinstall_service"));
+        assert_eq!(check.repair_action_id.as_deref(), Some("reinstall_service"));
     }
 
     #[test]

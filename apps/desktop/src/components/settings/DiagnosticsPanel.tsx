@@ -1,15 +1,21 @@
-import { RefreshCw, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Wrench, XCircle } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
 import { useGatewayRuntimeStatusQuery } from "@/hooks/queries/useGatewayRuntimeStatusQuery";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { queryKeys } from "@/hooks/queries/queryKeys";
 import type {
   DiagnosticCheck,
   DiagnosticsReport,
   GatewayRuntimeStatus,
   GatewayTriggerRunRecord,
 } from "@/lib/tauri";
+import { runRepairAction } from "@/lib/tauri";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { buildGatewayRuntimeSummary } from "./diagnosticsRuntimeView";
+import { buildDiagnosticRepairAction } from "./diagnosticsRepairView";
+import { formatMutationError } from "./settingsUtils";
 
 const STATUS_ICON: Record<string, typeof CheckCircle> = {
   pass: CheckCircle,
@@ -30,6 +36,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function DiagnosticsPanel() {
+  const queryClient = useQueryClient();
+  const [repairingActionId, setRepairingActionId] = useState<string | null>(null);
+  const [repairMessage, setRepairMessage] = useState<string | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
   const {
     data: report,
     isLoading,
@@ -52,6 +62,30 @@ export function DiagnosticsPanel() {
   const refreshAll = () => {
     void refetch();
     void refetchRuntime();
+  };
+  const handleRepair = async (actionId: string) => {
+    if (repairingActionId) return;
+    setRepairingActionId(actionId);
+    setRepairMessage(null);
+    setRepairError(null);
+    try {
+      const result = await runRepairAction(actionId);
+      if (result.success) {
+        setRepairMessage(result.message);
+      } else {
+        setRepairError(result.message);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.diagnosticsReport }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.gatewayRuntimeStatus }),
+        refetch(),
+        refetchRuntime(),
+      ]);
+    } catch (err) {
+      setRepairError(formatMutationError(err));
+    } finally {
+      setRepairingActionId(null);
+    }
   };
 
   return (
@@ -81,6 +115,16 @@ export function DiagnosticsPanel() {
         onRefresh={() => refetchRuntime()}
       />
 
+      {(repairError || repairMessage) && (
+        <div
+          className={repairError ? "forge-settings-error" : "forge-settings-success"}
+          role={repairError ? "alert" : "status"}
+        >
+          {repairError ? <XCircle className="size-3.5" /> : <CheckCircle className="size-3.5" />}
+          <span>{repairError ?? repairMessage}</span>
+        </div>
+      )}
+
       {/* ── Check list ── */}
       {report && report.checks.length > 0 && (
         <div className="forge-settings-readonly-panel">
@@ -89,7 +133,12 @@ export function DiagnosticsPanel() {
           </div>
           <div className="forge-settings-info-list">
             {report.checks.map((check) => (
-              <DiagnosticsCheckRow key={check.id} check={check} />
+              <DiagnosticsCheckRow
+                key={check.id}
+                check={check}
+                onRepair={handleRepair}
+                repairingActionId={repairingActionId}
+              />
             ))}
           </div>
         </div>
@@ -258,9 +307,19 @@ function DiagnosticsContent({
   );
 }
 
-function DiagnosticsCheckRow({ check }: { check: DiagnosticCheck }) {
+function DiagnosticsCheckRow({
+  check,
+  onRepair,
+  repairingActionId,
+}: {
+  check: DiagnosticCheck;
+  onRepair: (actionId: string) => void;
+  repairingActionId: string | null;
+}) {
   const Icon = STATUS_ICON[check.status] ?? CheckCircle;
   const cls = STATUS_CLASS[check.status] ?? STATUS_CLASS.pass;
+  const repairAction = buildDiagnosticRepairAction(check);
+  const isRepairing = repairAction != null && repairingActionId === repairAction.actionId;
 
   return (
     <div className="forge-settings-info-row">
@@ -284,6 +343,22 @@ function DiagnosticsCheckRow({ check }: { check: DiagnosticCheck }) {
             <span className="text-[10px] font-mono text-muted-foreground leading-tight">
               {formatDiagnosticDetail(check.detail)}
             </span>
+          )}
+          {repairAction && (
+            <ButtonPrimitive
+              type="button"
+              className="forge-diagnostic-repair-btn"
+              onClick={() => onRepair(repairAction.actionId)}
+              disabled={repairingActionId != null}
+              aria-label={`${repairAction.label}: ${check.label}`}
+            >
+              {isRepairing ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Wrench className="size-3" />
+              )}
+              <span>{repairAction.label}</span>
+            </ButtonPrimitive>
           )}
         </div>
       </dd>

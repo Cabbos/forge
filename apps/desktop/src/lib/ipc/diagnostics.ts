@@ -4,6 +4,8 @@ import type {
   DiagnosticsReport,
   GatewayRuntimeStatus,
   LogEntry,
+  RepairAction,
+  RepairResult,
   ServiceStatus,
 } from "./types";
 
@@ -52,6 +54,15 @@ export async function getDiagnosticsReport(): Promise<DiagnosticsReport> {
     };
   }
   return invoke<DiagnosticsReport>("get_diagnostics_report");
+}
+
+export async function listRepairActions(): Promise<RepairAction[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke<RepairAction[]>("list_repair_actions");
+}
+
+export async function runRepairAction(actionId: string): Promise<RepairResult> {
+  return invoke<RepairResult>("run_repair_action", { actionId });
 }
 
 export async function getGatewayRuntimeStatus(): Promise<GatewayRuntimeStatus> {

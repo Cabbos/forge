@@ -308,6 +308,7 @@ export interface DiagnosticCheck {
   message: string;
   detail?: unknown | null;
   remediation?: string | null;
+  repairActionId?: string | null;
 }
 
 export interface DiagnosticsReport {
@@ -335,6 +336,18 @@ export interface GatewayRuntimeStatus {
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: GatewayTriggerRunRecord[];
+}
+
+export interface RepairAction {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface RepairResult {
+  action_id: string;
+  success: boolean;
+  message: string;
 }
 
 export interface ScheduledTask {
