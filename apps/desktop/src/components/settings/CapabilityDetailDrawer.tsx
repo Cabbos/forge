@@ -4,6 +4,7 @@ import { ForgeIcon } from "@/components/primitives/icon";
 import { capabilityIconMeta } from "@/lib/capability-icons";
 import type { EcosystemItemStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 const STATUS_LABELS: Record<EcosystemItemStatus, string> = {
   healthy: "正常",
@@ -61,14 +62,14 @@ export function CapabilityDetailDrawer({
           <h4>{name}</h4>
           <span className="forge-capability-drawer-id">{id}</span>
         </div>
-        <button
+        <ButtonPrimitive
           type="button"
           className="forge-capability-drawer-close"
           onClick={onClose}
           aria-label="关闭详情"
         >
           <X size={16} />
-        </button>
+        </ButtonPrimitive>
       </div>
 
       <div className="forge-capability-drawer-body">

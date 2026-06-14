@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
 import { deriveWorkbenchSummary, normalizeA2ATaskProjection } from "@/lib/workbenchSummary";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 function iconFor(status: string) {
   if (status === "completed") return CheckCircle2;
@@ -279,7 +280,7 @@ export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | n
     : `${state.completed_count} 个子任务已完成`;
 
   return (
-    <button
+    <ButtonPrimitive
       type="button"
       className="forge-a2a-inline-summary"
       data-running={state.running_count > 0}
@@ -294,7 +295,7 @@ export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | n
         <span className="forge-a2a-inline-detail">{statusText}，查看过程与审阅材料</span>
       </span>
       <PanelRightOpen className="size-3.5" />
-    </button>
+    </ButtonPrimitive>
   );
 }
 

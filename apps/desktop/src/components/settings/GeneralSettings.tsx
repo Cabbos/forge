@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, Power, PowerOff } from "lucide-react";
 import { getServiceStatus, setAutostart, type ServiceStatus } from "@/lib/tauri";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 export function GeneralSettings() {
   const [status, setStatus] = useState<ServiceStatus | null>(null);
@@ -106,7 +107,7 @@ export function GeneralSettings() {
                 )}
               </div>
             </div>
-            <button
+            <ButtonPrimitive
               type="button"
               disabled={toggling}
               onClick={handleToggle}
@@ -124,7 +125,7 @@ export function GeneralSettings() {
               {toggling && (
                 <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-white" />
               )}
-            </button>
+            </ButtonPrimitive>
           </div>
 
           {/* Status text */}

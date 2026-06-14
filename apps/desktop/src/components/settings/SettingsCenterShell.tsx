@@ -1,4 +1,5 @@
-import type { ComponentProps, ComponentType, ReactNode } from "react";
+import type { ReactNode } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import {
   AlertCircle,
   Brain,
@@ -12,10 +13,6 @@ import {
   UserRound,
   Wrench,
 } from "lucide-react";
-import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
-import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
-import { SettingsProviderSection } from "@/components/settings/SettingsProviderSection";
-import { SettingsSummaryStrip } from "@/components/settings/SettingsSummaryStrip";
 import { DiagnosticsPanel } from "@/components/settings/DiagnosticsPanel";
 import { MemoryPanel } from "@/components/settings/MemoryPanel";
 import { ProfilesPanel } from "@/components/settings/ProfilesPanel";
@@ -34,22 +31,22 @@ export type SettingsSectionId =
   | "diagnostics"
   | "about";
 
-type SettingsIcon = ComponentType<{ className?: string }>;
+type SettingsIcon = React.ComponentType<{ className?: string }>;
 
-interface SettingsCenterShellProps {
+export interface SettingsCenterShellProps {
   activeSection: SettingsSectionId;
   onSectionChange: (section: SettingsSectionId) => void;
   configuredCount: number;
   providerTotal: number;
-  sessionCount: number;
   workspaceName: string;
   workspacePath: string;
   workspaceCount: number;
   providerLabel: string;
   modelLabel: string;
-  providerRowsProps: ComponentProps<typeof SettingsProviderRows>;
-  localDataProps: ComponentProps<typeof SettingsLocalDataSection>;
   error: string | null;
+  summaryStrip: ReactNode;
+  providerSection: ReactNode;
+  localDataSection: ReactNode;
 }
 
 const SETTINGS_SECTIONS: Array<{
@@ -75,15 +72,15 @@ export function SettingsCenterShell({
   onSectionChange,
   configuredCount,
   providerTotal,
-  sessionCount,
   workspaceName,
   workspacePath,
   workspaceCount,
   providerLabel,
   modelLabel,
-  providerRowsProps,
-  localDataProps,
   error,
+  summaryStrip,
+  providerSection,
+  localDataSection,
 }: SettingsCenterShellProps) {
   const activeMeta = SETTINGS_SECTIONS.find((section) => section.id === activeSection) ?? SETTINGS_SECTIONS[0];
   const ActiveIcon = activeMeta.icon;
@@ -91,18 +88,14 @@ export function SettingsCenterShell({
   return (
     <div className="forge-settings-center">
       <aside className="forge-settings-sidebar" aria-label="设置分类">
-        <SettingsSummaryStrip
-          configuredCount={configuredCount}
-          providerTotal={providerTotal}
-          sessionCount={sessionCount}
-        />
+        {summaryStrip}
         <nav className="forge-settings-nav">
           {SETTINGS_SECTIONS.map((section) => {
             const Icon = section.icon;
             const isActive = section.id === activeSection;
 
             return (
-              <button
+              <ButtonPrimitive
                 key={section.id}
                 type="button"
                 className="forge-settings-nav-button"
@@ -117,7 +110,7 @@ export function SettingsCenterShell({
                   <span className="forge-settings-nav-title">{section.title}</span>
                   <span className="forge-settings-nav-caption">{section.caption}</span>
                 </span>
-              </button>
+              </ButtonPrimitive>
             );
           })}
         </nav>
@@ -149,7 +142,7 @@ export function SettingsCenterShell({
                   />
                 </SettingsInfoList>
               </SettingsReadOnlyPanel>
-              <SettingsProviderSection providerRowsProps={providerRowsProps} showHeading={false} />
+              {providerSection}
             </>
           )}
 
@@ -190,7 +183,7 @@ export function SettingsCenterShell({
                   <SettingsInfoRow label="项目文件" value="清除对话不会删除项目文件" />
                 </SettingsInfoList>
               </SettingsReadOnlyPanel>
-              <SettingsLocalDataSection {...localDataProps} showHeading={false} />
+              {localDataSection}
             </>
           )}
 
@@ -221,22 +214,18 @@ export function SettingsCenterShell({
 }
 
 function SettingsReadOnlyPanel({
+  children,
   title,
   description,
-  children,
 }: {
+  children: ReactNode;
   title?: string;
   description?: string;
-  children: ReactNode;
 }) {
   return (
-    <div className="forge-settings-readonly-panel" data-forge-motion="settings-entry">
-      {(title || description) && (
-        <div className="forge-settings-readonly-heading">
-          {title && <h4>{title}</h4>}
-          {description && <p>{description}</p>}
-        </div>
-      )}
+    <div className="forge-settings-readonly-panel">
+      {title && <h4 className="forge-settings-panel-title">{title}</h4>}
+      {description && <p className="forge-settings-panel-description">{description}</p>}
       {children}
     </div>
   );
@@ -249,7 +238,7 @@ function SettingsInfoList({ children }: { children: ReactNode }) {
 function SettingsInfoRow({
   label,
   value,
-  subtle = false,
+  subtle,
 }: {
   label: string;
   value: string;
@@ -257,8 +246,10 @@ function SettingsInfoRow({
 }) {
   return (
     <div className="forge-settings-info-row">
-      <dt>{label}</dt>
-      <dd data-subtle={subtle ? "true" : "false"}>{value}</dd>
+      <dt className="forge-settings-info-label">{label}</dt>
+      <dd className={subtle ? "forge-settings-info-value-subtle" : "forge-settings-info-value"}>
+        {value}
+      </dd>
     </div>
   );
 }

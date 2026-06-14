@@ -266,14 +266,14 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-action-bar {
-    min-height: 3rem;
+    min-height: 2.25rem;
     border-top-color: #E8E1D7;
     background: #FBF7EF;
-    padding: 0.5rem 0.875rem;
+    padding: 0.25rem 0.875rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button {
-    height: 2rem;
+    height: 1.75rem;
     border-radius: 8px;
     font-size: 12px;
   }

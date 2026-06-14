@@ -1,4 +1,5 @@
 import { ShieldAlert, X } from "lucide-react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { useStore } from "@/store";
 
 const LEVEL_ICONS: Record<string, typeof ShieldAlert> = {
@@ -44,14 +45,14 @@ export function HealthAlertBanner() {
                 </p>
               )}
             </div>
-            <button
+            <ButtonPrimitive
               type="button"
               aria-label="Dismiss health alert"
               onClick={() => dismiss(alert.alert_id)}
               className="mt-0.5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
             >
               <X className="h-4 w-4" />
-            </button>
+            </ButtonPrimitive>
           </div>
         );
       })}

@@ -7,8 +7,6 @@ import {
   Pause,
   RefreshCw,
   Pencil,
-  Check,
-  X,
   AlertCircle,
   Loader2,
 } from "lucide-react";
@@ -21,200 +19,11 @@ import {
   deleteScheduledTask,
   setScheduledTaskEnabled,
   runScheduledTaskNow,
-  type ScheduledTask,
-  type RunHistoryEntry,
 } from "@/lib/tauri";
-
-// ── Formatters ────────────────────────────────────────────────────────────────
-
-function formatTimestamp(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function formatInterval(seconds: number): string {
-  if (seconds === 0) return "手动";
-  if (seconds < 60) return `${seconds} 秒`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 时`;
-  return `${Math.floor(seconds / 86400)} 天`;
-}
-
-function formatMutationError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  return "操作失败，请重试。";
-}
-
-// ── Status badge ─────────────────────────────────────────────────────────────
-
-function HistoryStatusBadge({ status }: { status: string }) {
-  const style =
-    status === "completed"
-      ? { bg: "var(--forge-active)", fg: "var(--forge-text-primary)" }
-      : status === "skipped"
-        ? { bg: "rgba(184, 138, 86, 0.15)", fg: "var(--forge-text-muted)" }
-        : { bg: "rgba(220, 80, 60, 0.12)", fg: "#b33a2e" };
-
-  const label =
-    status === "completed" ? "完成" : status === "skipped" ? "跳过" : "错误";
-
-  return (
-    <span
-      className="forge-scheduler-status-badge"
-      style={{ background: style.bg, color: style.fg }}
-    >
-      {label}
-    </span>
-  );
-}
-
-// ── Task editor sub-component ─────────────────────────────────────────────────
-
-function TaskEditor({
-  initial,
-  onSave,
-  onCancel,
-}: {
-  initial?: ScheduledTask;
-  onSave: (data: {
-    id?: string;
-    title: string;
-    text: string;
-    tags: string[];
-    interval_seconds: number;
-    profile_id?: string;
-  }) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [title, setTitle] = useState(initial?.title ?? "");
-  const [text, setText] = useState(initial?.text ?? "");
-  const [tagsStr, setTagsStr] = useState(initial?.tags.join(", ") ?? "");
-  const [intervalSecs, setIntervalSecs] = useState(
-    String(initial?.interval_seconds ?? 3600),
-  );
-  const [profileId, setProfileId] = useState(initial?.profile_id ?? "");
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const handleSave = useCallback(async () => {
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) return;
-    setSaveError(null);
-    setSaving(true);
-    try {
-      const parsedInterval = Math.max(0, parseInt(intervalSecs, 10) || 0);
-      const tagList = tagsStr
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      await onSave({
-        id: initial?.id,
-        title: trimmedTitle,
-        text: text.trim(),
-        tags: tagList,
-        interval_seconds: parsedInterval,
-        profile_id: profileId.trim() || undefined,
-      });
-    } catch (error) {
-      setSaveError(formatMutationError(error));
-    } finally {
-      setSaving(false);
-    }
-  }, [title, text, tagsStr, intervalSecs, profileId, initial, onSave]);
-
-  return (
-    <div className="forge-scheduler-editor">
-      <input
-        className="forge-scheduler-editor-title"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="任务名称"
-        disabled={saving}
-      />
-      <textarea
-        className="forge-scheduler-editor-text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={3}
-        placeholder="提示词 / 命令文本"
-        disabled={saving}
-      />
-      <div className="forge-scheduler-editor-row">
-        <input
-          className="forge-scheduler-editor-interval"
-          value={intervalSecs}
-          onChange={(e) => setIntervalSecs(e.target.value)}
-          placeholder="间隔（秒），0 为手动"
-          disabled={saving}
-          type="number"
-          min="0"
-        />
-        <input
-          className="forge-scheduler-editor-profile"
-          value={profileId}
-          onChange={(e) => setProfileId(e.target.value)}
-          placeholder="关联资料 ID（可选）"
-          disabled={saving}
-        />
-      </div>
-      <input
-        className="forge-scheduler-editor-tags"
-        value={tagsStr}
-        onChange={(e) => setTagsStr(e.target.value)}
-        placeholder="标签, 逗号分隔"
-        disabled={saving}
-      />
-      {saveError && (
-        <div className="forge-scheduler-editor-error" role="alert">
-          <AlertCircle className="size-3" />
-          <span>{saveError}</span>
-        </div>
-      )}
-      <div className="forge-scheduler-editor-actions">
-        <button
-          type="button"
-          className="forge-scheduler-action-btn"
-          onClick={handleSave}
-          disabled={saving || !title.trim()}
-          aria-label="保存"
-        >
-          {saving ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <Check className="size-3" />
-          )}
-        </button>
-        <button
-          type="button"
-          className="forge-scheduler-action-btn forge-scheduler-action-btn--cancel"
-          onClick={onCancel}
-          disabled={saving}
-          aria-label="取消"
-        >
-          <X className="size-3" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── History row ───────────────────────────────────────────────────────────────
-
-function HistoryRow({ entry }: { entry: RunHistoryEntry }) {
-  return (
-    <li className="forge-scheduler-history-item">
-      <HistoryStatusBadge status={entry.status} />
-      <span className="forge-scheduler-history-time">
-        {formatTimestamp(entry.started_at_ms)}
-      </span>
-      <span className="forge-scheduler-history-msg">{entry.message}</span>
-    </li>
-  );
-}
-
-// ── Panel ────────────────────────────────────────────────────────────────────
+import { formatMutationError, formatInterval, formatTimestamp } from "./settingsUtils";
+import { SchedulerTaskEditor } from "./SchedulerTaskEditor";
+import { SchedulerHistoryRow } from "./SchedulerHistoryRow";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 export function SchedulerPanel() {
   const queryClient = useQueryClient();
@@ -314,13 +123,13 @@ export function SchedulerPanel() {
         <div className="forge-scheduler-error" role="alert">
           <AlertCircle className="size-4" />
           <span>{getQueryErrorMessage(error)}</span>
-          <button
+          <ButtonPrimitive
             type="button"
             className="forge-scheduler-retry-btn"
             onClick={() => refetch()}
           >
             重试
-          </button>
+          </ButtonPrimitive>
         </div>
       </div>
     );
@@ -342,27 +151,27 @@ export function SchedulerPanel() {
 
       {/* Toolbar */}
       <div className="forge-scheduler-toolbar">
-        <button
+        <ButtonPrimitive
           type="button"
           className="forge-scheduler-create-btn"
           onClick={() => setEditing("new")}
         >
           <Plus className="size-3.5" />
           <span>新建任务</span>
-        </button>
-        <button
+        </ButtonPrimitive>
+        <ButtonPrimitive
           type="button"
           className="forge-scheduler-refresh-btn"
           onClick={() => refetch()}
           aria-label="刷新"
         >
           <RefreshCw className="size-3.5" />
-        </button>
+        </ButtonPrimitive>
       </div>
 
       {/* New task editor */}
       {editing === "new" && (
-        <TaskEditor
+        <SchedulerTaskEditor
           onSave={handleUpsert}
           onCancel={() => setEditing(null)}
         />
@@ -391,7 +200,7 @@ export function SchedulerPanel() {
             return (
               <li key={task.id} className="forge-scheduler-task-card">
                 {isEditing ? (
-                  <TaskEditor
+                  <SchedulerTaskEditor
                     initial={task}
                     onSave={handleUpsert}
                     onCancel={() => setEditing(null)}
@@ -410,7 +219,7 @@ export function SchedulerPanel() {
                         )}
                       </div>
                       <div className="forge-scheduler-task-actions">
-                        <button
+                        <ButtonPrimitive
                           type="button"
                           className="forge-scheduler-icon-btn"
                           onClick={() => handleToggle(task.id, !task.enabled)}
@@ -422,8 +231,8 @@ export function SchedulerPanel() {
                           ) : (
                             <Play className="size-3.5" />
                           )}
-                        </button>
-                        <button
+                        </ButtonPrimitive>
+                        <ButtonPrimitive
                           type="button"
                           className="forge-scheduler-icon-btn"
                           onClick={() => handleRunNow(task.id)}
@@ -436,8 +245,8 @@ export function SchedulerPanel() {
                           ) : (
                             <Play className="size-3.5" />
                           )}
-                        </button>
-                        <button
+                        </ButtonPrimitive>
+                        <ButtonPrimitive
                           type="button"
                           className="forge-scheduler-icon-btn"
                           onClick={() => setEditing(task.id)}
@@ -445,8 +254,8 @@ export function SchedulerPanel() {
                           title="编辑"
                         >
                           <Pencil className="size-3.5" />
-                        </button>
-                        <button
+                        </ButtonPrimitive>
+                        <ButtonPrimitive
                           type="button"
                           className="forge-scheduler-icon-btn forge-scheduler-icon-btn--danger"
                           onClick={() => handleDelete(task.id)}
@@ -454,7 +263,7 @@ export function SchedulerPanel() {
                           title="删除"
                         >
                           <Trash2 className="size-3.5" />
-                        </button>
+                        </ButtonPrimitive>
                       </div>
                     </div>
 
@@ -510,7 +319,7 @@ export function SchedulerPanel() {
                           </summary>
                           <ul className="forge-scheduler-history-list">
                             {taskHistory.slice(0, 5).map((entry) => (
-                              <HistoryRow key={entry.id} entry={entry} />
+                              <SchedulerHistoryRow key={entry.id} entry={entry} />
                             ))}
                           </ul>
                         </details>
@@ -532,7 +341,7 @@ export function SchedulerPanel() {
           </summary>
           <ul className="forge-scheduler-history-list">
             {history.map((entry) => (
-              <HistoryRow key={entry.id} entry={entry} />
+              <SchedulerHistoryRow key={entry.id} entry={entry} />
             ))}
           </ul>
         </details>

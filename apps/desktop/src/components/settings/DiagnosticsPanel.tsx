@@ -2,6 +2,7 @@ import { RefreshCw, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import type { DiagnosticCheck, DiagnosticsReport } from "@/lib/tauri";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 const STATUS_ICON: Record<string, typeof CheckCircle> = {
   pass: CheckCircle,
@@ -99,7 +100,7 @@ function DiagnosticsContent({
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <button
+        <ButtonPrimitive
           type="button"
           onClick={onRefresh}
           disabled={isRefreshing}
@@ -112,7 +113,7 @@ function DiagnosticsContent({
           <span className="forge-settings-nav-copy">
             <span className="forge-settings-nav-title">刷新</span>
           </span>
-        </button>
+        </ButtonPrimitive>
       </div>
     </>
   );
@@ -182,14 +183,14 @@ function DiagnosticsEmpty({ onRefresh }: { onRefresh: () => void }) {
     <div className="forge-settings-readonly-heading">
       <h4>暂无诊断数据</h4>
       <p>无法获取诊断报告。</p>
-      <button type="button" onClick={onRefresh} className="forge-settings-nav-button mt-2">
+      <ButtonPrimitive type="button" onClick={onRefresh} className="forge-settings-nav-button mt-2">
         <span className="forge-settings-nav-icon" aria-hidden="true">
           <RefreshCw className="size-3.5" />
         </span>
         <span className="forge-settings-nav-copy">
           <span className="forge-settings-nav-title">重试</span>
         </span>
-      </button>
+      </ButtonPrimitive>
     </div>
   );
 }
@@ -205,9 +206,9 @@ function DiagnosticsError({
     <div className="forge-settings-error" role="alert">
       <XCircle className="size-3.5" />
       <span>{message}</span>
-      <button type="button" onClick={onRetry} className="ml-auto text-xs underline">
+      <ButtonPrimitive type="button" onClick={onRetry} className="ml-auto text-xs underline">
         重试
-      </button>
+      </ButtonPrimitive>
     </div>
   );
 }

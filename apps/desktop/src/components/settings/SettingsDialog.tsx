@@ -8,11 +8,13 @@ import {
 } from "@/components/primitives/dialog";
 import { ForgeButton } from "@/components/primitives/button";
 import { Settings } from "lucide-react";
-import { useState } from "react";
 import {
   SettingsCenterShell,
   type SettingsSectionId,
 } from "@/components/settings/SettingsCenterShell";
+import { SettingsSummaryStrip } from "@/components/settings/SettingsSummaryStrip";
+import { SettingsProviderSection } from "@/components/settings/SettingsProviderSection";
+import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
 import { useSettingsDialogController } from "@/components/settings/useSettingsDialogController";
 
 interface SettingsDialogProps {
@@ -23,15 +25,15 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigger = false }: SettingsDialogProps = {}) {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("models");
   const {
     dialogOpen,
     setDialogOpen,
     dialogRef,
+    activeSection,
+    setActiveSection,
     configuredCount,
     providerTotal,
     sessionCount,
-    error,
     workspaceName,
     workspacePath,
     workspaceCount,
@@ -39,6 +41,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
     modelLabel,
     providerRowsProps,
     localDataProps,
+    error,
   } = useSettingsDialogController({ open, onOpenChange });
 
   return (
@@ -66,17 +69,29 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
           onSectionChange={setActiveSection}
           configuredCount={configuredCount}
           providerTotal={providerTotal}
-          sessionCount={sessionCount}
           workspaceName={workspaceName}
           workspacePath={workspacePath}
           workspaceCount={workspaceCount}
           providerLabel={providerLabel}
           modelLabel={modelLabel}
-          providerRowsProps={providerRowsProps}
-          localDataProps={localDataProps}
           error={error}
+          summaryStrip={
+            <SettingsSummaryStrip
+              configuredCount={configuredCount}
+              providerTotal={providerTotal}
+              sessionCount={sessionCount}
+            />
+          }
+          providerSection={
+            <SettingsProviderSection providerRowsProps={providerRowsProps} showHeading={false} />
+          }
+          localDataSection={
+            <SettingsLocalDataSection {...localDataProps} showHeading={false} />
+          }
         />
       </ForgeDialogContent>
     </ForgeDialog>
   );
 }
+
+export type { SettingsSectionId };

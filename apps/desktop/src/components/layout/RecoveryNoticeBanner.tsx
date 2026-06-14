@@ -1,4 +1,5 @@
 import { AlertTriangle, X } from "lucide-react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { useStore } from "@/store";
 
 export function RecoveryNoticeBanner() {
@@ -23,14 +24,14 @@ export function RecoveryNoticeBanner() {
             <p className="font-medium text-foreground">{notice.title}</p>
             <p className="text-muted-foreground">{notice.message}</p>
           </div>
-          <button
+          <ButtonPrimitive
             type="button"
             aria-label="Dismiss"
             onClick={() => dismiss(notice.notice_id)}
             className="mt-0.5 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ButtonPrimitive>
         </div>
       ))}
     </div>
