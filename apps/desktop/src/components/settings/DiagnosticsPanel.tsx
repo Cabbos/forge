@@ -1,5 +1,14 @@
 import { useState, type FormEvent } from "react";
-import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Send, Wrench, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  Wrench,
+  XCircle,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
 import { useGatewayRuntimeStatusQuery } from "@/hooks/queries/useGatewayRuntimeStatusQuery";
@@ -13,11 +22,17 @@ import type {
   GatewayRuntimeStatus,
   GatewayTriggerRunRecord,
 } from "@/lib/tauri";
-import { cancelGatewayTrigger, enqueueGatewayTrigger, runRepairAction } from "@/lib/tauri";
+import {
+  cancelGatewayTrigger,
+  enqueueGatewayTrigger,
+  replayGatewayTriggerRun,
+  runRepairAction,
+} from "@/lib/tauri";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import {
   buildGatewayRuntimeSummary,
   buildGatewayTriggerInput,
+  buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
 } from "./diagnosticsRuntimeView";
 import { buildDiagnosticRepairAction } from "./diagnosticsRepairView";
@@ -199,6 +214,7 @@ function GatewayRuntimePanel({
   const [triggerWorkspacePath, setTriggerWorkspacePath] = useState("");
   const [isEnqueuingTrigger, setIsEnqueuingTrigger] = useState(false);
   const [cancelingTriggerId, setCancelingTriggerId] = useState<string | null>(null);
+  const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [triggerMessageStatus, setTriggerMessageStatus] = useState<string | null>(null);
 
@@ -287,6 +303,23 @@ function GatewayRuntimePanel({
       setCancelingTriggerId(null);
     }
   };
+  const handleReplayRun = async (runId: string) => {
+    if (replayingRunId) return;
+    setReplayingRunId(runId);
+    setTriggerError(null);
+    setTriggerMessageStatus(null);
+    try {
+      const result = await replayGatewayTriggerRun(runId);
+      setTriggerMessageStatus(
+        `已重放 ${result.run_id} 为 ${result.trigger_id}，当前 pending ${result.pending_triggers} 个。`,
+      );
+      onRefresh();
+    } catch (error) {
+      setTriggerError(formatMutationError(error));
+    } finally {
+      setReplayingRunId(null);
+    }
+  };
 
   return (
     <div className="forge-settings-readonly-panel">
@@ -313,7 +346,11 @@ function GatewayRuntimePanel({
         <div className="forge-settings-info-row">
           <dt>最近运行</dt>
           <dd>
-            <GatewayRuntimeRuns runs={runtime.recent_runs} />
+            <GatewayRuntimeRuns
+              runs={runtime.recent_runs}
+              replayingRunId={replayingRunId}
+              onReplay={handleReplayRun}
+            />
           </dd>
         </div>
         <div className="forge-settings-info-row">
@@ -420,17 +457,50 @@ function GatewayRuntimePanel({
   );
 }
 
-function GatewayRuntimeRuns({ runs }: { runs: GatewayTriggerRunRecord[] }) {
+function GatewayRuntimeRuns({
+  runs,
+  replayingRunId,
+  onReplay,
+}: {
+  runs: GatewayTriggerRunRecord[];
+  replayingRunId: string | null;
+  onReplay: (runId: string) => void;
+}) {
   if (runs.length === 0) {
     return <span className="text-xs text-muted-foreground">暂无运行记录</span>;
   }
 
+  const rows = buildGatewayTriggerRunRows(runs).slice(0, 3);
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      {runs.slice(0, 3).map((run) => (
-        <span key={run.id} className="truncate text-xs text-muted-foreground">
-          {run.status} · attempt {run.attempt} · {run.message}
-        </span>
+    <div className="forge-gateway-trigger-queue">
+      {rows.map((row) => (
+        <div key={row.id} className="forge-gateway-trigger-row">
+          <div className="forge-gateway-trigger-row-main">
+            <span className="forge-gateway-trigger-row-title">
+              <span data-state={row.canReplay ? "pending" : "claimed"}>
+                {row.canReplay ? "replayable" : "legacy"}
+              </span>
+              <code>{row.id}</code>
+            </span>
+            <span className="forge-gateway-trigger-row-message">{row.title}</span>
+            <span className="forge-gateway-trigger-row-meta">{row.message}</span>
+            <span className="forge-gateway-trigger-row-meta">{row.subtitle}</span>
+          </div>
+          <ButtonPrimitive
+            type="button"
+            className="forge-gateway-trigger-cancel-btn"
+            disabled={!row.canReplay || replayingRunId != null}
+            aria-label={`Replay gateway trigger run ${row.id}`}
+            title={row.canReplay ? "重放 trigger run" : "旧记录缺少 trigger metadata"}
+            onClick={() => onReplay(row.id)}
+          >
+            {replayingRunId === row.id ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <RotateCcw className="size-3" />
+            )}
+          </ButtonPrimitive>
+        </div>
       ))}
     </div>
   );

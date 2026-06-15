@@ -345,6 +345,11 @@ export interface GatewayTriggerRunRecord {
   message: string;
   started_at_ms: number;
   ended_at_ms: number;
+  trigger_message?: string | null;
+  profile_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  workspace_path?: string | null;
 }
 
 export interface GatewayRuntimeStatus {
@@ -389,6 +394,13 @@ export interface CancelGatewayTriggerResult {
   ok: boolean;
   trigger_id: string;
   removed: boolean;
+  pending_triggers: number;
+}
+
+export interface ReplayGatewayTriggerRunResult {
+  ok: boolean;
+  run_id: string;
+  trigger_id: string;
   pending_triggers: number;
 }
 

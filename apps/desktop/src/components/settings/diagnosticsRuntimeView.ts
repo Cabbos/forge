@@ -45,12 +45,35 @@ export interface GatewayPendingTriggerLike {
   received_at_ms: number;
 }
 
+export interface GatewayTriggerRunLike {
+  id: string;
+  trigger_id: string;
+  attempt: number;
+  status: string;
+  message: string;
+  started_at_ms: number;
+  ended_at_ms: number;
+  trigger_message?: string | null;
+  profile_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  workspace_path?: string | null;
+}
+
 export interface GatewayTriggerRow {
   id: string;
   stateLabel: "pending" | "claimed";
   subtitle: string;
   message: string;
   workspacePath: string | null;
+}
+
+export interface GatewayTriggerRunRow {
+  id: string;
+  title: string;
+  subtitle: string;
+  message: string;
+  canReplay: boolean;
 }
 
 export interface GatewayTriggerInputResult {
@@ -143,6 +166,27 @@ export function buildGatewayTriggerRows(
         workspacePath: trigger.workspace_path?.trim() || null,
       };
     });
+}
+
+export function buildGatewayTriggerRunRows(
+  runs: GatewayTriggerRunLike[],
+): GatewayTriggerRunRow[] {
+  return runs.map((run) => {
+    const runtime = buildRuntimeLabel(run.provider, run.model);
+    const subtitleParts = [
+      `trigger=${run.trigger_id}`,
+      `profile=${run.profile_id?.trim() || "-"}`,
+      runtime,
+    ].filter(Boolean);
+
+    return {
+      id: run.id,
+      title: `${run.status} · attempt ${run.attempt}`,
+      subtitle: subtitleParts.join(" · "),
+      message: truncateTriggerMessage(run.message),
+      canReplay: Boolean(run.trigger_message?.trim()),
+    };
+  });
 }
 
 function assignOptional(

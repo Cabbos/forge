@@ -490,13 +490,14 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Bun CLI wrapper | ✅ Done | `forge trigger enqueue/list/runs/status` forwards to `forge_trigger` with tests |
 | Diagnostics enqueue control | ✅ Done | Settings > Diagnostics can enqueue a gateway trigger with optional profile/provider/model/workspace metadata and refresh runtime status |
 | Diagnostics queue management | ✅ Done | Settings > Diagnostics lists pending/claimed gateway triggers and can cancel stale queue entries through the gateway IPC |
-| Still deferred | ⏸️ Deferred | Replay/requeue controls, run-detail drilldown, and manual HTTP smoke |
+| Trigger replay controls | ✅ Done | Trigger run records now retain replay metadata; gateway IPC, Rust CLI, Bun wrapper, Tauri IPC, and Settings > Diagnostics can replay run records into the pending queue |
+| Still deferred | ⏸️ Deferred | Run-detail drilldown and manual HTTP smoke |
 
 **Acceptance gate (updated Phase 5-C):**
 
 - Desktop and CLI can read/write the same memory. **(Phase 5-A: ✅ Done)**
 - A scheduled task records next-run display and run history in the local scheduler. **(Phase 5-C: ✅ Done — deterministic MVP history; actual agent session execution deferred)**
-- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook, IPC enqueue, gateway runner, CLI controls, Diagnostics enqueue/list/cancel controls exist; replay/requeue and manual HTTP smoke still deferred)**
+- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook, IPC enqueue, gateway runner, CLI controls, Diagnostics enqueue/list/cancel/replay controls exist; run-detail drilldown and manual HTTP smoke still deferred)**
 - Settings > Scheduler panel allows create, edit, enable/disable, run now, delete. **(Phase 5-C: ✅ Done)**
 
 **Verification plan:**

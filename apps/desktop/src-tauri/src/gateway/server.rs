@@ -4,7 +4,8 @@
 use crate::gateway::protocol::{
     serialize_reply, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
     EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest,
-    GatewayResponse, HealthResult, PingResult, GATEWAY_VERSION,
+    GatewayResponse, HealthResult, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
+    GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
@@ -127,6 +128,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
         "enqueue_trigger" => handle_enqueue_trigger(state, request),
         "cancel_trigger" => handle_cancel_trigger(state, request),
+        "replay_trigger_run" => handle_replay_trigger_run(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
@@ -284,6 +286,60 @@ fn handle_cancel_trigger(state: &GatewayState, request: GatewayRequest) -> Gatew
             ok: true,
             trigger_id,
             removed,
+            pending_triggers: count_available_triggers(state),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_replay_trigger_run(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<ReplayTriggerRunParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let run_id = params.run_id.trim().to_string();
+    if run_id.is_empty() {
+        return invalid_params(request.id, "run_id must not be empty");
+    }
+
+    let Some(run) = state.trigger_run_store.find(&run_id) else {
+        return invalid_params(request.id, format!("run_id not found: {run_id}"));
+    };
+    let Some(message) = run
+        .trigger_message
+        .as_deref()
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(str::to_string)
+    else {
+        return invalid_params(
+            request.id,
+            format!("run {run_id} cannot be replayed because trigger metadata is missing"),
+        );
+    };
+
+    let trigger_id = new_trigger_id();
+    state.trigger_store.push(PendingTrigger {
+        id: trigger_id.clone(),
+        message,
+        profile_id: clean_optional_string(run.profile_id),
+        provider: clean_optional_string(run.provider),
+        model: clean_optional_string(run.model),
+        workspace_path: clean_optional_string(run.workspace_path),
+        attempt_count: 0,
+        claimed_at_ms: None,
+        received_at_ms: now_millis(),
+    });
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(ReplayTriggerRunResult {
+            ok: true,
+            run_id,
+            trigger_id,
             pending_triggers: count_available_triggers(state),
         })
         .unwrap(),
@@ -546,6 +602,11 @@ mod tests {
                 message: "ledger ok".into(),
                 started_at_ms: 1,
                 ended_at_ms: 2,
+                trigger_message: None,
+                profile_id: None,
+                provider: None,
+                model: None,
+                workspace_path: None,
             });
 
         let req = GatewayRequest {
@@ -590,6 +651,11 @@ mod tests {
                 message: "provider offline".into(),
                 started_at_ms: 10,
                 ended_at_ms: 11,
+                trigger_message: None,
+                profile_id: None,
+                provider: None,
+                model: None,
+                workspace_path: None,
             });
         state
             .trigger_run_store
@@ -601,6 +667,11 @@ mod tests {
                 message: "ok".into(),
                 started_at_ms: 20,
                 ended_at_ms: 21,
+                trigger_message: None,
+                profile_id: None,
+                provider: None,
+                model: None,
+                workspace_path: None,
             });
 
         let req = GatewayRequest {
@@ -803,6 +874,109 @@ mod tests {
             }
             _ => panic!("expected Err reply"),
         }
+    }
+
+    #[test]
+    fn dispatch_replay_trigger_run_queues_new_trigger_from_run_metadata() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-replayable".into(),
+                trigger_id: "trigger-original".into(),
+                attempt: 2,
+                status: "dead_letter".into(),
+                message: "provider offline".into(),
+                started_at_ms: 10,
+                ended_at_ms: 11,
+                trigger_message: Some("run the digest again".into()),
+                profile_id: Some("ops".into()),
+                provider: Some("openai".into()),
+                model: Some("gpt-5".into()),
+                workspace_path: Some("/repo/workspace".into()),
+            });
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "replay".into(),
+                method: "replay_trigger_run".into(),
+                params: Some(serde_json::json!({"run_id": " run-replayable "})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::ReplayTriggerRunResult =
+                    serde_json::from_value(resp.result).expect("parse replay result");
+                assert!(result.ok);
+                assert_eq!(result.run_id, "run-replayable");
+                assert_ne!(result.trigger_id, "trigger-original");
+                assert_eq!(result.pending_triggers, 1);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        let queued = state.trigger_store.list();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].message, "run the digest again");
+        assert_eq!(queued[0].profile_id.as_deref(), Some("ops"));
+        assert_eq!(queued[0].provider.as_deref(), Some("openai"));
+        assert_eq!(queued[0].model.as_deref(), Some("gpt-5"));
+        assert_eq!(queued[0].workspace_path.as_deref(), Some("/repo/workspace"));
+        assert_eq!(queued[0].attempt_count, 0);
+        assert!(queued[0].claimed_at_ms.is_none());
+    }
+
+    #[test]
+    fn dispatch_replay_trigger_run_rejects_legacy_run_without_metadata() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-legacy".into(),
+                trigger_id: "trigger-legacy".into(),
+                attempt: 1,
+                status: "completed".into(),
+                message: "old record".into(),
+                started_at_ms: 10,
+                ended_at_ms: 11,
+                trigger_message: None,
+                profile_id: None,
+                provider: None,
+                model: None,
+                workspace_path: None,
+            });
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "replay".into(),
+                method: "replay_trigger_run".into(),
+                params: Some(serde_json::json!({"run_id": "run-legacy"})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("metadata"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+        assert!(state.trigger_store.list().is_empty());
     }
 
     // ── GatewayState ────────────────────────────────────────────────────

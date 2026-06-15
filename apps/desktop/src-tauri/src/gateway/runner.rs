@@ -24,6 +24,41 @@ pub struct TriggerRunRecord {
     pub message: String,
     pub started_at_ms: u64,
     pub ended_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+}
+
+impl TriggerRunRecord {
+    fn from_trigger(
+        trigger: &PendingTrigger,
+        attempt: u32,
+        status: impl Into<String>,
+        message: String,
+        started_at_ms: u64,
+    ) -> Self {
+        Self {
+            id: new_trigger_run_id(),
+            trigger_id: trigger.id.clone(),
+            attempt,
+            status: status.into(),
+            message,
+            started_at_ms,
+            ended_at_ms: now_millis(),
+            trigger_message: Some(trigger.message.clone()),
+            profile_id: trigger.profile_id.clone(),
+            provider: trigger.provider.clone(),
+            model: trigger.model.clone(),
+            workspace_path: trigger.workspace_path.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -59,6 +94,17 @@ impl TriggerRunStore {
                 records.clone()
             })
             .unwrap_or_default()
+    }
+
+    pub fn find(&self, run_id: &str) -> Option<TriggerRunRecord> {
+        let run_id = run_id.trim();
+        if run_id.is_empty() {
+            return None;
+        }
+        self.records.lock().ok().and_then(|mut records| {
+            self.refresh_locked(&mut records);
+            records.iter().find(|record| record.id == run_id).cloned()
+        })
     }
 
     pub fn push(&self, record: TriggerRunRecord) {
@@ -232,15 +278,13 @@ fn record_trigger_success(
     started_at_ms: u64,
 ) -> TriggerRunRecord {
     let trigger_id = trigger.id.clone();
-    let record = TriggerRunRecord {
-        id: new_trigger_run_id(),
-        trigger_id: trigger.id,
-        attempt: trigger.attempt_count.saturating_add(1),
-        status: status.to_string(),
+    let record = TriggerRunRecord::from_trigger(
+        &trigger,
+        trigger.attempt_count.saturating_add(1),
+        status,
         message,
         started_at_ms,
-        ended_at_ms: now_millis(),
-    };
+    );
     run_store.push(record.clone());
     store.complete(&trigger_id);
     record
@@ -263,15 +307,8 @@ fn record_trigger_failure(
         "dead_letter"
     };
 
-    let record = TriggerRunRecord {
-        id: new_trigger_run_id(),
-        trigger_id: trigger.id,
-        attempt: next_attempt,
-        status: status.to_string(),
-        message,
-        started_at_ms,
-        ended_at_ms: now_millis(),
-    };
+    let record =
+        TriggerRunRecord::from_trigger(&trigger, next_attempt, status, message, started_at_ms);
     run_store.push(record.clone());
     record
 }
@@ -523,6 +560,59 @@ mod tests {
         assert_eq!(persisted[0].attempt, 1);
         assert_eq!(persisted[0].message, "ledger ok");
         assert!(persisted[0].started_at_ms <= persisted[0].ended_at_ms);
+    }
+
+    #[tokio::test]
+    async fn run_pending_triggers_once_persists_replay_metadata() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let run_path = workspace.path().join("trigger-runs.json");
+        let run_store = super::TriggerRunStore::persistent_at(run_path.clone());
+        let store = TriggerStore::new();
+        store.push(PendingTrigger {
+            id: "trigger-replayable".into(),
+            message: "replay me later".into(),
+            profile_id: Some("ops".into()),
+            provider: Some("openai".into()),
+            model: Some("gpt-5".into()),
+            workspace_path: Some(workspace.path().to_string_lossy().to_string()),
+            attempt_count: 1,
+            claimed_at_ms: None,
+            received_at_ms: 40,
+        });
+
+        let records = super::run_pending_triggers_once(
+            &store,
+            &run_store,
+            workspace.path(),
+            |_request| async { Ok(serde_json::json!({"final_answer": "metadata ok"})) },
+        )
+        .await;
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].trigger_message.as_deref(),
+            Some("replay me later")
+        );
+        assert_eq!(records[0].profile_id.as_deref(), Some("ops"));
+        assert_eq!(records[0].provider.as_deref(), Some("openai"));
+        assert_eq!(records[0].model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            records[0].workspace_path.as_deref(),
+            Some(workspace.path().to_string_lossy().as_ref())
+        );
+
+        let persisted = super::TriggerRunStore::persistent_at(run_path).list();
+        assert_eq!(
+            persisted[0].trigger_message.as_deref(),
+            Some("replay me later")
+        );
+        assert_eq!(persisted[0].profile_id.as_deref(), Some("ops"));
+        assert_eq!(persisted[0].provider.as_deref(), Some("openai"));
+        assert_eq!(persisted[0].model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            persisted[0].workspace_path.as_deref(),
+            Some(workspace.path().to_string_lossy().as_ref())
+        );
     }
 
     #[tokio::test]

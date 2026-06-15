@@ -104,6 +104,21 @@ pub struct CancelTriggerResult {
     pub pending_triggers: usize,
 }
 
+/// Parameters for replaying a previous trigger run into the pending queue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplayTriggerRunParams {
+    pub run_id: String,
+}
+
+/// Result returned after a previous trigger run is re-queued.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReplayTriggerRunResult {
+    pub ok: bool,
+    pub run_id: String,
+    pub trigger_id: String,
+    pub pending_triggers: usize,
+}
+
 /// Gateway version string.
 pub const GATEWAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -281,5 +296,27 @@ mod tests {
         let restored: CancelTriggerResult = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(restored, result);
+    }
+
+    #[test]
+    fn replay_trigger_run_params_and_result_roundtrip() {
+        let params = ReplayTriggerRunParams {
+            run_id: "run-1".into(),
+        };
+        let params_json = serde_json::to_string(&params).expect("serialize params");
+        let restored_params: ReplayTriggerRunParams =
+            serde_json::from_str(&params_json).expect("deserialize params");
+        assert_eq!(restored_params, params);
+
+        let result = ReplayTriggerRunResult {
+            ok: true,
+            run_id: "run-1".into(),
+            trigger_id: "trigger-replay".into(),
+            pending_triggers: 2,
+        };
+        let result_json = serde_json::to_string(&result).expect("serialize result");
+        let restored_result: ReplayTriggerRunResult =
+            serde_json::from_str(&result_json).expect("deserialize result");
+        assert_eq!(restored_result, result);
     }
 }

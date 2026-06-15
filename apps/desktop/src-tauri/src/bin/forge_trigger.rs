@@ -4,11 +4,13 @@
 //! - `forge_trigger enqueue --message "run digest" [--profile id] [--provider name] [--model name] [--workspace path]`
 //! - `forge_trigger list`
 //! - `forge_trigger runs`
+//! - `forge_trigger replay --run-id <run-id>`
 //! - `forge_trigger status`
 
 use forge::gateway::client::GatewayClient;
 use forge::gateway::protocol::{
     EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest,
+    ReplayTriggerRunParams, ReplayTriggerRunResult,
 };
 use forge::gateway::runner::TriggerRunRecord;
 use forge::gateway::server::{default_socket_path, GatewayRuntimeStatus};
@@ -19,6 +21,7 @@ enum TriggerCommand {
     Enqueue,
     List,
     Runs,
+    Replay,
     Status,
 }
 
@@ -26,6 +29,7 @@ enum TriggerCommand {
 struct ParsedTriggerArgs {
     command: TriggerCommand,
     message: Option<String>,
+    run_id: Option<String>,
     trigger_id: Option<String>,
     profile_id: Option<String>,
     provider: Option<String>,
@@ -66,6 +70,7 @@ async fn main() {
         TriggerCommand::Enqueue => enqueue_trigger(&mut client, args).await,
         TriggerCommand::List => list_pending_triggers(&mut client).await,
         TriggerCommand::Runs => list_trigger_runs(&mut client).await,
+        TriggerCommand::Replay => replay_trigger_run(&mut client, args).await,
         TriggerCommand::Status => show_runtime_status(&mut client).await,
     };
 
@@ -89,6 +94,7 @@ where
         "enqueue" => TriggerCommand::Enqueue,
         "list" => TriggerCommand::List,
         "runs" => TriggerCommand::Runs,
+        "replay" => TriggerCommand::Replay,
         "status" => TriggerCommand::Status,
         other => return Err(format!("unknown trigger command: {other}")),
     };
@@ -96,6 +102,7 @@ where
     let mut parsed = ParsedTriggerArgs {
         command,
         message: None,
+        run_id: None,
         trigger_id: None,
         profile_id: None,
         provider: None,
@@ -107,7 +114,11 @@ where
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--message" | "-m" => parsed.message = Some(next_value(&mut iter, "--message")?),
+            "--id" if parsed.command == TriggerCommand::Replay => {
+                parsed.run_id = Some(next_value(&mut iter, "--id")?)
+            }
             "--id" | "--trigger-id" => parsed.trigger_id = Some(next_value(&mut iter, "--id")?),
+            "--run-id" => parsed.run_id = Some(next_value(&mut iter, "--run-id")?),
             "--profile" | "-p" => parsed.profile_id = Some(next_value(&mut iter, "--profile")?),
             "--provider" => parsed.provider = Some(next_value(&mut iter, "--provider")?),
             "--model" => parsed.model = Some(next_value(&mut iter, "--model")?),
@@ -127,11 +138,22 @@ where
         if parsed.message.is_none() {
             return Err("message is required for trigger enqueue".to_string());
         }
+    } else if parsed.command == TriggerCommand::Replay {
+        if parsed.run_id.is_none() && positional_message.len() == 1 {
+            parsed.run_id = positional_message.pop();
+        } else if !positional_message.is_empty() {
+            return Err("unexpected positional argument".to_string());
+        }
+        parsed.run_id = clean_optional(parsed.run_id);
+        if parsed.run_id.is_none() {
+            return Err("run_id is required for trigger replay".to_string());
+        }
     } else if !positional_message.is_empty() {
         return Err("unexpected positional argument".to_string());
     }
 
     parsed.trigger_id = clean_optional(parsed.trigger_id);
+    parsed.run_id = clean_optional(parsed.run_id);
     parsed.profile_id = clean_optional(parsed.profile_id);
     parsed.provider = clean_optional(parsed.provider);
     parsed.model = clean_optional(parsed.model);
@@ -253,6 +275,34 @@ async fn list_trigger_runs(client: &mut GatewayClient) -> Result<(), String> {
     Ok(())
 }
 
+async fn replay_trigger_run(
+    client: &mut GatewayClient,
+    args: ParsedTriggerArgs,
+) -> Result<(), String> {
+    let params = ReplayTriggerRunParams {
+        run_id: args
+            .run_id
+            .ok_or_else(|| "run_id is required for trigger replay".to_string())?,
+    };
+    let reply = send(
+        client,
+        "replay_trigger_run",
+        Some(serde_json::to_value(params).unwrap()),
+    )
+    .await?;
+    let GatewayReply::Ok(response) = reply else {
+        return Err(render_gateway_error(reply));
+    };
+    let result = serde_json::from_value::<ReplayTriggerRunResult>(response.result)
+        .map_err(|error| format!("Gateway returned invalid replay result: {error}"))?;
+
+    println!(
+        "Replayed run {} as trigger {}. Pending triggers: {}.",
+        result.run_id, result.trigger_id, result.pending_triggers
+    );
+    Ok(())
+}
+
 async fn show_runtime_status(client: &mut GatewayClient) -> Result<(), String> {
     let reply = send(client, "runtime_status", None).await?;
     let GatewayReply::Ok(response) = reply else {
@@ -310,7 +360,7 @@ fn truncate(value: &str, max_chars: usize) -> String {
 }
 
 fn usage() -> &'static str {
-    "Usage: forge_trigger <enqueue|list|runs|status> [options]\n\
+    "Usage: forge_trigger <enqueue|list|runs|replay|status> [options]\n\
      \n\
      enqueue options:\n\
        --message, -m <text>     Prompt/message to queue\n\
@@ -318,7 +368,10 @@ fn usage() -> &'static str {
        --profile, -p <id>      Profile id\n\
        --provider <name>       Provider override\n\
        --model <name>          Model override\n\
-       --workspace, -w <path>  Workspace override"
+       --workspace, -w <path>  Workspace override\n\
+     \n\
+     replay options:\n\
+       --run-id, --id <id>     Trigger run id to replay"
 }
 
 #[cfg(test)]
@@ -379,5 +432,20 @@ mod tests {
             super::parse_trigger_args(["runs"]).expect("runs").command,
             super::TriggerCommand::Runs
         );
+    }
+
+    #[test]
+    fn parse_replay_collects_run_id() {
+        let parsed = super::parse_trigger_args(["replay", "--run-id", " run-1 "]).expect("parse");
+
+        assert_eq!(parsed.command, super::TriggerCommand::Replay);
+        assert_eq!(parsed.run_id.as_deref(), Some("run-1"));
+    }
+
+    #[test]
+    fn parse_replay_rejects_missing_run_id() {
+        let err = super::parse_trigger_args(["replay"]).expect_err("missing run id");
+
+        assert!(err.contains("run_id is required"));
     }
 }

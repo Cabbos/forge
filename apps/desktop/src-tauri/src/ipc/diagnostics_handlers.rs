@@ -4,7 +4,7 @@ use crate::diagnostics::{self, CapabilitySummary};
 use crate::gateway::client::GatewayClient;
 use crate::gateway::protocol::{
     CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult,
-    GatewayReply, GatewayRequest,
+    GatewayReply, GatewayRequest, ReplayTriggerRunParams, ReplayTriggerRunResult,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::gateway::webhook::PendingTrigger;
@@ -88,6 +88,25 @@ pub async fn cancel_gateway_trigger(trigger_id: String) -> Result<CancelTriggerR
     }
 }
 
+#[tauri::command]
+pub async fn replay_gateway_trigger_run(run_id: String) -> Result<ReplayTriggerRunResult, String> {
+    let request = build_replay_gateway_trigger_run_request(run_id)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<ReplayTriggerRunResult>(response.result)
+                .map_err(|error| format!("Gateway returned invalid replay result: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway trigger replay error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway trigger replay request failed: {error}")),
+    }
+}
+
 async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
     let socket_path = default_socket_path();
     let mut client = match GatewayClient::connect(&socket_path).await {
@@ -140,6 +159,22 @@ fn build_cancel_gateway_trigger_request(trigger_id: String) -> Result<GatewayReq
         params: Some(
             serde_json::to_value(CancelTriggerParams { trigger_id })
                 .map_err(|error| format!("serialize cancel params: {error}"))?,
+        ),
+    })
+}
+
+fn build_replay_gateway_trigger_run_request(run_id: String) -> Result<GatewayRequest, String> {
+    let run_id = run_id.trim().to_string();
+    if run_id.is_empty() {
+        return Err("run_id must not be empty".to_string());
+    }
+
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "replay_trigger_run".to_string(),
+        params: Some(
+            serde_json::to_value(ReplayTriggerRunParams { run_id })
+                .map_err(|error| format!("serialize replay params: {error}"))?,
         ),
     })
 }
@@ -331,5 +366,23 @@ mod tests {
             .expect_err("blank trigger id");
 
         assert!(error.contains("trigger_id must not be empty"));
+    }
+
+    #[test]
+    fn build_replay_gateway_trigger_run_request_trims_run_id() {
+        let request = super::build_replay_gateway_trigger_run_request(" run-1 ".to_string())
+            .expect("request");
+
+        assert_eq!(request.method, "replay_trigger_run");
+        let params = request.params.expect("params");
+        assert_eq!(params["run_id"], "run-1");
+    }
+
+    #[test]
+    fn build_replay_gateway_trigger_run_request_rejects_blank_id() {
+        let error = super::build_replay_gateway_trigger_run_request("   ".to_string())
+            .expect_err("blank run id");
+
+        assert!(error.contains("run_id must not be empty"));
     }
 }

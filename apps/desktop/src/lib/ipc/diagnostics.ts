@@ -10,6 +10,7 @@ import type {
   LogEntry,
   RepairAction,
   RepairResult,
+  ReplayGatewayTriggerRunResult,
   ServiceStatus,
 } from "./types.ts";
 
@@ -106,4 +107,13 @@ export async function cancelGatewayTrigger(
     throw new Error("Gateway trigger cancel is not available outside Tauri runtime.");
   }
   return invoke<CancelGatewayTriggerResult>("cancel_gateway_trigger", { triggerId });
+}
+
+export async function replayGatewayTriggerRun(
+  runId: string,
+): Promise<ReplayGatewayTriggerRunResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway trigger replay is not available outside Tauri runtime.");
+  }
+  return invoke<ReplayGatewayTriggerRunResult>("replay_gateway_trigger_run", { runId });
 }

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   buildGatewayRuntimeSummary,
+  buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
   buildGatewayTriggerInput,
 } from "./diagnosticsRuntimeView.ts";
@@ -132,5 +133,53 @@ describe("buildGatewayTriggerRows", () => {
 
     assert.equal(rows[0].message.length, 121);
     assert.match(rows[0].message, /…$/u);
+  });
+});
+
+describe("buildGatewayTriggerRunRows", () => {
+  it("marks runs with trigger metadata as replayable", () => {
+    const rows = buildGatewayTriggerRunRows([
+      {
+        id: "run-1",
+        trigger_id: "trigger-1",
+        attempt: 2,
+        status: "dead_letter",
+        message: "provider offline",
+        started_at_ms: 20,
+        ended_at_ms: 25,
+        trigger_message: "run digest",
+        profile_id: "ops",
+        provider: "openai",
+        model: "gpt-5",
+        workspace_path: "/repo",
+      },
+    ]);
+
+    assert.deepEqual(rows, [
+      {
+        id: "run-1",
+        title: "dead_letter · attempt 2",
+        subtitle: "trigger=trigger-1 · profile=ops · openai/gpt-5",
+        message: "provider offline",
+        canReplay: true,
+      },
+    ]);
+  });
+
+  it("keeps legacy runs visible but not replayable", () => {
+    const rows = buildGatewayTriggerRunRows([
+      {
+        id: "run-legacy",
+        trigger_id: "trigger-legacy",
+        attempt: 1,
+        status: "completed",
+        message: "legacy ok",
+        started_at_ms: 10,
+        ended_at_ms: 11,
+      },
+    ]);
+
+    assert.equal(rows[0].canReplay, false);
+    assert.equal(rows[0].subtitle, "trigger=trigger-legacy · profile=-");
   });
 });
