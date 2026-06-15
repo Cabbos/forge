@@ -5,6 +5,7 @@ import {
   exportSessionStore,
   getSessionStoreStats,
   pruneSessionStore,
+  renameSessionSnapshot,
   searchSessionStore,
 } from "./sessionStore.ts";
 
@@ -28,6 +29,13 @@ describe("session store IPC fallbacks", () => {
     await assert.rejects(
       pruneSessionStore({ keepRecent: 25 }),
       /Session store prune is not available outside Tauri runtime/,
+    );
+  });
+
+  it("throws a clear error for rename outside the Tauri runtime", async () => {
+    await assert.rejects(
+      renameSessionSnapshot({ sessionId: "session-1", summary: "Launch plan" }),
+      /Session snapshot rename is not available outside Tauri runtime/,
     );
   });
 });

@@ -45,6 +45,17 @@ pub fn get_snapshot(session_id: &str) -> Result<Option<serde_json::Value>, Strin
         .map_err(|error| format!("Failed to serialize session snapshot: {error}"))
 }
 
+pub fn rename(session_id: &str, summary: &str) -> Result<Option<SessionSnapshotSummary>, String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Ok(None);
+    }
+
+    crate::agent::snapshot::rename_session_snapshot(session_id, summary)
+        .map(summary_from_snapshot)
+        .map(Some)
+}
+
 pub fn export() -> Result<serde_json::Value, String> {
     serde_json::to_value(crate::agent::snapshot::export_session_snapshots()?)
         .map_err(|error| format!("Failed to serialize session export: {error}"))
@@ -150,6 +161,44 @@ mod tests {
         assert_eq!(detail["session_id"], "session-detail");
         assert_eq!(detail["provider"], "deepseek");
         assert_eq!(detail["messages"][0]["content"], "show me");
+
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn rename_updates_snapshot_summary_and_returns_updated_summary() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        std::env::set_var("HOME", home.path());
+        let snapshot = AgentSessionSnapshot::new(
+            "session-rename".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "/repo/rename".to_string(),
+            vec![ChatMessage::user("rename me".into())],
+            Some("old summary".to_string()),
+            Some(128_000),
+        );
+        crate::agent::snapshot::save_session_snapshot(&snapshot).expect("save snapshot");
+
+        let summary = super::rename(" session-rename ", "  launch plan  ")
+            .expect("rename")
+            .expect("summary");
+
+        assert_eq!(summary.session_id, "session-rename");
+        assert_eq!(summary.summary.as_deref(), Some("launch plan"));
+        assert_eq!(
+            super::search("launch")
+                .expect("search")
+                .first()
+                .and_then(|item| item.summary.as_deref()),
+            Some("launch plan")
+        );
 
         if let Some(value) = previous_home {
             std::env::set_var("HOME", value);

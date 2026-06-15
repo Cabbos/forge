@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { hasTauriRuntime } from "./core.ts";
 import type {
   PruneSessionStoreInput,
+  RenameSessionSnapshotInput,
   SessionSnapshotPruneReport,
   SessionSnapshotStoreStats,
   SessionSnapshotSummary,
@@ -34,6 +35,18 @@ export async function exportSessionStore(): Promise<unknown> {
     throw new Error("Session store export is not available outside Tauri runtime.");
   }
   return invoke<unknown>("export_session_store");
+}
+
+export async function renameSessionSnapshot(
+  input: RenameSessionSnapshotInput,
+): Promise<SessionSnapshotSummary | null> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Session snapshot rename is not available outside Tauri runtime.");
+  }
+  return invoke<SessionSnapshotSummary | null>("rename_session_snapshot", {
+    sessionId: input.sessionId,
+    summary: input.summary,
+  });
 }
 
 export async function pruneSessionStore(

@@ -1,6 +1,6 @@
 //! Forge Session CLI — inspect active gateway sessions and local session store.
 //!
-//! Usage: `forge_session <list|attach|show|events|input|stats|search|export|prune>`
+//! Usage: `forge_session <list|attach|show|events|input|stats|search|rename|export|prune>`
 
 use forge::gateway::client::{
     build_attach_session_request, build_enqueue_session_input_request,
@@ -89,6 +89,28 @@ async fn main() {
                 Err(error) => exit_with_error(format!("Failed to search session store: {error}")),
             }
         }
+        "rename" => {
+            let Some(session_id) = args.get(2) else {
+                eprintln!("Usage: forge_session rename <session_id> <summary>");
+                std::process::exit(1);
+            };
+            let summary = args.get(3..).unwrap_or_default().join(" ");
+            if summary.trim().is_empty() {
+                eprintln!("Usage: forge_session rename <session_id> <summary>");
+                std::process::exit(1);
+            }
+            match forge::session_store::rename(session_id, &summary) {
+                Ok(Some(snapshot)) => {
+                    for line in render_rename_result_lines(&snapshot) {
+                        println!("{line}");
+                    }
+                }
+                Ok(None) => exit_with_error("Session id must not be empty".to_string()),
+                Err(error) => {
+                    exit_with_error(format!("Failed to rename session snapshot: {error}"))
+                }
+            }
+        }
         "export" => match forge::session_store::export()
             .and_then(|export| serde_json::to_string_pretty(&export).map_err(|e| e.to_string()))
         {
@@ -116,7 +138,7 @@ async fn main() {
         },
         _ => {
             eprintln!(
-                "Usage: forge_session list|attach|show|events|input|stats|search|export|prune"
+                "Usage: forge_session list|attach|show|events|input|stats|search|rename|export|prune"
             );
             std::process::exit(1);
         }
@@ -627,6 +649,22 @@ fn render_prune_report_lines(report: &SessionSnapshotPruneReport) -> Vec<String>
     lines
 }
 
+fn render_rename_result_lines(snapshot: &SessionSnapshotSummary) -> Vec<String> {
+    let mut lines = vec![
+        "Session renamed:".to_string(),
+        format!(
+            "  {}  {}/{}  {}",
+            snapshot.session_id, snapshot.provider, snapshot.model, snapshot.working_dir
+        ),
+    ];
+    if let Some(summary) = snapshot.summary.as_deref() {
+        if !summary.trim().is_empty() {
+            lines.push(format!("  summary  {}", summary.trim()));
+        }
+    }
+    lines
+}
+
 fn parse_prune_args(args: &[String]) -> Result<(usize, Option<u64>), String> {
     let mut keep_recent = None;
     let mut older_than_ms = None;
@@ -721,7 +759,9 @@ fn now_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use forge::session_store::{SessionSnapshotPruneReport, SessionSnapshotStoreStats};
+    use forge::session_store::{
+        SessionSnapshotPruneReport, SessionSnapshotStoreStats, SessionSnapshotSummary,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -803,6 +843,29 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("deleted: 1")));
         assert!(lines.iter().any(|line| line.contains("old-session")));
         assert!(lines.iter().any(|line| line.contains("kept: 1")));
+    }
+
+    #[test]
+    fn render_rename_result_lines_shows_new_summary() {
+        let summary = SessionSnapshotSummary {
+            session_id: "session-rename".to_string(),
+            provider: "deepseek".to_string(),
+            model: "deepseek-v4-flash".to_string(),
+            working_dir: "/repo/rename".to_string(),
+            summary: Some("Launch plan".to_string()),
+            created_at_ms: 10,
+            updated_at_ms: 20,
+            message_count: 3,
+        };
+
+        let lines = super::render_rename_result_lines(&summary);
+
+        assert_eq!(lines[0], "Session renamed:");
+        assert_eq!(
+            lines[1],
+            "  session-rename  deepseek/deepseek-v4-flash  /repo/rename"
+        );
+        assert_eq!(lines[2], "  summary  Launch plan");
     }
 
     #[test]

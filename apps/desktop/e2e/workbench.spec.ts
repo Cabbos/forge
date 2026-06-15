@@ -151,6 +151,19 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(searchArgs.query).toBe("launch");
 
+    await dialog.getByRole("button", { name: "重命名 history-launch-plan" }).click();
+    await dialog.getByLabel("会话名称").fill("Launch plan renamed");
+    await dialog.getByRole("button", { name: "保存重命名 history-launch-plan" }).click();
+    const renamedArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastRenamedSessionSnapshotArgs;
+    });
+    expect(renamedArgs).toEqual({
+      sessionId: "history-launch-plan",
+      summary: "Launch plan renamed",
+    });
+    await expect(dialog.getByText("Launch plan renamed")).toBeVisible();
+
     await dialog.getByRole("button", { name: "恢复 history-launch-plan" }).click();
     const resumedId = await page.evaluate(() => {
       // @ts-expect-error mock

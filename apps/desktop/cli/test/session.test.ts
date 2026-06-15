@@ -8,6 +8,7 @@ describe("sessionCommand", () => {
       ["list"],
       ["stats"],
       ["search", "launch"],
+      ["rename", "session-1", "Launch plan"],
       ["export"],
       ["prune", "--keep", "25"],
       ["attach", "session-1"],
@@ -40,7 +41,7 @@ describe("sessionCommand", () => {
 
   test("rejects unsupported session subcommands", async () => {
     const stderr: string[] = [];
-    const code = await sessionCommand(["rename"], {
+    const code = await sessionCommand(["bogus"], {
       io: {
         stdout: () => {},
         stderr: (text) => stderr.push(text),

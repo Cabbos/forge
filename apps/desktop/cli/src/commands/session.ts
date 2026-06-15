@@ -12,12 +12,13 @@ export async function sessionCommand(argv: string[], deps: CliDeps = {}): Promis
     "input",
     "stats",
     "search",
+    "rename",
     "export",
     "prune",
   ]);
   if (!supported.has(sub)) {
     deps.io?.stderr(
-      "Usage: forge session list|attach|show|events|input|stats|search|export|prune\n",
+      "Usage: forge session list|attach|show|events|input|stats|search|rename|export|prune\n",
     );
     return 1;
   }

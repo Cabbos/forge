@@ -83,6 +83,11 @@ export interface PruneSessionStoreInput {
   olderThanMs?: number | null;
 }
 
+export interface RenameSessionSnapshotInput {
+  sessionId: string;
+  summary: string;
+}
+
 export interface AppWorkspaceMetadata {
   id: string;
   name: string;

@@ -110,6 +110,7 @@ pub fn run() {
             ipc::session_lifecycle::list_sessions,
             ipc::session_store_handlers::get_session_store_stats,
             ipc::session_store_handlers::search_session_store,
+            ipc::session_store_handlers::rename_session_snapshot,
             ipc::session_store_handlers::export_session_store,
             ipc::session_store_handlers::prune_session_store,
             app_metadata::load_app_metadata,

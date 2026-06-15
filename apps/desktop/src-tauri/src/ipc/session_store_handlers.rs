@@ -13,6 +13,14 @@ pub async fn search_session_store(query: String) -> Result<Vec<SessionSnapshotSu
 }
 
 #[tauri::command]
+pub async fn rename_session_snapshot(
+    session_id: String,
+    summary: String,
+) -> Result<Option<SessionSnapshotSummary>, String> {
+    crate::session_store::rename(&session_id, &summary)
+}
+
+#[tauri::command]
 pub async fn export_session_store() -> Result<serde_json::Value, String> {
     crate::session_store::export()
 }

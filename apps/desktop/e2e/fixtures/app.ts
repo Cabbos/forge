@@ -347,6 +347,23 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             });
           }
           return [];
+        case "rename_session_snapshot":
+          {
+            const sessionId = String(args.sessionId ?? "");
+            const summary = String(args.summary ?? "");
+            // @ts-expect-error mock
+            window.__lastRenamedSessionSnapshotArgs = { sessionId, summary };
+            // @ts-expect-error mock
+            const snapshots = Array.isArray(window.__mockSessionStoreSearchResults)
+              // @ts-expect-error mock
+              ? window.__mockSessionStoreSearchResults
+              : [];
+            const snapshot = snapshots.find((item) => item.session_id === sessionId);
+            if (!snapshot) return null;
+            snapshot.summary = summary;
+            snapshot.updated_at_ms = Date.now();
+            return snapshot;
+          }
         case "load_app_metadata":
           return appMetadataFromIndexedDb();
         case "save_app_metadata":

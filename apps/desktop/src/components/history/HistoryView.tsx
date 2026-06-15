@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { Clock3, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Check, Clock3, Pencil, RotateCcw, Search, Trash2, X } from "lucide-react";
 import {
   ForgeDialog,
   ForgeDialogContent,
@@ -11,6 +11,7 @@ import {
 import {
   deleteSession,
   getSessionStoreStats,
+  renameSessionSnapshot,
   resumeSession,
   searchSessionStore,
   type SessionSnapshotStoreStats,
@@ -52,6 +53,8 @@ export function HistoryView({ onRestored }: { onRestored?: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +131,47 @@ export function HistoryView({ onRestored }: { onRestored?: () => void }) {
     }
   };
 
+  const startRenameSnapshot = (snapshot: SessionSnapshotSummary) => {
+    setError(null);
+    setEditingSessionId(snapshot.session_id);
+    setEditDraft(snapshot.summary || snapshot.session_id);
+  };
+
+  const cancelRenameSnapshot = () => {
+    setEditingSessionId(null);
+    setEditDraft("");
+  };
+
+  const saveRenameSnapshot = async (snapshot: SessionSnapshotSummary) => {
+    const nextSummary = editDraft.trim();
+    if (!nextSummary) {
+      setError("会话名称不能为空");
+      return;
+    }
+
+    setBusySessionId(snapshot.session_id);
+    setError(null);
+    try {
+      const renamed = await renameSessionSnapshot({
+        sessionId: snapshot.session_id,
+        summary: nextSummary,
+      });
+      const updatedSnapshot = renamed
+        ? renamed
+        : { ...snapshot, summary: nextSummary, updated_at_ms: Date.now() };
+      setResults((current) =>
+        current.map((item) =>
+          item.session_id === snapshot.session_id ? updatedSnapshot : item
+        )
+      );
+      cancelRenameSnapshot();
+    } catch (err) {
+      setError(userFacingHistoryError(err, "重命名会话失败"));
+    } finally {
+      setBusySessionId(null);
+    }
+  };
+
   const deleteSnapshot = async (snapshot: SessionSnapshotSummary) => {
     setBusySessionId(snapshot.session_id);
     setError(null);
@@ -191,18 +235,66 @@ export function HistoryView({ onRestored }: { onRestored?: () => void }) {
       <div className="forge-history-result-list">
         {visibleResults.map((snapshot) => {
           const busy = busySessionId === snapshot.session_id;
+          const editing = editingSessionId === snapshot.session_id;
           return (
             <article key={snapshot.session_id} className="forge-history-result">
               <div className="forge-history-result-main">
-                <h3 className="forge-history-result-title">
-                  {snapshot.summary || snapshot.session_id}
-                </h3>
+                {editing ? (
+                  <div className="forge-history-rename">
+                    <label className="forge-history-rename-field">
+                      <span>会话名称</span>
+                      <input
+                        value={editDraft}
+                        onChange={(event) => setEditDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void saveRenameSnapshot(snapshot);
+                          if (event.key === "Escape") cancelRenameSnapshot();
+                        }}
+                        className="forge-history-rename-input"
+                        autoFocus
+                      />
+                    </label>
+                    <div className="forge-history-rename-actions">
+                      <ButtonPrimitive
+                        type="button"
+                        className="forge-history-icon-btn"
+                        aria-label={`保存重命名 ${snapshot.session_id}`}
+                        disabled={busy}
+                        onClick={() => void saveRenameSnapshot(snapshot)}
+                      >
+                        <Check className="size-3.5" />
+                      </ButtonPrimitive>
+                      <ButtonPrimitive
+                        type="button"
+                        className="forge-history-icon-btn"
+                        aria-label={`取消重命名 ${snapshot.session_id}`}
+                        disabled={busy}
+                        onClick={cancelRenameSnapshot}
+                      >
+                        <X className="size-3.5" />
+                      </ButtonPrimitive>
+                    </div>
+                  </div>
+                ) : (
+                  <h3 className="forge-history-result-title">
+                    {snapshot.summary || snapshot.session_id}
+                  </h3>
+                )}
                 <p className="forge-history-result-meta">
                   {snapshot.provider}/{snapshot.model} · {snapshot.message_count} 条消息 · {formatTime(snapshot.updated_at_ms)}
                 </p>
                 <p className="forge-history-result-path">{snapshot.working_dir}</p>
               </div>
               <div className="forge-history-result-actions">
+                <ButtonPrimitive
+                  type="button"
+                  className="forge-history-icon-btn"
+                  aria-label={`重命名 ${snapshot.session_id}`}
+                  disabled={busy || editing}
+                  onClick={() => startRenameSnapshot(snapshot)}
+                >
+                  <Pencil className="size-3.5" />
+                </ButtonPrimitive>
                 <ButtonPrimitive
                   type="button"
                   className="forge-history-icon-btn"

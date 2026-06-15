@@ -305,6 +305,31 @@ fn delete_session_snapshot_at(root: &Path, session_id: &str) -> Result<(), Strin
     Ok(())
 }
 
+pub fn rename_session_snapshot(
+    session_id: &str,
+    summary: &str,
+) -> Result<AgentSessionSnapshot, String> {
+    rename_session_snapshot_at(&app_data_dir(), session_id, summary)
+}
+
+fn rename_session_snapshot_at(
+    root: &Path,
+    session_id: &str,
+    summary: &str,
+) -> Result<AgentSessionSnapshot, String> {
+    let session_id = session_id.trim();
+    let summary = summary.trim();
+    if summary.is_empty() {
+        return Err("Session summary must not be empty".to_string());
+    }
+
+    let mut snapshot = load_session_snapshot_at(root, session_id)?;
+    snapshot.summary = Some(summary.to_string());
+    snapshot.updated_at_ms = now_ms();
+    save_session_snapshot_at(root, &snapshot)?;
+    Ok(snapshot)
+}
+
 fn sync_a2a_ledger_at(root: &Path, snapshot: &AgentSessionSnapshot) -> Result<(), String> {
     if let Some(bus) = &snapshot.a2a_state {
         crate::agent::a2a::ledger::save_session_ledger_at(root, &snapshot.session_id, bus)
@@ -912,6 +937,52 @@ mod tests {
         assert_eq!(report.kept_session_ids, vec!["keep-session"]);
         assert!(!sessions_dir.join("old-session.json").exists());
         assert!(sessions_dir.join("keep-session.json").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rename_session_snapshot_updates_summary_and_keeps_creation_time() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-store-rename-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut snapshot = snapshot();
+        snapshot.session_id = "rename-session".to_string();
+        snapshot.summary = Some("old title".to_string());
+        snapshot.created_at_ms = 10;
+        snapshot.updated_at_ms = 20;
+        fs::write(
+            sessions_dir.join("rename-session.json"),
+            serde_json::to_string(&snapshot).expect("snapshot json"),
+        )
+        .expect("write snapshot");
+
+        let renamed = rename_session_snapshot_at(&root, "rename-session", "  renamed launch  ")
+            .expect("rename snapshot");
+
+        assert_eq!(renamed.summary.as_deref(), Some("renamed launch"));
+        assert_eq!(renamed.created_at_ms, 10);
+        assert!(renamed.updated_at_ms >= 20);
+
+        let stored = load_session_snapshot_at(&root, "rename-session").expect("stored snapshot");
+        assert_eq!(stored.summary.as_deref(), Some("renamed launch"));
+        assert_eq!(stored.created_at_ms, 10);
+        assert_eq!(
+            search_session_snapshots_at(&root, "renamed")
+                .expect("search renamed")
+                .len(),
+            1
+        );
+        assert!(search_session_snapshots_at(&root, "old title")
+            .expect("search old")
+            .is_empty());
 
         let _ = fs::remove_dir_all(root);
     }

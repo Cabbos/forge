@@ -139,6 +139,45 @@
     white-space: nowrap;
   }
 
+  .forge-history-rename {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 0.375rem;
+  }
+
+  .forge-history-rename-field {
+    display: grid;
+    min-width: 0;
+    gap: 0.1875rem;
+    color: var(--forge-text-faint);
+    font-size: 10px;
+    line-height: 0.875rem;
+  }
+
+  .forge-history-rename-input {
+    min-width: 0;
+    height: 1.75rem;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: 7px;
+    background: var(--forge-bg-overlay);
+    color: var(--forge-text-primary);
+    font-size: 12px;
+    outline: none;
+    padding: 0 0.5rem;
+  }
+
+  .forge-history-rename-input:focus {
+    border-color: var(--forge-border-strong);
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
+  }
+
+  .forge-history-rename-actions {
+    display: inline-flex;
+    gap: 0.25rem;
+  }
+
   .forge-history-result-meta,
   .forge-history-result-path {
     margin: 0;
