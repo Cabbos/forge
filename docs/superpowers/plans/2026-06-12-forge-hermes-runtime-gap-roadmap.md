@@ -551,6 +551,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 6.3 Add macOS `launchd` plist generation and registration.
   - Files: `service/launchd.rs`.
 - [ ] 6.4 Add Windows service wrapper and Linux systemd unit generation.
+  - **Phase 6.4 generation follow-up (2026-06-16):** Added CI-safe Linux systemd user-unit generation and Windows `sc.exe` command-plan generation with structured unsupported status responses. These modules make the cross-platform service contracts visible without executing OS service registration on unsupported platforms; platform-specific install/start/stop wiring remains a later hardening step.
   - Files: `service/windows.rs`, `service/systemd.rs`.
 - [ ] 6.5 Add autostart toggle in Settings > General.
   - Files: `src/components/settings/GeneralSettings.tsx`.
