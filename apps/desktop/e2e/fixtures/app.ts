@@ -364,6 +364,43 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             snapshot.updated_at_ms = Date.now();
             return snapshot;
           }
+        case "export_session_store":
+          {
+            // @ts-expect-error mock
+            window.__lastExportSessionStoreCalled = true;
+            // @ts-expect-error mock
+            const snapshots = Array.isArray(window.__mockSessionStoreSearchResults)
+              // @ts-expect-error mock
+              ? window.__mockSessionStoreSearchResults
+              : [];
+            return {
+              schema_version: 1,
+              exported_at_ms: Date.now(),
+              snapshots,
+            };
+          }
+        case "prune_session_store":
+          {
+            // @ts-expect-error mock
+            window.__lastPruneSessionStoreArgs = args;
+            // @ts-expect-error mock
+            const snapshots = Array.isArray(window.__mockSessionStoreSearchResults)
+              // @ts-expect-error mock
+              ? window.__mockSessionStoreSearchResults
+              : [];
+            const keepRecent = Number(args.keepRecent ?? snapshots.length);
+            const deleted = snapshots.splice(keepRecent).map((snapshot) => snapshot.session_id);
+            // @ts-expect-error mock
+            if (window.__mockSessionStoreStats) {
+              // @ts-expect-error mock
+              window.__mockSessionStoreStats.total_snapshots = snapshots.length;
+            }
+            return {
+              deleted_session_ids: deleted,
+              kept_session_ids: snapshots.map((snapshot) => snapshot.session_id),
+              skipped_corrupted: 0,
+            };
+          }
         case "load_app_metadata":
           return appMetadataFromIndexedDb();
         case "save_app_metadata":

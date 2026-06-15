@@ -133,10 +133,19 @@ test.describe("Timeline Message Flow", () => {
       ];
     });
 
-    await page.getByRole("button", { name: "历史" }).click();
+    await page.getByRole("button", { name: "历史", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("heading", { name: "历史" })).toBeVisible();
     await expect(dialog.getByText("2 个快照")).toBeVisible();
+
+    await dialog.getByRole("button", { name: "导出历史" }).click();
+    const exported = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastExportSessionStoreCalled;
+    });
+    expect(exported).toBe(true);
+    await expect(dialog.getByText("已导出 2 个快照")).toBeVisible();
+
     await dialog.getByLabel("服务筛选").selectOption("anthropic");
     await expect(dialog.getByText("Memory profile notes")).toBeVisible();
     await expect(dialog.getByText("Launch service hardening plan")).toHaveCount(0);
@@ -171,7 +180,15 @@ test.describe("Timeline Message Flow", () => {
     });
     expect(resumedId).toBe("history-launch-plan");
 
-    await page.getByRole("button", { name: "历史" }).click();
+    await page.getByRole("button", { name: "历史", exact: true }).click();
+    await dialog.getByRole("button", { name: "清理旧记录" }).click();
+    const pruneArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastPruneSessionStoreArgs;
+    });
+    expect(pruneArgs.keepRecent).toBe(50);
+    await expect(dialog.getByText("已清理 0 个快照")).toBeVisible();
+
     await dialog.getByPlaceholder("搜索摘要、模型、项目路径").fill("launch");
     await dialog.getByRole("button", { name: "删除 history-launch-plan" }).click();
     const deletedId = await page.evaluate(() => {

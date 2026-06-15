@@ -610,6 +610,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 7.2 Implement History view: searchable, filterable list of all sessions with restore/delete.
   - **Phase 7.2 history-dialog partial (2026-06-16):** Added a lazy-loaded History dialog from the sidebar utility rail. It reads session-store stats, searches saved snapshots, filters by provider, restores snapshot-backed sessions through `resume_session`, and deletes sessions through the existing delete IPC. Playwright covers search, provider filtering, restore, and delete using mocked session-store IPC.
   - **Phase 7.2 rename follow-up (2026-06-16):** History results now support inline persisted renaming with a compact edit state and save/cancel icon controls. Playwright covers rename IPC payloads and immediate list refresh alongside search/filter/restore/delete.
+  - **Phase 7.2 export/prune follow-up (2026-06-16):** History now exposes session-store export as a JSON download and a conservative "清理旧记录" action that keeps the most recent 50 snapshots, updates stats/list state, and reports the result inline. Playwright covers export IPC and prune IPC payloads.
   - Files: `src/components/history/HistoryView.tsx`.
 - [ ] 7.3 Implement recovery/error states: offline, gateway disconnected, API key missing, snapshot corrupted.
   - Files: `src/components/RecoverySurface.tsx`, `store/index.ts`.

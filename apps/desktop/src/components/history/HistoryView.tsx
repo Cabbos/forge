@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { Check, Clock3, Pencil, RotateCcw, Search, Trash2, X } from "lucide-react";
+import {
+  Check,
+  Clock3,
+  Download,
+  Pencil,
+  RotateCcw,
+  Scissors,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   ForgeDialog,
   ForgeDialogContent,
@@ -10,7 +20,9 @@ import {
 } from "@/components/primitives/dialog";
 import {
   deleteSession,
+  exportSessionStore,
   getSessionStoreStats,
+  pruneSessionStore,
   renameSessionSnapshot,
   resumeSession,
   searchSessionStore,
@@ -52,6 +64,8 @@ export function HistoryView({ onRestored }: { onRestored?: () => void }) {
   const [providerFilter, setProviderFilter] = useState("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"export" | "prune" | null>(null);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -128,6 +142,50 @@ export function HistoryView({ onRestored }: { onRestored?: () => void }) {
       setError(userFacingHistoryError(err, "恢复会话失败"));
     } finally {
       setBusySessionId(null);
+    }
+  };
+
+  const exportHistory = async () => {
+    setBusyAction("export");
+    setError(null);
+    setActionStatus(null);
+    try {
+      const exported = await exportSessionStore();
+      downloadSessionStoreExport(exported);
+      setActionStatus(`已导出 ${countExportedSnapshots(exported)} 个快照`);
+    } catch (err) {
+      setError(userFacingHistoryError(err, "导出历史失败"));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const pruneHistory = async () => {
+    setBusyAction("prune");
+    setError(null);
+    setActionStatus(null);
+    try {
+      const report = await pruneSessionStore({ keepRecent: 50 });
+      const deletedIds = new Set(report.deleted_session_ids);
+      setResults((current) =>
+        current.filter((snapshot) => !deletedIds.has(snapshot.session_id))
+      );
+      setStats((current) =>
+        current
+          ? {
+              ...current,
+              total_snapshots: Math.max(
+                0,
+                current.total_snapshots - report.deleted_session_ids.length,
+              ),
+            }
+          : current,
+      );
+      setActionStatus(`已清理 ${report.deleted_session_ids.length} 个快照`);
+    } catch (err) {
+      setError(userFacingHistoryError(err, "清理历史失败"));
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -224,6 +282,36 @@ export function HistoryView({ onRestored }: { onRestored?: () => void }) {
           </select>
         </label>
         <span className="forge-history-count">{summary}</span>
+      </div>
+
+      <div className="forge-history-management">
+        <div className="forge-history-management-actions">
+          <ButtonPrimitive
+            type="button"
+            className="forge-history-management-btn"
+            aria-label="导出历史"
+            disabled={busyAction !== null}
+            onClick={() => void exportHistory()}
+          >
+            <Download className="size-3.5" />
+            <span>导出</span>
+          </ButtonPrimitive>
+          <ButtonPrimitive
+            type="button"
+            className="forge-history-management-btn"
+            aria-label="清理旧记录"
+            disabled={busyAction !== null}
+            onClick={() => void pruneHistory()}
+          >
+            <Scissors className="size-3.5" />
+            <span>清理旧记录</span>
+          </ButtonPrimitive>
+        </div>
+        {actionStatus && (
+          <span className="forge-history-status" role="status">
+            {actionStatus}
+          </span>
+        )}
       </div>
 
       {error && (
@@ -359,4 +447,24 @@ function formatTime(value: number) {
 function userFacingHistoryError(error: unknown, fallback: string) {
   const raw = error instanceof Error ? error.message : String(error);
   return raw ? `${fallback}：${raw}` : fallback;
+}
+
+function countExportedSnapshots(value: unknown) {
+  if (!value || typeof value !== "object") return 0;
+  const snapshots = (value as { snapshots?: unknown }).snapshots;
+  return Array.isArray(snapshots) ? snapshots.length : 0;
+}
+
+function downloadSessionStoreExport(value: unknown) {
+  if (typeof document === "undefined") return;
+  const json = JSON.stringify(value, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `forge-session-store-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
