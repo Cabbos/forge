@@ -5,6 +5,8 @@
 //! - Linux: systemd user unit at `~/.config/systemd/user/forge-gateway.service`
 //! - Windows: service wrapper command plan
 
+use std::path::PathBuf;
+
 pub mod launchd;
 pub mod systemd;
 pub mod windows;
@@ -222,6 +224,14 @@ pub fn query_status_snapshot() -> Result<ServiceStatusSnapshot, String> {
     }
 }
 
+pub fn service_definition_path(backend: ServiceBackend) -> Option<PathBuf> {
+    match backend {
+        ServiceBackend::Launchd => Some(launchd::plist_path()),
+        ServiceBackend::Systemd => Some(systemd::user_unit_path()),
+        ServiceBackend::Windows | ServiceBackend::Unsupported => None,
+    }
+}
+
 pub fn start() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::start(),
@@ -365,5 +375,16 @@ mod tests {
         assert!(snapshot.service_path.is_empty());
         assert!(snapshot.plist_path.is_empty());
         assert!(snapshot.running);
+    }
+
+    #[test]
+    fn service_definition_path_tracks_file_backed_platforms() {
+        let launchd_path = service_definition_path(ServiceBackend::Launchd).unwrap();
+        let systemd_path = service_definition_path(ServiceBackend::Systemd).unwrap();
+
+        assert!(launchd_path.ends_with("com.forge.gateway.plist"));
+        assert!(systemd_path.ends_with("forge-gateway.service"));
+        assert_eq!(service_definition_path(ServiceBackend::Windows), None);
+        assert_eq!(service_definition_path(ServiceBackend::Unsupported), None);
     }
 }

@@ -27,7 +27,7 @@ const WATCHDOG_CHECK_INTERVAL_SECS: u64 = 60;
 /// same session until this cooldown passes.
 const ALERT_COOLDOWN_SECS: u64 = 300;
 
-/// How often the gateway service watchdog probes launchd.
+/// How often the gateway service watchdog probes the platform service backend.
 const GATEWAY_WATCHDOG_CHECK_INTERVAL_SECS: u64 = 30;
 
 /// Initial restart delay after a failed gateway repair attempt.
@@ -49,8 +49,8 @@ pub struct GatewayServiceProbe {
     pub message: String,
 }
 
-impl From<crate::service::launchd::LaunchdServiceStatus> for GatewayServiceProbe {
-    fn from(status: crate::service::launchd::LaunchdServiceStatus) -> Self {
+impl From<crate::service::ServiceStatusSnapshot> for GatewayServiceProbe {
+    fn from(status: crate::service::ServiceStatusSnapshot) -> Self {
         Self {
             supported: status.supported,
             installed: status.installed,
@@ -167,14 +167,21 @@ fn evaluate_gateway_watchdog(
 }
 
 fn probe_gateway_service() -> GatewayServiceProbe {
-    match crate::service::launchd::query_status() {
+    match crate::service::query_status_snapshot() {
         Ok(status) => GatewayServiceProbe::from(status),
-        Err(error) => GatewayServiceProbe {
-            supported: cfg!(target_os = "macos"),
-            installed: crate::service::launchd::plist_path().exists(),
-            running: false,
-            message: format!("Gateway service status unavailable: {error}"),
-        },
+        Err(error) => {
+            let backend = crate::service::ServiceBackend::current();
+            let installed = crate::service::service_definition_path(backend)
+                .map(|path| path.exists())
+                .unwrap_or(false);
+
+            GatewayServiceProbe {
+                supported: backend != crate::service::ServiceBackend::Unsupported,
+                installed,
+                running: false,
+                message: format!("Gateway service status unavailable: {error}"),
+            }
+        }
     }
 }
 
@@ -196,8 +203,9 @@ fn gateway_watchdog_alert(
 /// Spawn the gateway service watchdog background task.
 ///
 /// The task is conservative: it only attempts automatic restart when the
-/// platform supports service management, the launchd plist is installed, and
-/// the service is not running. Failed restart attempts use exponential backoff.
+/// platform supports service management, the service definition is installed,
+/// and the service is not running. Failed restart attempts use exponential
+/// backoff.
 pub fn spawn_gateway_watchdog(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut state = GatewayWatchdogState::default();
@@ -564,18 +572,21 @@ mod tests {
     }
 
     #[test]
-    fn gateway_service_probe_uses_structured_launchd_status() {
-        let probe = GatewayServiceProbe::from(crate::service::launchd::LaunchdServiceStatus {
+    fn gateway_service_probe_uses_platform_status_snapshot() {
+        let probe = GatewayServiceProbe::from(crate::service::ServiceStatusSnapshot {
             supported: true,
             installed: true,
             running: false,
-            message: "Gateway service is installed but not running.".into(),
-            label: "com.forge.gateway".into(),
-            launch_domain: "gui/123".into(),
-            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
-            log_path: "/Users/test/.forge/logs/gateway.log".into(),
-            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
-            status_message: "Service 'com.forge.gateway' is not installed.".into(),
+            message: "Gateway systemd user service is installed but not running.".into(),
+            backend: "systemd".into(),
+            service_id: "forge-gateway.service".into(),
+            label: "forge-gateway.service".into(),
+            launch_domain: "systemd-user".into(),
+            service_path: "/home/alice/.config/systemd/user/forge-gateway.service".into(),
+            plist_path: "/home/alice/.config/systemd/user/forge-gateway.service".into(),
+            log_path: "/home/alice/.forge/logs/gateway.log".into(),
+            error_log_path: "/home/alice/.forge/logs/gateway-error.log".into(),
+            status_message: "Service 'forge-gateway.service' is not running: inactive".into(),
         });
 
         assert!(probe.supported);
