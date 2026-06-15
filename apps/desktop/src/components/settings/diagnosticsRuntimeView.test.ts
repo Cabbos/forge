@@ -241,6 +241,7 @@ describe("buildGatewayTriggerRunRows", () => {
       {
         id: "run-1",
         trigger_id: "trigger-1",
+        session_id: "gateway-session-1",
         attempt: 2,
         status: "dead_letter",
         message: "provider offline",
@@ -258,7 +259,7 @@ describe("buildGatewayTriggerRunRows", () => {
       {
         id: "run-1",
         title: "dead_letter · attempt 2",
-        subtitle: "trigger=trigger-1 · profile=ops · openai/gpt-5",
+        subtitle: "trigger=trigger-1 · session=gateway-session-1 · profile=ops · openai/gpt-5",
         message: "provider offline",
         canReplay: true,
       },

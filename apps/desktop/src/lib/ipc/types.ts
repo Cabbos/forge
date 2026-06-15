@@ -380,6 +380,7 @@ export interface DiagnosticsReport {
 export interface GatewayTriggerRunRecord {
   id: string;
   trigger_id: string;
+  session_id?: string | null;
   attempt: number;
   status: string;
   message: string;

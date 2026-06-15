@@ -2,6 +2,12 @@ use crate::agent::turn_state::{AgentTurnState, AgentVerificationStatus};
 
 pub fn build_trace_payload(input: super::types::TracePayloadInput) -> serde_json::Value {
     let mut event_summary = super::summary::summarize_events(&input.raw_events);
+    let session_id = input
+        .raw_events
+        .iter()
+        .map(|event| event.session_id().trim())
+        .find(|session_id| !session_id.is_empty())
+        .map(str::to_string);
     let verification_result = input
         .latest_turn
         .as_ref()
@@ -15,6 +21,7 @@ pub fn build_trace_payload(input: super::types::TracePayloadInput) -> serde_json
 
     serde_json::json!({
         "task_id": input.task_id,
+        "session_id": session_id,
         "user_prompt": input.prompt,
         "provider": input.provider,
         "model": input.model,

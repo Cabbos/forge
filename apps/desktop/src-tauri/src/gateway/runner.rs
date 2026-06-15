@@ -19,6 +19,8 @@ const MAX_TRIGGER_RUN_RECORDS: usize = 1000;
 pub struct TriggerRunRecord {
     pub id: String,
     pub trigger_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub attempt: u32,
     pub status: String,
     pub message: String,
@@ -43,10 +45,12 @@ impl TriggerRunRecord {
         status: impl Into<String>,
         message: String,
         started_at_ms: u64,
+        session_id: Option<String>,
     ) -> Self {
         Self {
             id: new_trigger_run_id(),
             trigger_id: trigger.id.clone(),
+            session_id,
             attempt,
             status: status.into(),
             message,
@@ -228,6 +232,7 @@ where
                     trigger,
                     error,
                     started_at_ms,
+                    None,
                 ));
                 continue;
             }
@@ -244,6 +249,7 @@ where
                         trigger,
                         message,
                         started_at_ms,
+                        session_id_from_payload(&payload),
                     ));
                 } else {
                     records.push(record_trigger_success(
@@ -253,6 +259,7 @@ where
                         status,
                         message,
                         started_at_ms,
+                        session_id_from_payload(&payload),
                     ));
                 }
             }
@@ -262,6 +269,7 @@ where
                 trigger,
                 error,
                 started_at_ms,
+                None,
             )),
         }
     }
@@ -276,6 +284,7 @@ fn record_trigger_success(
     status: &str,
     message: String,
     started_at_ms: u64,
+    session_id: Option<String>,
 ) -> TriggerRunRecord {
     let trigger_id = trigger.id.clone();
     let record = TriggerRunRecord::from_trigger(
@@ -284,6 +293,7 @@ fn record_trigger_success(
         status,
         message,
         started_at_ms,
+        session_id,
     );
     run_store.push(record.clone());
     store.complete(&trigger_id);
@@ -296,6 +306,7 @@ fn record_trigger_failure(
     mut trigger: PendingTrigger,
     message: String,
     started_at_ms: u64,
+    session_id: Option<String>,
 ) -> TriggerRunRecord {
     let next_attempt = trigger.attempt_count.saturating_add(1);
     trigger.attempt_count = next_attempt;
@@ -307,8 +318,14 @@ fn record_trigger_failure(
         "dead_letter"
     };
 
-    let record =
-        TriggerRunRecord::from_trigger(&trigger, next_attempt, status, message, started_at_ms);
+    let record = TriggerRunRecord::from_trigger(
+        &trigger,
+        next_attempt,
+        status,
+        message,
+        started_at_ms,
+        session_id,
+    );
     run_store.push(record.clone());
     record
 }
@@ -395,6 +412,15 @@ fn trigger_message_from_payload(payload: &serde_json::Value) -> String {
         .to_string()
 }
 
+fn session_id_from_payload(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("session_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -460,7 +486,7 @@ mod tests {
                 let prompts = prompts.clone();
                 async move {
                     prompts.lock().unwrap().push(request.prompt);
-                    Ok(serde_json::json!({"ok": true}))
+                    Ok(serde_json::json!({"ok": true, "session_id": "gateway-session-2"}))
                 }
             },
         )
@@ -474,6 +500,10 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].trigger_id, "trigger-2");
         assert_eq!(records[0].status, "completed");
+        assert_eq!(
+            serde_json::to_value(&records[0]).unwrap()["session_id"],
+            "gateway-session-2"
+        );
     }
 
     #[tokio::test]

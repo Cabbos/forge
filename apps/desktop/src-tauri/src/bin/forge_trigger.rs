@@ -281,16 +281,22 @@ async fn list_trigger_runs(client: &mut GatewayClient) -> Result<(), String> {
 
     println!("Recent trigger runs:");
     for run in runs.into_iter().take(20) {
-        println!(
-            "  {}  trigger={}  attempt={}  {}  {}",
-            run.id,
-            run.trigger_id,
-            run.attempt,
-            run.status,
-            truncate(&run.message, 80)
-        );
+        println!("{}", render_trigger_run_summary_line(&run));
     }
     Ok(())
+}
+
+fn render_trigger_run_summary_line(run: &TriggerRunRecord) -> String {
+    let session = run.session_id.as_deref().unwrap_or("-");
+    format!(
+        "  {}  trigger={}  session={}  attempt={}  {}  {}",
+        run.id,
+        run.trigger_id,
+        session,
+        run.attempt,
+        run.status,
+        truncate(&run.message, 80)
+    )
 }
 
 async fn replay_trigger_run(
@@ -345,6 +351,7 @@ async fn show_trigger_run(
     let run = result.run;
     println!("Trigger run {}", run.id);
     println!("  trigger: {}", run.trigger_id);
+    println!("  session: {}", run.session_id.as_deref().unwrap_or("-"));
     println!("  status: {}", run.status);
     println!("  attempt: {}", run.attempt);
     println!("  started_at_ms: {}", run.started_at_ms);
@@ -544,5 +551,29 @@ mod tests {
         let err = super::parse_trigger_args(["show"]).expect_err("missing run id");
 
         assert!(err.contains("run_id is required"));
+    }
+
+    #[test]
+    fn render_trigger_run_summary_line_includes_session_id_when_available() {
+        let run = super::TriggerRunRecord {
+            id: "run-1".into(),
+            trigger_id: "trigger-1".into(),
+            session_id: Some("gateway-session-1".into()),
+            attempt: 2,
+            status: "completed".into(),
+            message: "done".into(),
+            started_at_ms: 10,
+            ended_at_ms: 20,
+            trigger_message: Some("run digest".into()),
+            profile_id: Some("ops".into()),
+            provider: Some("openai".into()),
+            model: Some("gpt-5".into()),
+            workspace_path: Some("/repo".into()),
+        };
+
+        assert_eq!(
+            super::render_trigger_run_summary_line(&run),
+            "  run-1  trigger=trigger-1  session=gateway-session-1  attempt=2  completed  done"
+        );
     }
 }

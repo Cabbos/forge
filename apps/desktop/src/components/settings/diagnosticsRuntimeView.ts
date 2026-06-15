@@ -67,6 +67,7 @@ export interface GatewayPendingTriggerLike {
 export interface GatewayTriggerRunLike {
   id: string;
   trigger_id: string;
+  session_id?: string | null;
   attempt: number;
   status: string;
   message: string;
@@ -240,6 +241,7 @@ export function buildGatewayTriggerRunRows(
     const runtime = buildRuntimeLabel(run.provider, run.model);
     const subtitleParts = [
       `trigger=${run.trigger_id}`,
+      run.session_id?.trim() ? `session=${run.session_id.trim()}` : null,
       `profile=${run.profile_id?.trim() || "-"}`,
       runtime,
     ].filter(Boolean);

@@ -1013,6 +1013,7 @@ mod tests {
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-1".into(),
                 trigger_id: "trigger-1".into(),
+                session_id: None,
                 attempt: 1,
                 status: "completed".into(),
                 message: "ledger ok".into(),
@@ -1056,6 +1057,7 @@ mod tests {
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-dead".into(),
                 trigger_id: "claimed-1".into(),
+                session_id: None,
                 attempt: 3,
                 status: "dead_letter".into(),
                 message: "provider offline".into(),
@@ -1072,6 +1074,7 @@ mod tests {
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-ok".into(),
                 trigger_id: "pending-1".into(),
+                session_id: None,
                 attempt: 1,
                 status: "completed".into(),
                 message: "ok".into(),
@@ -1416,6 +1419,7 @@ mod tests {
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-replayable".into(),
                 trigger_id: "trigger-original".into(),
+                session_id: None,
                 attempt: 2,
                 status: "dead_letter".into(),
                 message: "provider offline".into(),
@@ -1468,6 +1472,7 @@ mod tests {
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-legacy".into(),
                 trigger_id: "trigger-legacy".into(),
+                session_id: None,
                 attempt: 1,
                 status: "completed".into(),
                 message: "old record".into(),
@@ -1507,6 +1512,7 @@ mod tests {
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-detail".into(),
                 trigger_id: "trigger-detail".into(),
+                session_id: None,
                 attempt: 3,
                 status: "dead_letter".into(),
                 message: "provider offline".into(),

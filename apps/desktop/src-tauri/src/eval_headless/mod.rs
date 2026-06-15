@@ -411,6 +411,7 @@ mod tests {
         });
 
         assert_eq!(payload["task_id"], "small-edit-success");
+        assert_eq!(payload["session_id"], "session-1");
         assert_eq!(payload["provider"], "forge");
         assert_eq!(payload["model"], "local-forge");
         assert_eq!(

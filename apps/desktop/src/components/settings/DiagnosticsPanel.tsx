@@ -695,6 +695,7 @@ function GatewayRuntimeRuns({
 
 function formatRunDetail(run: GatewayTriggerRunRecord): string {
   const parts = [
+    `session=${run.session_id?.trim() || "-"}`,
     `started=${run.started_at_ms}`,
     `ended=${run.ended_at_ms}`,
     `workspace=${run.workspace_path?.trim() || "-"}`,

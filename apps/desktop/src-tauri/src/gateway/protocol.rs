@@ -351,6 +351,7 @@ mod tests {
             run: crate::gateway::runner::TriggerRunRecord {
                 id: "run-1".into(),
                 trigger_id: "trigger-1".into(),
+                session_id: Some("session-1".into()),
                 attempt: 2,
                 status: "dead_letter".into(),
                 message: "provider offline".into(),
@@ -364,6 +365,7 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&result).expect("serialize result");
+        assert!(json.contains("\"session_id\":\"session-1\""));
         let back: GetTriggerRunResult = serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }
