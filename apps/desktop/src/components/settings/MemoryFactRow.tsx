@@ -12,7 +12,7 @@ export function MemoryFactRow({
 }: {
   fact: MemoryFact;
   onDelete: (id: string) => Promise<void> | void;
-  onUpdate: (id: string, text: string, tags: string[]) => Promise<void> | void;
+  onUpdate: (fact: MemoryFact, text: string, tags: string[]) => Promise<void> | void;
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -36,7 +36,7 @@ export function MemoryFactRow({
         <MemoryInlineEditor
           initial={fact}
           onSave={async (text, tags) => {
-            await onUpdate(fact.id, text, tags);
+            await onUpdate(fact, text, tags);
             setEditing(false);
           }}
           onCancel={() => setEditing(false)}

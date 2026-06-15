@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::ipc::workspace::resolve_bound_working_dir;
-use crate::memory::facts::{MemoryFact, UpsertMemoryFactInput, UpsertMemoryFactOutput};
+use crate::memory::facts::{
+    MemoryFact, MemoryFactListFilter, UpsertMemoryFactInput, UpsertMemoryFactOutput,
+};
 use crate::memory::{
     MemoryListFilter, MemoryPatch, MemoryScope, SelectedContextMemory, WikiMemory,
 };
@@ -144,8 +146,19 @@ fn emit_memory_updated(
 pub async fn list_memory_facts(
     state: tauri::State<'_, Arc<AppState>>,
     query: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<Vec<MemoryFact>, String> {
-    Ok(state.memory_facts.list(query.as_deref()))
+    Ok(state.memory_facts.list_with_filter(memory_fact_list_filter(
+        query.as_deref(),
+        profile_id.as_deref(),
+    )))
+}
+
+fn memory_fact_list_filter<'a>(
+    query: Option<&'a str>,
+    profile_id: Option<&'a str>,
+) -> MemoryFactListFilter<'a> {
+    MemoryFactListFilter { query, profile_id }
 }
 
 #[tauri::command]
@@ -166,6 +179,7 @@ pub async fn delete_memory_fact(
 
 #[cfg(test)]
 mod tests {
+    use super::memory_fact_list_filter;
     use super::normalize_memory_project_path;
     use super::normalize_memory_project_path_for_request;
     use crate::harness::Harness;
@@ -212,6 +226,14 @@ mod tests {
             normalize_memory_project_path(Some("  ")).expect("blank path should not fail");
 
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn memory_fact_list_filter_carries_query_and_profile_id() {
+        let filter = memory_fact_list_filter(Some(" gateway "), Some(" work "));
+
+        assert_eq!(filter.query, Some(" gateway "));
+        assert_eq!(filter.profile_id, Some(" work "));
     }
 
     #[tokio::test]

@@ -2,9 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { hasTauriRuntime } from "./core";
 import type { MemoryFact, UpsertMemoryFactInput, UpsertMemoryFactOutput } from "./types";
 
-export async function listMemoryFacts(query?: string): Promise<MemoryFact[]> {
+export async function listMemoryFacts(
+  query?: string,
+  profileId?: string | null,
+): Promise<MemoryFact[]> {
   if (!hasTauriRuntime()) return [];
-  return invoke("list_memory_facts", { query: query ?? null });
+  return invoke("list_memory_facts", {
+    query: query ?? null,
+    profileId: profileId ?? null,
+  });
 }
 
 export async function upsertMemoryFact(

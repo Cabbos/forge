@@ -9,14 +9,21 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemoryFactsQuery } from "@/hooks/queries/useMemoryFactsQuery";
+import { useProfilesQuery } from "@/hooks/queries/useProfilesQuery";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import {
   upsertMemoryFact,
   deleteMemoryFact,
 } from "@/lib/tauri";
+import type { MemoryFact } from "@/lib/tauri";
 import { MemoryInlineEditor } from "./MemoryInlineEditor";
 import { MemoryFactRow } from "./MemoryFactRow";
+import {
+  buildMemoryFactUpsertInput,
+  resolveActiveMemoryProfile,
+  resolveMemoryProfileId,
+} from "./memoryProfileView";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 export function MemoryPanel() {
@@ -24,6 +31,9 @@ export function MemoryPanel() {
   const [creating, setCreating] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const { data: profilePayload } = useProfilesQuery();
+  const activeProfile = resolveActiveMemoryProfile(profilePayload);
+  const activeProfileId = resolveMemoryProfileId(activeProfile?.id);
 
   const {
     data: facts,
@@ -32,7 +42,7 @@ export function MemoryPanel() {
     error,
     refetch,
     isFetching,
-  } = useMemoryFactsQuery(query || undefined);
+  } = useMemoryFactsQuery(query || undefined, activeProfileId);
 
   const invalidate = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.memoryFactsAll });
@@ -41,19 +51,28 @@ export function MemoryPanel() {
   const handleUpsert = useCallback(
     async (text: string, tags: string[]) => {
       setMutationError(null);
-      await upsertMemoryFact({ text, tags });
+      await upsertMemoryFact(buildMemoryFactUpsertInput({
+        text,
+        tags,
+        activeProfileId,
+      }));
       await invalidate();
     },
-    [invalidate],
+    [activeProfileId, invalidate],
   );
 
   const handleUpdate = useCallback(
-    async (id: string, text: string, tags: string[]) => {
+    async (fact: MemoryFact, text: string, tags: string[]) => {
       setMutationError(null);
-      await upsertMemoryFact({ id, text, tags });
+      await upsertMemoryFact(buildMemoryFactUpsertInput({
+        fact,
+        text,
+        tags,
+        activeProfileId,
+      }));
       await invalidate();
     },
-    [invalidate],
+    [activeProfileId, invalidate],
   );
 
   const handleDelete = useCallback(
@@ -186,7 +205,10 @@ export function MemoryPanel() {
             ))}
           </div>
           <div className="forge-memory-count">
-            {facts.length} 条记忆
+            <span>{facts.length} 条记忆</span>
+            {activeProfile && (
+              <span className="forge-memory-profile-scope">{activeProfile.name}</span>
+            )}
           </div>
         </div>
       )}

@@ -58,6 +58,12 @@ pub struct UpsertMemoryFactOutput {
     pub was_update: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemoryFactListFilter<'a> {
+    pub query: Option<&'a str>,
+    pub profile_id: Option<&'a str>,
+}
+
 // ── Store ────────────────────────────────────────────────────────────────────
 
 pub struct MemoryFactStore {
@@ -101,14 +107,24 @@ impl MemoryFactStore {
     /// case-insensitive substring search over `text`, `tags`, `profile_id`,
     /// and `source`.
     pub fn list(&self, query: Option<&str>) -> Vec<MemoryFact> {
+        self.list_with_filter(MemoryFactListFilter {
+            query,
+            profile_id: None,
+        })
+    }
+
+    pub fn list_with_filter(&self, filter: MemoryFactListFilter<'_>) -> Vec<MemoryFact> {
         let facts = self.facts.lock().unwrap_or_else(|e| e.into_inner());
-        let q = normalize_query(query);
-        if q.is_empty() {
-            return facts.clone();
-        }
+        let q = normalize_query(filter.query);
+        let profile_id = normalize_optional_text_ref(filter.profile_id);
         facts
             .iter()
-            .filter(|f| fact_matches_query(f, &q))
+            .filter(|f| {
+                profile_id
+                    .as_deref()
+                    .is_none_or(|id| f.profile_id.as_deref() == Some(id))
+            })
+            .filter(|f| q.is_empty() || fact_matches_query(f, &q))
             .cloned()
             .collect()
     }
@@ -145,8 +161,8 @@ impl MemoryFactStore {
                 // Update — created_at_ms is preserved in-place.
                 existing.text = text;
                 existing.tags = tags;
-                existing.profile_id = input.profile_id.filter(|s| !s.trim().is_empty());
-                existing.source = input.source.filter(|s| !s.trim().is_empty());
+                existing.profile_id = normalize_optional_text_owned(input.profile_id);
+                existing.source = normalize_optional_text_owned(input.source);
                 existing.updated_at_ms = now_ms;
 
                 let fact = existing.clone();
@@ -170,8 +186,8 @@ impl MemoryFactStore {
             id,
             text,
             tags,
-            profile_id: input.profile_id.filter(|s| !s.trim().is_empty()),
-            source: input.source.filter(|s| !s.trim().is_empty()),
+            profile_id: normalize_optional_text_owned(input.profile_id),
+            source: normalize_optional_text_owned(input.source),
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
         };
@@ -250,6 +266,17 @@ fn load_facts(path: &PathBuf) -> (Vec<MemoryFact>, Option<String>) {
 
 fn normalize_query(query: Option<&str>) -> String {
     query.unwrap_or("").trim().to_lowercase()
+}
+
+fn normalize_optional_text_ref(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_optional_text_owned(value: Option<String>) -> Option<String> {
+    value.and_then(|value| normalize_optional_text_ref(Some(&value)))
 }
 
 fn fact_matches_query(fact: &MemoryFact, query: &str) -> bool {
@@ -493,6 +520,89 @@ mod tests {
         assert_eq!(store.list(Some("  ")).len(), 2);
     }
 
+    #[test]
+    fn profile_filter_matches_exact_profile_id() {
+        let path = temp_path("profile-filter");
+        let store = MemoryFactStore::new(path);
+        store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "work fact".into(),
+                tags: vec![],
+                profile_id: Some("work".into()),
+                source: None,
+            })
+            .expect("work upsert");
+        store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "personal fact".into(),
+                tags: vec![],
+                profile_id: Some("personal".into()),
+                source: None,
+            })
+            .expect("personal upsert");
+        store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "global fact".into(),
+                tags: vec![],
+                profile_id: None,
+                source: None,
+            })
+            .expect("global upsert");
+
+        let results = store.list_with_filter(MemoryFactListFilter {
+            query: None,
+            profile_id: Some("work"),
+        });
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].text, "work fact");
+        assert_eq!(results[0].profile_id.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn profile_filter_combines_with_query() {
+        let path = temp_path("profile-query-filter");
+        let store = MemoryFactStore::new(path);
+        store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "shared keyword in work".into(),
+                tags: vec![],
+                profile_id: Some("work".into()),
+                source: None,
+            })
+            .expect("work upsert");
+        store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "shared keyword in personal".into(),
+                tags: vec![],
+                profile_id: Some("personal".into()),
+                source: None,
+            })
+            .expect("personal upsert");
+        store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "work unrelated".into(),
+                tags: vec![],
+                profile_id: Some("work".into()),
+                source: None,
+            })
+            .expect("work unrelated upsert");
+
+        let results = store.list_with_filter(MemoryFactListFilter {
+            query: Some("shared"),
+            profile_id: Some("work"),
+        });
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].text, "shared keyword in work");
+    }
+
     // ── Update ───────────────────────────────────────────────────────────
 
     #[test]
@@ -523,6 +633,36 @@ mod tests {
             "updated_at_ms {updated} should be > created_at_ms {created}",
             updated = out2.fact.updated_at_ms
         );
+    }
+
+    #[test]
+    fn profile_id_is_trimmed_and_blank_is_dropped() {
+        let path = temp_path("trim-profile-id");
+        let store = MemoryFactStore::new(path);
+
+        let created = store
+            .upsert(UpsertMemoryFactInput {
+                id: None,
+                text: "profile scoped".into(),
+                tags: vec![],
+                profile_id: Some("  work  ".into()),
+                source: None,
+            })
+            .expect("create");
+
+        assert_eq!(created.fact.profile_id.as_deref(), Some("work"));
+
+        let updated = store
+            .upsert(UpsertMemoryFactInput {
+                id: Some(created.fact.id),
+                text: "profile cleared".into(),
+                tags: vec![],
+                profile_id: Some("   ".into()),
+                source: None,
+            })
+            .expect("update");
+
+        assert_eq!(updated.fact.profile_id, None);
     }
 
     #[test]

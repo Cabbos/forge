@@ -1036,9 +1036,27 @@
   }
 
   .forge-memory-count {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
     color: var(--forge-text-faint);
     font-size: 10px;
     padding-top: 0.25rem;
+  }
+
+  .forge-memory-profile-scope {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 0;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: 4px;
+    padding: 0 0.3rem;
+    color: var(--forge-text-muted);
+    line-height: 1.25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ── Scheduler (Phase 5-C) ─────────────────────────────────────────────── */
