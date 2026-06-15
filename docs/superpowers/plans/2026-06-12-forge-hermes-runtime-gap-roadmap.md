@@ -547,6 +547,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 6.2 Add service management commands: `forge service install`, `start`, `stop`, `restart`, `uninstall`.
   - **Phase 6.2 follow-up (2026-06-15):** launchd service management is now exposed as reusable Rust APIs (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). `forge_service` and Diagnostics gateway repair share the same restart path instead of duplicating `launchctl` bootout/bootstrap logic. CI-safe tests cover public API availability and launchctl output parsing for running, already-loaded, not-running, and "Could not find service" cases.
   - **Phase 6.2 status follow-up (2026-06-15):** `LaunchdServiceStatus` is now the single structured service-status snapshot used by Settings autostart IPC, Diagnostics, and the gateway service watchdog. The UI-facing payload remains stable, but backend callers no longer duplicate `launchctl print` calls or infer `running` by parsing status strings.
+  - **Phase 6.2 platform-facade follow-up (2026-06-16):** Service command dispatch now goes through a platform facade instead of hard-coding launchd in `forge_service`. The facade maps macOS to launchd, Linux to systemd, Windows to the Windows service wrapper, and keeps unsupported lifecycle actions honest until their platform-specific execution paths are wired.
   - Files: `src-tauri/src/service/`.
 - [ ] 6.3 Add macOS `launchd` plist generation and registration.
   - Files: `service/launchd.rs`.

@@ -8,3 +8,178 @@
 pub mod launchd;
 pub mod systemd;
 pub mod windows;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceBackend {
+    Launchd,
+    Systemd,
+    Windows,
+    Unsupported,
+}
+
+impl ServiceBackend {
+    pub fn for_target_os(target_os: &str) -> Self {
+        match target_os {
+            "macos" => Self::Launchd,
+            "linux" => Self::Systemd,
+            "windows" => Self::Windows,
+            _ => Self::Unsupported,
+        }
+    }
+
+    pub fn current() -> Self {
+        Self::for_target_os(std::env::consts::OS)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Launchd => "launchd",
+            Self::Systemd => "systemd",
+            Self::Windows => "windows-service",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceCommand {
+    Install,
+    Uninstall,
+    Status,
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ServiceCommand {
+    pub fn parse(command: &str) -> Result<Self, String> {
+        match command {
+            "install" => Ok(Self::Install),
+            "uninstall" => Ok(Self::Uninstall),
+            "status" => Ok(Self::Status),
+            "start" => Ok(Self::Start),
+            "stop" => Ok(Self::Stop),
+            "restart" => Ok(Self::Restart),
+            cmd => Err(format!("Unknown service command: {cmd}")),
+        }
+    }
+}
+
+pub fn run_service_command(command: &str) -> Result<String, String> {
+    match ServiceCommand::parse(command)? {
+        ServiceCommand::Install => install(),
+        ServiceCommand::Uninstall => uninstall(),
+        ServiceCommand::Status => status(),
+        ServiceCommand::Start => start(),
+        ServiceCommand::Stop => stop(),
+        ServiceCommand::Restart => restart(),
+    }
+}
+
+pub fn install() -> Result<String, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => launchd::install(),
+        backend => unsupported_lifecycle_operation(backend, "install"),
+    }
+}
+
+pub fn uninstall() -> Result<String, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => launchd::uninstall(),
+        backend => unsupported_lifecycle_operation(backend, "uninstall"),
+    }
+}
+
+pub fn status() -> Result<String, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => launchd::status(),
+        ServiceBackend::Systemd => systemd::status(),
+        ServiceBackend::Windows => windows::status(),
+        ServiceBackend::Unsupported => {
+            unsupported_lifecycle_operation(ServiceBackend::Unsupported, "status")
+        }
+    }
+}
+
+pub fn start() -> Result<String, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => launchd::start(),
+        backend => unsupported_lifecycle_operation(backend, "start"),
+    }
+}
+
+pub fn stop() -> Result<String, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => launchd::stop(),
+        backend => unsupported_lifecycle_operation(backend, "stop"),
+    }
+}
+
+pub fn restart() -> Result<String, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => launchd::restart(),
+        backend => unsupported_lifecycle_operation(backend, "restart"),
+    }
+}
+
+fn unsupported_lifecycle_operation(
+    backend: ServiceBackend,
+    operation: &str,
+) -> Result<String, String> {
+    Err(format!(
+        "Service {operation} is not available for the {} backend yet.",
+        backend.label()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_for_target_os_maps_supported_services() {
+        assert_eq!(
+            ServiceBackend::for_target_os("macos"),
+            ServiceBackend::Launchd
+        );
+        assert_eq!(
+            ServiceBackend::for_target_os("linux"),
+            ServiceBackend::Systemd
+        );
+        assert_eq!(
+            ServiceBackend::for_target_os("windows"),
+            ServiceBackend::Windows
+        );
+        assert_eq!(
+            ServiceBackend::for_target_os("freebsd"),
+            ServiceBackend::Unsupported
+        );
+    }
+
+    #[test]
+    fn service_command_parse_accepts_lifecycle_commands() {
+        assert_eq!(
+            ServiceCommand::parse("install"),
+            Ok(ServiceCommand::Install)
+        );
+        assert_eq!(
+            ServiceCommand::parse("uninstall"),
+            Ok(ServiceCommand::Uninstall)
+        );
+        assert_eq!(ServiceCommand::parse("status"), Ok(ServiceCommand::Status));
+        assert_eq!(ServiceCommand::parse("start"), Ok(ServiceCommand::Start));
+        assert_eq!(ServiceCommand::parse("stop"), Ok(ServiceCommand::Stop));
+        assert_eq!(
+            ServiceCommand::parse("restart"),
+            Ok(ServiceCommand::Restart)
+        );
+    }
+
+    #[test]
+    fn service_command_parse_rejects_unknown_commands() {
+        assert_eq!(
+            ServiceCommand::parse("reload"),
+            Err("Unknown service command: reload".to_string())
+        );
+    }
+}

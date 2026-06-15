@@ -11,15 +11,7 @@ fn main() {
         process::exit(1);
     }
 
-    let result = match args[1].as_str() {
-        "install" => forge::service::launchd::install(),
-        "uninstall" => forge::service::launchd::uninstall(),
-        "status" => forge::service::launchd::status(),
-        "start" => forge::service::launchd::start(),
-        "stop" => forge::service::launchd::stop(),
-        "restart" => forge::service::launchd::restart(),
-        cmd => Err(format!("Unknown service command: {cmd}")),
-    };
+    let result = forge::service::run_service_command(&args[1]);
 
     match result {
         Ok(msg) => {
