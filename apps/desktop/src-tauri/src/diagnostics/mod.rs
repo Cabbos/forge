@@ -134,6 +134,7 @@ pub fn run_diagnostics(capabilities: Option<Vec<CapabilitySummary>>) -> Diagnost
         check_app_metadata(),
         check_log_directory(),
         check_gateway_service_status(),
+        update_repair::check_update_repair_status(),
         check_capability_inventory(capabilities),
         check_project_runtime(),
     ];
@@ -893,6 +894,7 @@ mod tests {
                 "app_metadata",
                 "log_directory",
                 "gateway_service",
+                "update_repair",
                 "capability_inventory",
                 "project_runtime",
             ]

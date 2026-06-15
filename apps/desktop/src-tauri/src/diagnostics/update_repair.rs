@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::diagnostics::repair::{run_repair, RepairResult};
-use crate::diagnostics::{CheckStatus, DiagnosticsReport};
+use crate::diagnostics::{CheckStatus, DiagnosticCheck, DiagnosticsReport};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,6 +65,10 @@ pub fn plan_update_repair(report: &DiagnosticsReport) -> UpdateRepairPlan {
     let mut manual_blockers = Vec::new();
 
     for check in &report.checks {
+        if check.id == "update_repair" {
+            continue;
+        }
+
         if check.status == CheckStatus::Pass {
             continue;
         }
@@ -123,6 +127,94 @@ pub fn execute_update_repair_for_current_version() -> Result<UpdateRepairLifecyc
         crate::diagnostics::run_diagnostics_basic,
         run_repair,
     )
+}
+
+pub fn check_update_repair_status() -> DiagnosticCheck {
+    check_update_repair_status_at(&forge_data_dir())
+}
+
+fn check_update_repair_status_at(root: &Path) -> DiagnosticCheck {
+    let marker_path = update_repair_marker_path(root);
+    match read_update_repair_marker(root) {
+        Ok(Some(marker)) => update_repair_check_from_marker(marker, marker_path),
+        Ok(None) => DiagnosticCheck::pass(
+            "update_repair",
+            "Update repair",
+            "No update repair state recorded yet.",
+        )
+        .with_detail(serde_json::json!({
+            "recorded": false,
+            "markerPath": marker_path.display().to_string(),
+        })),
+        Err(error) => DiagnosticCheck::warn(
+            "update_repair",
+            "Update repair",
+            format!("Cannot read update repair state: {error}"),
+        )
+        .with_detail(serde_json::json!({
+            "recorded": false,
+            "markerPath": marker_path.display().to_string(),
+            "error": error,
+        }))
+        .with_remediation(
+            "Remove the update repair marker if it stays unreadable, then restart Forge.",
+        ),
+    }
+}
+
+fn update_repair_check_from_marker(
+    marker: UpdateRepairVersionMarker,
+    marker_path: PathBuf,
+) -> DiagnosticCheck {
+    let detail = serde_json::json!({
+        "recorded": true,
+        "markerPath": marker_path.display().to_string(),
+        "appVersion": marker.app_version,
+        "checkedAtMs": marker.checked_at_ms,
+        "success": marker.success,
+        "needed": marker.needed,
+        "actionCount": marker.action_count,
+        "manualBlockers": marker.manual_blockers,
+    });
+
+    let app_version = detail["appVersion"].as_str().unwrap_or("unknown");
+    let action_count = detail["actionCount"].as_u64().unwrap_or(0);
+    let manual_blocker_count = detail["manualBlockers"].as_array().map_or(0, Vec::len);
+
+    if detail["success"].as_bool().unwrap_or(false) {
+        let message = if detail["needed"].as_bool().unwrap_or(false) {
+            format!(
+                "Update repair completed for version {app_version}: {action_count} action{} ran.",
+                if action_count == 1 { "" } else { "s" }
+            )
+        } else {
+            format!("Update repair checked version {app_version}; no action needed.")
+        };
+
+        return DiagnosticCheck::pass("update_repair", "Update repair", message)
+            .with_detail(detail);
+    }
+
+    if manual_blocker_count > 0 {
+        DiagnosticCheck::warn(
+            "update_repair",
+            "Update repair",
+            format!(
+                "Update repair for version {app_version} needs manual review: {manual_blocker_count} blocker{}.",
+                if manual_blocker_count == 1 { "" } else { "s" }
+            ),
+        )
+        .with_detail(detail)
+        .with_remediation("Open Settings > Diagnostics and run the recommended repair action.")
+    } else {
+        DiagnosticCheck::fail(
+            "update_repair",
+            "Update repair",
+            format!("Update repair failed for version {app_version}."),
+        )
+        .with_detail(detail)
+        .with_remediation("Open Settings > Diagnostics and run the recommended repair action.")
+    }
 }
 
 fn execute_update_repair_for_version_at(
@@ -399,6 +491,21 @@ mod tests {
     }
 
     #[test]
+    fn plan_update_repair_ignores_update_repair_observability_check() {
+        let report = report_with(vec![
+            DiagnosticCheck::fail("update_repair", "Update repair", "Previous repair failed."),
+            DiagnosticCheck::warn("gateway_service", "Gateway service", "Gateway stopped.")
+                .with_repair_action_id("restart_gateway"),
+        ]);
+
+        let plan = plan_update_repair(&report);
+
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(plan.actions[0].action_id, "restart_gateway");
+        assert!(plan.manual_blockers.is_empty());
+    }
+
+    #[test]
     fn execute_update_repair_plan_runs_actions_in_order() {
         let plan = UpdateRepairPlan {
             needed: true,
@@ -459,6 +566,63 @@ mod tests {
 
         assert!(!run.success);
         assert_eq!(run.results.len(), 1);
+    }
+
+    #[test]
+    fn update_repair_check_passes_when_marker_is_successful() {
+        let root = temp_root("check-pass");
+        write_update_repair_marker(
+            &root,
+            &UpdateRepairVersionMarker {
+                app_version: "1.2.3".into(),
+                checked_at_ms: 1234,
+                success: true,
+                needed: true,
+                action_count: 2,
+                manual_blockers: Vec::new(),
+            },
+        )
+        .expect("marker");
+
+        let check = check_update_repair_status_at(&root);
+
+        assert_eq!(check.id, "update_repair");
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert!(check.message.contains("1.2.3"));
+        let detail = check.detail.expect("detail");
+        assert_eq!(detail["appVersion"], "1.2.3");
+        assert_eq!(detail["actionCount"], 2);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_repair_check_warns_when_manual_blockers_remain() {
+        let root = temp_root("check-manual-blockers");
+        write_update_repair_marker(
+            &root,
+            &UpdateRepairVersionMarker {
+                app_version: "1.2.4".into(),
+                checked_at_ms: 5678,
+                success: false,
+                needed: true,
+                action_count: 1,
+                manual_blockers: vec!["config_settings".into()],
+            },
+        )
+        .expect("marker");
+
+        let check = check_update_repair_status_at(&root);
+
+        assert_eq!(check.id, "update_repair");
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(check.message.contains("manual review"));
+        assert_eq!(
+            check.detail.expect("detail")["manualBlockers"],
+            serde_json::json!(["config_settings"])
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

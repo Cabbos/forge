@@ -575,10 +575,11 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 6.8 watchdog-service follow-up (2026-06-16):** The gateway service watchdog now probes `ServiceStatusSnapshot` through the cross-platform service facade instead of calling launchd directly. Its fallback installed check uses the facade's file-backed service definition path, keeping launchd/systemd service files behind the service module while preserving conservative restart behavior.
   - **Phase 6.8 service-fallback follow-up (2026-06-16):** Service status failure metadata now comes from `service::unavailable_status_snapshot`, so Diagnostics and service IPC no longer keep their own launchd/systemd/Windows constants or fallback path logic. The facade owns service ids, launch domains, file-backed service paths, and log paths for successful and failed status probes.
   - Files: `diagnostics/repair.rs`, `diagnostics/watchdog.rs`, `diagnostics/mod.rs`, `ipc/service_handlers.rs`, `service/mod.rs`, `src/components/settings/DiagnosticsPanel.tsx`, `src/components/settings/diagnosticsRepairView.ts`, `src/lib/ipc/types.ts`.
-- [ ] 6.9 Tests: service install/uninstall in CI-safe mock mode, update repair tests.
+- [x] 6.9 Tests: service install/uninstall in CI-safe mock mode, update repair tests.
   - **Phase 6.9 partial (2026-06-15):** Added CI-safe launchd command-output parsing tests and service-management API coverage without invoking real `launchctl` state changes.
   - **Phase 6.9 status partial (2026-06-15):** Added CI-safe conversion tests proving IPC, Diagnostics, and watchdog consume the same structured `LaunchdServiceStatus`.
   - **Phase 6.9 lifecycle mock follow-up (2026-06-16):** launchd, systemd, and Windows service install/uninstall now route through injectable runner seams for CI-safe coverage. Focused tests verify plist/unit writes and launchctl/systemctl/sc.exe command ordering without invoking real service managers.
+  - **Phase 6.9 update-repair visibility follow-up (2026-06-16):** Update repair marker state is now exposed through `DiagnosticsReport` as an `update_repair` check without feeding that observability check back into automatic update-repair planning. Focused tests cover successful markers, manual-review blockers, stable diagnostics ordering, planner self-check exclusion, and the existing update-repair lifecycle runner.
 
 **Acceptance gate:**
 
