@@ -131,6 +131,33 @@ pub(crate) async fn unregister_gateway_session_best_effort(session_id: &str) {
     }
 }
 
+pub(crate) async fn gateway_session_ids_for_shutdown(state: &Arc<AppState>) -> Vec<String> {
+    let mut ids = state
+        .sessions
+        .read()
+        .await
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
+pub(crate) async fn unregister_all_gateway_sessions_best_effort(state: &Arc<AppState>) {
+    let session_ids = gateway_session_ids_for_shutdown(state).await;
+    if session_ids.is_empty() {
+        return;
+    }
+    crate::app_log!(
+        "INFO",
+        "[gateway] shutdown unregister: {} live session(s)",
+        session_ids.len()
+    );
+    for session_id in session_ids {
+        unregister_gateway_session_best_effort(&session_id).await;
+    }
+}
+
 pub(crate) struct RestoredSession {
     pub(crate) session: Arc<AgentSession>,
     pub(crate) session_id: String,

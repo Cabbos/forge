@@ -159,6 +159,15 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 crate::autosave::flush_all_sessions(app_handle);
+                if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
+                    let state = state.inner().clone();
+                    tauri::async_runtime::block_on(async move {
+                        crate::ipc::session_lifecycle::unregister_all_gateway_sessions_best_effort(
+                            &state,
+                        )
+                        .await;
+                    });
+                }
             }
         });
 }

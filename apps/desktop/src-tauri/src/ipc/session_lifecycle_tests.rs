@@ -13,8 +13,9 @@ use crate::agent::snapshot::{
 };
 use crate::harness::Harness;
 use crate::ipc::session_lifecycle::{
-    choose_startup_snapshot, gateway_session_info_for_session, list_session_infos_for_state,
-    restore_session_from_snapshot, session_snapshot_with_workflow_state,
+    choose_startup_snapshot, gateway_session_ids_for_shutdown, gateway_session_info_for_session,
+    list_session_infos_for_state, restore_session_from_snapshot,
+    session_snapshot_with_workflow_state,
 };
 use crate::protocol::events::DeliverySummary;
 use crate::state::AppState;
@@ -187,6 +188,33 @@ async fn gateway_session_info_for_session_uses_live_session_metadata() {
         !info.restored_from_registry,
         "desktop re-registration should mark the gateway entry as live"
     );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn gateway_session_ids_for_shutdown_returns_sorted_live_session_ids() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-gateway-shutdown-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+
+    state
+        .register_session(
+            "session-b".to_string(),
+            test_agent_session("session-b", &workspace),
+        )
+        .await;
+    state
+        .register_session(
+            "session-a".to_string(),
+            test_agent_session("session-a", &workspace),
+        )
+        .await;
+
+    let ids = gateway_session_ids_for_shutdown(&state).await;
+
+    assert_eq!(ids, vec!["session-a".to_string(), "session-b".to_string()]);
 
     let _ = std::fs::remove_dir_all(workspace);
 }
