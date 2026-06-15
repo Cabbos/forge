@@ -1,6 +1,7 @@
 //! Durable inbox for input addressed to existing gateway sessions.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,9 +53,60 @@ impl SessionInputStore {
             .lock()
             .map(|mut records| {
                 self.refresh_locked(&mut records);
-                records.clone()
+                sorted_session_inputs(records.iter().cloned())
             })
             .unwrap_or_default()
+    }
+
+    pub fn list_for_sessions(
+        &self,
+        session_ids: &[String],
+        limit: usize,
+    ) -> Vec<SessionInputRecord> {
+        let session_ids = session_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .collect::<HashSet<_>>();
+        if session_ids.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        self.records
+            .lock()
+            .map(|mut records| {
+                self.refresh_locked(&mut records);
+                sorted_session_inputs(
+                    records
+                        .iter()
+                        .filter(|record| session_ids.contains(record.session_id.as_str()))
+                        .cloned(),
+                )
+                .into_iter()
+                .take(limit)
+                .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn complete(&self, input_id: &str) -> bool {
+        let input_id = input_id.trim();
+        if input_id.is_empty() {
+            return false;
+        }
+        self.records
+            .lock()
+            .map(|mut records| {
+                self.refresh_locked(&mut records);
+                let before = records.len();
+                records.retain(|record| record.id != input_id);
+                let removed = records.len() != before;
+                if removed {
+                    self.save_locked(&records);
+                }
+                removed
+            })
+            .unwrap_or(false)
     }
 
     fn refresh_locked(&self, records: &mut Vec<SessionInputRecord>) {
@@ -129,6 +181,18 @@ fn merge_session_inputs(target: &mut Vec<SessionInputRecord>, incoming: Vec<Sess
     }
 }
 
+fn sorted_session_inputs(
+    records: impl IntoIterator<Item = SessionInputRecord>,
+) -> Vec<SessionInputRecord> {
+    let mut records = records.into_iter().collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        left.received_at_ms
+            .cmp(&right.received_at_ms)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    records
+}
+
 fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -160,5 +224,53 @@ mod tests {
         assert_eq!(records[0].id, "input-1");
         assert_eq!(records[0].session_id, "session-1");
         assert_eq!(records[0].message, "continue");
+    }
+
+    #[test]
+    fn session_input_store_lists_matching_sessions_in_received_order() {
+        let store = SessionInputStore::new();
+        store.push(SessionInputRecord {
+            id: "input-3".into(),
+            session_id: "session-2".into(),
+            message: "third".into(),
+            received_at_ms: 30,
+        });
+        store.push(SessionInputRecord {
+            id: "input-1".into(),
+            session_id: "session-1".into(),
+            message: "first".into(),
+            received_at_ms: 10,
+        });
+        store.push(SessionInputRecord {
+            id: "input-2".into(),
+            session_id: "session-1".into(),
+            message: "second".into(),
+            received_at_ms: 20,
+        });
+
+        let records = store.list_for_sessions(&[" session-1 ".to_string()], 1);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "input-1");
+        assert_eq!(records[0].message, "first");
+    }
+
+    #[test]
+    fn session_input_store_completes_records_and_persists_removal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session-inputs.json");
+        let store = SessionInputStore::persistent_at(path.clone());
+        store.push(SessionInputRecord {
+            id: "input-1".into(),
+            session_id: "session-1".into(),
+            message: "continue".into(),
+            received_at_ms: 10,
+        });
+
+        assert!(store.complete(" input-1 "));
+        assert!(!store.complete("input-1"));
+
+        let restored = SessionInputStore::persistent_at(path);
+        assert!(restored.list().is_empty());
     }
 }

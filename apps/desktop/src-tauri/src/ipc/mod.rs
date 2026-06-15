@@ -20,6 +20,7 @@ pub mod send_input_context;
 pub mod send_input_continuity;
 pub mod service_handlers;
 pub mod session_builder;
+pub mod session_input_inbox;
 pub mod session_lifecycle;
 pub mod session_store_handlers;
 pub mod settings_handlers;

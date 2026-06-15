@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::runner::TriggerRunRecord;
+use crate::gateway::session_input::SessionInputRecord;
 
 /// An incoming request from a gateway client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,6 +185,37 @@ pub struct EnqueueSessionInputResult {
     pub ok: bool,
     pub input_id: String,
     pub session_id: String,
+    pub pending_inputs: usize,
+}
+
+/// Parameters for listing queued input addressed to live sessions owned by a runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListSessionInputsParams {
+    pub session_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+/// Result returned after listing queued session input.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListSessionInputsResult {
+    pub ok: bool,
+    pub inputs: Vec<SessionInputRecord>,
+    pub pending_inputs: usize,
+}
+
+/// Parameters for marking a queued session input as accepted by the owner runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompleteSessionInputParams {
+    pub input_id: String,
+}
+
+/// Result returned after marking a queued session input complete.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompleteSessionInputResult {
+    pub ok: bool,
+    pub input_id: String,
+    pub removed: bool,
     pub pending_inputs: usize,
 }
 
@@ -452,6 +484,54 @@ mod tests {
         assert!(json.contains("\"pending_inputs\":2"));
         let back: EnqueueSessionInputResult =
             serde_json::from_str(&json).expect("deserialize result");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn list_and_complete_session_input_roundtrip() {
+        let params = ListSessionInputsParams {
+            session_ids: vec!["session-1".into(), " session-2 ".into()],
+            limit: Some(3),
+        };
+        let json = serde_json::to_string(&params).expect("serialize list params");
+        let back: ListSessionInputsParams =
+            serde_json::from_str(&json).expect("deserialize list params");
+        assert_eq!(back, params);
+
+        let result = ListSessionInputsResult {
+            ok: true,
+            inputs: vec![SessionInputRecord {
+                id: "input-1".into(),
+                session_id: "session-1".into(),
+                message: "continue".into(),
+                received_at_ms: 123,
+            }],
+            pending_inputs: 2,
+        };
+        let json = serde_json::to_string(&result).expect("serialize list result");
+        assert!(json.contains("\"input-1\""));
+        let back: ListSessionInputsResult =
+            serde_json::from_str(&json).expect("deserialize list result");
+        assert_eq!(back, result);
+
+        let params = CompleteSessionInputParams {
+            input_id: " input-1 ".into(),
+        };
+        let json = serde_json::to_string(&params).expect("serialize complete params");
+        let back: CompleteSessionInputParams =
+            serde_json::from_str(&json).expect("deserialize complete params");
+        assert_eq!(back, params);
+
+        let result = CompleteSessionInputResult {
+            ok: true,
+            input_id: "input-1".into(),
+            removed: true,
+            pending_inputs: 1,
+        };
+        let json = serde_json::to_string(&result).expect("serialize complete result");
+        assert!(json.contains("\"removed\":true"));
+        let back: CompleteSessionInputResult =
+            serde_json::from_str(&json).expect("deserialize complete result");
         assert_eq!(back, result);
     }
 

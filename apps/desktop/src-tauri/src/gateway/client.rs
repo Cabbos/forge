@@ -2,8 +2,8 @@
 //! requests, and parse responses.
 
 use crate::gateway::protocol::{
-    EnqueueSessionInputParams, GatewayReply, GatewayRequest, GatewaySessionInfo,
-    GetSessionSnapshotParams,
+    CompleteSessionInputParams, EnqueueSessionInputParams, GatewayReply, GatewayRequest,
+    GatewaySessionInfo, GetSessionSnapshotParams, ListSessionInputsParams,
 };
 use crate::gateway::server::default_socket_path;
 use std::path::PathBuf;
@@ -155,6 +155,49 @@ pub fn build_enqueue_session_input_request(
     })
 }
 
+pub fn build_list_session_inputs_request(
+    session_ids: Vec<String>,
+    limit: usize,
+) -> Result<GatewayRequest, String> {
+    let mut cleaned = Vec::new();
+    for session_id in session_ids {
+        let session_id = session_id.trim();
+        if session_id.is_empty() || cleaned.iter().any(|existing| existing == session_id) {
+            continue;
+        }
+        cleaned.push(session_id.to_string());
+    }
+    if cleaned.is_empty() {
+        return Err("session_ids must not be empty".to_string());
+    }
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "list_session_inputs".to_string(),
+        params: Some(
+            serde_json::to_value(ListSessionInputsParams {
+                session_ids: cleaned,
+                limit: Some(limit.max(1)),
+            })
+            .map_err(|error| format!("serialize list session input params: {error}"))?,
+        ),
+    })
+}
+
+pub fn build_complete_session_input_request(input_id: &str) -> Result<GatewayRequest, String> {
+    let input_id = input_id.trim().to_string();
+    if input_id.is_empty() {
+        return Err("input_id must not be empty".to_string());
+    }
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "complete_session_input".to_string(),
+        params: Some(
+            serde_json::to_value(CompleteSessionInputParams { input_id })
+                .map_err(|error| format!("serialize complete session input params: {error}"))?,
+        ),
+    })
+}
+
 pub async fn try_register_session(info: GatewaySessionInfo) -> Result<(), String> {
     let request = build_register_session_request(info)?;
     send_best_effort_gateway_request(request).await
@@ -287,5 +330,29 @@ mod tests {
         let params = request.params.expect("params");
         assert_eq!(params["session_id"], "session-1");
         assert_eq!(params["message"], "continue");
+    }
+
+    #[test]
+    fn list_session_inputs_request_trims_and_deduplicates_session_ids() {
+        let request = build_list_session_inputs_request(
+            vec![" session-1 ".into(), "".into(), "session-1".into()],
+            0,
+        )
+        .expect("request");
+
+        assert_eq!(request.method, "list_session_inputs");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_ids"][0], "session-1");
+        assert_eq!(params["session_ids"].as_array().expect("array").len(), 1);
+        assert_eq!(params["limit"], 1);
+    }
+
+    #[test]
+    fn complete_session_input_request_trims_input_id() {
+        let request = build_complete_session_input_request(" input-1 ").expect("request");
+
+        assert_eq!(request.method, "complete_session_input");
+        let params = request.params.expect("params");
+        assert_eq!(params["input_id"], "input-1");
     }
 }

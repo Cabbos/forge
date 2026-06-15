@@ -3,12 +3,14 @@
 
 use crate::gateway::protocol::{
     serialize_reply, AttachSessionParams, AttachSessionResult, CancelTriggerParams,
-    CancelTriggerResult, EnqueueSessionInputParams, EnqueueSessionInputResult,
-    EnqueueTriggerParams, EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply,
-    GatewayRequest, GatewayResponse, GatewaySessionAttachStatus, GatewaySessionControl,
-    GatewaySessionControlPlane, GatewaySessionInfo, GatewaySessionSnapshotSummary,
-    GetSessionSnapshotParams, GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult,
-    HealthResult, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
+    CancelTriggerResult, CompleteSessionInputParams, CompleteSessionInputResult,
+    EnqueueSessionInputParams, EnqueueSessionInputResult, EnqueueTriggerParams,
+    EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest,
+    GatewayResponse, GatewaySessionAttachStatus, GatewaySessionControl, GatewaySessionControlPlane,
+    GatewaySessionInfo, GatewaySessionSnapshotSummary, GetSessionSnapshotParams,
+    GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, HealthResult,
+    ListSessionInputsParams, ListSessionInputsResult, PingResult, ReplayTriggerRunParams,
+    ReplayTriggerRunResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::session_input::{new_session_input_record, SessionInputStore};
@@ -287,6 +289,8 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
         "enqueue_trigger" => handle_enqueue_trigger(state, request),
         "enqueue_session_input" => handle_enqueue_session_input(state, request),
+        "list_session_inputs" => handle_list_session_inputs(state, request),
+        "complete_session_input" => handle_complete_session_input(state, request),
         "cancel_trigger" => handle_cancel_trigger(state, request),
         "replay_trigger_run" => handle_replay_trigger_run(state, request),
         "get_trigger_run" => handle_get_trigger_run(state, request),
@@ -484,6 +488,60 @@ fn handle_enqueue_session_input(state: &GatewayState, request: GatewayRequest) -
             ok: true,
             input_id,
             session_id,
+            pending_inputs: state.session_input_store.list().len(),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_list_session_inputs(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<ListSessionInputsParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let session_ids = clean_session_ids(params.session_ids);
+    if session_ids.is_empty() {
+        return invalid_params(request.id, "session_ids must not be empty");
+    }
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let inputs = state
+        .session_input_store
+        .list_for_sessions(&session_ids, limit);
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(ListSessionInputsResult {
+            ok: true,
+            inputs,
+            pending_inputs: state.session_input_store.list().len(),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_complete_session_input(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<CompleteSessionInputParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let input_id = params.input_id.trim().to_string();
+    if input_id.is_empty() {
+        return invalid_params(request.id, "input_id must not be empty");
+    }
+    let removed = state.session_input_store.complete(&input_id);
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(CompleteSessionInputResult {
+            ok: true,
+            input_id,
+            removed,
             pending_inputs: state.session_input_store.list().len(),
         })
         .unwrap(),
@@ -780,6 +838,18 @@ fn clean_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn clean_session_ids(session_ids: Vec<String>) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for session_id in session_ids {
+        let session_id = session_id.trim();
+        if session_id.is_empty() || cleaned.iter().any(|existing| existing == session_id) {
+            continue;
+        }
+        cleaned.push(session_id.to_string());
+    }
+    cleaned
+}
+
 fn default_session_registry_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home)
@@ -924,11 +994,12 @@ fn session_attach_control(
         GatewaySessionAttachStatus::Live => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
             gateway_can_stream: false,
-            gateway_can_send_input: false,
+            gateway_can_send_input: true,
             gateway_can_resume: false,
             gateway_can_read_snapshot,
-            required_action: "Open the owning desktop runtime to continue this session."
-                .to_string(),
+            required_action:
+                "Queue input through the gateway; the owning desktop runtime will consume it."
+                    .to_string(),
         },
         GatewaySessionAttachStatus::Restored => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
@@ -1314,7 +1385,11 @@ mod tests {
                     assert_eq!(result.status, expected_status);
                     assert_eq!(result.ok, expected_ok);
                     assert!(!result.control.gateway_can_stream);
-                    assert!(!result.control.gateway_can_send_input);
+                    assert_eq!(
+                        result.control.gateway_can_send_input,
+                        expected_status
+                            == crate::gateway::protocol::GatewaySessionAttachStatus::Live
+                    );
                     assert!(!result.control.gateway_can_resume);
                     assert!(!result.control.gateway_can_read_snapshot);
                     assert_eq!(
@@ -1352,7 +1427,7 @@ mod tests {
             crate::gateway::protocol::GatewaySessionControlPlane::DesktopRuntimeRequired
         );
         assert!(!control.gateway_can_stream);
-        assert!(!control.gateway_can_send_input);
+        assert!(control.gateway_can_send_input);
         assert!(!control.gateway_can_resume);
         assert!(control.gateway_can_read_snapshot);
     }
@@ -1509,6 +1584,88 @@ mod tests {
                 assert!(err.error.message.contains("message"));
             }
             _ => panic!("expected Err reply"),
+        }
+        assert!(state.session_input_store.list().is_empty());
+    }
+
+    #[test]
+    fn dispatch_list_session_inputs_filters_live_session_ids() {
+        let state = test_gateway_state();
+        state
+            .session_input_store
+            .push(crate::gateway::session_input::SessionInputRecord {
+                id: "input-2".into(),
+                session_id: "session-2".into(),
+                message: "skip".into(),
+                received_at_ms: 20,
+            });
+        state
+            .session_input_store
+            .push(crate::gateway::session_input::SessionInputRecord {
+                id: "input-1".into(),
+                session_id: "session-1".into(),
+                message: "continue".into(),
+                received_at_ms: 10,
+            });
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "list-inputs".into(),
+                method: "list_session_inputs".into(),
+                params: Some(serde_json::json!({
+                    "session_ids": [" session-1 ", "session-1"],
+                    "limit": 10
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::ListSessionInputsResult =
+                    serde_json::from_value(resp.result).expect("parse list input result");
+                assert!(result.ok);
+                assert_eq!(result.pending_inputs, 2);
+                assert_eq!(result.inputs.len(), 1);
+                assert_eq!(result.inputs[0].id, "input-1");
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn dispatch_complete_session_input_removes_record() {
+        let state = test_gateway_state();
+        state
+            .session_input_store
+            .push(crate::gateway::session_input::SessionInputRecord {
+                id: "input-1".into(),
+                session_id: "session-1".into(),
+                message: "continue".into(),
+                received_at_ms: 10,
+            });
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "complete-input".into(),
+                method: "complete_session_input".into(),
+                params: Some(serde_json::json!({
+                    "input_id": " input-1 "
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::CompleteSessionInputResult =
+                    serde_json::from_value(resp.result).expect("parse complete input result");
+                assert!(result.ok);
+                assert!(result.removed);
+                assert_eq!(result.input_id, "input-1");
+                assert_eq!(result.pending_inputs, 0);
+            }
+            _ => panic!("expected Ok reply"),
         }
         assert!(state.session_input_store.list().is_empty());
     }

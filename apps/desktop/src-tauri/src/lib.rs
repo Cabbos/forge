@@ -75,6 +75,7 @@ pub fn run() {
             diagnostics::watchdog::spawn_session_watchdog(app.handle().clone());
             diagnostics::watchdog::spawn_gateway_watchdog(app.handle().clone());
             ipc::session_lifecycle::spawn_gateway_session_heartbeat(app.handle().clone());
+            ipc::session_input_inbox::spawn_gateway_session_input_poller(app.handle().clone());
             crate::app_log!("INFO", "DeepSeek Agent started");
             Ok(())
         })
