@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { hasTauriRuntime } from "./core";
-import type { CapabilityInfo, EcosystemItem, ToolInventoryEntry } from "./types";
+import type {
+  CapabilityInfo,
+  EcosystemItem,
+  McpEcosystemItemConfig,
+  ToolInventoryEntry,
+} from "./types";
 
 export async function listEcosystemItems(): Promise<EcosystemItem[]> {
   if (!hasTauriRuntime()) return [];
@@ -19,11 +24,13 @@ export async function getToolInventory(): Promise<ToolInventoryEntry[]> {
 /**
  * Configure an ecosystem item.
  *
- * **Phase 3-A limitation:** In-app configuration is not yet supported.
- * This will return an error with a clear message.  The UI should display the
- * error honestly rather than implying configuration is possible.
+ * MCP server items support `.forge/mcp.json` write-back. Other item kinds
+ * still return a clear unsupported error until their config models stabilize.
  */
-export async function configureEcosystemItem(id: string, config: unknown): Promise<void> {
+export async function configureEcosystemItem(
+  id: string,
+  config: McpEcosystemItemConfig,
+): Promise<void> {
   return invoke("configure_ecosystem_item", { id, config });
 }
 

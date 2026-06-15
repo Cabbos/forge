@@ -139,17 +139,43 @@ struct McpConfigProbe {
     config_summary: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct EcosystemMcpConfig {
     #[serde(default)]
     servers: HashMap<String, EcosystemMcpServerConfig>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct EcosystemMcpServerConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     command: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EcosystemMcpConfigureInput {
+    name: Option<String>,
+    description: Option<String>,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EcosystemMcpConfigureUpdate {
+    enabled: Option<bool>,
 }
 
 fn mcp_config_probe_for_capability(meta: &CapabilityMetadata) -> Option<McpConfigProbe> {
@@ -226,6 +252,89 @@ fn command_is_available(command: &str) -> bool {
 
 fn mcp_config_summary(command: &str, arg_count: usize) -> String {
     format!("Command: {command}, Args: {arg_count}")
+}
+
+fn configure_mcp_ecosystem_item_at(
+    config_path: &Path,
+    capability_id: &str,
+    config: serde_json::Value,
+) -> Result<EcosystemMcpConfigureUpdate, String> {
+    let server_id = capability_id
+        .strip_prefix("mcp:")
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            "Only MCP ecosystem items can be configured through this path".to_string()
+        })?;
+
+    let input: EcosystemMcpConfigureInput =
+        serde_json::from_value(config).map_err(|e| format!("Invalid MCP config payload: {e}"))?;
+    if input.name.is_none()
+        && input.description.is_none()
+        && input.command.is_none()
+        && input.args.is_none()
+        && input.enabled.is_none()
+    {
+        return Err("No supported MCP config fields were provided".to_string());
+    }
+
+    let mut mcp_config = read_ecosystem_mcp_config(config_path)?;
+    let server = mcp_config.servers.entry(server_id.to_string()).or_default();
+
+    if let Some(name) = input.name {
+        server.name = normalize_optional_config_string(name);
+    }
+    if let Some(description) = input.description {
+        server.description = normalize_optional_config_string(description);
+    }
+    if let Some(command) = input.command {
+        let command = command.trim().to_string();
+        if command.is_empty() {
+            return Err("MCP command must not be empty".to_string());
+        }
+        server.command = Some(command);
+    }
+    if let Some(args) = input.args {
+        server.args = args;
+    }
+    if let Some(enabled) = input.enabled {
+        server.enabled = Some(enabled);
+    }
+
+    write_ecosystem_mcp_config(config_path, &mcp_config)?;
+    Ok(EcosystemMcpConfigureUpdate {
+        enabled: input.enabled,
+    })
+}
+
+fn normalize_optional_config_string(value: String) -> Option<String> {
+    let value = value.trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn read_ecosystem_mcp_config(config_path: &Path) -> Result<EcosystemMcpConfig, String> {
+    if !config_path.exists() {
+        return Ok(EcosystemMcpConfig::default());
+    }
+    let content =
+        std::fs::read_to_string(config_path).map_err(|e| format!("Read MCP config source: {e}"))?;
+    serde_json::from_str::<EcosystemMcpConfig>(&content)
+        .map_err(|e| format!("Parse MCP config source: {e}"))
+}
+
+fn write_ecosystem_mcp_config(
+    config_path: &Path,
+    config: &EcosystemMcpConfig,
+) -> Result<(), String> {
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Create MCP config dir: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Serialize MCP config source: {e}"))?;
+    let tmp = config_path.with_extension("tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("Write MCP config tmp: {e}"))?;
+    std::fs::rename(&tmp, config_path).map_err(|e| format!("Replace MCP config source: {e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -333,6 +442,59 @@ mod tests {
         // This is a sync stub for now — validates the error message shape
         let msg = "In-app configuration is not yet supported";
         assert!(msg.contains("not yet supported"));
+    }
+
+    #[test]
+    fn configure_mcp_ecosystem_item_updates_existing_server_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &config_path,
+            serde_json::json!({
+                "servers": {
+                    "test": {
+                        "name": "Old MCP",
+                        "description": "old description",
+                        "command": "old-command",
+                        "args": ["--old"],
+                        "enabled": false,
+                        "env": { "KEEP": "yes" }
+                    },
+                    "other": {
+                        "command": "other-command"
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write config");
+
+        let update = configure_mcp_ecosystem_item_at(
+            &config_path,
+            "mcp:test",
+            serde_json::json!({
+                "name": "New MCP",
+                "description": "new description",
+                "command": "new-command",
+                "args": ["--new", "value"],
+                "enabled": true
+            }),
+        )
+        .expect("configure mcp");
+
+        assert_eq!(update.enabled, Some(true));
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+                .expect("saved json");
+        let test = &saved["servers"]["test"];
+        assert_eq!(test["name"], "New MCP");
+        assert_eq!(test["description"], "new description");
+        assert_eq!(test["command"], "new-command");
+        assert_eq!(test["args"], serde_json::json!(["--new", "value"]));
+        assert_eq!(test["enabled"], true);
+        assert_eq!(test["env"]["KEEP"], "yes");
+        assert_eq!(saved["servers"]["other"]["command"], "other-command");
     }
 
     #[test]
@@ -803,22 +965,33 @@ pub async fn get_tool_inventory(
 
 /// Configure an ecosystem item.
 ///
-/// **Phase 3-A limitation:** There is no persistent configuration storage for
-/// ecosystem items yet.  This command returns an explicit "unsupported" error
-/// so the UI can surface the limitation honestly instead of faking success.
-///
-/// MCP server configuration is managed through `.forge/mcp.json` and is not
-/// editable through this command in the current release.
+/// Currently supports MCP server items by writing the source `.forge/mcp.json`
+/// entry. Other ecosystem item kinds still return an explicit unsupported
+/// error until they have a stable persistent config model.
 #[tauri::command]
 pub async fn configure_ecosystem_item(
-    _state: tauri::State<'_, Arc<AppState>>,
+    state: tauri::State<'_, Arc<AppState>>,
     id: String,
-    _config: serde_json::Value,
+    config: serde_json::Value,
 ) -> Result<(), String> {
-    Err(format!(
-        "In-app configuration is not yet supported for ecosystem items. \
-         To configure '{}', edit the relevant config file directly or use \
-         the forge CLI.  See docs/roadmap Phase 3 for the delivery timeline.",
-        id
-    ))
+    let meta = state
+        .harness
+        .capability_registry
+        .get(&id)
+        .ok_or_else(|| format!("Ecosystem item not found: {id}"))?;
+
+    if !matches!(meta.kind, CapabilityKind::McpServer) {
+        return Err(format!(
+            "In-app configuration currently supports MCP server items only. \
+             '{}' is a {} item.",
+            id,
+            capability_kind_label(&meta.kind)
+        ));
+    }
+
+    let update = configure_mcp_ecosystem_item_at(Path::new(&meta.source), &id, config)?;
+    if let Some(enabled) = update.enabled {
+        toggle_capability(state, id, enabled).await?;
+    }
+    Ok(())
 }

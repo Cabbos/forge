@@ -209,6 +209,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `harness/capability.rs`.
 - [x] 3.3 Add IPC commands: `list_ecosystem_items`, `set_ecosystem_enabled`, `configure_ecosystem_item`, `get_tool_inventory`.
   - **Phase 3-A (2026-06-12):** Added all 4 commands to `ipc/capability_handlers.rs` and registered in `lib.rs`. `list_ecosystem_items` builds from registry + SkillLoader. `set_ecosystem_enabled` delegates to existing toggle. `get_tool_inventory` returns tool/MCP items. `configure_ecosystem_item` returns explicit "not yet supported" error (no config persistence path yet).
+  - **Phase 3-D follow-up (2026-06-15):** `configure_ecosystem_item` now supports MCP server configuration write-back for existing `mcp:<id>` entries by updating the source `.forge/mcp.json` entry (name, description, command, args, enabled) while preserving unknown fields and other servers. Non-MCP item kinds still return an explicit unsupported error until provider/skill config schemas stabilize.
   - Added TS types (`EcosystemItem`, `EcosystemItemStatus`, `ToolInventoryEntry`) and wrapper functions in `lib/tauri.ts`.
   - Files: `ipc/capability_handlers.rs`, `lib.rs`, `lib/tauri.ts`.
 - [ ] 3.4 Add `StreamEvent::EcosystemChanged` so UI refreshes when items install/uninstall.
@@ -242,7 +243,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Diagnostics integration | ✅ Done | Unhealthy counts, status enrichment; MCP config probe added in Phase 3-C |
 | Tests | ✅ Done | 14 new Rust tests, all existing pass |
 | Provider/extension inventory | ⏸️ Deferred | No provider source yet; represented as unavailable |
-| In-app config persistence | ⏸️ Deferred | configure_ecosystem_item returns honest error |
+| In-app config persistence | 🟨 Partial | MCP server write-back is supported; provider/skill config schemas still deferred |
 
 **Phase 3-B summary (2026-06-12):** Tool-count visibility in UI without touching Rust agent loop.
 

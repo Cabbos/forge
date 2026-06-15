@@ -294,6 +294,14 @@ export interface EcosystemItem {
   configSummary?: string | null;
 }
 
+export interface McpEcosystemItemConfig {
+  name?: string | null;
+  description?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  enabled?: boolean | null;
+}
+
 export interface ToolInventoryEntry {
   id: string;
   name: string;
