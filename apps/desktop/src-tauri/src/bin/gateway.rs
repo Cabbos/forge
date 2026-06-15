@@ -5,6 +5,7 @@
 //! Listens on:
 //! - Unix socket at `~/.forge/gateway.sock` for IPC (JSON-line protocol)
 //! - TCP `127.0.0.1:2021` for webhook/trigger ingestion (JSON-line)
+//! - HTTP `127.0.0.1:2022` for the read-only gateway dashboard
 
 use std::sync::Arc;
 
@@ -21,6 +22,17 @@ async fn main() {
         socket_path.display(),
         forge::gateway::webhook::WEBHOOK_PORT,
     );
+
+    // Spawn local read-only HTTP dashboard in background.
+    let dashboard_runtime_state = state.clone();
+    state.mark_runtime_task_started(forge::gateway::server::DASHBOARD_HTTP_TASK);
+    tokio::spawn(async move {
+        if let Err(e) = forge::gateway::dashboard::serve(dashboard_runtime_state.clone()).await {
+            log::error!("Dashboard listener died: {e}");
+            dashboard_runtime_state
+                .mark_runtime_task_failed(forge::gateway::server::DASHBOARD_HTTP_TASK, e);
+        }
+    });
 
     // Spawn webhook TCP listener in background.
     let webhook_state = state.trigger_store.clone();

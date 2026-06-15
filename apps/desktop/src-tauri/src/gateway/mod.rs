@@ -6,6 +6,7 @@
 //! CLI) connect to manage sessions, query health, and receive events.
 
 pub mod client;
+pub mod dashboard;
 pub mod protocol;
 pub mod runner;
 pub mod server;

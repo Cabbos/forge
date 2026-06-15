@@ -289,6 +289,7 @@ impl GatewayState {
 pub const WEBHOOK_LISTENER_TASK: &str = "webhook_listener";
 pub const TRIGGER_RUNNER_TASK: &str = "trigger_runner";
 pub const SCHEDULER_TICK_TASK: &str = "scheduler_tick";
+pub const DASHBOARD_HTTP_TASK: &str = "dashboard_http";
 pub const SESSION_STALE_AFTER_MS: u64 = 5 * 60 * 1000;
 
 pub fn default_runtime_task_statuses() -> Vec<GatewayRuntimeTaskStatus> {
@@ -884,6 +885,7 @@ fn default_runtime_task_map() -> HashMap<String, GatewayRuntimeTaskStatus> {
         WEBHOOK_LISTENER_TASK,
         TRIGGER_RUNNER_TASK,
         SCHEDULER_TICK_TASK,
+        DASHBOARD_HTTP_TASK,
     ]
     .into_iter()
     .map(|name| {
@@ -908,6 +910,7 @@ fn ordered_runtime_tasks(
         WEBHOOK_LISTENER_TASK,
         TRIGGER_RUNNER_TASK,
         SCHEDULER_TICK_TASK,
+        DASHBOARD_HTTP_TASK,
     ] {
         if let Some(status) = tasks.get(name) {
             ordered.push(status.clone());
@@ -921,6 +924,7 @@ fn ordered_runtime_tasks(
                 WEBHOOK_LISTENER_TASK,
                 TRIGGER_RUNNER_TASK,
                 SCHEDULER_TICK_TASK,
+                DASHBOARD_HTTP_TASK,
             ]
             .contains(&name.as_str())
         })
@@ -1478,6 +1482,7 @@ mod tests {
                         (WEBHOOK_LISTENER_TASK, false),
                         (TRIGGER_RUNNER_TASK, false),
                         (SCHEDULER_TICK_TASK, false),
+                        (DASHBOARD_HTTP_TASK, false),
                     ]
                 );
             }
@@ -1710,6 +1715,16 @@ mod tests {
         assert!(trigger.running);
         assert!(trigger.last_started_at_ms.is_some());
         assert!(trigger.last_error.is_none());
+    }
+
+    #[test]
+    fn default_runtime_tasks_include_dashboard_http() {
+        let task_names = default_runtime_task_statuses()
+            .into_iter()
+            .map(|task| task.name)
+            .collect::<Vec<_>>();
+
+        assert!(task_names.contains(&DASHBOARD_HTTP_TASK.to_string()));
     }
 
     #[test]
