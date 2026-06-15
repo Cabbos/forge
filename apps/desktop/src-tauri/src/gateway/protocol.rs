@@ -212,6 +212,20 @@ pub struct GetTriggerRunResult {
     pub run: TriggerRunRecord,
 }
 
+/// Parameters for reading a saved session snapshot by id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetSessionSnapshotParams {
+    pub session_id: String,
+}
+
+/// Result returned after reading a saved session snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GetSessionSnapshotResult {
+    pub ok: bool,
+    pub session_id: String,
+    pub snapshot: serde_json::Value,
+}
+
 /// Gateway version string.
 pub const GATEWAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -367,6 +381,34 @@ mod tests {
         let json = serde_json::to_string(&result).expect("serialize result");
         assert!(json.contains("\"session_id\":\"session-1\""));
         let back: GetTriggerRunResult = serde_json::from_str(&json).expect("deserialize result");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn get_session_snapshot_params_and_result_roundtrip() {
+        let params = GetSessionSnapshotParams {
+            session_id: " session-1 ".into(),
+        };
+        let json = serde_json::to_string(&params).expect("serialize params");
+        let back: GetSessionSnapshotParams =
+            serde_json::from_str(&json).expect("deserialize params");
+        assert_eq!(back, params);
+
+        let result = GetSessionSnapshotResult {
+            ok: true,
+            session_id: "session-1".into(),
+            snapshot: serde_json::json!({
+                "session_id": "session-1",
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "messages": [{"role": "user", "content": "hello"}]
+            }),
+        };
+        let json = serde_json::to_string(&result).expect("serialize result");
+        assert!(json.contains("\"session_id\":\"session-1\""));
+        assert!(json.contains("\"messages\""));
+        let back: GetSessionSnapshotResult =
+            serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }
 

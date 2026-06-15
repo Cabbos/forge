@@ -11,6 +11,7 @@ describe("sessionCommand", () => {
       ["export"],
       ["prune", "--keep", "25"],
       ["attach", "session-1"],
+      ["show", "session-1"],
     ];
 
     for (const args of cases) {

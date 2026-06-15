@@ -9,6 +9,7 @@ import type {
   GatewayPendingTrigger,
   GatewayRuntimeStatus,
   GatewaySessionInfo,
+  GetGatewaySessionSnapshotResult,
   GetGatewayTriggerRunResult,
   LogEntry,
   RepairAction,
@@ -143,4 +144,13 @@ export async function attachGatewaySession(
     throw new Error("Gateway session attach is not available outside Tauri runtime.");
   }
   return invoke<AttachGatewaySessionResult>("attach_gateway_session", { sessionId });
+}
+
+export async function getGatewaySessionSnapshot(
+  sessionId: string,
+): Promise<GetGatewaySessionSnapshotResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway session snapshot detail is not available outside Tauri runtime.");
+  }
+  return invoke<GetGatewaySessionSnapshotResult>("get_gateway_session_snapshot", { sessionId });
 }

@@ -506,6 +506,12 @@ export interface GetGatewayTriggerRunResult {
   run: GatewayTriggerRunRecord;
 }
 
+export interface GetGatewaySessionSnapshotResult {
+  ok: boolean;
+  session_id: string;
+  snapshot: Record<string, unknown>;
+}
+
 export interface RepairAction {
   id: string;
   label: string;

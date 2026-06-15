@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use crate::diagnostics::{self, CapabilitySummary};
-use crate::gateway::client::{build_attach_session_request, GatewayClient};
+use crate::gateway::client::{
+    build_attach_session_request, build_get_session_snapshot_request, GatewayClient,
+};
 use crate::gateway::protocol::{
     AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
-    EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo, GetTriggerRunParams,
-    GetTriggerRunResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
+    EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo,
+    GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, ReplayTriggerRunParams,
+    ReplayTriggerRunResult,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::gateway::webhook::PendingTrigger;
@@ -167,6 +170,30 @@ pub async fn attach_gateway_session(session_id: String) -> Result<AttachSessionR
     }
 }
 
+#[tauri::command]
+pub async fn get_gateway_session_snapshot(
+    session_id: String,
+) -> Result<GetSessionSnapshotResult, String> {
+    let request = build_get_gateway_session_snapshot_request(session_id)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<GetSessionSnapshotResult>(response.result).map_err(|error| {
+                format!("Gateway returned invalid session snapshot detail: {error}")
+            })
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway session snapshot detail error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!(
+            "Gateway session snapshot detail request failed: {error}"
+        )),
+    }
+}
+
 async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
     let socket_path = default_socket_path();
     let mut client = match GatewayClient::connect(&socket_path).await {
@@ -265,6 +292,12 @@ fn build_get_gateway_trigger_run_request(run_id: String) -> Result<GatewayReques
 
 fn build_attach_gateway_session_request(session_id: String) -> Result<GatewayRequest, String> {
     build_attach_session_request(&session_id)
+}
+
+fn build_get_gateway_session_snapshot_request(
+    session_id: String,
+) -> Result<GatewayRequest, String> {
+    build_get_session_snapshot_request(&session_id)
 }
 
 fn build_enqueue_gateway_trigger_request(
@@ -514,6 +547,24 @@ mod tests {
     #[test]
     fn build_attach_gateway_session_request_rejects_blank_id() {
         let error = super::build_attach_gateway_session_request("   ".to_string())
+            .expect_err("blank session id");
+
+        assert!(error.contains("session_id must not be empty"));
+    }
+
+    #[test]
+    fn build_get_gateway_session_snapshot_request_trims_session_id() {
+        let request = super::build_get_gateway_session_snapshot_request(" session-1 ".to_string())
+            .expect("request");
+
+        assert_eq!(request.method, "get_session_snapshot");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+    }
+
+    #[test]
+    fn build_get_gateway_session_snapshot_request_rejects_blank_id() {
+        let error = super::build_get_gateway_session_snapshot_request("   ".to_string())
             .expect_err("blank session id");
 
         assert!(error.contains("session_id must not be empty"));

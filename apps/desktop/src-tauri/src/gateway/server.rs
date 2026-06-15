@@ -6,8 +6,9 @@ use crate::gateway::protocol::{
     CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
     GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
     GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
-    GatewaySessionSnapshotSummary, GetTriggerRunParams, GetTriggerRunResult, HealthResult,
-    PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
+    GatewaySessionSnapshotSummary, GetSessionSnapshotParams, GetSessionSnapshotResult,
+    GetTriggerRunParams, GetTriggerRunResult, HealthResult, PingResult, ReplayTriggerRunParams,
+    ReplayTriggerRunResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
@@ -283,6 +284,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "cancel_trigger" => handle_cancel_trigger(state, request),
         "replay_trigger_run" => handle_replay_trigger_run(state, request),
         "get_trigger_run" => handle_get_trigger_run(state, request),
+        "get_session_snapshot" => handle_get_session_snapshot(request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
@@ -539,6 +541,46 @@ fn handle_get_trigger_run(state: &GatewayState, request: GatewayRequest) -> Gate
     GatewayReply::Ok(GatewayResponse {
         id: request.id,
         result: serde_json::to_value(GetTriggerRunResult { ok: true, run }).unwrap(),
+    })
+}
+
+fn handle_get_session_snapshot(request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<GetSessionSnapshotParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let session_id = params.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return invalid_params(request.id, "session_id must not be empty");
+    }
+
+    let snapshot = match crate::agent::snapshot::load_session_snapshot(&session_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return invalid_params(
+                request.id,
+                format!("session snapshot not available: {error}"),
+            );
+        }
+    };
+    let snapshot = match serde_json::to_value(snapshot) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return invalid_params(request.id, format!("serialize snapshot: {error}"));
+        }
+    };
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(GetSessionSnapshotResult {
+            ok: true,
+            session_id,
+            snapshot,
+        })
+        .unwrap(),
     })
 }
 
@@ -1592,6 +1634,53 @@ mod tests {
                 assert_eq!(result.run.workspace_path.as_deref(), Some("/repo"));
             }
             _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn dispatch_get_session_snapshot_returns_saved_snapshot_detail() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        std::env::set_var("HOME", home.path());
+        let snapshot = crate::agent::snapshot::AgentSessionSnapshot::new(
+            "snapshot-detail-session".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "/repo/detail".to_string(),
+            vec![ChatMessage::user("show me".into())],
+            Some("detail summary".to_string()),
+            Some(128_000),
+        );
+        crate::agent::snapshot::save_session_snapshot(&snapshot).expect("save snapshot");
+        let state = GatewayState::new();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "snapshot-detail".into(),
+                method: "get_session_snapshot".into(),
+                params: Some(serde_json::json!({"session_id": " snapshot-detail-session "})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::GetSessionSnapshotResult =
+                    serde_json::from_value(resp.result).expect("parse snapshot result");
+                assert!(result.ok);
+                assert_eq!(result.session_id, "snapshot-detail-session");
+                assert_eq!(result.snapshot["session_id"], "snapshot-detail-session");
+                assert_eq!(result.snapshot["provider"], "deepseek");
+                assert_eq!(result.snapshot["messages"][0]["content"], "show me");
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
         }
     }
 

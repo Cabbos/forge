@@ -1,8 +1,10 @@
 //! Forge Session CLI — inspect active gateway sessions and local session store.
 //!
-//! Usage: `forge_session <list|attach|stats|search|export|prune>`
+//! Usage: `forge_session <list|attach|show|stats|search|export|prune>`
 
-use forge::gateway::client::{build_attach_session_request, GatewayClient};
+use forge::gateway::client::{
+    build_attach_session_request, build_get_session_snapshot_request, GatewayClient,
+};
 use forge::gateway::protocol::GatewayRequest;
 use forge::gateway::server::{default_socket_path, SESSION_STALE_AFTER_MS};
 use forge::session_store::{
@@ -23,6 +25,13 @@ async fn main() {
                 std::process::exit(1);
             };
             attach_gateway_session(session_id).await;
+        }
+        "show" => {
+            let Some(session_id) = args.get(2) else {
+                eprintln!("Usage: forge_session show <session_id>");
+                std::process::exit(1);
+            };
+            show_gateway_session_snapshot(session_id).await;
         }
         "stats" => match forge::session_store::stats() {
             Ok(stats) => {
@@ -73,7 +82,7 @@ async fn main() {
             }
         },
         _ => {
-            eprintln!("Usage: forge_session list|attach|stats|search|export|prune");
+            eprintln!("Usage: forge_session list|attach|show|stats|search|export|prune");
             std::process::exit(1);
         }
     }
@@ -151,6 +160,51 @@ async fn attach_gateway_session(session_id: &str) {
         Ok(mut client) => match client.send(request).await {
             Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
                 for line in render_attach_result_lines(&resp.result) {
+                    println!("{line}");
+                }
+            }
+            Ok(forge::gateway::protocol::GatewayReply::Err(err)) => {
+                eprintln!(
+                    "Gateway error: {} (code: {})",
+                    err.error.message, err.error.code
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("Request failed: {error}");
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("Failed to connect to gateway: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn show_gateway_session_snapshot(session_id: &str) {
+    let socket_path = default_socket_path();
+    if !socket_path.exists() {
+        println!(
+            "Gateway is not running (no socket at {}).",
+            socket_path.display()
+        );
+        println!("Start it with: forge service start");
+        return;
+    }
+
+    let request = match build_get_session_snapshot_request(session_id) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+
+    match GatewayClient::connect(&socket_path).await {
+        Ok(mut client) => match client.send(request).await {
+            Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
+                for line in render_session_snapshot_detail_lines(&resp.result) {
                     println!("{line}");
                 }
             }
@@ -259,6 +313,33 @@ fn append_attach_snapshot_lines(result: &serde_json::Value, lines: &mut Vec<Stri
             lines.push(format!("  summary  {}", summary.trim()));
         }
     }
+}
+
+fn render_session_snapshot_detail_lines(result: &serde_json::Value) -> Vec<String> {
+    let session_id = result["session_id"].as_str().unwrap_or("?");
+    let snapshot = result.get("snapshot").unwrap_or(&serde_json::Value::Null);
+    let provider = snapshot["provider"].as_str().unwrap_or("?");
+    let model = snapshot["model"].as_str().unwrap_or("?");
+    let working_dir = snapshot["working_dir"].as_str().unwrap_or("?");
+    let created_at_ms = snapshot["created_at_ms"].as_u64().unwrap_or(0);
+    let updated_at_ms = snapshot["updated_at_ms"].as_u64().unwrap_or(0);
+    let message_count = snapshot
+        .get("messages")
+        .and_then(|messages| messages.as_array())
+        .map(Vec::len)
+        .unwrap_or(0);
+
+    let mut lines = vec![
+        "Gateway session snapshot:".to_string(),
+        format!("  {session_id}  {provider}/{model}  {working_dir}"),
+        format!("  created={created_at_ms} updated={updated_at_ms} messages={message_count}"),
+    ];
+    if let Some(summary) = snapshot["summary"].as_str() {
+        if !summary.trim().is_empty() {
+            lines.push(format!("  summary  {}", summary.trim()));
+        }
+    }
+    lines
 }
 
 fn render_snapshot_lines(title: &str, snapshots: &[SessionSnapshotSummary]) -> Vec<String> {
@@ -542,5 +623,36 @@ mod tests {
         );
         assert_eq!(lines[5], "  summary  latest summary");
         assert_eq!(lines[6], "  claude/opus  /repo/live");
+    }
+
+    #[test]
+    fn render_session_snapshot_detail_lines_shows_full_snapshot_metadata() {
+        let result = serde_json::json!({
+            "ok": true,
+            "session_id": "session-1",
+            "snapshot": {
+                "session_id": "session-1",
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "working_dir": "/repo/detail",
+                "summary": "detail summary",
+                "created_at_ms": 10,
+                "updated_at_ms": 20,
+                "messages": [
+                    {"role": "user", "content": "show me"},
+                    {"role": "assistant", "content": "done"}
+                ]
+            }
+        });
+
+        let lines = super::render_session_snapshot_detail_lines(&result);
+
+        assert_eq!(lines[0], "Gateway session snapshot:");
+        assert_eq!(
+            lines[1],
+            "  session-1  deepseek/deepseek-v4-flash  /repo/detail"
+        );
+        assert_eq!(lines[2], "  created=10 updated=20 messages=2");
+        assert_eq!(lines[3], "  summary  detail summary");
     }
 }

@@ -1,7 +1,9 @@
 //! Gateway client — connect to the gateway Unix socket, send JSON-line
 //! requests, and parse responses.
 
-use crate::gateway::protocol::{GatewayReply, GatewayRequest, GatewaySessionInfo};
+use crate::gateway::protocol::{
+    GatewayReply, GatewayRequest, GatewaySessionInfo, GetSessionSnapshotParams,
+};
 use crate::gateway::server::default_socket_path;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -107,6 +109,21 @@ pub fn build_attach_session_request(session_id: &str) -> Result<GatewayRequest, 
         id: uuid::Uuid::now_v7().simple().to_string(),
         method: "attach_session".to_string(),
         params: Some(serde_json::json!({ "session_id": session_id })),
+    })
+}
+
+pub fn build_get_session_snapshot_request(session_id: &str) -> Result<GatewayRequest, String> {
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err("session_id must not be empty".to_string());
+    }
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "get_session_snapshot".to_string(),
+        params: Some(
+            serde_json::to_value(GetSessionSnapshotParams { session_id })
+                .map_err(|error| format!("serialize get session snapshot params: {error}"))?,
+        ),
     })
 }
 
@@ -220,6 +237,15 @@ mod tests {
         let request = build_attach_session_request(" session-1 ").expect("request");
 
         assert_eq!(request.method, "attach_session");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+    }
+
+    #[test]
+    fn get_session_snapshot_request_trims_session_id() {
+        let request = build_get_session_snapshot_request(" session-1 ").expect("request");
+
+        assert_eq!(request.method, "get_session_snapshot");
         let params = request.params.expect("params");
         assert_eq!(params["session_id"], "session-1");
     }
