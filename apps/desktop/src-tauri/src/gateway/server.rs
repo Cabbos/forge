@@ -4,8 +4,8 @@
 use crate::gateway::protocol::{
     serialize_reply, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
     EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest,
-    GatewayResponse, HealthResult, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
-    GATEWAY_VERSION,
+    GatewayResponse, GetTriggerRunParams, GetTriggerRunResult, HealthResult, PingResult,
+    ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
@@ -129,6 +129,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "enqueue_trigger" => handle_enqueue_trigger(state, request),
         "cancel_trigger" => handle_cancel_trigger(state, request),
         "replay_trigger_run" => handle_replay_trigger_run(state, request),
+        "get_trigger_run" => handle_get_trigger_run(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
@@ -343,6 +344,29 @@ fn handle_replay_trigger_run(state: &GatewayState, request: GatewayRequest) -> G
             pending_triggers: count_available_triggers(state),
         })
         .unwrap(),
+    })
+}
+
+fn handle_get_trigger_run(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<GetTriggerRunParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let run_id = params.run_id.trim().to_string();
+    if run_id.is_empty() {
+        return invalid_params(request.id, "run_id must not be empty");
+    }
+
+    let Some(run) = state.trigger_run_store.find(&run_id) else {
+        return invalid_params(request.id, format!("run_id not found: {run_id}"));
+    };
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(GetTriggerRunResult { ok: true, run }).unwrap(),
     })
 }
 
@@ -977,6 +1001,55 @@ mod tests {
             _ => panic!("expected Err reply"),
         }
         assert!(state.trigger_store.list().is_empty());
+    }
+
+    #[test]
+    fn dispatch_get_trigger_run_returns_requested_run_detail() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-detail".into(),
+                trigger_id: "trigger-detail".into(),
+                attempt: 3,
+                status: "dead_letter".into(),
+                message: "provider offline".into(),
+                started_at_ms: 10,
+                ended_at_ms: 22,
+                trigger_message: Some("run digest".into()),
+                profile_id: Some("ops".into()),
+                provider: Some("openai".into()),
+                model: Some("gpt-5".into()),
+                workspace_path: Some("/repo".into()),
+            });
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "detail".into(),
+                method: "get_trigger_run".into(),
+                params: Some(serde_json::json!({"run_id": " run-detail "})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::GetTriggerRunResult =
+                    serde_json::from_value(resp.result).expect("parse detail result");
+                assert!(result.ok);
+                assert_eq!(result.run.id, "run-detail");
+                assert_eq!(result.run.trigger_id, "trigger-detail");
+                assert_eq!(result.run.trigger_message.as_deref(), Some("run digest"));
+                assert_eq!(result.run.workspace_path.as_deref(), Some("/repo"));
+            }
+            _ => panic!("expected Ok reply"),
+        }
     }
 
     // ── GatewayState ────────────────────────────────────────────────────

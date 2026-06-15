@@ -76,8 +76,8 @@ describe("triggerCommand", () => {
     });
   });
 
-  test("accepts status list runs and replay subcommands", async () => {
-    const validCommands = ["status", "list", "runs", "replay"];
+  test("accepts status list runs replay and show subcommands", async () => {
+    const validCommands = ["status", "list", "runs", "replay", "show"];
 
     for (const command of validCommands) {
       const calls: Parameters<SpawnRunner>[0][] = [];
@@ -86,7 +86,10 @@ describe("triggerCommand", () => {
         return { exitCode: 0, stdout: `${command} ok\n`, stderr: "" };
       };
 
-      const args = command === "replay" ? [command, "--run-id", "run-1"] : [command];
+      const args =
+        command === "replay" || command === "show"
+          ? [command, "--run-id", "run-1"]
+          : [command];
       const code = await triggerCommand(args, {
         io: {
           stdout: () => {},
@@ -99,7 +102,7 @@ describe("triggerCommand", () => {
       expect(code).toBe(0);
       expect(calls[0]?.args).toContain("forge_trigger");
       expect(calls[0]?.args).toContain(command);
-      if (command === "replay") {
+      if (command === "replay" || command === "show") {
         expect(calls[0]?.args).toContain("--run-id");
         expect(calls[0]?.args).toContain("run-1");
       }

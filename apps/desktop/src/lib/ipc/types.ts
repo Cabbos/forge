@@ -404,6 +404,11 @@ export interface ReplayGatewayTriggerRunResult {
   pending_triggers: number;
 }
 
+export interface GetGatewayTriggerRunResult {
+  ok: boolean;
+  run: GatewayTriggerRunRecord;
+}
+
 export interface RepairAction {
   id: string;
   label: string;

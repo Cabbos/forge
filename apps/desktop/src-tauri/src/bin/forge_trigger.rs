@@ -9,8 +9,8 @@
 
 use forge::gateway::client::GatewayClient;
 use forge::gateway::protocol::{
-    EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest,
-    ReplayTriggerRunParams, ReplayTriggerRunResult,
+    EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest, GetTriggerRunParams,
+    GetTriggerRunResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
 };
 use forge::gateway::runner::TriggerRunRecord;
 use forge::gateway::server::{default_socket_path, GatewayRuntimeStatus};
@@ -22,6 +22,7 @@ enum TriggerCommand {
     List,
     Runs,
     Replay,
+    Show,
     Status,
 }
 
@@ -71,6 +72,7 @@ async fn main() {
         TriggerCommand::List => list_pending_triggers(&mut client).await,
         TriggerCommand::Runs => list_trigger_runs(&mut client).await,
         TriggerCommand::Replay => replay_trigger_run(&mut client, args).await,
+        TriggerCommand::Show => show_trigger_run(&mut client, args).await,
         TriggerCommand::Status => show_runtime_status(&mut client).await,
     };
 
@@ -95,6 +97,7 @@ where
         "list" => TriggerCommand::List,
         "runs" => TriggerCommand::Runs,
         "replay" => TriggerCommand::Replay,
+        "show" => TriggerCommand::Show,
         "status" => TriggerCommand::Status,
         other => return Err(format!("unknown trigger command: {other}")),
     };
@@ -114,7 +117,12 @@ where
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--message" | "-m" => parsed.message = Some(next_value(&mut iter, "--message")?),
-            "--id" if parsed.command == TriggerCommand::Replay => {
+            "--id"
+                if matches!(
+                    parsed.command,
+                    TriggerCommand::Replay | TriggerCommand::Show
+                ) =>
+            {
                 parsed.run_id = Some(next_value(&mut iter, "--id")?)
             }
             "--id" | "--trigger-id" => parsed.trigger_id = Some(next_value(&mut iter, "--id")?),
@@ -138,7 +146,10 @@ where
         if parsed.message.is_none() {
             return Err("message is required for trigger enqueue".to_string());
         }
-    } else if parsed.command == TriggerCommand::Replay {
+    } else if matches!(
+        parsed.command,
+        TriggerCommand::Replay | TriggerCommand::Show
+    ) {
         if parsed.run_id.is_none() && positional_message.len() == 1 {
             parsed.run_id = positional_message.pop();
         } else if !positional_message.is_empty() {
@@ -146,7 +157,14 @@ where
         }
         parsed.run_id = clean_optional(parsed.run_id);
         if parsed.run_id.is_none() {
-            return Err("run_id is required for trigger replay".to_string());
+            return Err(format!(
+                "run_id is required for trigger {}",
+                match parsed.command {
+                    TriggerCommand::Replay => "replay",
+                    TriggerCommand::Show => "show",
+                    _ => unreachable!(),
+                }
+            ));
         }
     } else if !positional_message.is_empty() {
         return Err("unexpected positional argument".to_string());
@@ -303,6 +321,48 @@ async fn replay_trigger_run(
     Ok(())
 }
 
+async fn show_trigger_run(
+    client: &mut GatewayClient,
+    args: ParsedTriggerArgs,
+) -> Result<(), String> {
+    let params = GetTriggerRunParams {
+        run_id: args
+            .run_id
+            .ok_or_else(|| "run_id is required for trigger show".to_string())?,
+    };
+    let reply = send(
+        client,
+        "get_trigger_run",
+        Some(serde_json::to_value(params).unwrap()),
+    )
+    .await?;
+    let GatewayReply::Ok(response) = reply else {
+        return Err(render_gateway_error(reply));
+    };
+    let result = serde_json::from_value::<GetTriggerRunResult>(response.result)
+        .map_err(|error| format!("Gateway returned invalid trigger run detail: {error}"))?;
+
+    let run = result.run;
+    println!("Trigger run {}", run.id);
+    println!("  trigger: {}", run.trigger_id);
+    println!("  status: {}", run.status);
+    println!("  attempt: {}", run.attempt);
+    println!("  started_at_ms: {}", run.started_at_ms);
+    println!("  ended_at_ms: {}", run.ended_at_ms);
+    println!("  profile: {}", run.profile_id.as_deref().unwrap_or("-"));
+    println!("  provider: {}", run.provider.as_deref().unwrap_or("-"));
+    println!("  model: {}", run.model.as_deref().unwrap_or("-"));
+    println!(
+        "  workspace: {}",
+        run.workspace_path.as_deref().unwrap_or("-")
+    );
+    println!("  message: {}", run.message);
+    if let Some(trigger_message) = run.trigger_message.as_deref() {
+        println!("  trigger_message: {}", trigger_message);
+    }
+    Ok(())
+}
+
 async fn show_runtime_status(client: &mut GatewayClient) -> Result<(), String> {
     let reply = send(client, "runtime_status", None).await?;
     let GatewayReply::Ok(response) = reply else {
@@ -360,7 +420,7 @@ fn truncate(value: &str, max_chars: usize) -> String {
 }
 
 fn usage() -> &'static str {
-    "Usage: forge_trigger <enqueue|list|runs|replay|status> [options]\n\
+    "Usage: forge_trigger <enqueue|list|runs|replay|show|status> [options]\n\
      \n\
      enqueue options:\n\
        --message, -m <text>     Prompt/message to queue\n\
@@ -371,7 +431,10 @@ fn usage() -> &'static str {
        --workspace, -w <path>  Workspace override\n\
      \n\
      replay options:\n\
-       --run-id, --id <id>     Trigger run id to replay"
+       --run-id, --id <id>     Trigger run id to replay\n\
+     \n\
+     show options:\n\
+       --run-id, --id <id>     Trigger run id to inspect"
 }
 
 #[cfg(test)]
@@ -445,6 +508,29 @@ mod tests {
     #[test]
     fn parse_replay_rejects_missing_run_id() {
         let err = super::parse_trigger_args(["replay"]).expect_err("missing run id");
+
+        assert!(err.contains("run_id is required"));
+    }
+
+    #[test]
+    fn parse_show_collects_run_id() {
+        let parsed = super::parse_trigger_args(["show", " run-1 "]).expect("parse");
+
+        assert_eq!(parsed.command, super::TriggerCommand::Show);
+        assert_eq!(parsed.run_id.as_deref(), Some("run-1"));
+    }
+
+    #[test]
+    fn parse_show_accepts_id_alias() {
+        let parsed = super::parse_trigger_args(["show", "--id", " run-2 "]).expect("parse");
+
+        assert_eq!(parsed.command, super::TriggerCommand::Show);
+        assert_eq!(parsed.run_id.as_deref(), Some("run-2"));
+    }
+
+    #[test]
+    fn parse_show_rejects_missing_run_id() {
+        let err = super::parse_trigger_args(["show"]).expect_err("missing run id");
 
         assert!(err.contains("run_id is required"));
     }

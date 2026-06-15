@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   CheckCircle,
+  Info,
   Loader2,
   RefreshCw,
   RotateCcw,
@@ -25,6 +26,7 @@ import type {
 import {
   cancelGatewayTrigger,
   enqueueGatewayTrigger,
+  getGatewayTriggerRun,
   replayGatewayTriggerRun,
   runRepairAction,
 } from "@/lib/tauri";
@@ -215,6 +217,8 @@ function GatewayRuntimePanel({
   const [isEnqueuingTrigger, setIsEnqueuingTrigger] = useState(false);
   const [cancelingTriggerId, setCancelingTriggerId] = useState<string | null>(null);
   const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
+  const [inspectingRunId, setInspectingRunId] = useState<string | null>(null);
+  const [selectedRunDetail, setSelectedRunDetail] = useState<GatewayTriggerRunRecord | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [triggerMessageStatus, setTriggerMessageStatus] = useState<string | null>(null);
 
@@ -320,6 +324,24 @@ function GatewayRuntimePanel({
       setReplayingRunId(null);
     }
   };
+  const handleInspectRun = async (runId: string) => {
+    if (inspectingRunId) return;
+    if (selectedRunDetail?.id === runId) {
+      setSelectedRunDetail(null);
+      return;
+    }
+    setInspectingRunId(runId);
+    setTriggerError(null);
+    setTriggerMessageStatus(null);
+    try {
+      const result = await getGatewayTriggerRun(runId);
+      setSelectedRunDetail(result.run);
+    } catch (error) {
+      setTriggerError(formatMutationError(error));
+    } finally {
+      setInspectingRunId(null);
+    }
+  };
 
   return (
     <div className="forge-settings-readonly-panel">
@@ -349,7 +371,10 @@ function GatewayRuntimePanel({
             <GatewayRuntimeRuns
               runs={runtime.recent_runs}
               replayingRunId={replayingRunId}
+              inspectingRunId={inspectingRunId}
+              selectedRunDetail={selectedRunDetail}
               onReplay={handleReplayRun}
+              onInspect={handleInspectRun}
             />
           </dd>
         </div>
@@ -460,11 +485,17 @@ function GatewayRuntimePanel({
 function GatewayRuntimeRuns({
   runs,
   replayingRunId,
+  inspectingRunId,
+  selectedRunDetail,
   onReplay,
+  onInspect,
 }: {
   runs: GatewayTriggerRunRecord[];
   replayingRunId: string | null;
+  inspectingRunId: string | null;
+  selectedRunDetail: GatewayTriggerRunRecord | null;
   onReplay: (runId: string) => void;
+  onInspect: (runId: string) => void;
 }) {
   if (runs.length === 0) {
     return <span className="text-xs text-muted-foreground">暂无运行记录</span>;
@@ -485,7 +516,26 @@ function GatewayRuntimeRuns({
             <span className="forge-gateway-trigger-row-message">{row.title}</span>
             <span className="forge-gateway-trigger-row-meta">{row.message}</span>
             <span className="forge-gateway-trigger-row-meta">{row.subtitle}</span>
+            {selectedRunDetail?.id === row.id && (
+              <span className="forge-gateway-trigger-row-meta">
+                {formatRunDetail(selectedRunDetail)}
+              </span>
+            )}
           </div>
+          <ButtonPrimitive
+            type="button"
+            className="forge-gateway-trigger-cancel-btn"
+            disabled={inspectingRunId != null}
+            aria-label={`Inspect gateway trigger run ${row.id}`}
+            title="查看 trigger run 详情"
+            onClick={() => onInspect(row.id)}
+          >
+            {inspectingRunId === row.id ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Info className="size-3" />
+            )}
+          </ButtonPrimitive>
           <ButtonPrimitive
             type="button"
             className="forge-gateway-trigger-cancel-btn"
@@ -504,6 +554,16 @@ function GatewayRuntimeRuns({
       ))}
     </div>
   );
+}
+
+function formatRunDetail(run: GatewayTriggerRunRecord): string {
+  const parts = [
+    `started=${run.started_at_ms}`,
+    `ended=${run.ended_at_ms}`,
+    `workspace=${run.workspace_path?.trim() || "-"}`,
+    `trigger_message=${run.trigger_message?.trim() || "-"}`,
+  ];
+  return parts.join(" · ");
 }
 
 function GatewayTriggerQueue({

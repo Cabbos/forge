@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { CliDeps } from "../cli.ts";
 import { bunSpawnRunner } from "../lib/spawn.ts";
 
-const VALID_COMMANDS = ["enqueue", "list", "runs", "replay", "status"] as const;
+const VALID_COMMANDS = ["enqueue", "list", "runs", "replay", "show", "status"] as const;
 
 export async function triggerCommand(argv: string[], deps: CliDeps = {}): Promise<number> {
   const sub = argv[0];

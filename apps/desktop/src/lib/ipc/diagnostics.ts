@@ -7,6 +7,7 @@ import type {
   EnqueueGatewayTriggerResult,
   GatewayPendingTrigger,
   GatewayRuntimeStatus,
+  GetGatewayTriggerRunResult,
   LogEntry,
   RepairAction,
   RepairResult,
@@ -116,4 +117,13 @@ export async function replayGatewayTriggerRun(
     throw new Error("Gateway trigger replay is not available outside Tauri runtime.");
   }
   return invoke<ReplayGatewayTriggerRunResult>("replay_gateway_trigger_run", { runId });
+}
+
+export async function getGatewayTriggerRun(
+  runId: string,
+): Promise<GetGatewayTriggerRunResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway trigger run detail is not available outside Tauri runtime.");
+  }
+  return invoke<GetGatewayTriggerRunResult>("get_gateway_trigger_run", { runId });
 }

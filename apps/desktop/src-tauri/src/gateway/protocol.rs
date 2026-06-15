@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::gateway::runner::TriggerRunRecord;
+
 /// An incoming request from a gateway client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GatewayRequest {
@@ -117,6 +119,19 @@ pub struct ReplayTriggerRunResult {
     pub run_id: String,
     pub trigger_id: String,
     pub pending_triggers: usize,
+}
+
+/// Parameters for reading a previous trigger run by id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetTriggerRunParams {
+    pub run_id: String,
+}
+
+/// Result returned after reading a previous trigger run.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetTriggerRunResult {
+    pub ok: bool,
+    pub run: TriggerRunRecord,
 }
 
 /// Gateway version string.
@@ -242,6 +257,37 @@ mod tests {
         let json = serde_json::to_string(&health).expect("serialize");
         let back: HealthResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, health);
+    }
+
+    #[test]
+    fn get_trigger_run_params_and_result_roundtrip() {
+        let params = GetTriggerRunParams {
+            run_id: " run-1 ".into(),
+        };
+        let json = serde_json::to_string(&params).expect("serialize params");
+        let back: GetTriggerRunParams = serde_json::from_str(&json).expect("deserialize params");
+        assert_eq!(back, params);
+
+        let result = GetTriggerRunResult {
+            ok: true,
+            run: crate::gateway::runner::TriggerRunRecord {
+                id: "run-1".into(),
+                trigger_id: "trigger-1".into(),
+                attempt: 2,
+                status: "dead_letter".into(),
+                message: "provider offline".into(),
+                started_at_ms: 10,
+                ended_at_ms: 20,
+                trigger_message: Some("run digest".into()),
+                profile_id: Some("ops".into()),
+                provider: Some("openai".into()),
+                model: Some("gpt-5".into()),
+                workspace_path: Some("/repo".into()),
+            },
+        };
+        let json = serde_json::to_string(&result).expect("serialize result");
+        let back: GetTriggerRunResult = serde_json::from_str(&json).expect("deserialize result");
+        assert_eq!(back, result);
     }
 
     // ── GatewayRequest roundtrip ─────────────────────────────────────────
