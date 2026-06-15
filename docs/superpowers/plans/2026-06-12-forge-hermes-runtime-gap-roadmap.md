@@ -428,7 +428,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.4 Profile model | ✅ Done | `profile/mod.rs` model + `ProfileStore` + 22 tests + IPC + AppState wiring |
 | 5.5 Profile switcher | 🟨 Partial | Settings UI + headless field done; CLI `--profile` deferred; runtime selection not wired |
 | 5.6 Shared runtime / gateway | ⏸️ Deferred | No gateway (Phase 6) |
-| 5.7 Messaging triggers | ⏸️ Deferred | Depends on gateway |
+| 5.7 Messaging triggers | 🟨 Partial | Gateway IPC enqueue contract done; TCP webhook already exists; CLI/user-facing polish still deferred |
 | 5.8 Scheduler engine | ✅ Done | Phase 5-C local MVP; background tick/gateway cron deferred |
 | 5.9 Scheduler panel | ✅ Done | Phase 5-C Settings panel added |
 | Embeddings | ⏸️ Deferred | Honest placeholder comment; no implementation |
@@ -478,11 +478,21 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Forbidden modules touched | 🚫 None | Hard boundaries honored |
 | New StreamEvent variants | 🚫 None | No StreamEvent changes |
 
+**Phase 5-D summary (2026-06-15):** Gateway trigger enqueue contract.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Gateway `enqueue_trigger` IPC | ✅ Done | Unix-socket JSON-RPC can queue pending triggers into the same `TriggerStore` used by webhook and scheduler |
+| Trigger metadata | ✅ Done | Accepts message, optional trigger_id, profile_id, provider, model, and workspace_path |
+| Runtime visibility | ✅ Done | `EnqueueTriggerResult.pending_triggers` and `runtime_status` reflect the newly queued trigger |
+| Validation | ✅ Done | Missing/blank message returns JSON-RPC invalid params without mutating the queue |
+| Still deferred | ⏸️ Deferred | Human-facing CLI command and dashboard controls for trigger enqueue/listing |
+
 **Acceptance gate (updated Phase 5-C):**
 
 - Desktop and CLI can read/write the same memory. **(Phase 5-A: ✅ Done)**
 - A scheduled task records next-run display and run history in the local scheduler. **(Phase 5-C: ✅ Done — deterministic MVP history; actual agent session execution deferred)**
-- A messaging trigger creates a new session via HTTP. **(⏸️ Deferred — depends on Phase 6 gateway)**
+- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook and IPC enqueue exist; full user-facing HTTP/CLI smoke still deferred)**
 - Settings > Scheduler panel allows create, edit, enable/disable, run now, delete. **(Phase 5-C: ✅ Done)**
 
 **Verification plan:**
@@ -714,7 +724,7 @@ Codex must stop and ask the user if any of the following occur:
 - Phase 6.6: Dashboard web UI
 - Phase 6.7: Update repair
 - Phase 6.8: Self-healing actions
-- Phase 5.7: Messaging triggers
+- Phase 5.7: Messaging trigger CLI/dashboard polish
 - Phase 7: Full product polish + acceptance suite
 
 ## Appendix — Likely Files/Modules by Domain

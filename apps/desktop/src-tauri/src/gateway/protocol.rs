@@ -65,6 +65,30 @@ pub struct HealthResult {
     pub gateway_version: String,
 }
 
+/// Parameters for queueing a gateway trigger through the Unix socket.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnqueueTriggerParams {
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+}
+
+/// Result returned after a trigger is accepted into the gateway queue.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnqueueTriggerResult {
+    pub ok: bool,
+    pub trigger_id: String,
+    pub pending_triggers: usize,
+}
+
 /// Gateway version string.
 pub const GATEWAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -202,5 +226,30 @@ mod tests {
         let json = serde_json::to_string(&req).expect("serialize");
         let back: GatewayRequest = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, req);
+    }
+
+    #[test]
+    fn enqueue_trigger_params_roundtrip_with_metadata() {
+        let params = EnqueueTriggerParams {
+            message: "run daily digest".into(),
+            trigger_id: Some("trigger-cli-1".into()),
+            profile_id: Some("ops".into()),
+            provider: Some("openai".into()),
+            model: Some("gpt-5".into()),
+            workspace_path: Some("/tmp/forge-workspace".into()),
+        };
+
+        let json = serde_json::to_string(&params).expect("serialize");
+        let restored: EnqueueTriggerParams = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(restored.message, "run daily digest");
+        assert_eq!(restored.trigger_id.as_deref(), Some("trigger-cli-1"));
+        assert_eq!(restored.profile_id.as_deref(), Some("ops"));
+        assert_eq!(restored.provider.as_deref(), Some("openai"));
+        assert_eq!(restored.model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            restored.workspace_path.as_deref(),
+            Some("/tmp/forge-workspace")
+        );
     }
 }

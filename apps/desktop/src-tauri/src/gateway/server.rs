@@ -2,16 +2,16 @@
 //! response serialization.
 
 use crate::gateway::protocol::{
-    serialize_reply, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse,
-    HealthResult, PingResult, GATEWAY_VERSION,
+    serialize_reply, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError, GatewayErrorBody,
+    GatewayReply, GatewayRequest, GatewayResponse, HealthResult, PingResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
-use crate::gateway::webhook::TriggerStore;
+use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -124,6 +124,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "unregister_session" => handle_unregister_session(state, request),
         "list_pending_triggers" => handle_list_triggers(state, request.id),
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
+        "enqueue_trigger" => handle_enqueue_trigger(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
@@ -212,6 +213,55 @@ fn handle_drain_triggers(state: &GatewayState, id: String) -> GatewayReply {
     })
 }
 
+fn handle_enqueue_trigger(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<EnqueueTriggerParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let message = params.message.trim().to_string();
+    if message.is_empty() {
+        return invalid_params(request.id, "message must not be empty");
+    }
+
+    let trigger_id = params
+        .trigger_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(new_trigger_id);
+
+    state.trigger_store.push(PendingTrigger {
+        id: trigger_id.clone(),
+        message,
+        profile_id: clean_optional_string(params.profile_id),
+        provider: clean_optional_string(params.provider),
+        model: clean_optional_string(params.model),
+        workspace_path: clean_optional_string(params.workspace_path),
+        attempt_count: 0,
+        claimed_at_ms: None,
+        received_at_ms: now_millis(),
+    });
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(EnqueueTriggerResult {
+            ok: true,
+            trigger_id,
+            pending_triggers: state
+                .trigger_store
+                .list()
+                .iter()
+                .filter(|trigger| trigger.claimed_at_ms.is_none())
+                .count(),
+        })
+        .unwrap(),
+    })
+}
+
 fn handle_list_trigger_runs(state: &GatewayState, id: String) -> GatewayReply {
     let runs = state.trigger_run_store.list();
     GatewayReply::Ok(GatewayResponse {
@@ -279,6 +329,33 @@ fn handle_unregister_session(state: &GatewayState, request: GatewayRequest) -> G
             },
         }),
     }
+}
+
+fn invalid_params(id: String, message: impl Into<String>) -> GatewayReply {
+    GatewayReply::Err(GatewayError {
+        id,
+        error: GatewayErrorBody {
+            code: -32602,
+            message: message.into(),
+        },
+    })
+}
+
+fn clean_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn new_trigger_id() -> String {
+    uuid::Uuid::now_v7().simple().to_string()
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 // ── Connection handling ─────────────────────────────────────────────────────
@@ -509,6 +586,89 @@ mod tests {
             }
             _ => panic!("expected Ok reply"),
         }
+    }
+
+    #[test]
+    fn dispatch_enqueue_trigger_pushes_to_store_and_updates_runtime_status() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "enqueue".into(),
+                method: "enqueue_trigger".into(),
+                params: Some(serde_json::json!({
+                    "trigger_id": "trigger-ipc-1",
+                    "message": "  run digest  ",
+                    "profile_id": "ops",
+                    "provider": "openai",
+                    "model": "gpt-5",
+                    "workspace_path": "/tmp/forge-workspace"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::EnqueueTriggerResult =
+                    serde_json::from_value(resp.result).expect("parse enqueue result");
+                assert!(result.ok);
+                assert_eq!(result.trigger_id, "trigger-ipc-1");
+                assert_eq!(result.pending_triggers, 1);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        let queued = state.trigger_store.list();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].id, "trigger-ipc-1");
+        assert_eq!(queued[0].message, "run digest");
+        assert_eq!(queued[0].profile_id.as_deref(), Some("ops"));
+        assert_eq!(queued[0].provider.as_deref(), Some("openai"));
+        assert_eq!(queued[0].model.as_deref(), Some("gpt-5"));
+        assert_eq!(
+            queued[0].workspace_path.as_deref(),
+            Some("/tmp/forge-workspace")
+        );
+
+        let status = build_runtime_status(&state);
+        assert_eq!(status.pending_triggers, 1);
+        assert_eq!(status.claimed_triggers, 0);
+    }
+
+    #[test]
+    fn dispatch_enqueue_trigger_rejects_blank_message() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "enqueue".into(),
+                method: "enqueue_trigger".into(),
+                params: Some(serde_json::json!({"message": "   "})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("message"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+        assert!(state.trigger_store.list().is_empty());
     }
 
     // ── GatewayState ────────────────────────────────────────────────────
