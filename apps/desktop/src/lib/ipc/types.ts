@@ -411,6 +411,27 @@ export interface GatewayRuntimeTaskStatus {
   last_error?: string | null;
 }
 
+export type GatewaySessionAttachStatus = "live" | "restored" | "stale" | "missing";
+
+export interface GatewaySessionInfo {
+  session_id: string;
+  provider: string;
+  model: string;
+  workspace_path: string;
+  created_at_ms: number;
+  owner_pid?: number | null;
+  last_seen_at_ms?: number | null;
+  restored_from_registry: boolean;
+}
+
+export interface AttachGatewaySessionResult {
+  ok: boolean;
+  session_id: string;
+  status: GatewaySessionAttachStatus;
+  message: string;
+  session?: GatewaySessionInfo | null;
+}
+
 export interface GatewayPendingTrigger {
   id: string;
   message: string;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  attachGatewaySession,
   enqueueGatewayTrigger,
   getGatewayTriggerRun,
   replayGatewayTriggerRun,
@@ -30,6 +31,15 @@ describe("getGatewayTriggerRun", () => {
     await assert.rejects(
       getGatewayTriggerRun("run-1"),
       /Gateway trigger run detail is not available outside Tauri runtime/,
+    );
+  });
+});
+
+describe("attachGatewaySession", () => {
+  it("returns a clear error outside the Tauri runtime", async () => {
+    await assert.rejects(
+      attachGatewaySession("session-1"),
+      /Gateway session attach is not available outside Tauri runtime/,
     );
   });
 });

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::diagnostics::{self, CapabilitySummary};
-use crate::gateway::client::GatewayClient;
+use crate::gateway::client::{build_attach_session_request, GatewayClient};
 use crate::gateway::protocol::{
-    CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult,
-    GatewayReply, GatewayRequest, GetTriggerRunParams, GetTriggerRunResult, ReplayTriggerRunParams,
-    ReplayTriggerRunResult,
+    AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
+    EnqueueTriggerResult, GatewayReply, GatewayRequest, GetTriggerRunParams, GetTriggerRunResult,
+    ReplayTriggerRunParams, ReplayTriggerRunResult,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::gateway::webhook::PendingTrigger;
@@ -129,6 +129,25 @@ pub async fn get_gateway_trigger_run(run_id: String) -> Result<GetTriggerRunResu
     }
 }
 
+#[tauri::command]
+pub async fn attach_gateway_session(session_id: String) -> Result<AttachSessionResult, String> {
+    let request = build_attach_gateway_session_request(session_id)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<AttachSessionResult>(response.result)
+                .map_err(|error| format!("Gateway returned invalid session attach result: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway session attach error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway session attach request failed: {error}")),
+    }
+}
+
 async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
     let socket_path = default_socket_path();
     let mut client = match GatewayClient::connect(&socket_path).await {
@@ -215,6 +234,10 @@ fn build_get_gateway_trigger_run_request(run_id: String) -> Result<GatewayReques
                 .map_err(|error| format!("serialize get trigger run params: {error}"))?,
         ),
     })
+}
+
+fn build_attach_gateway_session_request(session_id: String) -> Result<GatewayRequest, String> {
+    build_attach_session_request(&session_id)
 }
 
 fn build_enqueue_gateway_trigger_request(
@@ -441,5 +464,23 @@ mod tests {
             .expect_err("blank run id");
 
         assert!(error.contains("run_id must not be empty"));
+    }
+
+    #[test]
+    fn build_attach_gateway_session_request_trims_session_id() {
+        let request = super::build_attach_gateway_session_request(" session-1 ".to_string())
+            .expect("request");
+
+        assert_eq!(request.method, "attach_session");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+    }
+
+    #[test]
+    fn build_attach_gateway_session_request_rejects_blank_id() {
+        let error = super::build_attach_gateway_session_request("   ".to_string())
+            .expect_err("blank session id");
+
+        assert!(error.contains("session_id must not be empty"));
     }
 }

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { hasTauriRuntime } from "./core.ts";
 import type {
+  AttachGatewaySessionResult,
   CancelGatewayTriggerResult,
   DiagnosticsReport,
   EnqueueGatewayTriggerInput,
@@ -127,4 +128,13 @@ export async function getGatewayTriggerRun(
     throw new Error("Gateway trigger run detail is not available outside Tauri runtime.");
   }
   return invoke<GetGatewayTriggerRunResult>("get_gateway_trigger_run", { runId });
+}
+
+export async function attachGatewaySession(
+  sessionId: string,
+): Promise<AttachGatewaySessionResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway session attach is not available outside Tauri runtime.");
+  }
+  return invoke<AttachGatewaySessionResult>("attach_gateway_session", { sessionId });
 }
