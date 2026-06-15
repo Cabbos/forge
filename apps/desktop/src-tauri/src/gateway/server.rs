@@ -5,9 +5,9 @@ use crate::gateway::protocol::{
     serialize_reply, AttachSessionParams, AttachSessionResult, CancelTriggerParams,
     CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
     GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
-    GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo, GetTriggerRunParams,
-    GetTriggerRunResult, HealthResult, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
-    GATEWAY_VERSION,
+    GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
+    GatewaySessionSnapshotSummary, GetTriggerRunParams, GetTriggerRunResult, HealthResult,
+    PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
@@ -138,6 +138,7 @@ impl GatewayState {
     /// Return the gateway's current attachment view for a single session id.
     pub fn attach_session(&self, session_id: &str) -> AttachSessionResult {
         let session_id = session_id.trim().to_string();
+        let snapshot = gateway_snapshot_summary_for_session(&session_id);
         let session = self
             .sessions
             .lock()
@@ -149,7 +150,11 @@ impl GatewayState {
                 session_id,
                 status: GatewaySessionAttachStatus::Missing,
                 message: "Session is not registered with the gateway.".to_string(),
-                control: session_attach_control(GatewaySessionAttachStatus::Missing),
+                control: session_attach_control(
+                    GatewaySessionAttachStatus::Missing,
+                    snapshot.is_some(),
+                ),
+                snapshot,
                 session: None,
             };
         };
@@ -161,7 +166,8 @@ impl GatewayState {
             session_id,
             status,
             message: session_attach_message(status).to_string(),
-            control: session_attach_control(status),
+            control: session_attach_control(status, snapshot.is_some()),
+            snapshot,
             session: Some(session),
         }
     }
@@ -775,13 +781,17 @@ fn session_attach_message(status: GatewaySessionAttachStatus) -> &'static str {
     }
 }
 
-fn session_attach_control(status: GatewaySessionAttachStatus) -> GatewaySessionControl {
+fn session_attach_control(
+    status: GatewaySessionAttachStatus,
+    gateway_can_read_snapshot: bool,
+) -> GatewaySessionControl {
     match status {
         GatewaySessionAttachStatus::Live => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
             gateway_can_stream: false,
             gateway_can_send_input: false,
             gateway_can_resume: false,
+            gateway_can_read_snapshot,
             required_action: "Open the owning desktop runtime to continue this session."
                 .to_string(),
         },
@@ -790,6 +800,7 @@ fn session_attach_control(status: GatewaySessionAttachStatus) -> GatewaySessionC
             gateway_can_stream: false,
             gateway_can_send_input: false,
             gateway_can_resume: false,
+            gateway_can_read_snapshot,
             required_action:
                 "Restore the session in desktop first; gateway only has registry metadata."
                     .to_string(),
@@ -799,17 +810,43 @@ fn session_attach_control(status: GatewaySessionAttachStatus) -> GatewaySessionC
             gateway_can_stream: false,
             gateway_can_send_input: false,
             gateway_can_resume: false,
+            gateway_can_read_snapshot,
             required_action: "Reopen desktop to recover or clear the stale owner before attaching."
                 .to_string(),
         },
         GatewaySessionAttachStatus::Missing => GatewaySessionControl {
-            control_plane: GatewaySessionControlPlane::Unavailable,
+            control_plane: if gateway_can_read_snapshot {
+                GatewaySessionControlPlane::DesktopRestoreRequired
+            } else {
+                GatewaySessionControlPlane::Unavailable
+            },
             gateway_can_stream: false,
             gateway_can_send_input: false,
             gateway_can_resume: false,
-            required_action: "Register or restore the session before attaching.".to_string(),
+            gateway_can_read_snapshot,
+            required_action: if gateway_can_read_snapshot {
+                "Restore the session from snapshot before attaching.".to_string()
+            } else {
+                "Register or restore the session before attaching.".to_string()
+            },
         },
     }
+}
+
+fn gateway_snapshot_summary_for_session(session_id: &str) -> Option<GatewaySessionSnapshotSummary> {
+    crate::session_store::get_summary(session_id)
+        .ok()
+        .flatten()
+        .map(|summary| GatewaySessionSnapshotSummary {
+            session_id: summary.session_id,
+            provider: summary.provider,
+            model: summary.model,
+            working_dir: summary.working_dir,
+            summary: summary.summary,
+            created_at_ms: summary.created_at_ms,
+            updated_at_ms: summary.updated_at_ms,
+            message_count: summary.message_count,
+        })
 }
 
 fn new_trigger_id() -> String {
@@ -1136,6 +1173,7 @@ mod tests {
                     assert!(!result.control.gateway_can_stream);
                     assert!(!result.control.gateway_can_send_input);
                     assert!(!result.control.gateway_can_resume);
+                    assert!(!result.control.gateway_can_read_snapshot);
                     assert_eq!(
                         result.control.control_plane,
                         match expected_status {
@@ -1157,6 +1195,38 @@ mod tests {
                 _ => panic!("expected Ok attach reply for {session_id}"),
             }
         }
+    }
+
+    #[test]
+    fn session_attach_control_reports_readable_snapshot_capability() {
+        let control = session_attach_control(
+            crate::gateway::protocol::GatewaySessionAttachStatus::Live,
+            true,
+        );
+
+        assert_eq!(
+            control.control_plane,
+            crate::gateway::protocol::GatewaySessionControlPlane::DesktopRuntimeRequired
+        );
+        assert!(!control.gateway_can_stream);
+        assert!(!control.gateway_can_send_input);
+        assert!(!control.gateway_can_resume);
+        assert!(control.gateway_can_read_snapshot);
+    }
+
+    #[test]
+    fn session_attach_control_routes_missing_snapshot_to_restore_action() {
+        let control = session_attach_control(
+            crate::gateway::protocol::GatewaySessionAttachStatus::Missing,
+            true,
+        );
+
+        assert_eq!(
+            control.control_plane,
+            crate::gateway::protocol::GatewaySessionControlPlane::DesktopRestoreRequired
+        );
+        assert!(control.gateway_can_read_snapshot);
+        assert!(control.required_action.contains("snapshot"));
     }
 
     #[test]

@@ -423,7 +423,19 @@ export interface GatewaySessionControl {
   gateway_can_stream: boolean;
   gateway_can_send_input: boolean;
   gateway_can_resume: boolean;
+  gateway_can_read_snapshot: boolean;
   required_action: string;
+}
+
+export interface GatewaySessionSnapshotSummary {
+  session_id: string;
+  provider: string;
+  model: string;
+  working_dir: string;
+  summary?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  message_count: number;
 }
 
 export interface GatewaySessionInfo {
@@ -443,6 +455,7 @@ export interface AttachGatewaySessionResult {
   status: GatewaySessionAttachStatus;
   message: string;
   control: GatewaySessionControl;
+  snapshot?: GatewaySessionSnapshotSummary | null;
   session?: GatewaySessionInfo | null;
 }
 

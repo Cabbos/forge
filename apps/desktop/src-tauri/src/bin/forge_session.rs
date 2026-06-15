@@ -206,6 +206,7 @@ fn render_attach_result_lines(result: &serde_json::Value) -> Vec<String> {
     ];
 
     append_attach_control_lines(result, &mut lines);
+    append_attach_snapshot_lines(result, &mut lines);
 
     if let Some(session) = result.get("session").filter(|session| session.is_object()) {
         let provider = session["provider"].as_str().unwrap_or("?");
@@ -225,12 +226,37 @@ fn append_attach_control_lines(result: &serde_json::Value, lines: &mut Vec<Strin
     let can_stream = control["gateway_can_stream"].as_bool().unwrap_or(false);
     let can_send_input = control["gateway_can_send_input"].as_bool().unwrap_or(false);
     let can_resume = control["gateway_can_resume"].as_bool().unwrap_or(false);
+    let can_read_snapshot = control["gateway_can_read_snapshot"]
+        .as_bool()
+        .unwrap_or(false);
     lines.push(format!(
-        "  control  {control_plane}  stream={can_stream} input={can_send_input} resume={can_resume}"
+        "  control  {control_plane}  stream={can_stream} input={can_send_input} resume={can_resume} snapshot={can_read_snapshot}"
     ));
     if let Some(required_action) = control["required_action"].as_str() {
         if !required_action.trim().is_empty() {
             lines.push(format!("  action  {}", required_action.trim()));
+        }
+    }
+}
+
+fn append_attach_snapshot_lines(result: &serde_json::Value, lines: &mut Vec<String>) {
+    let Some(snapshot) = result
+        .get("snapshot")
+        .filter(|snapshot| snapshot.is_object())
+    else {
+        return;
+    };
+    let provider = snapshot["provider"].as_str().unwrap_or("?");
+    let model = snapshot["model"].as_str().unwrap_or("?");
+    let working_dir = snapshot["working_dir"].as_str().unwrap_or("?");
+    let updated_at_ms = snapshot["updated_at_ms"].as_u64().unwrap_or(0);
+    let message_count = snapshot["message_count"].as_u64().unwrap_or(0);
+    lines.push(format!(
+        "  snapshot  updated={updated_at_ms} messages={message_count}  {provider}/{model}  {working_dir}"
+    ));
+    if let Some(summary) = snapshot["summary"].as_str() {
+        if !summary.trim().is_empty() {
+            lines.push(format!("  summary  {}", summary.trim()));
         }
     }
 }
@@ -474,7 +500,18 @@ mod tests {
                 "gateway_can_stream": false,
                 "gateway_can_send_input": false,
                 "gateway_can_resume": false,
+                "gateway_can_read_snapshot": true,
                 "required_action": "Open the owning desktop runtime to continue this session."
+            },
+            "snapshot": {
+                "session_id": "session-live",
+                "provider": "claude",
+                "model": "opus",
+                "working_dir": "/repo/live",
+                "summary": "latest summary",
+                "created_at_ms": 1,
+                "updated_at_ms": 2,
+                "message_count": 3
             },
             "session": {
                 "session_id": "session-live",
@@ -493,12 +530,17 @@ mod tests {
         );
         assert_eq!(
             lines[2],
-            "  control  desktop_runtime_required  stream=false input=false resume=false"
+            "  control  desktop_runtime_required  stream=false input=false resume=false snapshot=true"
         );
         assert_eq!(
             lines[3],
             "  action  Open the owning desktop runtime to continue this session."
         );
-        assert_eq!(lines[4], "  claude/opus  /repo/live");
+        assert_eq!(
+            lines[4],
+            "  snapshot  updated=2 messages=3  claude/opus  /repo/live"
+        );
+        assert_eq!(lines[5], "  summary  latest summary");
+        assert_eq!(lines[6], "  claude/opus  /repo/live");
     }
 }

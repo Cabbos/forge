@@ -113,7 +113,22 @@ pub struct GatewaySessionControl {
     pub gateway_can_stream: bool,
     pub gateway_can_send_input: bool,
     pub gateway_can_resume: bool,
+    pub gateway_can_read_snapshot: bool,
     pub required_action: String,
+}
+
+/// Lightweight snapshot summary available to gateway attach callers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewaySessionSnapshotSummary {
+    pub session_id: String,
+    pub provider: String,
+    pub model: String,
+    pub working_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub message_count: usize,
 }
 
 /// Result returned by `attach_session`.
@@ -124,6 +139,8 @@ pub struct AttachSessionResult {
     pub status: GatewaySessionAttachStatus,
     pub message: String,
     pub control: GatewaySessionControl,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<GatewaySessionSnapshotSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<GatewaySessionInfo>,
 }
@@ -370,8 +387,19 @@ mod tests {
                 gateway_can_stream: false,
                 gateway_can_send_input: false,
                 gateway_can_resume: false,
+                gateway_can_read_snapshot: true,
                 required_action: "Open the owning desktop runtime to continue this session.".into(),
             },
+            snapshot: Some(GatewaySessionSnapshotSummary {
+                session_id: "session-1".into(),
+                provider: "openai".into(),
+                model: "gpt-5".into(),
+                working_dir: "/repo".into(),
+                summary: Some("latest summary".into()),
+                created_at_ms: 1,
+                updated_at_ms: 2,
+                message_count: 3,
+            }),
             session: Some(GatewaySessionInfo {
                 session_id: "session-1".into(),
                 provider: "openai".into(),
@@ -386,6 +414,8 @@ mod tests {
         let json = serde_json::to_string(&result).expect("serialize result");
         assert!(json.contains("\"status\":\"live\""));
         assert!(json.contains("\"control_plane\":\"desktop_runtime_required\""));
+        assert!(json.contains("\"gateway_can_read_snapshot\":true"));
+        assert!(json.contains("\"message_count\":3"));
         let back: AttachSessionResult = serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }
