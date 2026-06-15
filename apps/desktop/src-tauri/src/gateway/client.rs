@@ -113,6 +113,14 @@ pub fn build_attach_session_request(session_id: &str) -> Result<GatewayRequest, 
     })
 }
 
+pub fn build_dashboard_snapshot_request() -> GatewayRequest {
+    GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "dashboard_snapshot".to_string(),
+        params: None,
+    }
+}
+
 pub fn build_get_session_snapshot_request(session_id: &str) -> Result<GatewayRequest, String> {
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
@@ -389,5 +397,14 @@ mod tests {
         assert_eq!(request.method, "complete_session_input");
         let params = request.params.expect("params");
         assert_eq!(params["input_id"], "input-1");
+    }
+
+    #[test]
+    fn dashboard_snapshot_request_uses_dashboard_method() {
+        let request = build_dashboard_snapshot_request();
+
+        assert_eq!(request.method, "dashboard_snapshot");
+        assert!(request.params.is_none());
+        assert!(!request.id.is_empty());
     }
 }

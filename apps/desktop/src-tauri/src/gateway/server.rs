@@ -54,6 +54,30 @@ pub struct GatewayRuntimeTaskStatus {
     pub last_error: Option<String>,
 }
 
+/// Aggregated read-only snapshot for gateway dashboard clients.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayDashboardSnapshot {
+    pub ok: bool,
+    pub generated_at_ms: u64,
+    pub status: GatewayRuntimeStatus,
+    pub sessions: Vec<GatewaySessionInfo>,
+    pub queued_triggers: Vec<PendingTrigger>,
+    pub recent_runs: Vec<TriggerRunRecord>,
+    pub recent_session_inputs: Vec<SessionInputCompletionRecord>,
+    pub event_log: Vec<GatewayDashboardEventLogEntry>,
+}
+
+/// Compact event line derived from gateway run/input history for dashboards.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayDashboardEventLogEntry {
+    pub kind: String,
+    pub id: String,
+    pub message: String,
+    pub at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
 // ── Server state ────────────────────────────────────────────────────────────
 
 /// Shared state accessible to all request handlers.
@@ -302,6 +326,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "tail_session_events" => handle_tail_session_events(request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
+        "dashboard_snapshot" => handle_dashboard_snapshot(state, request.id),
         _ => GatewayReply::Err(GatewayError {
             id: request.id,
             error: GatewayErrorBody {
@@ -747,6 +772,75 @@ fn handle_runtime_status(state: &GatewayState, id: String) -> GatewayReply {
         id,
         result: serde_json::to_value(build_runtime_status(state)).unwrap(),
     })
+}
+
+fn handle_dashboard_snapshot(state: &GatewayState, id: String) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(build_dashboard_snapshot(state)).unwrap(),
+    })
+}
+
+fn build_dashboard_snapshot(state: &GatewayState) -> GatewayDashboardSnapshot {
+    let status = build_runtime_status(state);
+    let sessions = state.list_sessions();
+    let queued_triggers = state.trigger_store.list();
+    let recent_runs = status.recent_runs.clone();
+    let recent_session_inputs = status.recent_session_inputs.clone();
+    let event_log =
+        build_dashboard_event_log(&recent_runs, &recent_session_inputs, &status.runtime_tasks);
+
+    GatewayDashboardSnapshot {
+        ok: status.ok,
+        generated_at_ms: now_millis(),
+        status,
+        sessions,
+        queued_triggers,
+        recent_runs,
+        recent_session_inputs,
+        event_log,
+    }
+}
+
+fn build_dashboard_event_log(
+    runs: &[TriggerRunRecord],
+    session_inputs: &[SessionInputCompletionRecord],
+    runtime_tasks: &[GatewayRuntimeTaskStatus],
+) -> Vec<GatewayDashboardEventLogEntry> {
+    let mut entries = Vec::with_capacity(runs.len() + session_inputs.len() + runtime_tasks.len());
+    for run in runs {
+        entries.push(GatewayDashboardEventLogEntry {
+            kind: "trigger_run".to_string(),
+            id: run.id.clone(),
+            message: format!("{}: {}", run.status, run.message),
+            at_ms: run.ended_at_ms.max(run.started_at_ms),
+            session_id: run.session_id.clone(),
+        });
+    }
+    for input in session_inputs {
+        entries.push(GatewayDashboardEventLogEntry {
+            kind: "session_input_completed".to_string(),
+            id: input.input_id.clone(),
+            message: input.message_preview.clone(),
+            at_ms: input.completed_at_ms.max(input.received_at_ms),
+            session_id: Some(input.session_id.clone()),
+        });
+    }
+    for task in runtime_tasks {
+        let Some(error) = task.last_error.as_deref() else {
+            continue;
+        };
+        entries.push(GatewayDashboardEventLogEntry {
+            kind: "runtime_task_failed".to_string(),
+            id: task.name.clone(),
+            message: error.to_string(),
+            at_ms: task.last_started_at_ms.unwrap_or_default(),
+            session_id: None,
+        });
+    }
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.at_ms));
+    entries.truncate(50);
+    entries
 }
 
 fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
@@ -1386,6 +1480,84 @@ mod tests {
                         (SCHEDULER_TICK_TASK, false),
                     ]
                 );
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn dispatch_dashboard_snapshot_returns_dashboard_operational_summary() {
+        let state = test_gateway_state();
+        state.register_session(test_session("session-1", "claude"));
+        state.trigger_store.push(test_trigger("pending-1", None));
+        state
+            .trigger_store
+            .push(test_trigger("claimed-1", Some(1234)));
+        state
+            .trigger_run_store
+            .push(crate::gateway::runner::TriggerRunRecord {
+                id: "run-ok".into(),
+                trigger_id: "pending-1".into(),
+                session_id: Some("session-1".into()),
+                attempt: 1,
+                status: "completed".into(),
+                message: "ok".into(),
+                started_at_ms: 20,
+                ended_at_ms: 21,
+                trigger_message: Some("run digest".into()),
+                profile_id: Some("ops".into()),
+                provider: Some("claude".into()),
+                model: Some("sonnet".into()),
+                workspace_path: Some("/repo".into()),
+            });
+        state
+            .session_input_store
+            .push(crate::gateway::session_input::SessionInputRecord {
+                id: "input-1".into(),
+                session_id: "session-1".into(),
+                message: "continue".into(),
+                received_at_ms: 30,
+            });
+        state
+            .session_input_store
+            .complete_with_record("input-1")
+            .expect("completion");
+        state.mark_runtime_task_failed(WEBHOOK_LISTENER_TASK, "address already in use");
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "dashboard".into(),
+                method: "dashboard_snapshot".into(),
+                params: None,
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let snapshot: GatewayDashboardSnapshot =
+                    serde_json::from_value(resp.result).expect("parse dashboard snapshot");
+                assert!(snapshot.ok);
+                assert!(snapshot.generated_at_ms > 0);
+                assert_eq!(snapshot.status.pending_triggers, 1);
+                assert_eq!(snapshot.status.claimed_triggers, 1);
+                assert_eq!(snapshot.sessions.len(), 1);
+                assert_eq!(snapshot.sessions[0].session_id, "session-1");
+                assert_eq!(snapshot.queued_triggers.len(), 2);
+                assert_eq!(snapshot.recent_runs.len(), 1);
+                assert_eq!(snapshot.recent_runs[0].id, "run-ok");
+                assert_eq!(snapshot.recent_session_inputs.len(), 1);
+                assert_eq!(snapshot.recent_session_inputs[0].input_id, "input-1");
+                assert!(snapshot
+                    .event_log
+                    .iter()
+                    .any(|entry| entry.kind == "trigger_run" && entry.id == "run-ok"));
+                assert!(snapshot.event_log.iter().any(|entry| {
+                    entry.kind == "session_input_completed" && entry.id == "input-1"
+                }));
+                assert!(snapshot.event_log.iter().any(|entry| {
+                    entry.kind == "runtime_task_failed" && entry.id == WEBHOOK_LISTENER_TASK
+                }));
             }
             _ => panic!("expected Ok reply"),
         }

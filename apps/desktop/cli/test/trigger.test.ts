@@ -76,8 +76,8 @@ describe("triggerCommand", () => {
     });
   });
 
-  test("accepts status list runs replay and show subcommands", async () => {
-    const validCommands = ["status", "list", "runs", "replay", "show"];
+  test("accepts status dashboard list runs replay and show subcommands", async () => {
+    const validCommands = ["status", "dashboard", "list", "runs", "replay", "show"];
 
     for (const command of validCommands) {
       const calls: Parameters<SpawnRunner>[0][] = [];

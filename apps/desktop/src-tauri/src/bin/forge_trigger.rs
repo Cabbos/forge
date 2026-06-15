@@ -7,13 +7,16 @@
 //! - `forge_trigger replay --run-id <run-id>`
 //! - `forge_trigger status`
 
-use forge::gateway::client::GatewayClient;
+use forge::gateway::client::{build_dashboard_snapshot_request, GatewayClient};
 use forge::gateway::protocol::{
     EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest, GetTriggerRunParams,
     GetTriggerRunResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
 };
 use forge::gateway::runner::TriggerRunRecord;
-use forge::gateway::server::{default_socket_path, GatewayRuntimeStatus};
+use forge::gateway::server::{
+    default_socket_path, GatewayDashboardEventLogEntry, GatewayDashboardSnapshot,
+    GatewayRuntimeStatus,
+};
 use forge::gateway::webhook::PendingTrigger;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +27,7 @@ enum TriggerCommand {
     Replay,
     Show,
     Status,
+    Dashboard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +78,7 @@ async fn main() {
         TriggerCommand::Replay => replay_trigger_run(&mut client, args).await,
         TriggerCommand::Show => show_trigger_run(&mut client, args).await,
         TriggerCommand::Status => show_runtime_status(&mut client).await,
+        TriggerCommand::Dashboard => show_dashboard_snapshot(&mut client).await,
     };
 
     if let Err(error) = result {
@@ -99,6 +104,7 @@ where
         "replay" => TriggerCommand::Replay,
         "show" => TriggerCommand::Show,
         "status" => TriggerCommand::Status,
+        "dashboard" => TriggerCommand::Dashboard,
         other => return Err(format!("unknown trigger command: {other}")),
     };
 
@@ -384,6 +390,23 @@ async fn show_runtime_status(client: &mut GatewayClient) -> Result<(), String> {
     Ok(())
 }
 
+async fn show_dashboard_snapshot(client: &mut GatewayClient) -> Result<(), String> {
+    let reply = client
+        .send(build_dashboard_snapshot_request())
+        .await
+        .map_err(|error| format!("Request failed: {error}"))?;
+    let GatewayReply::Ok(response) = reply else {
+        return Err(render_gateway_error(reply));
+    };
+    let snapshot = serde_json::from_value::<GatewayDashboardSnapshot>(response.result)
+        .map_err(|error| format!("Gateway returned invalid dashboard snapshot: {error}"))?;
+
+    for line in render_dashboard_snapshot_lines(&snapshot) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
 fn render_runtime_status_lines(status: &GatewayRuntimeStatus) -> Vec<String> {
     let mut lines = vec![
         status.message.clone(),
@@ -418,6 +441,69 @@ fn render_runtime_status_lines(status: &GatewayRuntimeStatus) -> Vec<String> {
         }
     }
     lines
+}
+
+fn render_dashboard_snapshot_lines(snapshot: &GatewayDashboardSnapshot) -> Vec<String> {
+    let mut lines = vec![
+        format!("Gateway dashboard snapshot @ {}", snapshot.generated_at_ms),
+        format!("Sessions: {}", snapshot.sessions.len()),
+        format!("Queued triggers: {}", snapshot.queued_triggers.len()),
+        format!("Recent runs: {}", snapshot.recent_runs.len()),
+        format!(
+            "Recent completed session inputs: {}",
+            snapshot.recent_session_inputs.len()
+        ),
+    ];
+
+    lines.extend(render_runtime_status_lines(&snapshot.status));
+
+    if !snapshot.sessions.is_empty() {
+        lines.push("Sessions:".to_string());
+        for session in snapshot.sessions.iter().take(10) {
+            lines.push(format!(
+                "  {}  {}/{}  {}",
+                session.session_id, session.provider, session.model, session.workspace_path
+            ));
+        }
+    }
+
+    if !snapshot.queued_triggers.is_empty() {
+        lines.push("Queued triggers:".to_string());
+        for trigger in snapshot.queued_triggers.iter().take(10) {
+            let state = if trigger.claimed_at_ms.is_some() {
+                "claimed"
+            } else {
+                "pending"
+            };
+            lines.push(format!(
+                "  {}  {}  profile={}  attempts={}  {}",
+                trigger.id,
+                state,
+                trigger.profile_id.as_deref().unwrap_or("-"),
+                trigger.attempt_count,
+                truncate(&trigger.message, 80)
+            ));
+        }
+    }
+
+    if !snapshot.event_log.is_empty() {
+        lines.push("Event log:".to_string());
+        for entry in snapshot.event_log.iter().take(10) {
+            lines.push(render_dashboard_event_line(entry));
+        }
+    }
+
+    lines
+}
+
+fn render_dashboard_event_line(entry: &GatewayDashboardEventLogEntry) -> String {
+    format!(
+        "  {}  {}  session={}  {}",
+        entry.kind,
+        entry.id,
+        entry.session_id.as_deref().unwrap_or("-"),
+        truncate(&entry.message, 80)
+    )
 }
 
 async fn send(
@@ -460,7 +546,7 @@ fn truncate(value: &str, max_chars: usize) -> String {
 }
 
 fn usage() -> &'static str {
-    "Usage: forge_trigger <enqueue|list|runs|replay|show|status> [options]\n\
+    "Usage: forge_trigger <enqueue|list|runs|replay|show|status|dashboard> [options]\n\
      \n\
      enqueue options:\n\
        --message, -m <text>     Prompt/message to queue\n\
@@ -526,6 +612,12 @@ mod tests {
                 .expect("status")
                 .command,
             super::TriggerCommand::Status
+        );
+        assert_eq!(
+            super::parse_trigger_args(["dashboard"])
+                .expect("dashboard")
+                .command,
+            super::TriggerCommand::Dashboard
         );
         assert_eq!(
             super::parse_trigger_args(["list"]).expect("list").command,
@@ -627,5 +719,68 @@ mod tests {
 
         assert!(lines.contains(&"Recent session inputs:".to_string()));
         assert!(lines.contains(&"  input-1  session=session-1  completed=20  continue".to_string()));
+    }
+
+    #[test]
+    fn render_dashboard_snapshot_lines_include_core_operational_sections() {
+        let snapshot = super::GatewayDashboardSnapshot {
+            ok: true,
+            generated_at_ms: 100,
+            status: super::GatewayRuntimeStatus {
+                ok: true,
+                message: "Gateway runtime is reachable.".into(),
+                uptime_seconds: 42,
+                active_sessions: 1,
+                pending_triggers: 1,
+                pending_session_inputs: 0,
+                claimed_triggers: 1,
+                dead_letter_runs: 0,
+                recent_runs: Vec::new(),
+                recent_session_inputs: Vec::new(),
+                runtime_tasks: Vec::new(),
+            },
+            sessions: vec![forge::gateway::protocol::GatewaySessionInfo {
+                session_id: "session-1".into(),
+                provider: "claude".into(),
+                model: "sonnet".into(),
+                workspace_path: "/repo".into(),
+                created_at_ms: 1,
+                owner_pid: Some(42),
+                last_seen_at_ms: Some(90),
+                restored_from_registry: false,
+            }],
+            queued_triggers: vec![forge::gateway::webhook::PendingTrigger {
+                id: "trigger-1".into(),
+                message: "run digest".into(),
+                profile_id: Some("ops".into()),
+                provider: Some("claude".into()),
+                model: Some("sonnet".into()),
+                workspace_path: Some("/repo".into()),
+                attempt_count: 1,
+                claimed_at_ms: Some(99),
+                received_at_ms: 80,
+            }],
+            recent_runs: Vec::new(),
+            recent_session_inputs: Vec::new(),
+            event_log: vec![super::GatewayDashboardEventLogEntry {
+                kind: "trigger_run".into(),
+                id: "run-1".into(),
+                message: "completed: ok".into(),
+                at_ms: 95,
+                session_id: Some("session-1".into()),
+            }],
+        };
+
+        let lines = super::render_dashboard_snapshot_lines(&snapshot);
+
+        assert!(lines.contains(&"Gateway dashboard snapshot @ 100".to_string()));
+        assert!(lines.contains(&"Sessions: 1".to_string()));
+        assert!(lines.contains(&"Queued triggers: 1".to_string()));
+        assert!(lines.contains(&"  session-1  claude/sonnet  /repo".to_string()));
+        assert!(lines
+            .contains(&"  trigger-1  claimed  profile=ops  attempts=1  run digest".to_string()));
+        assert!(
+            lines.contains(&"  trigger_run  run-1  session=session-1  completed: ok".to_string())
+        );
     }
 }
