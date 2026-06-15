@@ -56,6 +56,7 @@ pub struct GatewayState {
     pub trigger_store: Arc<TriggerStore>,
     pub trigger_run_store: Arc<TriggerRunStore>,
     runtime_tasks: Mutex<HashMap<String, GatewayRuntimeTaskStatus>>,
+    include_snapshot_sessions: bool,
 }
 
 impl Default for GatewayState {
@@ -66,10 +67,20 @@ impl Default for GatewayState {
 
 impl GatewayState {
     pub fn new() -> Self {
-        Self::new_with_session_registry_path(default_session_registry_path())
+        Self::new_with_session_registry_path_and_snapshot_listing(
+            default_session_registry_path(),
+            true,
+        )
     }
 
     pub fn new_with_session_registry_path(session_registry_path: PathBuf) -> Self {
+        Self::new_with_session_registry_path_and_snapshot_listing(session_registry_path, false)
+    }
+
+    fn new_with_session_registry_path_and_snapshot_listing(
+        session_registry_path: PathBuf,
+        include_snapshot_sessions: bool,
+    ) -> Self {
         let sessions = load_session_registry(&session_registry_path);
         let active_sessions = Arc::new(std::sync::atomic::AtomicUsize::new(active_session_count(
             &sessions,
@@ -82,6 +93,7 @@ impl GatewayState {
             trigger_store: Arc::new(TriggerStore::persistent_default()),
             trigger_run_store: Arc::new(TriggerRunStore::persistent_default()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
+            include_snapshot_sessions,
         }
     }
 
@@ -129,10 +141,19 @@ impl GatewayState {
 
     /// List all registered sessions.
     pub fn list_sessions(&self) -> Vec<GatewaySessionInfo> {
-        self.sessions
+        let mut sessions = self
+            .sessions
             .lock()
-            .map(|sessions| sorted_sessions(sessions.values().cloned()))
-            .unwrap_or_default()
+            .map(|sessions| sessions.clone())
+            .unwrap_or_default();
+        if self.include_snapshot_sessions {
+            for snapshot_session in snapshot_backed_gateway_sessions() {
+                sessions
+                    .entry(snapshot_session.session_id.clone())
+                    .or_insert(snapshot_session);
+            }
+        }
+        sorted_sessions(sessions.into_values())
     }
 
     /// Return the gateway's current attachment view for a single session id.
@@ -728,6 +749,28 @@ fn sorted_sessions(
     sessions
 }
 
+fn snapshot_backed_gateway_sessions() -> Vec<GatewaySessionInfo> {
+    match crate::agent::snapshot::list_session_snapshots() {
+        Ok(snapshots) => snapshots
+            .into_iter()
+            .map(|snapshot| GatewaySessionInfo {
+                session_id: snapshot.session_id,
+                provider: snapshot.provider,
+                model: snapshot.model,
+                workspace_path: snapshot.working_dir,
+                created_at_ms: snapshot.created_at_ms,
+                owner_pid: None,
+                last_seen_at_ms: None,
+                restored_from_registry: true,
+            })
+            .collect(),
+        Err(error) => {
+            log::warn!("failed to list gateway snapshot-backed sessions: {error}");
+            Vec::new()
+        }
+    }
+}
+
 fn active_session_count(sessions: &HashMap<String, GatewaySessionInfo>) -> usize {
     active_session_count_at(sessions, now_millis())
 }
@@ -924,9 +967,12 @@ pub async fn serve(state: Arc<GatewayState>, socket_path: PathBuf) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::base::ChatMessage;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_gateway_state() -> GatewayState {
         GatewayState {
@@ -937,6 +983,7 @@ mod tests {
             trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
             trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
+            include_snapshot_sessions: false,
         }
     }
 
@@ -965,7 +1012,7 @@ mod tests {
 
     #[test]
     fn dispatch_health_returns_state() {
-        let state = test_gateway_state();
+        let state = GatewayState::new();
         std::thread::sleep(Duration::from_millis(10));
         let req = GatewayRequest {
             id: "2".into(),
@@ -1578,6 +1625,41 @@ mod tests {
         assert_eq!(state.active_sessions(), 1);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].provider, "codex");
+    }
+
+    #[test]
+    fn gateway_state_lists_snapshot_only_sessions_as_restored() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        std::env::set_var("HOME", home.path());
+        let snapshot = crate::agent::snapshot::AgentSessionSnapshot::new(
+            "snapshot-only-session".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "/repo/snapshot".to_string(),
+            vec![ChatMessage::user("hello".into())],
+            Some("snapshot summary".to_string()),
+            Some(128_000),
+        );
+        crate::agent::snapshot::save_session_snapshot(&snapshot).expect("save snapshot");
+        let state = GatewayState::new();
+
+        let sessions = state.list_sessions();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "snapshot-only-session");
+        assert_eq!(sessions[0].provider, "deepseek");
+        assert_eq!(sessions[0].model, "deepseek-v4-flash");
+        assert_eq!(sessions[0].workspace_path, "/repo/snapshot");
+        assert!(sessions[0].restored_from_registry);
+        assert_eq!(state.active_sessions(), 0);
+
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]
