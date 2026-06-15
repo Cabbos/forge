@@ -11,7 +11,7 @@ use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -27,6 +27,8 @@ pub struct GatewaySessionInfo {
     pub model: String,
     pub workspace_path: String,
     pub created_at_ms: u64,
+    #[serde(default)]
+    pub restored_from_registry: bool,
 }
 
 /// Gateway runtime snapshot for diagnostics/status surfaces.
@@ -62,6 +64,7 @@ pub struct GatewayState {
     pub started_at: Instant,
     pub active_sessions: Arc<std::sync::atomic::AtomicUsize>,
     sessions: Mutex<HashMap<String, GatewaySessionInfo>>,
+    session_registry_path: Option<PathBuf>,
     pub trigger_store: Arc<TriggerStore>,
     pub trigger_run_store: Arc<TriggerRunStore>,
     runtime_tasks: Mutex<HashMap<String, GatewayRuntimeTaskStatus>>,
@@ -75,10 +78,19 @@ impl Default for GatewayState {
 
 impl GatewayState {
     pub fn new() -> Self {
+        Self::new_with_session_registry_path(default_session_registry_path())
+    }
+
+    pub fn new_with_session_registry_path(session_registry_path: PathBuf) -> Self {
+        let sessions = load_session_registry(&session_registry_path);
+        let active_sessions = Arc::new(std::sync::atomic::AtomicUsize::new(active_session_count(
+            &sessions,
+        )));
         Self {
             started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
+            active_sessions,
+            sessions: Mutex::new(sessions),
+            session_registry_path: Some(session_registry_path),
             trigger_store: Arc::new(TriggerStore::persistent_default()),
             trigger_run_store: Arc::new(TriggerRunStore::persistent_default()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
@@ -98,8 +110,11 @@ impl GatewayState {
     pub fn register_session(&self, info: GatewaySessionInfo) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.insert(info.session_id.clone(), info);
-            self.active_sessions
-                .store(sessions.len(), std::sync::atomic::Ordering::Relaxed);
+            self.active_sessions.store(
+                active_session_count(&sessions),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.save_session_registry_locked(&sessions);
         }
     }
 
@@ -107,8 +122,11 @@ impl GatewayState {
     pub fn unregister_session(&self, session_id: &str) {
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.remove(session_id);
-            self.active_sessions
-                .store(sessions.len(), std::sync::atomic::Ordering::Relaxed);
+            self.active_sessions.store(
+                active_session_count(&sessions),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            self.save_session_registry_locked(&sessions);
         }
     }
 
@@ -116,8 +134,17 @@ impl GatewayState {
     pub fn list_sessions(&self) -> Vec<GatewaySessionInfo> {
         self.sessions
             .lock()
-            .map(|s| s.values().cloned().collect())
+            .map(|sessions| sorted_sessions(sessions.values().cloned()))
             .unwrap_or_default()
+    }
+
+    fn save_session_registry_locked(&self, sessions: &HashMap<String, GatewaySessionInfo>) {
+        let Some(path) = &self.session_registry_path else {
+            return;
+        };
+        if let Err(error) = save_session_registry(path, sessions) {
+            log::warn!("failed to persist gateway session registry: {error}");
+        }
     }
 
     pub fn mark_runtime_task_started(&self, name: &str) {
@@ -585,6 +612,74 @@ fn clean_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn default_session_registry_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".forge")
+        .join("gateway-sessions.json")
+}
+
+fn load_session_registry(path: &Path) -> HashMap<String, GatewaySessionInfo> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return HashMap::new(),
+        Err(error) => {
+            log::warn!("failed to read gateway session registry: {error}");
+            return HashMap::new();
+        }
+    };
+    match serde_json::from_str::<Vec<GatewaySessionInfo>>(&raw) {
+        Ok(sessions) => sessions
+            .into_iter()
+            .filter(|session| !session.session_id.trim().is_empty())
+            .map(|mut session| {
+                session.restored_from_registry = true;
+                (session.session_id.clone(), session)
+            })
+            .collect(),
+        Err(error) => {
+            log::warn!("failed to parse gateway session registry: {error}");
+            HashMap::new()
+        }
+    }
+}
+
+fn save_session_registry(
+    path: &Path,
+    sessions: &HashMap<String, GatewaySessionInfo>,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("create session dir: {error}"))?;
+    }
+    let sessions = sorted_sessions(sessions.values().cloned());
+    let json = serde_json::to_string_pretty(&sessions)
+        .map_err(|error| format!("serialize sessions: {error}"))?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, json.as_bytes())
+        .map_err(|error| format!("write session registry tmp: {error}"))?;
+    std::fs::rename(&tmp, path).map_err(|error| format!("replace session registry: {error}"))?;
+    Ok(())
+}
+
+fn sorted_sessions(
+    sessions: impl IntoIterator<Item = GatewaySessionInfo>,
+) -> Vec<GatewaySessionInfo> {
+    let mut sessions = sessions.into_iter().collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        left.created_at_ms
+            .cmp(&right.created_at_ms)
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+    sessions
+}
+
+fn active_session_count(sessions: &HashMap<String, GatewaySessionInfo>) -> usize {
+    sessions
+        .values()
+        .filter(|session| !session.restored_from_registry)
+        .count()
+}
+
 fn new_trigger_id() -> String {
     uuid::Uuid::now_v7().simple().to_string()
 }
@@ -669,6 +764,7 @@ mod tests {
             started_at: Instant::now(),
             active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             sessions: Mutex::new(HashMap::new()),
+            session_registry_path: None,
             trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
             trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
@@ -700,7 +796,7 @@ mod tests {
 
     #[test]
     fn dispatch_health_returns_state() {
-        let state = GatewayState::new();
+        let state = test_gateway_state();
         std::thread::sleep(Duration::from_millis(10));
         let req = GatewayRequest {
             id: "2".into(),
@@ -1169,13 +1265,13 @@ mod tests {
 
     #[test]
     fn gateway_state_starts_with_zero_sessions() {
-        let state = GatewayState::new();
+        let state = test_gateway_state();
         assert_eq!(state.active_sessions(), 0);
     }
 
     #[test]
     fn gateway_state_registers_and_unregisters_session_count() {
-        let state = GatewayState::new();
+        let state = test_gateway_state();
         state.register_session(test_session("session-1", "claude"));
         assert_eq!(state.active_sessions(), 1);
         assert_eq!(state.list_sessions().len(), 1);
@@ -1187,7 +1283,7 @@ mod tests {
 
     #[test]
     fn gateway_state_replacing_session_does_not_double_count() {
-        let state = GatewayState::new();
+        let state = test_gateway_state();
         state.register_session(test_session("session-1", "claude"));
         state.register_session(test_session("session-1", "codex"));
 
@@ -1199,10 +1295,46 @@ mod tests {
 
     #[test]
     fn gateway_state_unregistering_missing_session_keeps_count_at_zero() {
-        let state = GatewayState::new();
+        let state = test_gateway_state();
         state.unregister_session("missing-session");
 
         assert_eq!(state.active_sessions(), 0);
+    }
+
+    #[test]
+    fn gateway_session_registry_restores_sessions_without_marking_them_active() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("gateway-sessions.json");
+        let state = GatewayState::new_with_session_registry_path(registry_path.clone());
+        state.register_session(test_session("session-1", "claude"));
+
+        let restored = GatewayState::new_with_session_registry_path(registry_path.clone());
+        let sessions = restored.list_sessions();
+
+        assert_eq!(restored.active_sessions(), 0);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "session-1");
+        assert_eq!(sessions[0].provider, "claude");
+        assert!(sessions[0].restored_from_registry);
+
+        restored.register_session(test_session("session-1", "claude"));
+        let live_sessions = restored.list_sessions();
+        assert_eq!(restored.active_sessions(), 1);
+        assert!(!live_sessions[0].restored_from_registry);
+    }
+
+    #[test]
+    fn gateway_session_registry_persists_unregistered_sessions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry_path = dir.path().join("gateway-sessions.json");
+        let state = GatewayState::new_with_session_registry_path(registry_path.clone());
+        state.register_session(test_session("session-1", "claude"));
+        state.unregister_session("session-1");
+
+        let restored = GatewayState::new_with_session_registry_path(registry_path);
+
+        assert_eq!(restored.active_sessions(), 0);
+        assert!(restored.list_sessions().is_empty());
     }
 
     // ── default_socket_path ─────────────────────────────────────────────
@@ -1221,6 +1353,7 @@ mod tests {
             model: "test-model".to_string(),
             workspace_path: "/tmp/forge-workspace".to_string(),
             created_at_ms: 1,
+            restored_from_registry: false,
         }
     }
 

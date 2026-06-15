@@ -40,17 +40,8 @@ async fn main() {
                 Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
                     let sessions: Vec<serde_json::Value> =
                         serde_json::from_value(resp.result).unwrap_or_default();
-                    if sessions.is_empty() {
-                        println!("No active sessions.");
-                    } else {
-                        println!("Active sessions:");
-                        for s in &sessions {
-                            let id = s["session_id"].as_str().unwrap_or("?");
-                            let provider = s["provider"].as_str().unwrap_or("?");
-                            let model = s["model"].as_str().unwrap_or("?");
-                            let workspace = s["workspace_path"].as_str().unwrap_or("?");
-                            println!("  {id}  {provider}/{model}  {workspace}");
-                        }
+                    for line in render_session_lines(&sessions) {
+                        println!("{line}");
                     }
                 }
                 Ok(forge::gateway::protocol::GatewayReply::Err(err)) => {
@@ -70,5 +61,59 @@ async fn main() {
             eprintln!("Failed to connect to gateway: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+fn render_session_lines(sessions: &[serde_json::Value]) -> Vec<String> {
+    if sessions.is_empty() {
+        return vec!["No gateway sessions.".to_string()];
+    }
+
+    let mut lines = Vec::with_capacity(sessions.len() + 1);
+    lines.push("Gateway sessions:".to_string());
+    for session in sessions {
+        let id = session["session_id"].as_str().unwrap_or("?");
+        let provider = session["provider"].as_str().unwrap_or("?");
+        let model = session["model"].as_str().unwrap_or("?");
+        let workspace = session["workspace_path"].as_str().unwrap_or("?");
+        let state = if session["restored_from_registry"].as_bool().unwrap_or(false) {
+            "restored"
+        } else {
+            "active"
+        };
+        lines.push(format!("  {id}  {state}  {provider}/{model}  {workspace}"));
+    }
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn render_session_lines_distinguishes_active_and_restored_sessions() {
+        let sessions = vec![
+            serde_json::json!({
+                "session_id": "session-live",
+                "provider": "claude",
+                "model": "opus",
+                "workspace_path": "/repo/live",
+                "restored_from_registry": false
+            }),
+            serde_json::json!({
+                "session_id": "session-restored",
+                "provider": "codex",
+                "model": "gpt-5",
+                "workspace_path": "/repo/restored",
+                "restored_from_registry": true
+            }),
+        ];
+
+        let lines = super::render_session_lines(&sessions);
+
+        assert_eq!(lines[0], "Gateway sessions:");
+        assert_eq!(lines[1], "  session-live  active  claude/opus  /repo/live");
+        assert_eq!(
+            lines[2],
+            "  session-restored  restored  codex/gpt-5  /repo/restored"
+        );
     }
 }
