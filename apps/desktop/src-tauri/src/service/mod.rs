@@ -31,6 +31,14 @@ impl ServiceBackend {
         Self::for_target_os(std::env::consts::OS)
     }
 
+    pub fn supports_command(self, command: ServiceCommand) -> bool {
+        match self {
+            Self::Launchd | Self::Systemd => true,
+            Self::Windows => command == ServiceCommand::Status,
+            Self::Unsupported => false,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Launchd => "launchd",
@@ -79,6 +87,7 @@ pub fn run_service_command(command: &str) -> Result<String, String> {
 pub fn install() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::install(),
+        ServiceBackend::Systemd => systemd::install(),
         backend => unsupported_lifecycle_operation(backend, "install"),
     }
 }
@@ -86,6 +95,7 @@ pub fn install() -> Result<String, String> {
 pub fn uninstall() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::uninstall(),
+        ServiceBackend::Systemd => systemd::uninstall(),
         backend => unsupported_lifecycle_operation(backend, "uninstall"),
     }
 }
@@ -104,6 +114,7 @@ pub fn status() -> Result<String, String> {
 pub fn start() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::start(),
+        ServiceBackend::Systemd => systemd::start(),
         backend => unsupported_lifecycle_operation(backend, "start"),
     }
 }
@@ -111,6 +122,7 @@ pub fn start() -> Result<String, String> {
 pub fn stop() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::stop(),
+        ServiceBackend::Systemd => systemd::stop(),
         backend => unsupported_lifecycle_operation(backend, "stop"),
     }
 }
@@ -118,6 +130,7 @@ pub fn stop() -> Result<String, String> {
 pub fn restart() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::restart(),
+        ServiceBackend::Systemd => systemd::restart(),
         backend => unsupported_lifecycle_operation(backend, "restart"),
     }
 }
@@ -181,5 +194,15 @@ mod tests {
             ServiceCommand::parse("reload"),
             Err("Unknown service command: reload".to_string())
         );
+    }
+
+    #[test]
+    fn backend_command_support_marks_systemd_lifecycle_available() {
+        assert!(ServiceBackend::Launchd.supports_command(ServiceCommand::Install));
+        assert!(ServiceBackend::Systemd.supports_command(ServiceCommand::Install));
+        assert!(ServiceBackend::Systemd.supports_command(ServiceCommand::Restart));
+        assert!(ServiceBackend::Windows.supports_command(ServiceCommand::Status));
+        assert!(!ServiceBackend::Windows.supports_command(ServiceCommand::Install));
+        assert!(!ServiceBackend::Unsupported.supports_command(ServiceCommand::Status));
     }
 }

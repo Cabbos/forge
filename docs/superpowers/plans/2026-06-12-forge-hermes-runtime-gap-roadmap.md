@@ -553,6 +553,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `service/launchd.rs`.
 - [ ] 6.4 Add Windows service wrapper and Linux systemd unit generation.
   - **Phase 6.4 generation follow-up (2026-06-16):** Added CI-safe Linux systemd user-unit generation and Windows `sc.exe` command-plan generation with structured unsupported status responses. These modules make the cross-platform service contracts visible without executing OS service registration on unsupported platforms; platform-specific install/start/stop wiring remains a later hardening step.
+  - **Phase 6.4 systemd-lifecycle follow-up (2026-06-16):** Linux systemd now has real lifecycle APIs for `install`, `uninstall`, `start`, `stop`, `restart`, and `status`. Install writes the user unit, creates log directories, runs `systemctl --user daemon-reload`, and enables/starts `forge-gateway.service`; status uses `systemctl --user is-active` rather than a placeholder. Windows service execution remains deferred to the wrapper hardening step.
   - Files: `service/windows.rs`, `service/systemd.rs`.
 - [ ] 6.5 Add autostart toggle in Settings > General.
   - Files: `src/components/settings/GeneralSettings.tsx`.

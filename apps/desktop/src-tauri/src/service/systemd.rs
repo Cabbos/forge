@@ -1,6 +1,8 @@
 //! Linux systemd user service integration for the Forge Gateway.
 
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub const UNIT_NAME: &str = "forge-gateway.service";
 
@@ -17,6 +19,13 @@ pub struct SystemdServiceStatus {
     pub status_message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemdInstallCommandPlan {
+    pub unit_path: String,
+    pub daemon_reload: Vec<String>,
+    pub enable_now: Vec<String>,
+}
+
 pub fn generate_unit() -> String {
     generate_unit_for_paths(
         gateway_binary_path(),
@@ -24,6 +33,81 @@ pub fn generate_unit() -> String {
         gateway_log_path(),
         gateway_error_log_path(),
     )
+}
+
+pub fn install() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return unsupported_lifecycle_operation("install");
+    }
+
+    let unit_path = user_unit_path();
+    if let Some(parent) = unit_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("create systemd dir: {error}"))?;
+    }
+    let log_dir = gateway_log_path()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home_dir().join(".forge").join("logs"));
+    fs::create_dir_all(&log_dir).map_err(|error| format!("create log dir: {error}"))?;
+    fs::write(&unit_path, generate_unit().as_bytes())
+        .map_err(|error| format!("write systemd unit: {error}"))?;
+
+    run_systemctl(&["--user", "daemon-reload"], false)?;
+    run_systemctl(&["--user", "enable", "--now", UNIT_NAME], false)?;
+
+    Ok(format!(
+        "Service '{UNIT_NAME}' installed and started via systemd."
+    ))
+}
+
+pub fn uninstall() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return unsupported_lifecycle_operation("uninstall");
+    }
+
+    let unit_path = user_unit_path();
+    run_systemctl(&["--user", "disable", "--now", UNIT_NAME], true)?;
+    if unit_path.exists() {
+        fs::remove_file(&unit_path).map_err(|error| format!("remove systemd unit: {error}"))?;
+    }
+    run_systemctl(&["--user", "daemon-reload"], false)?;
+
+    Ok(format!("Service '{UNIT_NAME}' uninstalled."))
+}
+
+pub fn start() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return unsupported_lifecycle_operation("start");
+    }
+
+    if !user_unit_path().exists() {
+        return install();
+    }
+
+    run_systemctl(&["--user", "start", UNIT_NAME], false)
+        .map(|_| format!("Service '{UNIT_NAME}' started."))
+}
+
+pub fn stop() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return unsupported_lifecycle_operation("stop");
+    }
+
+    run_systemctl(&["--user", "stop", UNIT_NAME], true)
+        .map(|_| format!("Service '{UNIT_NAME}' stopped."))
+}
+
+pub fn restart() -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return unsupported_lifecycle_operation("restart");
+    }
+
+    if !user_unit_path().exists() {
+        return install();
+    }
+
+    run_systemctl(&["--user", "restart", UNIT_NAME], false)
+        .map(|_| format!("Service '{UNIT_NAME}' restarted."))
 }
 
 pub fn generate_unit_for_paths(
@@ -55,6 +139,25 @@ WantedBy=default.target
         stdout_log = stdout_log.as_ref().display(),
         stderr_log = stderr_log.as_ref().display(),
     )
+}
+
+pub fn install_command_plan() -> SystemdInstallCommandPlan {
+    install_command_plan_for_unit_path(user_unit_path())
+}
+
+pub fn install_command_plan_for_unit_path(
+    unit_path: impl AsRef<Path>,
+) -> SystemdInstallCommandPlan {
+    SystemdInstallCommandPlan {
+        unit_path: unit_path.as_ref().display().to_string(),
+        daemon_reload: vec!["--user".to_string(), "daemon-reload".to_string()],
+        enable_now: vec![
+            "--user".to_string(),
+            "enable".to_string(),
+            "--now".to_string(),
+            UNIT_NAME.to_string(),
+        ],
+    }
 }
 
 pub fn user_unit_path() -> PathBuf {
@@ -102,21 +205,66 @@ pub fn query_status() -> Result<SystemdServiceStatus, String> {
 
     let unit_path = user_unit_path();
     let installed = unit_path.exists();
-    Ok(SystemdServiceStatus {
+    let output = Command::new("systemctl")
+        .args(["--user", "is-active", UNIT_NAME])
+        .output()
+        .map_err(|error| format!("systemctl: {error}"))?;
+
+    Ok(service_status_from_parts(
+        true,
+        installed,
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    ))
+}
+
+fn service_status_from_parts(
+    supported: bool,
+    installed: bool,
+    is_active_success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> SystemdServiceStatus {
+    if !supported {
+        return unsupported_service_status();
+    }
+
+    let state = stdout.trim();
+    let missing =
+        systemctl_reports_missing_service(stdout) || systemctl_reports_missing_service(stderr);
+    let running = installed && is_active_success && state == "active";
+    let status_message = if running {
+        format!("Service '{UNIT_NAME}' is running.")
+    } else if !installed || missing {
+        format!("Service '{UNIT_NAME}' is not installed.")
+    } else if state.is_empty() {
+        let detail = if stderr.trim().is_empty() {
+            "unknown"
+        } else {
+            stderr.trim()
+        };
+        format!("Service '{UNIT_NAME}' is not running: {detail}")
+    } else {
+        format!("Service '{UNIT_NAME}' is not running: {state}")
+    };
+    let message = match (installed, running) {
+        (true, true) => "Gateway systemd user service is installed and running.".to_string(),
+        (true, false) => "Gateway systemd user service is installed but not running.".to_string(),
+        (false, _) => "Gateway systemd user service is not installed.".to_string(),
+    };
+
+    SystemdServiceStatus {
         supported: true,
         installed,
-        running: false,
-        message: if installed {
-            "Gateway systemd user service is installed.".to_string()
-        } else {
-            "Gateway systemd user service is not installed.".to_string()
-        },
+        running,
+        message,
         unit_name: UNIT_NAME.to_string(),
-        unit_path: unit_path.display().to_string(),
+        unit_path: user_unit_path().display().to_string(),
         log_path: gateway_log_path().display().to_string(),
         error_log_path: gateway_error_log_path().display().to_string(),
-        status_message: "Systemd status probing is not installed yet.".to_string(),
-    })
+        status_message,
+    }
 }
 
 fn unsupported_service_status() -> SystemdServiceStatus {
@@ -131,6 +279,60 @@ fn unsupported_service_status() -> SystemdServiceStatus {
         error_log_path: String::new(),
         status_message: "Systemd user service management is only supported on Linux.".to_string(),
     }
+}
+
+fn unsupported_lifecycle_operation(operation: &str) -> Result<String, String> {
+    Err(format!(
+        "Systemd service {operation} is only supported on Linux."
+    ))
+}
+
+fn run_systemctl(args: &[&str], allow_missing: bool) -> Result<String, String> {
+    let output = Command::new("systemctl")
+        .args(args)
+        .output()
+        .map_err(|error| format!("systemctl: {error}"))?;
+    interpret_systemctl_result(
+        args,
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+        allow_missing,
+    )
+}
+
+fn interpret_systemctl_result(
+    args: &[&str],
+    success: bool,
+    stdout: &str,
+    stderr: &str,
+    allow_missing: bool,
+) -> Result<String, String> {
+    if success {
+        return Ok(stdout.trim().to_string());
+    }
+
+    if allow_missing
+        && (systemctl_reports_missing_service(stdout) || systemctl_reports_missing_service(stderr))
+    {
+        return Ok(format!("Service '{UNIT_NAME}' is not installed."));
+    }
+
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    Err(format!("systemctl {} failed: {detail}", args.join(" ")))
+}
+
+fn systemctl_reports_missing_service(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("not found")
+        || lower.contains("could not be found")
+        || lower.contains("does not exist")
+        || lower.contains("no such file")
+        || lower.contains("unit forge-gateway.service not loaded")
 }
 
 fn home_dir() -> PathBuf {
@@ -185,5 +387,61 @@ mod tests {
         assert!(!status.running);
         assert_eq!(status.unit_name, "forge-gateway.service");
         assert!(status.message.contains("Linux"));
+    }
+
+    #[test]
+    fn service_management_api_exports_lifecycle_commands() {
+        let _: fn() -> Result<String, String> = install;
+        let _: fn() -> Result<String, String> = uninstall;
+        let _: fn() -> Result<String, String> = start;
+        let _: fn() -> Result<String, String> = stop;
+        let _: fn() -> Result<String, String> = restart;
+    }
+
+    #[test]
+    fn install_command_plan_enables_user_unit_now() {
+        let plan = install_command_plan_for_unit_path(
+            "/home/alice/.config/systemd/user/forge-gateway.service",
+        );
+
+        assert_eq!(
+            plan.daemon_reload,
+            vec!["--user".to_string(), "daemon-reload".to_string()]
+        );
+        assert_eq!(
+            plan.enable_now,
+            vec![
+                "--user".to_string(),
+                "enable".to_string(),
+                "--now".to_string(),
+                "forge-gateway.service".to_string(),
+            ]
+        );
+        assert_eq!(
+            plan.unit_path,
+            "/home/alice/.config/systemd/user/forge-gateway.service"
+        );
+    }
+
+    #[test]
+    fn service_status_from_parts_detects_running_unit() {
+        let status = service_status_from_parts(true, true, true, "active\n", "");
+
+        assert!(status.supported);
+        assert!(status.installed);
+        assert!(status.running);
+        assert!(status.message.contains("installed and running"));
+        assert!(status.status_message.contains("is running"));
+    }
+
+    #[test]
+    fn service_status_from_parts_detects_installed_but_inactive_unit() {
+        let status = service_status_from_parts(true, true, false, "inactive\n", "");
+
+        assert!(status.supported);
+        assert!(status.installed);
+        assert!(!status.running);
+        assert!(status.message.contains("installed but not running"));
+        assert!(status.status_message.contains("not running"));
     }
 }
