@@ -1,13 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
-import { hasTauriRuntime } from "./core";
+import { hasTauriRuntime } from "./core.ts";
 import type {
   DiagnosticsReport,
+  EnqueueGatewayTriggerInput,
+  EnqueueGatewayTriggerResult,
   GatewayRuntimeStatus,
   LogEntry,
   RepairAction,
   RepairResult,
   ServiceStatus,
-} from "./types";
+} from "./types.ts";
 
 export async function getServiceStatus(): Promise<ServiceStatus> {
   if (!hasTauriRuntime()) {
@@ -79,4 +81,13 @@ export async function getGatewayRuntimeStatus(): Promise<GatewayRuntimeStatus> {
     };
   }
   return invoke<GatewayRuntimeStatus>("get_gateway_runtime_status");
+}
+
+export async function enqueueGatewayTrigger(
+  input: EnqueueGatewayTriggerInput,
+): Promise<EnqueueGatewayTriggerResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway trigger enqueue is not available outside Tauri runtime.");
+  }
+  return invoke<EnqueueGatewayTriggerResult>("enqueue_gateway_trigger", { input });
 }

@@ -488,13 +488,14 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Validation | ✅ Done | Missing/blank message returns JSON-RPC invalid params without mutating the queue |
 | Rust trigger CLI | ✅ Done | `forge_trigger enqueue/list/runs/status` talks to the gateway socket and renders pending/runs/status output |
 | Bun CLI wrapper | ✅ Done | `forge trigger enqueue/list/runs/status` forwards to `forge_trigger` with tests |
-| Still deferred | ⏸️ Deferred | Dashboard controls for trigger enqueue/listing/runs |
+| Diagnostics enqueue control | ✅ Done | Settings > Diagnostics can enqueue a gateway trigger with optional profile/provider/model/workspace metadata and refresh runtime status |
+| Still deferred | ⏸️ Deferred | Full dashboard listing/replay controls and manual HTTP smoke |
 
 **Acceptance gate (updated Phase 5-C):**
 
 - Desktop and CLI can read/write the same memory. **(Phase 5-A: ✅ Done)**
 - A scheduled task records next-run display and run history in the local scheduler. **(Phase 5-C: ✅ Done — deterministic MVP history; actual agent session execution deferred)**
-- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook, IPC enqueue, gateway runner, and CLI controls exist; dashboard/manual HTTP smoke still deferred)**
+- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook, IPC enqueue, gateway runner, CLI controls, and Diagnostics enqueue control exist; full dashboard listing/replay and manual HTTP smoke still deferred)**
 - Settings > Scheduler panel allows create, edit, enable/disable, run now, delete. **(Phase 5-C: ✅ Done)**
 
 **Verification plan:**
@@ -730,7 +731,7 @@ Codex must stop and ask the user if any of the following occur:
 - Phase 6.6: Dashboard web UI
 - Phase 6.7: Update repair
 - Phase 6.8: Self-healing actions
-- Phase 5.7: Messaging trigger dashboard polish
+- Phase 5.7: Messaging trigger full dashboard listing/replay polish
 - Phase 7: Full product polish + acceptance suite
 
 ## Appendix — Likely Files/Modules by Domain

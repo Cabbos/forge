@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::diagnostics::{self, CapabilitySummary};
 use crate::gateway::client::GatewayClient;
-use crate::gateway::protocol::{GatewayReply, GatewayRequest};
+use crate::gateway::protocol::{
+    EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest,
+};
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::harness::skills::SkillLoader;
 use crate::ipc::capability_handlers::{
@@ -24,6 +26,26 @@ pub async fn get_diagnostics_report(
 #[tauri::command]
 pub async fn get_gateway_runtime_status() -> Result<GatewayRuntimeStatus, String> {
     Ok(read_gateway_runtime_status().await)
+}
+
+#[tauri::command]
+pub async fn enqueue_gateway_trigger(
+    input: EnqueueTriggerParams,
+) -> Result<EnqueueTriggerResult, String> {
+    let request = build_enqueue_gateway_trigger_request(input)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<EnqueueTriggerResult>(response.result)
+                .map_err(|error| format!("Gateway returned invalid enqueue result: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => {
+            Err(format!("Gateway enqueue error: {}", error.error.message))
+        }
+        Err(error) => Err(format!("Gateway enqueue request failed: {error}")),
+    }
 }
 
 async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
@@ -56,6 +78,36 @@ async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
             unavailable_gateway_runtime_status(format!("Gateway status request failed: {error}"))
         }
     }
+}
+
+fn build_enqueue_gateway_trigger_request(
+    input: EnqueueTriggerParams,
+) -> Result<GatewayRequest, String> {
+    let message = input.message.trim().to_string();
+    if message.is_empty() {
+        return Err("message must not be empty".to_string());
+    }
+
+    let params = EnqueueTriggerParams {
+        message,
+        trigger_id: clean_optional_string(input.trigger_id),
+        profile_id: clean_optional_string(input.profile_id),
+        provider: clean_optional_string(input.provider),
+        model: clean_optional_string(input.model),
+        workspace_path: clean_optional_string(input.workspace_path),
+    };
+
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "enqueue_trigger".to_string(),
+        params: Some(serde_json::to_value(params).unwrap()),
+    })
+}
+
+fn clean_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn unavailable_gateway_runtime_status(message: impl Into<String>) -> GatewayRuntimeStatus {
@@ -139,6 +191,8 @@ pub async fn list_repair_actions() -> Result<Vec<crate::diagnostics::repair::Rep
 
 #[cfg(test)]
 mod tests {
+    use crate::gateway::protocol::EnqueueTriggerParams;
+
     #[test]
     fn unavailable_gateway_runtime_status_is_renderable() {
         let status = super::unavailable_gateway_runtime_status("gateway offline");
@@ -149,5 +203,43 @@ mod tests {
         assert_eq!(status.dead_letter_runs, 0);
         assert!(status.recent_runs.is_empty());
         assert!(status.message.contains("gateway offline"));
+    }
+
+    #[test]
+    fn build_enqueue_gateway_trigger_request_serializes_metadata() {
+        let request = super::build_enqueue_gateway_trigger_request(EnqueueTriggerParams {
+            message: "run dashboard digest".to_string(),
+            trigger_id: None,
+            profile_id: Some("ops".to_string()),
+            provider: Some("openai".to_string()),
+            model: Some("gpt-5".to_string()),
+            workspace_path: Some("/repo/workspace".to_string()),
+        })
+        .expect("request");
+
+        assert_eq!(request.method, "enqueue_trigger");
+        let params =
+            serde_json::from_value::<EnqueueTriggerParams>(request.params.expect("params"))
+                .expect("params");
+        assert_eq!(params.message, "run dashboard digest");
+        assert_eq!(params.profile_id.as_deref(), Some("ops"));
+        assert_eq!(params.provider.as_deref(), Some("openai"));
+        assert_eq!(params.model.as_deref(), Some("gpt-5"));
+        assert_eq!(params.workspace_path.as_deref(), Some("/repo/workspace"));
+    }
+
+    #[test]
+    fn build_enqueue_gateway_trigger_request_rejects_blank_message() {
+        let error = super::build_enqueue_gateway_trigger_request(EnqueueTriggerParams {
+            message: "  ".to_string(),
+            trigger_id: None,
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: None,
+        })
+        .expect_err("blank message");
+
+        assert!(error.contains("message must not be empty"));
     }
 }

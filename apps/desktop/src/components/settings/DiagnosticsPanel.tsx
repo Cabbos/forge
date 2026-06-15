@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Wrench, XCircle } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Send, Wrench, XCircle } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
 import { useGatewayRuntimeStatusQuery } from "@/hooks/queries/useGatewayRuntimeStatusQuery";
@@ -11,9 +11,9 @@ import type {
   GatewayRuntimeStatus,
   GatewayTriggerRunRecord,
 } from "@/lib/tauri";
-import { runRepairAction } from "@/lib/tauri";
+import { enqueueGatewayTrigger, runRepairAction } from "@/lib/tauri";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { buildGatewayRuntimeSummary } from "./diagnosticsRuntimeView";
+import { buildGatewayRuntimeSummary, buildGatewayTriggerInput } from "./diagnosticsRuntimeView";
 import { buildDiagnosticRepairAction } from "./diagnosticsRepairView";
 import { formatMutationError } from "./settingsUtils";
 
@@ -160,6 +160,15 @@ function GatewayRuntimePanel({
   queryError: string | null;
   onRefresh: () => void;
 }) {
+  const [triggerMessage, setTriggerMessage] = useState("");
+  const [triggerProfileId, setTriggerProfileId] = useState("");
+  const [triggerProvider, setTriggerProvider] = useState("");
+  const [triggerModel, setTriggerModel] = useState("");
+  const [triggerWorkspacePath, setTriggerWorkspacePath] = useState("");
+  const [isEnqueuingTrigger, setIsEnqueuingTrigger] = useState(false);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [triggerMessageStatus, setTriggerMessageStatus] = useState<string | null>(null);
+
   if (isLoading && !status) {
     return (
       <div className="forge-settings-readonly-panel">
@@ -192,6 +201,39 @@ function GatewayRuntimePanel({
   const summary = buildGatewayRuntimeSummary(runtime);
   const Icon = STATUS_ICON[summary.tone] ?? CheckCircle;
   const cls = STATUS_CLASS[summary.tone] ?? STATUS_CLASS.pass;
+  const handleEnqueueTrigger = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isEnqueuingTrigger) return;
+
+    const built = buildGatewayTriggerInput({
+      message: triggerMessage,
+      profileId: triggerProfileId,
+      provider: triggerProvider,
+      model: triggerModel,
+      workspacePath: triggerWorkspacePath,
+    });
+    if (!built.input) {
+      setTriggerError(built.error);
+      setTriggerMessageStatus(null);
+      return;
+    }
+
+    setIsEnqueuingTrigger(true);
+    setTriggerError(null);
+    setTriggerMessageStatus(null);
+    try {
+      const result = await enqueueGatewayTrigger(built.input);
+      setTriggerMessage("");
+      setTriggerMessageStatus(
+        `已排入 ${result.trigger_id}，当前 pending ${result.pending_triggers} 个。`,
+      );
+      onRefresh();
+    } catch (error) {
+      setTriggerError(formatMutationError(error));
+    } finally {
+      setIsEnqueuingTrigger(false);
+    }
+  };
 
   return (
     <div className="forge-settings-readonly-panel">
@@ -222,6 +264,77 @@ function GatewayRuntimePanel({
           </dd>
         </div>
       </div>
+      <form className="forge-gateway-trigger-form" onSubmit={handleEnqueueTrigger}>
+        <textarea
+          className="forge-gateway-trigger-message"
+          value={triggerMessage}
+          onChange={(event) => setTriggerMessage(event.target.value)}
+          placeholder="排入后台 trigger 的消息"
+          rows={3}
+          disabled={isEnqueuingTrigger}
+        />
+        <div className="forge-gateway-trigger-grid">
+          <input
+            className="forge-gateway-trigger-input"
+            value={triggerProfileId}
+            onChange={(event) => setTriggerProfileId(event.target.value)}
+            placeholder="profile id"
+            disabled={isEnqueuingTrigger}
+          />
+          <input
+            className="forge-gateway-trigger-input"
+            value={triggerProvider}
+            onChange={(event) => setTriggerProvider(event.target.value)}
+            placeholder="provider"
+            disabled={isEnqueuingTrigger}
+          />
+          <input
+            className="forge-gateway-trigger-input"
+            value={triggerModel}
+            onChange={(event) => setTriggerModel(event.target.value)}
+            placeholder="model"
+            disabled={isEnqueuingTrigger}
+          />
+          <input
+            className="forge-gateway-trigger-input"
+            value={triggerWorkspacePath}
+            onChange={(event) => setTriggerWorkspacePath(event.target.value)}
+            placeholder="workspace path"
+            disabled={isEnqueuingTrigger}
+          />
+        </div>
+        {triggerError && (
+          <div className="forge-settings-error" role="alert">
+            <XCircle className="size-3.5" />
+            <span>{triggerError}</span>
+          </div>
+        )}
+        {triggerMessageStatus && (
+          <div className="forge-settings-success" role="status">
+            <CheckCircle className="size-3.5" />
+            <span>{triggerMessageStatus}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <ButtonPrimitive
+            type="submit"
+            disabled={isEnqueuingTrigger}
+            className="forge-settings-nav-button"
+            aria-label="Enqueue gateway trigger"
+          >
+            <span className="forge-settings-nav-icon" aria-hidden="true">
+              {isEnqueuingTrigger ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Send className="size-3.5" />
+              )}
+            </span>
+            <span className="forge-settings-nav-copy">
+              <span className="forge-settings-nav-title">排入 Trigger</span>
+            </span>
+          </ButtonPrimitive>
+        </div>
+      </form>
       <div className="flex items-center gap-2">
         <ButtonPrimitive
           type="button"

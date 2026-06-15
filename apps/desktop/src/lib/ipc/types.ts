@@ -358,6 +358,21 @@ export interface GatewayRuntimeStatus {
   recent_runs: GatewayTriggerRunRecord[];
 }
 
+export interface EnqueueGatewayTriggerInput {
+  message: string;
+  trigger_id?: string | null;
+  profile_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  workspace_path?: string | null;
+}
+
+export interface EnqueueGatewayTriggerResult {
+  ok: boolean;
+  trigger_id: string;
+  pending_triggers: number;
+}
+
 export interface RepairAction {
   id: string;
   label: string;

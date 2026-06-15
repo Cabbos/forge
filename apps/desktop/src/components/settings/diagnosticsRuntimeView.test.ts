@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildGatewayRuntimeSummary } from "./diagnosticsRuntimeView.ts";
+import {
+  buildGatewayRuntimeSummary,
+  buildGatewayTriggerInput,
+} from "./diagnosticsRuntimeView.ts";
 
 describe("buildGatewayRuntimeSummary", () => {
   it("summarizes reachable runtime queues and dead letters", () => {
@@ -36,5 +39,41 @@ describe("buildGatewayRuntimeSummary", () => {
     assert.equal(summary.tone, "fail");
     assert.equal(summary.statusText, "不可用");
     assert.equal(summary.counts, "0 pending · 0 claimed · 0 dead-letter");
+  });
+});
+
+describe("buildGatewayTriggerInput", () => {
+  it("trims trigger form fields and maps them to gateway params", () => {
+    const result = buildGatewayTriggerInput({
+      message: "  run dashboard digest  ",
+      profileId: " ops ",
+      provider: " openai ",
+      model: " gpt-5 ",
+      workspacePath: " /repo/workspace ",
+    });
+
+    assert.deepEqual(result, {
+      input: {
+        message: "run dashboard digest",
+        profile_id: "ops",
+        provider: "openai",
+        model: "gpt-5",
+        workspace_path: "/repo/workspace",
+      },
+      error: null,
+    });
+  });
+
+  it("rejects blank trigger messages", () => {
+    const result = buildGatewayTriggerInput({
+      message: "   ",
+      profileId: "",
+      provider: "",
+      model: "",
+      workspacePath: "",
+    });
+
+    assert.equal(result.input, null);
+    assert.equal(result.error, "Message is required.");
   });
 });
