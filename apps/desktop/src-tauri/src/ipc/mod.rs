@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod mcp_context;
 pub mod memory_handlers;
 pub mod open_file;
+pub mod permission_handlers;
 pub mod profile_handlers;
 pub mod project_checkpoint;
 pub mod project_records;

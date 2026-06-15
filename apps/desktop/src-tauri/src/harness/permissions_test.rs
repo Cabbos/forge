@@ -295,4 +295,70 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn persistent_deny_overrides_default_allowed_tools() {
+        let (db, dir) = temp_db();
+        let gate = PermissionGate::new(db);
+        let input = serde_json::json!({"path": "src/main.rs"});
+
+        gate.deny_permanently("read").await;
+
+        let decision = gate.check("session-1", "read", &input, &dir).await;
+        assert!(
+            matches!(decision, PermissionDecision::Deny { .. }),
+            "persistent deny should override built-in read allowlist: {:?}",
+            decision
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn reset_permission_restores_default_policy() {
+        let (db, dir) = temp_db();
+        let gate = PermissionGate::new(db);
+        let input = serde_json::json!({"path": "src/main.rs"});
+
+        gate.deny_permanently("read_file").await;
+        assert!(
+            matches!(
+                gate.check("session-1", "read_file", &input, &dir).await,
+                PermissionDecision::Deny { .. }
+            ),
+            "read_file should be denied before reset"
+        );
+
+        gate.reset_permission("read_file").await;
+
+        let decision = gate.check("session-1", "read_file", &input, &dir).await;
+        assert!(
+            matches!(decision, PermissionDecision::Allow),
+            "reset should restore the built-in read_file allow policy: {:?}",
+            decision
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn database_lists_latest_permission_rules() {
+        let (db, dir) = temp_db();
+
+        db.upsert_permission("write_to_file", true)
+            .expect("allow write");
+        db.upsert_permission("write_to_file", false)
+            .expect("deny write");
+        db.upsert_permission("run_shell", true)
+            .expect("allow shell");
+
+        let rules = db.list_permission_rules().expect("list rules");
+
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].tool_name, "run_shell");
+        assert!(rules[0].approved);
+        assert_eq!(rules[1].tool_name, "write_to_file");
+        assert!(!rules[1].approved);
+        assert!(!db.is_permission_approved("write_to_file").unwrap());
+        assert!(db.is_permission_denied("write_to_file").unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

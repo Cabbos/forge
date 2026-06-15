@@ -88,6 +88,19 @@ export interface RenameSessionSnapshotInput {
   summary: string;
 }
 
+export type PermissionRuleDecision = "allow" | "deny";
+
+export interface PermissionRuleView {
+  tool_name: string;
+  decision: PermissionRuleDecision;
+  created_at: string;
+}
+
+export interface SetPermissionRuleInput {
+  toolName: string;
+  decision: PermissionRuleDecision;
+}
+
 export interface AppWorkspaceMetadata {
   id: string;
   name: string;

@@ -8,6 +8,7 @@ export * from "./ipc/a2a";
 export * from "./ipc/apiKeys";
 export * from "./ipc/capabilities";
 export * from "./ipc/ecosystem";
+export * from "./ipc/permissions";
 export * from "./ipc/mcp";
 export * from "./ipc/files";
 export * from "./ipc/project";

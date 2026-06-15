@@ -616,6 +616,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 7.3 health-alert follow-up (2026-06-16):** `health_alert` events now bypass active-session filtering like recovery notices, so gateway/watchdog failures surface even when no conversation is selected. Missing API key errors now also upsert a critical global health alert pointing users to Settings > Models while preserving the existing in-thread missing-key card. Playwright covers both no-active-session health alerts and active-session missing-key promotion.
   - Files: `src/components/RecoverySurface.tsx`, `store/index.ts`.
 - [ ] 7.4 Implement permission states: per-tool permission levels, allowlist, denylist, reset.
+  - **Phase 7.4 backend contract follow-up (2026-06-16):** Permission persistence now models latest per-tool allow/deny rules instead of append-only approvals. `PermissionGate` supports permanent deny and reset, deny rules override built-in allowlisted tools, and reset restores the default policy. Added Tauri IPC commands plus TS wrappers for `list_permission_rules`, `set_permission_rule`, and `reset_permission_rule`, giving the future Settings permission panel a stable backend contract.
   - Files: `executor/permissions.rs`, `src/components/settings/PermissionsPanel.tsx`.
 - [ ] 7.5 Implement rich previews: image diff, file tree diff, markdown preview for writes.
   - Files: `src/components/messages/WriteFilePreview.tsx`, `DiffPreview.tsx`.
