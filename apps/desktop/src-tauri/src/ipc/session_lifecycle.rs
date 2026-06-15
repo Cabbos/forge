@@ -10,7 +10,7 @@ use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
     ActiveToolCallDescriptor, AgentSessionSnapshot, PendingConfirmDescriptor,
 };
-use crate::gateway::server::GatewaySessionInfo;
+use crate::gateway::protocol::GatewaySessionInfo;
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::emit_delivery_summary;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};

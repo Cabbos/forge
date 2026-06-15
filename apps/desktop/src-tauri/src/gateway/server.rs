@@ -2,9 +2,10 @@
 //! response serialization.
 
 use crate::gateway::protocol::{
-    serialize_reply, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
-    EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest,
-    GatewayResponse, GetTriggerRunParams, GetTriggerRunResult, HealthResult, PingResult,
+    serialize_reply, AttachSessionParams, AttachSessionResult, CancelTriggerParams,
+    CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
+    GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
+    GatewaySessionInfo, GetTriggerRunParams, GetTriggerRunResult, HealthResult, PingResult,
     ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
@@ -16,24 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-
-// ── Session info ─────────────────────────────────────────────────────────────
-
-/// Lightweight session record tracked by the gateway.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GatewaySessionInfo {
-    pub session_id: String,
-    pub provider: String,
-    pub model: String,
-    pub workspace_path: String,
-    pub created_at_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner_pid: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_seen_at_ms: Option<u64>,
-    #[serde(default)]
-    pub restored_from_registry: bool,
-}
 
 /// Gateway runtime snapshot for diagnostics/status surfaces.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -151,6 +134,35 @@ impl GatewayState {
             .unwrap_or_default()
     }
 
+    /// Return the gateway's current attachment view for a single session id.
+    pub fn attach_session(&self, session_id: &str) -> AttachSessionResult {
+        let session_id = session_id.trim().to_string();
+        let session = self
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|sessions| sessions.get(&session_id).cloned());
+        let Some(session) = session else {
+            return AttachSessionResult {
+                ok: false,
+                session_id,
+                status: GatewaySessionAttachStatus::Missing,
+                message: "Session is not registered with the gateway.".to_string(),
+                session: None,
+            };
+        };
+
+        let status = session_attach_status_at(&session, now_millis());
+        let ok = matches!(status, GatewaySessionAttachStatus::Live);
+        AttachSessionResult {
+            ok,
+            session_id,
+            status,
+            message: session_attach_message(status).to_string(),
+            session: Some(session),
+        }
+    }
+
     fn save_session_registry_locked(&self, sessions: &HashMap<String, GatewaySessionInfo>) {
         let Some(path) = &self.session_registry_path else {
             return;
@@ -232,6 +244,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "ping" => handle_ping(request.id),
         "health" => handle_health(state, request.id),
         "list_sessions" => handle_list_sessions(state, request.id),
+        "attach_session" => handle_attach_session(state, request),
         "register_session" => handle_register_session(state, request),
         "unregister_session" => handle_unregister_session(state, request),
         "list_pending_triggers" => handle_list_triggers(state, request.id),
@@ -250,6 +263,25 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
             },
         }),
     }
+}
+
+fn handle_attach_session(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<AttachSessionParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let session_id = params.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return invalid_params(request.id, "session_id must not be empty");
+    }
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(state.attach_session(&session_id)).unwrap(),
+    })
 }
 
 fn handle_ping(id: String) -> GatewayReply {
@@ -710,6 +742,36 @@ fn session_counts_as_active_at(session: &GatewaySessionInfo, now_ms: u64) -> boo
     now_ms.saturating_sub(last_seen_at_ms) <= SESSION_STALE_AFTER_MS
 }
 
+fn session_attach_status_at(
+    session: &GatewaySessionInfo,
+    now_ms: u64,
+) -> GatewaySessionAttachStatus {
+    if session.restored_from_registry {
+        return GatewaySessionAttachStatus::Restored;
+    }
+
+    if let Some(last_seen_at_ms) = session.last_seen_at_ms {
+        if now_ms.saturating_sub(last_seen_at_ms) > SESSION_STALE_AFTER_MS {
+            return GatewaySessionAttachStatus::Stale;
+        }
+    }
+
+    GatewaySessionAttachStatus::Live
+}
+
+fn session_attach_message(status: GatewaySessionAttachStatus) -> &'static str {
+    match status {
+        GatewaySessionAttachStatus::Live => "Session is live and attachable.",
+        GatewaySessionAttachStatus::Restored => {
+            "Session metadata was restored from the gateway registry; reopen the owning runtime before attaching."
+        }
+        GatewaySessionAttachStatus::Stale => {
+            "Session heartbeat is stale; the owning runtime may have exited unexpectedly."
+        }
+        GatewaySessionAttachStatus::Missing => "Session is not registered with the gateway.",
+    }
+}
+
 fn new_trigger_id() -> String {
     uuid::Uuid::now_v7().simple().to_string()
 }
@@ -975,6 +1037,70 @@ mod tests {
                 );
             }
             _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn dispatch_attach_session_classifies_session_states() {
+        let state = test_gateway_state();
+        state.register_session(test_session("session-live", "claude"));
+
+        let mut restored = test_session("session-restored", "codex");
+        restored.restored_from_registry = true;
+        state.register_session(restored);
+
+        let mut stale = test_session("session-stale", "openai");
+        stale.last_seen_at_ms = Some(now_millis().saturating_sub(SESSION_STALE_AFTER_MS + 1));
+        state.register_session(stale);
+
+        let cases = [
+            (
+                "session-live",
+                crate::gateway::protocol::GatewaySessionAttachStatus::Live,
+                true,
+            ),
+            (
+                "session-restored",
+                crate::gateway::protocol::GatewaySessionAttachStatus::Restored,
+                false,
+            ),
+            (
+                "session-stale",
+                crate::gateway::protocol::GatewaySessionAttachStatus::Stale,
+                false,
+            ),
+            (
+                "missing",
+                crate::gateway::protocol::GatewaySessionAttachStatus::Missing,
+                false,
+            ),
+        ];
+
+        for (session_id, expected_status, expected_ok) in cases {
+            let reply = dispatch(
+                &state,
+                GatewayRequest {
+                    id: format!("attach-{session_id}"),
+                    method: "attach_session".into(),
+                    params: Some(serde_json::json!({ "session_id": format!(" {session_id} ") })),
+                },
+            );
+
+            match reply {
+                GatewayReply::Ok(resp) => {
+                    let result: crate::gateway::protocol::AttachSessionResult =
+                        serde_json::from_value(resp.result).expect("parse attach result");
+                    assert_eq!(result.session_id, session_id);
+                    assert_eq!(result.status, expected_status);
+                    assert_eq!(result.ok, expected_ok);
+                    assert_eq!(
+                        result.session.is_some(),
+                        expected_status
+                            != crate::gateway::protocol::GatewaySessionAttachStatus::Missing
+                    );
+                }
+                _ => panic!("expected Ok attach reply for {session_id}"),
+            }
         }
     }
 

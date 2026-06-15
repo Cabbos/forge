@@ -1,8 +1,8 @@
 //! Forge Session CLI — inspect active gateway sessions and local session store.
 //!
-//! Usage: `forge_session <list|stats|search|export|prune>`
+//! Usage: `forge_session <list|attach|stats|search|export|prune>`
 
-use forge::gateway::client::GatewayClient;
+use forge::gateway::client::{build_attach_session_request, GatewayClient};
 use forge::gateway::protocol::GatewayRequest;
 use forge::gateway::server::{default_socket_path, SESSION_STALE_AFTER_MS};
 use forge::session_store::{
@@ -17,6 +17,13 @@ async fn main() {
 
     match cmd {
         "list" => list_gateway_sessions().await,
+        "attach" => {
+            let Some(session_id) = args.get(2) else {
+                eprintln!("Usage: forge_session attach <session_id>");
+                std::process::exit(1);
+            };
+            attach_gateway_session(session_id).await;
+        }
         "stats" => match forge::session_store::stats() {
             Ok(stats) => {
                 for line in render_store_stats_lines(&stats) {
@@ -66,7 +73,7 @@ async fn main() {
             }
         },
         _ => {
-            eprintln!("Usage: forge_session list|stats|search|export|prune");
+            eprintln!("Usage: forge_session list|attach|stats|search|export|prune");
             std::process::exit(1);
         }
     }
@@ -121,6 +128,51 @@ async fn list_gateway_sessions() {
     }
 }
 
+async fn attach_gateway_session(session_id: &str) {
+    let socket_path = default_socket_path();
+    if !socket_path.exists() {
+        println!(
+            "Gateway is not running (no socket at {}).",
+            socket_path.display()
+        );
+        println!("Start it with: forge service start");
+        return;
+    }
+
+    let request = match build_attach_session_request(session_id) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+
+    match GatewayClient::connect(&socket_path).await {
+        Ok(mut client) => match client.send(request).await {
+            Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
+                for line in render_attach_result_lines(&resp.result) {
+                    println!("{line}");
+                }
+            }
+            Ok(forge::gateway::protocol::GatewayReply::Err(err)) => {
+                eprintln!(
+                    "Gateway error: {} (code: {})",
+                    err.error.message, err.error.code
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("Request failed: {error}");
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("Failed to connect to gateway: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn exit_with_error(message: String) -> ! {
     eprintln!("{message}");
     std::process::exit(1);
@@ -141,6 +193,25 @@ fn render_session_lines(sessions: &[serde_json::Value]) -> Vec<String> {
         let state = session_state_label(session);
         lines.push(format!("  {id}  {state}  {provider}/{model}  {workspace}"));
     }
+    lines
+}
+
+fn render_attach_result_lines(result: &serde_json::Value) -> Vec<String> {
+    let session_id = result["session_id"].as_str().unwrap_or("?");
+    let status = result["status"].as_str().unwrap_or("unknown");
+    let message = result["message"].as_str().unwrap_or("");
+    let mut lines = vec![
+        "Gateway session attach:".to_string(),
+        format!("  {session_id}  {status}  {message}"),
+    ];
+
+    if let Some(session) = result.get("session") {
+        let provider = session["provider"].as_str().unwrap_or("?");
+        let model = session["model"].as_str().unwrap_or("?");
+        let workspace = session["workspace_path"].as_str().unwrap_or("?");
+        lines.push(format!("  {provider}/{model}  {workspace}"));
+    }
+
     lines
 }
 
@@ -369,5 +440,30 @@ mod tests {
 
         assert_eq!(super::parse_prune_args(&args).unwrap(), (25, Some(1000)));
         assert!(super::parse_prune_args(&[]).is_err());
+    }
+
+    #[test]
+    fn render_attach_result_lines_shows_status_and_session() {
+        let result = serde_json::json!({
+            "ok": true,
+            "session_id": "session-live",
+            "status": "live",
+            "message": "Session is live and attachable.",
+            "session": {
+                "session_id": "session-live",
+                "provider": "claude",
+                "model": "opus",
+                "workspace_path": "/repo/live"
+            }
+        });
+
+        let lines = super::render_attach_result_lines(&result);
+
+        assert_eq!(lines[0], "Gateway session attach:");
+        assert_eq!(
+            lines[1],
+            "  session-live  live  Session is live and attachable."
+        );
+        assert_eq!(lines[2], "  claude/opus  /repo/live");
     }
 }

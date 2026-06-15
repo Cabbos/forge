@@ -49,6 +49,22 @@ pub enum GatewayReply {
     Err(GatewayError),
 }
 
+/// Lightweight session record tracked by the gateway.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewaySessionInfo {
+    pub session_id: String,
+    pub provider: String,
+    pub model: String,
+    pub workspace_path: String,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_at_ms: Option<u64>,
+    #[serde(default)]
+    pub restored_from_registry: bool,
+}
+
 // ── Well-known methods ──────────────────────────────────────────────────────
 
 /// Result of the `ping` method.
@@ -65,6 +81,32 @@ pub struct HealthResult {
     pub uptime_seconds: u64,
     pub active_sessions: usize,
     pub gateway_version: String,
+}
+
+/// Parameters for attaching to a session known by the gateway registry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachSessionParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewaySessionAttachStatus {
+    Live,
+    Restored,
+    Stale,
+    Missing,
+}
+
+/// Result returned by `attach_session`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachSessionResult {
+    pub ok: bool,
+    pub session_id: String,
+    pub status: GatewaySessionAttachStatus,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<GatewaySessionInfo>,
 }
 
 /// Parameters for queueing a gateway trigger through the Unix socket.
@@ -287,6 +329,37 @@ mod tests {
         };
         let json = serde_json::to_string(&result).expect("serialize result");
         let back: GetTriggerRunResult = serde_json::from_str(&json).expect("deserialize result");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn attach_session_params_and_result_roundtrip() {
+        let params = AttachSessionParams {
+            session_id: " session-1 ".into(),
+        };
+        let json = serde_json::to_string(&params).expect("serialize params");
+        let back: AttachSessionParams = serde_json::from_str(&json).expect("deserialize params");
+        assert_eq!(back, params);
+
+        let result = AttachSessionResult {
+            ok: true,
+            session_id: "session-1".into(),
+            status: GatewaySessionAttachStatus::Live,
+            message: "Session is live and attachable.".into(),
+            session: Some(GatewaySessionInfo {
+                session_id: "session-1".into(),
+                provider: "openai".into(),
+                model: "gpt-5".into(),
+                workspace_path: "/repo".into(),
+                created_at_ms: 10,
+                owner_pid: Some(42),
+                last_seen_at_ms: Some(20),
+                restored_from_registry: false,
+            }),
+        };
+        let json = serde_json::to_string(&result).expect("serialize result");
+        assert!(json.contains("\"status\":\"live\""));
+        let back: AttachSessionResult = serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }
 
