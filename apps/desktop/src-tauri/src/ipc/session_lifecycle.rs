@@ -9,6 +9,7 @@ use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
     ActiveToolCallDescriptor, AgentSessionSnapshot, PendingConfirmDescriptor,
 };
+use crate::gateway::server::GatewaySessionInfo;
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::emit_delivery_summary;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
@@ -89,10 +90,45 @@ pub(crate) async fn register_and_dispatch_session_start(
     state
         .register_session(session_id.to_string(), session.clone())
         .await;
+    register_gateway_session_best_effort(session_id, &session).await;
     let _ = session
         .harness
         .dispatch_session_start_event(session_id)
         .await;
+}
+
+pub(crate) fn gateway_session_info_for_session(
+    session_id: &str,
+    session: &AgentSession,
+) -> GatewaySessionInfo {
+    let snapshot = session.snapshot();
+    GatewaySessionInfo {
+        session_id: session_id.to_string(),
+        provider: session.agent_type.clone(),
+        model: session.model_id.clone(),
+        workspace_path: snapshot.working_dir,
+        created_at_ms: snapshot.created_at_ms,
+        restored_from_registry: false,
+    }
+}
+
+pub(crate) async fn register_gateway_session_best_effort(session_id: &str, session: &AgentSession) {
+    let info = gateway_session_info_for_session(session_id, session);
+    if let Err(error) = crate::gateway::client::try_register_session(info).await {
+        crate::app_log!(
+            "WARN",
+            "[gateway] failed to register session '{session_id}': {error}"
+        );
+    }
+}
+
+pub(crate) async fn unregister_gateway_session_best_effort(session_id: &str) {
+    if let Err(error) = crate::gateway::client::try_unregister_session(session_id).await {
+        crate::app_log!(
+            "WARN",
+            "[gateway] failed to unregister session '{session_id}': {error}"
+        );
+    }
 }
 
 pub(crate) struct RestoredSession {
@@ -309,6 +345,7 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
     state
         .register_session(snapshot.session_id.clone(), upgraded.clone())
         .await;
+    register_gateway_session_best_effort(&snapshot.session_id, &upgraded).await;
     let _ = upgraded
         .harness
         .dispatch_session_start_event(&snapshot.session_id)
@@ -443,6 +480,7 @@ pub async fn kill_session(
     if let Some(s) = state.sessions.read().await.get(&session_id).cloned() {
         s.kill(&app_handle);
         let _ = s.harness.dispatch_session_stop_event(&session_id).await;
+        unregister_gateway_session_best_effort(&session_id).await;
         if let Err(error) = save_session_snapshot_with_workflow(&state, &s).await {
             crate::app_log!("WARN", "[session_snapshot] {}", error);
         }
@@ -467,6 +505,7 @@ pub async fn delete_session(
         let _ = s.harness.dispatch_session_stop_event(&session_id).await;
     }
     state.unregister_session(&session_id).await;
+    unregister_gateway_session_best_effort(&session_id).await;
     state.workflow_states.write().await.remove(&session_id);
     state.delivery_states.write().await.remove(&session_id);
     if let Err(error) = delete_session_snapshot(&session_id) {

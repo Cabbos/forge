@@ -2,6 +2,7 @@
 //! requests, and parse responses.
 
 use crate::gateway::protocol::{GatewayReply, GatewayRequest};
+use crate::gateway::server::{default_socket_path, GatewaySessionInfo};
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -75,6 +76,53 @@ pub async fn health(socket_path: &PathBuf) -> Result<GatewayReply, String> {
         .await
 }
 
+pub fn build_register_session_request(info: GatewaySessionInfo) -> Result<GatewayRequest, String> {
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "register_session".to_string(),
+        params: Some(
+            serde_json::to_value(info).map_err(|error| format!("serialize session: {error}"))?,
+        ),
+    })
+}
+
+pub fn build_unregister_session_request(session_id: &str) -> Result<GatewayRequest, String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Err("session_id must not be empty".to_string());
+    }
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "unregister_session".to_string(),
+        params: Some(serde_json::json!({ "session_id": session_id })),
+    })
+}
+
+pub async fn try_register_session(info: GatewaySessionInfo) -> Result<(), String> {
+    let request = build_register_session_request(info)?;
+    send_best_effort_gateway_request(request).await
+}
+
+pub async fn try_unregister_session(session_id: &str) -> Result<(), String> {
+    let request = build_unregister_session_request(session_id)?;
+    send_best_effort_gateway_request(request).await
+}
+
+async fn send_best_effort_gateway_request(request: GatewayRequest) -> Result<(), String> {
+    let socket_path = default_socket_path();
+    if !socket_path.exists() {
+        return Err(format!(
+            "gateway socket is not available at {}",
+            socket_path.display()
+        ));
+    }
+    let mut client = GatewayClient::connect(&socket_path).await?;
+    match client.send(request).await? {
+        GatewayReply::Ok(_) => Ok(()),
+        GatewayReply::Err(error) => Err(format!("gateway error: {}", error.error.message)),
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -118,5 +166,36 @@ mod tests {
             }
             _ => panic!("expected Err"),
         }
+    }
+
+    #[test]
+    fn register_session_request_carries_session_metadata() {
+        let request = build_register_session_request(GatewaySessionInfo {
+            session_id: "session-1".into(),
+            provider: "openai".into(),
+            model: "gpt-5".into(),
+            workspace_path: "/repo".into(),
+            created_at_ms: 1234,
+            restored_from_registry: false,
+        })
+        .expect("request");
+
+        assert_eq!(request.method, "register_session");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+        assert_eq!(params["provider"], "openai");
+        assert_eq!(params["model"], "gpt-5");
+        assert_eq!(params["workspace_path"], "/repo");
+        assert_eq!(params["created_at_ms"], 1234);
+        assert_eq!(params["restored_from_registry"], false);
+    }
+
+    #[test]
+    fn unregister_session_request_trims_session_id() {
+        let request = build_unregister_session_request(" session-1 ").expect("request");
+
+        assert_eq!(request.method, "unregister_session");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
     }
 }

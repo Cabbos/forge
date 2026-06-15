@@ -13,8 +13,8 @@ use crate::agent::snapshot::{
 };
 use crate::harness::Harness;
 use crate::ipc::session_lifecycle::{
-    choose_startup_snapshot, list_session_infos_for_state, restore_session_from_snapshot,
-    session_snapshot_with_workflow_state,
+    choose_startup_snapshot, gateway_session_info_for_session, list_session_infos_for_state,
+    restore_session_from_snapshot, session_snapshot_with_workflow_state,
 };
 use crate::protocol::events::DeliverySummary;
 use crate::state::AppState;
@@ -167,6 +167,28 @@ async fn list_session_infos_prefers_live_session_state_over_stale_snapshot() {
 
     let _ = std::fs::remove_dir_all(session_workspace);
     let _ = std::fs::remove_dir_all(stale_workspace);
+}
+
+#[tokio::test]
+async fn gateway_session_info_for_session_uses_live_session_metadata() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-gateway-info-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let session = test_agent_session("gateway-session", &workspace);
+
+    let info = gateway_session_info_for_session("gateway-session", &session);
+
+    assert_eq!(info.session_id, "gateway-session");
+    assert_eq!(info.provider, "deepseek");
+    assert_eq!(info.model, "deepseek-chat");
+    assert_eq!(info.workspace_path, workspace.to_string_lossy());
+    assert!(info.created_at_ms > 0);
+    assert!(
+        !info.restored_from_registry,
+        "desktop re-registration should mark the gateway entry as live"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[tokio::test]
