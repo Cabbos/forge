@@ -48,6 +48,98 @@ impl ServiceBackend {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceStatusSnapshot {
+    pub supported: bool,
+    pub installed: bool,
+    pub running: bool,
+    pub message: String,
+    pub backend: String,
+    pub service_id: String,
+    pub label: String,
+    pub launch_domain: String,
+    pub service_path: String,
+    pub plist_path: String,
+    pub log_path: String,
+    pub error_log_path: String,
+    pub status_message: String,
+}
+
+impl ServiceStatusSnapshot {
+    pub fn from_launchd_status(status: launchd::LaunchdServiceStatus) -> Self {
+        Self {
+            supported: status.supported,
+            installed: status.installed,
+            running: status.running,
+            message: status.message,
+            backend: ServiceBackend::Launchd.label().to_string(),
+            service_id: status.label.clone(),
+            label: status.label,
+            launch_domain: status.launch_domain,
+            service_path: status.plist_path.clone(),
+            plist_path: status.plist_path,
+            log_path: status.log_path,
+            error_log_path: status.error_log_path,
+            status_message: status.status_message,
+        }
+    }
+
+    pub fn from_systemd_status(status: systemd::SystemdServiceStatus) -> Self {
+        Self {
+            supported: status.supported,
+            installed: status.installed,
+            running: status.running,
+            message: status.message,
+            backend: ServiceBackend::Systemd.label().to_string(),
+            service_id: status.unit_name.clone(),
+            label: status.unit_name,
+            launch_domain: "systemd-user".to_string(),
+            service_path: status.unit_path.clone(),
+            plist_path: status.unit_path,
+            log_path: status.log_path,
+            error_log_path: status.error_log_path,
+            status_message: status.status_message,
+        }
+    }
+
+    pub fn from_windows_status(status: windows::WindowsServiceStatus) -> Self {
+        Self {
+            supported: status.supported,
+            installed: status.installed,
+            running: status.running,
+            message: status.message,
+            backend: ServiceBackend::Windows.label().to_string(),
+            service_id: status.service_name.clone(),
+            label: status.service_name,
+            launch_domain: "windows-service-control".to_string(),
+            service_path: String::new(),
+            plist_path: String::new(),
+            log_path: String::new(),
+            error_log_path: String::new(),
+            status_message: status.status_message,
+        }
+    }
+
+    fn unsupported(backend: ServiceBackend, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            supported: false,
+            installed: false,
+            running: false,
+            message: message.clone(),
+            backend: backend.label().to_string(),
+            service_id: String::new(),
+            label: String::new(),
+            launch_domain: "unsupported".to_string(),
+            service_path: String::new(),
+            plist_path: String::new(),
+            log_path: String::new(),
+            error_log_path: String::new(),
+            status_message: message,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceCommand {
     Install,
@@ -109,6 +201,24 @@ pub fn status() -> Result<String, String> {
         ServiceBackend::Unsupported => {
             unsupported_lifecycle_operation(ServiceBackend::Unsupported, "status")
         }
+    }
+}
+
+pub fn query_status_snapshot() -> Result<ServiceStatusSnapshot, String> {
+    match ServiceBackend::current() {
+        ServiceBackend::Launchd => {
+            launchd::query_status().map(ServiceStatusSnapshot::from_launchd_status)
+        }
+        ServiceBackend::Systemd => {
+            systemd::query_status().map(ServiceStatusSnapshot::from_systemd_status)
+        }
+        ServiceBackend::Windows => {
+            windows::query_status().map(ServiceStatusSnapshot::from_windows_status)
+        }
+        ServiceBackend::Unsupported => Ok(ServiceStatusSnapshot::unsupported(
+            ServiceBackend::Unsupported,
+            "Service management is not supported on this platform.",
+        )),
     }
 }
 
@@ -209,5 +319,51 @@ mod tests {
         assert!(ServiceBackend::Windows.supports_command(ServiceCommand::Install));
         assert!(ServiceBackend::Windows.supports_command(ServiceCommand::Restart));
         assert!(!ServiceBackend::Unsupported.supports_command(ServiceCommand::Status));
+    }
+
+    #[test]
+    fn status_snapshot_maps_systemd_status() {
+        let snapshot = ServiceStatusSnapshot::from_systemd_status(systemd::SystemdServiceStatus {
+            supported: true,
+            installed: true,
+            running: false,
+            message: "Gateway systemd user service is installed but not running.".into(),
+            unit_name: "forge-gateway.service".into(),
+            unit_path: "/home/alice/.config/systemd/user/forge-gateway.service".into(),
+            log_path: "/home/alice/.forge/logs/gateway.log".into(),
+            error_log_path: "/home/alice/.forge/logs/gateway-error.log".into(),
+            status_message: "Service 'forge-gateway.service' is not running: inactive".into(),
+        });
+
+        assert_eq!(snapshot.backend, "systemd");
+        assert_eq!(snapshot.service_id, "forge-gateway.service");
+        assert_eq!(snapshot.label, "forge-gateway.service");
+        assert_eq!(snapshot.launch_domain, "systemd-user");
+        assert_eq!(
+            snapshot.service_path,
+            "/home/alice/.config/systemd/user/forge-gateway.service"
+        );
+        assert_eq!(snapshot.plist_path, snapshot.service_path);
+        assert!(!snapshot.running);
+    }
+
+    #[test]
+    fn status_snapshot_maps_windows_status() {
+        let snapshot = ServiceStatusSnapshot::from_windows_status(windows::WindowsServiceStatus {
+            supported: true,
+            installed: true,
+            running: true,
+            message: "Gateway Windows service is installed and running.".into(),
+            service_name: "ForgeGateway".into(),
+            status_message: "Service 'ForgeGateway' is running.".into(),
+        });
+
+        assert_eq!(snapshot.backend, "windows-service");
+        assert_eq!(snapshot.service_id, "ForgeGateway");
+        assert_eq!(snapshot.label, "ForgeGateway");
+        assert_eq!(snapshot.launch_domain, "windows-service-control");
+        assert!(snapshot.service_path.is_empty());
+        assert!(snapshot.plist_path.is_empty());
+        assert!(snapshot.running);
     }
 }

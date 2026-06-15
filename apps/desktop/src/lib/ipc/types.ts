@@ -601,11 +601,15 @@ export type ServiceStatus = {
   running: boolean;
   message: string;
   supported: boolean;
+  backend: string;
+  service_id: string;
   label: string;
   launch_domain: string;
+  service_path: string;
   plist_path: string;
   log_path: string;
   error_log_path: string;
+  status_message: string;
 };
 
 export type LogEntry = {

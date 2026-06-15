@@ -27,11 +27,15 @@ export async function getServiceStatus(): Promise<ServiceStatus> {
       running: false,
       message: "Service status not available outside Tauri runtime.",
       supported: false,
+      backend: "unsupported",
+      service_id: "",
       label: "com.forge.gateway",
       launch_domain: "unsupported",
+      service_path: "",
       plist_path: "",
       log_path: "",
       error_log_path: "",
+      status_message: "Service status not available outside Tauri runtime.",
     };
   }
   return invoke<ServiceStatus>("get_service_status");
