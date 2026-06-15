@@ -235,6 +235,13 @@ export interface AgentA2ATaskProjection {
   failure_kind: string | null;
   resume_note: string | null;
   latest_progress: string | null;
+  // Phase 4-C — durable WorktreeWorker lease / retry state.
+  lease_owner: string | null;
+  lease_acquired_at_ms: number | null;
+  lease_expires_at_ms: number | null;
+  last_heartbeat_at_ms: number | null;
+  attempt_count: number;
+  max_attempts: number;
   // Phase 4-B — diff-derived file visibility (safe: parsed from existing artifacts).
   diff_available: boolean | null;
   changed_file_count: number | null;

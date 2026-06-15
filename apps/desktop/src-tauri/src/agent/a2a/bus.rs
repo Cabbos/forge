@@ -54,6 +54,134 @@ impl AgentA2ABus {
         self.tasks.iter().find(|task| task.task_id == *task_id)
     }
 
+    pub(crate) fn claim_task_lease(
+        &mut self,
+        task_id: &AgentTaskId,
+        owner: impl Into<String>,
+        timestamp_ms: u64,
+        lease_duration_ms: u64,
+    ) -> bool {
+        let owner = owner.into();
+        let Some(task) = self.tasks.iter_mut().find(|task| task.task_id == *task_id) else {
+            return false;
+        };
+        if !is_lease_claimable_status(&task.status) {
+            return false;
+        }
+        if let Some(current_owner) = task.lease_owner.as_deref() {
+            if current_owner != owner && !lease_is_expired(task, timestamp_ms) {
+                return false;
+            }
+        }
+
+        task.updated_at_ms = timestamp_ms;
+        task.status = AgentTaskStatus::Running;
+        task.started_at_ms.get_or_insert(timestamp_ms);
+        task.ended_at_ms = None;
+        task.resume_note = None;
+        task.lease_owner = Some(owner);
+        task.lease_acquired_at_ms = Some(timestamp_ms);
+        task.lease_expires_at_ms = Some(lease_expires_at(timestamp_ms, lease_duration_ms));
+        task.last_heartbeat_at_ms = Some(timestamp_ms);
+        task.attempt_count = task.attempt_count.saturating_add(1);
+        true
+    }
+
+    pub(crate) fn heartbeat_task_lease(
+        &mut self,
+        task_id: &AgentTaskId,
+        owner: &str,
+        timestamp_ms: u64,
+        lease_duration_ms: u64,
+    ) -> bool {
+        let Some(task) = self.tasks.iter_mut().find(|task| task.task_id == *task_id) else {
+            return false;
+        };
+        if task.lease_owner.as_deref() != Some(owner) || lease_is_expired(task, timestamp_ms) {
+            return false;
+        }
+
+        task.updated_at_ms = timestamp_ms;
+        task.last_heartbeat_at_ms = Some(timestamp_ms);
+        task.lease_expires_at_ms = Some(lease_expires_at(timestamp_ms, lease_duration_ms));
+        true
+    }
+
+    pub(crate) fn cancel_task(
+        &mut self,
+        task_id: &AgentTaskId,
+        message: impl Into<String>,
+        timestamp_ms: u64,
+    ) -> bool {
+        let message = message.into();
+        let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
+            if is_terminal_status(&task.status) {
+                return None;
+            }
+            task.status = AgentTaskStatus::Cancelled;
+            task.ended_at_ms = Some(timestamp_ms);
+            task.failure = None;
+            task.resume_note = None;
+            clear_active_lease(task);
+            Some(task.agent_id.clone())
+        }) else {
+            return false;
+        };
+        let Some(agent_id) = agent_id else {
+            return false;
+        };
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::Cancelled,
+            message,
+            timestamp_ms,
+        );
+        true
+    }
+
+    pub(crate) fn retry_task(&mut self, task_id: &AgentTaskId, timestamp_ms: u64) -> bool {
+        let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
+            if !matches!(
+                task.status,
+                AgentTaskStatus::Failed | AgentTaskStatus::Interrupted
+            ) {
+                return None;
+            }
+            if !task
+                .failure
+                .as_ref()
+                .map(|failure| failure.retryable)
+                .unwrap_or(false)
+            {
+                return None;
+            }
+            if task.attempt_count >= task.max_attempts {
+                return None;
+            }
+
+            task.status = AgentTaskStatus::Pending;
+            task.failure = None;
+            task.ended_at_ms = None;
+            task.resume_note = None;
+            clear_active_lease(task);
+            Some(task.agent_id.clone())
+        }) else {
+            return false;
+        };
+        let Some(agent_id) = agent_id else {
+            return false;
+        };
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::Progress,
+            "Retry scheduled".to_string(),
+            timestamp_ms,
+        );
+        true
+    }
+
     pub(crate) fn start_task(&mut self, task_id: &AgentTaskId, timestamp_ms: u64) {
         let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
             task.status = AgentTaskStatus::Running;
@@ -110,6 +238,7 @@ impl AgentA2ABus {
         let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
             task.status = AgentTaskStatus::Completed;
             task.ended_at_ms = Some(timestamp_ms);
+            clear_active_lease(task);
             task.artifacts.extend(artifacts);
             task.agent_id.clone()
         }) else {
@@ -158,6 +287,7 @@ impl AgentA2ABus {
         let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
             task.status = AgentTaskStatus::Failed;
             task.ended_at_ms = Some(timestamp_ms);
+            clear_active_lease(task);
             task.failure = Some(AgentTaskFailure {
                 kind: kind.clone(),
                 message: message.clone(),
@@ -186,6 +316,7 @@ impl AgentA2ABus {
                 task.status = AgentTaskStatus::Interrupted;
                 task.updated_at_ms = timestamp_ms;
                 task.ended_at_ms = Some(timestamp_ms);
+                clear_active_lease(task);
 
                 // For worktree workers, try to preserve the worktree path and
                 // attach a recovery artifact so the UI can guide the user.
@@ -361,6 +492,13 @@ impl AgentA2ABus {
                     failure_kind: task.failure.as_ref().map(|f| f.kind.clone()),
                     resume_note: task.resume_note.clone(),
                     latest_progress: self.latest_progress_for(&task.task_id),
+                    // Phase 4-C — durable worker lease / retry state.
+                    lease_owner: task.lease_owner.clone(),
+                    lease_acquired_at_ms: task.lease_acquired_at_ms,
+                    lease_expires_at_ms: task.lease_expires_at_ms,
+                    last_heartbeat_at_ms: task.last_heartbeat_at_ms,
+                    attempt_count: task.attempt_count,
+                    max_attempts: task.max_attempts,
                     // Phase 4-B — diff-derived file visibility.
                     diff_available,
                     changed_file_count,
@@ -514,6 +652,34 @@ fn compute_duration_ms(started_at_ms: Option<u64>, ended_at_ms: Option<u64>) -> 
     } else {
         Some(0)
     }
+}
+
+fn lease_expires_at(timestamp_ms: u64, lease_duration_ms: u64) -> u64 {
+    timestamp_ms.saturating_add(lease_duration_ms)
+}
+
+fn lease_is_expired(task: &AgentTaskRecord, timestamp_ms: u64) -> bool {
+    task.lease_expires_at_ms
+        .map(|expires_at| timestamp_ms > expires_at)
+        .unwrap_or(true)
+}
+
+fn clear_active_lease(task: &mut AgentTaskRecord) {
+    task.lease_owner = None;
+    task.lease_acquired_at_ms = None;
+    task.lease_expires_at_ms = None;
+    task.last_heartbeat_at_ms = None;
+}
+
+fn is_terminal_status(status: &AgentTaskStatus) -> bool {
+    matches!(
+        status,
+        AgentTaskStatus::Completed | AgentTaskStatus::Cancelled
+    )
+}
+
+fn is_lease_claimable_status(status: &AgentTaskStatus) -> bool {
+    matches!(status, AgentTaskStatus::Pending | AgentTaskStatus::Running)
 }
 
 fn message_kind_for_projection(kind: &AgentMessageKind) -> &'static str {
@@ -889,6 +1055,144 @@ mod tests {
         assert_eq!(task_proj.started_at_ms, Some(20));
         assert_eq!(task_proj.ended_at_ms, Some(40));
         assert_eq!(task_proj.duration_ms, Some(20));
+    }
+
+    #[test]
+    fn task_lease_claim_records_owner_attempt_and_projection_fields() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.lease_owner.as_deref(), Some("worker-1"));
+        assert_eq!(task.lease_acquired_at_ms, Some(20));
+        assert_eq!(task.lease_expires_at_ms, Some(120));
+        assert_eq!(task.last_heartbeat_at_ms, Some(20));
+        assert_eq!(task.attempt_count, 1);
+        assert_eq!(task.max_attempts, 3);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.lease_owner.as_deref(), Some("worker-1"));
+        assert_eq!(task_proj.lease_acquired_at_ms, Some(20));
+        assert_eq!(task_proj.lease_expires_at_ms, Some(120));
+        assert_eq!(task_proj.last_heartbeat_at_ms, Some(20));
+        assert_eq!(task_proj.attempt_count, 1);
+        assert_eq!(task_proj.max_attempts, 3);
+    }
+
+    #[test]
+    fn task_lease_heartbeat_extends_only_current_unexpired_owner() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+        assert!(!bus.heartbeat_task_lease(&task_id, "worker-2", 40, 100));
+        assert!(bus.heartbeat_task_lease(&task_id, "worker-1", 50, 100));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.last_heartbeat_at_ms, Some(50));
+        assert_eq!(task.lease_expires_at_ms, Some(150));
+
+        assert!(!bus.heartbeat_task_lease(&task_id, "worker-1", 151, 100));
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.last_heartbeat_at_ms, Some(50));
+        assert_eq!(task.lease_expires_at_ms, Some(150));
+    }
+
+    #[test]
+    fn cancel_task_clears_active_lease_and_marks_cancelled() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+
+        assert!(bus.cancel_task(&task_id, "user_cancelled", 30));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Cancelled);
+        assert_eq!(task.ended_at_ms, Some(30));
+        assert!(task.lease_owner.is_none());
+        assert!(task.lease_expires_at_ms.is_none());
+        assert_eq!(
+            bus.projection().tasks[0].latest_message.as_deref(),
+            Some("user_cancelled")
+        );
+    }
+
+    #[test]
+    fn retry_task_requeues_retryable_failure_and_preserves_attempt_count() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+        bus.fail_task(&task_id, "tool_error", "worker failed", true, 30);
+
+        assert!(bus.retry_task(&task_id, 40));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Pending);
+        assert_eq!(task.attempt_count, 1);
+        assert!(task.failure.is_none());
+        assert!(task.ended_at_ms.is_none());
+        assert!(task.lease_owner.is_none());
+        assert_eq!(
+            bus.projection().tasks[0].latest_progress.as_deref(),
+            Some("Retry scheduled")
+        );
+    }
+
+    #[test]
+    fn retry_task_rejects_non_retryable_or_exhausted_tasks() {
+        let mut bus = AgentA2ABus::default();
+        let non_retryable = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Non retryable",
+            "No retry",
+            10,
+        );
+        bus.fail_task(&non_retryable, "review_rejected", "no retry", false, 20);
+
+        assert!(!bus.retry_task(&non_retryable, 30));
+
+        let exhausted = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Exhausted",
+            "No attempts left",
+            40,
+        );
+        assert!(bus.claim_task_lease(&exhausted, "worker-1", 50, 100));
+        assert!(bus.claim_task_lease(&exhausted, "worker-1", 60, 100));
+        assert!(bus.claim_task_lease(&exhausted, "worker-1", 70, 100));
+        bus.fail_task(&exhausted, "tool_error", "failed", true, 80);
+
+        assert!(!bus.retry_task(&exhausted, 90));
+        assert_eq!(bus.task(&exhausted).expect("task").attempt_count, 3);
     }
 
     #[test]

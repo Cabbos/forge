@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { deriveWorkbenchSummary } from "../lib/workbenchSummary.ts";
+import { deriveWorkbenchSummary, normalizeA2ATaskProjection } from "../lib/workbenchSummary.ts";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "../lib/protocol.ts";
 
 function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProjection {
@@ -35,6 +35,13 @@ function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProj
     failure_kind: overrides.failure_kind ?? null,
     resume_note: overrides.resume_note ?? null,
     latest_progress: overrides.latest_progress ?? null,
+    // Phase 4-C fields
+    lease_owner: overrides.lease_owner ?? null,
+    lease_acquired_at_ms: overrides.lease_acquired_at_ms ?? null,
+    lease_expires_at_ms: overrides.lease_expires_at_ms ?? null,
+    last_heartbeat_at_ms: overrides.last_heartbeat_at_ms ?? null,
+    attempt_count: overrides.attempt_count ?? 0,
+    max_attempts: overrides.max_attempts ?? 3,
     // Phase 4-B fields
     diff_available: overrides.diff_available ?? null,
     changed_file_count: overrides.changed_file_count ?? null,
@@ -226,5 +233,39 @@ describe("deriveWorkbenchSummary", () => {
     assert.strictEqual(result.total, 1);
     assert.strictEqual(result.changedFiles, 0);
     assert.strictEqual(result.tasksWithDiff, 0);
+  });
+
+  it("normalizes missing lease fields on sparse legacy task projections", () => {
+    const legacyTask = {
+      task_id: "legacy",
+      agent_id: "agent",
+      role: "implementer",
+      execution_mode: "worktree_worker",
+      status: "running",
+      title: "Legacy worker",
+      messages: [],
+      latest_message: null,
+      failure_message: null,
+      updated_at_ms: 0,
+      artifact_count: 0,
+      latest_artifact_kind: null,
+      latest_artifact_title: null,
+      needs_human_review: null,
+      reason_codes: [],
+      tests_passed: null,
+      diff_truncated: null,
+      worktree_path: null,
+      cleaned_up: null,
+      suggested_action: null,
+    } as unknown as AgentA2ATaskProjection;
+
+    const normalized = normalizeA2ATaskProjection(legacyTask);
+
+    assert.strictEqual(normalized.lease_owner, null);
+    assert.strictEqual(normalized.lease_acquired_at_ms, null);
+    assert.strictEqual(normalized.lease_expires_at_ms, null);
+    assert.strictEqual(normalized.last_heartbeat_at_ms, null);
+    assert.strictEqual(normalized.attempt_count, 0);
+    assert.strictEqual(normalized.max_attempts, 3);
   });
 });

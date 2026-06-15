@@ -65,6 +65,13 @@ export function normalizeA2ATaskProjection(task: AgentA2ATaskProjection): AgentA
     failure_kind: task.failure_kind ?? null,
     resume_note: task.resume_note ?? null,
     latest_progress: task.latest_progress ?? null,
+    // Phase 4-C fields
+    lease_owner: task.lease_owner ?? null,
+    lease_acquired_at_ms: task.lease_acquired_at_ms ?? null,
+    lease_expires_at_ms: task.lease_expires_at_ms ?? null,
+    last_heartbeat_at_ms: task.last_heartbeat_at_ms ?? null,
+    attempt_count: task.attempt_count ?? 0,
+    max_attempts: task.max_attempts ?? 3,
     // Phase 4-B fields
     diff_available: task.diff_available ?? null,
     changed_file_count: task.changed_file_count ?? null,

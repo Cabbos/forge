@@ -195,6 +195,10 @@ pub(crate) struct AgentTaskFailure {
     pub created_at_ms: u64,
 }
 
+pub(crate) fn default_max_task_attempts() -> u32 {
+    3
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AgentTaskRecord {
     pub task_id: AgentTaskId,
@@ -213,6 +217,18 @@ pub(crate) struct AgentTaskRecord {
     pub started_at_ms: Option<u64>,
     pub ended_at_ms: Option<u64>,
     pub resume_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_acquired_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at_ms: Option<u64>,
+    #[serde(default)]
+    pub attempt_count: u32,
+    #[serde(default = "default_max_task_attempts")]
+    pub max_attempts: u32,
 }
 
 impl AgentTaskRecord {
@@ -243,6 +259,12 @@ impl AgentTaskRecord {
             started_at_ms: None,
             ended_at_ms: None,
             resume_note: None,
+            lease_owner: None,
+            lease_acquired_at_ms: None,
+            lease_expires_at_ms: None,
+            last_heartbeat_at_ms: None,
+            attempt_count: 0,
+            max_attempts: default_max_task_attempts(),
         }
     }
 }

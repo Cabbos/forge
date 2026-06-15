@@ -347,11 +347,22 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Diagnostics integration | ✅ Done | `a2a_ledger` diagnostic summarizes readable/corrupt sidecars and links corrupt state to `clear_a2a_ledger_cache` |
 | CRITICAL paths touched | 🚫 None | Zero edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, session loop |
 
+**Phase 4-D summary (2026-06-15):** Durable worker lease and retry state.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Worker lease ownership | ✅ Done | `AgentTaskRecord` persists `lease_owner`, acquire/expiry timestamps, and `last_heartbeat_at_ms` |
+| Worker heartbeat | ✅ Done | Current owner can extend an unexpired lease; wrong owner or expired heartbeats are rejected without mutating task state |
+| Retry accounting | ✅ Done | `attempt_count` and `max_attempts` are persisted/projected; retryable failures can be requeued until attempts are exhausted |
+| Cancel cleanup | ✅ Done | User cancellation marks the task cancelled, records a cancelled message, and clears active lease state |
+| Projection + TS mirror | ✅ Done | `AgentA2ATaskProjection` exposes lease/retry fields in Rust and `src/lib/protocol.ts`; sparse legacy payloads normalize defaults |
+| CRITICAL paths touched | 🚫 None | No edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, or session loop |
+
 **Known deferred items (Phase 4-B):**
 - True live file IO stream — requires executor/ToolExecutor hooks (CRITICAL risk path)
 - Token/cost per-task streaming — requires adapter trait changes
 - New `StreamEvent` variants for subagent-specific events
-- e2e worker lifecycle tests (depends on runnable worktree worker harness)
+- e2e worker lifecycle tests (depends on runnable worktree worker harness; Phase 4-D adds unit coverage for lease/heartbeat/cancel/retry)
 
 **Acceptance gate:**
 

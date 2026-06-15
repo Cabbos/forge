@@ -51,6 +51,19 @@ pub struct AgentA2ATaskProjection {
     pub resume_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_progress: Option<String>,
+    // Phase 4-C — durable WorktreeWorker lease / retry state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_acquired_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at_ms: Option<u64>,
+    #[serde(default)]
+    pub attempt_count: u32,
+    #[serde(default)]
+    pub max_attempts: u32,
     // Phase 4-B — diff-derived file visibility (safe: parsed from existing artifacts).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_available: Option<bool>,
