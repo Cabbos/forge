@@ -10,7 +10,7 @@ use crate::gateway::protocol::{
     GatewaySessionInfo, GatewaySessionSnapshotSummary, GetSessionSnapshotParams,
     GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, HealthResult,
     ListSessionInputsParams, ListSessionInputsResult, PingResult, ReplayTriggerRunParams,
-    ReplayTriggerRunResult, GATEWAY_VERSION,
+    ReplayTriggerRunResult, TailSessionEventsParams, TailSessionEventsResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::session_input::{new_session_input_record, SessionInputStore};
@@ -295,6 +295,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "replay_trigger_run" => handle_replay_trigger_run(state, request),
         "get_trigger_run" => handle_get_trigger_run(state, request),
         "get_session_snapshot" => handle_get_session_snapshot(request),
+        "tail_session_events" => handle_tail_session_events(request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
@@ -691,6 +692,44 @@ fn handle_get_session_snapshot(request: GatewayRequest) -> GatewayReply {
     })
 }
 
+fn handle_tail_session_events(request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<TailSessionEventsParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let session_id = params.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return invalid_params(request.id, "session_id must not be empty");
+    }
+
+    let tail = match crate::transcript::tail_transcript_events(
+        &session_id,
+        params.after_cursor,
+        params.limit.unwrap_or(100),
+    ) {
+        Ok(tail) => tail,
+        Err(error) => {
+            return invalid_params(request.id, format!("session events unavailable: {error}"));
+        }
+    };
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(TailSessionEventsResult {
+            ok: true,
+            session_id: tail.session_id,
+            events: tail.events,
+            next_cursor: tail.next_cursor,
+            total_events: tail.total_events,
+            cursor_reset: tail.cursor_reset,
+        })
+        .unwrap(),
+    })
+}
+
 fn handle_list_trigger_runs(state: &GatewayState, id: String) -> GatewayReply {
     let runs = state.trigger_run_store.list();
     GatewayReply::Ok(GatewayResponse {
@@ -993,7 +1032,7 @@ fn session_attach_control(
     match status {
         GatewaySessionAttachStatus::Live => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
-            gateway_can_stream: false,
+            gateway_can_stream: true,
             gateway_can_send_input: true,
             gateway_can_resume: false,
             gateway_can_read_snapshot,
@@ -1003,7 +1042,7 @@ fn session_attach_control(
         },
         GatewaySessionAttachStatus::Restored => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
-            gateway_can_stream: false,
+            gateway_can_stream: gateway_can_read_snapshot,
             gateway_can_send_input: false,
             gateway_can_resume: false,
             gateway_can_read_snapshot,
@@ -1013,7 +1052,7 @@ fn session_attach_control(
         },
         GatewaySessionAttachStatus::Stale => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
-            gateway_can_stream: false,
+            gateway_can_stream: gateway_can_read_snapshot,
             gateway_can_send_input: false,
             gateway_can_resume: false,
             gateway_can_read_snapshot,
@@ -1026,7 +1065,7 @@ fn session_attach_control(
             } else {
                 GatewaySessionControlPlane::Unavailable
             },
-            gateway_can_stream: false,
+            gateway_can_stream: gateway_can_read_snapshot,
             gateway_can_send_input: false,
             gateway_can_resume: false,
             gateway_can_read_snapshot,
@@ -1384,7 +1423,11 @@ mod tests {
                     assert_eq!(result.session_id, session_id);
                     assert_eq!(result.status, expected_status);
                     assert_eq!(result.ok, expected_ok);
-                    assert!(!result.control.gateway_can_stream);
+                    assert_eq!(
+                        result.control.gateway_can_stream,
+                        expected_status
+                            == crate::gateway::protocol::GatewaySessionAttachStatus::Live
+                    );
                     assert_eq!(
                         result.control.gateway_can_send_input,
                         expected_status
@@ -1426,7 +1469,7 @@ mod tests {
             control.control_plane,
             crate::gateway::protocol::GatewaySessionControlPlane::DesktopRuntimeRequired
         );
-        assert!(!control.gateway_can_stream);
+        assert!(control.gateway_can_stream);
         assert!(control.gateway_can_send_input);
         assert!(!control.gateway_can_resume);
         assert!(control.gateway_can_read_snapshot);
@@ -1443,6 +1486,7 @@ mod tests {
             control.control_plane,
             crate::gateway::protocol::GatewaySessionControlPlane::DesktopRestoreRequired
         );
+        assert!(control.gateway_can_stream);
         assert!(control.gateway_can_read_snapshot);
         assert!(control.required_action.contains("snapshot"));
     }
@@ -1946,6 +1990,63 @@ mod tests {
                 assert_eq!(result.snapshot["session_id"], "snapshot-detail-session");
                 assert_eq!(result.snapshot["provider"], "deepseek");
                 assert_eq!(result.snapshot["messages"][0]["content"], "show me");
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn dispatch_tail_session_events_returns_transcript_cursor_window() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        std::env::set_var("HOME", home.path());
+        crate::transcript::append_transcript_event(serde_json::json!({
+            "event_type": "user_message",
+            "session_id": "tail-session",
+            "block_id": "user-1",
+            "content": "hello"
+        }))
+        .expect("append first event");
+        crate::transcript::append_transcript_event(serde_json::json!({
+            "event_type": "text_chunk",
+            "session_id": "tail-session",
+            "block_id": "text-1",
+            "content": "world"
+        }))
+        .expect("append second event");
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "tail-events".into(),
+                method: "tail_session_events".into(),
+                params: Some(serde_json::json!({
+                    "session_id": " tail-session ",
+                    "after_cursor": 1,
+                    "limit": 10
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::TailSessionEventsResult =
+                    serde_json::from_value(resp.result).expect("parse tail result");
+                assert!(result.ok);
+                assert_eq!(result.session_id, "tail-session");
+                assert_eq!(result.events.len(), 1);
+                assert_eq!(result.events[0]["event_type"], "text_chunk");
+                assert_eq!(result.total_events, 2);
+                assert_eq!(result.next_cursor, 2);
+                assert!(!result.cursor_reset);
             }
             _ => panic!("expected Ok reply"),
         }

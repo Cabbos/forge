@@ -3,7 +3,7 @@
 
 use crate::gateway::protocol::{
     CompleteSessionInputParams, EnqueueSessionInputParams, GatewayReply, GatewayRequest,
-    GatewaySessionInfo, GetSessionSnapshotParams, ListSessionInputsParams,
+    GatewaySessionInfo, GetSessionSnapshotParams, ListSessionInputsParams, TailSessionEventsParams,
 };
 use crate::gateway::server::default_socket_path;
 use std::path::PathBuf;
@@ -124,6 +124,29 @@ pub fn build_get_session_snapshot_request(session_id: &str) -> Result<GatewayReq
         params: Some(
             serde_json::to_value(GetSessionSnapshotParams { session_id })
                 .map_err(|error| format!("serialize get session snapshot params: {error}"))?,
+        ),
+    })
+}
+
+pub fn build_tail_session_events_request(
+    session_id: &str,
+    after_cursor: Option<usize>,
+    limit: Option<usize>,
+) -> Result<GatewayRequest, String> {
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err("session_id must not be empty".to_string());
+    }
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "tail_session_events".to_string(),
+        params: Some(
+            serde_json::to_value(TailSessionEventsParams {
+                session_id,
+                after_cursor,
+                limit,
+            })
+            .map_err(|error| format!("serialize tail session events params: {error}"))?,
         ),
     })
 }
@@ -319,6 +342,18 @@ mod tests {
         assert_eq!(request.method, "get_session_snapshot");
         let params = request.params.expect("params");
         assert_eq!(params["session_id"], "session-1");
+    }
+
+    #[test]
+    fn tail_session_events_request_trims_session_id_and_keeps_cursor() {
+        let request =
+            build_tail_session_events_request(" session-1 ", Some(2), Some(10)).expect("request");
+
+        assert_eq!(request.method, "tail_session_events");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+        assert_eq!(params["after_cursor"], 2);
+        assert_eq!(params["limit"], 10);
     }
 
     #[test]

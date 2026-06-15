@@ -4,9 +4,21 @@ import { bunSpawnRunner } from "../lib/spawn.ts";
 
 export async function sessionCommand(argv: string[], deps: CliDeps = {}): Promise<number> {
   const sub = argv[0] || "list";
-  const supported = new Set(["list", "attach", "show", "input", "stats", "search", "export", "prune"]);
+  const supported = new Set([
+    "list",
+    "attach",
+    "show",
+    "events",
+    "input",
+    "stats",
+    "search",
+    "export",
+    "prune",
+  ]);
   if (!supported.has(sub)) {
-    deps.io?.stderr("Usage: forge session list|attach|show|input|stats|search|export|prune\n");
+    deps.io?.stderr(
+      "Usage: forge session list|attach|show|events|input|stats|search|export|prune\n",
+    );
     return 1;
   }
 

@@ -17,6 +17,7 @@ import type {
   RepairResult,
   ReplayGatewayTriggerRunResult,
   ServiceStatus,
+  TailGatewaySessionEventsResult,
 } from "./types.ts";
 
 export async function getServiceStatus(): Promise<ServiceStatus> {
@@ -155,6 +156,21 @@ export async function getGatewaySessionSnapshot(
     throw new Error("Gateway session snapshot detail is not available outside Tauri runtime.");
   }
   return invoke<GetGatewaySessionSnapshotResult>("get_gateway_session_snapshot", { sessionId });
+}
+
+export async function tailGatewaySessionEvents(
+  sessionId: string,
+  afterCursor?: number | null,
+  limit?: number | null,
+): Promise<TailGatewaySessionEventsResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway session events are not available outside Tauri runtime.");
+  }
+  return invoke<TailGatewaySessionEventsResult>("tail_gateway_session_events", {
+    sessionId,
+    afterCursor,
+    limit,
+  });
 }
 
 export async function enqueueGatewaySessionInput(

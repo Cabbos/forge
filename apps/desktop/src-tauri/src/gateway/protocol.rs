@@ -276,6 +276,28 @@ pub struct GetSessionSnapshotResult {
     pub snapshot: serde_json::Value,
 }
 
+/// Parameters for tailing persisted session transcript events through the gateway.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TailSessionEventsParams {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_cursor: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+/// Result returned by `tail_session_events`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TailSessionEventsResult {
+    pub ok: bool,
+    pub session_id: String,
+    pub events: Vec<serde_json::Value>,
+    pub next_cursor: usize,
+    pub total_events: usize,
+    #[serde(default)]
+    pub cursor_reset: bool,
+}
+
 /// Gateway version string.
 pub const GATEWAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -532,6 +554,37 @@ mod tests {
         assert!(json.contains("\"removed\":true"));
         let back: CompleteSessionInputResult =
             serde_json::from_str(&json).expect("deserialize complete result");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn tail_session_events_params_and_result_roundtrip() {
+        let params = TailSessionEventsParams {
+            session_id: " session-1 ".into(),
+            after_cursor: Some(2),
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&params).expect("serialize params");
+        let back: TailSessionEventsParams =
+            serde_json::from_str(&json).expect("deserialize params");
+        assert_eq!(back, params);
+
+        let result = TailSessionEventsResult {
+            ok: true,
+            session_id: "session-1".into(),
+            events: vec![serde_json::json!({
+                "event_type": "user_message",
+                "session_id": "session-1",
+                "content": "hello"
+            })],
+            next_cursor: 3,
+            total_events: 3,
+            cursor_reset: false,
+        };
+        let json = serde_json::to_string(&result).expect("serialize result");
+        assert!(json.contains("\"next_cursor\":3"));
+        let back: TailSessionEventsResult =
+            serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }
 

@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::diagnostics::{self, CapabilitySummary};
 use crate::gateway::client::{
     build_attach_session_request, build_enqueue_session_input_request,
-    build_get_session_snapshot_request, GatewayClient,
+    build_get_session_snapshot_request, build_tail_session_events_request, GatewayClient,
 };
 use crate::gateway::protocol::{
     AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueSessionInputResult,
     EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo,
     GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, ReplayTriggerRunParams,
-    ReplayTriggerRunResult,
+    ReplayTriggerRunResult, TailSessionEventsResult,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::gateway::webhook::PendingTrigger;
@@ -196,6 +196,29 @@ pub async fn get_gateway_session_snapshot(
 }
 
 #[tauri::command]
+pub async fn tail_gateway_session_events(
+    session_id: String,
+    after_cursor: Option<usize>,
+    limit: Option<usize>,
+) -> Result<TailSessionEventsResult, String> {
+    let request = build_tail_gateway_session_events_request(session_id, after_cursor, limit)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<TailSessionEventsResult>(response.result)
+                .map_err(|error| format!("Gateway returned invalid session events: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway session events error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway session events request failed: {error}")),
+    }
+}
+
+#[tauri::command]
 pub async fn enqueue_gateway_session_input(
     session_id: String,
     message: String,
@@ -321,6 +344,14 @@ fn build_get_gateway_session_snapshot_request(
     session_id: String,
 ) -> Result<GatewayRequest, String> {
     build_get_session_snapshot_request(&session_id)
+}
+
+fn build_tail_gateway_session_events_request(
+    session_id: String,
+    after_cursor: Option<usize>,
+    limit: Option<usize>,
+) -> Result<GatewayRequest, String> {
+    build_tail_session_events_request(&session_id, after_cursor, limit)
 }
 
 fn build_enqueue_gateway_session_input_request(
@@ -600,6 +631,22 @@ mod tests {
             .expect_err("blank session id");
 
         assert!(error.contains("session_id must not be empty"));
+    }
+
+    #[test]
+    fn build_tail_gateway_session_events_request_trims_cursor_params() {
+        let request = super::build_tail_gateway_session_events_request(
+            " session-1 ".to_string(),
+            Some(2),
+            Some(10),
+        )
+        .expect("request");
+
+        assert_eq!(request.method, "tail_session_events");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+        assert_eq!(params["after_cursor"], 2);
+        assert_eq!(params["limit"], 10);
     }
 
     #[test]

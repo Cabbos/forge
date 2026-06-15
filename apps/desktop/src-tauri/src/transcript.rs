@@ -18,10 +18,20 @@ struct TranscriptRecord {
     event: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TranscriptTail {
+    pub session_id: String,
+    pub events: Vec<serde_json::Value>,
+    pub next_cursor: usize,
+    pub total_events: usize,
+    pub cursor_reset: bool,
+}
+
 const TRANSCRIPT_PROTOCOL_VERSION: u32 = 1;
 const TRANSCRIPT_MAX_BYTES: u64 = 5_000_000;
 const TRANSCRIPT_RETAIN_EVENTS: usize = 2_000;
 const TRANSCRIPT_COMPACT_MARKER: &str = "_forge_transcript_compacted";
+const TRANSCRIPT_TAIL_MAX_EVENTS: usize = 500;
 
 static TRANSCRIPT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
 
@@ -61,6 +71,14 @@ pub fn emit_stream_event(app_handle: &tauri::AppHandle, event: StreamEvent) {
 
 pub fn load_transcript_events(session_id: &str) -> Result<Vec<serde_json::Value>, String> {
     load_transcript_events_at(&app_data_dir(), session_id)
+}
+
+pub fn tail_transcript_events(
+    session_id: &str,
+    after_cursor: Option<usize>,
+    limit: usize,
+) -> Result<TranscriptTail, String> {
+    tail_transcript_events_at(&app_data_dir(), session_id, after_cursor, limit)
 }
 
 pub fn delete_transcript(session_id: &str) -> Result<(), String> {
@@ -151,6 +169,54 @@ fn load_transcript_events_at_with_limits(
         let events =
             renderable_events_for_load(records, session_id, should_throttle, retain_events);
         Ok(close_unfinished_renderable_events(events, session_id))
+    })
+}
+
+fn tail_transcript_events_at(
+    root: &Path,
+    session_id: &str,
+    after_cursor: Option<usize>,
+    limit: usize,
+) -> Result<TranscriptTail, String> {
+    let path = transcript_path(root, session_id)?;
+    if !path.exists() {
+        return Ok(TranscriptTail {
+            session_id: session_id.to_string(),
+            events: Vec::new(),
+            next_cursor: 0,
+            total_events: 0,
+            cursor_reset: after_cursor.unwrap_or_default() > 0,
+        });
+    }
+
+    with_transcript_path_lock(&path, || {
+        let records = load_transcript_records_from_path(&path)?;
+        let events = records
+            .into_iter()
+            .filter(|record| !is_compact_marker(&record.event))
+            .map(|record| record.event)
+            .collect::<Vec<_>>();
+        let total_events = events.len();
+        let limit = limit.clamp(1, TRANSCRIPT_TAIL_MAX_EVENTS);
+        let requested_cursor = after_cursor.unwrap_or_else(|| total_events.saturating_sub(limit));
+        let cursor_reset = requested_cursor > total_events;
+        let start = if cursor_reset {
+            total_events.saturating_sub(limit)
+        } else {
+            requested_cursor
+        };
+        let tail_events = events
+            .into_iter()
+            .skip(start)
+            .take(limit)
+            .collect::<Vec<_>>();
+        Ok(TranscriptTail {
+            session_id: session_id.to_string(),
+            next_cursor: start + tail_events.len(),
+            total_events,
+            events: tail_events,
+            cursor_reset,
+        })
     })
 }
 
@@ -508,6 +574,64 @@ mod tests {
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
 
         assert_eq!(loaded, vec![event_one, event_two]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_tail_returns_cursor_window_without_synthetic_closure() {
+        let root = test_root("tail-cursor");
+        let event_one = json!({
+            "event_type": "user_message",
+            "session_id": "session-1",
+            "block_id": "user-1",
+            "content": "hello"
+        });
+        let tool_start = json!({
+            "event_type": "tool_call_start",
+            "session_id": "session-1",
+            "block_id": "tool-1",
+            "tool_name": "shell",
+            "input": {"cmd": "sleep 10"}
+        });
+
+        append_transcript_event_at(&root, event_one.clone()).expect("append first event");
+        append_transcript_event_at(&root, tool_start.clone()).expect("append tool start");
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+        assert!(
+            loaded.len() > 2,
+            "load path should synthesize unfinished closure"
+        );
+
+        let tail =
+            tail_transcript_events_at(&root, "session-1", Some(1), 10).expect("tail transcript");
+
+        assert_eq!(tail.session_id, "session-1");
+        assert_eq!(tail.events, vec![tool_start]);
+        assert_eq!(tail.total_events, 2);
+        assert_eq!(tail.next_cursor, 2);
+        assert!(!tail.cursor_reset);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_tail_resets_cursor_when_compaction_rewinds_visible_events() {
+        let root = test_root("tail-reset");
+        let event = json!({
+            "event_type": "user_message",
+            "session_id": "session-1",
+            "block_id": "user-1",
+            "content": "hello"
+        });
+        append_transcript_event_at(&root, event.clone()).expect("append event");
+
+        let tail =
+            tail_transcript_events_at(&root, "session-1", Some(99), 10).expect("tail transcript");
+
+        assert_eq!(tail.events, vec![event]);
+        assert_eq!(tail.total_events, 1);
+        assert_eq!(tail.next_cursor, 1);
+        assert!(tail.cursor_reset);
         let _ = fs::remove_dir_all(root);
     }
 

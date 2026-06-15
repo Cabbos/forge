@@ -153,6 +153,7 @@ pub fn run() {
             ipc::diagnostics_handlers::get_gateway_trigger_run,
             ipc::diagnostics_handlers::attach_gateway_session,
             ipc::diagnostics_handlers::get_gateway_session_snapshot,
+            ipc::diagnostics_handlers::tail_gateway_session_events,
             ipc::diagnostics_handlers::enqueue_gateway_session_input,
             ipc::diagnostics_handlers::get_recent_logs,
             ipc::diagnostics_handlers::run_repair_action,

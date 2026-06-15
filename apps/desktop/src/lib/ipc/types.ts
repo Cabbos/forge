@@ -520,6 +520,15 @@ export interface GetGatewaySessionSnapshotResult {
   snapshot: Record<string, unknown>;
 }
 
+export interface TailGatewaySessionEventsResult {
+  ok: boolean;
+  session_id: string;
+  events: StreamEvent[];
+  next_cursor: number;
+  total_events: number;
+  cursor_reset: boolean;
+}
+
 export interface RepairAction {
   id: string;
   label: string;

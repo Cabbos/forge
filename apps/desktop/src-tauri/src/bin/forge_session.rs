@@ -1,10 +1,10 @@
 //! Forge Session CLI — inspect active gateway sessions and local session store.
 //!
-//! Usage: `forge_session <list|attach|show|input|stats|search|export|prune>`
+//! Usage: `forge_session <list|attach|show|events|input|stats|search|export|prune>`
 
 use forge::gateway::client::{
     build_attach_session_request, build_enqueue_session_input_request,
-    build_get_session_snapshot_request, GatewayClient,
+    build_get_session_snapshot_request, build_tail_session_events_request, GatewayClient,
 };
 use forge::gateway::protocol::GatewayRequest;
 use forge::gateway::server::{default_socket_path, SESSION_STALE_AFTER_MS};
@@ -33,6 +33,26 @@ async fn main() {
                 std::process::exit(1);
             };
             show_gateway_session_snapshot(session_id).await;
+        }
+        "events" => {
+            let Some(session_id) = args.get(2) else {
+                eprintln!(
+                    "Usage: forge_session events <session_id> [--after <cursor>] [--limit <count>]"
+                );
+                std::process::exit(1);
+            };
+            match parse_events_args(&args[3..]) {
+                Ok((after_cursor, limit)) => {
+                    tail_gateway_session_events(session_id, after_cursor, limit).await;
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    eprintln!(
+                        "Usage: forge_session events <session_id> [--after <cursor>] [--limit <count>]"
+                    );
+                    std::process::exit(1);
+                }
+            }
         }
         "input" => {
             let Some(session_id) = args.get(2) else {
@@ -95,7 +115,9 @@ async fn main() {
             }
         },
         _ => {
-            eprintln!("Usage: forge_session list|attach|show|input|stats|search|export|prune");
+            eprintln!(
+                "Usage: forge_session list|attach|show|events|input|stats|search|export|prune"
+            );
             std::process::exit(1);
         }
     }
@@ -220,6 +242,55 @@ async fn show_gateway_session_snapshot(session_id: &str) {
         Ok(mut client) => match client.send(request).await {
             Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
                 for line in render_session_snapshot_detail_lines(&resp.result) {
+                    println!("{line}");
+                }
+            }
+            Ok(forge::gateway::protocol::GatewayReply::Err(err)) => {
+                eprintln!(
+                    "Gateway error: {} (code: {})",
+                    err.error.message, err.error.code
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("Request failed: {error}");
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("Failed to connect to gateway: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn tail_gateway_session_events(
+    session_id: &str,
+    after_cursor: Option<usize>,
+    limit: Option<usize>,
+) {
+    let socket_path = default_socket_path();
+    if !socket_path.exists() {
+        eprintln!(
+            "Gateway is not running (no socket at {}).",
+            socket_path.display()
+        );
+        eprintln!("Start it with: forge service start");
+        std::process::exit(1);
+    }
+
+    let request = match build_tail_session_events_request(session_id, after_cursor, limit) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+
+    match GatewayClient::connect(&socket_path).await {
+        Ok(mut client) => match client.send(request).await {
+            Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
+                for line in render_session_event_tail_lines(&resp.result) {
                     println!("{line}");
                 }
             }
@@ -426,6 +497,55 @@ fn render_session_snapshot_detail_lines(result: &serde_json::Value) -> Vec<Strin
     lines
 }
 
+fn render_session_event_tail_lines(result: &serde_json::Value) -> Vec<String> {
+    let session_id = result["session_id"].as_str().unwrap_or("?");
+    let next_cursor = result["next_cursor"].as_u64().unwrap_or(0);
+    let total_events = result["total_events"].as_u64().unwrap_or(0);
+    let cursor_reset = result["cursor_reset"].as_bool().unwrap_or(false);
+    let events = result
+        .get("events")
+        .and_then(|events| events.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![
+        "Gateway session events:".to_string(),
+        format!(
+            "  {session_id}  events={} next_cursor={next_cursor} total={total_events} reset={cursor_reset}",
+            events.len()
+        ),
+    ];
+    for event in events {
+        let event_type = event["event_type"].as_str().unwrap_or("event");
+        let block_id = event["block_id"].as_str().unwrap_or("-");
+        let preview = event
+            .get("content")
+            .and_then(|value| value.as_str())
+            .or_else(|| event.get("message").and_then(|value| value.as_str()))
+            .unwrap_or("")
+            .trim();
+        if preview.is_empty() {
+            lines.push(format!("  {event_type}  {block_id}"));
+        } else {
+            lines.push(format!(
+                "  {event_type}  {block_id}  {}",
+                truncate_event_preview(preview)
+            ));
+        }
+    }
+    lines
+}
+
+fn truncate_event_preview(value: &str) -> String {
+    const LIMIT: usize = 120;
+    let mut chars = value.chars();
+    let preview = chars.by_ref().take(LIMIT).collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
 fn local_session_snapshot_result(
     session_id: &str,
     snapshot: serde_json::Value,
@@ -542,6 +662,40 @@ fn parse_prune_args(args: &[String]) -> Result<(usize, Option<u64>), String> {
         keep_recent.ok_or_else(|| "--keep is required".to_string())?,
         older_than_ms,
     ))
+}
+
+fn parse_events_args(args: &[String]) -> Result<(Option<usize>, Option<usize>), String> {
+    let mut after_cursor = None;
+    let mut limit = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--after" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "--after requires a cursor".to_string())?;
+                after_cursor = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "--after must be a non-negative integer".to_string())?,
+                );
+                index += 2;
+            }
+            "--limit" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "--limit requires a count".to_string())?;
+                limit = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "--limit must be a non-negative integer".to_string())?,
+                );
+                index += 2;
+            }
+            unknown => return Err(format!("Unknown events option: {unknown}")),
+        }
+    }
+    Ok((after_cursor, limit))
 }
 
 fn session_state_label(session: &serde_json::Value) -> &'static str {
@@ -665,6 +819,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_events_args_accepts_after_and_limit() {
+        let args = vec![
+            "--after".to_string(),
+            "2".to_string(),
+            "--limit".to_string(),
+            "10".to_string(),
+        ];
+
+        assert_eq!(
+            super::parse_events_args(&args).unwrap(),
+            (Some(2), Some(10))
+        );
+        assert!(super::parse_events_args(&["--after".to_string()]).is_err());
+    }
+
+    #[test]
     fn render_attach_result_lines_shows_status_and_session() {
         let result = serde_json::json!({
             "ok": true,
@@ -749,6 +919,33 @@ mod tests {
         );
         assert_eq!(lines[2], "  created=10 updated=20 messages=2");
         assert_eq!(lines[3], "  summary  detail summary");
+    }
+
+    #[test]
+    fn render_session_event_tail_lines_shows_cursor_and_event_preview() {
+        let result = serde_json::json!({
+            "ok": true,
+            "session_id": "session-1",
+            "events": [
+                {
+                    "event_type": "user_message",
+                    "block_id": "user-1",
+                    "content": "continue"
+                }
+            ],
+            "next_cursor": 4,
+            "total_events": 6,
+            "cursor_reset": false
+        });
+
+        let lines = super::render_session_event_tail_lines(&result);
+
+        assert_eq!(lines[0], "Gateway session events:");
+        assert_eq!(
+            lines[1],
+            "  session-1  events=1 next_cursor=4 total=6 reset=false"
+        );
+        assert_eq!(lines[2], "  user_message  user-1  continue");
     }
 
     #[test]
