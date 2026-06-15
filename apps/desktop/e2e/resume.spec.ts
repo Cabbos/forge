@@ -276,4 +276,54 @@ test.describe("Recovery notice rendering (Phase 1.7 listener fix)", () => {
     await expect(banner.locator("text=通知一")).not.toBeVisible({ timeout: 3000 });
     await expect(banner.locator("text=通知二")).toBeVisible();
   });
+
+  test("health alert renders even without active session", async ({
+    page,
+  }) => {
+    await page.waitForFunction(() => {
+      return ((window as any).__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await injectSessionOutput(page, {
+      event_type: "health_alert",
+      session_id: "gateway-watchdog",
+      alert_id: "gateway-disconnected",
+      level: "critical",
+      title: "Gateway disconnected",
+      message: "The background runtime is not responding.",
+      remediation: "Open Settings > Diagnostics and restart Gateway.",
+    });
+
+    const banner = page.locator("[data-testid='health-alert-banner']");
+    await expect(banner).toBeVisible({ timeout: 5000 });
+    await expect(banner).toContainText("Gateway disconnected");
+    await expect(banner).toContainText("restart Gateway");
+  });
+
+  test("missing API key errors surface as a global health alert", async ({
+    page,
+  }) => {
+    await page.waitForFunction(() => {
+      return ((window as any).__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await page.evaluate(() => {
+      (window as any).__mockSessionId = "missing-key-session";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await injectSessionOutput(page, {
+      event_type: "error",
+      session_id: "missing-key-session",
+      block_id: "missing-key-error",
+      message: "OpenAI API key is missing.",
+      code: "missing_api_key",
+    });
+
+    const banner = page.locator("[data-testid='health-alert-banner']");
+    await expect(banner).toBeVisible({ timeout: 5000 });
+    await expect(banner).toContainText("缺少模型密钥");
+    await expect(banner).toContainText("打开设置 > 模型");
+  });
 });

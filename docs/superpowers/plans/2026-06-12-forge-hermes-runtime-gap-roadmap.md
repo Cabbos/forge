@@ -613,6 +613,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 7.2 export/prune follow-up (2026-06-16):** History now exposes session-store export as a JSON download and a conservative "清理旧记录" action that keeps the most recent 50 snapshots, updates stats/list state, and reports the result inline. Playwright covers export IPC and prune IPC payloads.
   - Files: `src/components/history/HistoryView.tsx`.
 - [ ] 7.3 Implement recovery/error states: offline, gateway disconnected, API key missing, snapshot corrupted.
+  - **Phase 7.3 health-alert follow-up (2026-06-16):** `health_alert` events now bypass active-session filtering like recovery notices, so gateway/watchdog failures surface even when no conversation is selected. Missing API key errors now also upsert a critical global health alert pointing users to Settings > Models while preserving the existing in-thread missing-key card. Playwright covers both no-active-session health alerts and active-session missing-key promotion.
   - Files: `src/components/RecoverySurface.tsx`, `store/index.ts`.
 - [ ] 7.4 Implement permission states: per-tool permission levels, allowlist, denylist, reset.
   - Files: `executor/permissions.rs`, `src/components/settings/PermissionsPanel.tsx`.

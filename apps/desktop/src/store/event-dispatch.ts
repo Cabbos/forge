@@ -267,6 +267,18 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
 
     if (event_type === "error") {
       const errorEvent = event as Extract<StreamEvent, { event_type: "error" }>;
+      if (errorEvent.code === "missing_api_key") {
+        set({
+          healthAlerts: upsertHealthAlert(get().healthAlerts, {
+            alert_id: `missing-api-key:${session_id}`,
+            session_id,
+            level: "critical",
+            title: "缺少模型密钥",
+            message: "当前 provider 没有可用的 API key，agent 无法继续发送请求。",
+            remediation: "打开设置 > 模型，添加对应 provider 的 API key 后重试。",
+          }),
+        });
+      }
       if (
         errorEvent.code === "missing_api_key" &&
         blocks.some((block) => block.event_type === "error" && block.metadata?.code === "missing_api_key")

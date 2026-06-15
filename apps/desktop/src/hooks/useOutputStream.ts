@@ -14,7 +14,10 @@ export function useOutputStream(sessionId: string | null) {
 
     const setup = async () => {
       const cleanup = await listen<StreamEvent>("session-output", (event) => {
-        if (event.payload.event_type === "recovery_notice") {
+        if (
+          event.payload.event_type === "recovery_notice" ||
+          event.payload.event_type === "health_alert"
+        ) {
           useStore.getState().dispatchOutputEvent(event.payload);
           return;
         }
