@@ -553,7 +553,7 @@ pub fn check_log_directory() -> DiagnosticCheck {
     }
 }
 
-/// Check whether the Forge Gateway launchd service is installed and running.
+/// Check whether the Forge Gateway platform service is installed and running.
 pub fn check_gateway_service_status() -> DiagnosticCheck {
     gateway_service_check_from_snapshot(gateway_service_snapshot())
 }
@@ -564,16 +564,19 @@ struct GatewayServiceSnapshot {
     installed: bool,
     running: bool,
     status_message: String,
+    backend: String,
+    service_id: String,
     label: String,
     launch_domain: String,
+    service_path: String,
     plist_path: String,
     log_path: String,
     error_log_path: String,
 }
 
 fn gateway_service_snapshot() -> GatewayServiceSnapshot {
-    match crate::service::launchd::query_status() {
-        Ok(status) => gateway_service_snapshot_from_launchd_status(status),
+    match crate::service::query_status_snapshot() {
+        Ok(status) => gateway_service_snapshot_from_service_status(status),
         Err(error) => gateway_service_unavailable_snapshot(error),
     }
 }
@@ -581,13 +584,24 @@ fn gateway_service_snapshot() -> GatewayServiceSnapshot {
 fn gateway_service_snapshot_from_launchd_status(
     status: crate::service::launchd::LaunchdServiceStatus,
 ) -> GatewayServiceSnapshot {
+    gateway_service_snapshot_from_service_status(
+        crate::service::ServiceStatusSnapshot::from_launchd_status(status),
+    )
+}
+
+fn gateway_service_snapshot_from_service_status(
+    status: crate::service::ServiceStatusSnapshot,
+) -> GatewayServiceSnapshot {
     GatewayServiceSnapshot {
         supported: status.supported,
         installed: status.installed,
         running: status.running,
         status_message: status.status_message,
+        backend: status.backend,
+        service_id: status.service_id,
         label: status.label,
         launch_domain: status.launch_domain,
+        service_path: status.service_path,
         plist_path: status.plist_path,
         log_path: status.log_path,
         error_log_path: status.error_log_path,
@@ -595,32 +609,65 @@ fn gateway_service_snapshot_from_launchd_status(
 }
 
 fn gateway_service_unavailable_snapshot(error: impl std::fmt::Display) -> GatewayServiceSnapshot {
-    let plist_path = crate::service::launchd::plist_path();
+    let backend = crate::service::ServiceBackend::current();
+    let service_path = match backend {
+        crate::service::ServiceBackend::Launchd => crate::service::launchd::plist_path(),
+        crate::service::ServiceBackend::Systemd => crate::service::systemd::user_unit_path(),
+        crate::service::ServiceBackend::Windows | crate::service::ServiceBackend::Unsupported => {
+            std::path::PathBuf::new()
+        }
+    };
     GatewayServiceSnapshot {
-        supported: cfg!(target_os = "macos"),
-        installed: plist_path.exists(),
+        supported: backend != crate::service::ServiceBackend::Unsupported,
+        installed: service_path.exists(),
         running: false,
         status_message: format!("Gateway service status unavailable: {error}"),
-        label: crate::service::launchd::SERVICE_LABEL.to_string(),
-        launch_domain: if cfg!(target_os = "macos") {
-            crate::service::launchd::launchctl_domain()
-        } else {
-            "unsupported".to_string()
+        backend: match backend {
+            crate::service::ServiceBackend::Launchd => "launchd",
+            crate::service::ServiceBackend::Systemd => "systemd",
+            crate::service::ServiceBackend::Windows => "windows-service",
+            crate::service::ServiceBackend::Unsupported => "unsupported",
+        }
+        .to_string(),
+        service_id: match backend {
+            crate::service::ServiceBackend::Launchd => crate::service::launchd::SERVICE_LABEL,
+            crate::service::ServiceBackend::Systemd => crate::service::systemd::UNIT_NAME,
+            crate::service::ServiceBackend::Windows => crate::service::windows::SERVICE_NAME,
+            crate::service::ServiceBackend::Unsupported => "",
+        }
+        .to_string(),
+        label: match backend {
+            crate::service::ServiceBackend::Launchd => crate::service::launchd::SERVICE_LABEL,
+            crate::service::ServiceBackend::Systemd => crate::service::systemd::UNIT_NAME,
+            crate::service::ServiceBackend::Windows => crate::service::windows::SERVICE_NAME,
+            crate::service::ServiceBackend::Unsupported => "",
+        }
+        .to_string(),
+        launch_domain: match backend {
+            crate::service::ServiceBackend::Launchd => crate::service::launchd::launchctl_domain(),
+            crate::service::ServiceBackend::Systemd => "systemd-user".to_string(),
+            crate::service::ServiceBackend::Windows => "windows-service-control".to_string(),
+            crate::service::ServiceBackend::Unsupported => "unsupported".to_string(),
         },
-        plist_path: if cfg!(target_os = "macos") {
-            plist_path.display().to_string()
-        } else {
-            String::new()
-        },
-        log_path: if cfg!(target_os = "macos") {
+        service_path: service_path.display().to_string(),
+        plist_path: service_path.display().to_string(),
+        log_path: if backend == crate::service::ServiceBackend::Launchd {
             crate::service::launchd::gateway_log_path()
+                .display()
+                .to_string()
+        } else if backend == crate::service::ServiceBackend::Systemd {
+            crate::service::systemd::gateway_log_path()
                 .display()
                 .to_string()
         } else {
             String::new()
         },
-        error_log_path: if cfg!(target_os = "macos") {
+        error_log_path: if backend == crate::service::ServiceBackend::Launchd {
             crate::service::launchd::gateway_error_log_path()
+                .display()
+                .to_string()
+        } else if backend == crate::service::ServiceBackend::Systemd {
+            crate::service::systemd::gateway_error_log_path()
                 .display()
                 .to_string()
         } else {
@@ -634,8 +681,11 @@ fn gateway_service_check_from_snapshot(snapshot: GatewayServiceSnapshot) -> Diag
         "supported": snapshot.supported,
         "installed": snapshot.installed,
         "running": snapshot.running,
+        "backend": snapshot.backend,
+        "service_id": snapshot.service_id,
         "label": snapshot.label,
         "launch_domain": snapshot.launch_domain,
+        "service_path": snapshot.service_path,
         "plist_path": snapshot.plist_path,
         "log_path": snapshot.log_path,
         "error_log_path": snapshot.error_log_path,
@@ -1203,8 +1253,11 @@ mod tests {
             installed: true,
             running: true,
             status_message: "Service 'com.forge.gateway' is running.".into(),
+            backend: "launchd".into(),
+            service_id: "com.forge.gateway".into(),
             label: "com.forge.gateway".into(),
             launch_domain: "gui/123".into(),
+            service_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
             plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
             log_path: "/Users/test/.forge/logs/gateway.log".into(),
             error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
@@ -1222,8 +1275,11 @@ mod tests {
             installed: true,
             running: false,
             status_message: "Service 'com.forge.gateway' is installed but not running.".into(),
+            backend: "launchd".into(),
+            service_id: "com.forge.gateway".into(),
             label: "com.forge.gateway".into(),
             launch_domain: "gui/123".into(),
+            service_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
             plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
             log_path: "/Users/test/.forge/logs/gateway.log".into(),
             error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
@@ -1241,8 +1297,11 @@ mod tests {
             installed: false,
             running: false,
             status_message: "Service 'com.forge.gateway' is not installed.".into(),
+            backend: "launchd".into(),
+            service_id: "com.forge.gateway".into(),
             label: "com.forge.gateway".into(),
             launch_domain: "gui/123".into(),
+            service_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
             plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
             log_path: "/Users/test/.forge/logs/gateway.log".into(),
             error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
@@ -1264,8 +1323,11 @@ mod tests {
             installed: false,
             running: false,
             status_message: "Service management is only supported on macOS.".into(),
+            backend: "unsupported".into(),
+            service_id: "".into(),
             label: "com.forge.gateway".into(),
             launch_domain: "unsupported".into(),
+            service_path: "".into(),
             plist_path: "".into(),
             log_path: "".into(),
             error_log_path: "".into(),
@@ -1300,6 +1362,33 @@ mod tests {
             "Service 'com.forge.gateway' is running."
         );
         assert_eq!(snapshot.launch_domain, "gui/123");
+    }
+
+    #[test]
+    fn gateway_service_snapshot_preserves_cross_platform_service_status() {
+        let snapshot =
+            gateway_service_snapshot_from_service_status(crate::service::ServiceStatusSnapshot {
+                supported: true,
+                installed: true,
+                running: false,
+                message: "Gateway systemd user service is installed but not running.".into(),
+                backend: "systemd".into(),
+                service_id: "forge-gateway.service".into(),
+                label: "forge-gateway.service".into(),
+                launch_domain: "systemd-user".into(),
+                service_path: "/home/alice/.config/systemd/user/forge-gateway.service".into(),
+                plist_path: "/home/alice/.config/systemd/user/forge-gateway.service".into(),
+                log_path: "/home/alice/.forge/logs/gateway.log".into(),
+                error_log_path: "/home/alice/.forge/logs/gateway-error.log".into(),
+                status_message: "Service 'forge-gateway.service' is not running: inactive".into(),
+            });
+
+        assert_eq!(snapshot.backend, "systemd");
+        assert_eq!(snapshot.service_id, "forge-gateway.service");
+        assert_eq!(
+            snapshot.service_path,
+            "/home/alice/.config/systemd/user/forge-gateway.service"
+        );
     }
 
     // ── Capability inventory check shape ──────────────────────────────────
