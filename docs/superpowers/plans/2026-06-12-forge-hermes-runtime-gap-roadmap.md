@@ -403,7 +403,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 5-B (2026-06-12):** Created `profile` module with `ForgeProfile` (id, name, default_provider?, default_model?, default_workspace?, api_key_overrides?, created_at_ms, updated_at_ms), `ProfileStore` (atomic JSON persistence at `~/.forge/profiles.json`, schema_version, seed default, list/upsert/delete/set_active). 22 unit tests covering seed, create/list, update preserves created_at, set active, delete inactive, reject active delete, validation, corrupt JSON handling, atomic save, persistence roundtrip, API key overrides storage. IPC wired: `list_profiles`, `upsert_profile`, `delete_profile`, `set_active_profile` Tauri commands registered in `lib.rs`. `ProfileStore` added to `AppState`.
 - [ ] 5.5 Add profile switcher in UI and CLI `--profile` flag.
   - Files: `src/components/settings/ProfilesPanel.tsx`, CLI entry.
-  - **Phase 5-B partial (2026-06-12):** Settings > Profiles panel built with create/edit/delete/active selection, loading/error/empty states, mutation error handling. Frontend types, query keys, and `useProfilesQuery` hook added. Optional `profile_id` field added to `EvalHeadlessRequest` (Rust) and `HeadlessRequest` (TypeScript CLI helpers) with test. CLI `run` command remains a stub; `--profile` parsing and runtime profile selection deferred. Headless request profile_id is forward-compat storage only — not wired to agent session creation.
+  - **Phase 5-B partial (2026-06-12):** Settings > Profiles panel built with create/edit/delete/active selection, loading/error/empty states, mutation error handling. Frontend types, query keys, and `useProfilesQuery` hook added. Optional `profile_id` field added to `EvalHeadlessRequest` (Rust) and `HeadlessRequest` (TypeScript CLI helpers) with test. At that point CLI `run --profile` and runtime profile selection were still deferred.
+  - **Phase 5.5 follow-up (2026-06-15):** `forge run --profile` is implemented and forwarded into `EvalHeadlessRequest`; headless and gateway trigger execution resolve profile provider/model/workspace defaults. Desktop new-session creation now consumes the active profile defaults as well: `useSession` resolves active profile defaults before calling `create_session`, and the Rust IPC handler accepts `profile_id` so direct Tauri calls also honor profile provider/model/workspace defaults. Remaining polish: keep composer model selection visibly synchronized with active profile changes and connect profile associations deeper into long-term memory.
 - [ ] 5.6 Implement shared runtime state: CLI and desktop can attach to the same gateway/session host.
   - Files: `runtime/gateway.rs`.
   - **Deferred:** No gateway runtime exists (Phase 6 dependency).
@@ -426,7 +427,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.3 Settings > Memory panel | ✅ Done | Full CRUD UI with search, inline edit, delete, mutation errors |
 | 5.10 Memory store tests | ✅ Done | 19 Rust tests, 976 total pass; npm build passes |
 | 5.4 Profile model | ✅ Done | `profile/mod.rs` model + `ProfileStore` + 22 tests + IPC + AppState wiring |
-| 5.5 Profile switcher | 🟨 Partial | Settings UI + headless field done; CLI `--profile` deferred; runtime selection not wired |
+| 5.5 Profile switcher | 🟨 Partial | Settings UI, CLI `--profile`, headless/gateway profile resolution, and desktop new-session defaults done; composer-visible sync and deeper memory association deferred |
 | 5.6 Shared runtime / gateway | ⏸️ Deferred | No gateway (Phase 6) |
 | 5.7 Messaging triggers | 🟨 Partial | TCP webhook, Gateway IPC enqueue, trigger runner, and CLI trigger controls exist; dashboard polish still deferred |
 | 5.8 Scheduler engine | ✅ Done | Phase 5-C local MVP; background tick/gateway cron deferred |
@@ -446,7 +447,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.5 Settings > Profiles panel | ✅ Done | Full CRUD UI with active selection, inline edit, delete, mutation errors |
 | 5.5 Frontend types/hooks | ✅ Done | Types in tauri.ts, queryKeys.profilesAll, useProfilesQuery |
 | 5.5 Headless request profile_id | ✅ Done | Optional field in Rust EvalHeadlessRequest + TS HeadlessRequest + test |
-| 5.5 CLI --profile runtime | ⏸️ Deferred | CLI run is a stub; profile runtime selection not wired |
+| 5.5 CLI/headless/desktop profile runtime | ✅ Done | `forge run --profile`, `EvalHeadlessRequest`, gateway triggers, and desktop `create_session` consume profile defaults |
 | 5.6-5.7 Remaining items | ⏸️ Deferred | Gateway and messaging deferred; scheduler local MVP completed in Phase 5-C |
 | Profile tests | ✅ Done | 22 Rust unit tests pass |
 | New dependencies | 🚫 None | No new crates or npm packages |
@@ -701,7 +702,7 @@ Codex must stop and ask the user if any of the following occur:
 ### 2026-06-12 Final Progress Summary
 
 **Completed:**
-- ✅ Phase 5.5: CLI `--profile` flag + runtime profile resolution (wire into `EvalHeadlessRequest`)
+- ✅ Phase 5.5: CLI `--profile` flag + runtime profile resolution for headless, gateway triggers, and desktop new-session creation
 - ✅ Phase 6-A: Gateway core — protocol types + JSON-line IPC + server dispatch (ping/health/list_sessions/register_session/unregister_session)
 - ✅ Phase 6-B: launchd plist generation + install/uninstall/start/stop/restart/status + `forge_service` binary + CLI `forge service` command
 - ✅ Phase 6.5: Autostart toggle in Settings > General with install/running status badges

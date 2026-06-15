@@ -14,6 +14,7 @@ export async function createSession(
   provider: string,
   model: string,
   apiKey = "",
+  profileId: string | null = null,
 ): Promise<SessionCreated> {
   if (!hasTauriRuntime()) {
     rememberWorkingDir(workingDir);
@@ -26,6 +27,7 @@ export async function createSession(
       provider,
       apiKey: apiKey || "",
       model,
+      profileId,
     });
   } catch (error) {
     if (!isMissingTauriRuntimeError(error)) throw error;

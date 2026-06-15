@@ -119,6 +119,73 @@ fn manual_compact_request_matches_text_and_structured_capability() {
     assert!(!is_manual_compact_request("/fix", &[]));
 }
 
+fn test_profile(
+    overrides: impl FnOnce(&mut crate::profile::ForgeProfile),
+) -> crate::profile::ForgeProfile {
+    let mut profile = crate::profile::ForgeProfile {
+        id: "ops".to_string(),
+        name: "Ops".to_string(),
+        default_provider: Some("anthropic".to_string()),
+        default_model: Some("claude-sonnet-4-5".to_string()),
+        default_workspace: Some("/Users/cabbos/project/ops".to_string()),
+        api_key_overrides: None,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+    };
+    overrides(&mut profile);
+    profile
+}
+
+#[test]
+fn create_session_defaults_use_profile_provider_model_and_workspace() {
+    let profile = test_profile(|_| {});
+
+    let defaults = resolve_create_session_defaults(
+        "/Users/cabbos/project/forge".to_string(),
+        Some("deepseek".to_string()),
+        Some("deepseek-chat".to_string()),
+        Some(&profile),
+    );
+
+    assert_eq!(defaults.working_dir, "/Users/cabbos/project/ops");
+    assert_eq!(defaults.provider.as_deref(), Some("anthropic"));
+    assert_eq!(defaults.model.as_deref(), Some("claude-sonnet-4-5"));
+}
+
+#[test]
+fn create_session_defaults_fall_back_to_request_without_profile() {
+    let defaults = resolve_create_session_defaults(
+        "/Users/cabbos/project/forge".to_string(),
+        Some("deepseek".to_string()),
+        Some("deepseek-chat".to_string()),
+        None,
+    );
+
+    assert_eq!(defaults.working_dir, "/Users/cabbos/project/forge");
+    assert_eq!(defaults.provider.as_deref(), Some("deepseek"));
+    assert_eq!(defaults.model.as_deref(), Some("deepseek-chat"));
+}
+
+#[test]
+fn create_session_defaults_ignore_blank_profile_fields() {
+    let profile = test_profile(|profile| {
+        profile.default_provider = Some("  ".to_string());
+        profile.default_model = Some(String::new());
+        profile.default_workspace = Some("   ".to_string());
+    });
+
+    let defaults = resolve_create_session_defaults(
+        "/workspace".to_string(),
+        Some("openai".to_string()),
+        Some("gpt-5-codex".to_string()),
+        Some(&profile),
+    );
+
+    assert_eq!(defaults.working_dir, "/workspace");
+    assert_eq!(defaults.provider.as_deref(), Some("openai"));
+    assert_eq!(defaults.model.as_deref(), Some("gpt-5-codex"));
+}
+
 fn record_test_continuity_lesson(
     state: &Arc<AppState>,
     project_path: &std::path::Path,
