@@ -415,10 +415,17 @@ export interface RepairAction {
   description: string;
 }
 
+export interface RepairVerification {
+  label: string;
+  ok: boolean;
+  message: string;
+}
+
 export interface RepairResult {
   action_id: string;
   success: boolean;
   message: string;
+  verification?: RepairVerification | null;
 }
 
 export interface ScheduledTask {

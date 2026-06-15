@@ -53,6 +53,16 @@ pub struct RepairResult {
     pub action_id: String,
     pub success: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<RepairVerification>,
+}
+
+/// Post-action verification attached to a repair result.
+#[derive(Debug, Clone, Serialize)]
+pub struct RepairVerification {
+    pub label: String,
+    pub ok: bool,
+    pub message: String,
 }
 
 /// Run a specific repair action by id.  Returns the result.
@@ -68,6 +78,7 @@ pub fn run_repair(action_id: &str) -> RepairResult {
             action_id: action_id.to_string(),
             success: false,
             message: format!("Unknown repair action: {action_id}"),
+            verification: None,
         },
     }
 }
@@ -77,18 +88,10 @@ fn restart_gateway() -> RepairResult {
     let plist_path = crate::service::launchd::plist_path();
     if !plist_path.exists() {
         // Try installing first.
-        match crate::service::launchd::install() {
-            Ok(msg) => RepairResult {
-                action_id: "restart_gateway".into(),
-                success: true,
-                message: msg,
-            },
-            Err(e) => RepairResult {
-                action_id: "restart_gateway".into(),
-                success: false,
-                message: format!("install failed: {e}"),
-            },
-        }
+        let install_result =
+            crate::service::launchd::install().map_err(|e| format!("install failed: {e}"));
+        let status_result = status_after_gateway_repair(&install_result);
+        gateway_service_repair_result("restart_gateway", install_result, status_result)
     } else {
         // Bootout then bootstrap.
         let domain = crate::service::launchd::launchctl_domain();
@@ -96,19 +99,72 @@ fn restart_gateway() -> RepairResult {
         let _ = std::process::Command::new("launchctl")
             .args(args.iter().map(String::as_str))
             .output();
-        match crate::service::launchd::install() {
-            Ok(msg) => RepairResult {
-                action_id: "restart_gateway".into(),
-                success: true,
-                message: msg,
-            },
-            Err(e) => RepairResult {
-                action_id: "restart_gateway".into(),
-                success: false,
-                message: format!("restart failed: {e}"),
-            },
-        }
+        let restart_result =
+            crate::service::launchd::install().map_err(|e| format!("restart failed: {e}"));
+        let status_result = status_after_gateway_repair(&restart_result);
+        gateway_service_repair_result("restart_gateway", restart_result, status_result)
     }
+}
+
+fn status_after_gateway_repair(repair_result: &Result<String, String>) -> Result<String, String> {
+    if repair_result.is_err() {
+        return Err("verification skipped because repair command failed".to_string());
+    }
+
+    crate::service::launchd::status()
+}
+
+fn gateway_service_repair_result(
+    action_id: &str,
+    repair_result: Result<String, String>,
+    status_result: Result<String, String>,
+) -> RepairResult {
+    match repair_result {
+        Err(error) => RepairResult {
+            action_id: action_id.into(),
+            success: false,
+            message: error,
+            verification: None,
+        },
+        Ok(message) => match status_result {
+            Ok(status_message) if gateway_status_message_is_running(&status_message) => {
+                RepairResult {
+                    action_id: action_id.into(),
+                    success: true,
+                    message,
+                    verification: Some(RepairVerification {
+                        label: "Gateway service".into(),
+                        ok: true,
+                        message: status_message,
+                    }),
+                }
+            }
+            Ok(status_message) => RepairResult {
+                action_id: action_id.into(),
+                success: false,
+                message: format!("Gateway repair verification failed: {status_message}"),
+                verification: Some(RepairVerification {
+                    label: "Gateway service".into(),
+                    ok: false,
+                    message: status_message,
+                }),
+            },
+            Err(error) => RepairResult {
+                action_id: action_id.into(),
+                success: false,
+                message: format!("Gateway repair verification failed: {error}"),
+                verification: Some(RepairVerification {
+                    label: "Gateway service".into(),
+                    ok: false,
+                    message: error,
+                }),
+            },
+        },
+    }
+}
+
+fn gateway_status_message_is_running(message: &str) -> bool {
+    message.contains(" is running.")
 }
 
 fn clear_snapshot_cache() -> RepairResult {
@@ -121,6 +177,7 @@ fn clear_snapshot_cache_at(snapshots_dir: &Path) -> RepairResult {
             action_id: "clear_snapshot_cache".into(),
             success: true,
             message: "No snapshot cache to clear.".into(),
+            verification: None,
         };
     }
 
@@ -131,12 +188,14 @@ fn clear_snapshot_cache_at(snapshots_dir: &Path) -> RepairResult {
                 action_id: "clear_snapshot_cache".into(),
                 success: true,
                 message: "Snapshot cache cleared.".into(),
+                verification: None,
             }
         }
         Err(e) => RepairResult {
             action_id: "clear_snapshot_cache".into(),
             success: false,
             message: format!("Failed: {e}"),
+            verification: None,
         },
     }
 }
@@ -151,6 +210,7 @@ fn clear_a2a_ledger_cache_at(ledger_dir: &Path) -> RepairResult {
             action_id: "clear_a2a_ledger_cache".into(),
             success: true,
             message: "No A2A ledger cache to clear.".into(),
+            verification: None,
         };
     }
 
@@ -161,12 +221,14 @@ fn clear_a2a_ledger_cache_at(ledger_dir: &Path) -> RepairResult {
                 action_id: "clear_a2a_ledger_cache".into(),
                 success: true,
                 message: "A2A ledger cache cleared.".into(),
+                verification: None,
             }
         }
         Err(e) => RepairResult {
             action_id: "clear_a2a_ledger_cache".into(),
             success: false,
             message: format!("Failed: {e}"),
+            verification: None,
         },
     }
 }
@@ -198,18 +260,10 @@ fn a2a_ledger_cache_dir_for_home(home: impl AsRef<Path>) -> PathBuf {
 fn reinstall_service() -> RepairResult {
     // Uninstall then install.
     let _ = crate::service::launchd::uninstall();
-    match crate::service::launchd::install() {
-        Ok(msg) => RepairResult {
-            action_id: "reinstall_service".into(),
-            success: true,
-            message: msg,
-        },
-        Err(e) => RepairResult {
-            action_id: "reinstall_service".into(),
-            success: false,
-            message: format!("reinstall failed: {e}"),
-        },
-    }
+    let reinstall_result =
+        crate::service::launchd::install().map_err(|e| format!("reinstall failed: {e}"));
+    let status_result = status_after_gateway_repair(&reinstall_result);
+    gateway_service_repair_result("reinstall_service", reinstall_result, status_result)
 }
 
 fn clear_logs() -> RepairResult {
@@ -220,6 +274,7 @@ fn clear_logs() -> RepairResult {
             action_id: "clear_logs".into(),
             success: true,
             message: "No log file to clear.".into(),
+            verification: None,
         };
     }
 
@@ -230,11 +285,13 @@ fn clear_logs() -> RepairResult {
             action_id: "clear_logs".into(),
             success: true,
             message: "Log file archived and cleared.".into(),
+            verification: None,
         },
         Err(e) => RepairResult {
             action_id: "clear_logs".into(),
             success: false,
             message: format!("Failed: {e}"),
+            verification: None,
         },
     }
 }
@@ -247,6 +304,7 @@ fn check_config() -> RepairResult {
             action_id: "check_config".into(),
             success: true,
             message: "Config file not found (will be created on first use).".into(),
+            verification: None,
         };
     }
 
@@ -256,17 +314,20 @@ fn check_config() -> RepairResult {
                 action_id: "check_config".into(),
                 success: true,
                 message: "Config file is valid JSON.".into(),
+                verification: None,
             },
             Err(e) => RepairResult {
                 action_id: "check_config".into(),
                 success: false,
                 message: format!("Config file is corrupt: {e}"),
+                verification: None,
             },
         },
         Err(e) => RepairResult {
             action_id: "check_config".into(),
             success: false,
             message: format!("Cannot read config: {e}"),
+            verification: None,
         },
     }
 }
@@ -301,9 +362,54 @@ mod tests {
             action_id: "test".into(),
             success: true,
             message: "ok".into(),
+            verification: None,
         };
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(json.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn repair_result_serializes_verification_detail() {
+        let result = RepairResult {
+            action_id: "restart_gateway".into(),
+            success: false,
+            message: "Gateway repair verification failed.".into(),
+            verification: Some(RepairVerification {
+                label: "Gateway service".into(),
+                ok: false,
+                message: "Service 'com.forge.gateway' status unknown.".into(),
+            }),
+        };
+
+        let json = serde_json::to_value(&result).expect("serialize");
+
+        assert_eq!(json["verification"]["ok"], false);
+        assert_eq!(json["verification"]["label"], "Gateway service");
+    }
+
+    #[test]
+    fn gateway_service_repair_result_fails_when_status_is_not_running() {
+        let result = gateway_service_repair_result(
+            "restart_gateway",
+            Ok("Service installed.".to_string()),
+            Ok("Service 'com.forge.gateway' status unknown.".to_string()),
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.verification.as_ref().map(|v| v.ok), Some(false));
+        assert!(result.message.contains("verification failed"));
+    }
+
+    #[test]
+    fn gateway_service_repair_result_passes_when_status_is_running() {
+        let result = gateway_service_repair_result(
+            "restart_gateway",
+            Ok("Service installed.".to_string()),
+            Ok("Service 'com.forge.gateway' is running.".to_string()),
+        );
+
+        assert!(result.success, "{}", result.message);
+        assert_eq!(result.verification.as_ref().map(|v| v.ok), Some(true));
     }
 
     #[test]

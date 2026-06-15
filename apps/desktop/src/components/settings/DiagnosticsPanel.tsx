@@ -37,7 +37,10 @@ import {
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
 } from "./diagnosticsRuntimeView";
-import { buildDiagnosticRepairAction } from "./diagnosticsRepairView";
+import {
+  buildDiagnosticRepairAction,
+  formatRepairResultMessage,
+} from "./diagnosticsRepairView";
 import { formatMutationError } from "./settingsUtils";
 
 const STATUS_ICON: Record<string, typeof CheckCircle> = {
@@ -105,10 +108,11 @@ export function DiagnosticsPanel() {
     setRepairError(null);
     try {
       const result = await runRepairAction(actionId);
+      const formattedMessage = formatRepairResultMessage(result);
       if (result.success) {
-        setRepairMessage(result.message);
+        setRepairMessage(formattedMessage);
       } else {
-        setRepairError(result.message);
+        setRepairError(formattedMessage);
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.diagnosticsReport }),

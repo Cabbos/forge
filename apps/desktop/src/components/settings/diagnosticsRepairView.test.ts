@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildDiagnosticRepairAction } from "./diagnosticsRepairView.ts";
+import {
+  buildDiagnosticRepairAction,
+  formatRepairResultMessage,
+} from "./diagnosticsRepairView.ts";
 
 describe("buildDiagnosticRepairAction", () => {
   it("returns a labeled action for warning checks with a repair action id", () => {
@@ -29,5 +32,22 @@ describe("buildDiagnosticRepairAction", () => {
     });
 
     assert.equal(action, null);
+  });
+
+  it("includes verification detail when formatting repair results", () => {
+    const message = formatRepairResultMessage({
+      action_id: "restart_gateway",
+      success: false,
+      message: "Gateway repair verification failed.",
+      verification: {
+        label: "Gateway service",
+        ok: false,
+        message: "Service 'com.forge.gateway' status unknown.",
+      },
+    });
+
+    assert.match(message, /Gateway repair verification failed/);
+    assert.match(message, /Gateway service/);
+    assert.match(message, /status unknown/);
   });
 });

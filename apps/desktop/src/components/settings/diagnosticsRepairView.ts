@@ -1,4 +1,4 @@
-import type { DiagnosticCheck } from "@/lib/tauri";
+import type { DiagnosticCheck, RepairResult } from "@/lib/tauri";
 
 export interface DiagnosticRepairActionView {
   actionId: string;
@@ -24,4 +24,13 @@ export function buildDiagnosticRepairAction(
     actionId: check.repairActionId,
     label: REPAIR_ACTION_LABELS[check.repairActionId] ?? "运行修复",
   };
+}
+
+export function formatRepairResultMessage(result: RepairResult): string {
+  if (!result.verification) {
+    return result.message;
+  }
+
+  const status = result.verification.ok ? "验证通过" : "验证失败";
+  return `${result.message} ${result.verification.label}: ${status} - ${result.verification.message}`;
 }

@@ -534,7 +534,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 6.7 Implement update repair: on update, detect stale gateway/config, run doctor, repair if needed.
   - Files: `updater/mod.rs`, `diagnostics/checks.rs`.
 - [ ] 6.8 Add self-healing actions from diagnostics: restart gateway, clear snapshot cache, reinstall service.
-  - Files: `diagnostics/actions.rs`.
+  - **Phase 6.8 partial (2026-06-15):** `RepairResult` now carries optional post-action verification detail. `restart_gateway` and `reinstall_service` verify `launchd::status()` after the repair command and fail honestly when the service is still not running, rather than reporting command success as repair success. Settings > Diagnostics formats verification detail in the repair result message.
+  - Files: `diagnostics/repair.rs`, `src/components/settings/DiagnosticsPanel.tsx`, `src/components/settings/diagnosticsRepairView.ts`, `src/lib/ipc/types.ts`.
 - [ ] 6.9 Tests: service install/uninstall in CI-safe mock mode, update repair tests.
 
 **Acceptance gate:**
@@ -706,6 +707,7 @@ Codex must stop and ask the user if any of the following occur:
 - ✅ Phase 5.6: Gateway client library + session tracking + `forge_session` binary + CLI `forge session list` command
 - ✅ Phase 5.7: `forge_trigger` binary + `forge trigger enqueue/list/runs/status` CLI wrapper
 - ✅ Phase 2.5: Gateway service watchdog — 30s probe, automatic restart repair, global HealthAlert, exponential backoff
+- ✅ Phase 6.8 partial: Gateway repair actions now verify post-repair service health and surface verification detail in Diagnostics
 
 **Test totals:**
 - Rust: 1057 tests pass, 0 fail
@@ -735,7 +737,7 @@ Codex must stop and ask the user if any of the following occur:
 **Deferred for future:**
 - Phase 6.6: Dashboard web UI
 - Phase 6.7: Update repair
-- Phase 6.8: Update-aware self-healing verification and deeper repair flows
+- Phase 6.8: Update-aware self-healing orchestration and deeper repair flows
 - Phase 5.7: Messaging trigger full dashboard listing/replay polish
 - Phase 7: Full product polish + acceptance suite
 
