@@ -604,6 +604,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 **Work breakdown:**
 
 - [ ] 7.1 Complete Settings dialog: models, workspace, tools, memory, data, about, diagnostics, scheduler, general.
+  - **Phase 7.1 settings-scroll follow-up (2026-06-16):** Settings now switches to a stacked small-viewport layout so the category rail sits above the active panel and the content pane keeps its own vertical scroll. Added a Playwright regression for 390px-wide viewports and verified the same flow in the in-app Browser.
   - Files: `src/components/settings/`.
 - [ ] 7.2 Implement History view: searchable, filterable list of all sessions with restore/delete.
   - Files: `src/components/history/HistoryView.tsx`.

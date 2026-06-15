@@ -1029,6 +1029,50 @@ test.describe("Timeline Archive", () => {
       });
       expect(scrollAfter).toBeGreaterThan(scrollBefore);
     });
+
+    test("settings stay readable and content-scrollable on narrow viewports", async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 640 });
+      await page.evaluate(() => window.dispatchEvent(new Event("forge:open-settings")));
+
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByRole("heading", { name: "模型服务" })).toBeVisible();
+
+      const metrics = await dialog.evaluate((node) => {
+        const dialogRect = (node as HTMLElement).getBoundingClientRect();
+        const center = node.querySelector<HTMLElement>(".forge-settings-center");
+        const sidebar = node.querySelector<HTMLElement>(".forge-settings-sidebar");
+        const content = node.querySelector<HTMLElement>(".forge-settings-content");
+        const centerRect = center?.getBoundingClientRect();
+        const sidebarRect = sidebar?.getBoundingClientRect();
+        const contentRect = content?.getBoundingClientRect();
+        if (!center || !sidebar || !content || !centerRect || !sidebarRect || !contentRect) return null;
+
+        const scrollBefore = content.scrollTop;
+        content.scrollTop = 500;
+
+        return {
+          dialogWidth: Math.round(dialogRect.width),
+          centerWidth: Math.round(centerRect.width),
+          sidebarBottom: Math.round(sidebarRect.bottom),
+          contentTop: Math.round(contentRect.top),
+          contentWidth: Math.round(contentRect.width),
+          centerClientWidth: center.clientWidth,
+          centerScrollWidth: center.scrollWidth,
+          contentCanScroll: content.scrollHeight > content.clientHeight,
+          contentOverflowY: getComputedStyle(content).overflowY,
+          scrollBefore,
+          scrollAfter: content.scrollTop,
+        };
+      });
+
+      expect(metrics).not.toBeNull();
+      expect(metrics!.centerScrollWidth).toBeLessThanOrEqual(metrics!.centerClientWidth + 1);
+      expect(metrics!.sidebarBottom).toBeLessThanOrEqual(metrics!.contentTop);
+      expect(metrics!.contentWidth).toBeGreaterThanOrEqual(metrics!.dialogWidth - 48);
+      expect(metrics!.contentCanScroll).toBe(true);
+      expect(metrics!.contentOverflowY).toBe("auto");
+      expect(metrics!.scrollAfter).toBeGreaterThan(metrics!.scrollBefore);
+    });
   
     test("resume does not duplicate persisted delivery summary blocks", async ({ page }) => {
       const sessionId = "legacy-delivery-resume";
