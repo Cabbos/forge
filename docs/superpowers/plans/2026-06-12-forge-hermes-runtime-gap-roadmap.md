@@ -532,7 +532,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 6.6 Add dashboard: lightweight web UI served by gateway showing sessions, health, and logs.
   - Files: `apps/website` or a new `apps/dashboard` per monorepo rule; likely reuse `apps/website`.
 - [ ] 6.7 Implement update repair: on update, detect stale gateway/config, run doctor, repair if needed.
-  - **Phase 6.7 partial (2026-06-15):** Added `diagnostics/update_repair.rs` as the update-repair planning/execution layer. It converts `DiagnosticsReport` warnings/failures into deduplicated repair actions, keeps unrepairable failures as manual blockers, and executes the plan through an injectable runner (real path uses `run_repair`). Focused tests cover gateway repair planning, manual blockers for config failures, action deduplication, ordered execution, and failed repair results. Automatic invocation during an app update is still deferred until updater lifecycle hooks exist.
+  - **Phase 6.7 partial (2026-06-15):** Added `diagnostics/update_repair.rs` as the update-repair planning/execution layer. It converts `DiagnosticsReport` warnings/failures into deduplicated repair actions, keeps unrepairable failures as manual blockers, and executes the plan through an injectable runner (real path uses `run_repair`). Follow-up safety hardening restricts automatic update repair to conservative service lifecycle actions (`restart_gateway`, `reinstall_service`); destructive or unknown actions such as clearing snapshots, A2A ledgers, or logs are retained as manual blockers. Focused tests cover gateway repair planning, service-action allowlisting, destructive/unknown action blocking, manual blockers for config failures, action deduplication, ordered execution, and failed repair results. Automatic invocation during an app update is still deferred until updater lifecycle hooks exist.
   - Files: `diagnostics/update_repair.rs`, `diagnostics/mod.rs`.
 - [ ] 6.8 Add self-healing actions from diagnostics: restart gateway, clear snapshot cache, reinstall service.
   - **Phase 6.8 partial (2026-06-15):** `RepairResult` now carries optional post-action verification detail. `restart_gateway` and `reinstall_service` verify `launchd::status()` after the repair command and fail honestly when the service is still not running, rather than reporting command success as repair success. Settings > Diagnostics formats verification detail in the repair result message.
@@ -708,7 +708,7 @@ Codex must stop and ask the user if any of the following occur:
 - ✅ Phase 5.6: Gateway client library + session tracking + `forge_session` binary + CLI `forge session list` command
 - ✅ Phase 5.7: `forge_trigger` binary + `forge trigger enqueue/list/runs/status` CLI wrapper
 - ✅ Phase 2.5: Gateway service watchdog — 30s probe, automatic restart repair, global HealthAlert, exponential backoff
-- ✅ Phase 6.7 partial: Update repair planner/runner maps diagnostics to repair actions and manual blockers
+- ✅ Phase 6.7 partial: Update repair planner/runner maps diagnostics to repair actions, allows only conservative service repair actions to run automatically, and keeps destructive/unknown actions as manual blockers
 - ✅ Phase 6.8 partial: Gateway repair actions now verify post-repair service health and surface verification detail in Diagnostics
 
 **Test totals:**

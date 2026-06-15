@@ -47,13 +47,16 @@ pub fn plan_update_repair(report: &DiagnosticsReport) -> UpdateRepairPlan {
         }
 
         if let Some(action_id) = check.repair_action_id.as_deref() {
-            if seen_actions.insert(action_id.to_string()) {
+            let automatic = update_repair_action_is_automatic(action_id);
+            if automatic && seen_actions.insert(action_id.to_string()) {
                 actions.push(UpdateRepairActionPlan {
                     check_id: check.id.clone(),
                     action_id: action_id.to_string(),
                     label: check.label.clone(),
                     reason: check.message.clone(),
                 });
+            } else if !automatic {
+                manual_blockers.push(check.id.clone());
             }
         } else if check.status == CheckStatus::Fail {
             manual_blockers.push(check.id.clone());
@@ -79,6 +82,10 @@ pub fn plan_update_repair(report: &DiagnosticsReport) -> UpdateRepairPlan {
         actions,
         manual_blockers,
     }
+}
+
+fn update_repair_action_is_automatic(action_id: &str) -> bool {
+    matches!(action_id, "restart_gateway" | "reinstall_service")
 }
 
 pub fn execute_update_repair(report: &DiagnosticsReport) -> UpdateRepairRun {
@@ -138,6 +145,58 @@ mod tests {
     }
 
     #[test]
+    fn plan_update_repair_keeps_service_repair_actions_automatic() {
+        let report = report_with(vec![
+            DiagnosticCheck::warn("gateway_service", "Gateway service", "Gateway stopped.")
+                .with_repair_action_id("restart_gateway"),
+            DiagnosticCheck::warn("service_install", "Gateway service", "Service plist stale.")
+                .with_repair_action_id("reinstall_service"),
+        ]);
+
+        let plan = plan_update_repair(&report);
+
+        let action_ids = plan
+            .actions
+            .iter()
+            .map(|action| action.action_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(action_ids, vec!["restart_gateway", "reinstall_service"]);
+        assert!(plan.manual_blockers.is_empty());
+    }
+
+    #[test]
+    fn plan_update_repair_requires_manual_review_for_destructive_actions() {
+        let report = report_with(vec![DiagnosticCheck::warn(
+            "a2a_ledger",
+            "A2A task ledger",
+            "All A2A ledger files are corrupted.",
+        )
+        .with_repair_action_id("clear_a2a_ledger_cache")]);
+
+        let plan = plan_update_repair(&report);
+
+        assert!(plan.needed);
+        assert!(plan.actions.is_empty());
+        assert_eq!(plan.manual_blockers, vec!["a2a_ledger"]);
+    }
+
+    #[test]
+    fn plan_update_repair_requires_manual_review_for_unknown_actions() {
+        let report = report_with(vec![DiagnosticCheck::warn(
+            "future_check",
+            "Future check",
+            "A future repair action appeared.",
+        )
+        .with_repair_action_id("future_repair_action")]);
+
+        let plan = plan_update_repair(&report);
+
+        assert!(plan.needed);
+        assert!(plan.actions.is_empty());
+        assert_eq!(plan.manual_blockers, vec!["future_check"]);
+    }
+
+    #[test]
     fn plan_update_repair_deduplicates_repair_actions() {
         let report = report_with(vec![
             DiagnosticCheck::warn("gateway_service", "Gateway service", "Gateway stopped.")
@@ -184,10 +243,10 @@ mod tests {
                     reason: "Gateway service is installed but not running.".into(),
                 },
                 UpdateRepairActionPlan {
-                    check_id: "a2a_ledger".into(),
-                    action_id: "clear_a2a_ledger_cache".into(),
-                    label: "A2A task ledger".into(),
-                    reason: "All A2A ledger files are corrupted.".into(),
+                    check_id: "service_install".into(),
+                    action_id: "reinstall_service".into(),
+                    label: "Gateway service".into(),
+                    reason: "Service plist stale.".into(),
                 },
             ],
             manual_blockers: Vec::new(),
@@ -204,7 +263,7 @@ mod tests {
             }
         });
 
-        assert_eq!(calls, vec!["restart_gateway", "clear_a2a_ledger_cache"]);
+        assert_eq!(calls, vec!["restart_gateway", "reinstall_service"]);
         assert!(run.success);
         assert_eq!(run.results.len(), 2);
     }
