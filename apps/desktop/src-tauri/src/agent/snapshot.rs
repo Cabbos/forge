@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,6 +14,7 @@ use crate::workflow::WorkflowState;
 const MAX_LISTED_SESSION_SNAPSHOTS: usize = 200;
 const CURRENT_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 const LEGACY_SNAPSHOT_SCHEMA_VERSION: u32 = 0;
+const CURRENT_SNAPSHOT_EXPORT_SCHEMA_VERSION: u32 = 1;
 
 fn current_schema_version() -> u32 {
     CURRENT_SNAPSHOT_SCHEMA_VERSION
@@ -50,6 +52,31 @@ pub struct AgentSessionSnapshot {
     pub pending_confirms: Vec<PendingConfirmDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_tool_calls: Vec<ActiveToolCallDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSnapshotStoreStats {
+    pub total_snapshots: usize,
+    pub corrupted_snapshots: usize,
+    pub total_bytes: u64,
+    pub oldest_updated_at_ms: Option<u64>,
+    pub newest_updated_at_ms: Option<u64>,
+    pub by_provider: BTreeMap<String, usize>,
+    pub by_workspace: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionSnapshotExport {
+    pub schema_version: u32,
+    pub exported_at_ms: u64,
+    pub snapshots: Vec<AgentSessionSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSnapshotPruneReport {
+    pub deleted_session_ids: Vec<String>,
+    pub kept_session_ids: Vec<String>,
+    pub skipped_corrupted: usize,
 }
 
 /// Serializable descriptor for a pending confirmation that was interrupted
@@ -324,6 +351,196 @@ fn list_session_snapshots_from_dir(
     Ok(snapshots)
 }
 
+pub fn session_snapshot_store_stats() -> Result<SessionSnapshotStoreStats, String> {
+    session_snapshot_store_stats_at(&app_data_dir())
+}
+
+fn session_snapshot_store_stats_at(root: &Path) -> Result<SessionSnapshotStoreStats, String> {
+    let mut stats = SessionSnapshotStoreStats {
+        total_snapshots: 0,
+        corrupted_snapshots: 0,
+        total_bytes: 0,
+        oldest_updated_at_ms: None,
+        newest_updated_at_ms: None,
+        by_provider: BTreeMap::new(),
+        by_workspace: BTreeMap::new(),
+    };
+
+    for path in session_snapshot_json_paths(root)? {
+        stats.total_bytes = stats
+            .total_bytes
+            .saturating_add(path.metadata().map(|metadata| metadata.len()).unwrap_or(0));
+        match load_listable_session_snapshot(&path) {
+            Ok(snapshot) => {
+                stats.total_snapshots += 1;
+                stats.oldest_updated_at_ms = Some(
+                    stats
+                        .oldest_updated_at_ms
+                        .map_or(snapshot.updated_at_ms, |oldest| {
+                            oldest.min(snapshot.updated_at_ms)
+                        }),
+                );
+                stats.newest_updated_at_ms = Some(
+                    stats
+                        .newest_updated_at_ms
+                        .map_or(snapshot.updated_at_ms, |newest| {
+                            newest.max(snapshot.updated_at_ms)
+                        }),
+                );
+                *stats.by_provider.entry(snapshot.provider).or_insert(0) += 1;
+                *stats.by_workspace.entry(snapshot.working_dir).or_insert(0) += 1;
+            }
+            Err(_) => stats.corrupted_snapshots += 1,
+        }
+    }
+
+    Ok(stats)
+}
+
+pub fn search_session_snapshots(query: &str) -> Result<Vec<AgentSessionSnapshot>, String> {
+    search_session_snapshots_at(&app_data_dir(), query)
+}
+
+fn search_session_snapshots_at(
+    root: &Path,
+    query: &str,
+) -> Result<Vec<AgentSessionSnapshot>, String> {
+    let normalized = query.trim().to_ascii_lowercase();
+    let mut snapshots = all_valid_session_snapshots_from_dir(root)?;
+    if normalized.is_empty() {
+        return Ok(snapshots);
+    }
+    snapshots.retain(|snapshot| snapshot_matches_query(snapshot, &normalized));
+    Ok(snapshots)
+}
+
+pub fn export_session_snapshots() -> Result<SessionSnapshotExport, String> {
+    export_session_snapshots_at(&app_data_dir())
+}
+
+fn export_session_snapshots_at(root: &Path) -> Result<SessionSnapshotExport, String> {
+    Ok(SessionSnapshotExport {
+        schema_version: CURRENT_SNAPSHOT_EXPORT_SCHEMA_VERSION,
+        exported_at_ms: now_ms(),
+        snapshots: all_valid_session_snapshots_from_dir(root)?,
+    })
+}
+
+pub fn prune_session_snapshots(
+    keep_recent: usize,
+    older_than_ms: Option<u64>,
+) -> Result<SessionSnapshotPruneReport, String> {
+    prune_session_snapshots_at(&app_data_dir(), keep_recent, older_than_ms)
+}
+
+fn prune_session_snapshots_at(
+    root: &Path,
+    keep_recent: usize,
+    older_than_ms: Option<u64>,
+) -> Result<SessionSnapshotPruneReport, String> {
+    let mut deleted_session_ids = Vec::new();
+    let mut kept_session_ids = Vec::new();
+    let mut skipped_corrupted = 0;
+
+    let snapshots = all_valid_session_snapshots_from_dir(root)?;
+    for (index, snapshot) in snapshots.iter().enumerate() {
+        let outside_recent_window = index >= keep_recent;
+        let older_than_cutoff = older_than_ms.is_none_or(|cutoff| snapshot.updated_at_ms < cutoff);
+        if outside_recent_window && older_than_cutoff {
+            delete_session_snapshot_at(root, &snapshot.session_id)?;
+            deleted_session_ids.push(snapshot.session_id.clone());
+        } else {
+            kept_session_ids.push(snapshot.session_id.clone());
+        }
+    }
+
+    for path in session_snapshot_json_paths(root)? {
+        if load_listable_session_snapshot(&path).is_err() {
+            skipped_corrupted += 1;
+        }
+    }
+
+    Ok(SessionSnapshotPruneReport {
+        deleted_session_ids,
+        kept_session_ids,
+        skipped_corrupted,
+    })
+}
+
+fn all_valid_session_snapshots_from_dir(root: &Path) -> Result<Vec<AgentSessionSnapshot>, String> {
+    let mut snapshots = Vec::new();
+    for path in session_snapshot_json_paths(root)? {
+        match load_listable_session_snapshot(&path) {
+            Ok(snapshot) => snapshots.push(snapshot),
+            Err(reason) => crate::app_log!(
+                "WARN",
+                "[session_snapshot] skipped {}: {}",
+                path.display(),
+                reason.as_str()
+            ),
+        }
+    }
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.updated_at_ms));
+    Ok(snapshots)
+}
+
+fn session_snapshot_json_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let sessions_dir = root.join("sessions");
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = fs::read_dir(&sessions_dir)
+        .map_err(|e| format!("Failed to read session snapshot dir: {e}"))?;
+    let mut paths = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
+fn snapshot_matches_query(snapshot: &AgentSessionSnapshot, normalized_query: &str) -> bool {
+    snapshot
+        .session_id
+        .to_ascii_lowercase()
+        .contains(normalized_query)
+        || snapshot
+            .provider
+            .to_ascii_lowercase()
+            .contains(normalized_query)
+        || snapshot
+            .model
+            .to_ascii_lowercase()
+            .contains(normalized_query)
+        || snapshot
+            .working_dir
+            .to_ascii_lowercase()
+            .contains(normalized_query)
+        || snapshot
+            .summary
+            .as_deref()
+            .is_some_and(|summary| summary.to_ascii_lowercase().contains(normalized_query))
+        || snapshot.messages.iter().any(|message| {
+            message.role.to_ascii_lowercase().contains(normalized_query)
+                || message_content_text(&message.content)
+                    .to_ascii_lowercase()
+                    .contains(normalized_query)
+        })
+}
+
+fn message_content_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum SnapshotListSkipReason {
     Unreadable,
@@ -590,6 +807,111 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["session-1"]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_snapshot_store_stats_include_counts_bytes_and_facets() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-store-stats-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut first = snapshot();
+        first.session_id = "session-a".to_string();
+        first.provider = "openai".to_string();
+        first.working_dir = "/workspace/a".to_string();
+        first.updated_at_ms = 20;
+        fs::write(
+            sessions_dir.join("session-a.json"),
+            serde_json::to_string(&first).expect("first json"),
+        )
+        .expect("write first");
+
+        let mut second = snapshot();
+        second.session_id = "session-b".to_string();
+        second.provider = "anthropic".to_string();
+        second.working_dir = "/workspace/b".to_string();
+        second.updated_at_ms = 40;
+        fs::write(
+            sessions_dir.join("session-b.json"),
+            serde_json::to_string(&second).expect("second json"),
+        )
+        .expect("write second");
+
+        fs::write(sessions_dir.join("broken.json"), "{").expect("write corrupted");
+
+        let stats = session_snapshot_store_stats_at(&root).expect("stats");
+
+        assert_eq!(stats.total_snapshots, 2);
+        assert_eq!(stats.corrupted_snapshots, 1);
+        assert!(stats.total_bytes > 0);
+        assert_eq!(stats.oldest_updated_at_ms, Some(20));
+        assert_eq!(stats.newest_updated_at_ms, Some(40));
+        assert_eq!(stats.by_provider.get("openai"), Some(&1));
+        assert_eq!(stats.by_provider.get("anthropic"), Some(&1));
+        assert_eq!(stats.by_workspace.get("/workspace/a"), Some(&1));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_snapshot_store_search_export_and_prune() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-store-search-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut keep = snapshot();
+        keep.session_id = "keep-session".to_string();
+        keep.working_dir = "/workspace/keep".to_string();
+        keep.summary = Some("important launch notes".to_string());
+        keep.updated_at_ms = 50;
+        fs::write(
+            sessions_dir.join("keep-session.json"),
+            serde_json::to_string(&keep).expect("keep json"),
+        )
+        .expect("write keep");
+
+        let mut prune = snapshot();
+        prune.session_id = "old-session".to_string();
+        prune.working_dir = "/workspace/archive".to_string();
+        prune.summary = Some("obsolete thread".to_string());
+        prune.updated_at_ms = 10;
+        fs::write(
+            sessions_dir.join("old-session.json"),
+            serde_json::to_string(&prune).expect("old json"),
+        )
+        .expect("write old");
+
+        let matches = search_session_snapshots_at(&root, "launch").expect("search");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].session_id, "keep-session");
+
+        let export = export_session_snapshots_at(&root).expect("export");
+        assert_eq!(export.schema_version, 1);
+        assert_eq!(export.snapshots.len(), 2);
+        assert!(export
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.session_id == "old-session"));
+
+        let report = prune_session_snapshots_at(&root, 1, None).expect("prune");
+        assert_eq!(report.deleted_session_ids, vec!["old-session"]);
+        assert_eq!(report.kept_session_ids, vec!["keep-session"]);
+        assert!(!sessions_dir.join("old-session.json").exists());
+        assert!(sessions_dir.join("keep-session.json").exists());
 
         let _ = fs::remove_dir_all(root);
     }

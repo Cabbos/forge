@@ -64,7 +64,7 @@ export function helpText(): string {
     "  doctor          Check local Forge CLI readiness",
     "  run             Run one prompt through Forge headless",
     "  service         Manage Forge gateway service (install|uninstall|start|stop|restart|status)",
-    "  session         List active gateway sessions",
+    "  session         Inspect gateway sessions and local session store",
     "  trigger         Enqueue and inspect gateway triggers",
     "",
     "Run options:",

@@ -4,8 +4,9 @@ import { bunSpawnRunner } from "../lib/spawn.ts";
 
 export async function sessionCommand(argv: string[], deps: CliDeps = {}): Promise<number> {
   const sub = argv[0] || "list";
-  if (sub !== "list") {
-    deps.io?.stderr("Usage: forge session list\n");
+  const supported = new Set(["list", "stats", "search", "export", "prune"]);
+  if (!supported.has(sub)) {
+    deps.io?.stderr("Usage: forge session list|stats|search|export|prune\n");
     return 1;
   }
 
@@ -20,6 +21,8 @@ export async function sessionCommand(argv: string[], deps: CliDeps = {}): Promis
       join(forgeRepoRoot, "src-tauri", "Cargo.toml"),
       "--bin",
       "forge_session",
+      "--",
+      ...argv,
     ],
     cwd: forgeRepoRoot,
   });

@@ -22,6 +22,7 @@ mod profile;
 mod protocol;
 pub mod scheduler;
 pub mod service;
+pub mod session_store;
 pub mod settings;
 mod state;
 mod transcript;
