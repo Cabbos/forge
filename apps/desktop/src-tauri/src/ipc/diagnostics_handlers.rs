@@ -3,9 +3,11 @@ use std::sync::Arc;
 use crate::diagnostics::{self, CapabilitySummary};
 use crate::gateway::client::GatewayClient;
 use crate::gateway::protocol::{
-    EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest,
+    CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult,
+    GatewayReply, GatewayRequest,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
+use crate::gateway::webhook::PendingTrigger;
 use crate::harness::skills::SkillLoader;
 use crate::ipc::capability_handlers::{
     capability_kind_label, ecosystem_status_for_capability, ecosystem_status_label,
@@ -48,6 +50,44 @@ pub async fn enqueue_gateway_trigger(
     }
 }
 
+#[tauri::command]
+pub async fn list_gateway_triggers() -> Result<Vec<PendingTrigger>, String> {
+    let request = build_list_gateway_triggers_request();
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<Vec<PendingTrigger>>(response.result)
+                .map_err(|error| format!("Gateway returned invalid trigger list: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway trigger list error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway trigger list request failed: {error}")),
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_gateway_trigger(trigger_id: String) -> Result<CancelTriggerResult, String> {
+    let request = build_cancel_gateway_trigger_request(trigger_id)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<CancelTriggerResult>(response.result)
+                .map_err(|error| format!("Gateway returned invalid cancel result: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway trigger cancel error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway trigger cancel request failed: {error}")),
+    }
+}
+
 async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
     let socket_path = default_socket_path();
     let mut client = match GatewayClient::connect(&socket_path).await {
@@ -78,6 +118,30 @@ async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
             unavailable_gateway_runtime_status(format!("Gateway status request failed: {error}"))
         }
     }
+}
+
+fn build_list_gateway_triggers_request() -> GatewayRequest {
+    GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "list_pending_triggers".to_string(),
+        params: None,
+    }
+}
+
+fn build_cancel_gateway_trigger_request(trigger_id: String) -> Result<GatewayRequest, String> {
+    let trigger_id = trigger_id.trim().to_string();
+    if trigger_id.is_empty() {
+        return Err("trigger_id must not be empty".to_string());
+    }
+
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "cancel_trigger".to_string(),
+        params: Some(
+            serde_json::to_value(CancelTriggerParams { trigger_id })
+                .map_err(|error| format!("serialize cancel params: {error}"))?,
+        ),
+    })
 }
 
 fn build_enqueue_gateway_trigger_request(
@@ -241,5 +305,31 @@ mod tests {
         .expect_err("blank message");
 
         assert!(error.contains("message must not be empty"));
+    }
+
+    #[test]
+    fn build_list_gateway_triggers_request_uses_gateway_method() {
+        let request = super::build_list_gateway_triggers_request();
+
+        assert_eq!(request.method, "list_pending_triggers");
+        assert!(request.params.is_none());
+    }
+
+    #[test]
+    fn build_cancel_gateway_trigger_request_trims_trigger_id() {
+        let request = super::build_cancel_gateway_trigger_request(" trigger-1 ".to_string())
+            .expect("request");
+
+        assert_eq!(request.method, "cancel_trigger");
+        let params = request.params.expect("params");
+        assert_eq!(params["trigger_id"], "trigger-1");
+    }
+
+    #[test]
+    fn build_cancel_gateway_trigger_request_rejects_blank_id() {
+        let error = super::build_cancel_gateway_trigger_request("   ".to_string())
+            .expect_err("blank trigger id");
+
+        assert!(error.contains("trigger_id must not be empty"));
     }
 }

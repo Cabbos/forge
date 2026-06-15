@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { hasTauriRuntime } from "./core.ts";
 import type {
+  CancelGatewayTriggerResult,
   DiagnosticsReport,
   EnqueueGatewayTriggerInput,
   EnqueueGatewayTriggerResult,
+  GatewayPendingTrigger,
   GatewayRuntimeStatus,
   LogEntry,
   RepairAction,
@@ -90,4 +92,18 @@ export async function enqueueGatewayTrigger(
     throw new Error("Gateway trigger enqueue is not available outside Tauri runtime.");
   }
   return invoke<EnqueueGatewayTriggerResult>("enqueue_gateway_trigger", { input });
+}
+
+export async function listGatewayTriggers(): Promise<GatewayPendingTrigger[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke<GatewayPendingTrigger[]>("list_gateway_triggers");
+}
+
+export async function cancelGatewayTrigger(
+  triggerId: string,
+): Promise<CancelGatewayTriggerResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway trigger cancel is not available outside Tauri runtime.");
+  }
+  return invoke<CancelGatewayTriggerResult>("cancel_gateway_trigger", { triggerId });
 }

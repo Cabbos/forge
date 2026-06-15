@@ -138,6 +138,8 @@ pub fn run() {
             ipc::diagnostics_handlers::get_diagnostics_report,
             ipc::diagnostics_handlers::get_gateway_runtime_status,
             ipc::diagnostics_handlers::enqueue_gateway_trigger,
+            ipc::diagnostics_handlers::list_gateway_triggers,
+            ipc::diagnostics_handlers::cancel_gateway_trigger,
             ipc::diagnostics_handlers::get_recent_logs,
             ipc::diagnostics_handlers::run_repair_action,
             ipc::diagnostics_handlers::list_repair_actions,

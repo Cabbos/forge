@@ -3,17 +3,23 @@ import { AlertTriangle, CheckCircle, Loader2, RefreshCw, Send, Wrench, XCircle }
 import { useQueryClient } from "@tanstack/react-query";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
 import { useGatewayRuntimeStatusQuery } from "@/hooks/queries/useGatewayRuntimeStatusQuery";
+import { useGatewayTriggersQuery } from "@/hooks/queries/useGatewayTriggersQuery";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import type {
   DiagnosticCheck,
   DiagnosticsReport,
+  GatewayPendingTrigger,
   GatewayRuntimeStatus,
   GatewayTriggerRunRecord,
 } from "@/lib/tauri";
-import { enqueueGatewayTrigger, runRepairAction } from "@/lib/tauri";
+import { cancelGatewayTrigger, enqueueGatewayTrigger, runRepairAction } from "@/lib/tauri";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { buildGatewayRuntimeSummary, buildGatewayTriggerInput } from "./diagnosticsRuntimeView";
+import {
+  buildGatewayRuntimeSummary,
+  buildGatewayTriggerInput,
+  buildGatewayTriggerRows,
+} from "./diagnosticsRuntimeView";
 import { buildDiagnosticRepairAction } from "./diagnosticsRepairView";
 import { formatMutationError } from "./settingsUtils";
 
@@ -56,12 +62,24 @@ export function DiagnosticsPanel() {
     refetch: refetchRuntime,
     isFetching: isRuntimeFetching,
   } = useGatewayRuntimeStatusQuery();
+  const {
+    data: gatewayTriggers = [],
+    isLoading: isGatewayTriggersLoading,
+    isError: isGatewayTriggersError,
+    error: gatewayTriggersError,
+    refetch: refetchGatewayTriggers,
+    isFetching: isGatewayTriggersFetching,
+  } = useGatewayTriggersQuery();
 
   const queryError = getQueryErrorMessage(isError ? error : null);
   const runtimeQueryError = getQueryErrorMessage(isRuntimeError ? runtimeError : null);
+  const gatewayTriggersQueryError = getQueryErrorMessage(
+    isGatewayTriggersError ? gatewayTriggersError : null,
+  );
   const refreshAll = () => {
     void refetch();
     void refetchRuntime();
+    void refetchGatewayTriggers();
   };
   const handleRepair = async (actionId: string) => {
     if (repairingActionId) return;
@@ -78,8 +96,10 @@ export function DiagnosticsPanel() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.diagnosticsReport }),
         queryClient.invalidateQueries({ queryKey: queryKeys.gatewayRuntimeStatus }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.gatewayTriggers }),
         refetch(),
         refetchRuntime(),
+        refetchGatewayTriggers(),
       ]);
     } catch (err) {
       setRepairError(formatMutationError(err));
@@ -109,10 +129,16 @@ export function DiagnosticsPanel() {
 
       <GatewayRuntimePanel
         status={runtimeStatus}
+        triggers={gatewayTriggers}
         isLoading={isRuntimeLoading}
-        isRefreshing={isRuntimeFetching}
+        isTriggersLoading={isGatewayTriggersLoading}
+        isRefreshing={isRuntimeFetching || isGatewayTriggersFetching}
         queryError={runtimeQueryError}
-        onRefresh={() => refetchRuntime()}
+        triggersQueryError={gatewayTriggersQueryError}
+        onRefresh={() => {
+          void refetchRuntime();
+          void refetchGatewayTriggers();
+        }}
       />
 
       {(repairError || repairMessage) && (
@@ -149,15 +175,21 @@ export function DiagnosticsPanel() {
 
 function GatewayRuntimePanel({
   status,
+  triggers,
   isLoading,
+  isTriggersLoading,
   isRefreshing,
   queryError,
+  triggersQueryError,
   onRefresh,
 }: {
   status?: GatewayRuntimeStatus;
+  triggers: GatewayPendingTrigger[];
   isLoading: boolean;
+  isTriggersLoading: boolean;
   isRefreshing: boolean;
   queryError: string | null;
+  triggersQueryError: string | null;
   onRefresh: () => void;
 }) {
   const [triggerMessage, setTriggerMessage] = useState("");
@@ -166,6 +198,7 @@ function GatewayRuntimePanel({
   const [triggerModel, setTriggerModel] = useState("");
   const [triggerWorkspacePath, setTriggerWorkspacePath] = useState("");
   const [isEnqueuingTrigger, setIsEnqueuingTrigger] = useState(false);
+  const [cancelingTriggerId, setCancelingTriggerId] = useState<string | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [triggerMessageStatus, setTriggerMessageStatus] = useState<string | null>(null);
 
@@ -199,6 +232,7 @@ function GatewayRuntimePanel({
     recent_runs: [],
   };
   const summary = buildGatewayRuntimeSummary(runtime);
+  const triggerRows = buildGatewayTriggerRows(triggers);
   const Icon = STATUS_ICON[summary.tone] ?? CheckCircle;
   const cls = STATUS_CLASS[summary.tone] ?? STATUS_CLASS.pass;
   const handleEnqueueTrigger = async (event: FormEvent<HTMLFormElement>) => {
@@ -234,6 +268,25 @@ function GatewayRuntimePanel({
       setIsEnqueuingTrigger(false);
     }
   };
+  const handleCancelTrigger = async (triggerId: string) => {
+    if (cancelingTriggerId) return;
+    setCancelingTriggerId(triggerId);
+    setTriggerError(null);
+    setTriggerMessageStatus(null);
+    try {
+      const result = await cancelGatewayTrigger(triggerId);
+      setTriggerMessageStatus(
+        result.removed
+          ? `已取消 ${result.trigger_id}，当前 pending ${result.pending_triggers} 个。`
+          : `${result.trigger_id} 已不在队列中。`,
+      );
+      onRefresh();
+    } catch (error) {
+      setTriggerError(formatMutationError(error));
+    } finally {
+      setCancelingTriggerId(null);
+    }
+  };
 
   return (
     <div className="forge-settings-readonly-panel">
@@ -261,6 +314,18 @@ function GatewayRuntimePanel({
           <dt>最近运行</dt>
           <dd>
             <GatewayRuntimeRuns runs={runtime.recent_runs} />
+          </dd>
+        </div>
+        <div className="forge-settings-info-row">
+          <dt>队列详情</dt>
+          <dd>
+            <GatewayTriggerQueue
+              rows={triggerRows}
+              isLoading={isTriggersLoading}
+              queryError={triggersQueryError}
+              cancelingTriggerId={cancelingTriggerId}
+              onCancel={handleCancelTrigger}
+            />
           </dd>
         </div>
       </div>
@@ -367,6 +432,74 @@ function GatewayRuntimeRuns({ runs }: { runs: GatewayTriggerRunRecord[] }) {
           {run.status} · attempt {run.attempt} · {run.message}
         </span>
       ))}
+    </div>
+  );
+}
+
+function GatewayTriggerQueue({
+  rows,
+  isLoading,
+  queryError,
+  cancelingTriggerId,
+  onCancel,
+}: {
+  rows: ReturnType<typeof buildGatewayTriggerRows>;
+  isLoading: boolean;
+  queryError: string | null;
+  cancelingTriggerId: string | null;
+  onCancel: (triggerId: string) => void;
+}) {
+  if (isLoading && rows.length === 0) {
+    return <span className="text-xs text-muted-foreground">正在读取 trigger 队列</span>;
+  }
+
+  if (queryError && rows.length === 0) {
+    return <span className="text-xs text-red-500">{queryError}</span>;
+  }
+
+  if (rows.length === 0) {
+    return <span className="text-xs text-muted-foreground">暂无 pending trigger</span>;
+  }
+
+  return (
+    <div className="forge-gateway-trigger-queue">
+      {rows.slice(0, 6).map((row) => {
+        const isCanceling = cancelingTriggerId === row.id;
+        return (
+          <div key={row.id} className="forge-gateway-trigger-row">
+            <div className="forge-gateway-trigger-row-main">
+              <span className="forge-gateway-trigger-row-title">
+                <span data-state={row.stateLabel}>{row.stateLabel}</span>
+                <code>{row.id}</code>
+              </span>
+              <span className="forge-gateway-trigger-row-message">{row.message}</span>
+              <span className="forge-gateway-trigger-row-meta">{row.subtitle}</span>
+              {row.workspacePath && (
+                <span className="forge-gateway-trigger-row-meta">{row.workspacePath}</span>
+              )}
+            </div>
+            <ButtonPrimitive
+              type="button"
+              className="forge-gateway-trigger-cancel-btn"
+              disabled={Boolean(cancelingTriggerId)}
+              aria-label={`Cancel gateway trigger ${row.id}`}
+              title="取消 trigger"
+              onClick={() => onCancel(row.id)}
+            >
+              {isCanceling ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <XCircle className="size-3" />
+              )}
+            </ButtonPrimitive>
+          </div>
+        );
+      })}
+      {rows.length > 6 && (
+        <span className="text-[10px] text-muted-foreground">
+          另有 {rows.length - 6} 个 trigger，可用 CLI 查看完整列表。
+        </span>
+      )}
     </div>
   );
 }

@@ -33,6 +33,26 @@ export interface GatewayTriggerInput {
   workspace_path?: string;
 }
 
+export interface GatewayPendingTriggerLike {
+  id: string;
+  message: string;
+  profile_id?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  workspace_path?: string | null;
+  attempt_count: number;
+  claimed_at_ms?: number | null;
+  received_at_ms: number;
+}
+
+export interface GatewayTriggerRow {
+  id: string;
+  stateLabel: "pending" | "claimed";
+  subtitle: string;
+  message: string;
+  workspacePath: string | null;
+}
+
 export interface GatewayTriggerInputResult {
   input: GatewayTriggerInput | null;
   error: string | null;
@@ -93,6 +113,38 @@ export function buildGatewayTriggerInput(
   };
 }
 
+export function buildGatewayTriggerRows(
+  triggers: GatewayPendingTriggerLike[],
+): GatewayTriggerRow[] {
+  return [...triggers]
+    .sort((left, right) => {
+      const leftClaimed = left.claimed_at_ms != null;
+      const rightClaimed = right.claimed_at_ms != null;
+      if (leftClaimed !== rightClaimed) {
+        return leftClaimed ? 1 : -1;
+      }
+      return right.received_at_ms - left.received_at_ms;
+    })
+    .map((trigger) => {
+      const stateLabel = trigger.claimed_at_ms != null ? "claimed" : "pending";
+      const runtime = buildRuntimeLabel(trigger.provider, trigger.model);
+      const subtitleParts = [
+        `profile=${trigger.profile_id?.trim() || "-"}`,
+        runtime,
+        `attempts=${trigger.attempt_count}`,
+        `received=${trigger.received_at_ms}`,
+      ].filter(Boolean);
+
+      return {
+        id: trigger.id,
+        stateLabel,
+        subtitle: subtitleParts.join(" · "),
+        message: truncateTriggerMessage(trigger.message),
+        workspacePath: trigger.workspace_path?.trim() || null,
+      };
+    });
+}
+
 function assignOptional(
   input: GatewayTriggerInput,
   key: keyof Omit<GatewayTriggerInput, "message">,
@@ -102,4 +154,17 @@ function assignOptional(
   if (trimmed) {
     input[key] = trimmed;
   }
+}
+
+function buildRuntimeLabel(provider?: string | null, model?: string | null): string | null {
+  const cleanProvider = provider?.trim();
+  const cleanModel = model?.trim();
+  if (cleanProvider && cleanModel) return `${cleanProvider}/${cleanModel}`;
+  return cleanProvider || cleanModel || null;
+}
+
+function truncateTriggerMessage(message: string, maxLength = 120): string {
+  const chars = [...message.trim()];
+  if (chars.length <= maxLength) return chars.join("");
+  return `${chars.slice(0, maxLength).join("")}…`;
 }

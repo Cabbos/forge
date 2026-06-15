@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   buildGatewayRuntimeSummary,
+  buildGatewayTriggerRows,
   buildGatewayTriggerInput,
 } from "./diagnosticsRuntimeView.ts";
 
@@ -75,5 +76,61 @@ describe("buildGatewayTriggerInput", () => {
 
     assert.equal(result.input, null);
     assert.equal(result.error, "Message is required.");
+  });
+});
+
+describe("buildGatewayTriggerRows", () => {
+  it("orders pending before claimed triggers and formats metadata", () => {
+    const rows = buildGatewayTriggerRows([
+      {
+        id: "claimed-1",
+        message: "claimed work item",
+        profile_id: "ops",
+        provider: "openai",
+        model: "gpt-5",
+        workspace_path: "/repo",
+        attempt_count: 2,
+        claimed_at_ms: 1234,
+        received_at_ms: 20,
+      },
+      {
+        id: "pending-1",
+        message: "pending work item",
+        profile_id: null,
+        provider: null,
+        model: null,
+        workspace_path: null,
+        attempt_count: 0,
+        claimed_at_ms: null,
+        received_at_ms: 30,
+      },
+    ]);
+
+    assert.deepEqual(
+      rows.map((row) => [row.id, row.stateLabel, row.subtitle, row.message]),
+      [
+        ["pending-1", "pending", "profile=- · attempts=0 · received=30", "pending work item"],
+        ["claimed-1", "claimed", "profile=ops · openai/gpt-5 · attempts=2 · received=20", "claimed work item"],
+      ],
+    );
+  });
+
+  it("truncates long trigger messages for compact diagnostics rows", () => {
+    const rows = buildGatewayTriggerRows([
+      {
+        id: "long-1",
+        message: "x".repeat(140),
+        profile_id: "ops",
+        provider: null,
+        model: null,
+        workspace_path: null,
+        attempt_count: 1,
+        claimed_at_ms: null,
+        received_at_ms: 10,
+      },
+    ]);
+
+    assert.equal(rows[0].message.length, 121);
+    assert.match(rows[0].message, /…$/u);
   });
 });

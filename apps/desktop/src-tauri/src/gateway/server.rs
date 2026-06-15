@@ -2,8 +2,9 @@
 //! response serialization.
 
 use crate::gateway::protocol::{
-    serialize_reply, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError, GatewayErrorBody,
-    GatewayReply, GatewayRequest, GatewayResponse, HealthResult, PingResult, GATEWAY_VERSION,
+    serialize_reply, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
+    EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest,
+    GatewayResponse, HealthResult, PingResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
@@ -125,6 +126,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "list_pending_triggers" => handle_list_triggers(state, request.id),
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
         "enqueue_trigger" => handle_enqueue_trigger(state, request),
+        "cancel_trigger" => handle_cancel_trigger(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         _ => GatewayReply::Err(GatewayError {
@@ -262,6 +264,32 @@ fn handle_enqueue_trigger(state: &GatewayState, request: GatewayRequest) -> Gate
     })
 }
 
+fn handle_cancel_trigger(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<CancelTriggerParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let trigger_id = params.trigger_id.trim().to_string();
+    if trigger_id.is_empty() {
+        return invalid_params(request.id, "trigger_id must not be empty");
+    }
+
+    let removed = state.trigger_store.complete(&trigger_id);
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(CancelTriggerResult {
+            ok: true,
+            trigger_id,
+            removed,
+            pending_triggers: count_available_triggers(state),
+        })
+        .unwrap(),
+    })
+}
+
 fn handle_list_trigger_runs(state: &GatewayState, id: String) -> GatewayReply {
     let runs = state.trigger_run_store.list();
     GatewayReply::Ok(GatewayResponse {
@@ -280,10 +308,7 @@ fn handle_runtime_status(state: &GatewayState, id: String) -> GatewayReply {
 fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
     let triggers = state.trigger_store.list();
     let runs = state.trigger_run_store.list();
-    let pending_triggers = triggers
-        .iter()
-        .filter(|trigger| trigger.claimed_at_ms.is_none())
-        .count();
+    let pending_triggers = count_pending_triggers(&triggers);
     let claimed_triggers = triggers.len().saturating_sub(pending_triggers);
     let dead_letter_runs = runs
         .iter()
@@ -300,6 +325,17 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         dead_letter_runs,
         recent_runs: runs.into_iter().take(20).collect(),
     }
+}
+
+fn count_available_triggers(state: &GatewayState) -> usize {
+    count_pending_triggers(&state.trigger_store.list())
+}
+
+fn count_pending_triggers(triggers: &[PendingTrigger]) -> usize {
+    triggers
+        .iter()
+        .filter(|trigger| trigger.claimed_at_ms.is_none())
+        .count()
 }
 
 fn handle_unregister_session(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
@@ -669,6 +705,104 @@ mod tests {
             _ => panic!("expected Err reply"),
         }
         assert!(state.trigger_store.list().is_empty());
+    }
+
+    #[test]
+    fn dispatch_cancel_trigger_removes_pending_trigger() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state
+            .trigger_store
+            .push(test_trigger("trigger-cancel", None));
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "cancel".into(),
+                method: "cancel_trigger".into(),
+                params: Some(serde_json::json!({"trigger_id": " trigger-cancel "})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::CancelTriggerResult =
+                    serde_json::from_value(resp.result).expect("parse cancel result");
+                assert!(result.ok);
+                assert!(result.removed);
+                assert_eq!(result.trigger_id, "trigger-cancel");
+                assert_eq!(result.pending_triggers, 0);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+        assert!(state.trigger_store.list().is_empty());
+    }
+
+    #[test]
+    fn dispatch_cancel_trigger_reports_missing_trigger_without_mutating_queue() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+        state.trigger_store.push(test_trigger("trigger-keep", None));
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "cancel-missing".into(),
+                method: "cancel_trigger".into(),
+                params: Some(serde_json::json!({"trigger_id": "missing-trigger"})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::CancelTriggerResult =
+                    serde_json::from_value(resp.result).expect("parse cancel result");
+                assert!(result.ok);
+                assert!(!result.removed);
+                assert_eq!(result.trigger_id, "missing-trigger");
+                assert_eq!(result.pending_triggers, 1);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+        assert_eq!(state.trigger_store.list().len(), 1);
+    }
+
+    #[test]
+    fn dispatch_cancel_trigger_rejects_blank_id() {
+        let state = GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+        };
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "cancel-blank".into(),
+                method: "cancel_trigger".into(),
+                params: Some(serde_json::json!({"trigger_id": "  "})),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("trigger_id"));
+            }
+            _ => panic!("expected Err reply"),
+        }
     }
 
     // ── GatewayState ────────────────────────────────────────────────────

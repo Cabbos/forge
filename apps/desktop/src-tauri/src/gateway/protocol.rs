@@ -89,6 +89,21 @@ pub struct EnqueueTriggerResult {
     pub pending_triggers: usize,
 }
 
+/// Parameters for removing a queued gateway trigger.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CancelTriggerParams {
+    pub trigger_id: String,
+}
+
+/// Result returned after a cancel request is processed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CancelTriggerResult {
+    pub ok: bool,
+    pub trigger_id: String,
+    pub removed: bool,
+    pub pending_triggers: usize,
+}
+
 /// Gateway version string.
 pub const GATEWAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -251,5 +266,20 @@ mod tests {
             restored.workspace_path.as_deref(),
             Some("/tmp/forge-workspace")
         );
+    }
+
+    #[test]
+    fn cancel_trigger_result_roundtrip() {
+        let result = CancelTriggerResult {
+            ok: true,
+            trigger_id: "trigger-1".into(),
+            removed: true,
+            pending_triggers: 0,
+        };
+
+        let json = serde_json::to_string(&result).expect("serialize");
+        let restored: CancelTriggerResult = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(restored, result);
     }
 }
