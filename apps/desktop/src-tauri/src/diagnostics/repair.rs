@@ -84,8 +84,7 @@ pub fn run_repair(action_id: &str) -> RepairResult {
 }
 
 fn restart_gateway() -> RepairResult {
-    let restart_result =
-        crate::service::launchd::restart().map_err(|e| format!("restart failed: {e}"));
+    let restart_result = crate::service::restart().map_err(|e| format!("restart failed: {e}"));
     let status_result = status_after_gateway_repair(&restart_result);
     gateway_service_repair_result("restart_gateway", restart_result, status_result)
 }
@@ -95,7 +94,7 @@ fn status_after_gateway_repair(repair_result: &Result<String, String>) -> Result
         return Err("verification skipped because repair command failed".to_string());
     }
 
-    crate::service::launchd::status()
+    crate::service::status()
 }
 
 fn gateway_service_repair_result(
@@ -267,9 +266,8 @@ fn a2a_ledger_cache_dir_for_home(home: impl AsRef<Path>) -> PathBuf {
 
 fn reinstall_service() -> RepairResult {
     // Uninstall then install.
-    let _ = crate::service::launchd::uninstall();
-    let reinstall_result =
-        crate::service::launchd::install().map_err(|e| format!("reinstall failed: {e}"));
+    let _ = crate::service::uninstall();
+    let reinstall_result = crate::service::install().map_err(|e| format!("reinstall failed: {e}"));
     let status_result = status_after_gateway_repair(&reinstall_result);
     gateway_service_repair_result("reinstall_service", reinstall_result, status_result)
 }
@@ -418,6 +416,23 @@ mod tests {
 
         assert!(result.success, "{}", result.message);
         assert_eq!(result.verification.as_ref().map(|v| v.ok), Some(true));
+    }
+
+    #[test]
+    fn gateway_service_repair_result_accepts_platform_running_statuses() {
+        for status in [
+            "Service 'forge-gateway.service' is running.",
+            "Service 'ForgeGateway' is running.",
+        ] {
+            let result = gateway_service_repair_result(
+                "restart_gateway",
+                Ok("Service restarted.".to_string()),
+                Ok(status.to_string()),
+            );
+
+            assert!(result.success, "{status}: {}", result.message);
+            assert_eq!(result.verification.as_ref().map(|v| v.ok), Some(true));
+        }
     }
 
     #[test]
