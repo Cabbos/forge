@@ -207,6 +207,50 @@ test.describe("Timeline Message Flow", () => {
     await expect(dialog).toHaveCount(0);
   });
 
+  test("settings tools panel manages permission rules", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      window.__mockPermissionRules = [
+        {
+          tool_name: "run_shell",
+          decision: "deny",
+          created_at: "2026-06-16T00:00:00.000Z",
+        },
+        {
+          tool_name: "write_to_file",
+          decision: "allow",
+          created_at: "2026-06-16T00:00:00.000Z",
+        },
+      ];
+    });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "工具" }).click();
+
+    await expect(dialog.getByRole("heading", { name: "工具" })).toBeVisible();
+    const panel = dialog.getByTestId("settings-permissions-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId("settings-permission-rule-write_to_file")).toContainText("允许");
+    await expect(panel.getByTestId("settings-permission-rule-run_shell")).toContainText("拒绝");
+
+    await panel.getByRole("button", { name: "拒绝 write_to_file" }).click();
+    const setArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastSetPermissionRuleArgs;
+    });
+    expect(setArgs).toMatchObject({ toolName: "write_to_file", decision: "deny" });
+    await expect(panel.getByTestId("settings-permission-rule-write_to_file")).toContainText("拒绝");
+
+    await panel.getByRole("button", { name: "重置 write_to_file" }).click();
+    const resetArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastResetPermissionRuleArgs;
+    });
+    expect(resetArgs).toMatchObject({ toolName: "write_to_file" });
+    await expect(panel.getByTestId("settings-permission-rule-write_to_file")).toContainText("默认");
+  });
+
   test("empty workbench can start directly from a prompt", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {

@@ -112,6 +112,17 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       status: "pending",
       created_at: "2026-05-13T00:00:00.000Z",
     });
+    const permissionRules = () => {
+      // @ts-expect-error mock
+      if (!Array.isArray(window.__mockPermissionRules)) window.__mockPermissionRules = [];
+      // @ts-expect-error mock
+      return window.__mockPermissionRules as Array<Record<string, unknown>>;
+    };
+    const permissionRule = (toolName: string, decision: string) => ({
+      tool_name: toolName,
+      decision,
+      created_at: "2026-06-16T00:00:00.000Z",
+    });
     const openKeyvalDb = async () => {
       let db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("keyval-store");
@@ -312,6 +323,30 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "confirm_response":
         case "set_api_key":
           return undefined;
+        case "list_permission_rules":
+          return permissionRules();
+        case "set_permission_rule": {
+          const toolName = String(args.toolName ?? "");
+          const decision = String(args.decision ?? "allow");
+          const next = [
+            ...permissionRules().filter((rule) => rule.tool_name !== toolName),
+            permissionRule(toolName, decision),
+          ].sort((a, b) => String(a.tool_name).localeCompare(String(b.tool_name)));
+          // @ts-expect-error mock
+          window.__mockPermissionRules = next;
+          // @ts-expect-error mock
+          window.__lastSetPermissionRuleArgs = args;
+          return next;
+        }
+        case "reset_permission_rule": {
+          const toolName = String(args.toolName ?? "");
+          const next = permissionRules().filter((rule) => rule.tool_name !== toolName);
+          // @ts-expect-error mock
+          window.__mockPermissionRules = next;
+          // @ts-expect-error mock
+          window.__lastResetPermissionRuleArgs = args;
+          return next;
+        }
         case "list_sessions":
           // @ts-expect-error mock
           if (Array.isArray(window.__mockListSessions)) return window.__mockListSessions;

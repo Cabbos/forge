@@ -818,6 +818,12 @@
     color: var(--forge-pass);
   }
 
+  .forge-settings-status-pill[data-state="denied"] {
+    border-color: rgba(212, 119, 119, 0.24);
+    background: rgba(212, 119, 119, 0.07);
+    color: var(--destructive);
+  }
+
   .forge-settings-edit-row {
     grid-column: 2 / -1;
     display: grid;
@@ -835,6 +841,91 @@
     border-radius: 14px;
     background: rgba(212, 119, 119, 0.035);
     padding: 0.75rem;
+  }
+
+  .forge-settings-permissions-panel {
+    display: grid;
+    gap: 0.625rem;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: 8px;
+    background: var(--forge-bg-raised);
+    padding: 0.5rem;
+  }
+
+  .forge-settings-permissions-toolbar {
+    display: flex;
+    min-width: 0;
+    align-items: start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-radius: 8px;
+    background: var(--forge-bg-surface);
+    padding: 0.75rem;
+  }
+
+  .forge-settings-permission-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .forge-settings-permission-row {
+    display: grid;
+    min-height: 4rem;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.625rem;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    background: var(--forge-bg-surface);
+    padding: 0.75rem;
+  }
+
+  .forge-settings-permission-row:hover {
+    border-color: rgba(184, 138, 86, 0.18);
+    background: var(--forge-material-surface);
+  }
+
+  .forge-settings-permission-actions {
+    display: flex;
+    max-width: 15rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.375rem;
+  }
+
+  .forge-settings-permission-actions [data-slot="button"] {
+    border-color: var(--forge-border-subtle);
+    border-radius: 9px;
+    background: var(--forge-bg-surface);
+    color: var(--forge-text-secondary);
+    box-shadow: 0 1px 0 rgba(255, 251, 244, 0.8) inset;
+  }
+
+  .forge-settings-permission-actions [data-slot="button"]:hover {
+    border-color: var(--forge-border-strong);
+    background: var(--forge-bg-raised-hover);
+    color: var(--forge-text-primary);
+  }
+
+  @media (max-width: 560px) {
+    .forge-settings-permissions-toolbar,
+    .forge-settings-permission-row {
+      grid-template-columns: 1fr;
+    }
+
+    .forge-settings-permissions-toolbar {
+      display: grid;
+    }
+
+    .forge-settings-permission-row {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .forge-settings-permission-actions {
+      grid-column: 1 / -1;
+      max-width: none;
+      justify-content: flex-start;
+    }
   }
 
   /* ── Memory Facts Panel ──────────────────────────────────────────────── */

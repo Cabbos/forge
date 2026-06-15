@@ -18,6 +18,7 @@ import { MemoryPanel } from "@/components/settings/MemoryPanel";
 import { ProfilesPanel } from "@/components/settings/ProfilesPanel";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
 import { SchedulerPanel } from "@/components/settings/SchedulerPanel";
+import { PermissionsPanel } from "@/components/settings/PermissionsPanel";
 
 export type SettingsSectionId =
   | "general"
@@ -159,15 +160,7 @@ export function SettingsCenterShell({
             </SettingsReadOnlyPanel>
           )}
 
-          {activeSection === "tools" && (
-            <SettingsReadOnlyPanel title="执行通道" description="工具调用继续沿用当前项目的确认与输出流。">
-              <SettingsInfoList>
-                <SettingsInfoRow label="Shell" value="通过命令确认卡片执行" />
-                <SettingsInfoRow label="文件操作" value="写入前保留确认边界" />
-                <SettingsInfoRow label="能力入口" value="由能力面板管理" />
-              </SettingsInfoList>
-            </SettingsReadOnlyPanel>
-          )}
+          {activeSection === "tools" && <PermissionsPanel />}
 
           {activeSection === "memory" && <MemoryPanel />}
 

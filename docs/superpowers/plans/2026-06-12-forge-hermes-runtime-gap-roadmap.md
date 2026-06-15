@@ -617,7 +617,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `src/components/RecoverySurface.tsx`, `store/index.ts`.
 - [ ] 7.4 Implement permission states: per-tool permission levels, allowlist, denylist, reset.
   - **Phase 7.4 backend contract follow-up (2026-06-16):** Permission persistence now models latest per-tool allow/deny rules instead of append-only approvals. `PermissionGate` supports permanent deny and reset, deny rules override built-in allowlisted tools, and reset restores the default policy. Added Tauri IPC commands plus TS wrappers for `list_permission_rules`, `set_permission_rule`, and `reset_permission_rule`, giving the future Settings permission panel a stable backend contract.
-  - Files: `executor/permissions.rs`, `src/components/settings/PermissionsPanel.tsx`.
+  - **Phase 7.4 Settings UI follow-up (2026-06-16):** Settings > Tools now renders the permission rule table, including default/allow/deny states, per-tool allow/deny actions, reset, refresh, and inline errors. Added mocked e2e coverage for list/set/reset flows and verified the panel plus small-viewport Settings scrolling in the in-app Browser.
+  - Files: `executor/permissions.rs`, `src/components/settings/PermissionsPanel.tsx`, `src/styles/settings.css`, `e2e/workbench.spec.ts`.
 - [ ] 7.5 Implement rich previews: image diff, file tree diff, markdown preview for writes.
   - Files: `src/components/messages/WriteFilePreview.tsx`, `DiffPreview.tsx`.
 - [ ] 7.6 Harden review flows: approve/reject UI, bulk review, review history.
