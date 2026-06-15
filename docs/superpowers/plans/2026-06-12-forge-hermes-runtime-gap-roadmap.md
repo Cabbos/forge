@@ -404,7 +404,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 5.5 Add profile switcher in UI and CLI `--profile` flag.
   - Files: `src/components/settings/ProfilesPanel.tsx`, CLI entry.
   - **Phase 5-B partial (2026-06-12):** Settings > Profiles panel built with create/edit/delete/active selection, loading/error/empty states, mutation error handling. Frontend types, query keys, and `useProfilesQuery` hook added. Optional `profile_id` field added to `EvalHeadlessRequest` (Rust) and `HeadlessRequest` (TypeScript CLI helpers) with test. At that point CLI `run --profile` and runtime profile selection were still deferred.
-  - **Phase 5.5 follow-up (2026-06-15):** `forge run --profile` is implemented and forwarded into `EvalHeadlessRequest`; headless and gateway trigger execution resolve profile provider/model/workspace defaults. Desktop new-session creation now consumes the active profile defaults as well: `useSession` resolves active profile defaults before calling `create_session`, and the Rust IPC handler accepts `profile_id` so direct Tauri calls also honor profile provider/model/workspace defaults. Remaining polish: keep composer model selection visibly synchronized with active profile changes and connect profile associations deeper into long-term memory.
+  - **Phase 5.5 follow-up (2026-06-15):** `forge run --profile` is implemented and forwarded into `EvalHeadlessRequest`; headless and gateway trigger execution resolve profile provider/model/workspace defaults. Desktop new-session creation consumes the active profile defaults as well: `useSession` resolves active profile defaults before calling `create_session`, and the Rust IPC handler accepts `profile_id` so direct Tauri calls also honor profile provider/model/workspace defaults. Active profile changes now synchronize the visible composer provider/model selection so Settings and composer state agree. Remaining polish: connect profile associations deeper into long-term memory.
 - [ ] 5.6 Implement shared runtime state: CLI and desktop can attach to the same gateway/session host.
   - Files: `runtime/gateway.rs`.
   - **Deferred:** No gateway runtime exists (Phase 6 dependency).
@@ -427,7 +427,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.3 Settings > Memory panel | ✅ Done | Full CRUD UI with search, inline edit, delete, mutation errors |
 | 5.10 Memory store tests | ✅ Done | 19 Rust tests, 976 total pass; npm build passes |
 | 5.4 Profile model | ✅ Done | `profile/mod.rs` model + `ProfileStore` + 22 tests + IPC + AppState wiring |
-| 5.5 Profile switcher | 🟨 Partial | Settings UI, CLI `--profile`, headless/gateway profile resolution, and desktop new-session defaults done; composer-visible sync and deeper memory association deferred |
+| 5.5 Profile switcher | 🟨 Partial | Settings UI, CLI `--profile`, headless/gateway profile resolution, desktop new-session defaults, and composer-visible sync done; deeper memory association deferred |
 | 5.6 Shared runtime / gateway | ⏸️ Deferred | No gateway (Phase 6) |
 | 5.7 Messaging triggers | 🟨 Partial | TCP webhook, Gateway IPC enqueue, trigger runner, and CLI trigger controls exist; dashboard polish still deferred |
 | 5.8 Scheduler engine | ✅ Done | Phase 5-C local MVP; background tick/gateway cron deferred |

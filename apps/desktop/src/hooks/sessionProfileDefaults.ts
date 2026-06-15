@@ -1,4 +1,9 @@
-import type { ProfileListPayload } from "../lib/ipc/types";
+import {
+  getDefaultModel,
+  getProviderForModel,
+  normalizeProviderId,
+} from "../lib/providers.ts";
+import type { ForgeProfile, ProfileListPayload } from "../lib/ipc/types";
 
 export interface ResolveProfileSessionDefaultsInput {
   workingDir: string;
@@ -12,6 +17,18 @@ export interface ResolvedProfileSessionDefaults {
   provider: string;
   model: string;
   profileId: string | null;
+}
+
+export interface ResolveProfileComposerDefaultsInput {
+  currentProvider: string;
+  currentModel: string;
+  profile?: ForgeProfile | null;
+}
+
+export interface ResolvedProfileComposerDefaults {
+  provider: string;
+  model: string;
+  changed: boolean;
 }
 
 export function resolveProfileSessionDefaults(
@@ -35,6 +52,32 @@ export function resolveProfileSessionDefaults(
     provider: cleanProfileDefault(activeProfile.default_provider) ?? input.provider,
     model: cleanProfileDefault(activeProfile.default_model) ?? input.model,
     profileId: activeProfile.id,
+  };
+}
+
+export function resolveProfileComposerDefaults(
+  input: ResolveProfileComposerDefaultsInput,
+): ResolvedProfileComposerDefaults {
+  const profileProvider = cleanProfileDefault(input.profile?.default_provider);
+  const profileModel = cleanProfileDefault(input.profile?.default_model);
+
+  if (!profileProvider && !profileModel) {
+    return {
+      provider: input.currentProvider,
+      model: input.currentModel,
+      changed: false,
+    };
+  }
+
+  const provider = profileProvider
+    ? normalizeProviderId(profileProvider)
+    : getProviderForModel(profileModel) ?? normalizeProviderId(input.currentProvider);
+  const model = profileModel ?? getDefaultModel(provider);
+
+  return {
+    provider,
+    model,
+    changed: provider !== input.currentProvider || model !== input.currentModel,
   };
 }
 

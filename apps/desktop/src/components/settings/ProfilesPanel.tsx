@@ -15,14 +15,20 @@ import {
   setActiveProfile,
   type UpsertProfileInput,
 } from "@/lib/tauri";
+import { useStore } from "@/store";
 import { ProfileForm } from "./ProfileForm";
 import { ProfileRow } from "./ProfileRow";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { resolveProfileComposerDefaults } from "@/hooks/sessionProfileDefaults";
 
 export function ProfilesPanel() {
   const [creating, setCreating] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const selectedProvider = useStore((state) => state.selectedProvider);
+  const selectedModel = useStore((state) => state.selectedModel);
+  const setSelectedProvider = useStore((state) => state.setSelectedProvider);
+  const setSelectedModel = useStore((state) => state.setSelectedModel);
 
   const {
     data: payload,
@@ -71,10 +77,20 @@ export function ProfilesPanel() {
   const handleSetActive = useCallback(
     async (id: string) => {
       setMutationError(null);
-      await setActiveProfile(id);
+      const nextPayload = await setActiveProfile(id);
+      const activeProfile = nextPayload.profiles.find((profile) => profile.id === nextPayload.active_profile_id);
+      const composerDefaults = resolveProfileComposerDefaults({
+        currentProvider: selectedProvider,
+        currentModel: selectedModel,
+        profile: activeProfile,
+      });
+      if (composerDefaults.changed) {
+        setSelectedProvider(composerDefaults.provider);
+        setSelectedModel(composerDefaults.model);
+      }
       await invalidate();
     },
-    [invalidate],
+    [invalidate, selectedModel, selectedProvider, setSelectedModel, setSelectedProvider],
   );
 
   return (

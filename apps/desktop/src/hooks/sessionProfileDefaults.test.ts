@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { resolveProfileSessionDefaults } from "./sessionProfileDefaults.ts";
-import type { ProfileListPayload } from "../lib/ipc/types.ts";
+import {
+  resolveProfileComposerDefaults,
+  resolveProfileSessionDefaults,
+} from "./sessionProfileDefaults.ts";
+import type { ForgeProfile, ProfileListPayload } from "../lib/ipc/types.ts";
 
 const payload: ProfileListPayload = {
   active_profile_id: "ops",
@@ -90,6 +93,80 @@ describe("resolveProfileSessionDefaults", () => {
       provider: "openai",
       model: "gpt-5-codex",
       profileId: "blank",
+    });
+  });
+});
+
+function forgeProfile(overrides: Partial<ForgeProfile>): ForgeProfile {
+  return {
+    id: overrides.id ?? "profile-1",
+    name: overrides.name ?? "Profile",
+    default_provider: overrides.default_provider ?? null,
+    default_model: overrides.default_model ?? null,
+    default_workspace: overrides.default_workspace ?? null,
+    api_key_overrides: overrides.api_key_overrides ?? null,
+    created_at_ms: overrides.created_at_ms ?? 1,
+    updated_at_ms: overrides.updated_at_ms ?? 1,
+  };
+}
+
+describe("resolveProfileComposerDefaults", () => {
+  it("uses profile provider and model for the visible composer selection", () => {
+    const result = resolveProfileComposerDefaults({
+      currentProvider: "deepseek",
+      currentModel: "deepseek-chat",
+      profile: forgeProfile({
+        default_provider: "anthropic",
+        default_model: "claude-sonnet-4-6",
+      }),
+    });
+
+    assert.deepEqual(result, {
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      changed: true,
+    });
+  });
+
+  it("uses the provider default model when profile only sets provider", () => {
+    const result = resolveProfileComposerDefaults({
+      currentProvider: "deepseek",
+      currentModel: "deepseek-v4-flash[1m]",
+      profile: forgeProfile({ default_provider: "openai" }),
+    });
+
+    assert.deepEqual(result, {
+      provider: "openai",
+      model: "gpt-4o",
+      changed: true,
+    });
+  });
+
+  it("infers provider from a known profile model when provider is omitted", () => {
+    const result = resolveProfileComposerDefaults({
+      currentProvider: "deepseek",
+      currentModel: "deepseek-v4-flash[1m]",
+      profile: forgeProfile({ default_model: "claude-opus-4-7" }),
+    });
+
+    assert.deepEqual(result, {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      changed: true,
+    });
+  });
+
+  it("does not change composer selection when profile has no model defaults", () => {
+    const result = resolveProfileComposerDefaults({
+      currentProvider: "openai",
+      currentModel: "gpt-4o",
+      profile: forgeProfile({}),
+    });
+
+    assert.deepEqual(result, {
+      provider: "openai",
+      model: "gpt-4o",
+      changed: false,
     });
   });
 });
