@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   buildGatewaySessionRows,
+  buildGatewaySessionEventRows,
   buildGatewayRuntimeSummary,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
@@ -162,6 +163,60 @@ describe("buildGatewaySessionRows", () => {
     assert.equal(rows[0].runtime, "-");
     assert.equal(rows[0].workspacePath, null);
     assert.equal(rows[0].subtitle, "pid=- · last_seen=- · created=42");
+  });
+});
+
+describe("buildGatewaySessionEventRows", () => {
+  it("formats event tail cursor metadata and compact previews", () => {
+    const view = buildGatewaySessionEventRows({
+      ok: true,
+      session_id: "session-1",
+      events: [
+        {
+          event_type: "user_message",
+          block_id: "user-1",
+          content: "continue the work",
+        },
+        {
+          event_type: "tool_call_start",
+          block_id: "tool-1",
+          tool_name: "shell",
+        },
+      ],
+      next_cursor: 4,
+      total_events: 6,
+      cursor_reset: false,
+    });
+
+    assert.equal(view.summary, "2 events · next=4 · total=6");
+    assert.deepEqual(view.rows, [
+      {
+        id: "user-1",
+        eventType: "user_message",
+        label: "user_message",
+        preview: "continue the work",
+      },
+      {
+        id: "tool-1",
+        eventType: "tool_call_start",
+        label: "tool_call_start",
+        preview: "shell",
+      },
+    ]);
+  });
+
+  it("marks cursor resets and handles empty tails", () => {
+    const view = buildGatewaySessionEventRows({
+      ok: true,
+      session_id: "session-1",
+      events: [],
+      next_cursor: 0,
+      total_events: 0,
+      cursor_reset: true,
+    });
+
+    assert.equal(view.summary, "0 events · next=0 · total=0 · reset");
+    assert.deepEqual(view.rows, []);
   });
 });
 

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   CheckCircle,
+  Eye,
   Info,
   Loader2,
   RefreshCw,
@@ -24,6 +25,7 @@ import type {
   GatewayRuntimeStatus,
   GatewaySessionInfo,
   GatewayTriggerRunRecord,
+  TailGatewaySessionEventsResult,
 } from "@/lib/tauri";
 import {
   cancelGatewayTrigger,
@@ -31,10 +33,12 @@ import {
   getGatewayTriggerRun,
   replayGatewayTriggerRun,
   runRepairAction,
+  tailGatewaySessionEvents,
 } from "@/lib/tauri";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import {
   buildGatewayRuntimeSummary,
+  buildGatewaySessionEventRows,
   buildGatewaySessionRows,
   buildGatewayTriggerInput,
   buildGatewayTriggerRunRows,
@@ -250,6 +254,13 @@ function GatewayRuntimePanel({
   const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [inspectingRunId, setInspectingRunId] = useState<string | null>(null);
   const [selectedRunDetail, setSelectedRunDetail] = useState<GatewayTriggerRunRecord | null>(null);
+  const [tailingSessionId, setTailingSessionId] = useState<string | null>(null);
+  const [selectedSessionTail, setSelectedSessionTail] =
+    useState<TailGatewaySessionEventsResult | null>(null);
+  const [sessionTailError, setSessionTailError] = useState<{
+    sessionId: string;
+    message: string;
+  } | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [triggerMessageStatus, setTriggerMessageStatus] = useState<string | null>(null);
 
@@ -376,6 +387,25 @@ function GatewayRuntimePanel({
       setInspectingRunId(null);
     }
   };
+  const handleTailSession = async (sessionId: string) => {
+    if (tailingSessionId) return;
+    if (selectedSessionTail?.session_id === sessionId) {
+      setSelectedSessionTail(null);
+      setSessionTailError(null);
+      return;
+    }
+    setTailingSessionId(sessionId);
+    setSessionTailError(null);
+    setTriggerMessageStatus(null);
+    try {
+      const result = await tailGatewaySessionEvents(sessionId, null, 20);
+      setSelectedSessionTail(result);
+    } catch (error) {
+      setSessionTailError({ sessionId, message: formatMutationError(error) });
+    } finally {
+      setTailingSessionId(null);
+    }
+  };
 
   return (
     <div className="forge-settings-readonly-panel">
@@ -406,6 +436,10 @@ function GatewayRuntimePanel({
               rows={sessionRows}
               isLoading={isSessionsLoading}
               queryError={sessionsQueryError}
+              tailingSessionId={tailingSessionId}
+              selectedTail={selectedSessionTail}
+              tailError={sessionTailError}
+              onTail={handleTailSession}
             />
           </dd>
         </div>
@@ -536,10 +570,18 @@ function GatewaySessionRegistry({
   rows,
   isLoading,
   queryError,
+  tailingSessionId,
+  selectedTail,
+  tailError,
+  onTail,
 }: {
   rows: ReturnType<typeof buildGatewaySessionRows>;
   isLoading: boolean;
   queryError: string | null;
+  tailingSessionId: string | null;
+  selectedTail: TailGatewaySessionEventsResult | null;
+  tailError: { sessionId: string; message: string } | null;
+  onTail: (sessionId: string) => void;
 }) {
   if (isLoading && rows.length === 0) {
     return <span className="text-xs text-muted-foreground">正在读取 session registry</span>;
@@ -567,7 +609,29 @@ function GatewaySessionRegistry({
             {row.workspacePath && (
               <span className="forge-gateway-trigger-row-meta">{row.workspacePath}</span>
             )}
+            {selectedTail?.session_id === row.id && (
+              <GatewaySessionEventTail tail={selectedTail} />
+            )}
+            {tailError?.sessionId === row.id && (
+              <span className="forge-gateway-trigger-row-meta text-red-500">
+                {tailError.message}
+              </span>
+            )}
           </div>
+          <ButtonPrimitive
+            type="button"
+            className="forge-gateway-trigger-cancel-btn"
+            disabled={tailingSessionId != null}
+            aria-label={`Tail gateway session events ${row.id}`}
+            title="查看最近 session events"
+            onClick={() => onTail(row.id)}
+          >
+            {tailingSessionId === row.id ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Eye className="size-3" />
+            )}
+          </ButtonPrimitive>
         </div>
       ))}
       {rows.length > 5 && (
@@ -576,6 +640,28 @@ function GatewaySessionRegistry({
         </span>
       )}
     </div>
+  );
+}
+
+function GatewaySessionEventTail({
+  tail,
+}: {
+  tail: TailGatewaySessionEventsResult;
+}) {
+  const view = buildGatewaySessionEventRows(tail);
+  return (
+    <span className="forge-gateway-trigger-row-meta">
+      events: {view.summary}
+      {view.rows.length > 0 && (
+        <span className="mt-1 flex flex-col gap-0.5">
+          {view.rows.slice(0, 5).map((event) => (
+            <span key={event.id} className="text-[10px] text-muted-foreground">
+              {event.label} · {event.preview || event.id}
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
   );
 }
 

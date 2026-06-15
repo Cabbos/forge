@@ -107,6 +107,37 @@ export interface GatewaySessionRow {
   subtitle: string;
 }
 
+export interface GatewaySessionEventLike {
+  event_type?: string | null;
+  block_id?: string | null;
+  content?: string | null;
+  message?: string | null;
+  tool_name?: string | null;
+  command?: string | null;
+}
+
+export interface GatewaySessionEventTailLike {
+  ok: boolean;
+  session_id: string;
+  events: GatewaySessionEventLike[];
+  next_cursor: number;
+  total_events: number;
+  cursor_reset: boolean;
+}
+
+export interface GatewaySessionEventRow {
+  id: string;
+  eventType: string;
+  label: string;
+  preview: string;
+}
+
+export interface GatewaySessionEventRowsView {
+  summary: string;
+  rows: GatewaySessionEventRow[];
+  nextCursor: number;
+}
+
 export interface GatewayTriggerInputResult {
   input: GatewayTriggerInput | null;
   error: string | null;
@@ -259,6 +290,26 @@ export function buildGatewayTriggerRunRows(
   });
 }
 
+export function buildGatewaySessionEventRows(
+  tail: GatewaySessionEventTailLike,
+): GatewaySessionEventRowsView {
+  const reset = tail.cursor_reset ? " · reset" : "";
+  return {
+    summary: `${tail.events.length} events · next=${tail.next_cursor} · total=${tail.total_events}${reset}`,
+    rows: tail.events.map((event, index) => {
+      const eventType = event.event_type?.trim() || "event";
+      const id = event.block_id?.trim() || `${eventType}-${index}`;
+      return {
+        id,
+        eventType,
+        label: eventType,
+        preview: eventPreview(event),
+      };
+    }),
+    nextCursor: tail.next_cursor,
+  };
+}
+
 function gatewaySessionState(
   session: GatewaySessionLike,
   nowMs: number,
@@ -304,4 +355,14 @@ function truncateTriggerMessage(message: string, maxLength = 120): string {
   const chars = [...message.trim()];
   if (chars.length <= maxLength) return chars.join("");
   return `${chars.slice(0, maxLength).join("")}…`;
+}
+
+function eventPreview(event: GatewaySessionEventLike): string {
+  const value =
+    event.content?.trim() ||
+    event.message?.trim() ||
+    event.tool_name?.trim() ||
+    event.command?.trim() ||
+    "";
+  return truncateTriggerMessage(value, 120);
 }
