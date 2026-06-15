@@ -31,6 +31,20 @@ pub fn get_summary(session_id: &str) -> Result<Option<SessionSnapshotSummary>, S
     Ok(summary_from_snapshots(snapshots, session_id))
 }
 
+pub fn get_snapshot(session_id: &str) -> Result<Option<serde_json::Value>, String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Ok(None);
+    }
+    if get_summary(session_id)?.is_none() {
+        return Ok(None);
+    }
+
+    serde_json::to_value(crate::agent::snapshot::load_session_snapshot(session_id)?)
+        .map(Some)
+        .map_err(|error| format!("Failed to serialize session snapshot: {error}"))
+}
+
 pub fn export() -> Result<serde_json::Value, String> {
     serde_json::to_value(crate::agent::snapshot::export_session_snapshots()?)
         .map_err(|error| format!("Failed to serialize session export: {error}"))
@@ -72,6 +86,9 @@ fn summary_from_snapshots(
 mod tests {
     use crate::adapters::base::ChatMessage;
     use crate::agent::snapshot::AgentSessionSnapshot;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn summary_from_snapshots_matches_exact_session_id() {
@@ -107,5 +124,37 @@ mod tests {
         assert_eq!(summary.summary.as_deref(), Some("first summary"));
         assert_eq!(summary.message_count, 1);
         assert!(super::summary_from_snapshots(Vec::new(), "session-1").is_none());
+    }
+
+    #[test]
+    fn get_snapshot_returns_full_snapshot_json() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        std::env::set_var("HOME", home.path());
+        let snapshot = AgentSessionSnapshot::new(
+            "session-detail".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "/repo/detail".to_string(),
+            vec![ChatMessage::user("show me".into())],
+            Some("detail summary".to_string()),
+            Some(128_000),
+        );
+        crate::agent::snapshot::save_session_snapshot(&snapshot).expect("save snapshot");
+
+        let detail = super::get_snapshot(" session-detail ")
+            .expect("get snapshot")
+            .expect("snapshot");
+
+        assert_eq!(detail["session_id"], "session-detail");
+        assert_eq!(detail["provider"], "deepseek");
+        assert_eq!(detail["messages"][0]["content"], "show me");
+
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 }

@@ -183,13 +183,15 @@ async fn attach_gateway_session(session_id: &str) {
 }
 
 async fn show_gateway_session_snapshot(session_id: &str) {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        eprintln!("session_id must not be empty");
+        std::process::exit(1);
+    }
+
     let socket_path = default_socket_path();
     if !socket_path.exists() {
-        println!(
-            "Gateway is not running (no socket at {}).",
-            socket_path.display()
-        );
-        println!("Start it with: forge service start");
+        show_local_session_snapshot(session_id, Some(socket_path.display().to_string()));
         return;
     }
 
@@ -224,6 +226,26 @@ async fn show_gateway_session_snapshot(session_id: &str) {
             eprintln!("Failed to connect to gateway: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+fn show_local_session_snapshot(session_id: &str, missing_socket: Option<String>) {
+    match forge::session_store::get_snapshot(session_id) {
+        Ok(Some(snapshot)) => {
+            for line in render_session_snapshot_detail_lines(&local_session_snapshot_result(
+                session_id, snapshot,
+            )) {
+                println!("{line}");
+            }
+        }
+        Ok(None) => {
+            if let Some(socket_path) = missing_socket {
+                println!("Gateway is not running (no socket at {socket_path}).");
+            }
+            println!("No local session snapshot found for {}.", session_id.trim());
+            println!("Start the gateway with: forge service start");
+        }
+        Err(error) => exit_with_error(format!("Failed to read local session snapshot: {error}")),
     }
 }
 
@@ -340,6 +362,17 @@ fn render_session_snapshot_detail_lines(result: &serde_json::Value) -> Vec<Strin
         }
     }
     lines
+}
+
+fn local_session_snapshot_result(
+    session_id: &str,
+    snapshot: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "session_id": session_id.trim(),
+        "snapshot": snapshot,
+    })
 }
 
 fn render_snapshot_lines(title: &str, snapshots: &[SessionSnapshotSummary]) -> Vec<String> {
@@ -654,5 +687,22 @@ mod tests {
         );
         assert_eq!(lines[2], "  created=10 updated=20 messages=2");
         assert_eq!(lines[3], "  summary  detail summary");
+    }
+
+    #[test]
+    fn local_session_snapshot_result_wraps_snapshot_for_detail_renderer() {
+        let snapshot = serde_json::json!({
+            "session_id": "session-1",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "working_dir": "/repo/detail",
+            "messages": []
+        });
+
+        let result = super::local_session_snapshot_result(" session-1 ", snapshot.clone());
+
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["session_id"], "session-1");
+        assert_eq!(result["snapshot"], snapshot);
     }
 }
