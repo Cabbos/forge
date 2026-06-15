@@ -7,6 +7,7 @@
 //! - `watchdog` — session event tracker and stale-session health alert emission.
 
 pub mod repair;
+pub mod update_repair;
 pub mod watchdog;
 
 use serde::{Deserialize, Serialize};
