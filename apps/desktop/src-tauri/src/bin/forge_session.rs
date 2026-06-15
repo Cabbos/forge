@@ -205,7 +205,9 @@ fn render_attach_result_lines(result: &serde_json::Value) -> Vec<String> {
         format!("  {session_id}  {status}  {message}"),
     ];
 
-    if let Some(session) = result.get("session") {
+    append_attach_control_lines(result, &mut lines);
+
+    if let Some(session) = result.get("session").filter(|session| session.is_object()) {
         let provider = session["provider"].as_str().unwrap_or("?");
         let model = session["model"].as_str().unwrap_or("?");
         let workspace = session["workspace_path"].as_str().unwrap_or("?");
@@ -213,6 +215,24 @@ fn render_attach_result_lines(result: &serde_json::Value) -> Vec<String> {
     }
 
     lines
+}
+
+fn append_attach_control_lines(result: &serde_json::Value, lines: &mut Vec<String>) {
+    let Some(control) = result.get("control") else {
+        return;
+    };
+    let control_plane = control["control_plane"].as_str().unwrap_or("unknown");
+    let can_stream = control["gateway_can_stream"].as_bool().unwrap_or(false);
+    let can_send_input = control["gateway_can_send_input"].as_bool().unwrap_or(false);
+    let can_resume = control["gateway_can_resume"].as_bool().unwrap_or(false);
+    lines.push(format!(
+        "  control  {control_plane}  stream={can_stream} input={can_send_input} resume={can_resume}"
+    ));
+    if let Some(required_action) = control["required_action"].as_str() {
+        if !required_action.trim().is_empty() {
+            lines.push(format!("  action  {}", required_action.trim()));
+        }
+    }
 }
 
 fn render_snapshot_lines(title: &str, snapshots: &[SessionSnapshotSummary]) -> Vec<String> {
@@ -449,6 +469,13 @@ mod tests {
             "session_id": "session-live",
             "status": "live",
             "message": "Session is live and attachable.",
+            "control": {
+                "control_plane": "desktop_runtime_required",
+                "gateway_can_stream": false,
+                "gateway_can_send_input": false,
+                "gateway_can_resume": false,
+                "required_action": "Open the owning desktop runtime to continue this session."
+            },
             "session": {
                 "session_id": "session-live",
                 "provider": "claude",
@@ -464,6 +491,14 @@ mod tests {
             lines[1],
             "  session-live  live  Session is live and attachable."
         );
-        assert_eq!(lines[2], "  claude/opus  /repo/live");
+        assert_eq!(
+            lines[2],
+            "  control  desktop_runtime_required  stream=false input=false resume=false"
+        );
+        assert_eq!(
+            lines[3],
+            "  action  Open the owning desktop runtime to continue this session."
+        );
+        assert_eq!(lines[4], "  claude/opus  /repo/live");
     }
 }

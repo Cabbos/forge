@@ -98,6 +98,24 @@ pub enum GatewaySessionAttachStatus {
     Missing,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewaySessionControlPlane {
+    DesktopRuntimeRequired,
+    DesktopRestoreRequired,
+    Unavailable,
+}
+
+/// Gateway-side control capabilities for a session attach attempt.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewaySessionControl {
+    pub control_plane: GatewaySessionControlPlane,
+    pub gateway_can_stream: bool,
+    pub gateway_can_send_input: bool,
+    pub gateway_can_resume: bool,
+    pub required_action: String,
+}
+
 /// Result returned by `attach_session`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AttachSessionResult {
@@ -105,6 +123,7 @@ pub struct AttachSessionResult {
     pub session_id: String,
     pub status: GatewaySessionAttachStatus,
     pub message: String,
+    pub control: GatewaySessionControl,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<GatewaySessionInfo>,
 }
@@ -346,6 +365,13 @@ mod tests {
             session_id: "session-1".into(),
             status: GatewaySessionAttachStatus::Live,
             message: "Session is live and attachable.".into(),
+            control: GatewaySessionControl {
+                control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
+                gateway_can_stream: false,
+                gateway_can_send_input: false,
+                gateway_can_resume: false,
+                required_action: "Open the owning desktop runtime to continue this session.".into(),
+            },
             session: Some(GatewaySessionInfo {
                 session_id: "session-1".into(),
                 provider: "openai".into(),
@@ -359,6 +385,7 @@ mod tests {
         };
         let json = serde_json::to_string(&result).expect("serialize result");
         assert!(json.contains("\"status\":\"live\""));
+        assert!(json.contains("\"control_plane\":\"desktop_runtime_required\""));
         let back: AttachSessionResult = serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }

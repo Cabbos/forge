@@ -5,8 +5,9 @@ use crate::gateway::protocol::{
     serialize_reply, AttachSessionParams, AttachSessionResult, CancelTriggerParams,
     CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
     GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
-    GatewaySessionInfo, GetTriggerRunParams, GetTriggerRunResult, HealthResult, PingResult,
-    ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
+    GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo, GetTriggerRunParams,
+    GetTriggerRunResult, HealthResult, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
+    GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
@@ -148,6 +149,7 @@ impl GatewayState {
                 session_id,
                 status: GatewaySessionAttachStatus::Missing,
                 message: "Session is not registered with the gateway.".to_string(),
+                control: session_attach_control(GatewaySessionAttachStatus::Missing),
                 session: None,
             };
         };
@@ -159,6 +161,7 @@ impl GatewayState {
             session_id,
             status,
             message: session_attach_message(status).to_string(),
+            control: session_attach_control(status),
             session: Some(session),
         }
     }
@@ -772,6 +775,43 @@ fn session_attach_message(status: GatewaySessionAttachStatus) -> &'static str {
     }
 }
 
+fn session_attach_control(status: GatewaySessionAttachStatus) -> GatewaySessionControl {
+    match status {
+        GatewaySessionAttachStatus::Live => GatewaySessionControl {
+            control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
+            gateway_can_stream: false,
+            gateway_can_send_input: false,
+            gateway_can_resume: false,
+            required_action: "Open the owning desktop runtime to continue this session."
+                .to_string(),
+        },
+        GatewaySessionAttachStatus::Restored => GatewaySessionControl {
+            control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
+            gateway_can_stream: false,
+            gateway_can_send_input: false,
+            gateway_can_resume: false,
+            required_action:
+                "Restore the session in desktop first; gateway only has registry metadata."
+                    .to_string(),
+        },
+        GatewaySessionAttachStatus::Stale => GatewaySessionControl {
+            control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
+            gateway_can_stream: false,
+            gateway_can_send_input: false,
+            gateway_can_resume: false,
+            required_action: "Reopen desktop to recover or clear the stale owner before attaching."
+                .to_string(),
+        },
+        GatewaySessionAttachStatus::Missing => GatewaySessionControl {
+            control_plane: GatewaySessionControlPlane::Unavailable,
+            gateway_can_stream: false,
+            gateway_can_send_input: false,
+            gateway_can_resume: false,
+            required_action: "Register or restore the session before attaching.".to_string(),
+        },
+    }
+}
+
 fn new_trigger_id() -> String {
     uuid::Uuid::now_v7().simple().to_string()
 }
@@ -1093,6 +1133,21 @@ mod tests {
                     assert_eq!(result.session_id, session_id);
                     assert_eq!(result.status, expected_status);
                     assert_eq!(result.ok, expected_ok);
+                    assert!(!result.control.gateway_can_stream);
+                    assert!(!result.control.gateway_can_send_input);
+                    assert!(!result.control.gateway_can_resume);
+                    assert_eq!(
+                        result.control.control_plane,
+                        match expected_status {
+                            crate::gateway::protocol::GatewaySessionAttachStatus::Live =>
+                                crate::gateway::protocol::GatewaySessionControlPlane::DesktopRuntimeRequired,
+                            crate::gateway::protocol::GatewaySessionAttachStatus::Restored |
+                            crate::gateway::protocol::GatewaySessionAttachStatus::Stale =>
+                                crate::gateway::protocol::GatewaySessionControlPlane::DesktopRestoreRequired,
+                            crate::gateway::protocol::GatewaySessionAttachStatus::Missing =>
+                                crate::gateway::protocol::GatewaySessionControlPlane::Unavailable,
+                        }
+                    );
                     assert_eq!(
                         result.session.is_some(),
                         expected_status

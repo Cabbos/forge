@@ -413,6 +413,19 @@ export interface GatewayRuntimeTaskStatus {
 
 export type GatewaySessionAttachStatus = "live" | "restored" | "stale" | "missing";
 
+export type GatewaySessionControlPlane =
+  | "desktop_runtime_required"
+  | "desktop_restore_required"
+  | "unavailable";
+
+export interface GatewaySessionControl {
+  control_plane: GatewaySessionControlPlane;
+  gateway_can_stream: boolean;
+  gateway_can_send_input: boolean;
+  gateway_can_resume: boolean;
+  required_action: string;
+}
+
 export interface GatewaySessionInfo {
   session_id: string;
   provider: string;
@@ -429,6 +442,7 @@ export interface AttachGatewaySessionResult {
   session_id: string;
   status: GatewaySessionAttachStatus;
   message: string;
+  control: GatewaySessionControl;
   session?: GatewaySessionInfo | null;
 }
 
