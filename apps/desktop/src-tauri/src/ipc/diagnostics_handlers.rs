@@ -4,8 +4,8 @@ use crate::diagnostics::{self, CapabilitySummary};
 use crate::gateway::client::{build_attach_session_request, GatewayClient};
 use crate::gateway::protocol::{
     AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
-    EnqueueTriggerResult, GatewayReply, GatewayRequest, GetTriggerRunParams, GetTriggerRunResult,
-    ReplayTriggerRunParams, ReplayTriggerRunResult,
+    EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo, GetTriggerRunParams,
+    GetTriggerRunResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::gateway::webhook::PendingTrigger;
@@ -67,6 +67,25 @@ pub async fn list_gateway_triggers() -> Result<Vec<PendingTrigger>, String> {
             error.error.message
         )),
         Err(error) => Err(format!("Gateway trigger list request failed: {error}")),
+    }
+}
+
+#[tauri::command]
+pub async fn list_gateway_sessions() -> Result<Vec<GatewaySessionInfo>, String> {
+    let request = build_list_gateway_sessions_request();
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<Vec<GatewaySessionInfo>>(response.result)
+                .map_err(|error| format!("Gateway returned invalid session list: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway session list error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway session list request failed: {error}")),
     }
 }
 
@@ -184,6 +203,14 @@ fn build_list_gateway_triggers_request() -> GatewayRequest {
     GatewayRequest {
         id: uuid::Uuid::now_v7().simple().to_string(),
         method: "list_pending_triggers".to_string(),
+        params: None,
+    }
+}
+
+fn build_list_gateway_sessions_request() -> GatewayRequest {
+    GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "list_sessions".to_string(),
         params: None,
     }
 }
@@ -409,6 +436,14 @@ mod tests {
         let request = super::build_list_gateway_triggers_request();
 
         assert_eq!(request.method, "list_pending_triggers");
+        assert!(request.params.is_none());
+    }
+
+    #[test]
+    fn build_list_gateway_sessions_request_uses_gateway_method() {
+        let request = super::build_list_gateway_sessions_request();
+
+        assert_eq!(request.method, "list_sessions");
         assert!(request.params.is_none());
     }
 

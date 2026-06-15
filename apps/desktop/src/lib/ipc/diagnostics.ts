@@ -8,6 +8,7 @@ import type {
   EnqueueGatewayTriggerResult,
   GatewayPendingTrigger,
   GatewayRuntimeStatus,
+  GatewaySessionInfo,
   GetGatewayTriggerRunResult,
   LogEntry,
   RepairAction,
@@ -101,6 +102,11 @@ export async function enqueueGatewayTrigger(
 export async function listGatewayTriggers(): Promise<GatewayPendingTrigger[]> {
   if (!hasTauriRuntime()) return [];
   return invoke<GatewayPendingTrigger[]>("list_gateway_triggers");
+}
+
+export async function listGatewaySessions(): Promise<GatewaySessionInfo[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke<GatewaySessionInfo[]>("list_gateway_sessions");
 }
 
 export async function cancelGatewayTrigger(

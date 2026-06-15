@@ -5,6 +5,7 @@ import {
   attachGatewaySession,
   enqueueGatewayTrigger,
   getGatewayTriggerRun,
+  listGatewaySessions,
   replayGatewayTriggerRun,
 } from "./diagnostics.ts";
 
@@ -41,5 +42,11 @@ describe("attachGatewaySession", () => {
       attachGatewaySession("session-1"),
       /Gateway session attach is not available outside Tauri runtime/,
     );
+  });
+});
+
+describe("listGatewaySessions", () => {
+  it("returns an empty list outside the Tauri runtime", async () => {
+    assert.deepEqual(await listGatewaySessions(), []);
   });
 });

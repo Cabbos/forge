@@ -19,6 +19,17 @@ export interface GatewayRuntimeTaskLike {
   last_error?: string | null;
 }
 
+export interface GatewaySessionLike {
+  session_id: string;
+  provider: string;
+  model: string;
+  workspace_path: string;
+  created_at_ms: number;
+  owner_pid?: number | null;
+  last_seen_at_ms?: number | null;
+  restored_from_registry: boolean;
+}
+
 export interface GatewayRuntimeSummary {
   tone: GatewayRuntimeSummaryTone;
   statusText: string;
@@ -84,10 +95,22 @@ export interface GatewayTriggerRunRow {
   canReplay: boolean;
 }
 
+export type GatewaySessionRowState = "live" | "stale" | "restored";
+
+export interface GatewaySessionRow {
+  id: string;
+  stateLabel: GatewaySessionRowState;
+  runtime: string;
+  workspacePath: string | null;
+  subtitle: string;
+}
+
 export interface GatewayTriggerInputResult {
   input: GatewayTriggerInput | null;
   error: string | null;
 }
+
+export const GATEWAY_SESSION_STALE_AFTER_MS = 5 * 60 * 1000;
 
 export function buildGatewayRuntimeSummary(
   status: GatewayRuntimeSnapshotLike,
@@ -183,6 +206,33 @@ export function buildGatewayTriggerRows(
     });
 }
 
+export function buildGatewaySessionRows(
+  sessions: GatewaySessionLike[],
+  nowMs: number,
+): GatewaySessionRow[] {
+  return [...sessions]
+    .map((session) => {
+      const stateLabel = gatewaySessionState(session, nowMs);
+      const runtime = buildRuntimeLabel(session.provider, session.model) ?? "-";
+      const workspacePath = session.workspace_path.trim() || null;
+      const pid = session.owner_pid ?? "-";
+      const lastSeen = session.last_seen_at_ms ?? "-";
+
+      return {
+        id: session.session_id,
+        stateLabel,
+        runtime,
+        workspacePath,
+        subtitle: `pid=${pid} · last_seen=${lastSeen} · created=${session.created_at_ms}`,
+      };
+    })
+    .sort((left, right) => {
+      const stateOrder = sessionStateOrder(left.stateLabel) - sessionStateOrder(right.stateLabel);
+      if (stateOrder !== 0) return stateOrder;
+      return left.id.localeCompare(right.id);
+    });
+}
+
 export function buildGatewayTriggerRunRows(
   runs: GatewayTriggerRunLike[],
 ): GatewayTriggerRunRow[] {
@@ -202,6 +252,29 @@ export function buildGatewayTriggerRunRows(
       canReplay: Boolean(run.trigger_message?.trim()),
     };
   });
+}
+
+function gatewaySessionState(
+  session: GatewaySessionLike,
+  nowMs: number,
+): GatewaySessionRowState {
+  if (session.restored_from_registry) return "restored";
+  const lastSeen = session.last_seen_at_ms;
+  if (lastSeen != null && Math.max(0, nowMs - lastSeen) > GATEWAY_SESSION_STALE_AFTER_MS) {
+    return "stale";
+  }
+  return "live";
+}
+
+function sessionStateOrder(state: GatewaySessionRowState): number {
+  switch (state) {
+    case "live":
+      return 0;
+    case "stale":
+      return 1;
+    case "restored":
+      return 2;
+  }
 }
 
 function assignOptional(

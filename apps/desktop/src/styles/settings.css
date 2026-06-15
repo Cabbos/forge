@@ -512,6 +512,21 @@
     color: var(--forge-accent);
   }
 
+  .forge-gateway-trigger-row-title span[data-state="live"] {
+    border-color: rgba(58, 142, 95, 0.28);
+    color: var(--forge-success, #2f8f5b);
+  }
+
+  .forge-gateway-trigger-row-title span[data-state="stale"] {
+    border-color: rgba(184, 138, 86, 0.28);
+    color: var(--forge-accent);
+  }
+
+  .forge-gateway-trigger-row-title span[data-state="restored"] {
+    border-color: rgba(94, 116, 180, 0.28);
+    color: var(--forge-text-muted);
+  }
+
   .forge-gateway-trigger-row-title code {
     min-width: 0;
     overflow: hidden;

@@ -146,6 +146,7 @@ pub fn run() {
             ipc::diagnostics_handlers::get_gateway_runtime_status,
             ipc::diagnostics_handlers::enqueue_gateway_trigger,
             ipc::diagnostics_handlers::list_gateway_triggers,
+            ipc::diagnostics_handlers::list_gateway_sessions,
             ipc::diagnostics_handlers::cancel_gateway_trigger,
             ipc::diagnostics_handlers::replay_gateway_trigger_run,
             ipc::diagnostics_handlers::get_gateway_trigger_run,

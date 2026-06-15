@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildGatewaySessionRows,
   buildGatewayRuntimeSummary,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
@@ -68,6 +69,77 @@ describe("buildGatewayRuntimeSummary", () => {
     assert.equal(summary.tone, "warn");
     assert.equal(summary.statusText, "后台循环异常");
     assert.equal(summary.counts, "0 pending · 0 claimed · 0 dead-letter · 2/3 loops");
+  });
+});
+
+describe("buildGatewaySessionRows", () => {
+  it("orders live sessions before stale and restored sessions", () => {
+    const rows = buildGatewaySessionRows(
+      [
+        {
+          session_id: "restored-1",
+          provider: "claude",
+          model: "sonnet",
+          workspace_path: "/repo/restored",
+          created_at_ms: 10,
+          owner_pid: null,
+          last_seen_at_ms: null,
+          restored_from_registry: true,
+        },
+        {
+          session_id: "stale-1",
+          provider: "openai",
+          model: "gpt-5",
+          workspace_path: "/repo/stale",
+          created_at_ms: 20,
+          owner_pid: 100,
+          last_seen_at_ms: 1_000,
+          restored_from_registry: false,
+        },
+        {
+          session_id: "live-1",
+          provider: "openai",
+          model: "gpt-5",
+          workspace_path: "/repo/live",
+          created_at_ms: 30,
+          owner_pid: 200,
+          last_seen_at_ms: 299_000,
+          restored_from_registry: false,
+        },
+      ],
+      302_000,
+    );
+
+    assert.deepEqual(
+      rows.map((row) => [row.id, row.stateLabel, row.runtime, row.workspacePath]),
+      [
+        ["live-1", "live", "openai/gpt-5", "/repo/live"],
+        ["stale-1", "stale", "openai/gpt-5", "/repo/stale"],
+        ["restored-1", "restored", "claude/sonnet", "/repo/restored"],
+      ],
+    );
+  });
+
+  it("formats sparse session metadata without throwing", () => {
+    const rows = buildGatewaySessionRows(
+      [
+        {
+          session_id: "session-1",
+          provider: "",
+          model: "  ",
+          workspace_path: "  ",
+          created_at_ms: 42,
+          owner_pid: null,
+          last_seen_at_ms: null,
+          restored_from_registry: false,
+        },
+      ],
+      100,
+    );
+
+    assert.equal(rows[0].runtime, "-");
+    assert.equal(rows[0].workspacePath, null);
+    assert.equal(rows[0].subtitle, "pid=- · last_seen=- · created=42");
   });
 });
 

@@ -26,6 +26,7 @@ export const queryKeys = {
   diagnosticsReport: ["diagnostics-report"] as const,
   gatewayRuntimeStatus: ["gateway-runtime-status"] as const,
   gatewayTriggers: ["gateway-triggers"] as const,
+  gatewaySessions: ["gateway-sessions"] as const,
   memoryFactsAll: ["memory-facts"] as const,
   memoryFacts: (query?: string, profileId?: string | null) =>
     ["memory-facts", query ?? "", profileId ?? ""] as const,

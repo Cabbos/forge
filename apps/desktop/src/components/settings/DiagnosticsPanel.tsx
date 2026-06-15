@@ -13,6 +13,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useDiagnosticsReportQuery } from "@/hooks/queries/useDiagnosticsReportQuery";
 import { useGatewayRuntimeStatusQuery } from "@/hooks/queries/useGatewayRuntimeStatusQuery";
+import { useGatewaySessionsQuery } from "@/hooks/queries/useGatewaySessionsQuery";
 import { useGatewayTriggersQuery } from "@/hooks/queries/useGatewayTriggersQuery";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { queryKeys } from "@/hooks/queries/queryKeys";
@@ -21,6 +22,7 @@ import type {
   DiagnosticsReport,
   GatewayPendingTrigger,
   GatewayRuntimeStatus,
+  GatewaySessionInfo,
   GatewayTriggerRunRecord,
 } from "@/lib/tauri";
 import {
@@ -33,6 +35,7 @@ import {
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import {
   buildGatewayRuntimeSummary,
+  buildGatewaySessionRows,
   buildGatewayTriggerInput,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
@@ -90,16 +93,28 @@ export function DiagnosticsPanel() {
     refetch: refetchGatewayTriggers,
     isFetching: isGatewayTriggersFetching,
   } = useGatewayTriggersQuery();
+  const {
+    data: gatewaySessions = [],
+    isLoading: isGatewaySessionsLoading,
+    isError: isGatewaySessionsError,
+    error: gatewaySessionsError,
+    refetch: refetchGatewaySessions,
+    isFetching: isGatewaySessionsFetching,
+  } = useGatewaySessionsQuery();
 
   const queryError = getQueryErrorMessage(isError ? error : null);
   const runtimeQueryError = getQueryErrorMessage(isRuntimeError ? runtimeError : null);
   const gatewayTriggersQueryError = getQueryErrorMessage(
     isGatewayTriggersError ? gatewayTriggersError : null,
   );
+  const gatewaySessionsQueryError = getQueryErrorMessage(
+    isGatewaySessionsError ? gatewaySessionsError : null,
+  );
   const refreshAll = () => {
     void refetch();
     void refetchRuntime();
     void refetchGatewayTriggers();
+    void refetchGatewaySessions();
   };
   const handleRepair = async (actionId: string) => {
     if (repairingActionId) return;
@@ -118,9 +133,11 @@ export function DiagnosticsPanel() {
         queryClient.invalidateQueries({ queryKey: queryKeys.diagnosticsReport }),
         queryClient.invalidateQueries({ queryKey: queryKeys.gatewayRuntimeStatus }),
         queryClient.invalidateQueries({ queryKey: queryKeys.gatewayTriggers }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.gatewaySessions }),
         refetch(),
         refetchRuntime(),
         refetchGatewayTriggers(),
+        refetchGatewaySessions(),
       ]);
     } catch (err) {
       setRepairError(formatMutationError(err));
@@ -151,14 +168,18 @@ export function DiagnosticsPanel() {
       <GatewayRuntimePanel
         status={runtimeStatus}
         triggers={gatewayTriggers}
+        sessions={gatewaySessions}
         isLoading={isRuntimeLoading}
         isTriggersLoading={isGatewayTriggersLoading}
-        isRefreshing={isRuntimeFetching || isGatewayTriggersFetching}
+        isSessionsLoading={isGatewaySessionsLoading}
+        isRefreshing={isRuntimeFetching || isGatewayTriggersFetching || isGatewaySessionsFetching}
         queryError={runtimeQueryError}
         triggersQueryError={gatewayTriggersQueryError}
+        sessionsQueryError={gatewaySessionsQueryError}
         onRefresh={() => {
           void refetchRuntime();
           void refetchGatewayTriggers();
+          void refetchGatewaySessions();
         }}
       />
 
@@ -197,20 +218,26 @@ export function DiagnosticsPanel() {
 function GatewayRuntimePanel({
   status,
   triggers,
+  sessions,
   isLoading,
   isTriggersLoading,
+  isSessionsLoading,
   isRefreshing,
   queryError,
   triggersQueryError,
+  sessionsQueryError,
   onRefresh,
 }: {
   status?: GatewayRuntimeStatus;
   triggers: GatewayPendingTrigger[];
+  sessions: GatewaySessionInfo[];
   isLoading: boolean;
   isTriggersLoading: boolean;
+  isSessionsLoading: boolean;
   isRefreshing: boolean;
   queryError: string | null;
   triggersQueryError: string | null;
+  sessionsQueryError: string | null;
   onRefresh: () => void;
 }) {
   const [triggerMessage, setTriggerMessage] = useState("");
@@ -258,6 +285,7 @@ function GatewayRuntimePanel({
   };
   const summary = buildGatewayRuntimeSummary(runtime);
   const triggerRows = buildGatewayTriggerRows(triggers);
+  const sessionRows = buildGatewaySessionRows(sessions, Date.now());
   const Icon = STATUS_ICON[summary.tone] ?? CheckCircle;
   const cls = STATUS_CLASS[summary.tone] ?? STATUS_CLASS.pass;
   const handleEnqueueTrigger = async (event: FormEvent<HTMLFormElement>) => {
@@ -368,6 +396,16 @@ function GatewayRuntimePanel({
           <dt>会话</dt>
           <dd>
             {runtime.active_sessions} active · uptime {formatDuration(runtime.uptime_seconds)}
+          </dd>
+        </div>
+        <div className="forge-settings-info-row">
+          <dt>会话详情</dt>
+          <dd>
+            <GatewaySessionRegistry
+              rows={sessionRows}
+              isLoading={isSessionsLoading}
+              queryError={sessionsQueryError}
+            />
           </dd>
         </div>
         <div className="forge-settings-info-row">
@@ -489,6 +527,53 @@ function GatewayRuntimePanel({
           </span>
         </ButtonPrimitive>
       </div>
+    </div>
+  );
+}
+
+function GatewaySessionRegistry({
+  rows,
+  isLoading,
+  queryError,
+}: {
+  rows: ReturnType<typeof buildGatewaySessionRows>;
+  isLoading: boolean;
+  queryError: string | null;
+}) {
+  if (isLoading && rows.length === 0) {
+    return <span className="text-xs text-muted-foreground">正在读取 session registry</span>;
+  }
+
+  if (queryError && rows.length === 0) {
+    return <span className="text-xs text-red-500">{queryError}</span>;
+  }
+
+  if (rows.length === 0) {
+    return <span className="text-xs text-muted-foreground">暂无 gateway session</span>;
+  }
+
+  return (
+    <div className="forge-gateway-trigger-queue">
+      {rows.slice(0, 5).map((row) => (
+        <div key={row.id} className="forge-gateway-trigger-row">
+          <div className="forge-gateway-trigger-row-main">
+            <span className="forge-gateway-trigger-row-title">
+              <span data-state={row.stateLabel}>{row.stateLabel}</span>
+              <code>{row.id}</code>
+            </span>
+            <span className="forge-gateway-trigger-row-message">{row.runtime}</span>
+            <span className="forge-gateway-trigger-row-meta">{row.subtitle}</span>
+            {row.workspacePath && (
+              <span className="forge-gateway-trigger-row-meta">{row.workspacePath}</span>
+            )}
+          </div>
+        </div>
+      ))}
+      {rows.length > 5 && (
+        <span className="text-[10px] text-muted-foreground">
+          另有 {rows.length - 5} 个 session，可用 CLI 查看完整列表。
+        </span>
+      )}
     </div>
   );
 }
