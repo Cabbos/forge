@@ -3,14 +3,15 @@
 
 use crate::gateway::protocol::{
     serialize_reply, AttachSessionParams, AttachSessionResult, CancelTriggerParams,
-    CancelTriggerResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
-    GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
-    GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
-    GatewaySessionSnapshotSummary, GetSessionSnapshotParams, GetSessionSnapshotResult,
-    GetTriggerRunParams, GetTriggerRunResult, HealthResult, PingResult, ReplayTriggerRunParams,
-    ReplayTriggerRunResult, GATEWAY_VERSION,
+    CancelTriggerResult, EnqueueSessionInputParams, EnqueueSessionInputResult,
+    EnqueueTriggerParams, EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply,
+    GatewayRequest, GatewayResponse, GatewaySessionAttachStatus, GatewaySessionControl,
+    GatewaySessionControlPlane, GatewaySessionInfo, GatewaySessionSnapshotSummary,
+    GetSessionSnapshotParams, GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult,
+    HealthResult, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
+use crate::gateway::session_input::{new_session_input_record, SessionInputStore};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,6 +29,8 @@ pub struct GatewayRuntimeStatus {
     pub uptime_seconds: u64,
     pub active_sessions: usize,
     pub pending_triggers: usize,
+    #[serde(default)]
+    pub pending_session_inputs: usize,
     pub claimed_triggers: usize,
     pub dead_letter_runs: usize,
     pub recent_runs: Vec<TriggerRunRecord>,
@@ -56,6 +59,7 @@ pub struct GatewayState {
     session_registry_path: Option<PathBuf>,
     pub trigger_store: Arc<TriggerStore>,
     pub trigger_run_store: Arc<TriggerRunStore>,
+    pub session_input_store: Arc<SessionInputStore>,
     runtime_tasks: Mutex<HashMap<String, GatewayRuntimeTaskStatus>>,
     include_snapshot_sessions: bool,
 }
@@ -93,6 +97,7 @@ impl GatewayState {
             session_registry_path: Some(session_registry_path),
             trigger_store: Arc::new(TriggerStore::persistent_default()),
             trigger_run_store: Arc::new(TriggerRunStore::persistent_default()),
+            session_input_store: Arc::new(SessionInputStore::persistent_default()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
             include_snapshot_sessions,
         }
@@ -281,6 +286,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "list_pending_triggers" => handle_list_triggers(state, request.id),
         "drain_pending_triggers" => handle_drain_triggers(state, request.id),
         "enqueue_trigger" => handle_enqueue_trigger(state, request),
+        "enqueue_session_input" => handle_enqueue_session_input(state, request),
         "cancel_trigger" => handle_cancel_trigger(state, request),
         "replay_trigger_run" => handle_replay_trigger_run(state, request),
         "get_trigger_run" => handle_get_trigger_run(state, request),
@@ -436,6 +442,49 @@ fn handle_enqueue_trigger(state: &GatewayState, request: GatewayRequest) -> Gate
                 .iter()
                 .filter(|trigger| trigger.claimed_at_ms.is_none())
                 .count(),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_enqueue_session_input(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<EnqueueSessionInputParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let session_id = params.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return invalid_params(request.id, "session_id must not be empty");
+    }
+    let message = params.message.trim().to_string();
+    if message.is_empty() {
+        return invalid_params(request.id, "message must not be empty");
+    }
+
+    let input_id = params
+        .input_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(new_trigger_id);
+
+    state.session_input_store.push(new_session_input_record(
+        input_id.clone(),
+        session_id.clone(),
+        message,
+    ));
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(EnqueueSessionInputResult {
+            ok: true,
+            input_id,
+            session_id,
+            pending_inputs: state.session_input_store.list().len(),
         })
         .unwrap(),
     })
@@ -615,6 +664,7 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         uptime_seconds: state.uptime_seconds(),
         active_sessions: state.active_sessions(),
         pending_triggers,
+        pending_session_inputs: state.session_input_store.list().len(),
         claimed_triggers,
         dead_letter_runs,
         recent_runs: runs.into_iter().take(20).collect(),
@@ -1024,6 +1074,7 @@ mod tests {
             session_registry_path: None,
             trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
             trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+            session_input_store: Arc::new(crate::gateway::session_input::SessionInputStore::new()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
             include_snapshot_sessions: false,
         }
@@ -1395,6 +1446,71 @@ mod tests {
         let status = build_runtime_status(&state);
         assert_eq!(status.pending_triggers, 1);
         assert_eq!(status.claimed_triggers, 0);
+    }
+
+    #[test]
+    fn dispatch_enqueue_session_input_pushes_to_inbox_and_updates_runtime_status() {
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "enqueue-input".into(),
+                method: "enqueue_session_input".into(),
+                params: Some(serde_json::json!({
+                    "input_id": "input-ipc-1",
+                    "session_id": " session-1 ",
+                    "message": " continue the work "
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::EnqueueSessionInputResult =
+                    serde_json::from_value(resp.result).expect("parse enqueue input result");
+                assert!(result.ok);
+                assert_eq!(result.input_id, "input-ipc-1");
+                assert_eq!(result.session_id, "session-1");
+                assert_eq!(result.pending_inputs, 1);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        let queued = state.session_input_store.list();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].id, "input-ipc-1");
+        assert_eq!(queued[0].session_id, "session-1");
+        assert_eq!(queued[0].message, "continue the work");
+
+        let status = build_runtime_status(&state);
+        assert_eq!(status.pending_session_inputs, 1);
+    }
+
+    #[test]
+    fn dispatch_enqueue_session_input_rejects_blank_message() {
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "enqueue-input".into(),
+                method: "enqueue_session_input".into(),
+                params: Some(serde_json::json!({
+                    "session_id": "session-1",
+                    "message": "   "
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("message"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+        assert!(state.session_input_store.list().is_empty());
     }
 
     #[test]

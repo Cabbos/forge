@@ -169,6 +169,24 @@ pub struct EnqueueTriggerResult {
     pub pending_triggers: usize,
 }
 
+/// Parameters for queueing input addressed to an existing gateway session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnqueueSessionInputParams {
+    pub session_id: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_id: Option<String>,
+}
+
+/// Result returned after input is accepted into the gateway session inbox.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnqueueSessionInputResult {
+    pub ok: bool,
+    pub input_id: String,
+    pub session_id: String,
+    pub pending_inputs: usize,
+}
+
 /// Parameters for removing a queued gateway trigger.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CancelTriggerParams {
@@ -408,6 +426,31 @@ mod tests {
         assert!(json.contains("\"session_id\":\"session-1\""));
         assert!(json.contains("\"messages\""));
         let back: GetSessionSnapshotResult =
+            serde_json::from_str(&json).expect("deserialize result");
+        assert_eq!(back, result);
+    }
+
+    #[test]
+    fn enqueue_session_input_params_and_result_roundtrip() {
+        let params = EnqueueSessionInputParams {
+            session_id: " session-1 ".into(),
+            message: " continue ".into(),
+            input_id: Some("input-1".into()),
+        };
+        let json = serde_json::to_string(&params).expect("serialize params");
+        let back: EnqueueSessionInputParams =
+            serde_json::from_str(&json).expect("deserialize params");
+        assert_eq!(back, params);
+
+        let result = EnqueueSessionInputResult {
+            ok: true,
+            input_id: "input-1".into(),
+            session_id: "session-1".into(),
+            pending_inputs: 2,
+        };
+        let json = serde_json::to_string(&result).expect("serialize result");
+        assert!(json.contains("\"pending_inputs\":2"));
+        let back: EnqueueSessionInputResult =
             serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
     }

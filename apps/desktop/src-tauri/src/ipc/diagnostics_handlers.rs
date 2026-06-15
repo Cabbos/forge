@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use crate::diagnostics::{self, CapabilitySummary};
 use crate::gateway::client::{
-    build_attach_session_request, build_get_session_snapshot_request, GatewayClient,
+    build_attach_session_request, build_enqueue_session_input_request,
+    build_get_session_snapshot_request, GatewayClient,
 };
 use crate::gateway::protocol::{
-    AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueTriggerParams,
-    EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo,
+    AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueSessionInputResult,
+    EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo,
     GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, ReplayTriggerRunParams,
     ReplayTriggerRunResult,
 };
@@ -194,6 +195,28 @@ pub async fn get_gateway_session_snapshot(
     }
 }
 
+#[tauri::command]
+pub async fn enqueue_gateway_session_input(
+    session_id: String,
+    message: String,
+) -> Result<EnqueueSessionInputResult, String> {
+    let request = build_enqueue_gateway_session_input_request(session_id, message)?;
+    let socket_path = default_socket_path();
+    let mut client = GatewayClient::connect(&socket_path).await?;
+
+    match client.send(request).await {
+        Ok(GatewayReply::Ok(response)) => {
+            serde_json::from_value::<EnqueueSessionInputResult>(response.result)
+                .map_err(|error| format!("Gateway returned invalid session input result: {error}"))
+        }
+        Ok(GatewayReply::Err(error)) => Err(format!(
+            "Gateway session input enqueue error: {}",
+            error.error.message
+        )),
+        Err(error) => Err(format!("Gateway session input request failed: {error}")),
+    }
+}
+
 async fn read_gateway_runtime_status() -> GatewayRuntimeStatus {
     let socket_path = default_socket_path();
     let mut client = match GatewayClient::connect(&socket_path).await {
@@ -300,6 +323,13 @@ fn build_get_gateway_session_snapshot_request(
     build_get_session_snapshot_request(&session_id)
 }
 
+fn build_enqueue_gateway_session_input_request(
+    session_id: String,
+    message: String,
+) -> Result<GatewayRequest, String> {
+    build_enqueue_session_input_request(&session_id, &message)
+}
+
 fn build_enqueue_gateway_trigger_request(
     input: EnqueueTriggerParams,
 ) -> Result<GatewayRequest, String> {
@@ -337,6 +367,7 @@ fn unavailable_gateway_runtime_status(message: impl Into<String>) -> GatewayRunt
         uptime_seconds: 0,
         active_sessions: 0,
         pending_triggers: 0,
+        pending_session_inputs: 0,
         claimed_triggers: 0,
         dead_letter_runs: 0,
         recent_runs: Vec::new(),
@@ -420,6 +451,7 @@ mod tests {
 
         assert!(!status.ok);
         assert_eq!(status.pending_triggers, 0);
+        assert_eq!(status.pending_session_inputs, 0);
         assert_eq!(status.claimed_triggers, 0);
         assert_eq!(status.dead_letter_runs, 0);
         assert!(status.recent_runs.is_empty());
@@ -568,5 +600,30 @@ mod tests {
             .expect_err("blank session id");
 
         assert!(error.contains("session_id must not be empty"));
+    }
+
+    #[test]
+    fn build_enqueue_gateway_session_input_request_trims_payload() {
+        let request = super::build_enqueue_gateway_session_input_request(
+            " session-1 ".to_string(),
+            " continue ".to_string(),
+        )
+        .expect("request");
+
+        assert_eq!(request.method, "enqueue_session_input");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+        assert_eq!(params["message"], "continue");
+    }
+
+    #[test]
+    fn build_enqueue_gateway_session_input_request_rejects_blank_message() {
+        let error = super::build_enqueue_gateway_session_input_request(
+            "session-1".to_string(),
+            "   ".to_string(),
+        )
+        .expect_err("blank message");
+
+        assert!(error.contains("message must not be empty"));
     }
 }

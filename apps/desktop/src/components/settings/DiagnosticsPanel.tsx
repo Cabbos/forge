@@ -278,6 +278,7 @@ function GatewayRuntimePanel({
     uptime_seconds: 0,
     active_sessions: 0,
     pending_triggers: 0,
+    pending_session_inputs: 0,
     claimed_triggers: 0,
     dead_letter_runs: 0,
     recent_runs: [],

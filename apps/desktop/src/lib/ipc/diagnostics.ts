@@ -4,6 +4,7 @@ import type {
   AttachGatewaySessionResult,
   CancelGatewayTriggerResult,
   DiagnosticsReport,
+  EnqueueGatewaySessionInputResult,
   EnqueueGatewayTriggerInput,
   EnqueueGatewayTriggerResult,
   GatewayPendingTrigger,
@@ -82,6 +83,7 @@ export async function getGatewayRuntimeStatus(): Promise<GatewayRuntimeStatus> {
       uptime_seconds: 0,
       active_sessions: 0,
       pending_triggers: 0,
+      pending_session_inputs: 0,
       claimed_triggers: 0,
       dead_letter_runs: 0,
       recent_runs: [],
@@ -153,4 +155,17 @@ export async function getGatewaySessionSnapshot(
     throw new Error("Gateway session snapshot detail is not available outside Tauri runtime.");
   }
   return invoke<GetGatewaySessionSnapshotResult>("get_gateway_session_snapshot", { sessionId });
+}
+
+export async function enqueueGatewaySessionInput(
+  sessionId: string,
+  message: string,
+): Promise<EnqueueGatewaySessionInputResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Gateway session input enqueue is not available outside Tauri runtime.");
+  }
+  return invoke<EnqueueGatewaySessionInputResult>("enqueue_gateway_session_input", {
+    sessionId,
+    message,
+  });
 }

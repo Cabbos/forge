@@ -6,6 +6,7 @@ export interface GatewayRuntimeSnapshotLike {
   uptime_seconds: number;
   active_sessions: number;
   pending_triggers: number;
+  pending_session_inputs?: number;
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: unknown[];
@@ -120,7 +121,8 @@ export function buildGatewayRuntimeSummary(
   const runningTasks = runtimeTasks.filter((task) => task.running).length;
   const taskCounts =
     runtimeTasks.length > 0 ? ` · ${runningTasks}/${runtimeTasks.length} loops` : "";
-  const counts = `${status.pending_triggers} pending · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter${taskCounts}`;
+  const pendingSessionInputs = status.pending_session_inputs ?? 0;
+  const counts = `${status.pending_triggers} pending · ${pendingSessionInputs} inputs · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter${taskCounts}`;
 
   if (!status.ok) {
     return {
@@ -132,6 +134,7 @@ export function buildGatewayRuntimeSummary(
 
   if (
     status.pending_triggers > 0 ||
+    pendingSessionInputs > 0 ||
     status.claimed_triggers > 0 ||
     status.dead_letter_runs > 0 ||
     runtimeTasks.some((task) => !task.running || task.last_error)

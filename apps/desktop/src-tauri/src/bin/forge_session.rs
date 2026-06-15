@@ -1,9 +1,10 @@
 //! Forge Session CLI — inspect active gateway sessions and local session store.
 //!
-//! Usage: `forge_session <list|attach|show|stats|search|export|prune>`
+//! Usage: `forge_session <list|attach|show|input|stats|search|export|prune>`
 
 use forge::gateway::client::{
-    build_attach_session_request, build_get_session_snapshot_request, GatewayClient,
+    build_attach_session_request, build_enqueue_session_input_request,
+    build_get_session_snapshot_request, GatewayClient,
 };
 use forge::gateway::protocol::GatewayRequest;
 use forge::gateway::server::{default_socket_path, SESSION_STALE_AFTER_MS};
@@ -32,6 +33,18 @@ async fn main() {
                 std::process::exit(1);
             };
             show_gateway_session_snapshot(session_id).await;
+        }
+        "input" => {
+            let Some(session_id) = args.get(2) else {
+                eprintln!("Usage: forge_session input <session_id> <message>");
+                std::process::exit(1);
+            };
+            let message = args.get(3..).unwrap_or_default().join(" ");
+            if message.trim().is_empty() {
+                eprintln!("Usage: forge_session input <session_id> <message>");
+                std::process::exit(1);
+            }
+            enqueue_gateway_session_input(session_id, &message).await;
         }
         "stats" => match forge::session_store::stats() {
             Ok(stats) => {
@@ -82,7 +95,7 @@ async fn main() {
             }
         },
         _ => {
-            eprintln!("Usage: forge_session list|attach|show|stats|search|export|prune");
+            eprintln!("Usage: forge_session list|attach|show|input|stats|search|export|prune");
             std::process::exit(1);
         }
     }
@@ -209,6 +222,55 @@ async fn show_gateway_session_snapshot(session_id: &str) {
                 for line in render_session_snapshot_detail_lines(&resp.result) {
                     println!("{line}");
                 }
+            }
+            Ok(forge::gateway::protocol::GatewayReply::Err(err)) => {
+                eprintln!(
+                    "Gateway error: {} (code: {})",
+                    err.error.message, err.error.code
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("Request failed: {error}");
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("Failed to connect to gateway: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn enqueue_gateway_session_input(session_id: &str, message: &str) {
+    let socket_path = default_socket_path();
+    if !socket_path.exists() {
+        eprintln!(
+            "Gateway is not running (no socket at {}).",
+            socket_path.display()
+        );
+        eprintln!("Start it with: forge service start");
+        std::process::exit(1);
+    }
+
+    let request = match build_enqueue_session_input_request(session_id, message) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+
+    match GatewayClient::connect(&socket_path).await {
+        Ok(mut client) => match client.send(request).await {
+            Ok(forge::gateway::protocol::GatewayReply::Ok(resp)) => {
+                let result = resp.result;
+                let input_id = result["input_id"].as_str().unwrap_or("?");
+                let session_id = result["session_id"].as_str().unwrap_or("?");
+                let pending_inputs = result["pending_inputs"].as_u64().unwrap_or(0);
+                println!(
+                    "Queued session input {input_id} for {session_id}; pending inputs: {pending_inputs}"
+                );
             }
             Ok(forge::gateway::protocol::GatewayReply::Err(err)) => {
                 eprintln!(

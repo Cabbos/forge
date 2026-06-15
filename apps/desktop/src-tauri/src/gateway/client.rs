@@ -2,7 +2,8 @@
 //! requests, and parse responses.
 
 use crate::gateway::protocol::{
-    GatewayReply, GatewayRequest, GatewaySessionInfo, GetSessionSnapshotParams,
+    EnqueueSessionInputParams, GatewayReply, GatewayRequest, GatewaySessionInfo,
+    GetSessionSnapshotParams,
 };
 use crate::gateway::server::default_socket_path;
 use std::path::PathBuf;
@@ -123,6 +124,33 @@ pub fn build_get_session_snapshot_request(session_id: &str) -> Result<GatewayReq
         params: Some(
             serde_json::to_value(GetSessionSnapshotParams { session_id })
                 .map_err(|error| format!("serialize get session snapshot params: {error}"))?,
+        ),
+    })
+}
+
+pub fn build_enqueue_session_input_request(
+    session_id: &str,
+    message: &str,
+) -> Result<GatewayRequest, String> {
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err("session_id must not be empty".to_string());
+    }
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("message must not be empty".to_string());
+    }
+
+    Ok(GatewayRequest {
+        id: uuid::Uuid::now_v7().simple().to_string(),
+        method: "enqueue_session_input".to_string(),
+        params: Some(
+            serde_json::to_value(EnqueueSessionInputParams {
+                session_id,
+                message,
+                input_id: None,
+            })
+            .map_err(|error| format!("serialize enqueue session input params: {error}"))?,
         ),
     })
 }
@@ -248,5 +276,16 @@ mod tests {
         assert_eq!(request.method, "get_session_snapshot");
         let params = request.params.expect("params");
         assert_eq!(params["session_id"], "session-1");
+    }
+
+    #[test]
+    fn enqueue_session_input_request_trims_session_id_and_message() {
+        let request =
+            build_enqueue_session_input_request(" session-1 ", " continue ").expect("request");
+
+        assert_eq!(request.method, "enqueue_session_input");
+        let params = request.params.expect("params");
+        assert_eq!(params["session_id"], "session-1");
+        assert_eq!(params["message"], "continue");
     }
 }

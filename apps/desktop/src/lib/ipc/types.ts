@@ -399,6 +399,7 @@ export interface GatewayRuntimeStatus {
   uptime_seconds: number;
   active_sessions: number;
   pending_triggers: number;
+  pending_session_inputs: number;
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: GatewayTriggerRunRecord[];
@@ -485,6 +486,13 @@ export interface EnqueueGatewayTriggerResult {
   ok: boolean;
   trigger_id: string;
   pending_triggers: number;
+}
+
+export interface EnqueueGatewaySessionInputResult {
+  ok: boolean;
+  input_id: string;
+  session_id: string;
+  pending_inputs: number;
 }
 
 export interface CancelGatewayTriggerResult {
