@@ -563,6 +563,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `diagnostics/update_repair.rs`, `diagnostics/mod.rs`.
 - [ ] 6.8 Add self-healing actions from diagnostics: restart gateway, clear snapshot cache, reinstall service.
   - **Phase 6.8 partial (2026-06-15):** `RepairResult` now carries optional post-action verification detail. `restart_gateway` and `reinstall_service` verify `launchd::status()` after the repair command and fail honestly when the service is still not running, rather than reporting command success as repair success. Settings > Diagnostics formats verification detail in the repair result message.
+  - **Phase 6.8 cache verification follow-up (2026-06-16):** Destructive cache repairs now verify their post-action state too: `clear_snapshot_cache` and `clear_a2a_ledger_cache` return `RepairVerification` showing the target cache directory is empty or honestly reporting inspection failure. This gives Settings > Diagnostics the same evidence-backed result shape for cache cleanup as service repairs.
   - Files: `diagnostics/repair.rs`, `src/components/settings/DiagnosticsPanel.tsx`, `src/components/settings/diagnosticsRepairView.ts`, `src/lib/ipc/types.ts`.
 - [ ] 6.9 Tests: service install/uninstall in CI-safe mock mode, update repair tests.
   - **Phase 6.9 partial (2026-06-15):** Added CI-safe launchd command-output parsing tests and service-management API coverage without invoking real `launchctl` state changes.

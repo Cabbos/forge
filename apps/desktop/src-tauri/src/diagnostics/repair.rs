@@ -161,18 +161,19 @@ fn clear_snapshot_cache_at(snapshots_dir: &Path) -> RepairResult {
             action_id: "clear_snapshot_cache".into(),
             success: true,
             message: "No snapshot cache to clear.".into(),
-            verification: None,
+            verification: Some(verify_cache_dir_empty("Snapshot cache", snapshots_dir)),
         };
     }
 
     match std::fs::remove_dir_all(snapshots_dir) {
         Ok(()) => {
             let _ = std::fs::create_dir_all(snapshots_dir);
+            let verification = verify_cache_dir_empty("Snapshot cache", snapshots_dir);
             RepairResult {
                 action_id: "clear_snapshot_cache".into(),
-                success: true,
+                success: verification.ok,
                 message: "Snapshot cache cleared.".into(),
-                verification: None,
+                verification: Some(verification),
             }
         }
         Err(e) => RepairResult {
@@ -194,18 +195,19 @@ fn clear_a2a_ledger_cache_at(ledger_dir: &Path) -> RepairResult {
             action_id: "clear_a2a_ledger_cache".into(),
             success: true,
             message: "No A2A ledger cache to clear.".into(),
-            verification: None,
+            verification: Some(verify_cache_dir_empty("A2A ledger cache", ledger_dir)),
         };
     }
 
     match std::fs::remove_dir_all(ledger_dir) {
         Ok(()) => {
             let _ = std::fs::create_dir_all(ledger_dir);
+            let verification = verify_cache_dir_empty("A2A ledger cache", ledger_dir);
             RepairResult {
                 action_id: "clear_a2a_ledger_cache".into(),
-                success: true,
+                success: verification.ok,
                 message: "A2A ledger cache cleared.".into(),
-                verification: None,
+                verification: Some(verification),
             }
         }
         Err(e) => RepairResult {
@@ -213,6 +215,36 @@ fn clear_a2a_ledger_cache_at(ledger_dir: &Path) -> RepairResult {
             success: false,
             message: format!("Failed: {e}"),
             verification: None,
+        },
+    }
+}
+
+fn verify_cache_dir_empty(label: &str, dir: &Path) -> RepairVerification {
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => {
+            if entries.next().is_none() {
+                RepairVerification {
+                    label: label.into(),
+                    ok: true,
+                    message: format!("{} is empty.", dir.display()),
+                }
+            } else {
+                RepairVerification {
+                    label: label.into(),
+                    ok: false,
+                    message: format!("{} still contains files.", dir.display()),
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => RepairVerification {
+            label: label.into(),
+            ok: true,
+            message: format!("{} does not exist.", dir.display()),
+        },
+        Err(error) => RepairVerification {
+            label: label.into(),
+            ok: false,
+            message: format!("Cannot inspect {}: {error}", dir.display()),
         },
     }
 }
@@ -431,6 +463,11 @@ mod tests {
         let result = clear_snapshot_cache_at(&snapshots_dir);
 
         assert!(result.success, "{}", result.message);
+        assert_eq!(result.verification.as_ref().map(|v| v.ok), Some(true));
+        assert_eq!(
+            result.verification.as_ref().map(|v| v.label.as_str()),
+            Some("Snapshot cache")
+        );
         assert!(snapshots_dir.exists());
         assert!(
             std::fs::read_dir(&snapshots_dir)
@@ -467,6 +504,11 @@ mod tests {
         let result = clear_a2a_ledger_cache_at(&ledger_dir);
 
         assert!(result.success, "{}", result.message);
+        assert_eq!(result.verification.as_ref().map(|v| v.ok), Some(true));
+        assert_eq!(
+            result.verification.as_ref().map(|v| v.label.as_str()),
+            Some("A2A ledger cache")
+        );
         assert!(ledger_dir.exists());
         assert!(
             std::fs::read_dir(&ledger_dir)
