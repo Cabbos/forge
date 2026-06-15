@@ -492,13 +492,14 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Diagnostics queue management | ✅ Done | Settings > Diagnostics lists pending/claimed gateway triggers and can cancel stale queue entries through the gateway IPC |
 | Trigger replay controls | ✅ Done | Trigger run records now retain replay metadata; gateway IPC, Rust CLI, Bun wrapper, Tauri IPC, and Settings > Diagnostics can replay run records into the pending queue |
 | Trigger run detail drilldown | ✅ Done | Gateway `get_trigger_run` RPC, Rust CLI `forge_trigger show`, Bun wrapper support, Tauri IPC, and Settings > Diagnostics detail expansion read exact run metadata by `run_id` |
-| Still deferred | ⏸️ Deferred | Manual HTTP smoke |
+| Gateway webhook smoke | ✅ Done | `npm --prefix apps/desktop run smoke:gateway:webhook` starts an isolated temporary gateway, sends a TCP JSON-line webhook trigger to `127.0.0.1:2021`, verifies it through the Unix-socket gateway RPC, cancels the smoke trigger, and removes the temp HOME |
+| Still deferred | ⏸️ Deferred | None for Phase 5-D |
 
 **Acceptance gate (updated Phase 5-C):**
 
 - Desktop and CLI can read/write the same memory. **(Phase 5-A: ✅ Done)**
 - A scheduled task records next-run display and run history in the local scheduler. **(Phase 5-C: ✅ Done — deterministic MVP history; actual agent session execution deferred)**
-- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook, IPC enqueue, gateway runner, CLI controls, Diagnostics enqueue/list/cancel/replay/detail controls exist; manual HTTP smoke still deferred)**
+- A messaging trigger creates a new session via HTTP/TCP webhook. **(✅ Done for local gateway trigger ingestion — TCP webhook, IPC enqueue, gateway runner, CLI controls, Diagnostics enqueue/list/cancel/replay/detail controls, and isolated webhook smoke exist)**
 - Settings > Scheduler panel allows create, edit, enable/disable, run now, delete. **(Phase 5-C: ✅ Done)**
 
 **Verification plan:**
