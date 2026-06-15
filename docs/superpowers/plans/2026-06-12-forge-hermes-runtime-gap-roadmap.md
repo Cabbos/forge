@@ -428,7 +428,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.4 Profile model | ✅ Done | `profile/mod.rs` model + `ProfileStore` + 22 tests + IPC + AppState wiring |
 | 5.5 Profile switcher | 🟨 Partial | Settings UI + headless field done; CLI `--profile` deferred; runtime selection not wired |
 | 5.6 Shared runtime / gateway | ⏸️ Deferred | No gateway (Phase 6) |
-| 5.7 Messaging triggers | 🟨 Partial | Gateway IPC enqueue contract done; TCP webhook already exists; CLI/user-facing polish still deferred |
+| 5.7 Messaging triggers | 🟨 Partial | TCP webhook, Gateway IPC enqueue, trigger runner, and CLI trigger controls exist; dashboard polish still deferred |
 | 5.8 Scheduler engine | ✅ Done | Phase 5-C local MVP; background tick/gateway cron deferred |
 | 5.9 Scheduler panel | ✅ Done | Phase 5-C Settings panel added |
 | Embeddings | ⏸️ Deferred | Honest placeholder comment; no implementation |
@@ -472,13 +472,13 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Tests | ✅ Done | 26 Rust tests + npm build + cargo fmt + git diff --check all pass |
 | Background tick | ⏸️ Deferred | Frontend-driven via run_scheduled_task_now; no background cron yet |
 | Agent session execution | ⏸️ Deferred | MVP records history only; actual execution deferred to future phase |
-| Gateway-backed cron | ⏸️ Deferred | Depends on Phase 6 gateway infrastructure |
+| Gateway-backed cron | ✅ Done | Scheduler tick queues due tasks into `TriggerStore`; gateway runner consumes them as headless requests |
 | New dependencies | 🚫 None | No new crates or npm packages |
 | CRITICAL paths touched | 🚫 None | No edits to session.rs, executor/, adapters/, protocol/events.rs, agent/a2a/ |
 | Forbidden modules touched | 🚫 None | Hard boundaries honored |
 | New StreamEvent variants | 🚫 None | No StreamEvent changes |
 
-**Phase 5-D summary (2026-06-15):** Gateway trigger enqueue contract.
+**Phase 5-D summary (2026-06-15):** Gateway trigger enqueue contract and CLI.
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -486,13 +486,15 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Trigger metadata | ✅ Done | Accepts message, optional trigger_id, profile_id, provider, model, and workspace_path |
 | Runtime visibility | ✅ Done | `EnqueueTriggerResult.pending_triggers` and `runtime_status` reflect the newly queued trigger |
 | Validation | ✅ Done | Missing/blank message returns JSON-RPC invalid params without mutating the queue |
-| Still deferred | ⏸️ Deferred | Human-facing CLI command and dashboard controls for trigger enqueue/listing |
+| Rust trigger CLI | ✅ Done | `forge_trigger enqueue/list/runs/status` talks to the gateway socket and renders pending/runs/status output |
+| Bun CLI wrapper | ✅ Done | `forge trigger enqueue/list/runs/status` forwards to `forge_trigger` with tests |
+| Still deferred | ⏸️ Deferred | Dashboard controls for trigger enqueue/listing/runs |
 
 **Acceptance gate (updated Phase 5-C):**
 
 - Desktop and CLI can read/write the same memory. **(Phase 5-A: ✅ Done)**
 - A scheduled task records next-run display and run history in the local scheduler. **(Phase 5-C: ✅ Done — deterministic MVP history; actual agent session execution deferred)**
-- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook and IPC enqueue exist; full user-facing HTTP/CLI smoke still deferred)**
+- A messaging trigger creates a new session via HTTP. **(🟨 Partial — TCP webhook, IPC enqueue, gateway runner, and CLI controls exist; dashboard/manual HTTP smoke still deferred)**
 - Settings > Scheduler panel allows create, edit, enable/disable, run now, delete. **(Phase 5-C: ✅ Done)**
 
 **Verification plan:**
@@ -697,6 +699,7 @@ Codex must stop and ask the user if any of the following occur:
 - ✅ Phase 6-B: launchd plist generation + install/uninstall/start/stop/restart/status + `forge_service` binary + CLI `forge service` command
 - ✅ Phase 6.5: Autostart toggle in Settings > General with install/running status badges
 - ✅ Phase 5.6: Gateway client library + session tracking + `forge_session` binary + CLI `forge session list` command
+- ✅ Phase 5.7: `forge_trigger` binary + `forge trigger enqueue/list/runs/status` CLI wrapper
 
 **Test totals:**
 - Rust: 1057 tests pass, 0 fail
@@ -714,17 +717,20 @@ Codex must stop and ask the user if any of the following occur:
 - `apps/desktop/src-tauri/src/bin/gateway.rs`
 - `apps/desktop/src-tauri/src/bin/forge_service.rs`
 - `apps/desktop/src-tauri/src/bin/forge_session.rs`
+- `apps/desktop/src-tauri/src/bin/forge_trigger.rs`
 - `apps/desktop/cli/src/commands/run.ts` (rewritten from stub — parseRunArgs + runCommand)
 - `apps/desktop/cli/src/commands/service.ts`
 - `apps/desktop/cli/src/commands/session.ts`
+- `apps/desktop/cli/src/commands/trigger.ts`
 - `apps/desktop/cli/test/service.test.ts`
+- `apps/desktop/cli/test/trigger.test.ts`
 - `apps/desktop/src/components/settings/GeneralSettings.tsx`
 
 **Deferred for future:**
 - Phase 6.6: Dashboard web UI
 - Phase 6.7: Update repair
 - Phase 6.8: Self-healing actions
-- Phase 5.7: Messaging trigger CLI/dashboard polish
+- Phase 5.7: Messaging trigger dashboard polish
 - Phase 7: Full product polish + acceptance suite
 
 ## Appendix — Likely Files/Modules by Domain

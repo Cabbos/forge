@@ -101,6 +101,15 @@ describe("runCli", () => {
     expect(stderr.join("")).toContain("Usage: forge service");
   });
 
+  test("routes trigger command", async () => {
+    const { io, stderr } = createIo();
+
+    const code = await runCli(["trigger"], { io });
+
+    expect(code).toBe(1);
+    expect(stderr.join("")).toContain("Usage: forge trigger");
+  });
+
   test("returns non-zero for unknown commands", async () => {
     const { io, stderr } = createIo();
 

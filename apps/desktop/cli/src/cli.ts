@@ -2,6 +2,7 @@ import { runDoctor } from "./commands/doctor.ts";
 import { runCommand } from "./commands/run.ts";
 import { serviceCommand } from "./commands/service.ts";
 import { sessionCommand } from "./commands/session.ts";
+import { triggerCommand } from "./commands/trigger.ts";
 import type { SpawnRunner } from "./lib/spawn.ts";
 
 export type CliIo = {
@@ -47,6 +48,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return sessionCommand(rest, commandDeps);
   }
 
+  if (command === "trigger") {
+    return triggerCommand(rest, commandDeps);
+  }
+
   io.stderr(`Unknown command: ${command}\n\n${helpText()}`);
   return 1;
 }
@@ -60,6 +65,7 @@ export function helpText(): string {
     "  run             Run one prompt through Forge headless",
     "  service         Manage Forge gateway service (install|uninstall|start|stop|restart|status)",
     "  session         List active gateway sessions",
+    "  trigger         Enqueue and inspect gateway triggers",
     "",
     "Run options:",
     "  --profile, -p <id>    Use named profile for provider/model/workspace",
