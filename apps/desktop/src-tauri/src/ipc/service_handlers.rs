@@ -1,6 +1,6 @@
 //! IPC handlers for service management — autostart toggle, status query.
 
-use crate::service::{self, launchd};
+use crate::service;
 use serde::Serialize;
 
 /// Payload returned by `get_service_status`.
@@ -32,12 +32,6 @@ pub struct ServiceStatusPayload {
     pub error_log_path: String,
     /// Raw platform status message.
     pub status_message: String,
-}
-
-impl From<launchd::LaunchdServiceStatus> for ServiceStatusPayload {
-    fn from(status: launchd::LaunchdServiceStatus) -> Self {
-        Self::from(service::ServiceStatusSnapshot::from_launchd_status(status))
-    }
 }
 
 impl From<service::ServiceStatusSnapshot> for ServiceStatusPayload {
@@ -132,28 +126,6 @@ mod tests {
         };
         assert!(!payload.supported);
         assert_eq!(payload.message, "unsupported");
-    }
-
-    #[test]
-    fn service_status_payload_uses_structured_launchd_status() {
-        let payload = ServiceStatusPayload::from(launchd::LaunchdServiceStatus {
-            supported: true,
-            installed: true,
-            running: false,
-            message: "Gateway service is installed but not running.".into(),
-            label: "com.forge.gateway".into(),
-            launch_domain: "gui/123".into(),
-            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
-            log_path: "/Users/test/.forge/logs/gateway.log".into(),
-            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
-            status_message: "Service 'com.forge.gateway' is not installed.".into(),
-        });
-
-        assert!(payload.supported);
-        assert!(payload.installed);
-        assert!(!payload.running);
-        assert_eq!(payload.launch_domain, "gui/123");
-        assert!(payload.message.contains("installed but not running"));
     }
 
     #[test]

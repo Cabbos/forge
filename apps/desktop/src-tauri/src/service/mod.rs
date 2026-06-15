@@ -5,6 +5,7 @@
 //! - Linux: systemd user unit at `~/.config/systemd/user/forge-gateway.service`
 //! - Windows: service wrapper command plan
 
+use std::fmt::Display;
 use std::path::PathBuf;
 
 pub mod launchd;
@@ -232,6 +233,72 @@ pub fn service_definition_path(backend: ServiceBackend) -> Option<PathBuf> {
     }
 }
 
+pub fn unavailable_status_snapshot(error: impl Display) -> ServiceStatusSnapshot {
+    unavailable_status_snapshot_for_backend(ServiceBackend::current(), error)
+}
+
+pub fn unavailable_status_snapshot_for_backend(
+    backend: ServiceBackend,
+    error: impl Display,
+) -> ServiceStatusSnapshot {
+    let service_path = service_definition_path(backend);
+    let installed = service_path.as_ref().is_some_and(|path| path.exists());
+    let service_path = service_path
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    let message = format!("Gateway service status unavailable: {error}");
+
+    ServiceStatusSnapshot {
+        supported: backend != ServiceBackend::Unsupported,
+        installed,
+        running: false,
+        message: message.clone(),
+        backend: backend.label().to_string(),
+        service_id: service_id_for_backend(backend).to_string(),
+        label: service_id_for_backend(backend).to_string(),
+        launch_domain: launch_domain_for_backend(backend),
+        service_path: service_path.clone(),
+        plist_path: service_path,
+        log_path: log_path_for_backend(backend),
+        error_log_path: error_log_path_for_backend(backend),
+        status_message: message,
+    }
+}
+
+fn service_id_for_backend(backend: ServiceBackend) -> &'static str {
+    match backend {
+        ServiceBackend::Launchd => launchd::SERVICE_LABEL,
+        ServiceBackend::Systemd => systemd::UNIT_NAME,
+        ServiceBackend::Windows => windows::SERVICE_NAME,
+        ServiceBackend::Unsupported => "",
+    }
+}
+
+fn launch_domain_for_backend(backend: ServiceBackend) -> String {
+    match backend {
+        ServiceBackend::Launchd => launchd::launchctl_domain(),
+        ServiceBackend::Systemd => "systemd-user".to_string(),
+        ServiceBackend::Windows => "windows-service-control".to_string(),
+        ServiceBackend::Unsupported => "unsupported".to_string(),
+    }
+}
+
+fn log_path_for_backend(backend: ServiceBackend) -> String {
+    match backend {
+        ServiceBackend::Launchd => launchd::gateway_log_path().display().to_string(),
+        ServiceBackend::Systemd => systemd::gateway_log_path().display().to_string(),
+        ServiceBackend::Windows | ServiceBackend::Unsupported => String::new(),
+    }
+}
+
+fn error_log_path_for_backend(backend: ServiceBackend) -> String {
+    match backend {
+        ServiceBackend::Launchd => launchd::gateway_error_log_path().display().to_string(),
+        ServiceBackend::Systemd => systemd::gateway_error_log_path().display().to_string(),
+        ServiceBackend::Windows | ServiceBackend::Unsupported => String::new(),
+    }
+}
+
 pub fn start() -> Result<String, String> {
     match ServiceBackend::current() {
         ServiceBackend::Launchd => launchd::start(),
@@ -386,5 +453,25 @@ mod tests {
         assert!(systemd_path.ends_with("forge-gateway.service"));
         assert_eq!(service_definition_path(ServiceBackend::Windows), None);
         assert_eq!(service_definition_path(ServiceBackend::Unsupported), None);
+    }
+
+    #[test]
+    fn unavailable_status_snapshot_uses_backend_metadata() {
+        let snapshot =
+            unavailable_status_snapshot_for_backend(ServiceBackend::Windows, "sc.exe failed");
+
+        assert!(snapshot.supported);
+        assert!(!snapshot.installed);
+        assert!(!snapshot.running);
+        assert_eq!(snapshot.backend, "windows-service");
+        assert_eq!(snapshot.service_id, "ForgeGateway");
+        assert_eq!(snapshot.label, "ForgeGateway");
+        assert_eq!(snapshot.launch_domain, "windows-service-control");
+        assert!(snapshot.service_path.is_empty());
+        assert!(snapshot.plist_path.is_empty());
+        assert!(snapshot.log_path.is_empty());
+        assert!(snapshot.error_log_path.is_empty());
+        assert!(snapshot.status_message.contains("sc.exe failed"));
+        assert!(snapshot.message.contains("status unavailable"));
     }
 }

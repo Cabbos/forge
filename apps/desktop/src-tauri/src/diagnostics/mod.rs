@@ -577,16 +577,10 @@ struct GatewayServiceSnapshot {
 fn gateway_service_snapshot() -> GatewayServiceSnapshot {
     match crate::service::query_status_snapshot() {
         Ok(status) => gateway_service_snapshot_from_service_status(status),
-        Err(error) => gateway_service_unavailable_snapshot(error),
+        Err(error) => gateway_service_snapshot_from_service_status(
+            crate::service::unavailable_status_snapshot(error),
+        ),
     }
-}
-
-fn gateway_service_snapshot_from_launchd_status(
-    status: crate::service::launchd::LaunchdServiceStatus,
-) -> GatewayServiceSnapshot {
-    gateway_service_snapshot_from_service_status(
-        crate::service::ServiceStatusSnapshot::from_launchd_status(status),
-    )
 }
 
 fn gateway_service_snapshot_from_service_status(
@@ -605,74 +599,6 @@ fn gateway_service_snapshot_from_service_status(
         plist_path: status.plist_path,
         log_path: status.log_path,
         error_log_path: status.error_log_path,
-    }
-}
-
-fn gateway_service_unavailable_snapshot(error: impl std::fmt::Display) -> GatewayServiceSnapshot {
-    let backend = crate::service::ServiceBackend::current();
-    let service_path = match backend {
-        crate::service::ServiceBackend::Launchd => crate::service::launchd::plist_path(),
-        crate::service::ServiceBackend::Systemd => crate::service::systemd::user_unit_path(),
-        crate::service::ServiceBackend::Windows | crate::service::ServiceBackend::Unsupported => {
-            std::path::PathBuf::new()
-        }
-    };
-    GatewayServiceSnapshot {
-        supported: backend != crate::service::ServiceBackend::Unsupported,
-        installed: service_path.exists(),
-        running: false,
-        status_message: format!("Gateway service status unavailable: {error}"),
-        backend: match backend {
-            crate::service::ServiceBackend::Launchd => "launchd",
-            crate::service::ServiceBackend::Systemd => "systemd",
-            crate::service::ServiceBackend::Windows => "windows-service",
-            crate::service::ServiceBackend::Unsupported => "unsupported",
-        }
-        .to_string(),
-        service_id: match backend {
-            crate::service::ServiceBackend::Launchd => crate::service::launchd::SERVICE_LABEL,
-            crate::service::ServiceBackend::Systemd => crate::service::systemd::UNIT_NAME,
-            crate::service::ServiceBackend::Windows => crate::service::windows::SERVICE_NAME,
-            crate::service::ServiceBackend::Unsupported => "",
-        }
-        .to_string(),
-        label: match backend {
-            crate::service::ServiceBackend::Launchd => crate::service::launchd::SERVICE_LABEL,
-            crate::service::ServiceBackend::Systemd => crate::service::systemd::UNIT_NAME,
-            crate::service::ServiceBackend::Windows => crate::service::windows::SERVICE_NAME,
-            crate::service::ServiceBackend::Unsupported => "",
-        }
-        .to_string(),
-        launch_domain: match backend {
-            crate::service::ServiceBackend::Launchd => crate::service::launchd::launchctl_domain(),
-            crate::service::ServiceBackend::Systemd => "systemd-user".to_string(),
-            crate::service::ServiceBackend::Windows => "windows-service-control".to_string(),
-            crate::service::ServiceBackend::Unsupported => "unsupported".to_string(),
-        },
-        service_path: service_path.display().to_string(),
-        plist_path: service_path.display().to_string(),
-        log_path: if backend == crate::service::ServiceBackend::Launchd {
-            crate::service::launchd::gateway_log_path()
-                .display()
-                .to_string()
-        } else if backend == crate::service::ServiceBackend::Systemd {
-            crate::service::systemd::gateway_log_path()
-                .display()
-                .to_string()
-        } else {
-            String::new()
-        },
-        error_log_path: if backend == crate::service::ServiceBackend::Launchd {
-            crate::service::launchd::gateway_error_log_path()
-                .display()
-                .to_string()
-        } else if backend == crate::service::ServiceBackend::Systemd {
-            crate::service::systemd::gateway_error_log_path()
-                .display()
-                .to_string()
-        } else {
-            String::new()
-        },
     }
 }
 
@@ -1335,33 +1261,6 @@ mod tests {
 
         assert_eq!(check.status, CheckStatus::Pass);
         assert_eq!(check.detail.as_ref().unwrap()["supported"], false);
-    }
-
-    #[test]
-    fn gateway_service_snapshot_uses_structured_launchd_status() {
-        let snapshot = gateway_service_snapshot_from_launchd_status(
-            crate::service::launchd::LaunchdServiceStatus {
-                supported: true,
-                installed: true,
-                running: true,
-                message: "Gateway service is installed and running.".into(),
-                label: "com.forge.gateway".into(),
-                launch_domain: "gui/123".into(),
-                plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
-                log_path: "/Users/test/.forge/logs/gateway.log".into(),
-                error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
-                status_message: "Service 'com.forge.gateway' is running.".into(),
-            },
-        );
-
-        assert!(snapshot.supported);
-        assert!(snapshot.installed);
-        assert!(snapshot.running);
-        assert_eq!(
-            snapshot.status_message,
-            "Service 'com.forge.gateway' is running."
-        );
-        assert_eq!(snapshot.launch_domain, "gui/123");
     }
 
     #[test]
