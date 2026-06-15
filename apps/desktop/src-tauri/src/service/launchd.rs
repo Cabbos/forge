@@ -126,21 +126,11 @@ pub fn install() -> Result<String, String> {
         .output()
         .map_err(|e| format!("launchctl: {e}"))?;
 
-    if output.status.success() {
-        Ok(format!(
-            "Service '{SERVICE_LABEL}' installed and started via launchd."
-        ))
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // Bootstrap may fail with "already bootstrapped" — that's OK.
-        if stderr.contains("already bootstrapped") || stderr.contains("service already loaded") {
-            Ok(format!(
-                "Service '{SERVICE_LABEL}' already installed. Run `forge service restart` to reload."
-            ))
-        } else {
-            Err(format!("launchctl bootstrap failed: {stderr}"))
-        }
-    }
+    interpret_bootstrap_result(
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )
 }
 
 /// Uninstall the launchd service: run `launchctl bootout`, remove plist.
@@ -158,13 +148,11 @@ pub fn uninstall() -> Result<String, String> {
         .output()
         .map_err(|e| format!("launchctl: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // "not found" means already uninstalled — fine.
-        if !stderr.contains("not found") && !stderr.contains("No such process") {
-            return Err(format!("launchctl bootout failed: {stderr}"));
-        }
-    }
+    let _ = interpret_bootout_result(
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )?;
 
     // Remove plist.
     if plist_path.exists() {
@@ -172,6 +160,40 @@ pub fn uninstall() -> Result<String, String> {
     }
 
     Ok(format!("Service '{SERVICE_LABEL}' uninstalled."))
+}
+
+/// Start the launchd service by ensuring its plist is installed and bootstrapped.
+pub fn start() -> Result<String, String> {
+    install()
+}
+
+/// Stop the launchd service without removing its plist.
+pub fn stop() -> Result<String, String> {
+    let plist_path = plist_path();
+    let domain = launchctl_domain();
+    let output = Command::new("launchctl")
+        .args([
+            "bootout",
+            domain.as_str(),
+            plist_path.to_str().unwrap_or(""),
+        ])
+        .output()
+        .map_err(|e| format!("launchctl: {e}"))?;
+
+    interpret_bootout_result(
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )
+}
+
+/// Restart the launchd service, preserving the plist.  If the plist is missing,
+/// restart behaves like start and installs it.
+pub fn restart() -> Result<String, String> {
+    if plist_path().exists() {
+        stop()?;
+    }
+    start()
 }
 
 /// Check if the launchd service is currently running.
@@ -182,21 +204,72 @@ pub fn status() -> Result<String, String> {
         .output()
         .map_err(|e| format!("launchctl: {e}"))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if output.status.success() && stdout.contains("state = running") {
-        Ok(format!("Service '{SERVICE_LABEL}' is running."))
-    } else if stderr.contains("not found") || stdout.contains("not found") {
-        Ok(format!("Service '{SERVICE_LABEL}' is not installed."))
-    } else {
-        Ok(format!(
-            "Service '{SERVICE_LABEL}' status unknown: {stdout}"
-        ))
-    }
+    interpret_print_result(
+        output.status.success(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+fn interpret_bootstrap_result(
+    success: bool,
+    _stdout: &str,
+    stderr: &str,
+) -> Result<String, String> {
+    if success {
+        return Ok(format!(
+            "Service '{SERVICE_LABEL}' installed and started via launchd."
+        ));
+    }
+
+    if stderr.contains("already bootstrapped") || stderr.contains("service already loaded") {
+        return Ok(format!(
+            "Service '{SERVICE_LABEL}' already installed. Run `forge service restart` to reload."
+        ));
+    }
+
+    Err(format!("launchctl bootstrap failed: {stderr}"))
+}
+
+fn interpret_bootout_result(success: bool, _stdout: &str, stderr: &str) -> Result<String, String> {
+    if success {
+        return Ok("Service stopped.".to_string());
+    }
+
+    if launchctl_reports_missing_service(stderr) {
+        return Ok("Service is not running.".to_string());
+    }
+
+    Err(format!("launchctl bootout failed: {stderr}"))
+}
+
+fn interpret_print_result(success: bool, stdout: &str, stderr: &str) -> Result<String, String> {
+    if success && stdout.contains("state = running") {
+        return Ok(format!("Service '{SERVICE_LABEL}' is running."));
+    }
+
+    if launchctl_reports_missing_service(stderr) || launchctl_reports_missing_service(stdout) {
+        return Ok(format!("Service '{SERVICE_LABEL}' is not installed."));
+    }
+
+    let detail = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    Ok(format!(
+        "Service '{SERVICE_LABEL}' status unknown: {detail}"
+    ))
+}
+
+fn launchctl_reports_missing_service(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("not found")
+        || lower.contains("no such process")
+        || lower.contains("could not find service")
+}
 
 fn home_dir() -> PathBuf {
     std::env::var("HOME")
@@ -275,5 +348,43 @@ mod tests {
     #[test]
     fn launchctl_domain_uses_gui_domain() {
         assert!(launchctl_domain().starts_with("gui/"));
+    }
+
+    #[test]
+    fn service_management_api_exports_start_stop_restart() {
+        let _: fn() -> Result<String, String> = start;
+        let _: fn() -> Result<String, String> = stop;
+        let _: fn() -> Result<String, String> = restart;
+    }
+
+    #[test]
+    fn bootstrap_result_treats_already_loaded_as_installed() {
+        let message = interpret_bootstrap_result(false, "", "service already loaded")
+            .expect("already loaded");
+
+        assert!(message.contains("already installed"));
+    }
+
+    #[test]
+    fn bootout_result_treats_not_found_as_not_running() {
+        let message = interpret_bootout_result(false, "", "service not found").expect("not found");
+
+        assert_eq!(message, "Service is not running.");
+    }
+
+    #[test]
+    fn print_result_detects_running_service() {
+        let message = interpret_print_result(true, "state = running\n", "").expect("running");
+
+        assert!(message.contains("is running"));
+    }
+
+    #[test]
+    fn print_result_treats_launchctl_could_not_find_service_as_not_installed() {
+        let message =
+            interpret_print_result(false, "", "Could not find service \"com.forge.gateway\"")
+                .expect("not installed");
+
+        assert!(message.contains("not installed"));
     }
 }

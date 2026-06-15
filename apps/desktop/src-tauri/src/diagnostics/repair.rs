@@ -84,26 +84,10 @@ pub fn run_repair(action_id: &str) -> RepairResult {
 }
 
 fn restart_gateway() -> RepairResult {
-    // Stop → start via launchctl.
-    let plist_path = crate::service::launchd::plist_path();
-    if !plist_path.exists() {
-        // Try installing first.
-        let install_result =
-            crate::service::launchd::install().map_err(|e| format!("install failed: {e}"));
-        let status_result = status_after_gateway_repair(&install_result);
-        gateway_service_repair_result("restart_gateway", install_result, status_result)
-    } else {
-        // Bootout then bootstrap.
-        let domain = crate::service::launchd::launchctl_domain();
-        let args = gateway_bootout_args(&domain, &plist_path);
-        let _ = std::process::Command::new("launchctl")
-            .args(args.iter().map(String::as_str))
-            .output();
-        let restart_result =
-            crate::service::launchd::install().map_err(|e| format!("restart failed: {e}"));
-        let status_result = status_after_gateway_repair(&restart_result);
-        gateway_service_repair_result("restart_gateway", restart_result, status_result)
-    }
+    let restart_result =
+        crate::service::launchd::restart().map_err(|e| format!("restart failed: {e}"));
+    let status_result = status_after_gateway_repair(&restart_result);
+    gateway_service_repair_result("restart_gateway", restart_result, status_result)
 }
 
 fn status_after_gateway_repair(repair_result: &Result<String, String>) -> Result<String, String> {
@@ -231,14 +215,6 @@ fn clear_a2a_ledger_cache_at(ledger_dir: &Path) -> RepairResult {
             verification: None,
         },
     }
-}
-
-fn gateway_bootout_args(domain: &str, plist_path: &Path) -> Vec<String> {
-    vec![
-        "bootout".to_string(),
-        domain.to_string(),
-        plist_path.to_string_lossy().to_string(),
-    ]
 }
 
 fn snapshot_cache_dir() -> PathBuf {
@@ -501,22 +477,5 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn gateway_bootout_args_use_supplied_launchd_domain() {
-        let args = gateway_bootout_args(
-            "gui/12345",
-            std::path::Path::new("/tmp/com.forge.gateway.plist"),
-        );
-
-        assert_eq!(
-            args,
-            vec![
-                "bootout".to_string(),
-                "gui/12345".to_string(),
-                "/tmp/com.forge.gateway.plist".to_string(),
-            ]
-        );
     }
 }
