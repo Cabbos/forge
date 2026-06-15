@@ -220,6 +220,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `src/components/messages/processActivity.ts`, `src/components/layout/ProjectCockpit.tsx`, `src/store/processActivity.test.ts`.
 - [x] 3.7 Add diagnostics integration: each ecosystem item contributes a health check.
   - **Phase 3-A (2026-06-12):** Enhanced `diagnostics/mod.rs` `CapabilitySummary` with optional `status` and `status_message` fields. Enhanced `check_capability_inventory` to report unhealthy/unavailable counts when status data is available (warns when unhealthy items exist, lists their names). Updated `diagnostics_handlers.rs` to collect capabilities with status enrichment (MCP servers marked "unknown" with probe-not-implemented message; other items "healthy"/"unknown"). Added shared status helpers in `capability_handlers.rs` (`ecosystem_status_for_capability`, `ecosystem_status_label`) so Settings and Diagnostics use the same semantics.
+  - **Phase 3-C follow-up (2026-06-15):** MCP ecosystem status now performs a read-only config probe: it reads the source `mcp.json`, verifies the server entry and command, marks configured servers healthy, marks unreadable/invalid/missing-command servers unavailable, and surfaces a short command/arg summary in Settings.
   - Files: `diagnostics/mod.rs`, `ipc/diagnostics_handlers.rs`.
 - [ ] 3.8 Tests: plugin manager unit tests, UI component tests with mocked IPC.
   - **Phase 3-A partial (2026-06-12):** Added Rust tests for `EcosystemItem` model, IPC helpers, and diagnostics inventory aggregation. Existing frontend node tests (blocks, health-alerts, recovery-notices) and `npm run build` pass, but dedicated UI component tests with mocked IPC remain deferred because this app does not currently have a lightweight component-test harness for Settings panels.
@@ -235,7 +236,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | EcosystemChanged event | ⏸️ Deferred | Query invalidation sufficient for now |
 | Settings UI enhancement | ✅ Done | Status badges, detail drawer, config awareness |
 | Tool inventory & counts | ✅ Done | Tool inventory IPC, summary count in UI |
-| Diagnostics integration | ✅ Done | Unhealthy counts, status enrichment |
+| Diagnostics integration | ✅ Done | Unhealthy counts, status enrichment; MCP config probe added in Phase 3-C |
 | Tests | ✅ Done | 14 new Rust tests, all existing pass |
 | Provider/extension inventory | ⏸️ Deferred | No provider source yet; represented as unavailable |
 | In-app config persistence | ⏸️ Deferred | configure_ecosystem_item returns honest error |

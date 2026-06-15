@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -7,7 +8,7 @@ use crate::harness::capability::{
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::skills::SkillLoader;
 use crate::state::AppState;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 pub struct CapabilityInfo {
@@ -107,10 +108,12 @@ pub(crate) fn ecosystem_status_for_capability(
     enabled: bool,
 ) -> (EcosystemItemStatus, Option<String>) {
     match &meta.kind {
-        CapabilityKind::McpServer if enabled => (
-            EcosystemItemStatus::Unknown,
-            Some("MCP connectivity probe not yet implemented".into()),
-        ),
+        CapabilityKind::McpServer if enabled => mcp_config_probe_for_capability(meta)
+            .map(|probe| (probe.status, Some(probe.status_message)))
+            .unwrap_or((
+                EcosystemItemStatus::Unavailable,
+                Some("MCP configuration could not be inspected".into()),
+            )),
         CapabilityKind::McpServer => (
             EcosystemItemStatus::Unknown,
             Some("Disabled — enable to probe connectivity".into()),
@@ -122,7 +125,107 @@ pub(crate) fn ecosystem_status_for_capability(
 
 fn ecosystem_item_from_entry(entry: CapabilityEntry) -> EcosystemItem {
     let (status, status_message) = ecosystem_status_for_capability(&entry.metadata, entry.enabled);
-    EcosystemItem::from_capability_entry(&entry).with_status(status, status_message)
+    let config_summary =
+        mcp_config_probe_for_capability(&entry.metadata).and_then(|probe| probe.config_summary);
+    let mut item = EcosystemItem::from_capability_entry(&entry).with_status(status, status_message);
+    item.config_summary = config_summary;
+    item
+}
+
+#[derive(Debug)]
+struct McpConfigProbe {
+    status: EcosystemItemStatus,
+    status_message: String,
+    config_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EcosystemMcpConfig {
+    #[serde(default)]
+    servers: HashMap<String, EcosystemMcpServerConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EcosystemMcpServerConfig {
+    command: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
+}
+
+fn mcp_config_probe_for_capability(meta: &CapabilityMetadata) -> Option<McpConfigProbe> {
+    if !matches!(meta.kind, CapabilityKind::McpServer) {
+        return None;
+    }
+
+    let server_id = meta.id.strip_prefix("mcp:")?;
+    let config_path = Path::new(&meta.source);
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(_) => {
+            return Some(McpConfigProbe {
+                status: EcosystemItemStatus::Unavailable,
+                status_message: "MCP config source is unreadable".into(),
+                config_summary: None,
+            });
+        }
+    };
+    let config = match serde_json::from_str::<EcosystemMcpConfig>(&content) {
+        Ok(config) => config,
+        Err(_) => {
+            return Some(McpConfigProbe {
+                status: EcosystemItemStatus::Unavailable,
+                status_message: "MCP config source is invalid JSON".into(),
+                config_summary: None,
+            });
+        }
+    };
+    let Some(server) = config.servers.get(server_id) else {
+        return Some(McpConfigProbe {
+            status: EcosystemItemStatus::Unavailable,
+            status_message: "MCP server is missing from source config".into(),
+            config_summary: None,
+        });
+    };
+    let Some(command) = server
+        .command
+        .as_deref()
+        .map(str::trim)
+        .filter(|cmd| !cmd.is_empty())
+    else {
+        return Some(McpConfigProbe {
+            status: EcosystemItemStatus::Unavailable,
+            status_message: "MCP server has no command configured".into(),
+            config_summary: Some(format!("Args: {}", server.args.len())),
+        });
+    };
+
+    if !command_is_available(command) {
+        return Some(McpConfigProbe {
+            status: EcosystemItemStatus::Unavailable,
+            status_message: format!("MCP command not found: {command}"),
+            config_summary: Some(mcp_config_summary(command, server.args.len())),
+        });
+    }
+
+    Some(McpConfigProbe {
+        status: EcosystemItemStatus::Healthy,
+        status_message: "MCP command configured".into(),
+        config_summary: Some(mcp_config_summary(command, server.args.len())),
+    })
+}
+
+fn command_is_available(command: &str) -> bool {
+    let path = Path::new(command);
+    if path.is_absolute() || command.contains('/') || command.contains('\\') {
+        return path.exists();
+    }
+
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(command).exists()))
+}
+
+fn mcp_config_summary(command: &str, arg_count: usize) -> String {
+    format!("Command: {command}, Args: {arg_count}")
 }
 
 #[cfg(test)]
@@ -285,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn ecosystem_item_from_entry_marks_mcp_status_unknown_with_message() {
+    fn ecosystem_item_from_entry_marks_unreadable_mcp_source_unavailable() {
         let entry = capability_entry(
             "mcp:test",
             "Test MCP",
@@ -296,10 +399,87 @@ mod tests {
 
         let item = ecosystem_item_from_entry(entry);
 
-        assert_eq!(item.status, EcosystemItemStatus::Unknown);
+        assert_eq!(item.status, EcosystemItemStatus::Unavailable);
         assert_eq!(
             item.status_message.as_deref(),
-            Some("MCP connectivity probe not yet implemented"),
+            Some("MCP config source is unreadable"),
+        );
+    }
+
+    #[test]
+    fn ecosystem_item_from_entry_marks_configured_mcp_healthy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("mcp.json");
+        let command = std::env::current_exe()
+            .expect("current exe")
+            .to_string_lossy()
+            .to_string();
+        std::fs::write(
+            &config_path,
+            serde_json::json!({
+                "servers": {
+                    "test": {
+                        "command": command,
+                        "args": ["--help"]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write config");
+
+        let entry = capability_entry(
+            "mcp:test",
+            "Test MCP",
+            CapabilityKind::McpServer,
+            &config_path.to_string_lossy(),
+            true,
+        );
+
+        let item = ecosystem_item_from_entry(entry);
+
+        assert_eq!(item.status, EcosystemItemStatus::Healthy);
+        assert_eq!(
+            item.status_message.as_deref(),
+            Some("MCP command configured")
+        );
+        assert!(item
+            .config_summary
+            .as_deref()
+            .is_some_and(|summary| summary.contains("Args: 1")));
+    }
+
+    #[test]
+    fn ecosystem_item_from_entry_marks_mcp_without_command_unavailable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &config_path,
+            serde_json::json!({
+                "servers": {
+                    "test": {
+                        "args": ["--help"]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write config");
+
+        let entry = capability_entry(
+            "mcp:test",
+            "Test MCP",
+            CapabilityKind::McpServer,
+            &config_path.to_string_lossy(),
+            true,
+        );
+
+        let item = ecosystem_item_from_entry(entry);
+
+        assert_eq!(item.status, EcosystemItemStatus::Unavailable);
+        assert_eq!(
+            item.status_message.as_deref(),
+            Some("MCP server has no command configured"),
         );
     }
 
