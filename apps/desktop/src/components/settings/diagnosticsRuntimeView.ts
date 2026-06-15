@@ -45,6 +45,21 @@ export interface GatewayTriggerFormState {
   workspacePath: string;
 }
 
+export interface GatewaySessionInputFormState {
+  sessionId: string;
+  message: string;
+}
+
+export interface GatewaySessionInput {
+  sessionId: string;
+  message: string;
+}
+
+export interface GatewaySessionInputResult {
+  input: GatewaySessionInput | null;
+  error: string | null;
+}
+
 export interface GatewayTriggerInput {
   message: string;
   profile_id?: string;
@@ -205,6 +220,33 @@ export function buildGatewayTriggerInput(
 
   return {
     input,
+    error: null,
+  };
+}
+
+export function buildGatewaySessionInput(
+  form: GatewaySessionInputFormState,
+): GatewaySessionInputResult {
+  const sessionId = form.sessionId.trim();
+  if (!sessionId) {
+    return {
+      input: null,
+      error: "Session id is required.",
+    };
+  }
+  const message = form.message.trim();
+  if (!message) {
+    return {
+      input: null,
+      error: "Message is required.",
+    };
+  }
+
+  return {
+    input: {
+      sessionId,
+      message,
+    },
     error: null,
   };
 }

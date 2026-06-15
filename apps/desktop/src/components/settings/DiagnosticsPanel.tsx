@@ -29,6 +29,7 @@ import type {
 } from "@/lib/tauri";
 import {
   cancelGatewayTrigger,
+  enqueueGatewaySessionInput,
   enqueueGatewayTrigger,
   getGatewayTriggerRun,
   replayGatewayTriggerRun,
@@ -39,6 +40,7 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import {
   buildGatewayRuntimeSummary,
   buildGatewaySessionEventRows,
+  buildGatewaySessionInput,
   buildGatewaySessionRows,
   buildGatewayTriggerInput,
   buildGatewayTriggerRunRows,
@@ -261,6 +263,16 @@ function GatewayRuntimePanel({
     sessionId: string;
     message: string;
   } | null>(null);
+  const [sessionInputDrafts, setSessionInputDrafts] = useState<Record<string, string>>({});
+  const [sendingSessionInputId, setSendingSessionInputId] = useState<string | null>(null);
+  const [sessionInputError, setSessionInputError] = useState<{
+    sessionId: string;
+    message: string;
+  } | null>(null);
+  const [sessionInputStatus, setSessionInputStatus] = useState<{
+    sessionId: string;
+    message: string;
+  } | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [triggerMessageStatus, setTriggerMessageStatus] = useState<string | null>(null);
 
@@ -406,6 +418,55 @@ function GatewayRuntimePanel({
       setTailingSessionId(null);
     }
   };
+  const handleSessionInputDraftChange = (sessionId: string, value: string) => {
+    setSessionInputDrafts((drafts) => ({
+      ...drafts,
+      [sessionId]: value,
+    }));
+    if (sessionInputError?.sessionId === sessionId) {
+      setSessionInputError(null);
+    }
+    if (sessionInputStatus?.sessionId === sessionId) {
+      setSessionInputStatus(null);
+    }
+  };
+  const handleEnqueueSessionInput = async (
+    event: FormEvent<HTMLFormElement>,
+    sessionId: string,
+  ) => {
+    event.preventDefault();
+    if (sendingSessionInputId) return;
+
+    const built = buildGatewaySessionInput({
+      sessionId,
+      message: sessionInputDrafts[sessionId] ?? "",
+    });
+    if (!built.input) {
+      setSessionInputError({ sessionId, message: built.error ?? "Invalid session input." });
+      setSessionInputStatus(null);
+      return;
+    }
+
+    setSendingSessionInputId(sessionId);
+    setSessionInputError(null);
+    setSessionInputStatus(null);
+    try {
+      const result = await enqueueGatewaySessionInput(built.input.sessionId, built.input.message);
+      setSessionInputDrafts((drafts) => ({
+        ...drafts,
+        [sessionId]: "",
+      }));
+      setSessionInputStatus({
+        sessionId,
+        message: `已排入 ${result.input_id}，pending inputs ${result.pending_inputs} 个。`,
+      });
+      onRefresh();
+    } catch (error) {
+      setSessionInputError({ sessionId, message: formatMutationError(error) });
+    } finally {
+      setSendingSessionInputId(null);
+    }
+  };
 
   return (
     <div className="forge-settings-readonly-panel">
@@ -439,7 +500,13 @@ function GatewayRuntimePanel({
               tailingSessionId={tailingSessionId}
               selectedTail={selectedSessionTail}
               tailError={sessionTailError}
+              sessionInputDrafts={sessionInputDrafts}
+              sendingSessionInputId={sendingSessionInputId}
+              sessionInputError={sessionInputError}
+              sessionInputStatus={sessionInputStatus}
               onTail={handleTailSession}
+              onSessionInputDraftChange={handleSessionInputDraftChange}
+              onEnqueueSessionInput={handleEnqueueSessionInput}
             />
           </dd>
         </div>
@@ -573,7 +640,13 @@ function GatewaySessionRegistry({
   tailingSessionId,
   selectedTail,
   tailError,
+  sessionInputDrafts,
+  sendingSessionInputId,
+  sessionInputError,
+  sessionInputStatus,
   onTail,
+  onSessionInputDraftChange,
+  onEnqueueSessionInput,
 }: {
   rows: ReturnType<typeof buildGatewaySessionRows>;
   isLoading: boolean;
@@ -581,7 +654,13 @@ function GatewaySessionRegistry({
   tailingSessionId: string | null;
   selectedTail: TailGatewaySessionEventsResult | null;
   tailError: { sessionId: string; message: string } | null;
+  sessionInputDrafts: Record<string, string>;
+  sendingSessionInputId: string | null;
+  sessionInputError: { sessionId: string; message: string } | null;
+  sessionInputStatus: { sessionId: string; message: string } | null;
   onTail: (sessionId: string) => void;
+  onSessionInputDraftChange: (sessionId: string, value: string) => void;
+  onEnqueueSessionInput: (event: FormEvent<HTMLFormElement>, sessionId: string) => void;
 }) {
   if (isLoading && rows.length === 0) {
     return <span className="text-xs text-muted-foreground">正在读取 session registry</span>;
@@ -608,6 +687,41 @@ function GatewaySessionRegistry({
             <span className="forge-gateway-trigger-row-meta">{row.subtitle}</span>
             {row.workspacePath && (
               <span className="forge-gateway-trigger-row-meta">{row.workspacePath}</span>
+            )}
+            <form
+              className="forge-gateway-session-input-form"
+              onSubmit={(event) => onEnqueueSessionInput(event, row.id)}
+            >
+              <input
+                className="forge-gateway-trigger-input"
+                value={sessionInputDrafts[row.id] ?? ""}
+                onChange={(event) => onSessionInputDraftChange(row.id, event.target.value)}
+                placeholder="session input"
+                disabled={sendingSessionInputId != null}
+              />
+              <ButtonPrimitive
+                type="submit"
+                className="forge-gateway-trigger-cancel-btn"
+                disabled={sendingSessionInputId != null}
+                aria-label={`Enqueue gateway session input ${row.id}`}
+                title="发送 session input"
+              >
+                {sendingSessionInputId === row.id ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Send className="size-3" />
+                )}
+              </ButtonPrimitive>
+            </form>
+            {sessionInputError?.sessionId === row.id && (
+              <span className="forge-gateway-trigger-row-meta text-red-500">
+                {sessionInputError.message}
+              </span>
+            )}
+            {sessionInputStatus?.sessionId === row.id && (
+              <span className="forge-gateway-trigger-row-meta text-green-600">
+                {sessionInputStatus.message}
+              </span>
             )}
             {selectedTail?.session_id === row.id && (
               <GatewaySessionEventTail tail={selectedTail} />

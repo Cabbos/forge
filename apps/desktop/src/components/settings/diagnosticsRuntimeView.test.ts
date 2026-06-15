@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildGatewaySessionRows,
   buildGatewaySessionEventRows,
+  buildGatewaySessionInput,
   buildGatewayRuntimeSummary,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
@@ -217,6 +218,33 @@ describe("buildGatewaySessionEventRows", () => {
 
     assert.equal(view.summary, "0 events · next=0 · total=0 · reset");
     assert.deepEqual(view.rows, []);
+  });
+});
+
+describe("buildGatewaySessionInput", () => {
+  it("trims session id and message for gateway input enqueue", () => {
+    const result = buildGatewaySessionInput({
+      sessionId: " session-1 ",
+      message: " continue the work ",
+    });
+
+    assert.deepEqual(result, {
+      input: {
+        sessionId: "session-1",
+        message: "continue the work",
+      },
+      error: null,
+    });
+  });
+
+  it("rejects blank session input messages", () => {
+    const result = buildGatewaySessionInput({
+      sessionId: "session-1",
+      message: "   ",
+    });
+
+    assert.equal(result.input, null);
+    assert.equal(result.error, "Message is required.");
   });
 });
 
