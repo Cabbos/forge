@@ -2,7 +2,7 @@
 //! status checks for the Forge Gateway background service.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Label used in the launchd plist and `launchctl` commands.
@@ -20,6 +20,13 @@ pub struct LaunchdServiceStatus {
     pub log_path: String,
     pub error_log_path: String,
     pub status_message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LaunchctlCommandOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
 }
 
 /// Current user's launchd GUI domain, e.g. `gui/501`.
@@ -112,65 +119,69 @@ pub fn generate_plist() -> String {
 /// `launchctl bootstrap`.
 pub fn install() -> Result<String, String> {
     let plist_path = plist_path();
-
-    // Ensure parent dir exists.
-    if let Some(parent) = plist_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
-    }
-
-    // Ensure log dir exists.
     let log_dir = gateway_log_path()
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| home_dir().join(".forge").join("logs"));
-    fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir: {e}"))?;
 
-    // Write plist.
-    let plist_content = generate_plist();
-    fs::write(&plist_path, plist_content.as_bytes()).map_err(|e| format!("write plist: {e}"))?;
+    install_with_runner(
+        &plist_path,
+        &log_dir,
+        generate_plist(),
+        launchctl_domain(),
+        run_launchctl,
+    )
+}
 
-    // Bootstrap with launchctl.
-    let domain = launchctl_domain();
-    let output = Command::new("launchctl")
-        .args([
-            "bootstrap",
-            domain.as_str(),
-            plist_path.to_str().unwrap_or(""),
-        ])
-        .output()
-        .map_err(|e| format!("launchctl: {e}"))?;
+fn install_with_runner(
+    plist_path: impl AsRef<Path>,
+    log_dir: impl AsRef<Path>,
+    plist_content: String,
+    domain: String,
+    mut run: impl FnMut(&[&str]) -> Result<LaunchctlCommandOutput, String>,
+) -> Result<String, String> {
+    let plist_path = plist_path.as_ref();
+    if let Some(parent) = plist_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+    }
+
+    fs::create_dir_all(log_dir.as_ref()).map_err(|e| format!("create log dir: {e}"))?;
+
+    fs::write(plist_path, plist_content.as_bytes()).map_err(|e| format!("write plist: {e}"))?;
+
+    let plist = plist_path.to_string_lossy().to_string();
+    let output = run(&["bootstrap", domain.as_str(), plist.as_str()])?;
 
     interpret_bootstrap_result(
-        output.status.success(),
-        &String::from_utf8_lossy(&output.stdout),
-        &String::from_utf8_lossy(&output.stderr),
+        output.success,
+        output.stdout.as_str(),
+        output.stderr.as_str(),
     )
 }
 
 /// Uninstall the launchd service: run `launchctl bootout`, remove plist.
 pub fn uninstall() -> Result<String, String> {
     let plist_path = plist_path();
+    uninstall_with_runner(&plist_path, launchctl_domain(), run_launchctl)
+}
 
-    // Bootout.
-    let domain = launchctl_domain();
-    let output = Command::new("launchctl")
-        .args([
-            "bootout",
-            domain.as_str(),
-            plist_path.to_str().unwrap_or(""),
-        ])
-        .output()
-        .map_err(|e| format!("launchctl: {e}"))?;
+fn uninstall_with_runner(
+    plist_path: impl AsRef<Path>,
+    domain: String,
+    mut run: impl FnMut(&[&str]) -> Result<LaunchctlCommandOutput, String>,
+) -> Result<String, String> {
+    let plist_path = plist_path.as_ref();
+    let plist = plist_path.to_string_lossy().to_string();
+    let output = run(&["bootout", domain.as_str(), plist.as_str()])?;
 
     let _ = interpret_bootout_result(
-        output.status.success(),
-        &String::from_utf8_lossy(&output.stdout),
-        &String::from_utf8_lossy(&output.stderr),
+        output.success,
+        output.stdout.as_str(),
+        output.stderr.as_str(),
     )?;
 
-    // Remove plist.
     if plist_path.exists() {
-        fs::remove_file(&plist_path).map_err(|e| format!("remove plist: {e}"))?;
+        fs::remove_file(plist_path).map_err(|e| format!("remove plist: {e}"))?;
     }
 
     Ok(format!("Service '{SERVICE_LABEL}' uninstalled."))
@@ -238,6 +249,19 @@ pub fn query_status() -> Result<LaunchdServiceStatus, String> {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+fn run_launchctl(args: &[&str]) -> Result<LaunchctlCommandOutput, String> {
+    let output = Command::new("launchctl")
+        .args(args)
+        .output()
+        .map_err(|e| format!("launchctl: {e}"))?;
+
+    Ok(LaunchctlCommandOutput {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
 
 fn interpret_bootstrap_result(
     success: bool,
@@ -496,5 +520,86 @@ mod tests {
         assert!(!status.running);
         assert_eq!(status.launch_domain, "unsupported");
         assert!(status.plist_path.is_empty());
+    }
+
+    #[test]
+    fn install_with_runner_writes_plist_and_bootstraps() {
+        let root = temp_root("launchd-install-runner");
+        let plist = root.join("LaunchAgents").join("com.forge.gateway.plist");
+        let log_dir = root.join(".forge").join("logs");
+        let mut calls = Vec::new();
+
+        let message = install_with_runner(
+            &plist,
+            &log_dir,
+            "<plist>ok</plist>".to_string(),
+            "gui/501".to_string(),
+            |args| {
+                calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+                Ok(LaunchctlCommandOutput {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+        )
+        .expect("install with runner");
+
+        assert!(message.contains("installed and started via launchd"));
+        assert_eq!(
+            std::fs::read_to_string(&plist).expect("plist"),
+            "<plist>ok</plist>"
+        );
+        assert!(log_dir.exists());
+        assert_eq!(
+            calls,
+            vec![vec![
+                "bootstrap".to_string(),
+                "gui/501".to_string(),
+                plist.display().to_string(),
+            ]]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn uninstall_with_runner_boots_out_and_removes_plist() {
+        let root = temp_root("launchd-uninstall-runner");
+        let plist = root.join("LaunchAgents").join("com.forge.gateway.plist");
+        std::fs::create_dir_all(plist.parent().expect("plist parent")).expect("plist parent");
+        std::fs::write(&plist, "<plist>ok</plist>").expect("plist");
+        let mut calls = Vec::new();
+
+        let message = uninstall_with_runner(&plist, "gui/501".to_string(), |args| {
+            calls.push(args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>());
+            Ok(LaunchctlCommandOutput {
+                success: true,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        })
+        .expect("uninstall with runner");
+
+        assert!(message.contains("uninstalled"));
+        assert!(!plist.exists());
+        assert_eq!(
+            calls,
+            vec![vec![
+                "bootout".to_string(),
+                "gui/501".to_string(),
+                plist.display().to_string(),
+            ]]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("forge-{name}-{nanos}"))
     }
 }

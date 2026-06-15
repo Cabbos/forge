@@ -37,8 +37,15 @@ pub fn install() -> Result<String, String> {
     }
 
     let plan = command_plan();
-    run_sc_plan_command(&plan.create, false, true, false)?;
-    run_sc_plan_command(&plan.start, false, false, true)?;
+    install_with_runner(&plan, run_sc_plan_command)
+}
+
+fn install_with_runner(
+    plan: &WindowsServiceCommandPlan,
+    mut run: impl FnMut(&[String], bool, bool, bool) -> Result<String, String>,
+) -> Result<String, String> {
+    run(&plan.create, false, true, false)?;
+    run(&plan.start, false, false, true)?;
 
     Ok(format!(
         "Service '{SERVICE_NAME}' installed and started via Windows Service Control."
@@ -51,8 +58,15 @@ pub fn uninstall() -> Result<String, String> {
     }
 
     let plan = command_plan();
-    run_sc_plan_command(&plan.stop, true, false, false)?;
-    run_sc_plan_command(&plan.delete, true, false, false)?;
+    uninstall_with_runner(&plan, run_sc_plan_command)
+}
+
+fn uninstall_with_runner(
+    plan: &WindowsServiceCommandPlan,
+    mut run: impl FnMut(&[String], bool, bool, bool) -> Result<String, String>,
+) -> Result<String, String> {
+    run(&plan.stop, true, false, false)?;
+    run(&plan.delete, true, false, false)?;
 
     Ok(format!("Service '{SERVICE_NAME}' uninstalled."))
 }
@@ -404,5 +418,67 @@ SERVICE_NAME: ForgeGateway
         .expect("missing service");
 
         assert!(message.contains("not installed"));
+    }
+
+    #[test]
+    fn install_with_runner_executes_create_then_start() {
+        let plan = command_plan_for_binary("C:\\Forge\\gateway.exe");
+        let mut calls = Vec::new();
+
+        let message = install_with_runner(
+            &plan,
+            |command, allow_missing, allow_existing, allow_already_running| {
+                calls.push((
+                    command.to_vec(),
+                    allow_missing,
+                    allow_existing,
+                    allow_already_running,
+                ));
+                Ok("ok".to_string())
+            },
+        )
+        .expect("install with runner");
+
+        assert!(message.contains("installed and started"));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, plan.create);
+        assert_eq!(calls[0].1, false);
+        assert_eq!(calls[0].2, true);
+        assert_eq!(calls[0].3, false);
+        assert_eq!(calls[1].0, plan.start);
+        assert_eq!(calls[1].1, false);
+        assert_eq!(calls[1].2, false);
+        assert_eq!(calls[1].3, true);
+    }
+
+    #[test]
+    fn uninstall_with_runner_executes_stop_then_delete() {
+        let plan = command_plan_for_binary("C:\\Forge\\gateway.exe");
+        let mut calls = Vec::new();
+
+        let message = uninstall_with_runner(
+            &plan,
+            |command, allow_missing, allow_existing, allow_already_running| {
+                calls.push((
+                    command.to_vec(),
+                    allow_missing,
+                    allow_existing,
+                    allow_already_running,
+                ));
+                Ok("ok".to_string())
+            },
+        )
+        .expect("uninstall with runner");
+
+        assert!(message.contains("uninstalled"));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, plan.stop);
+        assert_eq!(calls[0].1, true);
+        assert_eq!(calls[0].2, false);
+        assert_eq!(calls[0].3, false);
+        assert_eq!(calls[1].0, plan.delete);
+        assert_eq!(calls[1].1, true);
+        assert_eq!(calls[1].2, false);
+        assert_eq!(calls[1].3, false);
     }
 }

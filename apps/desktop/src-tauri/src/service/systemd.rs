@@ -41,19 +41,30 @@ pub fn install() -> Result<String, String> {
     }
 
     let unit_path = user_unit_path();
-    if let Some(parent) = unit_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("create systemd dir: {error}"))?;
-    }
     let log_dir = gateway_log_path()
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| home_dir().join(".forge").join("logs"));
-    fs::create_dir_all(&log_dir).map_err(|error| format!("create log dir: {error}"))?;
-    fs::write(&unit_path, generate_unit().as_bytes())
+
+    install_with_runner(&unit_path, &log_dir, generate_unit(), run_systemctl)
+}
+
+fn install_with_runner(
+    unit_path: impl AsRef<Path>,
+    log_dir: impl AsRef<Path>,
+    unit_content: String,
+    mut run: impl FnMut(&[&str], bool) -> Result<String, String>,
+) -> Result<String, String> {
+    let unit_path = unit_path.as_ref();
+    if let Some(parent) = unit_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("create systemd dir: {error}"))?;
+    }
+    fs::create_dir_all(log_dir.as_ref()).map_err(|error| format!("create log dir: {error}"))?;
+    fs::write(unit_path, unit_content.as_bytes())
         .map_err(|error| format!("write systemd unit: {error}"))?;
 
-    run_systemctl(&["--user", "daemon-reload"], false)?;
-    run_systemctl(&["--user", "enable", "--now", UNIT_NAME], false)?;
+    run(&["--user", "daemon-reload"], false)?;
+    run(&["--user", "enable", "--now", UNIT_NAME], false)?;
 
     Ok(format!(
         "Service '{UNIT_NAME}' installed and started via systemd."
@@ -65,12 +76,19 @@ pub fn uninstall() -> Result<String, String> {
         return unsupported_lifecycle_operation("uninstall");
     }
 
-    let unit_path = user_unit_path();
-    run_systemctl(&["--user", "disable", "--now", UNIT_NAME], true)?;
+    uninstall_with_runner(user_unit_path(), run_systemctl)
+}
+
+fn uninstall_with_runner(
+    unit_path: impl AsRef<Path>,
+    mut run: impl FnMut(&[&str], bool) -> Result<String, String>,
+) -> Result<String, String> {
+    let unit_path = unit_path.as_ref();
+    run(&["--user", "disable", "--now", UNIT_NAME], true)?;
     if unit_path.exists() {
-        fs::remove_file(&unit_path).map_err(|error| format!("remove systemd unit: {error}"))?;
+        fs::remove_file(unit_path).map_err(|error| format!("remove systemd unit: {error}"))?;
     }
-    run_systemctl(&["--user", "daemon-reload"], false)?;
+    run(&["--user", "daemon-reload"], false)?;
 
     Ok(format!("Service '{UNIT_NAME}' uninstalled."))
 }
@@ -443,5 +461,107 @@ mod tests {
         assert!(!status.running);
         assert!(status.message.contains("installed but not running"));
         assert!(status.status_message.contains("not running"));
+    }
+
+    #[test]
+    fn install_with_runner_writes_unit_and_runs_systemctl_commands() {
+        let root = temp_root("systemd-install-runner");
+        let unit_path = user_unit_path_for_home(&root);
+        let log_dir = root.join(".forge").join("logs");
+        let mut calls = Vec::new();
+
+        let message = install_with_runner(
+            &unit_path,
+            &log_dir,
+            generate_unit_for_paths(
+                "/opt/forge/gateway",
+                &root,
+                log_dir.join("gateway.log"),
+                log_dir.join("gateway-error.log"),
+            ),
+            |args, allow_missing| {
+                calls.push((
+                    args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+                    allow_missing,
+                ));
+                Ok("ok".to_string())
+            },
+        )
+        .expect("install with runner");
+
+        assert!(message.contains("installed and started via systemd"));
+        assert!(unit_path.exists());
+        assert!(log_dir.exists());
+        let unit = std::fs::read_to_string(&unit_path).expect("unit written");
+        assert!(unit.contains("ExecStart=/opt/forge/gateway"));
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    vec!["--user".to_string(), "daemon-reload".to_string()],
+                    false,
+                ),
+                (
+                    vec![
+                        "--user".to_string(),
+                        "enable".to_string(),
+                        "--now".to_string(),
+                        "forge-gateway.service".to_string(),
+                    ],
+                    false,
+                ),
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn uninstall_with_runner_removes_unit_and_reloads_systemd() {
+        let root = temp_root("systemd-uninstall-runner");
+        let unit_path = user_unit_path_for_home(&root);
+        std::fs::create_dir_all(unit_path.parent().expect("unit parent")).expect("unit parent");
+        std::fs::write(&unit_path, "[Unit]\nDescription=Forge Gateway\n").expect("unit");
+        let mut calls = Vec::new();
+
+        let message = uninstall_with_runner(&unit_path, |args, allow_missing| {
+            calls.push((
+                args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
+                allow_missing,
+            ));
+            Ok("ok".to_string())
+        })
+        .expect("uninstall with runner");
+
+        assert!(message.contains("uninstalled"));
+        assert!(!unit_path.exists());
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    vec![
+                        "--user".to_string(),
+                        "disable".to_string(),
+                        "--now".to_string(),
+                        "forge-gateway.service".to_string(),
+                    ],
+                    true,
+                ),
+                (
+                    vec!["--user".to_string(), "daemon-reload".to_string()],
+                    false,
+                ),
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("forge-{name}-{nanos}"))
     }
 }

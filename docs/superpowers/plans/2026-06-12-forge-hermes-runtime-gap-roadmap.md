@@ -578,6 +578,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 6.9 Tests: service install/uninstall in CI-safe mock mode, update repair tests.
   - **Phase 6.9 partial (2026-06-15):** Added CI-safe launchd command-output parsing tests and service-management API coverage without invoking real `launchctl` state changes.
   - **Phase 6.9 status partial (2026-06-15):** Added CI-safe conversion tests proving IPC, Diagnostics, and watchdog consume the same structured `LaunchdServiceStatus`.
+  - **Phase 6.9 lifecycle mock follow-up (2026-06-16):** launchd, systemd, and Windows service install/uninstall now route through injectable runner seams for CI-safe coverage. Focused tests verify plist/unit writes and launchctl/systemctl/sc.exe command ordering without invoking real service managers.
 
 **Acceptance gate:**
 
