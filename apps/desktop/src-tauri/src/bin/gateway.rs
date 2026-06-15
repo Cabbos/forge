@@ -24,9 +24,13 @@ async fn main() {
 
     // Spawn webhook TCP listener in background.
     let webhook_state = state.trigger_store.clone();
+    let webhook_runtime_state = state.clone();
+    state.mark_runtime_task_started(forge::gateway::server::WEBHOOK_LISTENER_TASK);
     tokio::spawn(async move {
         if let Err(e) = forge::gateway::webhook::serve(webhook_state).await {
             log::error!("Webhook listener died: {e}");
+            webhook_runtime_state
+                .mark_runtime_task_failed(forge::gateway::server::WEBHOOK_LISTENER_TASK, e);
         }
     });
 
@@ -41,6 +45,7 @@ async fn main() {
         trigger_run_state,
         fallback_workspace.clone(),
     );
+    state.mark_runtime_task_started(forge::gateway::server::TRIGGER_RUNNER_TASK);
 
     // Spawn scheduler tick in background. Due tasks are queued into the same
     // trigger store, then picked up by the trigger runner above.
@@ -52,6 +57,7 @@ async fn main() {
         state.trigger_store.clone(),
         fallback_workspace,
     );
+    state.mark_runtime_task_started(forge::gateway::server::SCHEDULER_TICK_TASK);
 
     // Block on the Unix socket listener.
     match forge::gateway::server::serve(state, socket_path).await {

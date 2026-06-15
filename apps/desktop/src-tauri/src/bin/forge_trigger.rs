@@ -377,6 +377,17 @@ async fn show_runtime_status(client: &mut GatewayClient) -> Result<(), String> {
     println!("Pending triggers: {}", status.pending_triggers);
     println!("Claimed triggers: {}", status.claimed_triggers);
     println!("Dead-letter runs: {}", status.dead_letter_runs);
+    if !status.runtime_tasks.is_empty() {
+        println!("Runtime tasks:");
+        for task in status.runtime_tasks {
+            let state = if task.running { "running" } else { "stopped" };
+            if let Some(error) = task.last_error.as_deref() {
+                println!("  {}: {} ({})", task.name, state, error);
+            } else {
+                println!("  {}: {}", task.name, state);
+            }
+        }
+    }
     Ok(())
 }
 

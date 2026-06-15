@@ -9,6 +9,14 @@ export interface GatewayRuntimeSnapshotLike {
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: unknown[];
+  runtime_tasks?: GatewayRuntimeTaskLike[];
+}
+
+export interface GatewayRuntimeTaskLike {
+  name: string;
+  running: boolean;
+  last_started_at_ms?: number | null;
+  last_error?: string | null;
 }
 
 export interface GatewayRuntimeSummary {
@@ -84,7 +92,11 @@ export interface GatewayTriggerInputResult {
 export function buildGatewayRuntimeSummary(
   status: GatewayRuntimeSnapshotLike,
 ): GatewayRuntimeSummary {
-  const counts = `${status.pending_triggers} pending · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter`;
+  const runtimeTasks = status.runtime_tasks ?? [];
+  const runningTasks = runtimeTasks.filter((task) => task.running).length;
+  const taskCounts =
+    runtimeTasks.length > 0 ? ` · ${runningTasks}/${runtimeTasks.length} loops` : "";
+  const counts = `${status.pending_triggers} pending · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter${taskCounts}`;
 
   if (!status.ok) {
     return {
@@ -97,11 +109,14 @@ export function buildGatewayRuntimeSummary(
   if (
     status.pending_triggers > 0 ||
     status.claimed_triggers > 0 ||
-    status.dead_letter_runs > 0
+    status.dead_letter_runs > 0 ||
+    runtimeTasks.some((task) => !task.running || task.last_error)
   ) {
     return {
       tone: "warn",
-      statusText: "有积压",
+      statusText: runtimeTasks.some((task) => !task.running || task.last_error)
+        ? "后台循环异常"
+        : "有积压",
       counts,
     };
   }

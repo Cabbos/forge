@@ -361,6 +361,14 @@ export interface GatewayRuntimeStatus {
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: GatewayTriggerRunRecord[];
+  runtime_tasks: GatewayRuntimeTaskStatus[];
+}
+
+export interface GatewayRuntimeTaskStatus {
+  name: string;
+  running: boolean;
+  last_started_at_ms?: number | null;
+  last_error?: string | null;
 }
 
 export interface GatewayPendingTrigger {

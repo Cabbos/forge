@@ -82,6 +82,7 @@ export async function getGatewayRuntimeStatus(): Promise<GatewayRuntimeStatus> {
       claimed_triggers: 0,
       dead_letter_runs: 0,
       recent_runs: [],
+      runtime_tasks: [],
     };
   }
   return invoke<GatewayRuntimeStatus>("get_gateway_runtime_status");

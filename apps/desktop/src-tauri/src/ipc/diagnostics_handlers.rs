@@ -257,6 +257,7 @@ fn unavailable_gateway_runtime_status(message: impl Into<String>) -> GatewayRunt
         claimed_triggers: 0,
         dead_letter_runs: 0,
         recent_runs: Vec::new(),
+        runtime_tasks: crate::gateway::server::default_runtime_task_statuses(),
     }
 }
 

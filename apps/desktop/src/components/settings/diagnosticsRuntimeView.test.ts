@@ -19,11 +19,15 @@ describe("buildGatewayRuntimeSummary", () => {
       claimed_triggers: 1,
       dead_letter_runs: 1,
       recent_runs: [],
+      runtime_tasks: [
+        { name: "webhook_listener", running: true },
+        { name: "trigger_runner", running: true },
+      ],
     });
 
     assert.equal(summary.tone, "warn");
     assert.equal(summary.statusText, "有积压");
-    assert.equal(summary.counts, "3 pending · 1 claimed · 1 dead-letter");
+    assert.equal(summary.counts, "3 pending · 1 claimed · 1 dead-letter · 2/2 loops");
   });
 
   it("marks offline runtime as unavailable", () => {
@@ -36,11 +40,34 @@ describe("buildGatewayRuntimeSummary", () => {
       claimed_triggers: 0,
       dead_letter_runs: 0,
       recent_runs: [],
+      runtime_tasks: [],
     });
 
     assert.equal(summary.tone, "fail");
     assert.equal(summary.statusText, "不可用");
     assert.equal(summary.counts, "0 pending · 0 claimed · 0 dead-letter");
+  });
+
+  it("warns when a gateway runtime task is stopped", () => {
+    const summary = buildGatewayRuntimeSummary({
+      ok: true,
+      message: "Gateway runtime is reachable.",
+      uptime_seconds: 42,
+      active_sessions: 0,
+      pending_triggers: 0,
+      claimed_triggers: 0,
+      dead_letter_runs: 0,
+      recent_runs: [],
+      runtime_tasks: [
+        { name: "webhook_listener", running: true },
+        { name: "trigger_runner", running: false },
+        { name: "scheduler_tick", running: true },
+      ],
+    });
+
+    assert.equal(summary.tone, "warn");
+    assert.equal(summary.statusText, "后台循环异常");
+    assert.equal(summary.counts, "0 pending · 0 claimed · 0 dead-letter · 2/3 loops");
   });
 });
 

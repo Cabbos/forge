@@ -254,6 +254,7 @@ function GatewayRuntimePanel({
     claimed_triggers: 0,
     dead_letter_runs: 0,
     recent_runs: [],
+    runtime_tasks: [],
   };
   const summary = buildGatewayRuntimeSummary(runtime);
   const triggerRows = buildGatewayTriggerRows(triggers);
@@ -367,6 +368,12 @@ function GatewayRuntimePanel({
           <dt>会话</dt>
           <dd>
             {runtime.active_sessions} active · uptime {formatDuration(runtime.uptime_seconds)}
+          </dd>
+        </div>
+        <div className="forge-settings-info-row">
+          <dt>后台循环</dt>
+          <dd>
+            <GatewayRuntimeTasks tasks={runtime.runtime_tasks} />
           </dd>
         </div>
         <div className="forge-settings-info-row">
@@ -484,6 +491,47 @@ function GatewayRuntimePanel({
       </div>
     </div>
   );
+}
+
+function GatewayRuntimeTasks({
+  tasks,
+}: {
+  tasks: GatewayRuntimeStatus["runtime_tasks"];
+}) {
+  if (tasks.length === 0) {
+    return <span className="text-xs text-muted-foreground">暂无后台循环状态</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {tasks.map((task) => {
+        const cls = task.running && !task.last_error ? STATUS_CLASS.pass : STATUS_CLASS.warn;
+        return (
+          <span
+            key={task.name}
+            className={`inline-flex max-w-full items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] ${cls}`}
+            title={task.last_error ?? undefined}
+          >
+            <span>{formatRuntimeTaskName(task.name)}</span>
+            <span>{task.running ? "running" : "stopped"}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatRuntimeTaskName(name: string): string {
+  switch (name) {
+    case "webhook_listener":
+      return "webhook";
+    case "trigger_runner":
+      return "trigger";
+    case "scheduler_tick":
+      return "scheduler";
+    default:
+      return name.replace(/_/g, " ");
+  }
 }
 
 function GatewayRuntimeRuns({

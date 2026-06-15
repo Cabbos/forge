@@ -521,6 +521,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 **Work breakdown:**
 
 - [ ] 6.1 Implement background gateway service binary and IPC contract.
+  - **Phase 6.1 runtime-status follow-up (2026-06-15):** Gateway `runtime_status` now reports the background runtime loops that make the daemon useful as a host: webhook listener, trigger runner, and scheduler tick. The gateway binary marks each loop as started, records webhook startup failure detail if it exits, and exposes the task list through CLI/Diagnostics. This is observability scaffolding for the later true session-host contract; it does not yet move live desktop sessions into the daemon.
   - Files: `src-tauri/src/bin/gateway.rs`, `runtime/gateway.rs`.
 - [ ] 6.2 Add service management commands: `forge service install`, `start`, `stop`, `restart`, `uninstall`.
   - **Phase 6.2 follow-up (2026-06-15):** launchd service management is now exposed as reusable Rust APIs (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). `forge_service` and Diagnostics gateway repair share the same restart path instead of duplicating `launchctl` bootout/bootstrap logic. CI-safe tests cover public API availability and launchctl output parsing for running, already-loaded, not-running, and "Could not find service" cases.

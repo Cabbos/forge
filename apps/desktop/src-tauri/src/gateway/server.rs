@@ -40,6 +40,18 @@ pub struct GatewayRuntimeStatus {
     pub claimed_triggers: usize,
     pub dead_letter_runs: usize,
     pub recent_runs: Vec<TriggerRunRecord>,
+    #[serde(default)]
+    pub runtime_tasks: Vec<GatewayRuntimeTaskStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayRuntimeTaskStatus {
+    pub name: String,
+    pub running: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
 }
 
 // ── Server state ────────────────────────────────────────────────────────────
@@ -52,6 +64,7 @@ pub struct GatewayState {
     sessions: Mutex<HashMap<String, GatewaySessionInfo>>,
     pub trigger_store: Arc<TriggerStore>,
     pub trigger_run_store: Arc<TriggerRunStore>,
+    runtime_tasks: Mutex<HashMap<String, GatewayRuntimeTaskStatus>>,
 }
 
 impl Default for GatewayState {
@@ -68,6 +81,7 @@ impl GatewayState {
             sessions: Mutex::new(HashMap::new()),
             trigger_store: Arc::new(TriggerStore::persistent_default()),
             trigger_run_store: Arc::new(TriggerRunStore::persistent_default()),
+            runtime_tasks: Mutex::new(default_runtime_task_map()),
         }
     }
 
@@ -105,6 +119,61 @@ impl GatewayState {
             .map(|s| s.values().cloned().collect())
             .unwrap_or_default()
     }
+
+    pub fn mark_runtime_task_started(&self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Ok(mut tasks) = self.runtime_tasks.lock() {
+            tasks.insert(
+                name.to_string(),
+                GatewayRuntimeTaskStatus {
+                    name: name.to_string(),
+                    running: true,
+                    last_started_at_ms: Some(now_millis()),
+                    last_error: None,
+                },
+            );
+        }
+    }
+
+    pub fn mark_runtime_task_failed(&self, name: &str, error: impl Into<String>) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Ok(mut tasks) = self.runtime_tasks.lock() {
+            let status =
+                tasks
+                    .entry(name.to_string())
+                    .or_insert_with(|| GatewayRuntimeTaskStatus {
+                        name: name.to_string(),
+                        running: false,
+                        last_started_at_ms: None,
+                        last_error: None,
+                    });
+            status.running = false;
+            status.last_error = Some(error.into());
+        }
+    }
+
+    pub fn runtime_tasks(&self) -> Vec<GatewayRuntimeTaskStatus> {
+        let tasks = self
+            .runtime_tasks
+            .lock()
+            .map(|tasks| tasks.clone())
+            .unwrap_or_else(|_| default_runtime_task_map());
+        ordered_runtime_tasks(tasks)
+    }
+}
+
+pub const WEBHOOK_LISTENER_TASK: &str = "webhook_listener";
+pub const TRIGGER_RUNNER_TASK: &str = "trigger_runner";
+pub const SCHEDULER_TICK_TASK: &str = "scheduler_tick";
+
+pub fn default_runtime_task_statuses() -> Vec<GatewayRuntimeTaskStatus> {
+    ordered_runtime_tasks(default_runtime_task_map())
 }
 
 /// Socket path for the gateway.
@@ -404,6 +473,7 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         claimed_triggers,
         dead_letter_runs,
         recent_runs: runs.into_iter().take(20).collect(),
+        runtime_tasks: state.runtime_tasks(),
     }
 }
 
@@ -416,6 +486,58 @@ fn count_pending_triggers(triggers: &[PendingTrigger]) -> usize {
         .iter()
         .filter(|trigger| trigger.claimed_at_ms.is_none())
         .count()
+}
+
+fn default_runtime_task_map() -> HashMap<String, GatewayRuntimeTaskStatus> {
+    [
+        WEBHOOK_LISTENER_TASK,
+        TRIGGER_RUNNER_TASK,
+        SCHEDULER_TICK_TASK,
+    ]
+    .into_iter()
+    .map(|name| {
+        (
+            name.to_string(),
+            GatewayRuntimeTaskStatus {
+                name: name.to_string(),
+                running: false,
+                last_started_at_ms: None,
+                last_error: None,
+            },
+        )
+    })
+    .collect()
+}
+
+fn ordered_runtime_tasks(
+    tasks: HashMap<String, GatewayRuntimeTaskStatus>,
+) -> Vec<GatewayRuntimeTaskStatus> {
+    let mut ordered = Vec::with_capacity(tasks.len());
+    for name in [
+        WEBHOOK_LISTENER_TASK,
+        TRIGGER_RUNNER_TASK,
+        SCHEDULER_TICK_TASK,
+    ] {
+        if let Some(status) = tasks.get(name) {
+            ordered.push(status.clone());
+        }
+    }
+
+    let mut extras = tasks
+        .into_iter()
+        .filter(|(name, _)| {
+            ![
+                WEBHOOK_LISTENER_TASK,
+                TRIGGER_RUNNER_TASK,
+                SCHEDULER_TICK_TASK,
+            ]
+            .contains(&name.as_str())
+        })
+        .map(|(_, status)| status)
+        .collect::<Vec<_>>();
+    extras.sort_by(|a, b| a.name.cmp(&b.name));
+    ordered.extend(extras);
+    ordered
 }
 
 fn handle_unregister_session(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
@@ -542,6 +664,17 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
+    fn test_gateway_state() -> GatewayState {
+        GatewayState {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
+            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
+            runtime_tasks: Mutex::new(default_runtime_task_map()),
+        }
+    }
+
     // ── dispatch ──────────────────────────────────────────────────────────
 
     #[test]
@@ -609,13 +742,7 @@ mod tests {
 
     #[test]
     fn dispatch_list_trigger_runs_returns_records() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state
             .trigger_run_store
             .push(crate::gateway::runner::TriggerRunRecord {
@@ -654,13 +781,7 @@ mod tests {
 
     #[test]
     fn dispatch_runtime_status_returns_queue_and_run_summary() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state.trigger_store.push(test_trigger("pending-1", None));
         state
             .trigger_store
@@ -714,20 +835,54 @@ mod tests {
                 assert_eq!(status.dead_letter_runs, 1);
                 assert_eq!(status.recent_runs.len(), 2);
                 assert_eq!(status.recent_runs[0].id, "run-ok");
+                assert_eq!(
+                    status
+                        .runtime_tasks
+                        .iter()
+                        .map(|task| (task.name.as_str(), task.running))
+                        .collect::<Vec<_>>(),
+                    [
+                        (WEBHOOK_LISTENER_TASK, false),
+                        (TRIGGER_RUNNER_TASK, false),
+                        (SCHEDULER_TICK_TASK, false),
+                    ]
+                );
             }
             _ => panic!("expected Ok reply"),
         }
     }
 
     #[test]
+    fn runtime_status_reflects_background_task_state() {
+        let state = test_gateway_state();
+        state.mark_runtime_task_started(TRIGGER_RUNNER_TASK);
+        state.mark_runtime_task_failed(WEBHOOK_LISTENER_TASK, "address already in use");
+
+        let status = build_runtime_status(&state);
+        let webhook = status
+            .runtime_tasks
+            .iter()
+            .find(|task| task.name == WEBHOOK_LISTENER_TASK)
+            .expect("webhook status");
+        let trigger = status
+            .runtime_tasks
+            .iter()
+            .find(|task| task.name == TRIGGER_RUNNER_TASK)
+            .expect("trigger status");
+
+        assert!(!webhook.running);
+        assert_eq!(
+            webhook.last_error.as_deref(),
+            Some("address already in use")
+        );
+        assert!(trigger.running);
+        assert!(trigger.last_started_at_ms.is_some());
+        assert!(trigger.last_error.is_none());
+    }
+
+    #[test]
     fn dispatch_enqueue_trigger_pushes_to_store_and_updates_runtime_status() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
 
         let reply = dispatch(
             &state,
@@ -775,13 +930,7 @@ mod tests {
 
     #[test]
     fn dispatch_enqueue_trigger_rejects_blank_message() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
 
         let reply = dispatch(
             &state,
@@ -804,13 +953,7 @@ mod tests {
 
     #[test]
     fn dispatch_cancel_trigger_removes_pending_trigger() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state
             .trigger_store
             .push(test_trigger("trigger-cancel", None));
@@ -840,13 +983,7 @@ mod tests {
 
     #[test]
     fn dispatch_cancel_trigger_reports_missing_trigger_without_mutating_queue() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state.trigger_store.push(test_trigger("trigger-keep", None));
 
         let reply = dispatch(
@@ -874,13 +1011,7 @@ mod tests {
 
     #[test]
     fn dispatch_cancel_trigger_rejects_blank_id() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
 
         let reply = dispatch(
             &state,
@@ -902,13 +1033,7 @@ mod tests {
 
     #[test]
     fn dispatch_replay_trigger_run_queues_new_trigger_from_run_metadata() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state
             .trigger_run_store
             .push(crate::gateway::runner::TriggerRunRecord {
@@ -960,13 +1085,7 @@ mod tests {
 
     #[test]
     fn dispatch_replay_trigger_run_rejects_legacy_run_without_metadata() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state
             .trigger_run_store
             .push(crate::gateway::runner::TriggerRunRecord {
@@ -1005,13 +1124,7 @@ mod tests {
 
     #[test]
     fn dispatch_get_trigger_run_returns_requested_run_detail() {
-        let state = GatewayState {
-            started_at: Instant::now(),
-            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            sessions: Mutex::new(HashMap::new()),
-            trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
-            trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
-        };
+        let state = test_gateway_state();
         state
             .trigger_run_store
             .push(crate::gateway::runner::TriggerRunRecord {
