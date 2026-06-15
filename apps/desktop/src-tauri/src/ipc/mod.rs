@@ -21,6 +21,7 @@ pub mod send_input_continuity;
 pub mod service_handlers;
 pub mod session_builder;
 pub mod session_lifecycle;
+pub mod session_store_handlers;
 pub mod settings_handlers;
 pub mod workflow_handlers;
 pub mod workspace;

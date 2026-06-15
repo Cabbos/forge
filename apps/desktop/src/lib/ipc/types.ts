@@ -51,6 +51,38 @@ export interface SessionInfo {
   latest_delivery?: DeliverySummary | null;
 }
 
+export interface SessionSnapshotStoreStats {
+  total_snapshots: number;
+  corrupted_snapshots: number;
+  total_bytes: number;
+  oldest_updated_at_ms?: number | null;
+  newest_updated_at_ms?: number | null;
+  by_provider: Record<string, number>;
+  by_workspace: Record<string, number>;
+}
+
+export interface SessionSnapshotSummary {
+  session_id: string;
+  provider: string;
+  model: string;
+  working_dir: string;
+  summary?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  message_count: number;
+}
+
+export interface SessionSnapshotPruneReport {
+  deleted_session_ids: string[];
+  kept_session_ids: string[];
+  skipped_corrupted: number;
+}
+
+export interface PruneSessionStoreInput {
+  keepRecent: number;
+  olderThanMs?: number | null;
+}
+
 export interface AppWorkspaceMetadata {
   id: string;
   name: string;

@@ -3,6 +3,7 @@ export * from "./ipc/types";
 export * from "./ipc/core";
 export * from "./ipc/app";
 export * from "./ipc/session";
+export * from "./ipc/sessionStore";
 export * from "./ipc/a2a";
 export * from "./ipc/apiKeys";
 export * from "./ipc/capabilities";
