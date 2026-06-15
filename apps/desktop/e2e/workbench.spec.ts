@@ -96,6 +96,87 @@ test.describe("Timeline Message Flow", () => {
     await expect(main.getByRole("button", { name: "开始新对话" })).toBeVisible();
   });
 
+  test("history dialog searches snapshots and can restore or delete a session", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error mock
+      window.__mockSessionStoreStats = {
+        total_snapshots: 2,
+        corrupted_snapshots: 0,
+        total_bytes: 4096,
+        oldest_updated_at_ms: Date.now() - 120_000,
+        newest_updated_at_ms: Date.now() - 30_000,
+        by_provider: { deepseek: 1, anthropic: 1 },
+        by_workspace: { "/Users/cabbos/project/forge": 2 },
+      };
+      // @ts-expect-error mock
+      window.__mockSessionStoreSearchResults = [
+        {
+          session_id: "history-launch-plan",
+          provider: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          working_dir: "/Users/cabbos/project/forge",
+          summary: "Launch service hardening plan",
+          created_at_ms: Date.now() - 120_000,
+          updated_at_ms: Date.now() - 30_000,
+          message_count: 8,
+        },
+        {
+          session_id: "history-memory-notes",
+          provider: "anthropic",
+          model: "claude-sonnet-4.6",
+          working_dir: "/Users/cabbos/project/forge",
+          summary: "Memory profile notes",
+          created_at_ms: Date.now() - 240_000,
+          updated_at_ms: Date.now() - 180_000,
+          message_count: 3,
+        },
+      ];
+    });
+
+    await page.getByRole("button", { name: "历史" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "历史" })).toBeVisible();
+    await expect(dialog.getByText("2 个快照")).toBeVisible();
+    await dialog.getByLabel("服务筛选").selectOption("anthropic");
+    await expect(dialog.getByText("Memory profile notes")).toBeVisible();
+    await expect(dialog.getByText("Launch service hardening plan")).toHaveCount(0);
+    await dialog.getByLabel("服务筛选").selectOption("all");
+
+    await dialog.getByPlaceholder("搜索摘要、模型、项目路径").fill("launch");
+    await expect(dialog.getByText("Launch service hardening plan")).toBeVisible();
+    await expect(dialog.getByText("Memory profile notes")).toHaveCount(0);
+    const searchArgs = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastSearchSessionStoreArgs;
+    });
+    expect(searchArgs.query).toBe("launch");
+
+    await dialog.getByRole("button", { name: "恢复 history-launch-plan" }).click();
+    const resumedId = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastResumedSessionId;
+    });
+    expect(resumedId).toBe("history-launch-plan");
+
+    await page.getByRole("button", { name: "历史" }).click();
+    await dialog.getByPlaceholder("搜索摘要、模型、项目路径").fill("launch");
+    await dialog.getByRole("button", { name: "删除 history-launch-plan" }).click();
+    const deletedId = await page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastDeletedSessionId;
+    });
+    expect(deletedId).toBe("history-launch-plan");
+  });
+
+  test("settings dialog close button closes the modal", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "设置" })).toBeVisible();
+
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+
   test("empty workbench can start directly from a prompt", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {

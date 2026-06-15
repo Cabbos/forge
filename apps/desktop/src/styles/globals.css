@@ -22,6 +22,7 @@
 @import "./command.css";
 @import "./answer-index.css";
 @import "./settings.css";
+@import "./history.css";
 
 @tailwind base;
 @tailwind components;

@@ -607,6 +607,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 7.1 settings-scroll follow-up (2026-06-16):** Settings now switches to a stacked small-viewport layout so the category rail sits above the active panel and the content pane keeps its own vertical scroll. Added a Playwright regression for 390px-wide viewports and verified the same flow in the in-app Browser.
   - Files: `src/components/settings/`.
 - [ ] 7.2 Implement History view: searchable, filterable list of all sessions with restore/delete.
+  - **Phase 7.2 history-dialog partial (2026-06-16):** Added a lazy-loaded History dialog from the sidebar utility rail. It reads session-store stats, searches saved snapshots, filters by provider, restores snapshot-backed sessions through `resume_session`, and deletes sessions through the existing delete IPC. Playwright covers search, provider filtering, restore, and delete using mocked session-store IPC.
   - Files: `src/components/history/HistoryView.tsx`.
 - [ ] 7.3 Implement recovery/error states: offline, gateway disconnected, API key missing, snapshot corrupted.
   - Files: `src/components/RecoverySurface.tsx`, `store/index.ts`.

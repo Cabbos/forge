@@ -316,6 +316,37 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error mock
           if (Array.isArray(window.__mockListSessions)) return window.__mockListSessions;
           return persistedSessionsForBackend();
+        case "get_session_store_stats":
+          // @ts-expect-error mock
+          if (window.__mockSessionStoreStats) return window.__mockSessionStoreStats;
+          return {
+            total_snapshots: 0,
+            corrupted_snapshots: 0,
+            total_bytes: 0,
+            oldest_updated_at_ms: null,
+            newest_updated_at_ms: null,
+            by_provider: {},
+            by_workspace: {},
+          };
+        case "search_session_store":
+          // @ts-expect-error mock
+          window.__lastSearchSessionStoreArgs = args;
+          // @ts-expect-error mock
+          if (Array.isArray(window.__mockSessionStoreSearchResults)) {
+            const query = String(args.query ?? "").toLowerCase();
+            // @ts-expect-error mock
+            return window.__mockSessionStoreSearchResults.filter((snapshot) => {
+              const haystack = [
+                snapshot.session_id,
+                snapshot.provider,
+                snapshot.model,
+                snapshot.working_dir,
+                snapshot.summary,
+              ].join(" ").toLowerCase();
+              return !query || haystack.includes(query);
+            });
+          }
+          return [];
         case "load_app_metadata":
           return appMetadataFromIndexedDb();
         case "save_app_metadata":
