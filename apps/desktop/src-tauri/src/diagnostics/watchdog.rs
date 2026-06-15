@@ -49,6 +49,17 @@ pub struct GatewayServiceProbe {
     pub message: String,
 }
 
+impl From<crate::service::launchd::LaunchdServiceStatus> for GatewayServiceProbe {
+    fn from(status: crate::service::launchd::LaunchdServiceStatus) -> Self {
+        Self {
+            supported: status.supported,
+            installed: status.installed,
+            running: status.running,
+            message: status.message,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GatewayWatchdogAction {
     Observe,
@@ -156,26 +167,14 @@ fn evaluate_gateway_watchdog(
 }
 
 fn probe_gateway_service() -> GatewayServiceProbe {
-    if !cfg!(target_os = "macos") {
-        return GatewayServiceProbe {
-            supported: false,
-            installed: false,
+    match crate::service::launchd::query_status() {
+        Ok(status) => GatewayServiceProbe::from(status),
+        Err(error) => GatewayServiceProbe {
+            supported: cfg!(target_os = "macos"),
+            installed: crate::service::launchd::plist_path().exists(),
             running: false,
-            message: "Gateway service management is only supported on macOS.".to_string(),
-        };
-    }
-
-    let plist_path = crate::service::launchd::plist_path();
-    let installed = plist_path.exists();
-    let message = crate::service::launchd::status()
-        .unwrap_or_else(|error| format!("Gateway service status unavailable: {error}"));
-    let running = message.contains(" is running.");
-
-    GatewayServiceProbe {
-        supported: true,
-        installed,
-        running,
-        message,
+            message: format!("Gateway service status unavailable: {error}"),
+        },
     }
 }
 
@@ -562,5 +561,26 @@ mod tests {
 
         assert_eq!(decision.action, GatewayWatchdogAction::WaitForBackoff);
         assert_eq!(decision.alert_level, None);
+    }
+
+    #[test]
+    fn gateway_service_probe_uses_structured_launchd_status() {
+        let probe = GatewayServiceProbe::from(crate::service::launchd::LaunchdServiceStatus {
+            supported: true,
+            installed: true,
+            running: false,
+            message: "Gateway service is installed but not running.".into(),
+            label: "com.forge.gateway".into(),
+            launch_domain: "gui/123".into(),
+            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
+            log_path: "/Users/test/.forge/logs/gateway.log".into(),
+            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
+            status_message: "Service 'com.forge.gateway' is not installed.".into(),
+        });
+
+        assert!(probe.supported);
+        assert!(probe.installed);
+        assert!(!probe.running);
+        assert!(probe.message.contains("installed but not running"));
     }
 }

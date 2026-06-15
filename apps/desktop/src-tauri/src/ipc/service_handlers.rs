@@ -26,66 +26,26 @@ pub struct ServiceStatusPayload {
     pub error_log_path: String,
 }
 
+impl From<launchd::LaunchdServiceStatus> for ServiceStatusPayload {
+    fn from(status: launchd::LaunchdServiceStatus) -> Self {
+        Self {
+            installed: status.installed,
+            running: status.running,
+            message: status.message,
+            supported: status.supported,
+            label: status.label,
+            launch_domain: status.launch_domain,
+            plist_path: status.plist_path,
+            log_path: status.log_path,
+            error_log_path: status.error_log_path,
+        }
+    }
+}
+
 /// Query the current service status.
 #[tauri::command]
 pub async fn get_service_status() -> Result<ServiceStatusPayload, String> {
-    // Check if we're on macOS (only supported platform for now).
-    let supported = cfg!(target_os = "macos");
-    if !supported {
-        return Ok(ServiceStatusPayload {
-            installed: false,
-            running: false,
-            message: "Service management is only supported on macOS.".to_string(),
-            supported: false,
-            label: launchd::SERVICE_LABEL.to_string(),
-            launch_domain: "unsupported".to_string(),
-            plist_path: String::new(),
-            log_path: String::new(),
-            error_log_path: String::new(),
-        });
-    }
-
-    let plist_path = launchd::plist_path();
-    let installed = plist_path.exists();
-    let launch_domain = launchd::launchctl_domain();
-
-    // Check running status via launchctl.
-    let running = if installed {
-        let output = std::process::Command::new("launchctl")
-            .args(["print", &launchctl_print_target(&launch_domain)])
-            .output();
-        match output {
-            Ok(o) => {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                stdout.contains("state = running")
-            }
-            Err(_) => false,
-        }
-    } else {
-        false
-    };
-
-    let message = match (installed, running) {
-        (true, true) => "Gateway service is installed and running.".to_string(),
-        (true, false) => "Gateway service is installed but not running.".to_string(),
-        (false, _) => "Gateway service is not installed.".to_string(),
-    };
-
-    Ok(ServiceStatusPayload {
-        installed,
-        running,
-        message,
-        supported: true,
-        label: launchd::SERVICE_LABEL.to_string(),
-        launch_domain,
-        plist_path: plist_path.display().to_string(),
-        log_path: launchd::gateway_log_path().display().to_string(),
-        error_log_path: launchd::gateway_error_log_path().display().to_string(),
-    })
-}
-
-fn launchctl_print_target(domain: &str) -> String {
-    format!("{domain}/{}", launchd::SERVICE_LABEL)
+    launchd::query_status().map(ServiceStatusPayload::from)
 }
 
 /// Enable or disable autostart (installs/uninstalls the launchd service).
@@ -102,7 +62,6 @@ pub async fn set_autostart(enabled: bool) -> Result<ServiceStatusPayload, String
         launchd::uninstall()?;
     }
 
-    // Return updated status.
     get_service_status().await
 }
 
@@ -153,10 +112,24 @@ mod tests {
     }
 
     #[test]
-    fn launchctl_print_target_uses_supplied_domain() {
-        assert_eq!(
-            launchctl_print_target("gui/123"),
-            "gui/123/com.forge.gateway"
-        );
+    fn service_status_payload_uses_structured_launchd_status() {
+        let payload = ServiceStatusPayload::from(launchd::LaunchdServiceStatus {
+            supported: true,
+            installed: true,
+            running: false,
+            message: "Gateway service is installed but not running.".into(),
+            label: "com.forge.gateway".into(),
+            launch_domain: "gui/123".into(),
+            plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
+            log_path: "/Users/test/.forge/logs/gateway.log".into(),
+            error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
+            status_message: "Service 'com.forge.gateway' is not installed.".into(),
+        });
+
+        assert!(payload.supported);
+        assert!(payload.installed);
+        assert!(!payload.running);
+        assert_eq!(payload.launch_domain, "gui/123");
+        assert!(payload.message.contains("installed but not running"));
     }
 }

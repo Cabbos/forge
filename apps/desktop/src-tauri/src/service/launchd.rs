@@ -8,6 +8,20 @@ use std::process::Command;
 /// Label used in the launchd plist and `launchctl` commands.
 pub const SERVICE_LABEL: &str = "com.forge.gateway";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchdServiceStatus {
+    pub supported: bool,
+    pub installed: bool,
+    pub running: bool,
+    pub message: String,
+    pub label: String,
+    pub launch_domain: String,
+    pub plist_path: String,
+    pub log_path: String,
+    pub error_log_path: String,
+    pub status_message: String,
+}
+
 /// Current user's launchd GUI domain, e.g. `gui/501`.
 pub fn launchctl_domain() -> String {
     format!("gui/{}", unsafe { libc::getuid() })
@@ -198,17 +212,29 @@ pub fn restart() -> Result<String, String> {
 
 /// Check if the launchd service is currently running.
 pub fn status() -> Result<String, String> {
+    query_status().map(|status| status.status_message)
+}
+
+pub fn query_status() -> Result<LaunchdServiceStatus, String> {
+    if !cfg!(target_os = "macos") {
+        return Ok(unsupported_service_status());
+    }
+
+    let plist_path = plist_path();
+    let installed = plist_path.exists();
     let service_target = format!("{}/{}", launchctl_domain(), SERVICE_LABEL);
     let output = Command::new("launchctl")
         .args(["print", service_target.as_str()])
         .output()
         .map_err(|e| format!("launchctl: {e}"))?;
 
-    interpret_print_result(
+    Ok(service_status_from_parts(
+        true,
+        installed,
         output.status.success(),
         &String::from_utf8_lossy(&output.stdout),
         &String::from_utf8_lossy(&output.stderr),
-    )
+    ))
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -262,6 +288,55 @@ fn interpret_print_result(success: bool, stdout: &str, stderr: &str) -> Result<S
     Ok(format!(
         "Service '{SERVICE_LABEL}' status unknown: {detail}"
     ))
+}
+
+fn service_status_from_parts(
+    supported: bool,
+    installed: bool,
+    print_success: bool,
+    stdout: &str,
+    stderr: &str,
+) -> LaunchdServiceStatus {
+    if !supported {
+        return unsupported_service_status();
+    }
+
+    let status_message = interpret_print_result(print_success, stdout, stderr)
+        .unwrap_or_else(|error| format!("Gateway service status unavailable: {error}"));
+    let running = installed && status_message.contains(" is running.");
+    let message = match (installed, running) {
+        (true, true) => "Gateway service is installed and running.".to_string(),
+        (true, false) => "Gateway service is installed but not running.".to_string(),
+        (false, _) => "Gateway service is not installed.".to_string(),
+    };
+
+    LaunchdServiceStatus {
+        supported: true,
+        installed,
+        running,
+        message,
+        label: SERVICE_LABEL.to_string(),
+        launch_domain: launchctl_domain(),
+        plist_path: plist_path().display().to_string(),
+        log_path: gateway_log_path().display().to_string(),
+        error_log_path: gateway_error_log_path().display().to_string(),
+        status_message,
+    }
+}
+
+fn unsupported_service_status() -> LaunchdServiceStatus {
+    LaunchdServiceStatus {
+        supported: false,
+        installed: false,
+        running: false,
+        message: "Service management is only supported on macOS.".to_string(),
+        label: SERVICE_LABEL.to_string(),
+        launch_domain: "unsupported".to_string(),
+        plist_path: String::new(),
+        log_path: String::new(),
+        error_log_path: String::new(),
+        status_message: "Service management is only supported on macOS.".to_string(),
+    }
 }
 
 fn launchctl_reports_missing_service(text: &str) -> bool {
@@ -386,5 +461,40 @@ mod tests {
                 .expect("not installed");
 
         assert!(message.contains("not installed"));
+    }
+
+    #[test]
+    fn service_status_from_parts_returns_structured_running_status() {
+        let status = service_status_from_parts(true, true, true, "state = running\n", "");
+
+        assert!(status.supported);
+        assert!(status.installed);
+        assert!(status.running);
+        assert!(status.message.contains("installed and running"));
+        assert_eq!(status.label, SERVICE_LABEL);
+        assert!(status.plist_path.ends_with("com.forge.gateway.plist"));
+        assert!(status.log_path.ends_with("gateway.log"));
+        assert!(status.error_log_path.ends_with("gateway-error.log"));
+    }
+
+    #[test]
+    fn service_status_from_parts_reports_installed_but_not_running() {
+        let status = service_status_from_parts(true, true, false, "", "Could not find service");
+
+        assert!(status.supported);
+        assert!(status.installed);
+        assert!(!status.running);
+        assert!(status.message.contains("installed but not running"));
+    }
+
+    #[test]
+    fn unsupported_service_status_keeps_paths_empty() {
+        let status = unsupported_service_status();
+
+        assert!(!status.supported);
+        assert!(!status.installed);
+        assert!(!status.running);
+        assert_eq!(status.launch_domain, "unsupported");
+        assert!(status.plist_path.is_empty());
     }
 }

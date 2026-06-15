@@ -572,40 +572,60 @@ struct GatewayServiceSnapshot {
 }
 
 fn gateway_service_snapshot() -> GatewayServiceSnapshot {
-    if !cfg!(target_os = "macos") {
-        return GatewayServiceSnapshot {
-            supported: false,
-            installed: false,
-            running: false,
-            status_message: "Service management is only supported on macOS.".to_string(),
-            label: crate::service::launchd::SERVICE_LABEL.to_string(),
-            launch_domain: "unsupported".to_string(),
-            plist_path: String::new(),
-            log_path: String::new(),
-            error_log_path: String::new(),
-        };
+    match crate::service::launchd::query_status() {
+        Ok(status) => gateway_service_snapshot_from_launchd_status(status),
+        Err(error) => gateway_service_unavailable_snapshot(error),
     }
+}
 
-    let plist_path = crate::service::launchd::plist_path();
-    let installed = plist_path.exists();
-    let status_message = crate::service::launchd::status()
-        .unwrap_or_else(|error| format!("Gateway service status unavailable: {error}"));
-    let running = status_message.contains(" is running.");
-
+fn gateway_service_snapshot_from_launchd_status(
+    status: crate::service::launchd::LaunchdServiceStatus,
+) -> GatewayServiceSnapshot {
     GatewayServiceSnapshot {
-        supported: true,
-        installed,
-        running,
-        status_message,
+        supported: status.supported,
+        installed: status.installed,
+        running: status.running,
+        status_message: status.status_message,
+        label: status.label,
+        launch_domain: status.launch_domain,
+        plist_path: status.plist_path,
+        log_path: status.log_path,
+        error_log_path: status.error_log_path,
+    }
+}
+
+fn gateway_service_unavailable_snapshot(error: impl std::fmt::Display) -> GatewayServiceSnapshot {
+    let plist_path = crate::service::launchd::plist_path();
+    GatewayServiceSnapshot {
+        supported: cfg!(target_os = "macos"),
+        installed: plist_path.exists(),
+        running: false,
+        status_message: format!("Gateway service status unavailable: {error}"),
         label: crate::service::launchd::SERVICE_LABEL.to_string(),
-        launch_domain: crate::service::launchd::launchctl_domain(),
-        plist_path: plist_path.display().to_string(),
-        log_path: crate::service::launchd::gateway_log_path()
-            .display()
-            .to_string(),
-        error_log_path: crate::service::launchd::gateway_error_log_path()
-            .display()
-            .to_string(),
+        launch_domain: if cfg!(target_os = "macos") {
+            crate::service::launchd::launchctl_domain()
+        } else {
+            "unsupported".to_string()
+        },
+        plist_path: if cfg!(target_os = "macos") {
+            plist_path.display().to_string()
+        } else {
+            String::new()
+        },
+        log_path: if cfg!(target_os = "macos") {
+            crate::service::launchd::gateway_log_path()
+                .display()
+                .to_string()
+        } else {
+            String::new()
+        },
+        error_log_path: if cfg!(target_os = "macos") {
+            crate::service::launchd::gateway_error_log_path()
+                .display()
+                .to_string()
+        } else {
+            String::new()
+        },
     }
 }
 
@@ -1253,6 +1273,33 @@ mod tests {
 
         assert_eq!(check.status, CheckStatus::Pass);
         assert_eq!(check.detail.as_ref().unwrap()["supported"], false);
+    }
+
+    #[test]
+    fn gateway_service_snapshot_uses_structured_launchd_status() {
+        let snapshot = gateway_service_snapshot_from_launchd_status(
+            crate::service::launchd::LaunchdServiceStatus {
+                supported: true,
+                installed: true,
+                running: true,
+                message: "Gateway service is installed and running.".into(),
+                label: "com.forge.gateway".into(),
+                launch_domain: "gui/123".into(),
+                plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist".into(),
+                log_path: "/Users/test/.forge/logs/gateway.log".into(),
+                error_log_path: "/Users/test/.forge/logs/gateway-error.log".into(),
+                status_message: "Service 'com.forge.gateway' is running.".into(),
+            },
+        );
+
+        assert!(snapshot.supported);
+        assert!(snapshot.installed);
+        assert!(snapshot.running);
+        assert_eq!(
+            snapshot.status_message,
+            "Service 'com.forge.gateway' is running."
+        );
+        assert_eq!(snapshot.launch_domain, "gui/123");
     }
 
     // ── Capability inventory check shape ──────────────────────────────────

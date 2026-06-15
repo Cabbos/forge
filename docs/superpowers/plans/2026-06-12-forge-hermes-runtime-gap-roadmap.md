@@ -524,6 +524,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `src-tauri/src/bin/gateway.rs`, `runtime/gateway.rs`.
 - [ ] 6.2 Add service management commands: `forge service install`, `start`, `stop`, `restart`, `uninstall`.
   - **Phase 6.2 follow-up (2026-06-15):** launchd service management is now exposed as reusable Rust APIs (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). `forge_service` and Diagnostics gateway repair share the same restart path instead of duplicating `launchctl` bootout/bootstrap logic. CI-safe tests cover public API availability and launchctl output parsing for running, already-loaded, not-running, and "Could not find service" cases.
+  - **Phase 6.2 status follow-up (2026-06-15):** `LaunchdServiceStatus` is now the single structured service-status snapshot used by Settings autostart IPC, Diagnostics, and the gateway service watchdog. The UI-facing payload remains stable, but backend callers no longer duplicate `launchctl print` calls or infer `running` by parsing status strings.
   - Files: `src-tauri/src/service/`.
 - [ ] 6.3 Add macOS `launchd` plist generation and registration.
   - Files: `service/launchd.rs`.
@@ -541,6 +542,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `diagnostics/repair.rs`, `src/components/settings/DiagnosticsPanel.tsx`, `src/components/settings/diagnosticsRepairView.ts`, `src/lib/ipc/types.ts`.
 - [ ] 6.9 Tests: service install/uninstall in CI-safe mock mode, update repair tests.
   - **Phase 6.9 partial (2026-06-15):** Added CI-safe launchd command-output parsing tests and service-management API coverage without invoking real `launchctl` state changes.
+  - **Phase 6.9 status partial (2026-06-15):** Added CI-safe conversion tests proving IPC, Diagnostics, and watchdog consume the same structured `LaunchdServiceStatus`.
 
 **Acceptance gate:**
 
