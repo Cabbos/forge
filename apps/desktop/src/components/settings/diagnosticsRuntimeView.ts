@@ -10,6 +10,7 @@ export interface GatewayRuntimeSnapshotLike {
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: unknown[];
+  recent_session_inputs?: unknown[];
   runtime_tasks?: GatewayRuntimeTaskLike[];
 }
 

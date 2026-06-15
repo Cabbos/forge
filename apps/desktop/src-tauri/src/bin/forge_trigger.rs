@@ -378,24 +378,46 @@ async fn show_runtime_status(client: &mut GatewayClient) -> Result<(), String> {
     let status = serde_json::from_value::<GatewayRuntimeStatus>(response.result)
         .map_err(|error| format!("Gateway returned invalid runtime status: {error}"))?;
 
-    println!("{}", status.message);
-    println!("Uptime: {}s", status.uptime_seconds);
-    println!("Active sessions: {}", status.active_sessions);
-    println!("Pending triggers: {}", status.pending_triggers);
-    println!("Claimed triggers: {}", status.claimed_triggers);
-    println!("Dead-letter runs: {}", status.dead_letter_runs);
+    for line in render_runtime_status_lines(&status) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn render_runtime_status_lines(status: &GatewayRuntimeStatus) -> Vec<String> {
+    let mut lines = vec![
+        status.message.clone(),
+        format!("Uptime: {}s", status.uptime_seconds),
+        format!("Active sessions: {}", status.active_sessions),
+        format!("Pending triggers: {}", status.pending_triggers),
+        format!("Pending session inputs: {}", status.pending_session_inputs),
+        format!("Claimed triggers: {}", status.claimed_triggers),
+        format!("Dead-letter runs: {}", status.dead_letter_runs),
+    ];
     if !status.runtime_tasks.is_empty() {
-        println!("Runtime tasks:");
-        for task in status.runtime_tasks {
+        lines.push("Runtime tasks:".to_string());
+        for task in &status.runtime_tasks {
             let state = if task.running { "running" } else { "stopped" };
             if let Some(error) = task.last_error.as_deref() {
-                println!("  {}: {} ({})", task.name, state, error);
+                lines.push(format!("  {}: {} ({})", task.name, state, error));
             } else {
-                println!("  {}: {}", task.name, state);
+                lines.push(format!("  {}: {}", task.name, state));
             }
         }
     }
-    Ok(())
+    if !status.recent_session_inputs.is_empty() {
+        lines.push("Recent session inputs:".to_string());
+        for input in status.recent_session_inputs.iter().take(5) {
+            lines.push(format!(
+                "  {}  session={}  completed={}  {}",
+                input.input_id,
+                input.session_id,
+                input.completed_at_ms,
+                truncate(&input.message_preview, 80)
+            ));
+        }
+    }
+    lines
 }
 
 async fn send(
@@ -575,5 +597,35 @@ mod tests {
             super::render_trigger_run_summary_line(&run),
             "  run-1  trigger=trigger-1  session=gateway-session-1  attempt=2  completed  done"
         );
+    }
+
+    #[test]
+    fn render_runtime_status_lines_include_recent_session_inputs() {
+        let status = super::GatewayRuntimeStatus {
+            ok: true,
+            message: "Gateway runtime is reachable.".into(),
+            uptime_seconds: 42,
+            active_sessions: 1,
+            pending_triggers: 0,
+            pending_session_inputs: 0,
+            claimed_triggers: 0,
+            dead_letter_runs: 0,
+            recent_runs: Vec::new(),
+            recent_session_inputs: vec![
+                forge::gateway::session_input::SessionInputCompletionRecord {
+                    input_id: "input-1".into(),
+                    session_id: "session-1".into(),
+                    message_preview: "continue".into(),
+                    received_at_ms: 10,
+                    completed_at_ms: 20,
+                },
+            ],
+            runtime_tasks: Vec::new(),
+        };
+
+        let lines = super::render_runtime_status_lines(&status);
+
+        assert!(lines.contains(&"Recent session inputs:".to_string()));
+        assert!(lines.contains(&"  input-1  session=session-1  completed=20  continue".to_string()));
     }
 }

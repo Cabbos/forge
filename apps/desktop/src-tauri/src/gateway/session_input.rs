@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_SESSION_INPUT_COMPLETIONS: usize = 1000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionInputRecord {
     pub id: String,
@@ -14,10 +16,21 @@ pub struct SessionInputRecord {
     pub received_at_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionInputCompletionRecord {
+    pub input_id: String,
+    pub session_id: String,
+    pub message_preview: String,
+    pub received_at_ms: u64,
+    pub completed_at_ms: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct SessionInputStore {
     records: Mutex<Vec<SessionInputRecord>>,
     path: Option<PathBuf>,
+    completion_records: Mutex<Vec<SessionInputCompletionRecord>>,
+    completion_path: Option<PathBuf>,
 }
 
 impl SessionInputStore {
@@ -25,6 +38,8 @@ impl SessionInputStore {
         Self {
             records: Mutex::new(Vec::new()),
             path: None,
+            completion_records: Mutex::new(Vec::new()),
+            completion_path: None,
         }
     }
 
@@ -33,9 +48,12 @@ impl SessionInputStore {
     }
 
     pub fn persistent_at(path: PathBuf) -> Self {
+        let completion_path = completion_store_path_for_input_path(&path);
         Self {
             records: Mutex::new(load_session_inputs(&path)),
             path: Some(path),
+            completion_records: Mutex::new(load_session_input_completions(&completion_path)),
+            completion_path: Some(completion_path),
         }
     }
 
@@ -90,23 +108,46 @@ impl SessionInputStore {
     }
 
     pub fn complete(&self, input_id: &str) -> bool {
+        self.complete_with_record(input_id).is_some()
+    }
+
+    pub fn complete_with_record(&self, input_id: &str) -> Option<SessionInputCompletionRecord> {
         let input_id = input_id.trim();
         if input_id.is_empty() {
-            return false;
+            return None;
         }
-        self.records
+        let record = self.records.lock().ok().and_then(|mut records| {
+            self.refresh_locked(&mut records);
+            let position = records.iter().position(|record| record.id == input_id)?;
+            let record = records.remove(position);
+            self.save_locked(&records);
+            Some(record)
+        })?;
+        let completion = SessionInputCompletionRecord {
+            input_id: record.id,
+            session_id: record.session_id,
+            message_preview: message_preview(&record.message),
+            received_at_ms: record.received_at_ms,
+            completed_at_ms: now_millis(),
+        };
+        self.push_completion(completion.clone());
+        Some(completion)
+    }
+
+    pub fn recent_completions(&self, limit: usize) -> Vec<SessionInputCompletionRecord> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        self.completion_records
             .lock()
             .map(|mut records| {
-                self.refresh_locked(&mut records);
-                let before = records.len();
-                records.retain(|record| record.id != input_id);
-                let removed = records.len() != before;
-                if removed {
-                    self.save_locked(&records);
-                }
-                removed
+                self.refresh_completions_locked(&mut records);
+                sorted_session_input_completions(records.iter().cloned())
+                    .into_iter()
+                    .take(limit)
+                    .collect()
             })
-            .unwrap_or(false)
+            .unwrap_or_default()
     }
 
     fn refresh_locked(&self, records: &mut Vec<SessionInputRecord>) {
@@ -122,6 +163,35 @@ impl SessionInputStore {
         };
         if let Err(error) = save_session_inputs(path, records) {
             log::warn!("failed to persist gateway session inputs: {error}");
+        }
+    }
+
+    fn push_completion(&self, completion: SessionInputCompletionRecord) {
+        if let Ok(mut records) = self.completion_records.lock() {
+            self.refresh_completions_locked(&mut records);
+            records.retain(|existing| existing.input_id != completion.input_id);
+            records.push(completion);
+            *records = sorted_session_input_completions(records.iter().cloned())
+                .into_iter()
+                .take(MAX_SESSION_INPUT_COMPLETIONS)
+                .collect();
+            self.save_completions_locked(&records);
+        }
+    }
+
+    fn refresh_completions_locked(&self, records: &mut Vec<SessionInputCompletionRecord>) {
+        let Some(path) = &self.completion_path else {
+            return;
+        };
+        merge_session_input_completions(records, load_session_input_completions(path));
+    }
+
+    fn save_completions_locked(&self, records: &[SessionInputCompletionRecord]) {
+        let Some(path) = &self.completion_path else {
+            return;
+        };
+        if let Err(error) = save_session_input_completions(path, records) {
+            log::warn!("failed to persist gateway session input completions: {error}");
         }
     }
 }
@@ -144,6 +214,10 @@ fn default_session_input_store_path() -> PathBuf {
     PathBuf::from(home)
         .join(".forge")
         .join("session-inputs.json")
+}
+
+fn completion_store_path_for_input_path(path: &Path) -> PathBuf {
+    path.with_file_name("session-input-completions.json")
 }
 
 fn load_session_inputs(path: &Path) -> Vec<SessionInputRecord> {
@@ -171,6 +245,37 @@ fn save_session_inputs(path: &Path, records: &[SessionInputRecord]) -> Result<()
     Ok(())
 }
 
+fn load_session_input_completions(path: &Path) -> Vec<SessionInputCompletionRecord> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Vec<SessionInputCompletionRecord>>(&raw) {
+        Ok(records) => records,
+        Err(error) => {
+            log::warn!("failed to load gateway session input completions from disk: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn save_session_input_completions(
+    path: &Path,
+    records: &[SessionInputCompletionRecord],
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create input completion dir: {error}"))?;
+    }
+    let json = serde_json::to_string_pretty(records)
+        .map_err(|error| format!("serialize input completions: {error}"))?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, json.as_bytes())
+        .map_err(|error| format!("write input completion tmp: {error}"))?;
+    std::fs::rename(&tmp, path)
+        .map_err(|error| format!("replace input completion store: {error}"))?;
+    Ok(())
+}
+
 fn merge_session_inputs(target: &mut Vec<SessionInputRecord>, incoming: Vec<SessionInputRecord>) {
     for record in incoming {
         if let Some(existing) = target.iter_mut().find(|existing| existing.id == record.id) {
@@ -179,6 +284,26 @@ fn merge_session_inputs(target: &mut Vec<SessionInputRecord>, incoming: Vec<Sess
             target.push(record);
         }
     }
+}
+
+fn merge_session_input_completions(
+    target: &mut Vec<SessionInputCompletionRecord>,
+    incoming: Vec<SessionInputCompletionRecord>,
+) {
+    for record in incoming {
+        if let Some(existing) = target
+            .iter_mut()
+            .find(|existing| existing.input_id == record.input_id)
+        {
+            *existing = record;
+        } else {
+            target.push(record);
+        }
+    }
+    *target = sorted_session_input_completions(target.iter().cloned())
+        .into_iter()
+        .take(MAX_SESSION_INPUT_COMPLETIONS)
+        .collect();
 }
 
 fn sorted_session_inputs(
@@ -191,6 +316,29 @@ fn sorted_session_inputs(
             .then_with(|| left.id.cmp(&right.id))
     });
     records
+}
+
+fn sorted_session_input_completions(
+    records: impl IntoIterator<Item = SessionInputCompletionRecord>,
+) -> Vec<SessionInputCompletionRecord> {
+    let mut records = records.into_iter().collect::<Vec<_>>();
+    records.sort_by(|left, right| {
+        right
+            .completed_at_ms
+            .cmp(&left.completed_at_ms)
+            .then_with(|| right.received_at_ms.cmp(&left.received_at_ms))
+            .then_with(|| left.input_id.cmp(&right.input_id))
+    });
+    records
+}
+
+fn message_preview(message: &str) -> String {
+    let trimmed = message.trim();
+    let mut preview = trimmed.chars().take(160).collect::<String>();
+    if trimmed.chars().count() > 160 {
+        preview.push_str("...");
+    }
+    preview
 }
 
 fn now_millis() -> u64 {
@@ -272,5 +420,33 @@ mod tests {
 
         let restored = SessionInputStore::persistent_at(path);
         assert!(restored.list().is_empty());
+    }
+
+    #[test]
+    fn session_input_store_records_completion_history() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session-inputs.json");
+        let store = SessionInputStore::persistent_at(path.clone());
+        store.push(SessionInputRecord {
+            id: "input-1".into(),
+            session_id: "session-1".into(),
+            message: "continue with the queued task".into(),
+            received_at_ms: 10,
+        });
+
+        let completion = store
+            .complete_with_record(" input-1 ")
+            .expect("completion record");
+
+        assert_eq!(completion.input_id, "input-1");
+        assert_eq!(completion.session_id, "session-1");
+        assert_eq!(completion.message_preview, "continue with the queued task");
+        assert_eq!(completion.received_at_ms, 10);
+        assert!(completion.completed_at_ms >= completion.received_at_ms);
+        assert!(store.list().is_empty());
+        assert_eq!(store.recent_completions(10), vec![completion.clone()]);
+
+        let restored = SessionInputStore::persistent_at(path);
+        assert_eq!(restored.recent_completions(10), vec![completion]);
     }
 }

@@ -305,6 +305,7 @@ function GatewayRuntimePanel({
     claimed_triggers: 0,
     dead_letter_runs: 0,
     recent_runs: [],
+    recent_session_inputs: [],
     runtime_tasks: [],
   };
   const summary = buildGatewayRuntimeSummary(runtime);

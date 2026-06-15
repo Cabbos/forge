@@ -403,7 +403,16 @@ export interface GatewayRuntimeStatus {
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: GatewayTriggerRunRecord[];
+  recent_session_inputs: GatewaySessionInputCompletionRecord[];
   runtime_tasks: GatewayRuntimeTaskStatus[];
+}
+
+export interface GatewaySessionInputCompletionRecord {
+  input_id: string;
+  session_id: string;
+  message_preview: string;
+  received_at_ms: number;
+  completed_at_ms: number;
 }
 
 export interface GatewayRuntimeTaskStatus {

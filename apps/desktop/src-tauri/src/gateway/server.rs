@@ -13,7 +13,9 @@ use crate::gateway::protocol::{
     ReplayTriggerRunResult, TailSessionEventsParams, TailSessionEventsResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
-use crate::gateway::session_input::{new_session_input_record, SessionInputStore};
+use crate::gateway::session_input::{
+    new_session_input_record, SessionInputCompletionRecord, SessionInputStore,
+};
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,6 +38,8 @@ pub struct GatewayRuntimeStatus {
     pub claimed_triggers: usize,
     pub dead_letter_runs: usize,
     pub recent_runs: Vec<TriggerRunRecord>,
+    #[serde(default)]
+    pub recent_session_inputs: Vec<SessionInputCompletionRecord>,
     #[serde(default)]
     pub runtime_tasks: Vec<GatewayRuntimeTaskStatus>,
 }
@@ -765,6 +769,7 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         claimed_triggers,
         dead_letter_runs,
         recent_runs: runs.into_iter().take(20).collect(),
+        recent_session_inputs: state.session_input_store.recent_completions(20),
         runtime_tasks: state.runtime_tasks(),
     }
 }
@@ -1336,6 +1341,18 @@ mod tests {
                 model: None,
                 workspace_path: None,
             });
+        state
+            .session_input_store
+            .push(crate::gateway::session_input::SessionInputRecord {
+                id: "input-1".into(),
+                session_id: "session-1".into(),
+                message: "continue".into(),
+                received_at_ms: 30,
+            });
+        state
+            .session_input_store
+            .complete_with_record("input-1")
+            .expect("completion");
 
         let req = GatewayRequest {
             id: "runtime".into(),
@@ -1351,8 +1368,12 @@ mod tests {
                 assert_eq!(status.pending_triggers, 1);
                 assert_eq!(status.claimed_triggers, 1);
                 assert_eq!(status.dead_letter_runs, 1);
+                assert_eq!(status.pending_session_inputs, 0);
                 assert_eq!(status.recent_runs.len(), 2);
                 assert_eq!(status.recent_runs[0].id, "run-ok");
+                assert_eq!(status.recent_session_inputs.len(), 1);
+                assert_eq!(status.recent_session_inputs[0].input_id, "input-1");
+                assert_eq!(status.recent_session_inputs[0].session_id, "session-1");
                 assert_eq!(
                     status
                         .runtime_tasks
