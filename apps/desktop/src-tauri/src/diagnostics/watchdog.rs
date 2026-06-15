@@ -27,6 +27,233 @@ const WATCHDOG_CHECK_INTERVAL_SECS: u64 = 60;
 /// same session until this cooldown passes.
 const ALERT_COOLDOWN_SECS: u64 = 300;
 
+/// How often the gateway service watchdog probes launchd.
+const GATEWAY_WATCHDOG_CHECK_INTERVAL_SECS: u64 = 30;
+
+/// Initial restart delay after a failed gateway repair attempt.
+const GATEWAY_RESTART_BACKOFF_BASE_SECS: u64 = 5;
+
+/// Maximum restart delay after repeated gateway repair failures.
+const GATEWAY_RESTART_BACKOFF_MAX_SECS: u64 = 300;
+
+/// Synthetic session id used for global runtime health alerts.
+const RUNTIME_HEALTH_SESSION_ID: &str = "__runtime__";
+
+// ── Gateway service watchdog ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayServiceProbe {
+    pub supported: bool,
+    pub installed: bool,
+    pub running: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayWatchdogAction {
+    Observe,
+    RestartGateway,
+    WaitForBackoff,
+    AlertOnly,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayWatchdogDecision {
+    pub action: GatewayWatchdogAction,
+    pub alert_level: Option<String>,
+    pub message: String,
+    pub remediation: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GatewayWatchdogState {
+    restart_failures: u32,
+    last_restart_attempt: Option<Instant>,
+}
+
+impl GatewayWatchdogState {
+    pub fn record_restart_failure(&mut self, now: Instant) {
+        self.restart_failures = self.restart_failures.saturating_add(1);
+        self.last_restart_attempt = Some(now);
+    }
+
+    fn record_restart_success(&mut self) {
+        self.restart_failures = 0;
+        self.last_restart_attempt = None;
+    }
+
+    fn restart_backoff_remaining_secs(&self, now: Instant) -> Option<u64> {
+        let last_attempt = self.last_restart_attempt?;
+        let elapsed = now.duration_since(last_attempt).as_secs();
+        let delay = gateway_restart_backoff_secs(self.restart_failures);
+        Some(delay.saturating_sub(elapsed))
+    }
+}
+
+fn gateway_restart_backoff_secs(failure_count: u32) -> u64 {
+    let shift = failure_count.min(16);
+    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    GATEWAY_RESTART_BACKOFF_BASE_SECS
+        .saturating_mul(multiplier)
+        .min(GATEWAY_RESTART_BACKOFF_MAX_SECS)
+}
+
+fn evaluate_gateway_watchdog(
+    probe: GatewayServiceProbe,
+    state: &GatewayWatchdogState,
+    now: Instant,
+) -> GatewayWatchdogDecision {
+    if !probe.supported {
+        return GatewayWatchdogDecision {
+            action: GatewayWatchdogAction::Observe,
+            alert_level: None,
+            message: probe.message,
+            remediation: None,
+        };
+    }
+
+    if probe.running {
+        return GatewayWatchdogDecision {
+            action: GatewayWatchdogAction::Observe,
+            alert_level: None,
+            message: probe.message,
+            remediation: None,
+        };
+    }
+
+    if !probe.installed {
+        return GatewayWatchdogDecision {
+            action: GatewayWatchdogAction::AlertOnly,
+            alert_level: Some("warn".to_string()),
+            message: "Gateway service is not installed.".to_string(),
+            remediation: Some(
+                "Enable autostart in Settings -> General or run reinstall_service.".to_string(),
+            ),
+        };
+    }
+
+    if let Some(remaining) = state.restart_backoff_remaining_secs(now) {
+        if remaining > 0 {
+            return GatewayWatchdogDecision {
+                action: GatewayWatchdogAction::WaitForBackoff,
+                alert_level: None,
+                message: format!(
+                    "Gateway service restart is waiting for backoff ({remaining}s remaining)."
+                ),
+                remediation: None,
+            };
+        }
+    }
+
+    GatewayWatchdogDecision {
+        action: GatewayWatchdogAction::RestartGateway,
+        alert_level: Some("warn".to_string()),
+        message: "Gateway service is installed but is not running.".to_string(),
+        remediation: Some(
+            "Forge will try to restart the Gateway service automatically.".to_string(),
+        ),
+    }
+}
+
+fn probe_gateway_service() -> GatewayServiceProbe {
+    if !cfg!(target_os = "macos") {
+        return GatewayServiceProbe {
+            supported: false,
+            installed: false,
+            running: false,
+            message: "Gateway service management is only supported on macOS.".to_string(),
+        };
+    }
+
+    let plist_path = crate::service::launchd::plist_path();
+    let installed = plist_path.exists();
+    let message = crate::service::launchd::status()
+        .unwrap_or_else(|error| format!("Gateway service status unavailable: {error}"));
+    let running = message.contains(" is running.");
+
+    GatewayServiceProbe {
+        supported: true,
+        installed,
+        running,
+        message,
+    }
+}
+
+fn gateway_watchdog_alert(
+    level: impl Into<String>,
+    message: impl Into<String>,
+    remediation: Option<String>,
+) -> StreamEvent {
+    StreamEvent::HealthAlert {
+        session_id: RUNTIME_HEALTH_SESSION_ID.to_string(),
+        alert_id: "gateway-service-watchdog".to_string(),
+        level: level.into(),
+        title: "Gateway service watchdog".to_string(),
+        message: message.into(),
+        remediation,
+    }
+}
+
+/// Spawn the gateway service watchdog background task.
+///
+/// The task is conservative: it only attempts automatic restart when the
+/// platform supports service management, the launchd plist is installed, and
+/// the service is not running. Failed restart attempts use exponential backoff.
+pub fn spawn_gateway_watchdog(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut state = GatewayWatchdogState::default();
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(GATEWAY_WATCHDOG_CHECK_INTERVAL_SECS)).await;
+
+            let now = Instant::now();
+            let decision = evaluate_gateway_watchdog(probe_gateway_service(), &state, now);
+
+            match decision.action {
+                GatewayWatchdogAction::Observe => {
+                    state.record_restart_success();
+                }
+                GatewayWatchdogAction::AlertOnly => {
+                    if let Some(level) = decision.alert_level {
+                        crate::transcript::emit_stream_event(
+                            &app_handle,
+                            gateway_watchdog_alert(level, decision.message, decision.remediation),
+                        );
+                    }
+                }
+                GatewayWatchdogAction::WaitForBackoff => {}
+                GatewayWatchdogAction::RestartGateway => {
+                    let result = crate::diagnostics::repair::run_repair("restart_gateway");
+                    if result.success {
+                        state.record_restart_success();
+                        crate::transcript::emit_stream_event(
+                            &app_handle,
+                            gateway_watchdog_alert(
+                                "info",
+                                "Gateway service was restarted automatically.",
+                                Some(result.message),
+                            ),
+                        );
+                    } else {
+                        state.record_restart_failure(now);
+                        crate::transcript::emit_stream_event(
+                            &app_handle,
+                            gateway_watchdog_alert(
+                                decision.alert_level.unwrap_or_else(|| "warn".to_string()),
+                                format!(
+                                    "{} Automatic restart failed: {}",
+                                    decision.message, result.message
+                                ),
+                                decision.remediation,
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
 // ── Session event tracker ────────────────────────────────────────────────
 
 /// Tracks the latest event timestamp per session, keyed by session_id.
@@ -290,5 +517,50 @@ mod tests {
 
         // The recorded event should be very recent
         assert!(last_event.elapsed().as_secs() < 5);
+    }
+
+    #[test]
+    fn gateway_watchdog_restarts_installed_stopped_service() {
+        let now = Instant::now();
+        let state = GatewayWatchdogState::default();
+        let probe = GatewayServiceProbe {
+            supported: true,
+            installed: true,
+            running: false,
+            message: "Gateway service is installed but not running.".into(),
+        };
+
+        let decision = evaluate_gateway_watchdog(probe, &state, now);
+
+        assert_eq!(decision.action, GatewayWatchdogAction::RestartGateway);
+        assert_eq!(decision.alert_level.as_deref(), Some("warn"));
+        assert!(decision.message.contains("installed but is not running"));
+    }
+
+    #[test]
+    fn gateway_restart_backoff_is_exponential_and_capped() {
+        assert_eq!(gateway_restart_backoff_secs(0), 5);
+        assert_eq!(gateway_restart_backoff_secs(1), 10);
+        assert_eq!(gateway_restart_backoff_secs(2), 20);
+        assert_eq!(gateway_restart_backoff_secs(4), 80);
+        assert_eq!(gateway_restart_backoff_secs(10), 300);
+    }
+
+    #[test]
+    fn gateway_watchdog_waits_for_backoff_after_failure() {
+        let now = Instant::now();
+        let mut state = GatewayWatchdogState::default();
+        state.record_restart_failure(now);
+        let probe = GatewayServiceProbe {
+            supported: true,
+            installed: true,
+            running: false,
+            message: "Gateway service is installed but not running.".into(),
+        };
+
+        let decision = evaluate_gateway_watchdog(probe, &state, now + Duration::from_secs(4));
+
+        assert_eq!(decision.action, GatewayWatchdogAction::WaitForBackoff);
+        assert_eq!(decision.alert_level, None);
     }
 }

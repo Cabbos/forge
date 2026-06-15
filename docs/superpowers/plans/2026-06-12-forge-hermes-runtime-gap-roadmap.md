@@ -160,9 +160,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [x] 2.4 Add session watchdog: if a session has produced no event for N minutes, emit health alert and offer recovery.
   - Files: `diagnostics/watchdog.rs` (session event tracker, background watchdog task, stale detection with cooldown), `transcript.rs` (wire recording), `lib.rs` (spawn watchdog).
   - Completed 2026-06-12: watchdog monitors live (Running/Resuming) sessions every 60s, emits HealthAlert via emit_stream_event with stable alert_id when no event for 5min, per-session cooldown prevents spam. 9 unit tests cover tracker, stale detection, cooldown, and health alert shape.
-- [ ] 2.5 Add gateway watchdog: if the gateway process exits unexpectedly, restart with exponential backoff and surface status.
-  - **DEFERRED:** No gateway runtime process/service currently exists in the Forge codebase. The `gateway` keyword only appears in `protocol/events.rs` as a HealthAlert description example. A real gateway watchdog requires a gateway binary (Phase 6.1), service management (Phase 6.2), and OS-level launchd/systemd integration (Phase 6.3–6.4). This item will be implemented when Phase 6 gateway infrastructure is built.
-  - Files: `diagnostics/watchdog.rs` (placeholder module exists; no gateway-specific code written).
+- [x] 2.5 Add gateway watchdog: if the gateway process exits unexpectedly, restart with exponential backoff and surface status.
+  - **Completed 2026-06-15:** Added a gateway service watchdog in `diagnostics/watchdog.rs` and started it from `lib.rs` alongside the session watchdog. It probes the launchd gateway service every 30s, only auto-restarts when macOS service management is supported and the plist is installed but the service is not running, emits global `HealthAlert` updates, and applies exponential restart backoff capped at 300s after repair failures. Unit tests cover stopped-service restart decisions, backoff growth/capping, and waiting during backoff.
+  - Files: `diagnostics/watchdog.rs`, `lib.rs`.
 - [x] 2.6 Build in-app Diagnostics panel (Settings > Diagnostics) showing checks, logs, and repair actions.
   - Files: `src/components/settings/DiagnosticsPanel.tsx`, `src/hooks/queries/useDiagnosticsReportQuery.ts`, `src/hooks/queries/queryKeys.ts` (diagnosticsReport key), `SettingsCenterShell.tsx` (added diagnostics section with Stethoscope icon).
   - Completed 2026-06-12: Diagnostics section in Settings left-nav; panel shows overall status (ok/warnings/failures), generated timestamp, pass/warn/fail counts, ordered check list with id/label/status/message/remediation, refresh button with lucide RefreshCw icon, loading/error/empty states.
@@ -179,7 +179,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 **Acceptance gate:**
 
 - `forge doctor` returns a structured report.
-- Simulated gateway death is recovered within 30 seconds. **(DEFERRED — no gateway runtime exists; see 2.5)**
+- Simulated gateway death is recovered within 30 seconds. **(Implemented for installed launchd service — gateway watchdog probes every 30s and runs `restart_gateway` with exponential backoff on repeated failures)**
 - Simulated hung session triggers a health alert. **(Implemented — watchdog emits HealthAlert after 5min of no events)**
 
 **Verification plan:**
@@ -705,6 +705,7 @@ Codex must stop and ask the user if any of the following occur:
 - ✅ Phase 6.5: Autostart toggle in Settings > General with install/running status badges
 - ✅ Phase 5.6: Gateway client library + session tracking + `forge_session` binary + CLI `forge session list` command
 - ✅ Phase 5.7: `forge_trigger` binary + `forge trigger enqueue/list/runs/status` CLI wrapper
+- ✅ Phase 2.5: Gateway service watchdog — 30s probe, automatic restart repair, global HealthAlert, exponential backoff
 
 **Test totals:**
 - Rust: 1057 tests pass, 0 fail
@@ -734,7 +735,7 @@ Codex must stop and ask the user if any of the following occur:
 **Deferred for future:**
 - Phase 6.6: Dashboard web UI
 - Phase 6.7: Update repair
-- Phase 6.8: Self-healing actions
+- Phase 6.8: Update-aware self-healing verification and deeper repair flows
 - Phase 5.7: Messaging trigger full dashboard listing/replay polish
 - Phase 7: Full product polish + acceptance suite
 

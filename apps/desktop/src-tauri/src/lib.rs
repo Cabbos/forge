@@ -72,6 +72,7 @@ pub fn run() {
             });
             // Phase 2.4: spawn the session watchdog background task.
             diagnostics::watchdog::spawn_session_watchdog(app.handle().clone());
+            diagnostics::watchdog::spawn_gateway_watchdog(app.handle().clone());
             crate::app_log!("INFO", "DeepSeek Agent started");
             Ok(())
         })
