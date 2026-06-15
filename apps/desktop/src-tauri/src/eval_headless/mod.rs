@@ -11,6 +11,7 @@ use std::time::Instant;
 
 use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::time::now_ms;
+use crate::agent::turn_state::AgentTurnState;
 use crate::continuity::ContinuityService;
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::settings;
@@ -242,6 +243,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     let (changed_files, file_diffs) =
         snapshot::diff_workspace_snapshots(&before_snapshot, &after_snapshot);
     let final_answer = resolve::final_answer_from_events(&raw_events);
+    let snapshot_error = save_headless_session_snapshot(&session, latest_turn.clone()).err();
 
     let mut payload = trace::build_trace_payload(types::TracePayloadInput {
         task_id,
@@ -260,6 +262,14 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         validation_attempts,
     });
     trace::insert_agent_identity(&mut payload, &agent_provider, &agent_model);
+    if let Some(error) = snapshot_error {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "headless_snapshot_error".to_string(),
+                serde_json::Value::String(error),
+            );
+        }
+    }
 
     if let Some(ref error) = agent_error {
         let (error_code, failure_category, failure_reason) = if error == "timeout" {
@@ -285,6 +295,17 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     }
 
     Ok(payload)
+}
+
+fn save_headless_session_snapshot(
+    session: &crate::agent::session::AgentSession,
+    latest_turn: Option<AgentTurnState>,
+) -> Result<(), String> {
+    let mut snapshot = session.snapshot();
+    if let Some(latest_turn) = latest_turn {
+        snapshot = snapshot.with_latest_turn(latest_turn);
+    }
+    crate::agent::snapshot::save_session_snapshot(&snapshot)
 }
 
 #[cfg(test)]
@@ -1006,6 +1027,45 @@ mod tests {
             "watchdog should have killed session with zero timeout"
         );
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn save_headless_session_snapshot_persists_gateway_attach_snapshot() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        std::env::set_var("HOME", home.path());
+        let workspace = tempfile::tempdir().expect("workspace");
+        let pending_confirms: types::PendingConfirms =
+            Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let (session, _missing_key) = crate::ipc::session_builder::build_agent_session(
+            crate::ipc::session_builder::BuildAgentSessionRequest {
+                session_id: "headless-snapshot-session".to_string(),
+                provider: "deepseek".to_string(),
+                model: "deepseek-v4-flash".to_string(),
+                api_key: "fake-key-for-test",
+                api_base: None,
+                working_dir: workspace.path(),
+                pending_confirms,
+                existing_context_window_tokens: None,
+            },
+        )
+        .await
+        .expect("session should build");
+
+        super::save_headless_session_snapshot(&session, None).expect("save headless snapshot");
+
+        let snapshot = crate::agent::snapshot::load_session_snapshot("headless-snapshot-session")
+            .expect("snapshot should be readable");
+        assert_eq!(snapshot.session_id, "headless-snapshot-session");
+        assert_eq!(snapshot.provider, "deepseek");
+        assert_eq!(snapshot.model, "deepseek-v4-flash");
+        assert_eq!(
+            snapshot.working_dir,
+            workspace.path().to_string_lossy().to_string()
+        );
+
+        restore_env("HOME", previous_home);
     }
 
     fn agent_turn_event(session_id: &str, status: AgentTurnStatus) -> StreamEvent {
