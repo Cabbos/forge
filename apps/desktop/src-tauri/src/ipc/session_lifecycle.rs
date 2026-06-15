@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::adapters::build_adapter;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
@@ -20,6 +21,9 @@ use crate::settings;
 use crate::state::AppState;
 use crate::workflow::WorkflowState;
 use crate::workspace_safety::resolve_workspace_path as resolve_safe_workspace_path;
+use tauri::Manager;
+
+const GATEWAY_SESSION_HEARTBEAT_INTERVAL_SECS: u64 = 60;
 
 pub(crate) fn emit_missing_api_key_notice(
     app_handle: &tauri::AppHandle,
@@ -108,6 +112,8 @@ pub(crate) fn gateway_session_info_for_session(
         model: session.model_id.clone(),
         workspace_path: snapshot.working_dir,
         created_at_ms: snapshot.created_at_ms,
+        owner_pid: Some(std::process::id()),
+        last_seen_at_ms: Some(now_millis()),
         restored_from_registry: false,
     }
 }
@@ -143,6 +149,43 @@ pub(crate) async fn gateway_session_ids_for_shutdown(state: &Arc<AppState>) -> V
     ids
 }
 
+pub(crate) async fn gateway_session_infos_for_state(
+    state: &Arc<AppState>,
+) -> Vec<GatewaySessionInfo> {
+    let sessions = state.sessions.read().await;
+    let mut infos = sessions
+        .iter()
+        .map(|(session_id, session)| gateway_session_info_for_session(session_id, session))
+        .collect::<Vec<_>>();
+    infos.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+    infos
+}
+
+pub(crate) async fn heartbeat_gateway_sessions_once(state: &Arc<AppState>) {
+    for info in gateway_session_infos_for_state(state).await {
+        let session_id = info.session_id.clone();
+        if let Err(error) = crate::gateway::client::try_register_session(info).await {
+            crate::app_log!(
+                "WARN",
+                "[gateway] failed to heartbeat session '{session_id}': {error}"
+            );
+        }
+    }
+}
+
+pub(crate) fn spawn_gateway_session_heartbeat(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(GATEWAY_SESSION_HEARTBEAT_INTERVAL_SECS)).await;
+            let Some(state) = app_handle.try_state::<Arc<AppState>>() else {
+                break;
+            };
+            let state = state.inner().clone();
+            heartbeat_gateway_sessions_once(&state).await;
+        }
+    });
+}
+
 pub(crate) async fn unregister_all_gateway_sessions_best_effort(state: &Arc<AppState>) {
     let session_ids = gateway_session_ids_for_shutdown(state).await;
     if session_ids.is_empty() {
@@ -156,6 +199,13 @@ pub(crate) async fn unregister_all_gateway_sessions_best_effort(state: &Arc<AppS
     for session_id in session_ids {
         unregister_gateway_session_best_effort(&session_id).await;
     }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 pub(crate) struct RestoredSession {

@@ -4,7 +4,8 @@
 
 use forge::gateway::client::GatewayClient;
 use forge::gateway::protocol::GatewayRequest;
-use forge::gateway::server::default_socket_path;
+use forge::gateway::server::{default_socket_path, SESSION_STALE_AFTER_MS};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() {
@@ -76,14 +77,31 @@ fn render_session_lines(sessions: &[serde_json::Value]) -> Vec<String> {
         let provider = session["provider"].as_str().unwrap_or("?");
         let model = session["model"].as_str().unwrap_or("?");
         let workspace = session["workspace_path"].as_str().unwrap_or("?");
-        let state = if session["restored_from_registry"].as_bool().unwrap_or(false) {
-            "restored"
-        } else {
-            "active"
-        };
+        let state = session_state_label(session);
         lines.push(format!("  {id}  {state}  {provider}/{model}  {workspace}"));
     }
     lines
+}
+
+fn session_state_label(session: &serde_json::Value) -> &'static str {
+    if session["restored_from_registry"].as_bool().unwrap_or(false) {
+        return "restored";
+    }
+
+    if let Some(last_seen_at_ms) = session["last_seen_at_ms"].as_u64() {
+        if now_millis().saturating_sub(last_seen_at_ms) > SESSION_STALE_AFTER_MS {
+            return "stale";
+        }
+    }
+
+    "active"
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -115,5 +133,21 @@ mod tests {
             lines[2],
             "  session-restored  restored  codex/gpt-5  /repo/restored"
         );
+    }
+
+    #[test]
+    fn render_session_lines_marks_stale_live_sessions() {
+        let sessions = vec![serde_json::json!({
+            "session_id": "session-stale",
+            "provider": "claude",
+            "model": "opus",
+            "workspace_path": "/repo/stale",
+            "last_seen_at_ms": 1,
+            "restored_from_registry": false
+        })];
+
+        let lines = super::render_session_lines(&sessions);
+
+        assert_eq!(lines[1], "  session-stale  stale  claude/opus  /repo/stale");
     }
 }

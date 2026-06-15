@@ -14,7 +14,7 @@ use crate::agent::snapshot::{
 use crate::harness::Harness;
 use crate::ipc::session_lifecycle::{
     choose_startup_snapshot, gateway_session_ids_for_shutdown, gateway_session_info_for_session,
-    list_session_infos_for_state, restore_session_from_snapshot,
+    gateway_session_infos_for_state, list_session_infos_for_state, restore_session_from_snapshot,
     session_snapshot_with_workflow_state,
 };
 use crate::protocol::events::DeliverySummary;
@@ -184,6 +184,8 @@ async fn gateway_session_info_for_session_uses_live_session_metadata() {
     assert_eq!(info.model, "deepseek-chat");
     assert_eq!(info.workspace_path, workspace.to_string_lossy());
     assert!(info.created_at_ms > 0);
+    assert_eq!(info.owner_pid, Some(std::process::id()));
+    assert!(info.last_seen_at_ms.is_some_and(|seen_at| seen_at > 0));
     assert!(
         !info.restored_from_registry,
         "desktop re-registration should mark the gateway entry as live"
@@ -215,6 +217,39 @@ async fn gateway_session_ids_for_shutdown_returns_sorted_live_session_ids() {
     let ids = gateway_session_ids_for_shutdown(&state).await;
 
     assert_eq!(ids, vec!["session-a".to_string(), "session-b".to_string()]);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn gateway_session_infos_for_state_returns_sorted_live_payloads() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-gateway-heartbeat-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+
+    state
+        .register_session(
+            "session-b".to_string(),
+            test_agent_session("session-b", &workspace),
+        )
+        .await;
+    state
+        .register_session(
+            "session-a".to_string(),
+            test_agent_session("session-a", &workspace),
+        )
+        .await;
+
+    let infos = gateway_session_infos_for_state(&state).await;
+
+    assert_eq!(infos.len(), 2);
+    assert_eq!(infos[0].session_id, "session-a");
+    assert_eq!(infos[1].session_id, "session-b");
+    assert!(infos
+        .iter()
+        .all(|info| info.owner_pid == Some(std::process::id())));
+    assert!(infos.iter().all(|info| info.last_seen_at_ms.is_some()));
 
     let _ = std::fs::remove_dir_all(workspace);
 }

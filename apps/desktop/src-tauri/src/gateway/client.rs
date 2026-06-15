@@ -176,6 +176,8 @@ mod tests {
             model: "gpt-5".into(),
             workspace_path: "/repo".into(),
             created_at_ms: 1234,
+            owner_pid: Some(42),
+            last_seen_at_ms: Some(5678),
             restored_from_registry: false,
         })
         .expect("request");
@@ -187,6 +189,8 @@ mod tests {
         assert_eq!(params["model"], "gpt-5");
         assert_eq!(params["workspace_path"], "/repo");
         assert_eq!(params["created_at_ms"], 1234);
+        assert_eq!(params["owner_pid"], 42);
+        assert_eq!(params["last_seen_at_ms"], 5678);
         assert_eq!(params["restored_from_registry"], false);
     }
 

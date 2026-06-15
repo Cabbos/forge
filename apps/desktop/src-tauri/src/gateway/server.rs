@@ -27,6 +27,10 @@ pub struct GatewaySessionInfo {
     pub model: String,
     pub workspace_path: String,
     pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_at_ms: Option<u64>,
     #[serde(default)]
     pub restored_from_registry: bool,
 }
@@ -102,8 +106,17 @@ impl GatewayState {
     }
 
     pub fn active_sessions(&self) -> usize {
-        self.active_sessions
-            .load(std::sync::atomic::Ordering::Relaxed)
+        match self.sessions.lock() {
+            Ok(sessions) => {
+                let count = active_session_count(&sessions);
+                self.active_sessions
+                    .store(count, std::sync::atomic::Ordering::Relaxed);
+                count
+            }
+            Err(_) => self
+                .active_sessions
+                .load(std::sync::atomic::Ordering::Relaxed),
+        }
     }
 
     /// Register a new session (called by desktop app / CLI when a session is created).
@@ -198,6 +211,7 @@ impl GatewayState {
 pub const WEBHOOK_LISTENER_TASK: &str = "webhook_listener";
 pub const TRIGGER_RUNNER_TASK: &str = "trigger_runner";
 pub const SCHEDULER_TICK_TASK: &str = "scheduler_tick";
+pub const SESSION_STALE_AFTER_MS: u64 = 5 * 60 * 1000;
 
 pub fn default_runtime_task_statuses() -> Vec<GatewayRuntimeTaskStatus> {
     ordered_runtime_tasks(default_runtime_task_map())
@@ -674,10 +688,26 @@ fn sorted_sessions(
 }
 
 fn active_session_count(sessions: &HashMap<String, GatewaySessionInfo>) -> usize {
+    active_session_count_at(sessions, now_millis())
+}
+
+fn active_session_count_at(sessions: &HashMap<String, GatewaySessionInfo>, now_ms: u64) -> usize {
     sessions
         .values()
-        .filter(|session| !session.restored_from_registry)
+        .filter(|session| session_counts_as_active_at(session, now_ms))
         .count()
+}
+
+fn session_counts_as_active_at(session: &GatewaySessionInfo, now_ms: u64) -> bool {
+    if session.restored_from_registry {
+        return false;
+    }
+
+    let Some(last_seen_at_ms) = session.last_seen_at_ms else {
+        return true;
+    };
+
+    now_ms.saturating_sub(last_seen_at_ms) <= SESSION_STALE_AFTER_MS
 }
 
 fn new_trigger_id() -> String {
@@ -1302,6 +1332,26 @@ mod tests {
     }
 
     #[test]
+    fn active_session_count_excludes_stale_live_sessions() {
+        let now_ms = SESSION_STALE_AFTER_MS + 10;
+        let mut fresh = test_session("fresh-session", "claude");
+        fresh.last_seen_at_ms = Some(now_ms);
+        let mut stale = test_session("stale-session", "codex");
+        stale.last_seen_at_ms = Some(1);
+        let mut restored = test_session("restored-session", "openai");
+        restored.last_seen_at_ms = Some(now_ms);
+        restored.restored_from_registry = true;
+
+        let sessions = HashMap::from([
+            (fresh.session_id.clone(), fresh),
+            (stale.session_id.clone(), stale),
+            (restored.session_id.clone(), restored),
+        ]);
+
+        assert_eq!(active_session_count_at(&sessions, now_ms), 1);
+    }
+
+    #[test]
     fn gateway_session_registry_restores_sessions_without_marking_them_active() {
         let dir = tempfile::tempdir().expect("tempdir");
         let registry_path = dir.path().join("gateway-sessions.json");
@@ -1353,6 +1403,8 @@ mod tests {
             model: "test-model".to_string(),
             workspace_path: "/tmp/forge-workspace".to_string(),
             created_at_ms: 1,
+            owner_pid: Some(42),
+            last_seen_at_ms: Some(now_millis()),
             restored_from_registry: false,
         }
     }
