@@ -74,6 +74,24 @@ pub fn run() {
             // Phase 2.4: spawn the session watchdog background task.
             diagnostics::watchdog::spawn_session_watchdog(app.handle().clone());
             diagnostics::watchdog::spawn_gateway_watchdog(app.handle().clone());
+            std::thread::spawn(|| {
+                match diagnostics::update_repair::execute_update_repair_for_current_version() {
+                    Ok(run) if run.executed => crate::app_log!(
+                        "INFO",
+                        "Update repair checked version {}: success={}, needed={}, actions={}",
+                        run.app_version,
+                        run.repair_run.success,
+                        run.repair_run.plan.needed,
+                        run.repair_run.results.len()
+                    ),
+                    Ok(run) => crate::app_log!(
+                        "INFO",
+                        "Update repair already checked for version {}",
+                        run.app_version
+                    ),
+                    Err(error) => crate::app_log!("WARN", "Update repair check failed: {error}"),
+                }
+            });
             ipc::session_lifecycle::spawn_gateway_session_heartbeat(app.handle().clone());
             ipc::session_input_inbox::spawn_gateway_session_input_poller(app.handle().clone());
             crate::app_log!("INFO", "DeepSeek Agent started");

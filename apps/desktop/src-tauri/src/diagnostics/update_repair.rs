@@ -4,8 +4,11 @@
 //! planner decides which diagnostics repair actions are safe to run, while the
 //! executor can be wired to the real repair registry or a test runner.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::diagnostics::repair::{run_repair, RepairResult};
 use crate::diagnostics::{CheckStatus, DiagnosticsReport};
@@ -34,6 +37,26 @@ pub struct UpdateRepairRun {
     pub success: bool,
     pub plan: UpdateRepairPlan,
     pub results: Vec<RepairResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateRepairLifecycleRun {
+    pub app_version: String,
+    pub executed: bool,
+    pub marker_path: String,
+    pub repair_run: UpdateRepairRun,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRepairVersionMarker {
+    app_version: String,
+    checked_at_ms: u64,
+    success: bool,
+    needed: bool,
+    action_count: usize,
+    manual_blockers: Vec<String>,
 }
 
 pub fn plan_update_repair(report: &DiagnosticsReport) -> UpdateRepairPlan {
@@ -93,6 +116,66 @@ pub fn execute_update_repair(report: &DiagnosticsReport) -> UpdateRepairRun {
     execute_update_repair_plan_with_runner(&plan, run_repair)
 }
 
+pub fn execute_update_repair_for_current_version() -> Result<UpdateRepairLifecycleRun, String> {
+    execute_update_repair_for_version_at(
+        &forge_data_dir(),
+        env!("CARGO_PKG_VERSION"),
+        crate::diagnostics::run_diagnostics_basic,
+        run_repair,
+    )
+}
+
+fn execute_update_repair_for_version_at(
+    root: &Path,
+    app_version: &str,
+    mut diagnostics_runner: impl FnMut() -> DiagnosticsReport,
+    runner: impl FnMut(&str) -> RepairResult,
+) -> Result<UpdateRepairLifecycleRun, String> {
+    let marker_path = update_repair_marker_path(root);
+    match read_update_repair_marker(root) {
+        Ok(Some(marker)) if marker.app_version == app_version => {
+            return Ok(UpdateRepairLifecycleRun {
+                app_version: app_version.to_string(),
+                executed: false,
+                marker_path: marker_path.display().to_string(),
+                repair_run: no_update_repair_needed(),
+            });
+        }
+        Ok(None) => {
+            write_update_repair_marker(root, &baseline_update_repair_marker(app_version))?;
+            return Ok(UpdateRepairLifecycleRun {
+                app_version: app_version.to_string(),
+                executed: false,
+                marker_path: marker_path.display().to_string(),
+                repair_run: no_update_repair_needed(),
+            });
+        }
+        Ok(Some(_)) | Err(_) => {}
+    }
+
+    let report = diagnostics_runner();
+    let plan = plan_update_repair(&report);
+    let repair_run = execute_update_repair_plan_with_runner(&plan, runner);
+    write_update_repair_marker(
+        root,
+        &UpdateRepairVersionMarker {
+            app_version: app_version.to_string(),
+            checked_at_ms: now_ms(),
+            success: repair_run.success,
+            needed: repair_run.plan.needed,
+            action_count: repair_run.results.len(),
+            manual_blockers: repair_run.plan.manual_blockers.clone(),
+        },
+    )?;
+
+    Ok(UpdateRepairLifecycleRun {
+        app_version: app_version.to_string(),
+        executed: true,
+        marker_path: marker_path.display().to_string(),
+        repair_run,
+    })
+}
+
 fn execute_update_repair_plan_with_runner(
     plan: &UpdateRepairPlan,
     mut runner: impl FnMut(&str) -> RepairResult,
@@ -112,11 +195,86 @@ fn execute_update_repair_plan_with_runner(
     }
 }
 
+fn baseline_update_repair_marker(app_version: &str) -> UpdateRepairVersionMarker {
+    UpdateRepairVersionMarker {
+        app_version: app_version.to_string(),
+        checked_at_ms: now_ms(),
+        success: true,
+        needed: false,
+        action_count: 0,
+        manual_blockers: Vec::new(),
+    }
+}
+
+fn no_update_repair_needed() -> UpdateRepairRun {
+    UpdateRepairRun {
+        success: true,
+        plan: UpdateRepairPlan {
+            needed: false,
+            reason: "Update repair already checked for this version.".to_string(),
+            actions: Vec::new(),
+            manual_blockers: Vec::new(),
+        },
+        results: Vec::new(),
+    }
+}
+
+fn read_update_repair_marker(root: &Path) -> Result<Option<UpdateRepairVersionMarker>, String> {
+    let path = update_repair_marker_path(root);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let json =
+        fs::read_to_string(&path).map_err(|error| format!("read update repair marker: {error}"))?;
+    let marker = serde_json::from_str(&json)
+        .map_err(|error| format!("parse update repair marker: {error}"))?;
+    Ok(Some(marker))
+}
+
+fn write_update_repair_marker(
+    root: &Path,
+    marker: &UpdateRepairVersionMarker,
+) -> Result<(), String> {
+    let path = update_repair_marker_path(root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create update repair marker dir: {error}"))?;
+    }
+    let json = serde_json::to_string_pretty(marker)
+        .map_err(|error| format!("serialize update repair marker: {error}"))?;
+    fs::write(&path, json).map_err(|error| format!("write update repair marker: {error}"))
+}
+
+fn update_repair_marker_path(root: &Path) -> PathBuf {
+    root.join("update-repair-state.json")
+}
+
+fn forge_data_dir() -> PathBuf {
+    home_dir().join(".forge")
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::diagnostics::repair::RepairResult;
     use crate::diagnostics::{CheckStatus, DiagnosticCheck, DiagnosticsReport};
+    use std::cell::{Cell, RefCell};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn report_with(checks: Vec<DiagnosticCheck>) -> DiagnosticsReport {
         DiagnosticsReport {
@@ -124,6 +282,16 @@ mod tests {
             generated_at_ms: 42,
             checks,
         }
+    }
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "forge-update-repair-{name}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
     }
 
     #[test]
@@ -291,5 +459,95 @@ mod tests {
 
         assert!(!run.success);
         assert_eq!(run.results.len(), 1);
+    }
+
+    #[test]
+    fn update_repair_for_version_baselines_then_runs_once_on_version_change() {
+        let root = temp_root("runs-once");
+        let diagnostics_calls = Cell::new(0);
+        let repair_calls = RefCell::new(Vec::new());
+
+        let first = execute_update_repair_for_version_at(
+            &root,
+            "1.0.0",
+            || {
+                diagnostics_calls.set(diagnostics_calls.get() + 1);
+                report_with(vec![DiagnosticCheck::warn(
+                    "gateway_service",
+                    "Gateway service",
+                    "Gateway stopped.",
+                )
+                .with_repair_action_id("restart_gateway")])
+            },
+            |action_id| {
+                repair_calls.borrow_mut().push(action_id.to_string());
+                RepairResult {
+                    action_id: action_id.to_string(),
+                    success: true,
+                    message: "ok".into(),
+                    verification: None,
+                }
+            },
+        )
+        .expect("first update repair");
+
+        assert!(!first.executed);
+        assert!(first.repair_run.success);
+        assert_eq!(diagnostics_calls.get(), 0);
+        assert!(repair_calls.borrow().is_empty());
+
+        let second = execute_update_repair_for_version_at(
+            &root,
+            "1.0.0",
+            || {
+                diagnostics_calls.set(diagnostics_calls.get() + 1);
+                report_with(Vec::new())
+            },
+            |action_id| {
+                repair_calls.borrow_mut().push(action_id.to_string());
+                RepairResult {
+                    action_id: action_id.to_string(),
+                    success: true,
+                    message: "unexpected".into(),
+                    verification: None,
+                }
+            },
+        )
+        .expect("second update repair");
+
+        assert!(!second.executed);
+        assert_eq!(diagnostics_calls.get(), 0);
+        assert!(repair_calls.borrow().is_empty());
+
+        let third = execute_update_repair_for_version_at(
+            &root,
+            "1.1.0",
+            || {
+                diagnostics_calls.set(diagnostics_calls.get() + 1);
+                report_with(vec![DiagnosticCheck::warn(
+                    "gateway_service",
+                    "Gateway service",
+                    "Gateway stopped.",
+                )
+                .with_repair_action_id("restart_gateway")])
+            },
+            |action_id| {
+                repair_calls.borrow_mut().push(action_id.to_string());
+                RepairResult {
+                    action_id: action_id.to_string(),
+                    success: true,
+                    message: "ok".into(),
+                    verification: None,
+                }
+            },
+        )
+        .expect("third update repair");
+
+        assert!(third.executed);
+        assert!(third.repair_run.success);
+        assert_eq!(diagnostics_calls.get(), 1);
+        assert_eq!(repair_calls.borrow().as_slice(), ["restart_gateway"]);
+
+        let _ = fs::remove_dir_all(root);
     }
 }
