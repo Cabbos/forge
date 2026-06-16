@@ -1,4 +1,6 @@
+use crate::loop_runtime::budget::BudgetSnapshot;
 use crate::loop_runtime::gates::{HumanGateDecision, HumanGateRecord, HumanGateType};
+use crate::loop_runtime::policy::LoopActionIntent;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,7 +15,13 @@ pub struct LoopEventEnvelope {
     pub event: LoopRuntimeEvent,
     pub actor: LoopActor,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub causation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
     pub created_at_ms: u64,
@@ -32,7 +40,10 @@ impl LoopEventEnvelope {
             sequence: 0,
             event: LoopRuntimeEvent::TaskCreated { task },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id,
+            causation_id: None,
             idempotency_key,
             created_at_ms: now_millis(),
         }
@@ -55,7 +66,10 @@ impl LoopEventEnvelope {
                 canceled_at_ms: now_millis(),
             },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id,
+            causation_id: None,
             idempotency_key,
             created_at_ms: now_millis(),
         }
@@ -77,7 +91,10 @@ impl LoopEventEnvelope {
             sequence: 0,
             event: LoopRuntimeEvent::HumanGateRequested { gate },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id,
+            causation_id: None,
             idempotency_key,
             created_at_ms: now_millis(),
         }
@@ -101,7 +118,10 @@ impl LoopEventEnvelope {
                 decision,
             },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id,
+            causation_id: None,
             idempotency_key,
             created_at_ms: now_millis(),
         }
@@ -120,7 +140,10 @@ impl LoopEventEnvelope {
             sequence: 0,
             event: LoopRuntimeEvent::EvidenceRecorded { task_id, evidence },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id,
+            causation_id: None,
             idempotency_key,
             created_at_ms: now_millis(),
         }
@@ -142,7 +165,10 @@ impl LoopEventEnvelope {
                 task: LoopTaskRecord::new_for_test(task_id, goal),
             },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id: None,
+            causation_id: None,
             idempotency_key: None,
             created_at_ms: 1,
         }
@@ -161,7 +187,10 @@ impl LoopEventEnvelope {
                 canceled_at_ms: 2,
             },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id: None,
+            causation_id: None,
             idempotency_key: None,
             created_at_ms: 2,
         }
@@ -190,7 +219,10 @@ impl LoopEventEnvelope {
                 },
             },
             actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
             correlation_id: None,
+            causation_id: None,
             idempotency_key: None,
             created_at_ms: 2,
         }
@@ -202,6 +234,19 @@ impl LoopEventEnvelope {
 pub enum LoopRuntimeEvent {
     TaskCreated {
         task: LoopTaskRecord,
+    },
+    TaskStarted {
+        task_id: String,
+        lease: LoopTaskLease,
+    },
+    TaskWaitingForInput {
+        task_id: String,
+        reason: String,
+        waiting_at_ms: u64,
+    },
+    TaskInterrupted {
+        task_id: String,
+        reason: String,
     },
     TaskCanceled {
         task_id: String,
@@ -221,16 +266,34 @@ pub enum LoopRuntimeEvent {
         task_id: String,
         evidence: EvidenceRecord,
     },
+    PolicyDecisionRecorded {
+        task_id: String,
+        decision: PolicyDecisionRecord,
+    },
+    BudgetSnapshotRecorded {
+        task_id: String,
+        snapshot: BudgetSnapshot,
+    },
+    CompletionEvaluated {
+        task_id: String,
+        result: LoopCompletionResult,
+    },
 }
 
 impl LoopRuntimeEvent {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::TaskCreated { .. } => "task_created",
+            Self::TaskStarted { .. } => "task_started",
+            Self::TaskWaitingForInput { .. } => "task_waiting_for_input",
+            Self::TaskInterrupted { .. } => "task_interrupted",
             Self::TaskCanceled { .. } => "task_canceled",
             Self::HumanGateRequested { .. } => "human_gate_requested",
             Self::HumanGateResolved { .. } => "human_gate_resolved",
             Self::EvidenceRecorded { .. } => "evidence_recorded",
+            Self::PolicyDecisionRecorded { .. } => "policy_decision_recorded",
+            Self::BudgetSnapshotRecorded { .. } => "budget_snapshot_recorded",
+            Self::CompletionEvaluated { .. } => "completion_evaluated",
         }
     }
 }
@@ -268,6 +331,10 @@ pub struct LoopTaskRecord {
     pub open_gates: Vec<HumanGateRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<EvidenceRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_decisions: Vec<PolicyDecisionRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_budget_snapshot: Option<BudgetSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_event_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -304,6 +371,8 @@ impl LoopTaskRecord {
             lease: None,
             open_gates: Vec::new(),
             evidence: Vec::new(),
+            policy_decisions: Vec::new(),
+            latest_budget_snapshot: None,
             latest_event_id: None,
             outcome: None,
             completion_result: None,
@@ -328,6 +397,8 @@ impl LoopTaskRecord {
             lease: None,
             open_gates: Vec::new(),
             evidence: Vec::new(),
+            policy_decisions: Vec::new(),
+            latest_budget_snapshot: None,
             latest_event_id: None,
             outcome: None,
             completion_result: None,
@@ -347,15 +418,27 @@ pub enum LoopTaskStatus {
     Pending,
     Running,
     WaitingForReview,
+    WaitingForInput,
     Completed,
     Failed,
     Canceled,
+    Interrupted,
 }
 
 impl LoopTaskStatus {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Canceled)
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolicyDecisionRecord {
+    pub decision_id: String,
+    pub intent: LoopActionIntent,
+    pub allowed: bool,
+    pub reason: String,
+    pub actor: LoopActor,
+    pub created_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -575,4 +658,39 @@ pub fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::loop_runtime::{
+        LoopActor, LoopEventEnvelope, LoopRuntimeEvent, LoopTaskRecord, LOOP_RUNTIME_SCHEMA_VERSION,
+    };
+
+    #[test]
+    fn old_minimal_loop_event_envelope_json_without_runtime_metadata_deserializes() {
+        let json = serde_json::json!({
+            "schema_version": LOOP_RUNTIME_SCHEMA_VERSION,
+            "event_id": "evt-old",
+            "task_id": "loop-old",
+            "sequence": 1,
+            "event": {
+                "type": "task_created",
+                "task": LoopTaskRecord::new_for_test("loop-old", "old task")
+            },
+            "actor": { "kind": "gateway" },
+            "created_at_ms": 1
+        });
+
+        let envelope: LoopEventEnvelope = serde_json::from_value(json).unwrap();
+
+        assert_eq!(envelope.task_id, "loop-old");
+        assert_eq!(envelope.lease_id, None);
+        assert_eq!(envelope.attempt, None);
+        assert_eq!(envelope.causation_id, None);
+        assert!(matches!(envelope.actor, LoopActor::Gateway));
+        assert!(matches!(
+            envelope.event,
+            LoopRuntimeEvent::TaskCreated { .. }
+        ));
+    }
 }

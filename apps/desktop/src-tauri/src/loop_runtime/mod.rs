@@ -18,5 +18,6 @@ pub use projection::{LoopTaskProjection, LoopTaskProjectionStore};
 pub use types::{
     EvidenceRecord, LoopActor, LoopBudget, LoopCompletionContract, LoopCompletionResult,
     LoopCompletionStatus, LoopEventEnvelope, LoopPolicy, LoopRuntimeEvent, LoopTaskLease,
-    LoopTaskOutcome, LoopTaskOwner, LoopTaskRecord, LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
+    LoopTaskOutcome, LoopTaskOwner, LoopTaskRecord, LoopTaskStatus, PolicyDecisionRecord,
+    LOOP_RUNTIME_SCHEMA_VERSION,
 };

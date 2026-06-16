@@ -204,7 +204,10 @@ mod tests {
             actor: LoopActor::User {
                 source: "test".to_string(),
             },
+            lease_id: None,
+            attempt: None,
             correlation_id: None,
+            causation_id: None,
             idempotency_key: None,
             created_at_ms: sequence,
         }

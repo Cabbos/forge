@@ -1492,7 +1492,7 @@ git commit -m "feat(runtime): evaluate loop completion contracts"
 
 ## Task 3.5: Runtime Contract Reconciliation
 
-**Status:** Inserted on 2026-06-17 before Task 4. This task is required because Tasks 1-3 landed, but the current durable runtime contract drifted from the frozen Level 3 contract.
+**Status:** Implemented in working tree on 2026-06-17; pending review and commit gate. This task was required because Tasks 1-3 landed, but the durable runtime contract drifted from the frozen Level 3 contract.
 
 **Goal:** Reconcile the existing loop runtime ledger/projection/completion code with the minimum durable contract needed by later runner, A2A protocol, and UI work. Do not implement runner ownership, frontend protocol events, A2A stream events, or UI in this task.
 
@@ -1504,12 +1504,13 @@ git commit -m "feat(runtime): evaluate loop completion contracts"
 - Modify: `apps/desktop/src-tauri/src/loop_runtime/journal.rs`
 - Modify: `apps/desktop/src-tauri/src/loop_runtime/completion.rs`
 - Modify: `apps/desktop/src-tauri/src/loop_runtime/mod.rs`
+- Tiny compile fallout: `apps/desktop/src-tauri/src/loop_runtime/gates.rs` test helper only, to fill additive `LoopEventEnvelope` metadata fields in an existing direct struct literal.
 - Modify: `docs/superpowers/plans/2026-06-16-level-3-agent-loop-runtime.md`
 - Modify: `/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Runtime Plan.md`
 
 Do not modify `dispatch`, frontend protocol/store/UI, A2A streaming, or runner files unless a compiler error proves a tiny gateway type export is necessary. If that happens, document it in the implementation report.
 
-- [ ] **Step 3.5.1: Run impact checks before editing symbols**
+- [x] **Step 3.5.1: Run impact checks before editing symbols**
 
 Run upstream impact before changing each existing symbol:
 
@@ -1525,7 +1526,7 @@ gitnexus_impact(repo: "forge", target: "evaluate_completion", file_path: "apps/d
 
 Expected: report any HIGH/CRITICAL risk before editing and keep the patch limited to runtime contract reconciliation.
 
-- [ ] **Step 3.5.2: Write failing compatibility and projection tests**
+- [x] **Step 3.5.2: Write failing compatibility and projection tests**
 
 Add focused tests before implementation for:
 
@@ -1549,7 +1550,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml completion --lib
 
 Expected: FAIL for missing fields, variants, projection behavior, and completion behavior.
 
-- [ ] **Step 3.5.3: Extend the durable envelope and task projection types**
+- [x] **Step 3.5.3: Extend the durable envelope and task projection types**
 
 Reconcile the additive serde contract:
 
@@ -1570,7 +1571,7 @@ LoopTaskRecord projection fields:
 
 The new envelope fields must use serde defaults so old JSONL records deserialize when fields are missing. `waiting_for_input` and `interrupted` must not be treated as terminal by default.
 
-- [ ] **Step 3.5.4: Extend runtime events without starting Task 4**
+- [x] **Step 3.5.4: Extend runtime events without starting Task 4**
 
 Add the minimum durable loop runtime events:
 
@@ -1599,7 +1600,7 @@ created_at_ms: u64
 
 Reuse the existing `LoopActionIntent` from `policy.rs`; do not create a duplicate intent enum.
 
-- [ ] **Step 3.5.5: Reconcile projection replay and idempotency**
+- [x] **Step 3.5.5: Reconcile projection replay and idempotency**
 
 Projection behavior:
 
@@ -1614,7 +1615,7 @@ CompletionEvaluated: updates completion_result.
 
 Existing terminal-task ignore behavior must remain for events after terminal states. Journal idempotency fingerprints must cover every new event with stable semantic payloads and must not collapse distinct policy decisions accidentally.
 
-- [ ] **Step 3.5.6: Reconcile completion behavior**
+- [x] **Step 3.5.6: Reconcile completion behavior**
 
 Completion must not report complete for new non-terminal statuses:
 
@@ -1625,7 +1626,7 @@ interrupted -> blocked with reason task_interrupted
 
 Prefer existing `LoopCompletionStatus::Blocked`; do not add a new public completion status unless the API cannot remain coherent.
 
-- [ ] **Step 3.5.7: Run narrow verification**
+- [x] **Step 3.5.7: Run narrow verification**
 
 Run:
 
@@ -1645,7 +1646,7 @@ gitnexus_detect_changes(repo: "forge", scope: "all")
 
 Expected: tests pass, diff check is clean, and GitNexus changed-symbol summary is limited to the runtime contract reconciliation slice plus plan docs.
 
-- [ ] **Step 3.5.8: Sync Obsidian narrative**
+- [x] **Step 3.5.8: Sync Obsidian narrative**
 
 Update `/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Runtime Plan.md` with a 2026-06-17 note covering:
 
@@ -1660,6 +1661,18 @@ remaining gaps: runner ownership, A2A correlation, policy enforcement, acceptanc
 ```
 
 Expected: repo plan/code/tests remain engineering source of truth; Obsidian is synced as required narrative deliverable.
+
+**Implementation evidence (2026-06-17):**
+
+- Initial red run failed as expected on missing `PolicyDecisionRecord`, envelope metadata fields, `waiting_for_input` / `interrupted` statuses, new event variants, and projection fields.
+- Added additive envelope metadata with serde defaults, new non-terminal statuses, `PolicyDecisionRecord`, task policy/budget/completion projection fields, and the minimum durable runtime events.
+- Added `task_waiting_for_input` as the smallest replay-only event needed to project `waiting_for_input`.
+- Reconciled projection replay for started, waiting-for-input, interrupted, policy decision, budget snapshot, and completion evaluated events.
+- Reconciled idempotency fingerprints for every new event without using retry timestamps for policy decision identity.
+- Reconciled completion so `waiting_for_input` and `interrupted` return `LoopCompletionStatus::Blocked`.
+- Review fix: expanded `BudgetSnapshot` with nullable `input_tokens`, `output_tokens`, existing nullable `estimated_cost_micros`, and explicit `has_unknown_token_usage` / `has_unknown_cost` flags. Old snapshot JSON defaults these flags to unknown.
+- Added tests proving old budget snapshot JSON defaults unknown token/cost flags and `BudgetSnapshotRecorded` preserves unknown token/cost facts through projection.
+- Verification commands run: `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml completion --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib`, `git diff --check`, and `gitnexus_detect_changes(repo: "forge", scope: "all")`.
 
 ---
 

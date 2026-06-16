@@ -8,6 +8,14 @@ pub fn evaluate_completion(
 ) -> LoopCompletionResult {
     let contract = &task.completion_contract;
 
+    let runtime_block_reasons = runtime_block_reasons(task);
+    if !runtime_block_reasons.is_empty() {
+        return LoopCompletionResult {
+            status: LoopCompletionStatus::Blocked,
+            reasons: runtime_block_reasons,
+        };
+    }
+
     let review_wait_reasons = review_wait_reasons(task);
     if !review_wait_reasons.is_empty() {
         return LoopCompletionResult {
@@ -78,6 +86,14 @@ pub fn evaluate_completion(
     LoopCompletionResult {
         status: LoopCompletionStatus::Complete,
         reasons: Vec::new(),
+    }
+}
+
+fn runtime_block_reasons(task: &LoopTaskRecord) -> Vec<String> {
+    match task.status {
+        LoopTaskStatus::WaitingForInput => vec!["task_waiting_for_input".to_string()],
+        LoopTaskStatus::Interrupted => vec!["task_interrupted".to_string()],
+        _ => Vec::new(),
     }
 }
 
@@ -256,6 +272,28 @@ mod tests {
 
         assert_eq!(result.status, LoopCompletionStatus::WaitingForReview);
         assert_eq!(result.reasons, vec!["task_waiting_for_review"]);
+    }
+
+    #[test]
+    fn completion_blocks_when_task_status_is_waiting_for_input() {
+        let mut task = LoopTaskRecord::new_for_test("task-1", "finish runtime");
+        task.status = LoopTaskStatus::WaitingForInput;
+
+        let result = evaluate_completion(&task, &[]);
+
+        assert_eq!(result.status, LoopCompletionStatus::Blocked);
+        assert_eq!(result.reasons, vec!["task_waiting_for_input"]);
+    }
+
+    #[test]
+    fn completion_blocks_when_task_status_is_interrupted() {
+        let mut task = LoopTaskRecord::new_for_test("task-1", "finish runtime");
+        task.status = LoopTaskStatus::Interrupted;
+
+        let result = evaluate_completion(&task, &[]);
+
+        assert_eq!(result.status, LoopCompletionStatus::Blocked);
+        assert_eq!(result.reasons, vec!["task_interrupted"]);
     }
 
     #[test]

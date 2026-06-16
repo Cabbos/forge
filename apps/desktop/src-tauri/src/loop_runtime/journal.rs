@@ -168,6 +168,25 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "budget": task.budget,
             "completion_contract": task.completion_contract,
         }),
+        LoopRuntimeEvent::TaskStarted { task_id, lease } => serde_json::json!({
+            "type": "task_started",
+            "task_id": task_id,
+            "lease": lease,
+        }),
+        LoopRuntimeEvent::TaskWaitingForInput {
+            task_id,
+            reason,
+            waiting_at_ms: _,
+        } => serde_json::json!({
+            "type": "task_waiting_for_input",
+            "task_id": task_id,
+            "reason": reason,
+        }),
+        LoopRuntimeEvent::TaskInterrupted { task_id, reason } => serde_json::json!({
+            "type": "task_interrupted",
+            "task_id": task_id,
+            "reason": reason,
+        }),
         LoopRuntimeEvent::TaskCanceled {
             task_id,
             reason,
@@ -200,6 +219,27 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "type": "evidence_recorded",
             "task_id": task_id,
             "evidence": evidence_fingerprint(evidence),
+        }),
+        LoopRuntimeEvent::PolicyDecisionRecorded { task_id, decision } => serde_json::json!({
+            "type": "policy_decision_recorded",
+            "task_id": task_id,
+            "decision": {
+                "decision_id": decision.decision_id,
+                "intent": decision.intent,
+                "allowed": decision.allowed,
+                "reason": decision.reason,
+                "actor": decision.actor,
+            },
+        }),
+        LoopRuntimeEvent::BudgetSnapshotRecorded { task_id, snapshot } => serde_json::json!({
+            "type": "budget_snapshot_recorded",
+            "task_id": task_id,
+            "snapshot": snapshot,
+        }),
+        LoopRuntimeEvent::CompletionEvaluated { task_id, result } => serde_json::json!({
+            "type": "completion_evaluated",
+            "task_id": task_id,
+            "result": result,
         }),
     };
     serde_json::to_string(&payload)
@@ -279,9 +319,9 @@ fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use crate::loop_runtime::{
-        EvidenceRecord, HumanGateDecision, HumanGateDecisionKind, LoopActor, LoopEventEnvelope,
-        LoopEventJournal, LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus,
-        LOOP_RUNTIME_SCHEMA_VERSION,
+        EvidenceRecord, HumanGateDecision, HumanGateDecisionKind, LoopActionIntent, LoopActor,
+        LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus,
+        PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
     };
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
@@ -507,6 +547,48 @@ mod tests {
     }
 
     #[test]
+    fn same_idempotency_key_with_semantically_same_new_event_payload_reuses_existing_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        let first = policy_decision_event_for_test("loop-1", "decision-1", true, "allowed", 10)
+            .with_idempotency_key("policy:decision-1");
+        let second = policy_decision_event_for_test("loop-1", "decision-1", true, "allowed", 20)
+            .with_idempotency_key("policy:decision-1");
+
+        let first_result = journal.append_idempotent(first).unwrap();
+        let second_result = journal.append_idempotent(second).unwrap();
+
+        assert!(first_result.appended);
+        assert!(!second_result.appended);
+        assert_eq!(second_result.event, first_result.event);
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_idempotency_key_with_changed_new_event_payload_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                policy_decision_event_for_test("loop-1", "decision-1", true, "allowed", 10)
+                    .with_idempotency_key("policy:decision-1"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                policy_decision_event_for_test("loop-1", "decision-2", true, "allowed", 20)
+                    .with_idempotency_key("policy:decision-1"),
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("idempotency conflict"));
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
     fn concurrent_duplicate_idempotency_key_appends_once() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("loop-events.jsonl");
@@ -580,7 +662,10 @@ mod tests {
             actor: LoopActor::User {
                 source: "test".to_string(),
             },
+            lease_id: None,
+            attempt: None,
             correlation_id: None,
+            causation_id: None,
             idempotency_key: None,
             created_at_ms: timestamp + 2,
         }
@@ -607,5 +692,41 @@ mod tests {
             None,
             None,
         )
+    }
+
+    fn policy_decision_event_for_test(
+        task_id: &str,
+        decision_id: &str,
+        allowed: bool,
+        reason: &str,
+        timestamp: u64,
+    ) -> LoopEventEnvelope {
+        LoopEventEnvelope {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-{decision_id}-{timestamp}"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: LoopRuntimeEvent::PolicyDecisionRecorded {
+                task_id: task_id.to_string(),
+                decision: PolicyDecisionRecord {
+                    decision_id: decision_id.to_string(),
+                    intent: LoopActionIntent::Commit {
+                        completion_contract_satisfied: false,
+                        passing_evidence: false,
+                    },
+                    allowed,
+                    reason: reason.to_string(),
+                    actor: LoopActor::Gateway,
+                    created_at_ms: timestamp,
+                },
+            },
+            actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: timestamp,
+        }
     }
 }
