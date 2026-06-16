@@ -18,6 +18,7 @@ Runs the Forge Phase 7 acceptance gates:
   2. Website production build
   3. Eval runner test suite
   4. Desktop acceptance e2e smoke specs
+  5. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -35,6 +36,7 @@ COMMANDS=(
   "npm run build:website"
   "npm run test:eval"
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"
+  "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"write_file tool details show|diff cards show|image diff cards show\""
 )
 
 echo "Forge Phase 7 acceptance suite"

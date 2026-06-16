@@ -22,4 +22,6 @@ test("acceptance script dry-run lists the final product gates", () => {
   assert.match(output, /workbench\.spec\.ts/);
   assert.match(output, /a2a-confirm-runtime\.spec\.ts/);
   assert.match(output, /acceptance\.spec\.ts/);
+  assert.match(output, /messages\.spec\.ts/);
+  assert.match(output, /write_file tool details show\|diff cards show\|image diff cards show/);
 });

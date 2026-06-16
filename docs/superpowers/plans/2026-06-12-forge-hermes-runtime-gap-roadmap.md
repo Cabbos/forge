@@ -673,8 +673,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [x] 7.8 Final acceptance suite: end-to-end script covering resume, doctor, tool enable/disable, subagent, scheduler, settings round-trip.
   - **Phase 7.8 acceptance-harness partial (2026-06-16):** Added `scripts/acceptance.sh` with dry-run coverage for the desktop build, website build, eval runner tests, and the desktop acceptance smoke specs. Added a Node contract test for the script plan plus `e2e/acceptance.spec.ts` covering the Settings scheduler create, run, disable, and delete round trip through mocked Tauri scheduler IPC.
   - **Phase 7.8 doctor-permissions follow-up (2026-06-16):** Expanded `e2e/acceptance.spec.ts` so the acceptance smoke now covers Settings > Diagnostics doctor status, gateway runtime status, diagnostics refresh, and Settings > Tools permission allow/deny/reset round trips through the shared e2e IPC fixture.
-  - **Phase 7.8 full-suite signoff (2026-06-16):** `scripts/acceptance.sh` now passes end-to-end: desktop build, website build, eval runner tests, and 24 desktop smoke tests covering resume/recovery, History, Settings permissions, diagnostics, scheduler, A2A review, and background task status.
-  - Files: `scripts/acceptance.sh`, `e2e/acceptance.spec.ts`.
+  - **Phase 7.8 full-suite signoff (2026-06-16):** `scripts/acceptance.sh` now passes end-to-end: desktop build, website build, eval runner tests, 29 desktop smoke tests covering resume/recovery, History, Settings permissions, diagnostics, scheduler, A2A review, and background task status, plus 4 targeted rich-preview smoke tests for write previews and diff previews.
+  - **Phase 7.8 rich-preview gate follow-up (2026-06-16):** The final acceptance script now runs a targeted `e2e/messages.spec.ts` rich-preview smoke for Markdown write previews, image write previews, multi-file diff trees, and image diff previews, closing the coverage gap between Phase 7.5 preview work and the final acceptance gate without running the entire messages suite.
+  - Files: `scripts/acceptance.sh`, `scripts/acceptance.test.mjs`, `e2e/acceptance.spec.ts`, `e2e/messages.spec.ts`.
 - [x] 7.9 Documentation pass: update README, AGENTS.md, and CHANGELOG for new surfaces.
   - **Phase 7.9 docs follow-up (2026-06-16):** Updated root and desktop README files with the current runtime surfaces and acceptance entry points, added AGENTS guidance for keeping product docs/acceptance coverage aligned, and introduced `CHANGELOG.md` with the current unreleased Phase 7 desktop surfaces.
 
@@ -795,7 +796,7 @@ Codex must stop and ask the user if any of the following occur:
 | 4 | Subagent workbench | 2026-06-12 ✅ | Status/failure/file IO/lineage UI | Subagent stream visible and resumable |
 | 5 | Memory/profiles/multi-entry | 2026-06-12 ✅ | Memory store, profiles, scheduler, `forge --profile` + `forge session list` | CLI/desktop share state; `--profile` flag works |
 | 6 | Packaging/background/update | 2026-06-16 ✅ | Gateway binary, cross-platform service management, dashboard, update repair | Service lifecycle, dashboard, watchdog, update repair, and self-healing verified |
-| 7 | Product polish & acceptance | TBD | Settings/history/recovery/review surfaces | Deferred |
+| 7 | Product polish & acceptance | 2026-06-16 ✅ | Settings/history/recovery/review/preview/background task surfaces + acceptance script | Full acceptance script includes resume, workbench, A2A, settings, diagnostics, scheduler, and rich-preview gates |
 
 ### 2026-06-12 Final Progress Summary
 
@@ -836,11 +837,11 @@ Codex must stop and ask the user if any of the following occur:
 - `apps/desktop/src/components/settings/GeneralSettings.tsx`
 
 **Deferred for future:**
-- Phase 6.6: Dashboard web UI
-- Phase 6.7: Automatic update lifecycle hook for update repair
-- Phase 6.8: Update-aware self-healing orchestration and deeper repair flows
-- Phase 5.7: Messaging trigger full dashboard listing/replay polish
-- Phase 7: Full product polish + acceptance suite
+- True Tauri force-quit/reopen smoke harness (needs WebDriver / `tauri-driver` investment)
+- True live subagent file IO stream (requires executor hooks)
+- Token/cost telemetry stream (requires adapter-level usage hooks)
+- Memory embeddings and single-store migration for `WikiMemoryStore` + user-managed facts
+- Extension inventory once a real extension source exists
 
 ## Appendix — Likely Files/Modules by Domain
 
