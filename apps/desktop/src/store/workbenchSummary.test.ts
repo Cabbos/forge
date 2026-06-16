@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { deriveWorkbenchSummary, normalizeA2ATaskProjection } from "../lib/workbenchSummary.ts";
+import { deriveWorkbenchReviewView, deriveWorkbenchSummary, normalizeA2ATaskProjection } from "../lib/workbenchSummary.ts";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "../lib/protocol.ts";
 
 function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProjection {
@@ -267,5 +267,49 @@ describe("deriveWorkbenchSummary", () => {
     assert.strictEqual(normalized.last_heartbeat_at_ms, null);
     assert.strictEqual(normalized.attempt_count, 0);
     assert.strictEqual(normalized.max_attempts, 3);
+  });
+});
+
+describe("deriveWorkbenchReviewView", () => {
+  it("separates pending review queue from review rejection history", () => {
+    const tasks = [
+      task({
+        task_id: "pending",
+        title: "Pending review task",
+        execution_mode: "worktree_worker",
+        needs_human_review: true,
+        changed_files: ["apps/desktop/src/App.tsx"],
+        suggested_action: "Review and merge.",
+      }),
+      task({
+        task_id: "rejected",
+        title: "Rejected review task",
+        execution_mode: "worktree_worker",
+        status: "failed",
+        needs_human_review: false,
+        failure_kind: "review_rejection",
+        failure_message: "Scope too broad",
+        changed_files: ["apps/desktop/src-tauri/src/executor/permissions.rs"],
+        suggested_action: "Do not merge.",
+      }),
+      task({
+        task_id: "read-only",
+        title: "Read-only summary",
+        execution_mode: "read_only",
+        needs_human_review: true,
+      }),
+    ];
+
+    const result = deriveWorkbenchReviewView(projection(tasks));
+
+    assert.deepStrictEqual(result.queue.map((item) => item.taskId), ["pending"]);
+    assert.strictEqual(result.queue[0].title, "Pending review task");
+    assert.deepStrictEqual(result.queue[0].changedFiles, ["apps/desktop/src/App.tsx"]);
+    assert.strictEqual(result.queue[0].suggestedAction, "Review and merge.");
+
+    assert.deepStrictEqual(result.history.map((item) => item.taskId), ["rejected"]);
+    assert.strictEqual(result.history[0].label, "审阅拒绝");
+    assert.strictEqual(result.history[0].detail, "Scope too broad");
+    assert.deepStrictEqual(result.history[0].changedFiles, ["apps/desktop/src-tauri/src/executor/permissions.rs"]);
   });
 });

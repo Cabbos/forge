@@ -624,7 +624,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 7.5 diff-tree follow-up (2026-06-16):** Multi-file `diff_view` cards now derive per-file status and +/- counts from unified git diff text and render a compact file tree strip above the diff body. Added pure Node tests for diff file tree derivation/truncation and a Playwright regression for the multi-file diff UI. Image diff previews remain deferred.
   - Files: `src/components/messages/WriteFilePreview.tsx`, `DiffPreview.tsx`.
 - [ ] 7.6 Harden review flows: approve/reject UI, bulk review, review history.
-  - Files: `src/components/review/ReviewPanel.tsx`.
+  - **Phase 7.6 review-summary partial (2026-06-16):** Agent Workbench now derives a focused review queue and review-rejection history from worktree-worker projections, showing pending review items, changed-file chips, suggested actions, and rejected review records without exposing fake approve/reject controls before the backend action contract exists. Added pure helper tests and Playwright coverage for queue/history rendering.
+  - Files: `src/components/messages/AgentA2ATimeline.tsx`, `src/lib/workbenchSummary.ts`, `e2e/a2a-confirm-runtime.spec.ts`.
 - [ ] 7.7 Background task surfaces: global status bar, task list, notifications.
   - Files: `src/components/StatusBar.tsx`, `src/components/tasks/TaskManager.tsx`.
 - [ ] 7.8 Final acceptance suite: end-to-end script covering resume, doctor, tool enable/disable, subagent, scheduler, settings round-trip.

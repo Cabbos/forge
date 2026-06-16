@@ -17,6 +17,23 @@ export interface WorkbenchSummary {
   tasksWithDiff: number;
 }
 
+export interface WorkbenchReviewItem {
+  taskId: string;
+  title: string;
+  role: string;
+  status: string;
+  label: string;
+  detail: string | null;
+  changedFiles: string[];
+  suggestedAction: string | null;
+  worktreePath: string | null;
+}
+
+export interface WorkbenchReviewView {
+  queue: WorkbenchReviewItem[];
+  history: WorkbenchReviewItem[];
+}
+
 /** Pure helper: derive workbench summary counts from an AgentA2AProjection. */
 export function deriveWorkbenchSummary(state: AgentA2AProjection | null): WorkbenchSummary {
   if (!state || state.tasks.length === 0) {
@@ -46,6 +63,38 @@ export function deriveWorkbenchSummary(state: AgentA2AProjection | null): Workbe
     changedFiles: allChangedFiles.size,
     tasksWithDiff,
   };
+}
+
+/** Pure helper: derive review queue/history rows from worktree-worker projections. */
+export function deriveWorkbenchReviewView(state: AgentA2AProjection | null): WorkbenchReviewView {
+  const queue: WorkbenchReviewItem[] = [];
+  const history: WorkbenchReviewItem[] = [];
+  if (!state || state.tasks.length === 0) return { queue, history };
+
+  for (const rawTask of state.tasks) {
+    const task = normalizeA2ATaskProjection(rawTask);
+    if (task.execution_mode !== "worktree_worker") continue;
+
+    const item: WorkbenchReviewItem = {
+      taskId: task.task_id,
+      title: task.title,
+      role: task.role,
+      status: task.status,
+      label: task.failure_kind === "review_rejection" ? "审阅拒绝" : "需要审阅",
+      detail: task.failure_message ?? task.latest_message ?? null,
+      changedFiles: task.changed_files,
+      suggestedAction: task.suggested_action,
+      worktreePath: task.worktree_path,
+    };
+
+    if (task.needs_human_review === true) {
+      queue.push(item);
+    } else if (task.failure_kind === "review_rejection") {
+      history.push(item);
+    }
+  }
+
+  return { queue, history };
 }
 
 /**

@@ -88,6 +88,98 @@ function confirmThenStopEvents(sessionId: string): StreamEvent[] {
   ];
 }
 
+function reviewQueueEvents(sessionId: string): StreamEvent[] {
+  const now = Date.now();
+  return [
+    {
+      event_type: "session_started",
+      session_id: sessionId,
+      agent_type: "deepseek",
+      model: "deepseek-v4-flash",
+    },
+    {
+      event_type: "agent_a2a_updated",
+      session_id: sessionId,
+      state: {
+        running_count: 0,
+        completed_count: 1,
+        failed_count: 1,
+        interrupted_count: 0,
+        tasks: [
+          {
+            task_id: "review-task-1",
+            agent_id: "agent-review-1",
+            role: "worker",
+            execution_mode: "worktree_worker",
+            status: "completed",
+            title: "Implement settings recovery polish",
+            messages: [
+              {
+                message_id: "review-msg-1",
+                kind: "final_result",
+                content: "Patch ready for controller review",
+                created_at_ms: now,
+              },
+            ],
+            latest_message: "Patch ready for controller review",
+            failure_message: null,
+            updated_at_ms: now,
+            artifact_count: 1,
+            latest_artifact_kind: "diff_summary",
+            latest_artifact_title: "Settings recovery diff",
+            needs_human_review: true,
+            reason_codes: ["tests_passed", "diff_available"],
+            tests_passed: true,
+            diff_truncated: false,
+            worktree_path: "/tmp/forge-review-task-1",
+            cleaned_up: false,
+            suggested_action: "Review and merge after checking settings recovery.",
+            diff_available: true,
+            changed_file_count: 2,
+            changed_files: ["apps/desktop/src/components/settings/RecoveryPanel.tsx"],
+            test_report_excerpt: "1 e2e passed",
+          },
+          {
+            task_id: "review-task-2",
+            agent_id: "agent-review-2",
+            role: "reviewer",
+            execution_mode: "worktree_worker",
+            status: "failed",
+            title: "Review rejected unsafe permission edit",
+            messages: [
+              {
+                message_id: "review-msg-2",
+                kind: "failed",
+                content: "Rejected because permission edits were too broad",
+                created_at_ms: now,
+              },
+            ],
+            latest_message: "Rejected because permission edits were too broad",
+            failure_message: "Permission surface changed outside requested scope",
+            updated_at_ms: now,
+            artifact_count: 1,
+            latest_artifact_kind: "review_report",
+            latest_artifact_title: "Permission review",
+            needs_human_review: false,
+            reason_codes: ["scope_too_broad"],
+            tests_passed: false,
+            diff_truncated: false,
+            worktree_path: "/tmp/forge-review-task-2",
+            cleaned_up: true,
+            suggested_action: "Do not merge this worktree.",
+            failure_kind: "review_rejection",
+            retryable: false,
+            diff_available: true,
+            changed_file_count: 1,
+            changed_files: ["apps/desktop/src-tauri/src/executor/permissions.rs"],
+            test_report_excerpt: "review gate failed",
+          },
+        ],
+      },
+    },
+  ];
+}
+
 test.beforeEach(async ({ page }) => {
   await setup(page, { workingDir: "/tmp/forge-a2a-workspace" });
   await page.goto("http://localhost:1420");
@@ -140,6 +232,32 @@ test.describe("A2A runtime surfaces", () => {
     await expect(workspace).toContainText("Agent Workbench");
     await expect(workspace).toContainText("子任务");
     await expect(workspace).toContainText("1 运行");
+  });
+
+  test("hub panel summarizes review queue and review history", async ({ page }) => {
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, reviewQueueEvents(sessionId));
+    await openProjectArchive(page, "agents");
+
+    const workspace = page.locator(".forge-a2a-workspace");
+    await expect(workspace).toContainText("审阅队列");
+    await expect(workspace).toContainText("1 个待审阅");
+    await expect(workspace).toContainText("Implement settings recovery polish");
+    await expect(workspace).toContainText("apps/desktop/src/components/settings/RecoveryPanel.tsx");
+    await expect(workspace).toContainText("审阅历史");
+    await expect(workspace).toContainText("审阅拒绝");
+    await expect(workspace).toContainText("Review rejected unsafe permission edit");
   });
 });
 

@@ -13,7 +13,13 @@ import {
   XCircle,
 } from "lucide-react";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
-import { deriveWorkbenchSummary, normalizeA2ATaskProjection } from "@/lib/workbenchSummary";
+import {
+  deriveWorkbenchReviewView,
+  deriveWorkbenchSummary,
+  normalizeA2ATaskProjection,
+  type WorkbenchReviewItem,
+  type WorkbenchReviewView,
+} from "@/lib/workbenchSummary";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 function iconFor(status: string) {
@@ -159,6 +165,75 @@ function WorktreeReviewPanel({ task: rawTask }: { task: AgentA2ATaskProjection }
           <span className="forge-a2a-worktree-label">建议:</span>
           <span className="forge-a2a-worktree-action-text">{task.suggested_action}</span>
         </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewWorkbenchItem({
+  item,
+  tone,
+}: {
+  item: WorkbenchReviewItem;
+  tone: "queue" | "history";
+}) {
+  return (
+    <li className="forge-a2a-review-item" data-tone={tone}>
+      <div className="forge-a2a-review-item-main">
+        <span className="forge-a2a-review-item-label">{item.label}</span>
+        <span className="forge-a2a-review-item-title">{item.title}</span>
+        <span className="forge-a2a-review-item-role">{item.role}</span>
+      </div>
+      {item.detail && (
+        <p className="forge-a2a-review-item-detail">{item.detail}</p>
+      )}
+      {item.changedFiles.length > 0 && (
+        <div className="forge-a2a-review-files" aria-label={`${item.title} 变更文件`}>
+          {item.changedFiles.slice(0, 4).map((file) => (
+            <span key={file} className="forge-a2a-review-file" title={file}>
+              {file}
+            </span>
+          ))}
+        </div>
+      )}
+      {item.suggestedAction && (
+        <p className="forge-a2a-review-action">{item.suggestedAction}</p>
+      )}
+    </li>
+  );
+}
+
+function WorkbenchReviewSummary({ view }: { view: WorkbenchReviewView }) {
+  if (view.queue.length === 0 && view.history.length === 0) return null;
+
+  return (
+    <div className="forge-a2a-review-summary" aria-label="审阅摘要">
+      {view.queue.length > 0 && (
+        <section className="forge-a2a-review-section" aria-label="审阅队列">
+          <div className="forge-a2a-review-section-header">
+            <span className="forge-a2a-review-section-title">审阅队列</span>
+            <span className="forge-a2a-review-section-count">{view.queue.length} 个待审阅</span>
+          </div>
+          <ul className="forge-a2a-review-list">
+            {view.queue.map((item) => (
+              <ReviewWorkbenchItem key={item.taskId} item={item} tone="queue" />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {view.history.length > 0 && (
+        <section className="forge-a2a-review-section" aria-label="审阅历史">
+          <div className="forge-a2a-review-section-header">
+            <span className="forge-a2a-review-section-title">审阅历史</span>
+            <span className="forge-a2a-review-section-count">{view.history.length} 条记录</span>
+          </div>
+          <ul className="forge-a2a-review-list">
+            {view.history.map((item) => (
+              <ReviewWorkbenchItem key={item.taskId} item={item} tone="history" />
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   );
@@ -312,6 +387,7 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
   }
 
   const summary = deriveWorkbenchSummary(state);
+  const reviewView = deriveWorkbenchReviewView(state);
 
   return (
     <section className="forge-a2a-workspace" aria-label="子任务">
@@ -330,6 +406,8 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
           {summary.tasksWithDiff > 0 && <span data-tone="diff">{summary.tasksWithDiff} 有变更</span>}
         </div>
       </div>
+
+      <WorkbenchReviewSummary view={reviewView} />
 
       <div className="forge-a2a-workspace-task-list">
         {state.tasks.map((task) => (
