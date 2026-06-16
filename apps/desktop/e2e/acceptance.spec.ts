@@ -207,6 +207,68 @@ test.describe("Phase 7 acceptance surfaces", () => {
     });
   });
 
+  test("settings profiles supports create edit and delete round-trip", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "资料" }).click();
+
+    await expect(dialog).toContainText("3 个资料");
+    await dialog.getByRole("button", { name: "新建资料" }).click();
+    await dialog.getByPlaceholder("资料名称").fill("Research profile");
+    await dialog.getByPlaceholder("默认服务 (可选)").fill("openai");
+    await dialog.getByPlaceholder("默认模型 (可选)").fill("gpt-4o");
+    await dialog.getByPlaceholder("默认工作区 (可选)").fill("/Users/test/research");
+    await dialog.getByRole("button", { name: "创建" }).click();
+
+    const createdProfile = dialog.locator(".forge-memory-fact", { hasText: "Research profile" });
+    await expect(createdProfile).toBeVisible();
+    await expect(createdProfile).toContainText("openai");
+    await expect(createdProfile).toContainText("/Users/test/research");
+    let upsertProfileArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertProfileArgs;
+    });
+    expect(upsertProfileArgs).toMatchObject({
+      input: {
+        id: null,
+        name: "Research profile",
+        default_provider: "openai",
+        default_model: "gpt-4o",
+        default_workspace: "/Users/test/research",
+      },
+    });
+
+    await createdProfile.getByRole("button", { name: "编辑" }).click();
+    await dialog.getByPlaceholder("资料名称").fill("Research profile updated");
+    await dialog.getByPlaceholder("默认模型 (可选)").fill("gpt-4.1");
+    await dialog.getByRole("button", { name: "更新" }).click();
+
+    const updatedProfile = dialog.locator(".forge-memory-fact", { hasText: "Research profile updated" });
+    await expect(updatedProfile).toBeVisible();
+    await expect(updatedProfile).toContainText("gpt-4.1");
+    upsertProfileArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertProfileArgs;
+    });
+    expect(upsertProfileArgs).toMatchObject({
+      input: {
+        name: "Research profile updated",
+        default_provider: "openai",
+        default_model: "gpt-4.1",
+        default_workspace: "/Users/test/research",
+      },
+    });
+    expect(String(upsertProfileArgs.input.id)).toBeTruthy();
+
+    await updatedProfile.getByRole("button", { name: "删除" }).click();
+    await expect(dialog.locator(".forge-memory-fact", { hasText: "Research profile updated" })).toHaveCount(0);
+    const deleteProfileArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastDeleteProfileArgs;
+    });
+    expect(deleteProfileArgs).toEqual({ id: upsertProfileArgs.input.id });
+  });
+
   test("settings scheduler supports create, run, disable, and delete round-trip", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog");
