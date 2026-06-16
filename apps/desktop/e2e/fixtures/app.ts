@@ -123,6 +123,38 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       decision,
       created_at: "2026-06-16T00:00:00.000Z",
     });
+    const schedulerTasks = () => {
+      // @ts-expect-error mock
+      if (!Array.isArray(window.__mockScheduledTasks)) window.__mockScheduledTasks = [];
+      // @ts-expect-error mock
+      return window.__mockScheduledTasks as Array<Record<string, unknown>>;
+    };
+    const schedulerHistory = () => {
+      // @ts-expect-error mock
+      if (!Array.isArray(window.__mockSchedulerHistory)) window.__mockSchedulerHistory = [];
+      // @ts-expect-error mock
+      return window.__mockSchedulerHistory as Array<Record<string, unknown>>;
+    };
+    const schedulerTaskFromInput = (input: Record<string, unknown>, existing?: Record<string, unknown>) => {
+      const now = Date.now();
+      const intervalSeconds = Math.max(0, Number(input.interval_seconds ?? existing?.interval_seconds ?? 3600));
+      const id = String(input.id ?? existing?.id ?? crypto.randomUUID());
+      const createdAt = Number(existing?.created_at_ms ?? now);
+      return {
+        id,
+        title: String(input.title ?? existing?.title ?? "Scheduled task"),
+        text: String(input.text ?? existing?.text ?? ""),
+        enabled: Boolean(existing?.enabled ?? true),
+        interval_seconds: intervalSeconds,
+        next_run_at_ms: intervalSeconds > 0 ? now + intervalSeconds * 1000 : 0,
+        last_run_at_ms: existing?.last_run_at_ms ?? null,
+        created_at_ms: createdAt,
+        updated_at_ms: now,
+        tags: Array.isArray(input.tags) ? input.tags.map(String) : Array.isArray(existing?.tags) ? existing.tags.map(String) : [],
+        profile_id: typeof input.profile_id === "string" && input.profile_id ? input.profile_id : null,
+        last_error: null,
+      };
+    };
     const openKeyvalDb = async () => {
       let db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("keyval-store");
@@ -346,6 +378,67 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error mock
           window.__lastResetPermissionRuleArgs = args;
           return next;
+        }
+        case "list_scheduled_tasks":
+          return {
+            tasks: schedulerTasks(),
+            recent_history: schedulerHistory(),
+            load_error: null,
+          };
+        case "upsert_scheduled_task": {
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const tasks = schedulerTasks();
+          const id = typeof input.id === "string" && input.id ? input.id : null;
+          const existingIndex = id ? tasks.findIndex((task) => task.id === id) : -1;
+          const task = schedulerTaskFromInput(input, existingIndex >= 0 ? tasks[existingIndex] : undefined);
+          if (existingIndex >= 0) tasks[existingIndex] = task;
+          else tasks.push(task);
+          // @ts-expect-error mock
+          window.__lastUpsertScheduledTaskArgs = args;
+          return task;
+        }
+        case "delete_scheduled_task": {
+          const id = String(args.id ?? "");
+          const tasks = schedulerTasks();
+          const next = tasks.filter((task) => task.id !== id);
+          // @ts-expect-error mock
+          window.__mockScheduledTasks = next;
+          // @ts-expect-error mock
+          window.__lastDeleteScheduledTaskArgs = args;
+          return true;
+        }
+        case "set_scheduled_task_enabled": {
+          const id = String(args.id ?? "");
+          const enabled = Boolean(args.enabled);
+          const tasks = schedulerTasks();
+          const task = tasks.find((item) => item.id === id);
+          if (task) {
+            task.enabled = enabled;
+            task.updated_at_ms = Date.now();
+          }
+          // @ts-expect-error mock
+          window.__lastSetScheduledTaskEnabledArgs = args;
+          return true;
+        }
+        case "run_scheduled_task_now": {
+          const id = String(args.id ?? "");
+          const now = Date.now();
+          const tasks = schedulerTasks();
+          const task = tasks.find((item) => item.id === id);
+          if (!task) throw new Error(`Scheduled task not found: ${id}`);
+          task.last_run_at_ms = now;
+          task.updated_at_ms = now;
+          schedulerHistory().unshift({
+            id: crypto.randomUUID(),
+            task_id: id,
+            started_at_ms: now,
+            ended_at_ms: now + 1,
+            status: "completed",
+            message: `Ran ${String(task.title)}`,
+          });
+          // @ts-expect-error mock
+          window.__lastRunScheduledTaskNowArgs = args;
+          return task;
         }
         case "list_sessions":
           // @ts-expect-error mock

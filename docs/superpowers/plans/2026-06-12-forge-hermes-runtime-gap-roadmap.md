@@ -628,6 +628,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 7.7 Background task surfaces: global status bar, task list, notifications.
   - Files: `src/components/StatusBar.tsx`, `src/components/tasks/TaskManager.tsx`.
 - [ ] 7.8 Final acceptance suite: end-to-end script covering resume, doctor, tool enable/disable, subagent, scheduler, settings round-trip.
+  - **Phase 7.8 acceptance-harness partial (2026-06-16):** Added `scripts/acceptance.sh` with dry-run coverage for the desktop build, website build, eval runner tests, and the desktop acceptance smoke specs. Added a Node contract test for the script plan plus `e2e/acceptance.spec.ts` covering the Settings scheduler create, run, disable, and delete round trip through mocked Tauri scheduler IPC.
   - Files: `scripts/acceptance.sh`, `e2e/acceptance.spec.ts`.
 - [ ] 7.9 Documentation pass: update README, AGENTS.md, and CHANGELOG for new surfaces.
 
