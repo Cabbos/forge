@@ -524,6 +524,28 @@
     line-height: 1.55;
   }
 
+  .forge-write-preview-image-frame {
+    display: grid;
+    min-height: 8rem;
+    place-items: center;
+    margin: 0;
+    padding: 0.75rem;
+    background:
+      linear-gradient(45deg, rgba(92, 81, 63, 0.055) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(92, 81, 63, 0.055) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(92, 81, 63, 0.055) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(92, 81, 63, 0.055) 75%);
+    background-position: 0 0, 0 0.5rem, 0.5rem -0.5rem, -0.5rem 0;
+    background-size: 1rem 1rem;
+  }
+
+  .forge-write-preview-image-frame img {
+    display: block;
+    max-width: min(100%, 28rem);
+    max-height: 18rem;
+    object-fit: contain;
+  }
+
   .forge-write-preview-body .code-surface {
     margin: 0;
     border: 0;

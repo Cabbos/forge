@@ -17,6 +17,32 @@ describe("deriveWritePreview", () => {
     assert.strictEqual(preview?.content, "# Runtime\n\n- Gateway\n- Sessions\n");
   });
 
+  it("builds an image write preview from inline SVG content", () => {
+    const preview = deriveWritePreview("write_file", {
+      path: "assets/logo.svg",
+      content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>',
+    });
+
+    assert.notStrictEqual(preview, null);
+    assert.strictEqual(preview?.mode, "image");
+    assert.strictEqual(preview?.language, "svg");
+    assert.strictEqual(preview?.languageLabel, "SVG");
+    assert.ok(preview?.imageSrc?.startsWith("data:image/svg+xml;utf8,"));
+  });
+
+  it("builds an image write preview from image data URLs", () => {
+    const preview = deriveWritePreview("write_file", {
+      path: "assets/check.png",
+      content: "data:image/png;base64,iVBORw0KGgo=",
+    });
+
+    assert.notStrictEqual(preview, null);
+    assert.strictEqual(preview?.mode, "image");
+    assert.strictEqual(preview?.language, "png");
+    assert.strictEqual(preview?.languageLabel, "PNG");
+    assert.strictEqual(preview?.imageSrc, "data:image/png;base64,iVBORw0KGgo=");
+  });
+
   it("builds an edit preview from new_string when content is absent", () => {
     const preview = deriveWritePreview("edit", {
       file_path: "src/App.tsx",

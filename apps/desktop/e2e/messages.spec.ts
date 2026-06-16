@@ -1841,6 +1841,58 @@ test.beforeEach(async ({ page }) => {
     await expect(preview.locator(".markdown-content")).toContainText("Gateway");
   });
 
+  test("write_file tool details show an image write preview", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "image-write-preview-tool",
+        tool_name: "write_file",
+        tool_input: {
+          path: "assets/logo.svg",
+          content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#0f766e" /></svg>',
+        },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "image-write-preview-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 42,
+      },
+    ], 1);
+
+    await page.getByTestId("tool-card-trigger").click();
+
+    const preview = page.getByTestId("write-file-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("assets/logo.svg");
+    await expect(preview).toContainText("SVG");
+
+    const image = preview.getByTestId("write-file-image-preview");
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute("src", /^data:image\/svg\+xml;utf8,/);
+
+    const imageBox = await image.boundingBox();
+    expect(imageBox?.width ?? 0).toBeGreaterThan(0);
+    expect(imageBox?.height ?? 0).toBeGreaterThan(0);
+  });
+
   test("diff cards show a compact file tree for multi-file changes", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
