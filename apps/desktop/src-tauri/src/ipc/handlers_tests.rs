@@ -22,6 +22,7 @@ use crate::ipc::workspace_files::{
     open_file_target_for_request, preview_file_for_request, search_workspace_files_for_request,
     working_dir_for_request_or_explicit,
 };
+use crate::memory::facts::MemoryFactStore;
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
 use crate::workspace_safety::resolve_optional_workspace_path as resolve_requested_working_dir;
@@ -1026,8 +1027,10 @@ async fn tomato_clock_global_preference_not_injected_in_different_project_contex
     let forge_workspace = std::env::temp_dir().join(format!("forge-regression-{nonce}"));
     std::fs::create_dir_all(&forge_workspace).expect("workspace");
     let memory_path = std::env::temp_dir().join(format!("forge-regression-{nonce}.json"));
+    let facts_path = std::env::temp_dir().join(format!("forge-regression-facts-{nonce}.json"));
     let mut app_state = AppState::new(Arc::new(Harness::new(forge_workspace.clone())));
     app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+    app_state.memory_facts = Arc::new(MemoryFactStore::new(facts_path.clone()));
 
     // Insert the pollution: task-like content stored as UserProfile
     let now = memory_now_string();
@@ -1070,6 +1073,7 @@ async fn tomato_clock_global_preference_not_injected_in_different_project_contex
 
     let _ = std::fs::remove_dir_all(forge_workspace);
     let _ = std::fs::remove_file(memory_path);
+    let _ = std::fs::remove_file(facts_path);
 }
 
 #[tokio::test]
@@ -1078,8 +1082,10 @@ async fn forgotten_memory_not_injected_via_select_context() {
     let workspace = std::env::temp_dir().join(format!("forge-forget-select-{nonce}"));
     std::fs::create_dir_all(&workspace).expect("workspace");
     let memory_path = std::env::temp_dir().join(format!("forge-forget-select-{nonce}.json"));
+    let facts_path = std::env::temp_dir().join(format!("forge-forget-facts-{nonce}.json"));
     let mut app_state = AppState::new(Arc::new(Harness::new(workspace.clone())));
     app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+    app_state.memory_facts = Arc::new(MemoryFactStore::new(facts_path.clone()));
 
     let now = memory_now_string();
     let memory = WikiMemory {
@@ -1145,4 +1151,5 @@ async fn forgotten_memory_not_injected_via_select_context() {
 
     let _ = std::fs::remove_dir_all(workspace);
     let _ = std::fs::remove_file(memory_path);
+    let _ = std::fs::remove_file(facts_path);
 }

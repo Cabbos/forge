@@ -421,6 +421,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [x] 5.3 Add Settings > Memory panel: view, search, edit, delete facts.
   - Files: `src/components/settings/MemoryPanel.tsx`, `SettingsCenterShell.tsx`, `src/styles/settings.css`, `src/lib/tauri.ts`, `src/hooks/queries/queryKeys.ts`, `src/hooks/queries/useMemoryFactsQuery.ts`.
   - **Phase 5-A (2026-06-12):** Full CRUD MemoryPanel wired into Settings > Memory (replaced read-only placeholder). Dense, work-focused layout with search/filter bar, inline create, inline edit text+tags, delete, loading/error/empty states, and mutation error handling. Uses existing forge-* CSS conventions and lucide icons. No nested cards, no marketing copy.
+  - **Phase 5-F context follow-up (2026-06-16):** User-managed memory facts now participate in the send-input context path. The selector merges relevant `WikiMemoryStore` memories with matching global facts and active-profile facts from `MemoryFactStore`, reusing the existing `MemorySelection` event and hidden `MemoryContext` source. Other profiles' facts are excluded, keeping profile isolation intact. This narrows the memory-surface split without adding embeddings or replacing the existing wiki memory scorer.
 - [x] 5.10 (partial) Tests: memory store unit tests.
   - Files: `memory/facts.rs` (inline tests), `ipc/memory_handlers.rs` (existing tests still pass).
   - **Phase 5-A (2026-06-12):** 19 inline Rust tests: empty store, create/list, search (text/tags/profile_id/source, case-insensitive), update preserves created_at/changes updated_at, tag trim/dedup, delete, persist/reload roundtrip, corrupt JSON handling, atomic save (no leftover temp file), valid JSON output. All 976 Rust tests pass. Frontend `npm run build` passes.
@@ -460,8 +461,18 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.8 Scheduler engine | ✅ Done | Local CRUD/history plus gateway-owned scheduler tick and trigger-runner execution path |
 | 5.9 Scheduler panel | ✅ Done | Phase 5-C Settings panel added |
 | Embeddings | ⏸️ Deferred | Honest placeholder comment; no implementation |
-| WikiMemoryStore unification | ⏸️ Deferred | Existing context memory and new user-managed facts are separate stores |
+| WikiMemoryStore unification | 🟨 Partial | User-managed facts now join send-input context selection; storage/scoring/embeddings remain separate |
 | New dependencies | 🚫 None | No new crates or npm packages |
+
+**Phase 5-F summary (2026-06-16):** User-managed memory facts in turn context.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Active-profile facts in context | ✅ Done | Matching `MemoryFactStore` facts for the active profile are converted to `SelectedContextMemory` and injected through the existing hidden memory context |
+| Global facts in context | ✅ Done | Matching facts without `profile_id` are included alongside active-profile facts |
+| Profile isolation | ✅ Done | Facts scoped to another profile are excluded from send-input memory selection |
+| Wiki memory scorer | 🚫 Unchanged | Existing `WikiMemoryStore` selection remains the first context source; manual facts are additive |
+| Embeddings/unified storage | ⏸️ Deferred | No embeddings or single-store migration in this slice |
 
 **Phase 5-B summary (2026-06-12):**
 

@@ -17,8 +17,10 @@ use crate::ipc::send_input_context::{
     reserve_turn_then_record_user_message, select_send_input_memory_context,
     PrepareSendInputTurnRequest,
 };
+use crate::memory::facts::{MemoryFactStore, UpsertMemoryFactInput};
 use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
+use crate::profile::{ProfileStore, UpsertProfileInput};
 use crate::state::AppState;
 use crate::workflow::classify_workflow_with_command;
 
@@ -325,6 +327,104 @@ async fn send_input_memory_selection_uses_session_workspace_over_default_harness
     let _ = std::fs::remove_dir_all(session_workspace);
     let _ = std::fs::remove_dir_all(default_workspace);
     let _ = std::fs::remove_file(memory_path);
+}
+
+#[tokio::test]
+async fn send_input_memory_selection_includes_active_profile_and_global_facts() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_workspace = std::env::temp_dir().join(format!("forge-send-memory-facts-{nonce}"));
+    std::fs::create_dir_all(&session_workspace).expect("session workspace");
+    let memory_path = std::env::temp_dir().join(format!("forge-send-memory-facts-{nonce}.json"));
+    let facts_path =
+        std::env::temp_dir().join(format!("forge-send-memory-facts-store-{nonce}.json"));
+    let profiles_path =
+        std::env::temp_dir().join(format!("forge-send-memory-facts-profiles-{nonce}.json"));
+    let mut app_state = AppState::new(Arc::new(Harness::new(session_workspace.clone())));
+    app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+    app_state.memory_facts = Arc::new(MemoryFactStore::new(facts_path.clone()));
+    app_state.profiles = Arc::new(ProfileStore::new(profiles_path.clone()));
+    let state = Arc::new(app_state);
+    let work_profile = state
+        .profiles
+        .upsert(UpsertProfileInput {
+            id: Some("work".to_string()),
+            name: "Work".to_string(),
+            default_provider: None,
+            default_model: None,
+            default_workspace: None,
+            api_key_overrides: None,
+        })
+        .expect("work profile");
+    state
+        .profiles
+        .set_active(&work_profile.id)
+        .expect("set active profile");
+    state
+        .wiki_memory
+        .upsert_candidate(test_project_memory(
+            "wiki-memory",
+            "gateway queue wiki progress",
+            "wiki memory for gateway queue work",
+            session_workspace.to_str().expect("utf8"),
+        ))
+        .await
+        .expect("insert wiki memory");
+    state
+        .memory_facts
+        .upsert(UpsertMemoryFactInput {
+            id: Some("active-fact".to_string()),
+            text: "gateway queue replay metadata lives in diagnostics".to_string(),
+            tags: vec!["decision".to_string()],
+            profile_id: Some("work".to_string()),
+            source: Some("settings".to_string()),
+        })
+        .expect("active fact");
+    state
+        .memory_facts
+        .upsert(UpsertMemoryFactInput {
+            id: Some("global-fact".to_string()),
+            text: "gateway queue trigger smoke uses TCP JSON lines".to_string(),
+            tags: vec!["project".to_string()],
+            profile_id: None,
+            source: Some("settings".to_string()),
+        })
+        .expect("global fact");
+    state
+        .memory_facts
+        .upsert(UpsertMemoryFactInput {
+            id: Some("other-profile-fact".to_string()),
+            text: "gateway queue private note from another profile".to_string(),
+            tags: vec!["project".to_string()],
+            profile_id: Some("personal".to_string()),
+            source: Some("settings".to_string()),
+        })
+        .expect("other profile fact");
+
+    let selected = select_send_input_memory_context(
+        &state,
+        "gateway queue",
+        session_workspace.to_str().expect("utf8"),
+    )
+    .await;
+
+    let selected_ids = selected
+        .selected
+        .iter()
+        .map(|memory| memory.memory_id.as_str())
+        .collect::<Vec<_>>();
+    assert!(selected_ids.contains(&"wiki-memory"));
+    assert!(selected_ids.contains(&"fact:active-fact"));
+    assert!(selected_ids.contains(&"fact:global-fact"));
+    assert!(!selected_ids.contains(&"fact:other-profile-fact"));
+    let context = selected.context.expect("memory context");
+    assert!(context.contains("gateway queue replay metadata"));
+    assert!(context.contains("gateway queue trigger smoke"));
+    assert!(!context.contains("private note from another profile"));
+
+    let _ = std::fs::remove_dir_all(session_workspace);
+    let _ = std::fs::remove_file(memory_path);
+    let _ = std::fs::remove_file(facts_path);
+    let _ = std::fs::remove_file(profiles_path);
 }
 
 #[tokio::test]
