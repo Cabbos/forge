@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev          # Vite dev server on :1420 (frontend only, no Tauri)
 npm run tauri dev    # Full Tauri desktop app (starts Vite + Rust backend)
 npm run build        # TypeScript check + Vite production build
+npm run test:e2e -- e2e/acceptance.spec.ts
 ```
 
 The `npm run tauri` script proxies to `tauri` CLI. Run individual Tauri commands like `npm run tauri -- build`.
@@ -64,7 +65,10 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 
 - `SessionView` → `ChatView` → `MessageList` (virtualized) → `ConversationLane` → per-type block renderers in `components/messages/`.
 - `SessionView` → `InputBar` → `ComposerSurface` + `ComposerMenuLayer` + `ComposerToolbar` + `ComposerChipTray`.
-- `SettingsDialog` wraps `SettingsCenterShell` with nav sections: models, workspace, tools, memory, data, about.
+- `SettingsDialog` wraps `SettingsCenterShell` with nav sections: models, workspace, tools, memory, data, diagnostics, scheduler, general/service, and about.
+- `HistoryView` is lazy-loaded from the sidebar and uses session-store IPC for search, provider filtering, resume, delete, rename, export, and prune.
+- `StatusBar` sits at the bottom of `AppShell` and derives active A2A work, review items, scheduler tasks, and health alerts into compact background status/task rows.
+- `HubPanelHost` owns the Agent Workbench, including A2A review queue/history and retained-worktree context.
 - `CommandPalette` is the global search/switch surface (Cmd+K).
 
 ## Key patterns
@@ -73,6 +77,8 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 - API keys are stored in `~/.forge/config.json` via `settings.rs`. The frontend fetches status via `getApiKeyStatus()`.
 - The `@/` path alias maps to `src/` (configured in both `vite.config.ts` and `tsconfig.json`).
 - shadcn/ui components live in `src/components/ui/`. The config is in `components.json` (style: "base-nova").
+- Product-level runtime smoke coverage lives in `e2e/acceptance.spec.ts`; extend it when Settings, History, diagnostics, permissions, scheduler, A2A review, or background task surfaces change.
+- Shared e2e IPC mocks live in `e2e/fixtures/app.ts`. Keep those mocks contract-shaped, not implementation-shaped, so acceptance specs exercise the same UI paths users see.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

@@ -16,9 +16,21 @@ Keep the three apps independently runnable in the first migration. Do not extrac
 npm run build:desktop
 npm run build:website
 npm run test:eval
+scripts/acceptance.sh --dry-run
 ```
 
 When editing an imported app, also read that app's local `AGENTS.md` if present.
+
+## Current Desktop Product Surfaces
+
+The active desktop hardening work is tracked in `docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`.
+Recent Phase 7 surfaces include History session management, Settings diagnostics, permission rules, scheduler UI, A2A review summaries, background task status/list UI, and the Phase 7 acceptance script.
+
+When touching these surfaces, keep docs and acceptance coverage in sync:
+
+- Update `README.md`, `apps/desktop/README.md`, and `CHANGELOG.md` when a user-visible runtime surface changes.
+- Prefer adding or extending `apps/desktop/e2e/acceptance.spec.ts` for product-level smoke coverage.
+- Keep `scripts/acceptance.sh --dry-run` aligned with the specs it advertises.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

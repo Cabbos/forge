@@ -55,6 +55,9 @@ Forge 希望用户只需要理解三个产品层级：
 - 支持 MCP Resources、Prompts、Tools，以及本地 Hooks、Skills 和能力管理。
 - 对危险命令、文件写入和外部连接动作进行确认拦截。
 - 记录任务状态、上下文来源、工具证据、检查点、验证结果和恢复状态。
+- 通过 History 搜索、筛选、恢复、重命名、导出和清理本地 session 快照。
+- 在 Settings 中查看诊断、Gateway runtime、调度任务、权限规则、记忆/资料和本机服务状态。
+- 在 Agent Workbench 和全局后台状态栏里查看子任务、审阅队列、调度任务和健康告警。
 
 ## 适合的场景
 
@@ -125,6 +128,15 @@ npm run test:e2e       # Playwright E2E 测试
 npm run check:backend  # Rust fmt + clippy + test
 ```
 
+仓库根目录提供 Phase 7 验收脚本：
+
+```bash
+scripts/acceptance.sh          # build + eval + desktop acceptance smoke
+scripts/acceptance.sh --dry-run
+```
+
+当前 acceptance smoke 覆盖 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅和后台任务列表。
+
 也可以直接运行 Rust 测试：
 
 ```bash
@@ -182,13 +194,15 @@ Forge 的可信度来自几个工程约束：
 - 检查点、验证结果和交付状态的显式展示。
 - 后端使用 Rust 和 Tokio 承载 agent loop、IPC、PTY、MCP 和本地存储。
 - Playwright E2E 与 Rust 后端检查共同覆盖关键路径。
+- Gateway runtime、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
+- 子任务、审阅队列、健康告警和后台调度通过 Agent Workbench 与全局状态栏持续暴露。
 
 当前正在继续加强的方向：
 
-- 结构化错误，减少 `Result<..., String>` 对产品恢复能力的限制。
-- 更直接的 Agent loop 单元测试。
-- 更清晰的工具编排边界。
-- 更稳定的会话恢复和长期上下文行为。
+- 更完整的真实 Tauri force-quit/reopen 恢复验收。
+- 更直接的 Agent loop 单元测试和后台 gateway session-host 合约。
+- 更清晰的工具编排边界、审阅动作契约和图片/富媒体 diff 预览。
+- 更稳定的会话恢复、长期上下文行为和跨入口 profile/runtime 状态。
 
 ## 产品路线
 

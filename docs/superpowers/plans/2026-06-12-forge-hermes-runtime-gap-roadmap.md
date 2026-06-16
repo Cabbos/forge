@@ -634,7 +634,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 7.8 acceptance-harness partial (2026-06-16):** Added `scripts/acceptance.sh` with dry-run coverage for the desktop build, website build, eval runner tests, and the desktop acceptance smoke specs. Added a Node contract test for the script plan plus `e2e/acceptance.spec.ts` covering the Settings scheduler create, run, disable, and delete round trip through mocked Tauri scheduler IPC.
   - **Phase 7.8 doctor-permissions follow-up (2026-06-16):** Expanded `e2e/acceptance.spec.ts` so the acceptance smoke now covers Settings > Diagnostics doctor status, gateway runtime status, diagnostics refresh, and Settings > Tools permission allow/deny/reset round trips through the shared e2e IPC fixture.
   - Files: `scripts/acceptance.sh`, `e2e/acceptance.spec.ts`.
-- [ ] 7.9 Documentation pass: update README, AGENTS.md, and CHANGELOG for new surfaces.
+- [x] 7.9 Documentation pass: update README, AGENTS.md, and CHANGELOG for new surfaces.
+  - **Phase 7.9 docs follow-up (2026-06-16):** Updated root and desktop README files with the current runtime surfaces and acceptance entry points, added AGENTS guidance for keeping product docs/acceptance coverage aligned, and introduced `CHANGELOG.md` with the current unreleased Phase 7 desktop surfaces.
 
 **Acceptance gate:**
 
