@@ -36,6 +36,20 @@ export interface WorkbenchReviewView {
   history: WorkbenchReviewItem[];
 }
 
+export interface WorkbenchFileItem {
+  file: string;
+  taskIds: string[];
+  taskTitles: string[];
+}
+
+export interface WorkbenchFileView {
+  files: WorkbenchFileItem[];
+  visibleFileCount: number;
+  reportedFileCount: number;
+  hiddenFileCount: number;
+  tasksWithFiles: number;
+}
+
 /** Pure helper: derive workbench summary counts from an AgentA2AProjection. */
 export function deriveWorkbenchSummary(state: AgentA2AProjection | null): WorkbenchSummary {
   if (!state || state.tasks.length === 0) {
@@ -100,6 +114,54 @@ export function deriveWorkbenchReviewView(state: AgentA2AProjection | null): Wor
   }
 
   return { queue, history };
+}
+
+/** Pure helper: derive a file-centric workbench view from diff-derived projection fields. */
+export function deriveWorkbenchFileView(state: AgentA2AProjection | null): WorkbenchFileView {
+  const byFile = new Map<string, WorkbenchFileItem>();
+  let reportedFileCount = 0;
+  let tasksWithFiles = 0;
+  let hiddenFileCount = 0;
+
+  for (const rawTask of state?.tasks ?? []) {
+    const task = normalizeA2ATaskProjection(rawTask);
+    const reported = task.changed_file_count ?? 0;
+    if (reported <= 0) continue;
+
+    tasksWithFiles += 1;
+    reportedFileCount += reported;
+    const visibleFilesForTask = new Set<string>();
+    for (const file of task.changed_files) {
+      const key = file.trim();
+      if (!key) continue;
+      visibleFilesForTask.add(key);
+      const existing = byFile.get(key) ?? {
+        file: key,
+        taskIds: [],
+        taskTitles: [],
+      };
+      if (!existing.taskIds.includes(task.task_id)) {
+        existing.taskIds.push(task.task_id);
+        existing.taskTitles.push(task.title);
+      }
+      byFile.set(key, existing);
+    }
+    hiddenFileCount += Math.max(0, reported - visibleFilesForTask.size);
+  }
+
+  const files = [...byFile.values()].sort((a, b) => {
+    const taskDelta = b.taskIds.length - a.taskIds.length;
+    return taskDelta !== 0 ? taskDelta : a.file.localeCompare(b.file);
+  });
+  const visibleFileCount = files.length;
+
+  return {
+    files,
+    visibleFileCount,
+    reportedFileCount,
+    hiddenFileCount,
+    tasksWithFiles,
+  };
 }
 
 /**

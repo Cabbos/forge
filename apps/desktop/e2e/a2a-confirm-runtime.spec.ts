@@ -258,6 +258,10 @@ test.describe("A2A runtime surfaces", () => {
     await expect(workspace).toContainText("审阅历史");
     await expect(workspace).toContainText("审阅拒绝");
     await expect(workspace).toContainText("Review rejected unsafe permission edit");
+    await expect(workspace).toContainText("文件视图");
+    await expect(workspace).toContainText("2 可见 / 3 报告");
+    await expect(workspace).toContainText("1 未展开");
+    await expect(workspace).toContainText("apps/desktop/src-tauri/src/executor/permissions.rs");
   });
 
   test("hub panel can approve a review queue item", async ({ page }) => {

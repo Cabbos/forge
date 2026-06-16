@@ -306,6 +306,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `adapters/base.rs`, `adapters/anthropic.rs`, `adapters/openai.rs`.
 - [ ] 4.6 Build Subagent Workbench view: tree of parent/child sessions, status badges, cost tab, file IO tab.
   - **Phase 4-B partial (2026-06-12):** Enhanced existing `AgentA2ATimeline` / `AgentA2AWorkspace` components with parent-child lineage hint, duration/elapsed display, failure kind badge with retryable indicator, resume note for interrupted tasks, latest progress while running, workbench summary counts (review-needed, retained worktrees), **diff-derived changed-file chips in WorktreeReviewPanel** (file path chips, total count, per-task diff indicator), and **test report excerpt**. Stats area now shows tasks-with-diff count. Kept layout dense — no nested cards. No new tab components created (deferred for cost/file IO streams in 4-B).
+  - **Phase 4-E file-view follow-up (2026-06-16):** Added a file-centric Workbench summary derived from existing `changed_files` / `changed_file_count` projection fields. It groups visible changed paths across worker tasks, shows visible vs reported totals, and calls out hidden/unexpanded files when projection limits truncate path lists. This improves the Workbench file-IO view without touching executor hooks or claiming true live file IO streaming.
   - Files: `components/messages/AgentA2ATimeline.tsx`, `styles/process.css`.
 - [x] 4.7 Distinguish failure reasons: smoke failure, review rejection, arbitration timeout, tool error, user cancellation.
   - **Phase 4-A (2026-06-12):** Added `failure_kind` field to `AgentA2ATaskProjection` (populated from `AgentTaskFailure.kind` in bus.rs). Frontend renders a localized failure kind badge with distinct labels: 工具错误, 冒烟测试失败, 审阅拒绝, 仲裁超时, 用户取消. `retryable` flag shown as RefreshCw icon when true.
@@ -315,6 +316,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `agent/a2a/types.rs` (existing), `agent/a2a/bus.rs`.
 - [ ] 4.9 Tests: unit tests for cost tracking, status transitions, and failure classification; e2e for worker lifecycle.
   - **Phase 4-B partial (2026-06-12):** Added Rust unit tests in `bus.rs` covering `extract_files_from_diff_text` (modified, added, deleted, rename, fallback headers, dedup), `extract_test_report_excerpt` (summary field, result field, fallback), projection diff fields (no diff artifact, changed files extraction, 8-file limit, diff_available from metadata, no metadata, test report excerpt). Added 8 node tests for `deriveWorkbenchSummary` covering tasksWithDiff, visible changedFiles deduplication, truncated projection semantics, zero-diff defaults, null/empty inputs, and sparse legacy payloads. Cost tracking and e2e worker lifecycle tests remain deferred.
+  - **Phase 4-E file-view tests (2026-06-16):** Added node coverage for `deriveWorkbenchFileView` grouping, visible/reported/hidden counts, empty/null inputs, and no-diff tasks. Extended Playwright A2A runtime coverage to assert the Hub Workbench file view renders file totals, hidden count, and changed paths from mocked A2A projection state.
   - Files: `agent/a2a/bus.rs`, `store/workbenchSummary.test.ts`.
 
 **Phase 4-A summary (2026-06-12):**
@@ -326,10 +328,10 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 4.3 Status stream | ✅ Done | Timing, progress, resume_note on existing projection |
 | 4.4 File IO stream | ⏸️ Deferred | Requires executor hooks (CRITICAL risk path) |
 | 4.5 Cost/token stream | ⏸️ Deferred | Requires adapter trait changes |
-| 4.6 Workbench view | 🟨 Partial | Enhanced existing components; cost/file IO tabs deferred |
+| 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; true live IO and cost tabs deferred |
 | 4.7 Failure reasons | ✅ Done | failure_kind + retryable badge + localized labels |
 | 4.8 Lineage persistence | 🟨 Partial | Existing bus snapshot preserves fields when present; full lineage deferred |
-| 4.9 Tests | 🟨 Partial | Rust + node helper tests; cost/e2e deferred |
+| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view coverage; cost/live-worker lifecycle deferred |
 | Rust agent loop changes | 🚫 None | Constraint honored — zero edits to run_worktree_worker |
 | New dependencies | 🚫 None | No new packages |
 
@@ -371,6 +373,15 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Retry accounting | ✅ Done | `attempt_count` and `max_attempts` are persisted/projected; retryable failures can be requeued until attempts are exhausted |
 | Cancel cleanup | ✅ Done | User cancellation marks the task cancelled, records a cancelled message, and clears active lease state |
 | Projection + TS mirror | ✅ Done | `AgentA2ATaskProjection` exposes lease/retry fields in Rust and `src/lib/protocol.ts`; sparse legacy payloads normalize defaults |
+| CRITICAL paths touched | 🚫 None | No edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, or session loop |
+
+**Phase 4-E summary (2026-06-16):** Workbench file-centric view.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Workbench file view | ✅ Done | Groups projected changed paths across worker tasks and shows visible/reported/hidden counts |
+| File helper tests | ✅ Done | `deriveWorkbenchFileView` covers grouping, empty/null inputs, no-diff tasks, and hidden-file math |
+| A2A Playwright coverage | ✅ Done | Hub Workbench asserts file view totals and changed paths from mocked projection state |
 | CRITICAL paths touched | 🚫 None | No edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, or session loop |
 
 **Known deferred items (Phase 4-B):**

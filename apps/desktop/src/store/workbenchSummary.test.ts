@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { deriveWorkbenchReviewView, deriveWorkbenchSummary, normalizeA2ATaskProjection } from "../lib/workbenchSummary.ts";
+import {
+  deriveWorkbenchFileView,
+  deriveWorkbenchReviewView,
+  deriveWorkbenchSummary,
+  normalizeA2ATaskProjection,
+} from "../lib/workbenchSummary.ts";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "../lib/protocol.ts";
 
 function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProjection {
@@ -267,6 +272,72 @@ describe("deriveWorkbenchSummary", () => {
     assert.strictEqual(normalized.last_heartbeat_at_ms, null);
     assert.strictEqual(normalized.attempt_count, 0);
     assert.strictEqual(normalized.max_attempts, 3);
+  });
+});
+
+describe("deriveWorkbenchFileView", () => {
+  it("groups visible changed files by file path and task", () => {
+    const tasks = [
+      task({
+        task_id: "t1",
+        title: "Worker one",
+        changed_file_count: 2,
+        changed_files: ["shared.ts", "only-one.ts"],
+      }),
+      task({
+        task_id: "t2",
+        title: "Worker two",
+        changed_file_count: 2,
+        changed_files: ["shared.ts", "only-two.ts"],
+      }),
+    ];
+
+    const result = deriveWorkbenchFileView(projection(tasks));
+
+    assert.strictEqual(result.visibleFileCount, 3);
+    assert.strictEqual(result.reportedFileCount, 4);
+    assert.strictEqual(result.hiddenFileCount, 0);
+    assert.strictEqual(result.tasksWithFiles, 2);
+    assert.deepStrictEqual(result.files[0], {
+      file: "shared.ts",
+      taskIds: ["t1", "t2"],
+      taskTitles: ["Worker one", "Worker two"],
+    });
+  });
+
+  it("counts hidden files from per-task projection truncation", () => {
+    const result = deriveWorkbenchFileView(projection([
+      task({
+        task_id: "t1",
+        changed_file_count: 3,
+        changed_files: ["visible-one.ts"],
+      }),
+      task({
+        task_id: "t2",
+        changed_file_count: 2,
+        changed_files: ["visible-two.ts", "visible-two.ts"],
+      }),
+    ]));
+
+    assert.strictEqual(result.visibleFileCount, 2);
+    assert.strictEqual(result.reportedFileCount, 5);
+    assert.strictEqual(result.hiddenFileCount, 3);
+    assert.strictEqual(result.tasksWithFiles, 2);
+  });
+
+  it("returns an empty view for null or no diff tasks", () => {
+    const empty = deriveWorkbenchFileView(null);
+    assert.strictEqual(empty.visibleFileCount, 0);
+    assert.strictEqual(empty.reportedFileCount, 0);
+    assert.strictEqual(empty.hiddenFileCount, 0);
+    assert.deepStrictEqual(empty.files, []);
+
+    const noDiff = deriveWorkbenchFileView(projection([
+      task({ task_id: "t1", changed_file_count: 0, changed_files: [] }),
+      task({ task_id: "t2", changed_file_count: null, changed_files: ["ignored.ts"] }),
+    ]));
+    assert.strictEqual(noDiff.visibleFileCount, 0);
+    assert.strictEqual(noDiff.tasksWithFiles, 0);
   });
 });
 

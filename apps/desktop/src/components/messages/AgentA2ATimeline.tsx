@@ -16,9 +16,11 @@ import {
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
 import { reviewAgentA2ATasks, type AgentA2AReviewDecision } from "@/lib/ipc/a2a";
 import {
+  deriveWorkbenchFileView,
   deriveWorkbenchReviewView,
   deriveWorkbenchSummary,
   normalizeA2ATaskProjection,
+  type WorkbenchFileView,
   type WorkbenchReviewItem,
   type WorkbenchReviewView,
 } from "@/lib/workbenchSummary";
@@ -324,6 +326,39 @@ function WorkbenchReviewSummary({
   );
 }
 
+function WorkbenchFileSummary({ view }: { view: WorkbenchFileView }) {
+  if (view.files.length === 0) return null;
+
+  return (
+    <section className="forge-a2a-file-summary" aria-label="文件视图">
+      <div className="forge-a2a-file-summary-header">
+        <span className="forge-a2a-file-summary-title">文件视图</span>
+        <span className="forge-a2a-file-summary-count">
+          {view.visibleFileCount} 可见 / {view.reportedFileCount} 报告
+        </span>
+        {view.hiddenFileCount > 0 && (
+          <span className="forge-a2a-file-summary-hidden">
+            {view.hiddenFileCount} 未展开
+          </span>
+        )}
+      </div>
+      <div className="forge-a2a-file-summary-list">
+        {view.files.slice(0, 10).map((item) => (
+          <div key={item.file} className="forge-a2a-file-summary-row">
+            <FileCode className="size-3" />
+            <code className="forge-a2a-file-summary-path" title={item.file}>
+              {item.file}
+            </code>
+            <span className="forge-a2a-file-summary-task-count">
+              {item.taskIds.length} 任务
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TaskProcess({ task }: { task: AgentA2ATaskProjection }) {
   if (task.messages.length === 0) return null;
 
@@ -505,6 +540,7 @@ export function AgentA2AWorkspace({
 
   const summary = deriveWorkbenchSummary(state);
   const reviewView = deriveWorkbenchReviewView(state);
+  const fileView = deriveWorkbenchFileView(state);
 
   return (
     <section className="forge-a2a-workspace" aria-label="子任务">
@@ -529,6 +565,7 @@ export function AgentA2AWorkspace({
         busyKey={reviewBusyKey}
         onReview={sessionId ? handleReview : undefined}
       />
+      <WorkbenchFileSummary view={fileView} />
       {reviewError && (
         <p className="forge-a2a-review-error" role="alert">
           {reviewError}
