@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::gateway::runner::TriggerRunRecord;
 use crate::gateway::session_input::SessionInputRecord;
+use crate::loop_runtime::{
+    LoopBudget, LoopCompletionContract, LoopPolicy, LoopTaskRecord, LoopTaskStatus,
+};
 
 /// An incoming request from a gateway client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -296,6 +299,66 @@ pub struct TailSessionEventsResult {
     pub total_events: usize,
     #[serde(default)]
     pub cursor_reset: bool,
+}
+
+/// Parameters for creating a durable gateway-owned loop task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CreateLoopTaskRequest {
+    pub goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<LoopPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<LoopBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_contract: Option<LoopCompletionContract>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoopTaskResponse {
+    pub ok: bool,
+    pub task: LoopTaskRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListLoopTasksParams {
+    #[serde(default)]
+    pub statuses: Vec<LoopTaskStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListLoopTasksResult {
+    pub ok: bool,
+    pub tasks: Vec<LoopTaskRecord>,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetLoopTaskParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CancelLoopTaskParams {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CancelLoopTaskResult {
+    pub ok: bool,
+    pub changed: bool,
+    pub task: LoopTaskRecord,
 }
 
 /// Gateway version string.

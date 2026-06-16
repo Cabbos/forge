@@ -15,6 +15,7 @@ pub mod harness;
 mod ipc;
 mod log_store;
 mod logger;
+pub mod loop_runtime;
 mod memory;
 mod parser;
 mod process_runner;

@@ -2,21 +2,26 @@
 //! response serialization.
 
 use crate::gateway::protocol::{
-    serialize_reply, AttachSessionParams, AttachSessionResult, CancelTriggerParams,
-    CancelTriggerResult, CompleteSessionInputParams, CompleteSessionInputResult,
-    EnqueueSessionInputParams, EnqueueSessionInputResult, EnqueueTriggerParams,
-    EnqueueTriggerResult, GatewayError, GatewayErrorBody, GatewayReply, GatewayRequest,
-    GatewayResponse, GatewaySessionAttachStatus, GatewaySessionControl, GatewaySessionControlPlane,
-    GatewaySessionInfo, GatewaySessionSnapshotSummary, GetSessionSnapshotParams,
+    serialize_reply, AttachSessionParams, AttachSessionResult, CancelLoopTaskParams,
+    CancelLoopTaskResult, CancelTriggerParams, CancelTriggerResult, CompleteSessionInputParams,
+    CompleteSessionInputResult, CreateLoopTaskRequest, EnqueueSessionInputParams,
+    EnqueueSessionInputResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
+    GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
+    GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
+    GatewaySessionSnapshotSummary, GetLoopTaskParams, GetSessionSnapshotParams,
     GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, HealthResult,
-    ListSessionInputsParams, ListSessionInputsResult, PingResult, ReplayTriggerRunParams,
-    ReplayTriggerRunResult, TailSessionEventsParams, TailSessionEventsResult, GATEWAY_VERSION,
+    ListLoopTasksParams, ListLoopTasksResult, ListSessionInputsParams, ListSessionInputsResult,
+    LoopTaskResponse, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
+    TailSessionEventsParams, TailSessionEventsResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::session_input::{
     new_session_input_record, SessionInputCompletionRecord, SessionInputStore,
 };
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
+use crate::loop_runtime::{
+    LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskProjectionStore, LoopTaskRecord,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -90,6 +95,8 @@ pub struct GatewayState {
     pub trigger_store: Arc<TriggerStore>,
     pub trigger_run_store: Arc<TriggerRunStore>,
     pub session_input_store: Arc<SessionInputStore>,
+    pub loop_event_journal: Arc<LoopEventJournal>,
+    pub loop_task_projection_store: Arc<LoopTaskProjectionStore>,
     runtime_tasks: Mutex<HashMap<String, GatewayRuntimeTaskStatus>>,
     include_snapshot_sessions: bool,
 }
@@ -128,8 +135,29 @@ impl GatewayState {
             trigger_store: Arc::new(TriggerStore::persistent_default()),
             trigger_run_store: Arc::new(TriggerRunStore::persistent_default()),
             session_input_store: Arc::new(SessionInputStore::persistent_default()),
+            loop_event_journal: Arc::new(LoopEventJournal::persistent_default()),
+            loop_task_projection_store: Arc::new(LoopTaskProjectionStore::persistent_default()),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
             include_snapshot_sessions,
+        }
+    }
+
+    pub fn new_with_loop_runtime_stores(
+        loop_event_journal: Arc<LoopEventJournal>,
+        loop_task_projection_store: Arc<LoopTaskProjectionStore>,
+    ) -> Self {
+        Self {
+            started_at: Instant::now(),
+            active_sessions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            sessions: Mutex::new(HashMap::new()),
+            session_registry_path: None,
+            trigger_store: Arc::new(TriggerStore::new()),
+            trigger_run_store: Arc::new(TriggerRunStore::new()),
+            session_input_store: Arc::new(SessionInputStore::new()),
+            loop_event_journal,
+            loop_task_projection_store,
+            runtime_tasks: Mutex::new(default_runtime_task_map()),
+            include_snapshot_sessions: false,
         }
     }
 
@@ -325,6 +353,10 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "get_trigger_run" => handle_get_trigger_run(state, request),
         "get_session_snapshot" => handle_get_session_snapshot(request),
         "tail_session_events" => handle_tail_session_events(request),
+        "create_loop_task" => handle_create_loop_task(state, request),
+        "list_loop_tasks" => handle_list_loop_tasks(state, request),
+        "get_loop_task" => handle_get_loop_task(state, request),
+        "cancel_loop_task" => handle_cancel_loop_task(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         "dashboard_snapshot" => handle_dashboard_snapshot(state, request.id),
@@ -760,6 +792,251 @@ fn handle_tail_session_events(request: GatewayRequest) -> GatewayReply {
     })
 }
 
+fn handle_create_loop_task(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<CreateLoopTaskRequest>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let goal = params.goal.trim().to_string();
+    if goal.is_empty() {
+        return invalid_params(request.id, "goal must not be empty");
+    }
+    let session_id = clean_optional_string(params.session_id);
+    let profile_id = clean_optional_string(params.profile_id);
+    let workspace_path = clean_optional_string(params.workspace_path);
+    let idempotency_key = clean_optional_string(params.idempotency_key)
+        .unwrap_or_else(|| format!("rpc:{}", request.id));
+    match state
+        .loop_event_journal
+        .find_by_idempotency_key(&idempotency_key)
+    {
+        Ok(Some(existing)) => {
+            let LoopRuntimeEvent::TaskCreated { task } = existing.event else {
+                return invalid_params(
+                    request.id,
+                    format!("idempotency conflict for key: {idempotency_key}"),
+                );
+            };
+            if !create_request_matches_task(
+                &task,
+                &goal,
+                &session_id,
+                &profile_id,
+                &workspace_path,
+                &params.policy,
+                &params.budget,
+                &params.completion_contract,
+            ) {
+                return invalid_params(
+                    request.id,
+                    format!("idempotency conflict for key: {idempotency_key}"),
+                );
+            }
+            if let Err(error) = state
+                .loop_task_projection_store
+                .rebuild_from_journal(&state.loop_event_journal)
+            {
+                return invalid_params(request.id, error);
+            }
+            return loop_task_response(request.id, task);
+        }
+        Ok(None) => {}
+        Err(error) => return invalid_params(request.id, error),
+    }
+
+    let task = LoopTaskRecord::new(
+        goal,
+        session_id,
+        profile_id,
+        workspace_path,
+        params.policy,
+        params.budget,
+        params.completion_contract,
+    );
+    let event = LoopEventEnvelope::task_created(
+        task.clone(),
+        Some(request.id.clone()),
+        Some(idempotency_key),
+    );
+    let append = match state.loop_event_journal.append_idempotent(event) {
+        Ok(append) => append,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let projection = match state
+        .loop_task_projection_store
+        .rebuild_from_journal(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let task = projection
+        .find(&append.event.task_id)
+        .cloned()
+        .unwrap_or(task);
+    loop_task_response(request.id, task)
+}
+
+fn handle_list_loop_tasks(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let params = match request.params {
+        Some(params) => match serde_json::from_value::<ListLoopTasksParams>(params) {
+            Ok(params) => params,
+            Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+        },
+        None => ListLoopTasksParams {
+            statuses: Vec::new(),
+            limit: None,
+        },
+    };
+    let limit = params.limit.unwrap_or(50).clamp(1, 200);
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let mut tasks = projection.tasks;
+    if !params.statuses.is_empty() {
+        tasks.retain(|task| params.statuses.contains(&task.status));
+    }
+    let total = tasks.len();
+    tasks.truncate(limit);
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(ListLoopTasksResult {
+            ok: true,
+            tasks,
+            total,
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_get_loop_task(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<GetLoopTaskParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let task_id = params.task_id.trim().to_string();
+    if task_id.is_empty() {
+        return invalid_params(request.id, "task_id must not be empty");
+    }
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    loop_task_response(request.id, task)
+}
+
+fn handle_cancel_loop_task(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<CancelLoopTaskParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let task_id = params.task_id.trim().to_string();
+    if task_id.is_empty() {
+        return invalid_params(request.id, "task_id must not be empty");
+    }
+    let reason = clean_optional_string(params.reason);
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    if task.status.is_terminal() {
+        return cancel_loop_task_response(request.id, false, task);
+    }
+
+    let idempotency_key = cancel_idempotency_key(&task_id, reason.as_deref());
+    let event = LoopEventEnvelope::task_canceled(
+        task_id.clone(),
+        reason,
+        Some(request.id.clone()),
+        Some(idempotency_key),
+    );
+    if let Err(error) = state.loop_event_journal.append_idempotent(event) {
+        return invalid_params(request.id, error);
+    }
+    let projection = match state
+        .loop_task_projection_store
+        .rebuild_from_journal(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    cancel_loop_task_response(request.id, true, task)
+}
+
+fn loop_task_response(id: String, task: LoopTaskRecord) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(LoopTaskResponse { ok: true, task }).unwrap(),
+    })
+}
+
+fn cancel_loop_task_response(id: String, changed: bool, task: LoopTaskRecord) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(CancelLoopTaskResult {
+            ok: true,
+            changed,
+            task,
+        })
+        .unwrap(),
+    })
+}
+
+fn create_request_matches_task(
+    task: &LoopTaskRecord,
+    goal: &str,
+    session_id: &Option<String>,
+    profile_id: &Option<String>,
+    workspace_path: &Option<String>,
+    policy: &Option<crate::loop_runtime::LoopPolicy>,
+    budget: &Option<crate::loop_runtime::LoopBudget>,
+    completion_contract: &Option<crate::loop_runtime::LoopCompletionContract>,
+) -> bool {
+    task.goal == goal
+        && &task.session_id == session_id
+        && &task.profile_id == profile_id
+        && &task.workspace_path == workspace_path
+        && task.policy
+            == policy
+                .clone()
+                .unwrap_or_else(crate::loop_runtime::LoopPolicy::default_for_background_task)
+        && task.budget
+            == budget
+                .clone()
+                .unwrap_or_else(crate::loop_runtime::LoopBudget::default_for_background_task)
+        && task.completion_contract
+            == completion_contract.clone().unwrap_or_else(
+                crate::loop_runtime::LoopCompletionContract::default_for_background_task,
+            )
+}
+
 fn handle_list_trigger_runs(state: &GatewayState, id: String) -> GatewayReply {
     let runs = state.trigger_run_store.list();
     GatewayReply::Ok(GatewayResponse {
@@ -990,6 +1267,22 @@ fn clean_session_ids(session_ids: Vec<String>) -> Vec<String> {
         cleaned.push(session_id.to_string());
     }
     cleaned
+}
+
+fn cancel_idempotency_key(task_id: &str, reason: Option<&str>) -> String {
+    format!(
+        "cancel:{task_id}:{}",
+        stable_text_fingerprint(reason.unwrap_or(""))
+    )
+}
+
+fn stable_text_fingerprint(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn default_session_registry_path() -> PathBuf {
@@ -1288,6 +1581,20 @@ mod tests {
             trigger_store: Arc::new(crate::gateway::webhook::TriggerStore::new()),
             trigger_run_store: Arc::new(crate::gateway::runner::TriggerRunStore::new()),
             session_input_store: Arc::new(crate::gateway::session_input::SessionInputStore::new()),
+            loop_event_journal: Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+                tempfile::tempdir()
+                    .expect("loop runtime tempdir")
+                    .path()
+                    .join("loop-events.jsonl"),
+            )),
+            loop_task_projection_store: Arc::new(
+                crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+                    tempfile::tempdir()
+                        .expect("loop runtime projection tempdir")
+                        .path()
+                        .join("loop-tasks.json"),
+                ),
+            ),
             runtime_tasks: Mutex::new(default_runtime_task_map()),
             include_snapshot_sessions: false,
         }
@@ -1356,6 +1663,385 @@ mod tests {
             }
             _ => panic!("expected Err reply"),
         }
+    }
+
+    #[test]
+    fn create_loop_task_dispatch_persists_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection.clone());
+        let request = GatewayRequest {
+            id: "req-1".to_string(),
+            method: "create_loop_task".to_string(),
+            params: Some(serde_json::json!({
+                "goal": "Ship Level 3 runtime",
+                "workspace_path": "/Users/cabbos/project/forge"
+            })),
+        };
+
+        let GatewayReply::Ok(response) = dispatch(&state, request) else {
+            panic!("expected ok response");
+        };
+        let result: crate::gateway::protocol::LoopTaskResponse =
+            serde_json::from_value(response.result).unwrap();
+        assert!(result.ok);
+        assert_eq!(result.task.goal, "Ship Level 3 runtime");
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+        assert_eq!(projection.load_or_rebuild(&journal).unwrap().tasks.len(), 1);
+    }
+
+    #[test]
+    fn create_loop_task_rejects_empty_goal() {
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "create-empty".into(),
+                method: "create_loop_task".into(),
+                params: Some(serde_json::json!({ "goal": "   " })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("goal"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+    }
+
+    #[test]
+    fn create_loop_task_duplicate_idempotency_returns_original_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+        let request = || GatewayRequest {
+            id: "req-create".into(),
+            method: "create_loop_task".into(),
+            params: Some(serde_json::json!({
+                "goal": "Ship Level 3 runtime",
+                "idempotency_key": "create:level-3"
+            })),
+        };
+
+        let first = dispatch(&state, request());
+        let second = dispatch(&state, request());
+
+        let first_task = match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::LoopTaskResponse =
+                    serde_json::from_value(resp.result).expect("parse first create");
+                result.task
+            }
+            _ => panic!("expected first Ok reply"),
+        };
+        let second_task = match second {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::LoopTaskResponse =
+                    serde_json::from_value(resp.result).expect("parse second create");
+                result.task
+            }
+            _ => panic!("expected second Ok reply"),
+        };
+
+        assert_eq!(first_task.id, second_task.id);
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn create_loop_task_duplicate_idempotency_with_different_payload_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+
+        let first = dispatch(
+            &state,
+            GatewayRequest {
+                id: "req-create-1".into(),
+                method: "create_loop_task".into(),
+                params: Some(serde_json::json!({
+                    "goal": "Ship Level 3 runtime",
+                    "idempotency_key": "create:level-3",
+                    "workspace_path": "/repo/one"
+                })),
+            },
+        );
+        let second = dispatch(
+            &state,
+            GatewayRequest {
+                id: "req-create-2".into(),
+                method: "create_loop_task".into(),
+                params: Some(serde_json::json!({
+                    "goal": "Ship something else",
+                    "idempotency_key": "create:level-3",
+                    "workspace_path": "/repo/two"
+                })),
+            },
+        );
+
+        assert!(matches!(first, GatewayReply::Ok(_)));
+        match second {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("idempotency conflict"));
+            }
+            _ => panic!("expected idempotency conflict"),
+        }
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn concurrent_create_loop_task_duplicate_idempotency_appends_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let state = Arc::new(GatewayState::new_with_loop_runtime_stores(
+            journal.clone(),
+            projection,
+        ));
+        let barrier = Arc::new(std::sync::Barrier::new(12));
+        let mut handles = Vec::new();
+
+        for index in 0..12 {
+            let state = Arc::clone(&state);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                dispatch(
+                    &state,
+                    GatewayRequest {
+                        id: format!("req-create-{index}"),
+                        method: "create_loop_task".into(),
+                        params: Some(serde_json::json!({
+                            "goal": "Ship Level 3 runtime",
+                            "idempotency_key": "create:level-3",
+                            "workspace_path": "/repo"
+                        })),
+                    },
+                )
+            }));
+        }
+
+        let tasks = handles
+            .into_iter()
+            .map(|handle| match handle.join().unwrap() {
+                GatewayReply::Ok(resp) => {
+                    let result: crate::gateway::protocol::LoopTaskResponse =
+                        serde_json::from_value(resp.result).expect("parse create");
+                    result.task
+                }
+                GatewayReply::Err(err) => panic!("unexpected create error: {:?}", err.error),
+            })
+            .collect::<Vec<_>>();
+        let first_id = tasks[0].id.clone();
+
+        assert!(tasks.iter().all(|task| task.id == first_id));
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn create_loop_task_errors_when_journal_is_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal_path = dir.path().join("loop-events.jsonl");
+        let valid = serde_json::to_string(
+            &crate::loop_runtime::LoopEventEnvelope::task_created_for_test("loop-1", "blocked"),
+        )
+        .unwrap();
+        std::fs::write(&journal_path, format!("{valid}\n{{not json\n")).unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            journal_path,
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let state = GatewayState::new_with_loop_runtime_stores(journal, projection);
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "create-corrupt".into(),
+                method: "create_loop_task".into(),
+                params: Some(serde_json::json!({ "goal": "blocked" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains("line 2"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+    }
+
+    #[test]
+    fn list_loop_tasks_filters_by_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-pending",
+                    "pending",
+                ),
+            )
+            .unwrap();
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-canceled",
+                    "canceled",
+                ),
+            )
+            .unwrap();
+        journal
+            .append(crate::loop_runtime::LoopEventEnvelope::task_canceled(
+                "loop-canceled".into(),
+                Some("done".into()),
+                Some("test".into()),
+                Some("cancel:loop-canceled:done".into()),
+            ))
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal, projection);
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "list-loop".into(),
+                method: "list_loop_tasks".into(),
+                params: Some(serde_json::json!({
+                    "statuses": ["pending"],
+                    "limit": 10
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::ListLoopTasksResult =
+                    serde_json::from_value(resp.result).expect("parse loop tasks");
+                assert_eq!(result.total, 1);
+                assert_eq!(result.tasks[0].id, "loop-pending");
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn get_loop_task_rejects_missing_task() {
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "get-missing-loop".into(),
+                method: "get_loop_task".into(),
+                params: Some(serde_json::json!({ "task_id": "missing-loop" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err
+                    .error
+                    .message
+                    .contains("loop task not found: missing-loop"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+    }
+
+    #[test]
+    fn cancel_loop_task_is_idempotent_through_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-cancel",
+                    "cancel me",
+                ),
+            )
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+
+        let request = || GatewayRequest {
+            id: "cancel-loop".into(),
+            method: "cancel_loop_task".into(),
+            params: Some(serde_json::json!({
+                "task_id": "loop-cancel",
+                "reason": "user canceled from dashboard"
+            })),
+        };
+
+        let first = dispatch(&state, request());
+        let second = dispatch(&state, request());
+
+        match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::CancelLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse first cancel");
+                assert!(result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Canceled
+                );
+            }
+            _ => panic!("expected first Ok reply"),
+        }
+        match second {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::CancelLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse second cancel");
+                assert!(!result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Canceled
+                );
+            }
+            _ => panic!("expected second Ok reply"),
+        }
+        assert_eq!(journal.load_all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn cancel_loop_task_uses_stable_idempotency_key_fingerprint() {
+        assert_eq!(
+            cancel_idempotency_key("loop-1", Some("user canceled from dashboard")),
+            "cancel:loop-1:e2baa3767ed51387"
+        );
     }
 
     #[test]
