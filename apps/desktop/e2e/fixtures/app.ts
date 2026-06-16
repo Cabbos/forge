@@ -87,6 +87,28 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         },
       ],
     });
+    const serviceStatus = () => {
+      // @ts-expect-error acceptance mock
+      if (window.__mockServiceStatus && typeof window.__mockServiceStatus === "object") {
+        // @ts-expect-error acceptance mock
+        return window.__mockServiceStatus as Record<string, unknown>;
+      }
+      return {
+        installed: true,
+        running: true,
+        message: "Gateway service is installed and running.",
+        supported: true,
+        backend: "launchd",
+        service_id: "com.forge.gateway",
+        label: "com.forge.gateway",
+        launch_domain: "gui/501",
+        service_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist",
+        plist_path: "/Users/test/Library/LaunchAgents/com.forge.gateway.plist",
+        log_path: "/Users/test/.forge/logs/gateway.log",
+        error_log_path: "/Users/test/.forge/logs/gateway-error.log",
+        status_message: "Service 'com.forge.gateway' is running.",
+      };
+    };
     const mcpContextSources = {
       resources: [
         {
@@ -467,6 +489,28 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "get_gateway_runtime_status":
           // @ts-expect-error acceptance mock
           return window.__mockGatewayRuntimeStatus ?? gatewayRuntimeStatus();
+        case "get_service_status":
+          return serviceStatus();
+        case "set_autostart": {
+          const enabled = Boolean(args.enabled);
+          const current = serviceStatus();
+          const next = {
+            ...current,
+            installed: enabled,
+            running: enabled,
+            message: enabled
+              ? "Gateway service is installed and running."
+              : "Gateway service is not installed.",
+            status_message: enabled
+              ? `Service '${String(current.service_id ?? current.label ?? "forge-gateway")}' is running.`
+              : `Service '${String(current.service_id ?? current.label ?? "forge-gateway")}' is not installed.`,
+          };
+          // @ts-expect-error acceptance mock
+          window.__mockServiceStatus = next;
+          // @ts-expect-error acceptance mock
+          window.__lastSetAutostartArgs = args;
+          return next;
+        }
         case "list_gateway_triggers":
           // @ts-expect-error acceptance mock
           return Array.isArray(window.__mockGatewayTriggers) ? window.__mockGatewayTriggers : [];

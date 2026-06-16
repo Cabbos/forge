@@ -28,6 +28,55 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(refreshCount).toBeGreaterThan(1);
   });
 
+  test("settings general toggles gateway autostart through service IPC", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockServiceStatus = {
+        installed: false,
+        running: false,
+        message: "Gateway systemd user service is not installed.",
+        supported: true,
+        backend: "systemd",
+        service_id: "forge-gateway.service",
+        label: "forge-gateway.service",
+        launch_domain: "systemd-user",
+        service_path: "/home/alice/.config/systemd/user/forge-gateway.service",
+        plist_path: "/home/alice/.config/systemd/user/forge-gateway.service",
+        log_path: "/home/alice/.forge/logs/gateway.log",
+        error_log_path: "/home/alice/.forge/logs/gateway-error.log",
+        status_message: "Service 'forge-gateway.service' is not installed.",
+      };
+    });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "通用" }).click();
+
+    await expect(dialog.getByRole("heading", { name: "通用" }).first()).toBeVisible();
+    await expect(dialog).toContainText("systemd user service");
+    const switchControl = dialog.getByRole("switch");
+    await expect(switchControl).toHaveAttribute("aria-checked", "false");
+
+    await switchControl.click();
+    await expect(dialog).toContainText("已安装");
+    await expect(dialog).toContainText("运行中");
+    await expect(switchControl).toHaveAttribute("aria-checked", "true");
+    let autostartArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetAutostartArgs;
+    });
+    expect(autostartArgs).toEqual({ enabled: true });
+
+    await switchControl.click();
+    await expect(dialog).toContainText("未安装");
+    await expect(switchControl).toHaveAttribute("aria-checked", "false");
+    autostartArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetAutostartArgs;
+    });
+    expect(autostartArgs).toEqual({ enabled: false });
+  });
+
   test("settings tools supports permission allow deny and reset round-trip", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock
