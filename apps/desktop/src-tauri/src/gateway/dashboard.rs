@@ -118,20 +118,310 @@ fn dashboard_html() -> &'static str {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Forge Gateway Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f6f8;
+      color: #202124;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #f5f6f8;
+    }
+    main {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      font-weight: 680;
+    }
+    h2 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+    .muted {
+      color: #666d75;
+      font-size: 13px;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #c8cec8;
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #ffffffb8;
+      font-size: 13px;
+    }
+    .status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #2f8f46;
+    }
+    .status[data-ok="false"]::before {
+      background: #b54708;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 12px;
+    }
+    section {
+      grid-column: span 6;
+      border: 1px solid #d6dad4;
+      border-radius: 8px;
+      background: #fffffff2;
+      padding: 14px;
+      min-width: 0;
+    }
+    section.full {
+      grid-column: 1 / -1;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      border: 1px solid #e1e4df;
+      border-radius: 6px;
+      padding: 10px;
+      background: #f8faf9;
+    }
+    .metric strong {
+      display: block;
+      font-size: 20px;
+      margin-bottom: 2px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 6px;
+      border-bottom: 1px solid #eceee9;
+      vertical-align: top;
+    }
+    th {
+      color: #555c63;
+      font-weight: 600;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .empty {
+      color: #737a82;
+      font-size: 13px;
+      padding: 10px 0 2px;
+    }
+    @media (max-width: 760px) {
+      header {
+        flex-direction: column;
+      }
+      section {
+        grid-column: 1 / -1;
+      }
+      .metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
 </head>
 <body>
   <main>
-    <h1>Forge Gateway Dashboard</h1>
-    <pre id="snapshot">Loading /api/dashboard ...</pre>
+    <header>
+      <div>
+        <h1>Forge Gateway Dashboard</h1>
+        <div class="muted" id="generated">Loading /api/dashboard ...</div>
+      </div>
+      <div class="status" id="gateway-status" data-ok="false">Loading</div>
+    </header>
+    <div class="grid">
+      <section class="full">
+        <h2>Runtime</h2>
+        <div class="metrics" id="runtime-metrics"></div>
+      </section>
+      <section>
+        <h2>Runtime Tasks</h2>
+        <div id="runtime-tasks"></div>
+      </section>
+      <section>
+        <h2>Sessions</h2>
+        <div id="sessions"></div>
+      </section>
+      <section>
+        <h2>Queued Triggers</h2>
+        <div id="triggers"></div>
+      </section>
+      <section>
+        <h2>Recent Runs</h2>
+        <div id="runs"></div>
+      </section>
+      <section class="full">
+        <h2>Session Inputs</h2>
+        <div id="session-inputs"></div>
+      </section>
+      <section class="full">
+        <h2>Event Log</h2>
+        <div id="event-log"></div>
+      </section>
+    </div>
   </main>
   <script>
+    const text = (value, fallback = '-') => {
+      if (value === null || value === undefined || value === '') return fallback;
+      return String(value);
+    };
+
+    const time = (value) => {
+      if (!value) return '-';
+      return new Date(value).toLocaleString();
+    };
+
+    const setText = (id, value) => {
+      document.getElementById(id).textContent = value;
+    };
+
+    const metric = (label, value) => {
+      const node = document.createElement('div');
+      node.className = 'metric';
+      const strong = document.createElement('strong');
+      strong.textContent = text(value, '0');
+      const caption = document.createElement('span');
+      caption.className = 'muted';
+      caption.textContent = label;
+      node.append(strong, caption);
+      return node;
+    };
+
+    const empty = (message) => {
+      const node = document.createElement('div');
+      node.className = 'empty';
+      node.textContent = message;
+      return node;
+    };
+
+    const table = (headers, rows) => {
+      if (!rows.length) return empty('No records.');
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      headers.forEach((header) => {
+        const th = document.createElement('th');
+        th.textContent = header.label;
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      const tbody = document.createElement('tbody');
+      rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        headers.forEach((header) => {
+          const td = document.createElement('td');
+          const value = header.value(row);
+          if (header.code) {
+            const code = document.createElement('code');
+            code.textContent = text(value);
+            td.appendChild(code);
+          } else {
+            td.textContent = text(value);
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.append(thead, tbody);
+      return table;
+    };
+
+    const replace = (id, node) => {
+      const target = document.getElementById(id);
+      target.replaceChildren(node);
+    };
+
+    const render = (snapshot) => {
+      const status = snapshot.status || {};
+      const badge = document.getElementById('gateway-status');
+      badge.dataset.ok = String(Boolean(snapshot.ok));
+      badge.textContent = snapshot.ok ? 'Healthy' : 'Needs attention';
+      setText('generated', `Generated ${time(snapshot.generated_at_ms)} - ${text(status.message)}`);
+
+      const metrics = document.getElementById('runtime-metrics');
+      metrics.replaceChildren(
+        metric('uptime seconds', status.uptime_seconds),
+        metric('active sessions', status.active_sessions),
+        metric('pending triggers', status.pending_triggers),
+        metric('pending inputs', status.pending_session_inputs)
+      );
+
+      replace('runtime-tasks', table([
+        { label: 'Task', value: (row) => row.name, code: true },
+        { label: 'Running', value: (row) => row.running ? 'yes' : 'no' },
+        { label: 'Last start', value: (row) => time(row.last_started_at_ms) },
+        { label: 'Last error', value: (row) => row.last_error || '-' }
+      ], status.runtime_tasks || []));
+
+      replace('sessions', table([
+        { label: 'Session', value: (row) => row.session_id, code: true },
+        { label: 'Model', value: (row) => `${text(row.provider)}/${text(row.model)}` },
+        { label: 'Workspace', value: (row) => row.workspace_path, code: true },
+        { label: 'Last seen', value: (row) => time(row.last_seen_at_ms || row.created_at_ms) }
+      ], snapshot.sessions || []));
+
+      replace('triggers', table([
+        { label: 'Trigger', value: (row) => row.id, code: true },
+        { label: 'Message', value: (row) => row.message },
+        { label: 'Model', value: (row) => row.model || row.provider || '-' },
+        { label: 'Received', value: (row) => time(row.received_at_ms) }
+      ], snapshot.queued_triggers || []));
+
+      replace('runs', table([
+        { label: 'Run', value: (row) => row.id, code: true },
+        { label: 'Status', value: (row) => row.status },
+        { label: 'Message', value: (row) => row.message },
+        { label: 'Session', value: (row) => row.session_id || '-', code: true }
+      ], snapshot.recent_runs || []));
+
+      replace('session-inputs', table([
+        { label: 'Input', value: (row) => row.input_id, code: true },
+        { label: 'Session', value: (row) => row.session_id, code: true },
+        { label: 'Message', value: (row) => row.message_preview },
+        { label: 'Completed', value: (row) => time(row.completed_at_ms) }
+      ], snapshot.recent_session_inputs || []));
+
+      replace('event-log', table([
+        { label: 'Kind', value: (row) => row.kind },
+        { label: 'Id', value: (row) => row.id, code: true },
+        { label: 'Message', value: (row) => row.message },
+        { label: 'At', value: (row) => time(row.at_ms) },
+        { label: 'Session', value: (row) => row.session_id || '-', code: true }
+      ], snapshot.event_log || []));
+    };
+
     fetch('/api/dashboard')
       .then((response) => response.json())
-      .then((snapshot) => {
-        document.getElementById('snapshot').textContent = JSON.stringify(snapshot, null, 2);
-      })
+      .then(render)
       .catch((error) => {
-        document.getElementById('snapshot').textContent = String(error);
+        setText('generated', String(error));
+        setText('gateway-status', 'Unavailable');
       });
   </script>
 </body>
@@ -178,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_root_request_returns_minimal_html_shell() {
+    fn dashboard_root_request_returns_readable_dashboard_shell() {
         let state = Arc::new(GatewayState::new_with_session_registry_path(
             tempfile::tempdir()
                 .expect("tempdir")
@@ -193,6 +483,10 @@ mod tests {
         assert!(response.contains("content-type: text/html; charset=utf-8\r\n"));
         assert!(response.contains("Forge Gateway Dashboard"));
         assert!(response.contains("/api/dashboard"));
+        assert!(response.contains("Runtime Tasks"));
+        assert!(response.contains("Sessions"));
+        assert!(response.contains("Queued Triggers"));
+        assert!(response.contains("Event Log"));
     }
 
     #[test]
