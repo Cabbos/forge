@@ -142,6 +142,36 @@ impl LoopTaskProjection {
                     task.updated_at_ms = *resolved_at_ms;
                     task.latest_event_id = Some(event.event_id.clone());
                 }
+                LoopRuntimeEvent::EvidenceRecorded { task_id, evidence } => {
+                    if task_id != &event.task_id {
+                        return Err(format!(
+                            "evidence task id mismatch: envelope {}, payload {}",
+                            event.task_id, task_id
+                        ));
+                    }
+                    let Some(task) = tasks.get_mut(task_id) else {
+                        return Err(format!("evidence recorded before task creation: {task_id}"));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    if let Some(existing) = task
+                        .evidence
+                        .iter()
+                        .find(|existing| evidence_id(existing) == evidence_id(evidence))
+                    {
+                        if existing == evidence {
+                            continue;
+                        }
+                        return Err(format!(
+                            "duplicate evidence recorded: {}",
+                            evidence_id(evidence)
+                        ));
+                    }
+                    task.updated_at_ms = event.created_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
+                    task.evidence.push(evidence.clone());
+                }
             }
         }
 
@@ -156,6 +186,17 @@ impl LoopTaskProjection {
 
     pub fn find(&self, task_id: &str) -> Option<&LoopTaskRecord> {
         self.tasks.iter().find(|task| task.id == task_id)
+    }
+}
+
+fn evidence_id(evidence: &crate::loop_runtime::EvidenceRecord) -> &str {
+    match evidence {
+        crate::loop_runtime::EvidenceRecord::Command { evidence_id, .. }
+        | crate::loop_runtime::EvidenceRecord::GitNexus { evidence_id, .. }
+        | crate::loop_runtime::EvidenceRecord::Commit { evidence_id, .. }
+        | crate::loop_runtime::EvidenceRecord::Docs { evidence_id, .. }
+        | crate::loop_runtime::EvidenceRecord::Review { evidence_id, .. }
+        | crate::loop_runtime::EvidenceRecord::Budget { evidence_id, .. } => evidence_id,
     }
 }
 
@@ -373,6 +414,39 @@ mod tests {
 
         assert_eq!(projection.tasks.len(), 1);
         assert_eq!(projection.tasks[0].goal, "first");
+    }
+
+    #[test]
+    fn evidence_recorded_replays_into_task_projection() {
+        let created = LoopEventEnvelope::task_created_for_test("loop-1", "first");
+        let mut evidence = LoopEventEnvelope::evidence_recorded(
+            "loop-1".to_string(),
+            crate::loop_runtime::EvidenceRecord::command_for_test("build:desktop", true),
+            None,
+            None,
+        );
+        evidence.sequence = 2;
+
+        let projection = LoopTaskProjection::from_events(&[created, evidence]).unwrap();
+
+        assert_eq!(projection.tasks[0].evidence.len(), 1);
+    }
+
+    #[test]
+    fn evidence_recorded_with_mismatched_envelope_task_id_errors() {
+        let created = LoopEventEnvelope::task_created_for_test("loop-1", "first");
+        let mut evidence = LoopEventEnvelope::evidence_recorded(
+            "loop-2".to_string(),
+            crate::loop_runtime::EvidenceRecord::command_for_test("build:desktop", true),
+            None,
+            None,
+        );
+        evidence.task_id = "loop-1".to_string();
+        evidence.sequence = 2;
+
+        let error = LoopTaskProjection::from_events(&[created, evidence]).unwrap_err();
+
+        assert!(error.contains("evidence task id mismatch"));
     }
 
     #[test]

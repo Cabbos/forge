@@ -107,6 +107,25 @@ impl LoopEventEnvelope {
         }
     }
 
+    pub fn evidence_recorded(
+        task_id: String,
+        evidence: EvidenceRecord,
+        correlation_id: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> Self {
+        Self {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: new_loop_event_id(),
+            task_id: task_id.clone(),
+            sequence: 0,
+            event: LoopRuntimeEvent::EvidenceRecorded { task_id, evidence },
+            actor: LoopActor::Gateway,
+            correlation_id,
+            idempotency_key,
+            created_at_ms: now_millis(),
+        }
+    }
+
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
         self
@@ -198,6 +217,10 @@ pub enum LoopRuntimeEvent {
         decision: HumanGateDecision,
         resolved_at_ms: u64,
     },
+    EvidenceRecorded {
+        task_id: String,
+        evidence: EvidenceRecord,
+    },
 }
 
 impl LoopRuntimeEvent {
@@ -207,6 +230,7 @@ impl LoopRuntimeEvent {
             Self::TaskCanceled { .. } => "task_canceled",
             Self::HumanGateRequested { .. } => "human_gate_requested",
             Self::HumanGateResolved { .. } => "human_gate_resolved",
+            Self::EvidenceRecorded { .. } => "evidence_recorded",
         }
     }
 }
@@ -242,10 +266,14 @@ pub struct LoopTaskRecord {
     pub lease: Option<LoopTaskLease>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_gates: Vec<HumanGateRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<EvidenceRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_event_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<LoopTaskOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_result: Option<LoopCompletionResult>,
 }
 
 impl LoopTaskRecord {
@@ -275,8 +303,10 @@ impl LoopTaskRecord {
             updated_at_ms: now,
             lease: None,
             open_gates: Vec::new(),
+            evidence: Vec::new(),
             latest_event_id: None,
             outcome: None,
+            completion_result: None,
         }
     }
 
@@ -297,9 +327,17 @@ impl LoopTaskRecord {
             updated_at_ms: 1,
             lease: None,
             open_gates: Vec::new(),
+            evidence: Vec::new(),
             latest_event_id: None,
             outcome: None,
+            completion_result: None,
         }
+    }
+
+    #[cfg(test)]
+    pub fn with_completion_contract(mut self, contract: LoopCompletionContract) -> Self {
+        self.completion_contract = contract;
+        self
     }
 }
 
@@ -399,6 +437,109 @@ impl LoopCompletionContract {
             stop_on_budget_exceeded: true,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EvidenceRecord {
+    Command {
+        evidence_id: String,
+        check_name: String,
+        command: String,
+        exit_code: i32,
+        success: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_hash: Option<String>,
+    },
+    GitNexus {
+        evidence_id: String,
+        risk: String,
+        changed_symbols: u32,
+        affected_processes: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report_hash: Option<String>,
+    },
+    Commit {
+        evidence_id: String,
+        commit_sha: String,
+        summary: String,
+    },
+    Docs {
+        evidence_id: String,
+        paths: Vec<String>,
+    },
+    Review {
+        evidence_id: String,
+        gate_id: String,
+        decision: HumanGateDecision,
+    },
+    Budget {
+        evidence_id: String,
+        budget_exceeded: bool,
+    },
+}
+
+#[cfg(test)]
+impl EvidenceRecord {
+    pub fn command_for_test(check_name: &str, success: bool) -> Self {
+        Self::Command {
+            evidence_id: format!("evidence-command-{check_name}"),
+            check_name: check_name.to_string(),
+            command: check_name.to_string(),
+            exit_code: if success { 0 } else { 1 },
+            success,
+            artifact_hash: None,
+        }
+    }
+
+    pub fn gitnexus_for_test(risk: &str) -> Self {
+        Self::GitNexus {
+            evidence_id: format!("evidence-gitnexus-{risk}"),
+            risk: risk.to_string(),
+            changed_symbols: 1,
+            affected_processes: 0,
+            report_hash: None,
+        }
+    }
+
+    pub fn docs_for_test(paths: Vec<&str>) -> Self {
+        Self::Docs {
+            evidence_id: "evidence-docs".to_string(),
+            paths: paths.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    pub fn commit_for_test(commit_sha: &str) -> Self {
+        Self::Commit {
+            evidence_id: "evidence-commit".to_string(),
+            commit_sha: commit_sha.to_string(),
+            summary: "test commit".to_string(),
+        }
+    }
+
+    pub fn budget_for_test(budget_exceeded: bool) -> Self {
+        Self::Budget {
+            evidence_id: "evidence-budget".to_string(),
+            budget_exceeded,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopCompletionStatus {
+    Complete,
+    Blocked,
+    WaitingForReview,
+    FailedBudget,
+    FailedRisk,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoopCompletionResult {
+    pub status: LoopCompletionStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

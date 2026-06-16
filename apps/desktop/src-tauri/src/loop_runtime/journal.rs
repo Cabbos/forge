@@ -1,4 +1,4 @@
-use crate::loop_runtime::types::{LoopEventEnvelope, LoopRuntimeEvent};
+use crate::loop_runtime::types::{EvidenceRecord, LoopEventEnvelope, LoopRuntimeEvent};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -196,16 +196,92 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "decided_by": decision.decided_by,
             "reason": decision.reason,
         }),
+        LoopRuntimeEvent::EvidenceRecorded { task_id, evidence } => serde_json::json!({
+            "type": "evidence_recorded",
+            "task_id": task_id,
+            "evidence": evidence_fingerprint(evidence),
+        }),
     };
     serde_json::to_string(&payload)
         .map_err(|error| format!("serialize loop event payload: {error}"))
 }
 
+fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
+    match evidence {
+        EvidenceRecord::Command {
+            evidence_id,
+            check_name,
+            command,
+            exit_code,
+            success,
+            artifact_hash,
+        } => serde_json::json!({
+            "kind": "command",
+            "evidence_id": evidence_id,
+            "check_name": check_name,
+            "command": command,
+            "exit_code": exit_code,
+            "success": success,
+            "artifact_hash": artifact_hash,
+        }),
+        EvidenceRecord::GitNexus {
+            evidence_id,
+            risk,
+            changed_symbols,
+            affected_processes,
+            report_hash,
+        } => serde_json::json!({
+            "kind": "git_nexus",
+            "evidence_id": evidence_id,
+            "risk": risk,
+            "changed_symbols": changed_symbols,
+            "affected_processes": affected_processes,
+            "report_hash": report_hash,
+        }),
+        EvidenceRecord::Commit {
+            evidence_id,
+            commit_sha,
+            summary,
+        } => serde_json::json!({
+            "kind": "commit",
+            "evidence_id": evidence_id,
+            "commit_sha": commit_sha,
+            "summary": summary,
+        }),
+        EvidenceRecord::Docs { evidence_id, paths } => serde_json::json!({
+            "kind": "docs",
+            "evidence_id": evidence_id,
+            "paths": paths,
+        }),
+        EvidenceRecord::Review {
+            evidence_id,
+            gate_id,
+            decision,
+        } => serde_json::json!({
+            "kind": "review",
+            "evidence_id": evidence_id,
+            "gate_id": gate_id,
+            "decision_kind": decision.kind,
+            "decided_by": decision.decided_by,
+            "reason": decision.reason,
+        }),
+        EvidenceRecord::Budget {
+            evidence_id,
+            budget_exceeded,
+        } => serde_json::json!({
+            "kind": "budget",
+            "evidence_id": evidence_id,
+            "budget_exceeded": budget_exceeded,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::loop_runtime::{
-        HumanGateDecision, HumanGateDecisionKind, LoopActor, LoopEventEnvelope, LoopEventJournal,
-        LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
+        EvidenceRecord, HumanGateDecision, HumanGateDecisionKind, LoopActor, LoopEventEnvelope,
+        LoopEventJournal, LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus,
+        LOOP_RUNTIME_SCHEMA_VERSION,
     };
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
@@ -377,6 +453,60 @@ mod tests {
     }
 
     #[test]
+    fn same_idempotency_key_with_semantically_same_review_evidence_reuses_existing_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        let first =
+            review_evidence_event_for_test("loop-1", "gate-1", HumanGateDecisionKind::Approved, 10)
+                .with_idempotency_key("evidence:review:gate-1");
+        let second =
+            review_evidence_event_for_test("loop-1", "gate-1", HumanGateDecisionKind::Approved, 20)
+                .with_idempotency_key("evidence:review:gate-1");
+
+        let first_result = journal.append_idempotent(first).unwrap();
+        let second_result = journal.append_idempotent(second).unwrap();
+
+        assert!(first_result.appended);
+        assert!(!second_result.appended);
+        assert_eq!(second_result.event, first_result.event);
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_idempotency_key_with_different_review_evidence_decision_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                review_evidence_event_for_test(
+                    "loop-1",
+                    "gate-1",
+                    HumanGateDecisionKind::Approved,
+                    10,
+                )
+                .with_idempotency_key("evidence:review:gate-1"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                review_evidence_event_for_test(
+                    "loop-1",
+                    "gate-1",
+                    HumanGateDecisionKind::Denied,
+                    20,
+                )
+                .with_idempotency_key("evidence:review:gate-1"),
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("idempotency conflict"));
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
     fn concurrent_duplicate_idempotency_key_appends_once() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("loop-events.jsonl");
@@ -454,5 +584,28 @@ mod tests {
             idempotency_key: None,
             created_at_ms: timestamp + 2,
         }
+    }
+
+    fn review_evidence_event_for_test(
+        task_id: &str,
+        gate_id: &str,
+        kind: HumanGateDecisionKind,
+        timestamp: u64,
+    ) -> LoopEventEnvelope {
+        LoopEventEnvelope::evidence_recorded(
+            task_id.to_string(),
+            EvidenceRecord::Review {
+                evidence_id: format!("evidence-review-{gate_id}"),
+                gate_id: gate_id.to_string(),
+                decision: HumanGateDecision {
+                    kind,
+                    decided_at_ms: timestamp,
+                    decided_by: Some("reviewer".to_string()),
+                    reason: Some("reviewed".to_string()),
+                },
+            },
+            None,
+            None,
+        )
     }
 }

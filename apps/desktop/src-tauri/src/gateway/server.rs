@@ -5,7 +5,8 @@ use crate::gateway::protocol::{
     serialize_reply, AttachSessionParams, AttachSessionResult, CancelLoopTaskParams,
     CancelLoopTaskResult, CancelTriggerParams, CancelTriggerResult, CompleteSessionInputParams,
     CompleteSessionInputResult, CreateLoopTaskRequest, EnqueueSessionInputParams,
-    EnqueueSessionInputResult, EnqueueTriggerParams, EnqueueTriggerResult, GatewayError,
+    EnqueueSessionInputResult, EnqueueTriggerParams, EnqueueTriggerResult,
+    EvaluateLoopTaskCompletionParams, EvaluateLoopTaskCompletionResult, GatewayError,
     GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
     GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
     GatewaySessionSnapshotSummary, GetLoopTaskParams, GetSessionSnapshotParams,
@@ -20,7 +21,8 @@ use crate::gateway::session_input::{
 };
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use crate::loop_runtime::{
-    LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskProjectionStore, LoopTaskRecord,
+    evaluate_completion, LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent,
+    LoopTaskProjectionStore, LoopTaskRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -356,6 +358,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "create_loop_task" => handle_create_loop_task(state, request),
         "list_loop_tasks" => handle_list_loop_tasks(state, request),
         "get_loop_task" => handle_get_loop_task(state, request),
+        "evaluate_loop_task_completion" => handle_evaluate_loop_task_completion(state, request),
         "cancel_loop_task" => handle_cancel_loop_task(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
@@ -938,6 +941,43 @@ fn handle_get_loop_task(state: &GatewayState, request: GatewayRequest) -> Gatewa
         return invalid_params(request.id, format!("loop task not found: {task_id}"));
     };
     loop_task_response(request.id, task)
+}
+
+fn handle_evaluate_loop_task_completion(
+    state: &GatewayState,
+    request: GatewayRequest,
+) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<EvaluateLoopTaskCompletionParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let task_id = params.task_id.trim().to_string();
+    if task_id.is_empty() {
+        return invalid_params(request.id, "task_id must not be empty");
+    }
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    let result = evaluate_completion(&task, &task.evidence);
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(EvaluateLoopTaskCompletionResult {
+            ok: true,
+            task,
+            result,
+        })
+        .unwrap(),
+    })
 }
 
 fn handle_cancel_loop_task(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
@@ -1962,6 +2002,161 @@ mod tests {
             GatewayRequest {
                 id: "get-missing-loop".into(),
                 method: "get_loop_task".into(),
+                params: Some(serde_json::json!({ "task_id": "missing-loop" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err
+                    .error
+                    .message
+                    .contains("loop task not found: missing-loop"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+    }
+
+    #[test]
+    fn evaluate_loop_task_completion_returns_typed_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let task = crate::loop_runtime::LoopTaskRecord::new_for_test("loop-complete", "ship")
+            .with_completion_contract(crate::loop_runtime::LoopCompletionContract {
+                required_checks: vec!["build:desktop".to_string()],
+                max_gitnexus_risk: None,
+                require_docs: false,
+                require_commit: false,
+                require_review_decision: false,
+                stop_on_budget_exceeded: true,
+            });
+        journal
+            .append(crate::loop_runtime::LoopEventEnvelope::task_created(
+                task, None, None,
+            ))
+            .unwrap();
+        journal
+            .append(crate::loop_runtime::LoopEventEnvelope::evidence_recorded(
+                "loop-complete".to_string(),
+                crate::loop_runtime::EvidenceRecord::command_for_test("build:desktop", true),
+                None,
+                None,
+            ))
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal, projection);
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "evaluate-loop".into(),
+                method: "evaluate_loop_task_completion".into(),
+                params: Some(serde_json::json!({ "task_id": "loop-complete" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::EvaluateLoopTaskCompletionResult =
+                    serde_json::from_value(resp.result).expect("parse completion result");
+                assert!(result.ok);
+                assert_eq!(result.task.id, "loop-complete");
+                assert_eq!(
+                    result.result.status,
+                    crate::loop_runtime::LoopCompletionStatus::Complete
+                );
+                assert!(result.result.reasons.is_empty());
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn evaluate_loop_task_completion_uses_projected_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        let task = crate::loop_runtime::LoopTaskRecord::new_for_test("loop-canceled", "ship")
+            .with_completion_contract(crate::loop_runtime::LoopCompletionContract {
+                required_checks: vec!["build:desktop".to_string()],
+                max_gitnexus_risk: None,
+                require_docs: false,
+                require_commit: false,
+                require_review_decision: false,
+                stop_on_budget_exceeded: true,
+            });
+        journal
+            .append(crate::loop_runtime::LoopEventEnvelope::task_created(
+                task, None, None,
+            ))
+            .unwrap();
+        journal
+            .append(crate::loop_runtime::LoopEventEnvelope::task_canceled(
+                "loop-canceled".to_string(),
+                Some("stopped".to_string()),
+                None,
+                None,
+            ))
+            .unwrap();
+        journal
+            .append(crate::loop_runtime::LoopEventEnvelope::evidence_recorded(
+                "loop-canceled".to_string(),
+                crate::loop_runtime::EvidenceRecord::command_for_test("build:desktop", true),
+                None,
+                None,
+            ))
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal, projection);
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "evaluate-canceled-loop".into(),
+                method: "evaluate_loop_task_completion".into(),
+                params: Some(serde_json::json!({ "task_id": "loop-canceled" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::EvaluateLoopTaskCompletionResult =
+                    serde_json::from_value(resp.result).expect("parse completion result");
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Canceled
+                );
+                assert!(result.task.evidence.is_empty());
+                assert_ne!(
+                    result.result.status,
+                    crate::loop_runtime::LoopCompletionStatus::Complete
+                );
+                assert_eq!(
+                    result.result.reasons,
+                    vec!["missing_required_check:build:desktop"]
+                );
+            }
+            _ => panic!("expected Ok reply"),
+        }
+    }
+
+    #[test]
+    fn evaluate_loop_task_completion_rejects_missing_task() {
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "evaluate-missing-loop".into(),
+                method: "evaluate_loop_task_completion".into(),
                 params: Some(serde_json::json!({ "task_id": "missing-loop" })),
             },
         );

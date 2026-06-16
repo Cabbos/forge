@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::gateway::runner::TriggerRunRecord;
 use crate::gateway::session_input::SessionInputRecord;
 use crate::loop_runtime::{
-    LoopBudget, LoopCompletionContract, LoopPolicy, LoopTaskRecord, LoopTaskStatus,
+    LoopBudget, LoopCompletionContract, LoopCompletionResult, LoopPolicy, LoopTaskRecord,
+    LoopTaskStatus,
 };
 
 /// An incoming request from a gateway client.
@@ -359,6 +360,18 @@ pub struct CancelLoopTaskResult {
     pub ok: bool,
     pub changed: bool,
     pub task: LoopTaskRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvaluateLoopTaskCompletionParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvaluateLoopTaskCompletionResult {
+    pub ok: bool,
+    pub task: LoopTaskRecord,
+    pub result: LoopCompletionResult,
 }
 
 /// Gateway version string.
