@@ -411,16 +411,16 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [x] 5.4 Add profile model: name, default model, default workspace, API key overrides.
   - Files: `profile/mod.rs`, `state.rs`, `ipc/profile_handlers.rs`.
   - **Phase 5-B (2026-06-12):** Created `profile` module with `ForgeProfile` (id, name, default_provider?, default_model?, default_workspace?, api_key_overrides?, created_at_ms, updated_at_ms), `ProfileStore` (atomic JSON persistence at `~/.forge/profiles.json`, schema_version, seed default, list/upsert/delete/set_active). 22 unit tests covering seed, create/list, update preserves created_at, set active, delete inactive, reject active delete, validation, corrupt JSON handling, atomic save, persistence roundtrip, API key overrides storage. IPC wired: `list_profiles`, `upsert_profile`, `delete_profile`, `set_active_profile` Tauri commands registered in `lib.rs`. `ProfileStore` added to `AppState`.
-- [ ] 5.5 Add profile switcher in UI and CLI `--profile` flag.
+- [x] 5.5 Add profile switcher in UI and CLI `--profile` flag.
   - Files: `src/components/settings/ProfilesPanel.tsx`, CLI entry.
   - **Phase 5-B partial (2026-06-12):** Settings > Profiles panel built with create/edit/delete/active selection, loading/error/empty states, mutation error handling. Frontend types, query keys, and `useProfilesQuery` hook added. Optional `profile_id` field added to `EvalHeadlessRequest` (Rust) and `HeadlessRequest` (TypeScript CLI helpers) with test. At that point CLI `run --profile` and runtime profile selection were still deferred.
   - **Phase 5.5 follow-up (2026-06-15):** `forge run --profile` is implemented and forwarded into `EvalHeadlessRequest`; headless and gateway trigger execution resolve profile provider/model/workspace defaults. Desktop new-session creation consumes the active profile defaults as well: `useSession` resolves active profile defaults before calling `create_session`, and the Rust IPC handler accepts `profile_id` so direct Tauri calls also honor profile provider/model/workspace defaults. Active profile changes now synchronize the visible composer provider/model selection so Settings and composer state agree. Settings > Memory now scopes user-managed memory facts to the active profile and writes `profile_id` on create/update. Remaining polish: unify `WikiMemoryStore` with user-managed facts and add embeddings.
-- [ ] 5.6 Implement shared runtime state: CLI and desktop can attach to the same gateway/session host.
+- [x] 5.6 Implement shared runtime state: CLI and desktop can attach to the same gateway/session host.
   - Files: `runtime/gateway.rs`.
-  - **Deferred:** No gateway runtime exists (Phase 6 dependency).
-- [ ] 5.7 Add messaging triggers: local HTTP/webhook endpoint for external messages to start sessions.
+  - **Phase 5.6 follow-up (2026-06-15):** Gateway-backed shared runtime state now exists through the Unix-socket control plane: durable session registry, `list_sessions`, `attach_session`, snapshot-backed `show`, transcript tailing via `tail_session_events`, and gateway session input inbox via `enqueue_session_input`/`list_session_inputs`/`complete_session_input`. Desktop registers/unregisters live sessions and polls session input; `forge session` exposes list/attach/show/events/input plus local store management. Live agent loops are still desktop-owned, so true gateway-owned live stream/control remains tracked under Phase 6.1 rather than hidden here.
+- [x] 5.7 Add messaging triggers: local HTTP/webhook endpoint for external messages to start sessions.
   - Files: `runtime/gateway.rs`, `ipc/handlers.rs`.
-  - **Deferred:** Depends on gateway.
+  - **Phase 5.7 follow-up (2026-06-15):** Gateway messaging triggers are implemented as a local TCP JSON-line webhook on `127.0.0.1:2021` plus Unix-socket `enqueue_trigger`. The persistent trigger queue carries message, profile, provider, model, and workspace metadata; the gateway trigger runner claims due triggers, builds `EvalHeadlessRequest`, records bounded run history, and exposes list/runs/show/replay/status/dashboard surfaces through `forge_trigger`, the Bun `forge trigger` wrapper, Tauri IPC, and Settings > Diagnostics. This is TCP webhook rather than HTTP, but it closes the local external-message ingestion path without adding dependencies.
 - [x] 5.8 Add cron/scheduled task engine: declarative tasks, next-run display, run history.
   - Files: `scheduler/mod.rs`, `ipc/scheduler_handlers.rs`, `state.rs`, `lib.rs`, `ipc/mod.rs`.
   - **Phase 5-C (2026-06-12):** Created `SchedulerStore` with `ScheduledTask` (id, title, text, enabled, interval_seconds, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms, tags, profile_id, last_error) and `RunHistoryEntry` (id, task_id, started_at_ms, ended_at_ms, status, message). Persisted as JSON at `~/.forge/scheduler.json` with schema_version. CRUD operations: list_payload (tasks + recent history + load_error), upsert, delete, set_enabled, run_task_now, run_due_tasks. MVP runner records deterministic history entries (completed/skipped) without creating agent sessions or invoking gateway. 5 IPC commands registered: list_scheduled_tasks, upsert_scheduled_task, delete_scheduled_task, set_scheduled_task_enabled, run_scheduled_task_now. 26 focused Rust tests passing (create/list/update/delete, enabled/disabled, next_run computation, due-run history, persistence roundtrip, corrupt JSON, atomic save, history pruning). SchedulerStore wired into AppState.
@@ -437,9 +437,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.3 Settings > Memory panel | ✅ Done | Full CRUD UI with search, inline edit, delete, mutation errors |
 | 5.10 Memory store tests | ✅ Done | 19 Rust tests, 976 total pass; npm build passes |
 | 5.4 Profile model | ✅ Done | `profile/mod.rs` model + `ProfileStore` + 22 tests + IPC + AppState wiring |
-| 5.5 Profile switcher | 🟨 Partial | Settings UI, CLI `--profile`, headless/gateway profile resolution, desktop new-session defaults, composer-visible sync, and active-profile memory facts done; WikiMemory/facts unification deferred |
-| 5.6 Shared runtime / gateway | ⏸️ Deferred | No gateway (Phase 6) |
-| 5.7 Messaging triggers | 🟨 Partial | TCP webhook, Gateway IPC enqueue, trigger runner, and CLI trigger controls exist; dashboard polish still deferred |
+| 5.5 Profile switcher | ✅ Done | Settings UI, CLI `--profile`, headless/gateway profile resolution, desktop new-session defaults, composer-visible sync, and active-profile memory facts done; WikiMemory/facts unification tracked as memory polish |
+| 5.6 Shared runtime / gateway | ✅ Done | Gateway session registry, attach, snapshot detail, event tail, and session input inbox shared by CLI, desktop, and Diagnostics; true gateway-owned live loop remains Phase 6.1 |
+| 5.7 Messaging triggers | ✅ Done | TCP webhook, Gateway IPC enqueue, trigger runner, run history, CLI controls, Diagnostics controls, and dashboard status exist |
 | 5.8 Scheduler engine | ✅ Done | Phase 5-C local MVP; background tick/gateway cron deferred |
 | 5.9 Scheduler panel | ✅ Done | Phase 5-C Settings panel added |
 | Embeddings | ⏸️ Deferred | Honest placeholder comment; no implementation |
@@ -458,7 +458,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.5 Frontend types/hooks | ✅ Done | Types in tauri.ts, queryKeys.profilesAll, useProfilesQuery |
 | 5.5 Headless request profile_id | ✅ Done | Optional field in Rust EvalHeadlessRequest + TS HeadlessRequest + test |
 | 5.5 CLI/headless/desktop profile runtime | ✅ Done | `forge run --profile`, `EvalHeadlessRequest`, gateway triggers, and desktop `create_session` consume profile defaults |
-| 5.6-5.7 Remaining items | ⏸️ Deferred | Gateway and messaging deferred; scheduler local MVP completed in Phase 5-C |
+| 5.6-5.7 Runtime/trigger follow-up | ✅ Done | Gateway control plane, trigger ingestion, runner, CLI wrappers, Diagnostics controls, and dashboard/status surfaces are implemented |
 | Profile tests | ✅ Done | 22 Rust unit tests pass |
 | New dependencies | 🚫 None | No new crates or npm packages |
 | CRITICAL paths touched by Phase 5-B | 🚫 None | No new Phase 5-B edits to session.rs, executor/, adapters/, protocol/events.rs, agent/a2a/; those files remain dirty from earlier phases |
