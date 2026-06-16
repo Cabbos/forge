@@ -135,6 +135,12 @@ describe("deriveBackgroundTaskStatus", () => {
       "scheduler",
       "alert",
     ]);
+    assert.deepStrictEqual(result.notifications.map((item) => `${item.kind}:${item.title}:${item.detail}`), [
+      "alert:Gateway disconnected:Gateway is not responding",
+      "review:Background worker:等待人工审阅",
+      "agent:Background worker:子任务运行中",
+      "scheduler:Daily check:3600s 间隔",
+    ]);
     assert.strictEqual(result.hasAgentWork, true);
   });
 });

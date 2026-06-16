@@ -17,11 +17,14 @@ export interface BackgroundTaskListItem {
   tone: BackgroundTaskStatusItem["tone"];
 }
 
+export interface BackgroundTaskNotificationItem extends BackgroundTaskListItem {}
+
 export interface BackgroundTaskStatusView {
   visible: boolean;
   hasAgentWork: boolean;
   items: BackgroundTaskStatusItem[];
   tasks: BackgroundTaskListItem[];
+  notifications: BackgroundTaskNotificationItem[];
 }
 
 export function deriveBackgroundTaskStatus({
@@ -41,6 +44,7 @@ export function deriveBackgroundTaskStatus({
   const alertCount = healthAlerts.length;
 
   const items: BackgroundTaskStatusItem[] = [];
+  const notifications: BackgroundTaskNotificationItem[] = [];
   if (runningAgents > 0) {
     items.push({
       key: "agents-running",
@@ -71,34 +75,67 @@ export function deriveBackgroundTaskStatus({
   }
 
   const tasks: BackgroundTaskListItem[] = [];
+  for (const alert of healthAlerts) {
+    notifications.push({
+      id: `notification:alert:${alert.alert_id}`,
+      kind: "alert",
+      title: alert.title,
+      detail: alert.message,
+      tone: "alert",
+    });
+  }
   for (const rawTask of agentA2A?.tasks ?? []) {
     const task = normalizeA2ATaskProjection(rawTask);
     if (task.status === "running") {
+      const detail = task.latest_progress ?? task.latest_message ?? "子任务运行中";
       tasks.push({
         id: `agent:${task.task_id}`,
         kind: "agent",
         title: task.title,
-        detail: task.latest_progress ?? task.latest_message ?? "子任务运行中",
+        detail,
+        tone: "running",
+      });
+      notifications.push({
+        id: `notification:agent:${task.task_id}`,
+        kind: "agent",
+        title: task.title,
+        detail,
         tone: "running",
       });
     }
     if (task.needs_human_review === true) {
+      const detail = task.suggested_action ?? "等待人工审阅";
       tasks.push({
         id: `review:${task.task_id}`,
         kind: "review",
         title: task.title,
-        detail: task.suggested_action ?? "等待人工审阅",
+        detail,
+        tone: "review",
+      });
+      notifications.push({
+        id: `notification:review:${task.task_id}`,
+        kind: "review",
+        title: task.title,
+        detail,
         tone: "review",
       });
     }
   }
   for (const task of scheduler?.tasks ?? []) {
     if (!task.enabled) continue;
+    const detail = task.interval_seconds === 0 ? "手动触发" : `${task.interval_seconds}s 间隔`;
     tasks.push({
       id: `scheduler:${task.id}`,
       kind: "scheduler",
       title: task.title,
-      detail: task.interval_seconds === 0 ? "手动触发" : `${task.interval_seconds}s 间隔`,
+      detail,
+      tone: "scheduler",
+    });
+    notifications.push({
+      id: `notification:scheduler:${task.id}`,
+      kind: "scheduler",
+      title: task.title,
+      detail,
       tone: "scheduler",
     });
   }
@@ -117,5 +154,16 @@ export function deriveBackgroundTaskStatus({
     hasAgentWork: runningAgents > 0 || reviewNeeded > 0,
     items,
     tasks,
+    notifications: sortNotifications(notifications),
   };
+}
+
+function sortNotifications(notifications: BackgroundTaskNotificationItem[]) {
+  const priority: Record<BackgroundTaskNotificationItem["kind"], number> = {
+    alert: 0,
+    review: 1,
+    agent: 2,
+    scheduler: 3,
+  };
+  return [...notifications].sort((a, b) => priority[a.kind] - priority[b.kind]);
 }

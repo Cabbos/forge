@@ -298,6 +298,12 @@ test.describe("A2A runtime surfaces", () => {
     await expect(statusBar).toContainText("1 调度任务");
 
     await statusBar.getByRole("button", { name: "展开后台任务列表" }).click();
+    const notificationList = page.getByTestId("background-notification-list");
+    await expect(notificationList).toBeVisible();
+    await expect(notificationList).toContainText("通知");
+    await expect(notificationList).toContainText("需要审阅");
+    await expect(notificationList).toContainText("调度已启用");
+
     const taskList = page.getByTestId("background-task-list");
     await expect(taskList).toBeVisible();
     await expect(taskList).toContainText("Implement settings recovery polish");

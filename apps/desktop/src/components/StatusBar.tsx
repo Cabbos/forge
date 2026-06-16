@@ -37,7 +37,7 @@ export function StatusBar() {
       className="forge-background-status"
       data-testid="background-task-status"
     >
-      {expanded && <TaskManager tasks={view.tasks} />}
+      {expanded && <TaskManager tasks={view.tasks} notifications={view.notifications} />}
       <div className="forge-background-status-bar" role="status" aria-live="polite">
         <span className="forge-background-status-title">
           <Activity className="size-3.5" />

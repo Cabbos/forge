@@ -97,7 +97,15 @@
     list-style: none;
   }
 
-  .forge-background-task-item {
+  .forge-background-notification-list {
+    display: grid;
+    gap: 0.375rem;
+    border-bottom: 1px solid var(--forge-border-subtle);
+    padding-bottom: 0.5rem;
+  }
+
+  .forge-background-task-item,
+  .forge-background-notification-item {
     display: grid;
     grid-template-columns: auto 2.25rem minmax(0, 0.9fr) minmax(0, 1.1fr);
     align-items: center;
@@ -110,15 +118,22 @@
     line-height: 1rem;
   }
 
-  .forge-background-task-item[data-tone="running"] {
+  .forge-background-notification-item {
+    border-left-width: 3px;
+  }
+
+  .forge-background-task-item[data-tone="running"],
+  .forge-background-notification-item[data-tone="running"] {
     border-left-color: var(--forge-accent-muted);
   }
 
-  .forge-background-task-item[data-tone="review"] {
+  .forge-background-task-item[data-tone="review"],
+  .forge-background-notification-item[data-tone="review"] {
     border-left-color: var(--forge-amber-muted);
   }
 
-  .forge-background-task-item[data-tone="alert"] {
+  .forge-background-task-item[data-tone="alert"],
+  .forge-background-notification-item[data-tone="alert"] {
     border-left-color: var(--forge-danger-muted);
   }
 
