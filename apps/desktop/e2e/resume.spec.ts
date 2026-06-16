@@ -30,6 +30,66 @@ async function injectSessionOutput(
   }, payload);
 }
 
+async function seedActiveSession(
+  page: import("@playwright/test").Page,
+  sessionId: string,
+  workingDir: string,
+) {
+  await page.evaluate(
+    async ({ sessionId, workingDir }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open("keyval-store");
+        r.onerror = () => reject(r.error);
+        r.onsuccess = () => resolve(r.result);
+        r.onupgradeneeded = () => {
+          const database = r.result;
+          if (!database.objectStoreNames.contains("keyval")) database.createObjectStore("keyval");
+        };
+      });
+      const tx = db.transaction("keyval", "readwrite");
+      tx.objectStore("keyval").put(
+        [
+          {
+            id: workingDir,
+            name: "forge-resume-test",
+            path: workingDir,
+            lastOpenedAt: 1,
+          },
+        ],
+        "forge-workspaces",
+      );
+      tx.objectStore("keyval").put(workingDir, "forge-active-workspace");
+      tx.objectStore("keyval").put(
+        [
+          {
+            id: sessionId,
+            agentType: "deepseek",
+            model: "deepseek-v4-flash[1m]",
+            workingDir,
+            workspaceId: workingDir,
+            contextWindowTokens: 1_000_000,
+            status: "resuming",
+            workflowState: null,
+            deliverySummary: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        ],
+        "forge-sessions",
+      );
+      tx.objectStore("keyval").put(sessionId, "forge-active-session");
+      tx.objectStore("keyval").put([], `forge-blocks:${sessionId}`);
+
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    },
+    { sessionId, workingDir },
+  );
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 test.describe("Restart / reload smoke (IndexedDB persistence)", () => {
@@ -142,6 +202,48 @@ test.describe("Restart / reload smoke (IndexedDB persistence)", () => {
     await expect(
       page.getByText("请帮我创建一个 fibonacci 函数").first(),
     ).toBeVisible({ timeout: 5000 });
+  });
+
+  test("startup restore replay events hydrate the active frontend mirror", async ({ page }) => {
+    const restoredSessionId = "startup-restore-session";
+    const workingDir = "/tmp/forge-resume-workspace";
+    await seedActiveSession(page, restoredSessionId, workingDir);
+
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    await page.waitForFunction(() => {
+      return ((window as any).__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await injectSessionOutput(page, {
+      event_type: "session_started",
+      session_id: restoredSessionId,
+      agent_type: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      context_window_tokens: 1_000_000,
+    });
+    await injectSessionOutput(page, {
+      event_type: "session_status",
+      session_id: restoredSessionId,
+      status: "resuming",
+    });
+    await injectSessionOutput(page, {
+      event_type: "confirm_ask",
+      session_id: restoredSessionId,
+      block_id: "confirm-restored-1",
+      question: "Allow deployment command?",
+      kind: "shell_cmd",
+      replayed_interrupted: true,
+    });
+    await injectSessionOutput(page, {
+      event_type: "session_status",
+      session_id: restoredSessionId,
+      status: "running",
+    });
+
+    await expect(page.getByText("Allow deployment command?")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("confirm-interrupted")).toContainText("后端等待通道已失效");
+    await expect(page.getByText("确认已中断")).toBeVisible();
   });
 });
 
