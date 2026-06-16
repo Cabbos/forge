@@ -12,9 +12,14 @@ use crate::agent::context_builder::{
 use crate::agent::event_sink::EventEmitter;
 use crate::agent::loop_guard::LoopStopReason;
 use crate::agent::provider_capabilities::is_context_overflow_error;
-use crate::agent::recovery::{api_failure_trace, build_recovery_context, verification_failure_trace};
+use crate::agent::recovery::{
+    api_failure_trace, build_recovery_context, verification_failure_trace,
+};
 use crate::agent::retry_policy::should_retry_adapter_error;
-use crate::agent::session::{AgentSession, AgentTurnRunRequest, RoundDecision, MAX_AUTO_CONTINUATIONS};
+use crate::agent::session::compact::compact_summary_was_cancelled;
+use crate::agent::session::{
+    AgentSession, AgentTurnRunRequest, RoundDecision, MAX_AUTO_CONTINUATIONS,
+};
 use crate::agent::session_guards::{lock_unpoisoned, ActiveCancelGuard};
 use crate::agent::time::now_ms;
 use crate::agent::tool_results::{
@@ -26,10 +31,9 @@ use crate::agent::turn_outcome::{
     final_turn_transition_reason_for_current_turn, verification_has_failed,
 };
 use crate::agent::turn_state::{
-    AgentRecoveryAdvice,
-    AgentTurnMetadata, AgentTurnStatus, AgentVerificationStatus, AgentVerificationTrace,
+    AgentRecoveryAdvice, AgentTurnMetadata, AgentTurnStatus, AgentVerificationStatus,
+    AgentVerificationTrace,
 };
-use crate::agent::session::compact::compact_summary_was_cancelled;
 use crate::agent::verification;
 use crate::consts::{AGENT_LOOP_SETTLE_DELAY, AGENT_OVERFLOW_RETRY_DELAY};
 use crate::protocol::events::StreamEvent;
@@ -66,7 +70,7 @@ impl AgentSession {
     /// Tauri events and test/headless emitters.
     /// Phase 1 — set up the turn: recovery context, system prompt, user message,
     /// cancel token, and initial status.
-    async fn setup_turn(
+    pub(crate) async fn setup_turn(
         &self,
         text: &str,
         mut hidden_contexts: Vec<HiddenContextPart>,
@@ -626,7 +630,6 @@ impl AgentSession {
         self.emit_with_emitter(emitter);
     }
 
-
     fn emit_final_summary_text_emitter(
         &self,
         assistant_content: &[serde_json::Value],
@@ -683,11 +686,7 @@ impl AgentSession {
         self.emit_with_emitter(emitter);
     }
 
-    fn record_loop_guard_stop_emitter(
-        &self,
-        stop: &LoopStopReason,
-        emitter: &dyn EventEmitter,
-    ) {
+    fn record_loop_guard_stop_emitter(&self, stop: &LoopStopReason, emitter: &dyn EventEmitter) {
         let detail = loop_guard_recovery_detail(stop);
         if let Some(turn) = lock_unpoisoned(&self.latest_turn).as_mut() {
             turn.set_stop_reason(stop.as_str());
@@ -836,5 +835,3 @@ pub(crate) fn loop_guard_recovery_detail(stop: &LoopStopReason) -> String {
         advice.action,
     )
 }
-
-

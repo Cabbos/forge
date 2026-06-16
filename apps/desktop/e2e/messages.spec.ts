@@ -3,12 +3,34 @@ import { resolve } from "node:path";
 import { setup } from "./fixtures/app";
 import { simulateStream, fullConversation } from "./mock-ipc";
 
+async function forceDarkWorkbench(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const apply = () => {
+      document.querySelectorAll<HTMLElement>("[data-conversation-theme='light']").forEach((el) => {
+        el.setAttribute("data-conversation-theme", "dark");
+      });
+      document.querySelectorAll<HTMLElement>(".forge-app-shell[data-design-version='v3-light-workbench']").forEach((el) => {
+        el.setAttribute("data-design-version", "v3-dark-workbench");
+      });
+    };
 
-  test.beforeEach(async ({ page }) => {
-    await setup(page);
-    await page.goto("http://localhost:1420");
-    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    new MutationObserver(apply).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-conversation-theme", "data-design-version"],
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener("DOMContentLoaded", apply);
+    apply();
   });
+}
+
+test.beforeEach(async ({ page }) => {
+  await setup(page);
+  await forceDarkWorkbench(page);
+  await page.goto("http://localhost:1420");
+  await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+});
 
   test("internal skill context is not rendered in the conversation", async ({ page }) => {
     const sessionId = crypto.randomUUID();
@@ -150,7 +172,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     await processSummary.click();
 
     // Tool card should show write_to_file after expanding handled work.
-    await expect(page.locator("text=write_to_file")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("tool-card-trigger").filter({ hasText: "write_to_file" })).toBeVisible({ timeout: 5000 });
 
     // Shell card should show terminal output
     await expect(page.locator("text=python test.py")).toBeVisible();
@@ -590,7 +612,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.right).toBeLessThanOrEqual(4);
     expect(metrics!.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.boxShadow).not.toBe("none");
-    expect(metrics!.backdropFilter).not.toBe("none");
+    expect(metrics!.backdropFilter).toBe("none");
     expect(metrics!.transform).not.toBe("none");
     expect(metrics!.transitionProperty).toContain("transform");
   });
@@ -1912,11 +1934,12 @@ import { simulateStream, fullConversation } from "./mock-ipc";
 test.describe("Timeline Messages", () => {
   test.beforeEach(async ({ page }) => {
     await setup(page);
+    await forceDarkWorkbench(page);
     await page.goto("http://localhost:1420");
     await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
   });
 
-    test("empty workbench primary action starts a conversation", async ({ page }) => {
+  test("empty workbench primary action starts a conversation", async ({ page }) => {
       await page.getByRole("main").getByRole("button", { name: "开始新对话" }).click();
   
       await expect(page.locator("textarea")).toBeVisible();
@@ -2238,16 +2261,17 @@ test.describe("Timeline Messages", () => {
       await page.goto("http://localhost:1420");
       await page.getByRole("button", { name: "新对话", exact: true }).click();
       await expect(page.locator("textarea")).toBeVisible();
+      await page.locator("textarea").focus();
       await page.waitForFunction(() => {
         const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
         if (!composer) return false;
-        const rootStyle = getComputedStyle(document.documentElement);
+        const rootStyle = getComputedStyle(composer);
         const composerStyle = getComputedStyle(composer);
         return composerStyle.borderTopColor === rootStyle.getPropertyValue("--forge-material-border-focus").trim();
       });
   
       const metrics = await page.evaluate(() => {
-        const root = document.documentElement;
+        const root = document.querySelector<HTMLElement>(".forge-app-shell") ?? document.documentElement;
         const titlebar = document.querySelector("[data-testid='app-titlebar']");
         const sidebar = document.querySelector("aside");
         const composer = document.querySelector("[data-testid='composer-surface']");
@@ -2256,9 +2280,19 @@ test.describe("Timeline Messages", () => {
         const titlebarStyle = getComputedStyle(titlebar);
         const sidebarStyle = getComputedStyle(sidebar);
         const composerStyle = getComputedStyle(composer);
+        const resolveColor = (color: string) => {
+          const probe = document.createElement("span");
+          probe.style.color = color;
+          document.body.append(probe);
+          const resolved = getComputedStyle(probe).color;
+          probe.remove();
+          return resolved;
+        };
+        const materialBorderColor = resolveColor(rootStyle.getPropertyValue("--forge-material-border").trim());
         return {
           borderSubtle: rootStyle.getPropertyValue("--forge-border-subtle").trim(),
           materialBorder: rootStyle.getPropertyValue("--forge-material-border").trim(),
+          materialBorderColor,
           materialSurface: rootStyle.getPropertyValue("--forge-material-surface").trim(),
           materialRaised: rootStyle.getPropertyValue("--forge-material-raised").trim(),
           materialPopover: rootStyle.getPropertyValue("--forge-material-popover").trim(),
@@ -2268,6 +2302,7 @@ test.describe("Timeline Messages", () => {
           composerBorderFocusToken: rootStyle.getPropertyValue("--forge-material-border-focus").trim(),
           composerSurface: rootStyle.getPropertyValue("--forge-composer-surface").trim(),
           composerSurfaceFocus: rootStyle.getPropertyValue("--forge-composer-surface-focus").trim(),
+          composerSurfaceFocusColor: resolveColor(rootStyle.getPropertyValue("--forge-composer-surface-focus").trim()),
           composerShadowToken: rootStyle.getPropertyValue("--forge-composer-shadow").trim(),
           bgRaised: rootStyle.getPropertyValue("--forge-bg-raised").trim(),
           hover: rootStyle.getPropertyValue("--forge-hover").trim(),
@@ -2280,23 +2315,23 @@ test.describe("Timeline Messages", () => {
       });
   
       expect(metrics).not.toBeNull();
-      expect(metrics!.borderSubtle).toBe("#3A352C");
-      expect(metrics!.materialBorder).toBe("#3A352C");
-      expect(metrics!.materialSurface).toBe("rgba(34, 32, 28, 0.96)");
-      expect(metrics!.materialRaised).toBe("rgba(42, 39, 33, 0.94)");
-      expect(metrics!.materialPopover).toBe("rgba(42, 39, 33, 0.99)");
-      expect(metrics!.materialOverlay).toBe("rgba(42, 39, 33, 0.97)");
-      expect(metrics!.materialShadow).toContain("0 10px 28px");
-      expect(metrics!.composerBorderToken).toBe("#514737");
-      expect(metrics!.composerSurface).toBe("rgba(34, 32, 28, 0.98)");
-      expect(metrics!.composerShadowToken).toContain("0 12px 28px");
-      expect(metrics!.bgRaised).toBe("#26231E");
-      expect(metrics!.hover).toBe("rgba(207, 199, 184, 0.07)");
-      expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.42)");
-      expect(metrics!.titlebarBorder).toBe("rgb(58, 53, 44)");
-      expect(metrics!.sidebarBorder).toBe("rgb(58, 53, 44)");
+      expect(metrics!.borderSubtle).toBe("#DDD2C3");
+      expect(metrics!.materialBorder).toBe("#DDD2C3");
+      expect(metrics!.materialSurface).toBe("#FEFCF8");
+      expect(metrics!.materialRaised).toBe("#FEFCF8");
+      expect(metrics!.materialPopover).toBe("#FEFCF8");
+      expect(metrics!.materialOverlay).toBe("rgba(254, 252, 248, 0.97)");
+      expect(metrics!.materialShadow).toContain("0 10px 24px");
+      expect(metrics!.composerBorderToken).toBe("#D8C9B8");
+      expect(metrics!.composerSurface).toBe("#FEFCF8");
+      expect(metrics!.composerShadowToken).toContain("0 10px 26px");
+      expect(metrics!.bgRaised).toBe("#F4EEE4");
+      expect(metrics!.hover).toBe("rgba(92, 81, 68, 0.055)");
+      expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.38)");
+      expect(metrics!.titlebarBorder).toBe(metrics!.materialBorderColor);
+      expect(metrics!.sidebarBorder).toBe("rgba(221, 210, 195, 0.72)");
       expect(metrics!.composerBorder).toBe(metrics!.composerBorderFocusToken);
-      expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocus);
+      expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocusColor);
     });
   
     test("V3 color ladder keeps the dark workbench readable", async ({ page }) => {

@@ -225,6 +225,28 @@ export interface AgentA2ATaskProjection {
   worktree_path: string | null;
   cleaned_up: boolean | null;
   suggested_action: string | null;
+  // Phase 4-A enriched fields — derived from AgentTaskRecord / artifacts.
+  parent_task_id: string | null;
+  created_at_ms: number;
+  started_at_ms: number | null;
+  ended_at_ms: number | null;
+  duration_ms: number | null;
+  retryable: boolean | null;
+  failure_kind: string | null;
+  resume_note: string | null;
+  latest_progress: string | null;
+  // Phase 4-C — durable WorktreeWorker lease / retry state.
+  lease_owner: string | null;
+  lease_acquired_at_ms: number | null;
+  lease_expires_at_ms: number | null;
+  last_heartbeat_at_ms: number | null;
+  attempt_count: number;
+  max_attempts: number;
+  // Phase 4-B — diff-derived file visibility (safe: parsed from existing artifacts).
+  diff_available: boolean | null;
+  changed_file_count: number | null;
+  changed_files: string[];
+  test_report_excerpt: string | null;
 }
 
 export interface AgentA2AMessageProjection {
@@ -271,6 +293,7 @@ export type StreamEvent =
       question: string;
       kind: string;
       boundary?: WriteBoundary | null;
+      replayed_interrupted?: boolean;
     }
   // ── Context Management ──
   | {
@@ -313,7 +336,36 @@ export type StreamEvent =
   | { event_type: "session_status"; session_id: string; status: string }
   | { event_type: "session_stopped"; session_id: string; reason: string }
   | { event_type: "error"; session_id: string; block_id: string; message: string; code: string }
-  | { event_type: "usage"; session_id: string; input_tokens: number; output_tokens: number; estimated_cost_usd: number };
+  | { event_type: "usage"; session_id: string; input_tokens: number; output_tokens: number; estimated_cost_usd: number }
+  // ── Recovery Notice ──
+  | {
+      event_type: "recovery_notice";
+      session_id: string;
+      notice_id: string;
+      title: string;
+      message: string;
+      reason: string;
+      recoverable: boolean;
+    }
+  // ── Diagnostics / Health ──
+  | {
+      event_type: "diagnostics_update";
+      session_id: string;
+      ok: boolean;
+      pass_count: number;
+      warn_count: number;
+      fail_count: number;
+      report_json?: string | null;
+    }
+  | {
+      event_type: "health_alert";
+      session_id: string;
+      alert_id: string;
+      level: string;
+      title: string;
+      message: string;
+      remediation?: string | null;
+    };
 
 // Block state for accumulating streaming chunks
 export interface BlockState {
@@ -345,7 +397,7 @@ export interface SessionState {
   createdAt?: number | null;
   updatedAt?: number | null;
   contextWindowTokens?: number | null;
-  status: "running" | "stopped" | "error";
+  status: "running" | "stopped" | "error" | "resuming";
   streaming: boolean;
   blocks: BlockState[];
   costUsd: number;

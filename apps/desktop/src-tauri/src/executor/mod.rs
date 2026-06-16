@@ -1,5 +1,11 @@
+#[cfg(test)]
+mod executor_test;
 pub mod files;
+#[cfg(test)]
+mod files_test;
 pub mod shell;
+#[cfg(test)]
+mod shell_test;
 
 pub use files::FileExecutor;
 pub use shell::ShellExecutor;
@@ -10,6 +16,8 @@ use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
 use crate::agent::event_sink::EventEmitter;
+use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
+use crate::agent::time::now_ms;
 use crate::consts::{ASK_USER_TIMEOUT, SEARCH_TIMEOUT, WEB_FETCH_TIMEOUT, WEB_SEARCH_TIMEOUT};
 use crate::harness::shell_policy::validate_shell_command_failsafe;
 use crate::protocol::events::StreamEvent;
@@ -26,6 +34,8 @@ pub struct ToolExecutor {
     pub file: FileExecutor,
     pub shell: ShellExecutor,
     pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    pending_confirm_descriptors: Option<Arc<RwLock<Vec<PendingConfirmDescriptor>>>>,
+    active_tool_call_descriptors: Option<Arc<RwLock<Vec<ActiveToolCallDescriptor>>>>,
 }
 
 impl ToolExecutor {
@@ -37,6 +47,23 @@ impl ToolExecutor {
             file: FileExecutor::new(working_dir.clone()),
             shell: ShellExecutor::new(working_dir.clone()),
             pending_confirms,
+            pending_confirm_descriptors: None,
+            active_tool_call_descriptors: None,
+        }
+    }
+
+    pub(crate) fn new_with_descriptors(
+        working_dir: PathBuf,
+        pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+        pending_confirm_descriptors: Arc<RwLock<Vec<PendingConfirmDescriptor>>>,
+        active_tool_call_descriptors: Arc<RwLock<Vec<ActiveToolCallDescriptor>>>,
+    ) -> Self {
+        Self {
+            file: FileExecutor::new(working_dir.clone()),
+            shell: ShellExecutor::new(working_dir.clone()),
+            pending_confirms,
+            pending_confirm_descriptors: Some(pending_confirm_descriptors),
+            active_tool_call_descriptors: Some(active_tool_call_descriptors),
         }
     }
 
@@ -99,6 +126,15 @@ impl ToolExecutor {
             .map(str::to_string)
             .unwrap_or_else(|| BlockId::new().to_string());
         let start = std::time::Instant::now();
+        let started_at_ms = now_ms();
+        if let Some(registry) = &self.active_tool_call_descriptors {
+            registry.write().await.push(ActiveToolCallDescriptor::new(
+                block_id.clone(),
+                tool_name.to_string(),
+                tool_input.clone(),
+                started_at_ms,
+            ));
+        }
         crate::app_log!(
             "INFO",
             "[tool] start session={} block={} tool={} {}",
@@ -198,39 +234,75 @@ impl ToolExecutor {
                         block_id,
                         reason
                     );
-                    return format!("Error: {}", reason);
-                }
+                    format!("Error: {}", reason)
+                } else {
+                    // Emit ShellStart before execution so the frontend creates the block immediately
+                    emitter.emit(StreamEvent::ShellStart {
+                        session_id: session_id.to_string(),
+                        block_id: block_id.clone(),
+                        command: command.to_string(),
+                    });
 
-                // Emit ShellStart before execution so the frontend creates the block immediately
-                emitter.emit(StreamEvent::ShellStart {
-                    session_id: session_id.to_string(),
-                    block_id: block_id.clone(),
-                    command: command.to_string(),
-                });
+                    // Collectors accumulate output for the AI response string
+                    let stdout_captured: Arc<std::sync::Mutex<String>> =
+                        Arc::new(std::sync::Mutex::new(String::new()));
+                    let stderr_captured: Arc<std::sync::Mutex<String>> =
+                        Arc::new(std::sync::Mutex::new(String::new()));
+                    let emitted_bytes: Arc<std::sync::Mutex<usize>> =
+                        Arc::new(std::sync::Mutex::new(0));
+                    let emitted_truncation_notice: Arc<std::sync::Mutex<bool>> =
+                        Arc::new(std::sync::Mutex::new(false));
 
-                // Collectors accumulate output for the AI response string
-                let stdout_captured: Arc<std::sync::Mutex<String>> =
-                    Arc::new(std::sync::Mutex::new(String::new()));
-                let stderr_captured: Arc<std::sync::Mutex<String>> =
-                    Arc::new(std::sync::Mutex::new(String::new()));
-                let emitted_bytes: Arc<std::sync::Mutex<usize>> =
-                    Arc::new(std::sync::Mutex::new(0));
-                let emitted_truncation_notice: Arc<std::sync::Mutex<bool>> =
-                    Arc::new(std::sync::Mutex::new(false));
+                    let shell_result = if let Some(cancel) = cancel {
+                        let stdout_for_cb = stdout_captured.clone();
+                        let stderr_for_cb = stderr_captured.clone();
+                        let emitted_for_cb = emitted_bytes.clone();
+                        let notice_for_cb = emitted_truncation_notice.clone();
+                        let sid_for_cb = session_id.to_string();
+                        let bid_for_cb = block_id.clone();
+                        let emitter_for_cb = emitter.clone();
+                        self.shell
+                            .execute_streaming_with_cancel(
+                                command,
+                                cancel,
+                                move |line: String, is_stderr: bool| {
+                                    // Accumulate for AI response
+                                    let cap = if is_stderr {
+                                        &stderr_for_cb
+                                    } else {
+                                        &stdout_for_cb
+                                    };
+                                    {
+                                        let mut guard = cap.lock().unwrap();
+                                        append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
+                                    }
 
-                let shell_result = if let Some(cancel) = cancel {
-                    let stdout_for_cb = stdout_captured.clone();
-                    let stderr_for_cb = stderr_captured.clone();
-                    let emitted_for_cb = emitted_bytes.clone();
-                    let notice_for_cb = emitted_truncation_notice.clone();
-                    let sid_for_cb = session_id.to_string();
-                    let bid_for_cb = block_id.clone();
-                    let emitter_for_cb = emitter.clone();
-                    self.shell
-                        .execute_streaming_with_cancel(
-                            command,
-                            cancel,
-                            move |line: String, is_stderr: bool| {
+                                    // Emit to frontend line by line
+                                    if let Some(content) = next_stream_line(
+                                        &line,
+                                        &emitted_for_cb,
+                                        &notice_for_cb,
+                                        SHELL_STREAM_LIMIT,
+                                    ) {
+                                        emitter_for_cb.emit(StreamEvent::ShellOutput {
+                                            session_id: sid_for_cb.clone(),
+                                            block_id: bid_for_cb.clone(),
+                                            content,
+                                        });
+                                    }
+                                },
+                            )
+                            .await
+                    } else {
+                        let stdout_for_cb = stdout_captured.clone();
+                        let stderr_for_cb = stderr_captured.clone();
+                        let emitted_for_cb = emitted_bytes.clone();
+                        let notice_for_cb = emitted_truncation_notice.clone();
+                        let sid_for_cb = session_id.to_string();
+                        let bid_for_cb = block_id.clone();
+                        let emitter_for_cb = emitter.clone();
+                        self.shell
+                            .execute_streaming(command, move |line: String, is_stderr: bool| {
                                 // Accumulate for AI response
                                 let cap = if is_stderr {
                                     &stderr_for_cb
@@ -255,78 +327,42 @@ impl ToolExecutor {
                                         content,
                                     });
                                 }
-                            },
-                        )
-                        .await
-                } else {
-                    let stdout_for_cb = stdout_captured.clone();
-                    let stderr_for_cb = stderr_captured.clone();
-                    let emitted_for_cb = emitted_bytes.clone();
-                    let notice_for_cb = emitted_truncation_notice.clone();
-                    let sid_for_cb = session_id.to_string();
-                    let bid_for_cb = block_id.clone();
-                    let emitter_for_cb = emitter.clone();
-                    self.shell
-                        .execute_streaming(command, move |line: String, is_stderr: bool| {
-                            // Accumulate for AI response
-                            let cap = if is_stderr {
-                                &stderr_for_cb
-                            } else {
-                                &stdout_for_cb
+                            })
+                            .await
+                    };
+
+                    match shell_result {
+                        Ok(exit_code) => {
+                            emitter.emit(StreamEvent::ShellEnd {
+                                session_id: session_id.to_string(),
+                                block_id: block_id.clone(),
+                                exit_code,
+                            });
+                            let stdout = stdout_captured.lock().unwrap().clone();
+                            let stderr = stderr_captured.lock().unwrap().clone();
+                            let trunc = |s: &str, max: usize| {
+                                if s.len() > max {
+                                    format!("{}... [truncated {} bytes]", &s[..max], s.len() - max)
+                                } else {
+                                    s.to_string()
+                                }
                             };
-                            {
-                                let mut guard = cap.lock().unwrap();
-                                append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
-                            }
-
-                            // Emit to frontend line by line
-                            if let Some(content) = next_stream_line(
-                                &line,
-                                &emitted_for_cb,
-                                &notice_for_cb,
-                                SHELL_STREAM_LIMIT,
-                            ) {
-                                emitter_for_cb.emit(StreamEvent::ShellOutput {
-                                    session_id: sid_for_cb.clone(),
-                                    block_id: bid_for_cb.clone(),
-                                    content,
-                                });
-                            }
-                        })
-                        .await
-                };
-
-                match shell_result {
-                    Ok(exit_code) => {
-                        emitter.emit(StreamEvent::ShellEnd {
-                            session_id: session_id.to_string(),
-                            block_id: block_id.clone(),
-                            exit_code,
-                        });
-                        let stdout = stdout_captured.lock().unwrap().clone();
-                        let stderr = stderr_captured.lock().unwrap().clone();
-                        let trunc = |s: &str, max: usize| {
-                            if s.len() > max {
-                                format!("{}... [truncated {} bytes]", &s[..max], s.len() - max)
-                            } else {
-                                s.to_string()
-                            }
-                        };
-                        format!(
-                            "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
-                            exit_code,
-                            trunc(&stdout, 8000),
-                            trunc(&stderr, 4000)
-                        )
-                    }
-                    Err(e) => {
-                        // Emit ShellEnd to close the block since ShellStart was already sent
-                        emitter.emit(StreamEvent::ShellEnd {
-                            session_id: session_id.to_string(),
-                            block_id: block_id.clone(),
-                            exit_code: -1,
-                        });
-                        format!("Error: {}", e)
+                            format!(
+                                "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
+                                exit_code,
+                                trunc(&stdout, 8000),
+                                trunc(&stderr, 4000)
+                            )
+                        }
+                        Err(e) => {
+                            // Emit ShellEnd to close the block since ShellStart was already sent
+                            emitter.emit(StreamEvent::ShellEnd {
+                                session_id: session_id.to_string(),
+                                block_id: block_id.clone(),
+                                exit_code: -1,
+                            });
+                            format!("Error: {}", e)
+                        }
                     }
                 }
             }
@@ -394,11 +430,20 @@ impl ToolExecutor {
             "ask_user" => {
                 let question = get_str(tool_input, "question").unwrap_or("");
                 let (tx, rx) = tokio::sync::oneshot::channel();
+                let descriptor = PendingConfirmDescriptor::new(
+                    block_id.clone(),
+                    question.to_string(),
+                    "ask_user".to_string(),
+                    now_ms(),
+                );
                 {
                     self.pending_confirms
                         .write()
                         .await
                         .insert(block_id.clone(), tx);
+                    if let Some(registry) = &self.pending_confirm_descriptors {
+                        registry.write().await.push(descriptor);
+                    }
                 }
                 emitter.emit(StreamEvent::ConfirmAsk {
                     session_id: session_id.to_string(),
@@ -406,24 +451,27 @@ impl ToolExecutor {
                     question: question.to_string(),
                     kind: "ask_user".to_string(),
                     boundary: None,
+                    replayed_interrupted: false,
                 });
-                match tokio::time::timeout(ASK_USER_TIMEOUT, rx).await {
-                    Ok(Ok(true)) => {
-                        self.pending_confirms.write().await.remove(&block_id);
-                        "User approved".to_string()
+                let approved = tokio::time::timeout(ASK_USER_TIMEOUT, rx).await;
+                {
+                    self.pending_confirms.write().await.remove(&block_id);
+                    if let Some(registry) = &self.pending_confirm_descriptors {
+                        registry.write().await.retain(|d| d.block_id != block_id);
                     }
-                    Ok(Ok(false)) => {
-                        self.pending_confirms.write().await.remove(&block_id);
-                        "User declined".to_string()
-                    }
-                    _ => {
-                        self.pending_confirms.write().await.remove(&block_id);
-                        "No response from user".to_string()
-                    }
+                }
+                match approved {
+                    Ok(Ok(true)) => "User approved".to_string(),
+                    Ok(Ok(false)) => "User declined".to_string(),
+                    _ => "No response from user".to_string(),
                 }
             }
             _ => format!("Unknown tool: {}", tool_name),
         };
+
+        if let Some(registry) = &self.active_tool_call_descriptors {
+            registry.write().await.retain(|d| d.block_id != block_id);
+        }
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let is_error = result.starts_with("Error:")
@@ -1128,8 +1176,71 @@ fn simple_match(name: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{validate_shell_command_failsafe, ToolExecutor};
+    use crate::agent::event_sink::EventEmitter;
+    use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
+    use crate::protocol::events::StreamEvent;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    /// Emitter that immediately resolves any ConfirmAsk it sees by looking up
+    /// the pending sender and sending `approved`.
+    struct AutoResolveConfirmEmitter {
+        pending_confirms:
+            Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+        approve: bool,
+    }
+
+    impl AutoResolveConfirmEmitter {
+        fn new(
+            pending_confirms: Arc<
+                tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+            >,
+            approve: bool,
+        ) -> Self {
+            Self {
+                pending_confirms,
+                approve,
+            }
+        }
+    }
+
+    impl EventEmitter for AutoResolveConfirmEmitter {
+        fn emit(&self, event: StreamEvent) {
+            if let StreamEvent::ConfirmAsk { block_id, .. } = event {
+                if let Ok(mut guard) = self.pending_confirms.try_write() {
+                    if let Some(sender) = guard.remove(&block_id) {
+                        let _ = sender.send(self.approve);
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn descriptor_executor(
+        workspace: &std::path::Path,
+    ) -> (
+        ToolExecutor,
+        Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+        Arc<tokio::sync::RwLock<Vec<PendingConfirmDescriptor>>>,
+        Arc<tokio::sync::RwLock<Vec<ActiveToolCallDescriptor>>>,
+    ) {
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let pending_descriptors = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let active_descriptors = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let executor = ToolExecutor::new_with_descriptors(
+            workspace.to_path_buf(),
+            pending_confirms.clone(),
+            pending_descriptors.clone(),
+            active_descriptors.clone(),
+        );
+        (
+            executor,
+            pending_confirms,
+            pending_descriptors,
+            active_descriptors,
+        )
+    }
 
     #[test]
     fn shell_failsafe_blocks_destructive_root_commands() {
@@ -1204,6 +1315,64 @@ mod tests {
             assert!(result.contains("Stdout:"), "{alias}: {result}");
             assert!(result.contains("alias-ok"), "{alias}: {result}");
         }
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn execute_with_emitter_cleans_up_active_tool_call_descriptor() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-active-tool-cleanup-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let (executor, _pending_confirms, _pending_descriptors, active_descriptors) =
+            descriptor_executor(&workspace);
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "list_directory",
+                &serde_json::json!({"path": "."}),
+                Arc::new(crate::agent::event_sink::NoopEventEmitter),
+                Some("tool-block-1"),
+                None,
+            )
+            .await;
+
+        assert!(!result.starts_with("Error:"), "{result}");
+        assert!(
+            active_descriptors.read().await.is_empty(),
+            "active tool call descriptor should be removed after execution"
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn ask_user_cleans_up_pending_confirm_descriptor_on_response() {
+        let workspace =
+            std::env::temp_dir().join(format!("forge-ask-user-cleanup-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let (executor, pending_confirms, pending_descriptors, _active_descriptors) =
+            descriptor_executor(&workspace);
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "ask_user",
+                &serde_json::json!({"question": "Continue?"}),
+                Arc::new(AutoResolveConfirmEmitter::new(pending_confirms, true)),
+                Some("ask-block-1"),
+                None,
+            )
+            .await;
+
+        assert_eq!(result, "User approved");
+        assert!(
+            pending_descriptors.read().await.is_empty(),
+            "pending confirm descriptor should be removed after response"
+        );
+
         let _ = std::fs::remove_dir_all(workspace);
     }
 }

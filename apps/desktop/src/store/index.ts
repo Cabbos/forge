@@ -29,6 +29,19 @@ export const useStore = create<AppStore>((set, get) => ({
   firstLoopDraftBySession: new Map(),
   deliverySummaryBySession: new Map(),
   agentA2ABySession: new Map(),
+  recoveryNotices: [],
+  healthAlerts: [],
+
+  dismissRecoveryNotice: (noticeId) =>
+    set((state) => ({
+      recoveryNotices: state.recoveryNotices.filter((n) => n.notice_id !== noticeId),
+    })),
+
+  dismissHealthAlert: (alertId) =>
+    set((state) => ({
+      healthAlerts: state.healthAlerts.filter((a) => a.alert_id !== alertId),
+    })),
+
   pendingInput: "",
   selectedProvider: DEFAULT_PROVIDER_ID,
   selectedModel: getDefaultModel(DEFAULT_PROVIDER_ID),

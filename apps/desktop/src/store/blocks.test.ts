@@ -4,6 +4,7 @@ import {
   applyTranscriptEventToBlocks,
   closeInterruptedConfirmBlocks,
   eventToBlock,
+  SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
 } from "./blocks.ts";
 import type { StreamEvent } from "../lib/protocol.ts";
 
@@ -159,5 +160,195 @@ describe("closeInterruptedConfirmBlocks", () => {
     const blocks = closeInterruptedConfirmBlocks([original], "session_stopped");
 
     assert.deepStrictEqual(blocks[0], original);
+  });
+});
+
+describe("replayed confirm_ask", () => {
+  it("eventToBlock sets interrupted metadata when replayed_interrupted is true", () => {
+    const event: StreamEvent = {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-1",
+      question: "Allow write?",
+      kind: "file_write",
+      replayed_interrupted: true,
+    };
+    const block = eventToBlock(event);
+    assert.ok(block);
+    assert.strictEqual(block!.event_type, "confirm_ask");
+    assert.strictEqual(block!.isComplete, true);
+    assert.strictEqual(block!.metadata.confirmed, true);
+    assert.strictEqual(block!.metadata.answer, null);
+    assert.strictEqual(block!.metadata.confirm_interrupted, true);
+    assert.strictEqual(block!.metadata.confirm_interrupted_reason, "session_restored");
+  });
+
+  it("eventToBlock creates normal block when replayed_interrupted is false/omitted", () => {
+    const event: StreamEvent = {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-1",
+      question: "Allow write?",
+      kind: "file_write",
+    };
+    const block = eventToBlock(event);
+    assert.ok(block);
+    assert.strictEqual(block!.event_type, "confirm_ask");
+    assert.strictEqual(block!.isComplete, false);
+    assert.strictEqual(block!.metadata.confirmed, undefined);
+  });
+
+  it("applyTranscriptEventToBlocks replaces existing confirm_ask with replayed one", () => {
+    const normal: StreamEvent = {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-1",
+      question: "Allow write?",
+      kind: "file_write",
+    };
+    let blocks = applyTranscriptEventToBlocks([], normal);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].isComplete, false);
+
+    const replay: StreamEvent = {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-1",
+      question: "Allow write?",
+      kind: "file_write",
+      replayed_interrupted: true,
+    };
+    blocks = applyTranscriptEventToBlocks(blocks, replay);
+    // Should have replaced, not appended
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted, true);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted_reason, "session_restored");
+  });
+
+  it("applyTranscriptEventToBlocks appends replayed confirm when no existing block matches", () => {
+    const replay: StreamEvent = {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-2",
+      question: "Allow delete?",
+      kind: "file_delete",
+      replayed_interrupted: true,
+    };
+    const blocks = applyTranscriptEventToBlocks([], replay);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].block_id, "confirm-2");
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted, true);
+  });
+});
+
+describe("tool_call_start deduplication (Phase 1.6)", () => {
+  it("tool_call_start creates a new block when no existing block matches", () => {
+    const startEvent: StreamEvent = {
+      event_type: "tool_call_start",
+      session_id: "s1",
+      block_id: "tool-1",
+      tool_name: "write_to_file",
+      tool_input: { path: "file.txt" },
+    };
+    const blocks = applyTranscriptEventToBlocks([], startEvent);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].block_id, "tool-1");
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.strictEqual(blocks[0].metadata.tool_name, "write_to_file");
+    assert.deepStrictEqual(blocks[0].metadata.tool_input, { path: "file.txt" });
+  });
+
+  it("tool_call_start updates existing block with same block_id instead of appending", () => {
+    const first: StreamEvent = {
+      event_type: "tool_call_start",
+      session_id: "s1",
+      block_id: "tool-1",
+      tool_name: "write_to_file",
+      tool_input: { path: "old.txt" },
+    };
+    let blocks = applyTranscriptEventToBlocks([], first);
+    assert.strictEqual(blocks.length, 1);
+
+    const duplicate: StreamEvent = {
+      event_type: "tool_call_start",
+      session_id: "s1",
+      block_id: "tool-1",
+      tool_name: "write_to_file",
+      tool_input: { path: "new.txt" },
+    };
+    blocks = applyTranscriptEventToBlocks(blocks, duplicate);
+    // Should update, not append
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.strictEqual(blocks[0].metadata.tool_name, "write_to_file");
+    assert.deepStrictEqual(blocks[0].metadata.tool_input, { path: "new.txt" });
+  });
+
+  it("tool_call_start then interrupted tool_call_result updates one block", () => {
+    const startEvent: StreamEvent = {
+      event_type: "tool_call_start",
+      session_id: "s1",
+      block_id: "tool-1",
+      tool_name: "run_shell",
+      tool_input: { command: "npm test" },
+    };
+    let blocks = applyTranscriptEventToBlocks([], startEvent);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].isComplete, false);
+    assert.strictEqual(blocks[0].metadata.tool_name, "run_shell");
+
+    const resultEvent: StreamEvent = {
+      event_type: "tool_call_result",
+      session_id: "s1",
+      block_id: "tool-1",
+      result: SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
+      is_error: true,
+      duration_ms: 5000,
+    };
+    blocks = applyTranscriptEventToBlocks(blocks, resultEvent);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.is_error, true);
+    assert.strictEqual(blocks[0].metadata.duration_ms, 5000);
+    assert.strictEqual(blocks[0].metadata.tool_interrupted, true);
+    assert.strictEqual(blocks[0].metadata.tool_interrupted_reason, "session_restored");
+    // tool_name should be preserved from the start event
+    assert.strictEqual(blocks[0].metadata.tool_name, "run_shell");
+    assert.deepStrictEqual(blocks[0].metadata.tool_input, { command: "npm test" });
+  });
+
+  it("tool_call_result without prior start still creates a completed tool block", () => {
+    const resultEvent: StreamEvent = {
+      event_type: "tool_call_result",
+      session_id: "s1",
+      block_id: "tool-orphan",
+      result: "Some result",
+      is_error: false,
+      duration_ms: 100,
+    };
+    const blocks = applyTranscriptEventToBlocks([], resultEvent);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].block_id, "tool-orphan");
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.tool_name, "Tool");
+    assert.strictEqual(blocks[0].metadata.tool_interrupted, undefined);
+  });
+
+  it("eventToBlock marks restore-interrupted tool results with metadata", () => {
+    const resultEvent: StreamEvent = {
+      event_type: "tool_call_result",
+      session_id: "s1",
+      block_id: "tool-interrupted",
+      result: SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
+      is_error: true,
+      duration_ms: 250,
+    };
+    const block = eventToBlock(resultEvent);
+    assert.ok(block);
+    assert.strictEqual(block!.metadata.tool_interrupted, true);
+    assert.strictEqual(block!.metadata.tool_interrupted_reason, "session_restored");
   });
 });

@@ -23,7 +23,7 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel {
     border-color: #DED6CB;
-    border-radius: 12px;
+    border-radius: 8px;
     background: #FEFCF8 !important;
     box-shadow: 0 6px 18px rgba(79, 62, 42, 0.04);
   }

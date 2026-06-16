@@ -100,11 +100,14 @@ describe("runDoctor", () => {
     const { io, stdout } = createIo();
     const forgeRoot = createForgeRoot();
     const evalRunnerRoot = createEvalRunnerRoot();
+    const homeRoot = createTempDir("forge-cli-doctor-home-");
+    mkdirSync(join(homeRoot, ".forge"), { recursive: true });
 
     const code = await runDoctor(["--json"], {
       io,
       spawn: passingSpawnRunner(),
       env: {
+        HOME: homeRoot,
         FORGE_REPO_ROOT: forgeRoot,
         FORGE_EVAL_RUNNER_ROOT: evalRunnerRoot,
       },
@@ -114,11 +117,16 @@ describe("runDoctor", () => {
 
     expect(code).toBe(0);
     expect(report.ok).toBe(true);
+    // Phase 2: 4 original checks + 4 new diagnostics checks in stable order
     expect(report.checks.map((check: { name: string }) => check.name)).toEqual([
       "bun",
       "cargo",
       "forge_repo_root",
       "forge_eval_runner",
+      "forge_config",
+      "forge_app_data",
+      "forge_sessions",
+      "forge_logs",
     ]);
   });
 
@@ -167,11 +175,13 @@ describe("runDoctor", () => {
   test("prints failing human output and returns non-zero", async () => {
     const { io, stdout } = createIo();
     const emptyRoot = createTempDir("forge-cli-doctor-empty-");
+    const homeRoot = createTempDir("forge-cli-doctor-home-");
 
     const code = await runDoctor([], {
       io,
       spawn: failingSpawnRunner(),
       env: {
+        HOME: homeRoot,
         FORGE_REPO_ROOT: emptyRoot,
         FORGE_EVAL_RUNNER_ROOT: emptyRoot,
       },

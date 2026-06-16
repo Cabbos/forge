@@ -945,10 +945,16 @@ test.describe("Timeline Archive", () => {
     await setup(page);
     await page.goto("http://localhost:1420");
     await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    await page.evaluate(() => {
+      document.querySelectorAll('[data-conversation-theme="light"]').forEach((el) => {
+        el.setAttribute("data-conversation-theme", "dark");
+      });
+    });
   });
 
   
     test("settings show provider defaults and context window quietly", async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 720 });
       await page.getByRole("button", { name: "设置" }).click();
   
       const dialog = page.getByRole("dialog");
@@ -961,14 +967,25 @@ test.describe("Timeline Archive", () => {
         const panel = node.querySelector<HTMLElement>("[data-testid='settings-preferences-panel']");
         const rows = Array.from(node.querySelectorAll<HTMLElement>("[data-testid='settings-provider-row']"));
         const status = node.querySelector<HTMLElement>("[data-testid='settings-provider-status']");
+        const center = node.querySelector<HTMLElement>(".forge-settings-center");
+        const sidebar = node.querySelector<HTMLElement>(".forge-settings-sidebar");
+        const content = node.querySelector<HTMLElement>(".forge-settings-content");
         const panelStyle = panel ? getComputedStyle(panel) : null;
         const rowStyle = rows[0] ? getComputedStyle(rows[0]) : null;
         const secondRowStyle = rows[1] ? getComputedStyle(rows[1]) : null;
+        const centerRect = center?.getBoundingClientRect();
+        const sidebarRect = sidebar?.getBoundingClientRect();
+        const contentRect = content?.getBoundingClientRect();
         return {
           panelRadius: panelStyle ? Number.parseFloat(panelStyle.borderTopLeftRadius) : 0,
           panelDisplay: panelStyle?.display ?? "",
           panelGap: panelStyle?.rowGap ?? "",
           panelOverflow: panelStyle?.overflow ?? "",
+          centerBottom: centerRect ? Math.round(centerRect.bottom) : 0,
+          sidebarBottom: sidebarRect ? Math.round(sidebarRect.bottom) : 0,
+          contentBottom: contentRect ? Math.round(contentRect.bottom) : 0,
+          contentCanScroll: content ? content.scrollHeight > content.clientHeight : false,
+          contentOverflowY: content ? getComputedStyle(content).overflowY : "",
           firstRowHeight: rows[0] ? Math.round(rows[0].getBoundingClientRect().height) : 0,
           firstRowDisplay: rowStyle?.display ?? "",
           firstRowBackground: rowStyle?.backgroundColor ?? "",
@@ -983,6 +1000,10 @@ test.describe("Timeline Archive", () => {
       expect(settingsMetrics.panelDisplay).toBe("grid");
       expect(settingsMetrics.panelGap).toBe("8px");
       expect(settingsMetrics.panelOverflow).toBe("visible");
+      expect(settingsMetrics.sidebarBottom).toBeLessThanOrEqual(settingsMetrics.centerBottom);
+      expect(settingsMetrics.contentBottom).toBeLessThanOrEqual(settingsMetrics.centerBottom);
+      expect(settingsMetrics.contentCanScroll).toBe(true);
+      expect(settingsMetrics.contentOverflowY).toBe("auto");
       expect(settingsMetrics.firstRowHeight).toBeGreaterThanOrEqual(64);
       expect(settingsMetrics.firstRowDisplay).toBe("grid");
       expect(settingsMetrics.firstRowBackground).not.toBe("rgba(0, 0, 0, 0)");
@@ -993,10 +1014,64 @@ test.describe("Timeline Archive", () => {
       expect(settingsMetrics.statusBorder).not.toBe("rgba(0, 0, 0, 0)");
       await providerRows.first().hover();
       await expect(providerRows.first()).not.toHaveCSS("border-color", "rgba(0, 0, 0, 0)");
-      const deepseek = dialog.locator("section").filter({ hasText: "DeepSeek" });
+      const deepseek = dialog
+        .getByTestId("settings-preferences-panel")
+        .getByTestId("settings-provider-row")
+        .filter({ hasText: "DeepSeek" });
       await expect(deepseek.getByText("DeepSeek V4 Flash 1M")).toBeVisible();
       await expect(deepseek.getByText("默认模型 · 上下文 1M")).toBeVisible();
       await expect(deepseek.getByText("deepseek-v4-flash[1m]")).toHaveCount(0);
+      const contentScroll = dialog.locator(".forge-settings-content");
+      const scrollBefore = await contentScroll.evaluate((node) => node.scrollTop);
+      const scrollAfter = await contentScroll.evaluate((node) => {
+        node.scrollTop = 500;
+        return node.scrollTop;
+      });
+      expect(scrollAfter).toBeGreaterThan(scrollBefore);
+    });
+
+    test("settings stay readable and content-scrollable on narrow viewports", async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 640 });
+      await page.evaluate(() => window.dispatchEvent(new Event("forge:open-settings")));
+
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByRole("heading", { name: "模型服务" })).toBeVisible();
+
+      const metrics = await dialog.evaluate((node) => {
+        const dialogRect = (node as HTMLElement).getBoundingClientRect();
+        const center = node.querySelector<HTMLElement>(".forge-settings-center");
+        const sidebar = node.querySelector<HTMLElement>(".forge-settings-sidebar");
+        const content = node.querySelector<HTMLElement>(".forge-settings-content");
+        const centerRect = center?.getBoundingClientRect();
+        const sidebarRect = sidebar?.getBoundingClientRect();
+        const contentRect = content?.getBoundingClientRect();
+        if (!center || !sidebar || !content || !centerRect || !sidebarRect || !contentRect) return null;
+
+        const scrollBefore = content.scrollTop;
+        content.scrollTop = 500;
+
+        return {
+          dialogWidth: Math.round(dialogRect.width),
+          centerWidth: Math.round(centerRect.width),
+          sidebarBottom: Math.round(sidebarRect.bottom),
+          contentTop: Math.round(contentRect.top),
+          contentWidth: Math.round(contentRect.width),
+          centerClientWidth: center.clientWidth,
+          centerScrollWidth: center.scrollWidth,
+          contentCanScroll: content.scrollHeight > content.clientHeight,
+          contentOverflowY: getComputedStyle(content).overflowY,
+          scrollBefore,
+          scrollAfter: content.scrollTop,
+        };
+      });
+
+      expect(metrics).not.toBeNull();
+      expect(metrics!.centerScrollWidth).toBeLessThanOrEqual(metrics!.centerClientWidth + 1);
+      expect(metrics!.sidebarBottom).toBeLessThanOrEqual(metrics!.contentTop);
+      expect(metrics!.contentWidth).toBeGreaterThanOrEqual(metrics!.dialogWidth - 48);
+      expect(metrics!.contentCanScroll).toBe(true);
+      expect(metrics!.contentOverflowY).toBe("auto");
+      expect(metrics!.scrollAfter).toBeGreaterThan(metrics!.scrollBefore);
     });
   
     test("resume does not duplicate persisted delivery summary blocks", async ({ page }) => {
@@ -1116,7 +1191,8 @@ test.describe("Timeline Archive", () => {
         return {
           width: Math.round(node.getBoundingClientRect().width),
           gridDisplay: gridStyle?.display ?? "",
-          gridColumnCount: gridStyle?.gridTemplateColumns.split(" ").filter(Boolean).length ?? 0,
+          gridWrap: gridStyle?.flexWrap ?? "",
+          gridGap: gridStyle?.gap ?? "",
           itemCount: items.length,
           maxItemHeight: items.length ? Math.max(...items.map((item) => Math.round(item.getBoundingClientRect().height))) : 0,
           actionBarHeight: actionBar ? Math.round(actionBar.getBoundingClientRect().height) : 0,
@@ -1126,8 +1202,9 @@ test.describe("Timeline Archive", () => {
         };
       });
       expect(metrics.width).toBeLessThanOrEqual(720);
-      expect(metrics.gridDisplay).toBe("grid");
-      expect(metrics.gridColumnCount).toBeLessThanOrEqual(metrics.itemCount);
+      expect(metrics.gridDisplay).toBe("flex");
+      expect(metrics.gridWrap).toBe("wrap");
+      expect(metrics.gridGap).not.toBe("normal");
       expect(metrics.maxItemHeight).toBeLessThanOrEqual(72);
       expect(metrics.actionBarHeight).toBeLessThanOrEqual(42);
       expect(metrics.actionHeight).toBe(28);

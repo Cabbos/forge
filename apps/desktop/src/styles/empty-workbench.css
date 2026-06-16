@@ -41,9 +41,9 @@
   }
 
   .forge-empty-shell-centered .forge-empty-workbench {
-    flex: 0 1 min(100%, 720px);
-    width: min(100%, 720px);
-    max-width: 720px;
+    flex: 0 1 min(100%, 640px);
+    width: min(100%, 640px);
+    max-width: 640px;
   }
 
   .forge-empty-composer-frame {

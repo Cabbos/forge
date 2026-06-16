@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { AlertCircle, Blocks, Clock3, Search, Settings, SquarePen } from "lucide-react";
+import { AlertCircle, Blocks, Clock3, History, Search, Settings, SquarePen } from "lucide-react";
 import type { Workspace } from "@/lib/workspaces";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,7 @@ interface SidebarPrimaryNavProps {
 
 interface SidebarUtilityNavProps {
   activePanel: SidebarPanel | null;
+  onOpenHistory: () => void;
   onOpenPanel: (panel: SidebarPanel) => void;
   onOpenSettings: () => void;
 }
@@ -55,6 +56,7 @@ export function SidebarNoticeBanner({ notice }: { notice: SidebarNotice }) {
 
 export function SidebarUtilityNav({
   activePanel,
+  onOpenHistory,
   onOpenPanel,
   onOpenSettings,
 }: SidebarUtilityNavProps) {
@@ -75,6 +77,11 @@ export function SidebarUtilityNav({
         label="自动化"
         active={activePanel === "automation"}
         onClick={() => onOpenPanel("automation")}
+      />
+      <SidebarIconAction
+        icon={<History className="size-4" />}
+        label="历史"
+        onClick={onOpenHistory}
       />
       <SidebarIconAction
         icon={<Settings className="size-4" />}

@@ -2,12 +2,34 @@ import { test, expect } from "@playwright/test";
 import { setup, holdSendInput, expectHeldSendInput, releaseHeldSendInput, openProjectArchive, projectArchive } from "./fixtures/app";
 import { simulateStream, fullConversation } from "./mock-ipc";
 
+async function forceDarkWorkbench(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const apply = () => {
+      document.querySelectorAll<HTMLElement>("[data-conversation-theme='light']").forEach((el) => {
+        el.setAttribute("data-conversation-theme", "dark");
+      });
+      document.querySelectorAll<HTMLElement>(".forge-app-shell[data-design-version='v3-light-workbench']").forEach((el) => {
+        el.setAttribute("data-design-version", "v3-dark-workbench");
+      });
+    };
 
-  test.beforeEach(async ({ page }) => {
-    await setup(page);
-    await page.goto("http://localhost:1420");
-    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    new MutationObserver(apply).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-conversation-theme", "data-design-version"],
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener("DOMContentLoaded", apply);
+    apply();
   });
+}
+
+test.beforeEach(async ({ page }) => {
+  await setup(page);
+  await forceDarkWorkbench(page);
+  await page.goto("http://localhost:1420");
+  await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+});
 
 
   test("structured conversation blocks stay compact while collapsed", async ({ page }) => {
@@ -462,7 +484,6 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     await page.getByTestId("sub-agent-tool-trigger").click();
 
     const metrics = await page.evaluate(() => {
-      const rootStyle = getComputedStyle(document.documentElement);
       const resolveColor = (color: string) => {
         const probe = document.createElement("span");
         probe.style.color = color;
@@ -477,14 +498,15 @@ import { simulateStream, fullConversation } from "./mock-ipc";
       const toolResult = document.querySelector<HTMLElement>("[data-testid='sub-agent-tool-result']");
       if (!trace || !rounds || !result || !toolResult) return null;
 
+      const rootStyle = getComputedStyle(trace);
       const traceStyle = getComputedStyle(trace);
       const roundsStyle = getComputedStyle(rounds);
       const resultStyle = getComputedStyle(result);
       const toolResultStyle = getComputedStyle(toolResult);
 
       return {
-        materialRaised: rootStyle.getPropertyValue("--forge-material-raised").trim(),
-        materialSurface: rootStyle.getPropertyValue("--forge-material-surface").trim(),
+        materialRaised: resolveColor(rootStyle.getPropertyValue("--forge-material-raised").trim()),
+        materialSurface: resolveColor(rootStyle.getPropertyValue("--forge-material-surface").trim()),
         materialBorder: resolveColor(rootStyle.getPropertyValue("--forge-material-border").trim()),
         traceBackground: traceStyle.backgroundColor,
         traceBorder: traceStyle.borderTopColor,
@@ -689,34 +711,40 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     await page.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ }).click();
     await expect(page.getByRole("menu")).toBeVisible();
     await expect.poll(async () => page.evaluate(() => {
-      const root = getComputedStyle(document.documentElement);
+      const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
+      if (!composer) return false;
+      const root = getComputedStyle(composer);
       const materialBorderFocus = root.getPropertyValue("--forge-material-border-focus").trim();
       const colorProbe = document.createElement("span");
       document.body.append(colorProbe);
       colorProbe.style.color = materialBorderFocus;
       const expected = getComputedStyle(colorProbe).color;
       colorProbe.remove();
-      const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
-      return composer ? getComputedStyle(composer).borderTopColor === expected : false;
+      return getComputedStyle(composer).borderTopColor === expected;
     })).toBe(true);
 
     const metrics = await page.evaluate(() => {
-      const root = getComputedStyle(document.documentElement);
+      const shell = document.querySelector<HTMLElement>(".forge-app-shell") ?? document.documentElement;
+      const root = getComputedStyle(shell);
+      const resolveColor = (color: string) => {
+        const colorProbe = document.createElement("span");
+        colorProbe.style.color = color;
+        document.body.append(colorProbe);
+        const resolved = getComputedStyle(colorProbe).color;
+        colorProbe.remove();
+        return resolved;
+      };
       const materialBorder = root.getPropertyValue("--forge-material-border").trim();
-      const colorProbe = document.createElement("span");
-      document.body.append(colorProbe);
-      colorProbe.style.color = materialBorder;
-      const materialBorderColor = getComputedStyle(colorProbe).color;
-      colorProbe.remove();
+      const materialBorderColor = resolveColor(materialBorder);
       const materialBorderFocus = root.getPropertyValue("--forge-material-border-focus").trim();
-      const materialSurface = root.getPropertyValue("--forge-material-surface").trim();
-      const materialSurfaceFocus = root.getPropertyValue("--forge-material-surface-focus").trim();
-      const materialRaised = root.getPropertyValue("--forge-material-raised").trim();
-      const materialPopover = root.getPropertyValue("--forge-material-popover").trim();
+      const materialSurface = resolveColor(root.getPropertyValue("--forge-material-surface").trim());
+      const materialSurfaceFocus = resolveColor(root.getPropertyValue("--forge-material-surface-focus").trim());
+      const materialRaised = resolveColor(root.getPropertyValue("--forge-material-raised").trim());
+      const materialPopover = resolveColor(root.getPropertyValue("--forge-material-popover").trim());
       const materialOverlay = root.getPropertyValue("--forge-material-overlay").trim();
       const materialShadow = root.getPropertyValue("--forge-material-shadow").trim();
       const materialShadowStrong = root.getPropertyValue("--forge-material-shadow-strong").trim();
-      const composerSurfaceFocus = root.getPropertyValue("--forge-composer-surface-focus").trim();
+      const composerSurfaceFocus = resolveColor(root.getPropertyValue("--forge-composer-surface-focus").trim());
       const composerShadowFocus = root.getPropertyValue("--forge-composer-shadow-focus").trim();
       const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
       const detail = document.querySelector<HTMLElement>("[data-testid='log-detail-surface']");
@@ -759,15 +787,15 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics).not.toBeNull();
     expect(metrics!.composerBorder).toBe(metrics!.materialBorderFocus);
     expect(metrics!.composerBackground).toBe(metrics!.composerSurfaceFocus);
-    expect(metrics!.materialShadowStrong).toContain("0 4px 14px");
-    expect(metrics!.composerShadowFocus).toContain("0 4px 14px");
-    expect(metrics!.composerShadow).toContain("4px 14px");
+    expect(metrics!.materialShadowStrong).toContain("0 14px 32px");
+    expect(metrics!.composerShadowFocus).toContain("0 14px 32px");
+    expect(metrics!.composerShadow).toContain("14px 32px");
     expect(metrics!.detailBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.detailBackground).toBe(metrics!.materialRaised);
     expect(metrics!.menuBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.menuBackground).toBe(metrics!.materialPopover);
     expect(metrics!.archiveBorder).toBe(metrics!.materialBorderColor);
-    expect(metrics!.archiveBackground).toBe(metrics!.materialOverlay);
+    expect(metrics!.archiveBackground).toBe("rgb(236, 226, 212)");
     expect(metrics!.archiveHeaderHeight).toBe(42);
     expect(metrics!.archiveHeaderBorder).toBe(metrics!.materialBorderColor);
   });
@@ -1178,10 +1206,16 @@ import { simulateStream, fullConversation } from "./mock-ipc";
       const summaryStyle = getComputedStyle(summary);
       const codeStyle = getComputedStyle(code);
       const cardStyle = getComputedStyle(node);
+      const expectedBackgroundProbe = document.createElement("span");
+      expectedBackgroundProbe.style.background = cardStyle.getPropertyValue("--forge-material-raised").trim();
+      document.body.append(expectedBackgroundProbe);
+      const expectedBackground = getComputedStyle(expectedBackgroundProbe).backgroundColor;
+      expectedBackgroundProbe.remove();
       return {
         openState: (panel as HTMLElement).dataset.diffOpen,
         cardWidth: Math.round(panel.getBoundingClientRect().width),
         cardBackground: cardStyle.backgroundColor,
+        expectedBackground,
         perfRows: node.querySelectorAll(".diff-filmstrip-perf").length,
         grid: getComputedStyle(added).display,
         oldNumberWidth: Math.round(oldNo.getBoundingClientRect().width),
@@ -1202,7 +1236,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics).not.toBeNull();
     expect(metrics!.openState).toBe("true");
     expect(metrics!.cardWidth).toBeLessThanOrEqual(760);
-    expect(metrics!.cardBackground).toBe("rgba(42, 39, 33, 0.94)");
+    expect(metrics!.cardBackground).toBe(metrics!.expectedBackground);
     expect(metrics!.perfRows).toBe(0);
     expect(metrics!.maxWidth).not.toBe("none");
     expect(metrics!.bodyMaxHeight).toBe("320px");

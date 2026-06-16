@@ -395,4 +395,190 @@ mod tests {
 
         assert!(dirs.ends_with(&project_dirs));
     }
+
+    // ── parse_inline_string_list ──────────────────────────────────────
+
+    #[test]
+    fn parses_comma_separated_list() {
+        let result = parse_inline_string_list("fix, bug, feature");
+        assert_eq!(result, vec!["fix", "bug", "feature"]);
+    }
+
+    #[test]
+    fn parses_json_array() {
+        let result = parse_inline_string_list(r#"["fix", "bug", "feature"]"#);
+        assert_eq!(result, vec!["fix", "bug", "feature"]);
+    }
+
+    #[test]
+    fn parses_quoted_items() {
+        let result = parse_inline_string_list(r#""fix bug", 'feature request'"#);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn empty_string_returns_empty() {
+        let result = parse_inline_string_list("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_returns_empty() {
+        let result = parse_inline_string_list("   ");
+        assert!(result.is_empty(), "got {result:?}");
+    }
+
+    // ── parse_skill_metadata ──────────────────────────────────────────
+
+    #[test]
+    fn parses_description_from_frontmatter() {
+        let content = "description: A test skill for fixing bugs\n\ntriggers: fix\n";
+        let meta = parse_skill_metadata(content);
+        assert_eq!(meta.description, "A test skill for fixing bugs");
+    }
+
+    #[test]
+    fn parses_triggers() {
+        let content = "description: test\ntriggers: fix, bug, feature\n";
+        let meta = parse_skill_metadata(content);
+        assert!(meta.triggers.contains(&"fix".to_string()));
+        assert!(meta.triggers.contains(&"bug".to_string()));
+        assert!(meta.triggers.contains(&"feature".to_string()));
+    }
+
+    #[test]
+    fn parses_keywords_as_triggers() {
+        let content = "description: test\nkeywords: refactor, cleanup\n";
+        let meta = parse_skill_metadata(content);
+        assert!(meta.triggers.contains(&"refactor".to_string()));
+        assert!(meta.triggers.contains(&"cleanup".to_string()));
+    }
+
+    #[test]
+    fn parses_always_on_true() {
+        let content = "description: test\nalways_on: true\n";
+        let meta = parse_skill_metadata(content);
+        assert!(meta.always_on);
+    }
+
+    #[test]
+    fn parses_always_on_false() {
+        let content = "description: test\nalways_on: false\n";
+        let meta = parse_skill_metadata(content);
+        assert!(!meta.always_on);
+    }
+
+    #[test]
+    fn always_on_defaults_false_when_missing() {
+        let content = "description: test\n";
+        let meta = parse_skill_metadata(content);
+        assert!(!meta.always_on);
+    }
+
+    #[test]
+    fn empty_content_returns_defaults() {
+        let meta = parse_skill_metadata("");
+        assert!(meta.description.is_empty());
+        assert!(meta.triggers.is_empty());
+        assert!(!meta.always_on);
+    }
+
+    // ── skill_match_reason ────────────────────────────────────────────
+
+    fn make_skill(name: &str, triggers: Vec<&str>, always_on: bool) -> LoadedSkill {
+        LoadedSkill {
+            id: name.to_string(),
+            name: name.to_string(),
+            description: "test skill".to_string(),
+            instruction: "# Test\n\ndescription: test\n".to_string(),
+            source: SkillSource::Local(PathBuf::from("/tmp")),
+            enabled: true,
+            triggers: triggers.iter().map(|s| s.to_string()).collect(),
+            always_on,
+            tools: vec![],
+        }
+    }
+
+    #[test]
+    fn always_on_skill_matches_any_request() {
+        let skill = make_skill("always", vec![], true);
+        let reason = skill_match_reason(&skill, "any random text");
+        assert_eq!(reason, Some("always_on".to_string()));
+    }
+
+    #[test]
+    fn skill_without_triggers_matches_as_default() {
+        let skill = make_skill("default", vec![], false);
+        let reason = skill_match_reason(&skill, "any random text");
+        assert_eq!(reason, Some("default".to_string()));
+    }
+
+    #[test]
+    fn skill_with_triggers_matches_on_keyword() {
+        let skill = make_skill("git-helper", vec!["git", "commit", "branch"], false);
+        let reason = skill_match_reason(&skill, "please help me fix a git issue");
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("git"));
+    }
+
+    #[test]
+    fn skill_with_triggers_does_not_match_unrelated_request() {
+        let skill = make_skill("git-helper", vec!["git", "commit", "branch"], false);
+        let reason = skill_match_reason(&skill, "please write a python script");
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn trigger_match_is_case_insensitive() {
+        let skill = make_skill("docker", vec!["docker", "container"], false);
+        // skill_match_reason expects pre-lowercased input (as done by matched_skills_for_request)
+        let reason = skill_match_reason(&skill, "i need to build a docker image");
+        assert!(reason.is_some());
+    }
+
+    #[test]
+    fn multiple_trigger_matches_are_joined() {
+        let skill = make_skill("devops", vec!["docker", "k8s", "deploy"], false);
+        let reason = skill_match_reason(&skill, "deploy my docker container to k8s");
+        assert!(reason.is_some());
+        let r = reason.unwrap();
+        assert!(r.starts_with("trigger:"));
+        assert!(r.contains("docker"));
+        assert!(r.contains("k8s"));
+        assert!(r.contains("deploy"));
+    }
+
+    // ── MatchedSkill::label ───────────────────────────────────────────
+
+    #[test]
+    fn label_always_on_shows_chinese_label() {
+        let skill = make_skill("helper", vec![], true);
+        let matched = MatchedSkill {
+            skill,
+            reason: "always_on".to_string(),
+        };
+        assert!(matched.label().contains("常驻"));
+    }
+
+    #[test]
+    fn label_default_shows_chinese_label() {
+        let skill = make_skill("helper", vec![], false);
+        let matched = MatchedSkill {
+            skill,
+            reason: "default".to_string(),
+        };
+        assert!(matched.label().contains("默认"));
+    }
+
+    #[test]
+    fn label_trigger_shows_chinese_prefix() {
+        let skill = make_skill("git", vec!["git"], false);
+        let matched = MatchedSkill {
+            skill,
+            reason: "trigger:git,commit".to_string(),
+        };
+        let label = matched.label();
+        assert!(label.contains("触发"));
+        assert!(label.contains("git"));
+    }
 }

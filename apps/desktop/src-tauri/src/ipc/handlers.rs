@@ -16,6 +16,7 @@ use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, emit_restored_session_startup, emit_session_started,
     register_and_dispatch_session_start, restore_session_from_snapshot, resume_existing_session,
 };
+use crate::profile::ForgeProfile;
 use crate::protocol::commands::SessionCreated;
 use crate::settings;
 use crate::state::AppState;
@@ -31,9 +32,12 @@ pub async fn create_session(
     provider: Option<String>,
     api_key: String,
     model: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<SessionCreated, String> {
     let session_id = uuid::Uuid::now_v7().to_string();
-    let provider = normalize_provider(provider.as_deref());
+    let profile = selected_create_session_profile(&state, profile_id.as_deref());
+    let defaults = resolve_create_session_defaults(working_dir, provider, model, profile.as_ref());
+    let provider = normalize_provider(defaults.provider.as_deref());
     let credentials = settings::detect_credentials(&provider);
 
     let key = if api_key.is_empty() {
@@ -42,10 +46,11 @@ pub async fn create_session(
         api_key
     };
 
-    let model_str = model
+    let model_str = defaults
+        .model
         .or(credentials.model)
         .unwrap_or_else(|| default_model(&provider).to_string());
-    let working_dir = resolve_session_working_dir(&working_dir)?;
+    let working_dir = resolve_session_working_dir(&defaults.working_dir)?;
     let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
         session_id: session_id.clone(),
         provider: provider.clone(),
@@ -194,6 +199,52 @@ pub(crate) fn is_manual_compact_request(
             }
             ComposerCapabilitySelection::FileReference { .. } => false,
         })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CreateSessionDefaults {
+    working_dir: String,
+    provider: Option<String>,
+    model: Option<String>,
+}
+
+fn selected_create_session_profile(
+    state: &AppState,
+    profile_id: Option<&str>,
+) -> Option<ForgeProfile> {
+    let profile_id = clean_profile_default(profile_id)?;
+    state.profiles.get(&profile_id)
+}
+
+fn resolve_create_session_defaults(
+    working_dir: String,
+    provider: Option<String>,
+    model: Option<String>,
+    profile: Option<&ForgeProfile>,
+) -> CreateSessionDefaults {
+    let Some(profile) = profile else {
+        return CreateSessionDefaults {
+            working_dir,
+            provider,
+            model,
+        };
+    };
+
+    CreateSessionDefaults {
+        working_dir: clean_profile_default(profile.default_workspace.as_deref())
+            .unwrap_or(working_dir),
+        provider: clean_profile_default(profile.default_provider.as_deref()).or(provider),
+        model: clean_profile_default(profile.default_model.as_deref()).or(model),
+    }
+}
+
+fn clean_profile_default(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[cfg(test)]
