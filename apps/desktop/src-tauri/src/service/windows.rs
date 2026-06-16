@@ -442,13 +442,13 @@ SERVICE_NAME: ForgeGateway
         assert!(message.contains("installed and started"));
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, plan.create);
-        assert_eq!(calls[0].1, false);
-        assert_eq!(calls[0].2, true);
-        assert_eq!(calls[0].3, false);
+        assert!(!calls[0].1);
+        assert!(calls[0].2);
+        assert!(!calls[0].3);
         assert_eq!(calls[1].0, plan.start);
-        assert_eq!(calls[1].1, false);
-        assert_eq!(calls[1].2, false);
-        assert_eq!(calls[1].3, true);
+        assert!(!calls[1].1);
+        assert!(!calls[1].2);
+        assert!(calls[1].3);
     }
 
     #[test]
@@ -473,12 +473,12 @@ SERVICE_NAME: ForgeGateway
         assert!(message.contains("uninstalled"));
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].0, plan.stop);
-        assert_eq!(calls[0].1, true);
-        assert_eq!(calls[0].2, false);
-        assert_eq!(calls[0].3, false);
+        assert!(calls[0].1);
+        assert!(!calls[0].2);
+        assert!(!calls[0].3);
         assert_eq!(calls[1].0, plan.delete);
-        assert_eq!(calls[1].1, true);
-        assert_eq!(calls[1].2, false);
-        assert_eq!(calls[1].3, false);
+        assert!(calls[1].1);
+        assert!(!calls[1].2);
+        assert!(!calls[1].3);
     }
 }

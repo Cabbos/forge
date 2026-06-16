@@ -319,10 +319,9 @@ mod tests {
     use crate::harness::write_boundary::{WriteBoundary, WriteBoundaryRisk};
     use crate::profile::{ProfileStore, UpsertProfileInput};
     use crate::protocol::events::StreamEvent;
-    use std::sync::Mutex;
     use std::time::Duration;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn restore_env(key: &str, value: Option<String>) {
         if let Some(value) = value {
@@ -546,7 +545,7 @@ mod tests {
 
     #[test]
     fn deepseek_headless_model_ignores_anthropic_credential_model() {
-        let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+        let _guard = ENV_LOCK.blocking_lock();
         let previous_headless_model = std::env::var("FORGE_HEADLESS_MODEL").ok();
         let previous_eval_model = std::env::var("FORGE_EVAL_AI_MODEL").ok();
         std::env::remove_var("FORGE_HEADLESS_MODEL");
@@ -1031,7 +1030,7 @@ mod tests {
 
     #[tokio::test]
     async fn save_headless_session_snapshot_persists_gateway_attach_snapshot() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().await;
         let previous_home = std::env::var("HOME").ok();
         let home = tempfile::tempdir().expect("home");
         std::env::set_var("HOME", home.path());

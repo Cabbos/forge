@@ -24,10 +24,7 @@ const SESSION_INPUT_POLL_LIMIT: usize = 8;
 
 pub(crate) fn spawn_gateway_session_input_poller(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        loop {
-            let Some(state) = app_handle.try_state::<Arc<AppState>>() else {
-                break;
-            };
+        while let Some(state) = app_handle.try_state::<Arc<AppState>>() {
             let state = state.inner().clone();
             poll_gateway_session_inputs_once(&state, &app_handle).await;
             tokio::time::sleep(Duration::from_secs(SESSION_INPUT_POLL_INTERVAL_SECS)).await;
@@ -200,7 +197,9 @@ mod tests {
 
     #[test]
     fn poll_constants_keep_gateway_session_input_batches_small() {
-        assert!(SESSION_INPUT_POLL_INTERVAL_SECS >= 1);
+        const {
+            assert!(SESSION_INPUT_POLL_INTERVAL_SECS >= 1);
+        }
         assert!((1..=20).contains(&SESSION_INPUT_POLL_LIMIT));
     }
 

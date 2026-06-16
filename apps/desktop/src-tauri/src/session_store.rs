@@ -148,7 +148,7 @@ mod tests {
             "deepseek".to_string(),
             "deepseek-v4-flash".to_string(),
             "/repo/detail".to_string(),
-            vec![ChatMessage::user("show me".into())],
+            vec![ChatMessage::user("show me")],
             Some("detail summary".to_string()),
             Some(128_000),
         );
@@ -180,7 +180,7 @@ mod tests {
             "deepseek".to_string(),
             "deepseek-v4-flash".to_string(),
             "/repo/rename".to_string(),
-            vec![ChatMessage::user("rename me".into())],
+            vec![ChatMessage::user("rename me")],
             Some("old summary".to_string()),
             Some(128_000),
         );
