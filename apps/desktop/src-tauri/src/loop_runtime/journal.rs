@@ -177,6 +177,25 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "task_id": task_id,
             "reason": reason,
         }),
+        LoopRuntimeEvent::HumanGateRequested { gate } => serde_json::json!({
+            "type": "human_gate_requested",
+            "task_id": event.task_id,
+            "gate_id": gate.gate_id,
+            "gate_type": gate.gate_type,
+            "prompt": gate.prompt,
+        }),
+        LoopRuntimeEvent::HumanGateResolved {
+            gate_id,
+            decision,
+            resolved_at_ms: _,
+        } => serde_json::json!({
+            "type": "human_gate_resolved",
+            "task_id": event.task_id,
+            "gate_id": gate_id,
+            "decision_kind": decision.kind,
+            "decided_by": decision.decided_by,
+            "reason": decision.reason,
+        }),
     };
     serde_json::to_string(&payload)
         .map_err(|error| format!("serialize loop event payload: {error}"))
@@ -185,7 +204,8 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
 #[cfg(test)]
 mod tests {
     use crate::loop_runtime::{
-        LoopEventEnvelope, LoopEventJournal, LoopTaskProjection, LoopTaskStatus,
+        HumanGateDecision, HumanGateDecisionKind, LoopActor, LoopEventEnvelope, LoopEventJournal,
+        LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
     };
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
@@ -295,6 +315,68 @@ mod tests {
     }
 
     #[test]
+    fn same_idempotency_key_with_semantically_same_gate_resolution_reuses_existing_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        let first = human_gate_resolved_event_for_test(
+            "loop-1",
+            "gate-1",
+            HumanGateDecisionKind::Approved,
+            10,
+        )
+        .with_idempotency_key("resolve:gate-1");
+        let second = human_gate_resolved_event_for_test(
+            "loop-1",
+            "gate-1",
+            HumanGateDecisionKind::Approved,
+            20,
+        )
+        .with_idempotency_key("resolve:gate-1");
+
+        let first_result = journal.append_idempotent(first).unwrap();
+        let second_result = journal.append_idempotent(second).unwrap();
+
+        assert!(first_result.appended);
+        assert!(!second_result.appended);
+        assert_eq!(second_result.event, first_result.event);
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn same_idempotency_key_with_different_gate_resolution_decision_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                human_gate_resolved_event_for_test(
+                    "loop-1",
+                    "gate-1",
+                    HumanGateDecisionKind::Approved,
+                    10,
+                )
+                .with_idempotency_key("resolve:gate-1"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                human_gate_resolved_event_for_test(
+                    "loop-1",
+                    "gate-1",
+                    HumanGateDecisionKind::Denied,
+                    20,
+                )
+                .with_idempotency_key("resolve:gate-1"),
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("idempotency conflict"));
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
     fn concurrent_duplicate_idempotency_key_appends_once() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("loop-events.jsonl");
@@ -342,5 +424,35 @@ mod tests {
         let error = LoopEventJournal::new(path).load_all().unwrap_err();
 
         assert!(error.contains("line 2"));
+    }
+
+    fn human_gate_resolved_event_for_test(
+        task_id: &str,
+        gate_id: &str,
+        kind: HumanGateDecisionKind,
+        timestamp: u64,
+    ) -> LoopEventEnvelope {
+        LoopEventEnvelope {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-{gate_id}-{timestamp}"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: LoopRuntimeEvent::HumanGateResolved {
+                gate_id: gate_id.to_string(),
+                decision: HumanGateDecision {
+                    kind,
+                    decided_at_ms: timestamp,
+                    decided_by: Some("reviewer".to_string()),
+                    reason: Some("reviewed".to_string()),
+                },
+                resolved_at_ms: timestamp + 1,
+            },
+            actor: LoopActor::User {
+                source: "test".to_string(),
+            },
+            correlation_id: None,
+            idempotency_key: None,
+            created_at_ms: timestamp + 2,
+        }
     }
 }

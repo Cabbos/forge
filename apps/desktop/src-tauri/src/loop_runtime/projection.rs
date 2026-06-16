@@ -3,6 +3,7 @@ use crate::loop_runtime::types::{
     LoopEventEnvelope, LoopRuntimeEvent, LoopTaskOutcome, LoopTaskRecord, LoopTaskStatus,
     LOOP_RUNTIME_SCHEMA_VERSION,
 };
+use crate::loop_runtime::{HumanGateDecisionKind, HumanGateStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -61,6 +62,85 @@ impl LoopTaskProjection {
                         completed_at_ms: *canceled_at_ms,
                     });
                     task.lease = None;
+                }
+                LoopRuntimeEvent::HumanGateRequested { gate } => {
+                    let Some(task) = tasks.get_mut(&event.task_id) else {
+                        return Err(format!(
+                            "human gate requested before task creation: {}",
+                            event.task_id
+                        ));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    if let Some(existing) = task
+                        .open_gates
+                        .iter()
+                        .find(|existing| existing.gate_id == gate.gate_id)
+                    {
+                        if existing == gate {
+                            continue;
+                        }
+                        return Err(format!("duplicate human gate requested: {}", gate.gate_id));
+                    }
+                    task.status = LoopTaskStatus::WaitingForReview;
+                    task.updated_at_ms = gate.requested_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
+                    task.open_gates.push(gate.clone());
+                }
+                LoopRuntimeEvent::HumanGateResolved {
+                    gate_id,
+                    decision,
+                    resolved_at_ms,
+                } => {
+                    let Some(task) = tasks.get_mut(&event.task_id) else {
+                        return Err(format!(
+                            "human gate resolved before task creation: {}",
+                            event.task_id
+                        ));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    let Some(gate_index) = task
+                        .open_gates
+                        .iter()
+                        .position(|gate| gate.gate_id == *gate_id)
+                    else {
+                        return Err(format!("human gate resolved before request: {gate_id}"));
+                    };
+                    let resolved_status = match decision.kind {
+                        HumanGateDecisionKind::Approved => HumanGateStatus::Approved,
+                        HumanGateDecisionKind::Denied => HumanGateStatus::Denied,
+                        HumanGateDecisionKind::Canceled => HumanGateStatus::Canceled,
+                    };
+                    task.open_gates[gate_index].status = resolved_status;
+                    task.open_gates[gate_index].decision = Some(decision.clone());
+                    task.open_gates.remove(gate_index);
+                    match decision.kind {
+                        HumanGateDecisionKind::Approved => {
+                            if task.open_gates.is_empty()
+                                && task.status == LoopTaskStatus::WaitingForReview
+                            {
+                                task.status = LoopTaskStatus::Pending;
+                            }
+                        }
+                        HumanGateDecisionKind::Denied | HumanGateDecisionKind::Canceled => {
+                            task.status = LoopTaskStatus::WaitingForReview;
+                            let label = match decision.kind {
+                                HumanGateDecisionKind::Denied => "denied",
+                                HumanGateDecisionKind::Canceled => "canceled",
+                                HumanGateDecisionKind::Approved => unreachable!(),
+                            };
+                            task.outcome = Some(LoopTaskOutcome {
+                                status: LoopTaskStatus::WaitingForReview,
+                                message: format!("human gate {gate_id} {label}"),
+                                completed_at_ms: *resolved_at_ms,
+                            });
+                        }
+                    }
+                    task.updated_at_ms = *resolved_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
                 }
             }
         }

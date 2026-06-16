@@ -1,3 +1,4 @@
+use crate::loop_runtime::gates::{HumanGateDecision, HumanGateRecord, HumanGateType};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -60,6 +61,52 @@ impl LoopEventEnvelope {
         }
     }
 
+    pub fn human_gate_requested(
+        task_id: String,
+        gate_id: String,
+        gate_type: HumanGateType,
+        prompt: String,
+        correlation_id: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> Self {
+        let gate = HumanGateRecord::new(gate_id, gate_type, prompt);
+        Self {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: new_loop_event_id(),
+            task_id,
+            sequence: 0,
+            event: LoopRuntimeEvent::HumanGateRequested { gate },
+            actor: LoopActor::Gateway,
+            correlation_id,
+            idempotency_key,
+            created_at_ms: now_millis(),
+        }
+    }
+
+    pub fn human_gate_resolved(
+        task_id: String,
+        gate_id: String,
+        decision: HumanGateDecision,
+        correlation_id: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> Self {
+        Self {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: new_loop_event_id(),
+            task_id,
+            sequence: 0,
+            event: LoopRuntimeEvent::HumanGateResolved {
+                gate_id,
+                resolved_at_ms: decision.decided_at_ms,
+                decision,
+            },
+            actor: LoopActor::Gateway,
+            correlation_id,
+            idempotency_key,
+            created_at_ms: now_millis(),
+        }
+    }
+
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
         self
@@ -100,6 +147,35 @@ impl LoopEventEnvelope {
             created_at_ms: 2,
         }
     }
+
+    #[cfg(test)]
+    pub fn human_gate_requested_for_test(
+        task_id: &str,
+        gate_id: &str,
+        gate_type: HumanGateType,
+        prompt: &str,
+    ) -> Self {
+        Self {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-gate-{gate_id}-requested"),
+            task_id: task_id.to_string(),
+            sequence: 2,
+            event: LoopRuntimeEvent::HumanGateRequested {
+                gate: HumanGateRecord {
+                    gate_id: gate_id.to_string(),
+                    gate_type,
+                    prompt: prompt.to_string(),
+                    status: crate::loop_runtime::HumanGateStatus::Open,
+                    requested_at_ms: 2,
+                    decision: None,
+                },
+            },
+            actor: LoopActor::Gateway,
+            correlation_id: None,
+            idempotency_key: None,
+            created_at_ms: 2,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,6 +190,14 @@ pub enum LoopRuntimeEvent {
         reason: Option<String>,
         canceled_at_ms: u64,
     },
+    HumanGateRequested {
+        gate: HumanGateRecord,
+    },
+    HumanGateResolved {
+        gate_id: String,
+        decision: HumanGateDecision,
+        resolved_at_ms: u64,
+    },
 }
 
 impl LoopRuntimeEvent {
@@ -121,6 +205,8 @@ impl LoopRuntimeEvent {
         match self {
             Self::TaskCreated { .. } => "task_created",
             Self::TaskCanceled { .. } => "task_canceled",
+            Self::HumanGateRequested { .. } => "human_gate_requested",
+            Self::HumanGateResolved { .. } => "human_gate_resolved",
         }
     }
 }
@@ -129,6 +215,10 @@ impl LoopRuntimeEvent {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LoopActor {
     Gateway,
+    Desktop,
+    Runner { runner_id: String },
+    User { source: String },
+    Subagent { a2a_task_id: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,6 +240,8 @@ pub struct LoopTaskRecord {
     pub updated_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease: Option<LoopTaskLease>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_gates: Vec<HumanGateRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_event_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,6 +274,7 @@ impl LoopTaskRecord {
             created_at_ms: now,
             updated_at_ms: now,
             lease: None,
+            open_gates: Vec::new(),
             latest_event_id: None,
             outcome: None,
         }
@@ -203,6 +296,7 @@ impl LoopTaskRecord {
             created_at_ms: 1,
             updated_at_ms: 1,
             lease: None,
+            open_gates: Vec::new(),
             latest_event_id: None,
             outcome: None,
         }
@@ -230,6 +324,7 @@ impl LoopTaskStatus {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LoopTaskOwner {
     Gateway,
+    Session { session_id: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -308,9 +403,15 @@ impl LoopCompletionContract {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoopTaskLease {
-    pub owner_id: String,
-    pub claimed_at_ms: u64,
+    #[serde(default, alias = "owner_id")]
+    pub lease_id: String,
+    #[serde(default)]
+    pub owner_pid: u32,
+    #[serde(default, alias = "claimed_at_ms")]
+    pub acquired_at_ms: u64,
     pub expires_at_ms: u64,
+    #[serde(default)]
+    pub heartbeat_at_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
