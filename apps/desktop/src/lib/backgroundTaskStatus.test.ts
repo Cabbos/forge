@@ -123,6 +123,18 @@ describe("deriveBackgroundTaskStatus", () => {
       "1 调度任务",
       "1 告警",
     ]);
+    assert.deepStrictEqual(result.tasks.map((item) => item.title), [
+      "Background worker",
+      "Background worker",
+      "Daily check",
+      "Gateway disconnected",
+    ]);
+    assert.deepStrictEqual(result.tasks.map((item) => item.kind), [
+      "agent",
+      "review",
+      "scheduler",
+      "alert",
+    ]);
     assert.strictEqual(result.hasAgentWork, true);
   });
 });

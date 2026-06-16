@@ -9,10 +9,19 @@ export interface BackgroundTaskStatusItem {
   tone: "running" | "review" | "scheduler" | "alert";
 }
 
+export interface BackgroundTaskListItem {
+  id: string;
+  kind: "agent" | "review" | "scheduler" | "alert";
+  title: string;
+  detail: string;
+  tone: BackgroundTaskStatusItem["tone"];
+}
+
 export interface BackgroundTaskStatusView {
   visible: boolean;
   hasAgentWork: boolean;
   items: BackgroundTaskStatusItem[];
+  tasks: BackgroundTaskListItem[];
 }
 
 export function deriveBackgroundTaskStatus({
@@ -61,9 +70,52 @@ export function deriveBackgroundTaskStatus({
     });
   }
 
+  const tasks: BackgroundTaskListItem[] = [];
+  for (const rawTask of agentA2A?.tasks ?? []) {
+    const task = normalizeA2ATaskProjection(rawTask);
+    if (task.status === "running") {
+      tasks.push({
+        id: `agent:${task.task_id}`,
+        kind: "agent",
+        title: task.title,
+        detail: task.latest_progress ?? task.latest_message ?? "子任务运行中",
+        tone: "running",
+      });
+    }
+    if (task.needs_human_review === true) {
+      tasks.push({
+        id: `review:${task.task_id}`,
+        kind: "review",
+        title: task.title,
+        detail: task.suggested_action ?? "等待人工审阅",
+        tone: "review",
+      });
+    }
+  }
+  for (const task of scheduler?.tasks ?? []) {
+    if (!task.enabled) continue;
+    tasks.push({
+      id: `scheduler:${task.id}`,
+      kind: "scheduler",
+      title: task.title,
+      detail: task.interval_seconds === 0 ? "手动触发" : `${task.interval_seconds}s 间隔`,
+      tone: "scheduler",
+    });
+  }
+  for (const alert of healthAlerts) {
+    tasks.push({
+      id: `alert:${alert.alert_id}`,
+      kind: "alert",
+      title: alert.title,
+      detail: alert.message,
+      tone: "alert",
+    });
+  }
+
   return {
     visible: items.length > 0,
     hasAgentWork: runningAgents > 0 || reviewNeeded > 0,
     items,
+    tasks,
   };
 }

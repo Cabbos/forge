@@ -297,6 +297,12 @@ test.describe("A2A runtime surfaces", () => {
     await expect(statusBar).toContainText("1 待审阅");
     await expect(statusBar).toContainText("1 调度任务");
 
+    await statusBar.getByRole("button", { name: "展开后台任务列表" }).click();
+    const taskList = page.getByTestId("background-task-list");
+    await expect(taskList).toBeVisible();
+    await expect(taskList).toContainText("Implement settings recovery polish");
+    await expect(taskList).toContainText("Daily acceptance check");
+
     await statusBar.getByRole("button", { name: "打开后台任务面板" }).click();
     await expect(page.locator(".forge-a2a-workspace")).toBeVisible();
     await expect(page.locator(".forge-a2a-workspace")).toContainText("审阅队列");
