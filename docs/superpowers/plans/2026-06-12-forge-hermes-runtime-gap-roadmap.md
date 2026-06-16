@@ -604,10 +604,10 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 
 **Work breakdown:**
 
-- [ ] 7.1 Complete Settings dialog: models, workspace, tools, memory, data, about, diagnostics, scheduler, general.
+- [x] 7.1 Complete Settings dialog: models, workspace, tools, memory, data, about, diagnostics, scheduler, general.
   - **Phase 7.1 settings-scroll follow-up (2026-06-16):** Settings now switches to a stacked small-viewport layout so the category rail sits above the active panel and the content pane keeps its own vertical scroll. Added a Playwright regression for 390px-wide viewports and verified the same flow in the in-app Browser.
   - Files: `src/components/settings/`.
-- [ ] 7.2 Implement History view: searchable, filterable list of all sessions with restore/delete.
+- [x] 7.2 Implement History view: searchable, filterable list of all sessions with restore/delete.
   - **Phase 7.2 history-dialog partial (2026-06-16):** Added a lazy-loaded History dialog from the sidebar utility rail. It reads session-store stats, searches saved snapshots, filters by provider, restores snapshot-backed sessions through `resume_session`, and deletes sessions through the existing delete IPC. Playwright covers search, provider filtering, restore, and delete using mocked session-store IPC.
   - **Phase 7.2 rename follow-up (2026-06-16):** History results now support inline persisted renaming with a compact edit state and save/cancel icon controls. Playwright covers rename IPC payloads and immediate list refresh alongside search/filter/restore/delete.
   - **Phase 7.2 export/prune follow-up (2026-06-16):** History now exposes session-store export as a JSON download and a conservative "清理旧记录" action that keeps the most recent 50 snapshots, updates stats/list state, and reports the result inline. Playwright covers export IPC and prune IPC payloads.
@@ -615,7 +615,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 7.3 Implement recovery/error states: offline, gateway disconnected, API key missing, snapshot corrupted.
   - **Phase 7.3 health-alert follow-up (2026-06-16):** `health_alert` events now bypass active-session filtering like recovery notices, so gateway/watchdog failures surface even when no conversation is selected. Missing API key errors now also upsert a critical global health alert pointing users to Settings > Models while preserving the existing in-thread missing-key card. Playwright covers both no-active-session health alerts and active-session missing-key promotion.
   - Files: `src/components/RecoverySurface.tsx`, `store/index.ts`.
-- [ ] 7.4 Implement permission states: per-tool permission levels, allowlist, denylist, reset.
+- [x] 7.4 Implement permission states: per-tool permission levels, allowlist, denylist, reset.
   - **Phase 7.4 backend contract follow-up (2026-06-16):** Permission persistence now models latest per-tool allow/deny rules instead of append-only approvals. `PermissionGate` supports permanent deny and reset, deny rules override built-in allowlisted tools, and reset restores the default policy. Added Tauri IPC commands plus TS wrappers for `list_permission_rules`, `set_permission_rule`, and `reset_permission_rule`, giving the future Settings permission panel a stable backend contract.
   - **Phase 7.4 Settings UI follow-up (2026-06-16):** Settings > Tools now renders the permission rule table, including default/allow/deny states, per-tool allow/deny actions, reset, refresh, and inline errors. Added mocked e2e coverage for list/set/reset flows and verified the panel plus small-viewport Settings scrolling in the in-app Browser.
   - Files: `executor/permissions.rs`, `src/components/settings/PermissionsPanel.tsx`, `src/styles/settings.css`, `e2e/workbench.spec.ts`.
@@ -627,7 +627,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 7.6 Harden review flows: approve/reject UI, bulk review, review history.
   - **Phase 7.6 review-summary partial (2026-06-16):** Agent Workbench now derives a focused review queue and review-rejection history from worktree-worker projections, showing pending review items, changed-file chips, suggested actions, and rejected review records without exposing fake approve/reject controls before the backend action contract exists. Added pure helper tests and Playwright coverage for queue/history rendering.
   - Files: `src/components/messages/AgentA2ATimeline.tsx`, `src/lib/workbenchSummary.ts`, `e2e/a2a-confirm-runtime.spec.ts`.
-- [ ] 7.7 Background task surfaces: global status bar, task list, notifications.
+- [x] 7.7 Background task surfaces: global status bar, task list, notifications.
   - **Phase 7.7 status-bar partial (2026-06-16):** Added a global background status bar mounted in `AppShell`. It derives active subagent work, pending review count, enabled scheduler tasks, and health alerts into compact status chips, and opens the Agent Workbench when background agent work is present. Added pure aggregation tests plus Playwright coverage for the status bar and Hub handoff.
   - **Phase 7.7 task-list follow-up (2026-06-16):** The status bar now expands into a compact `TaskManager` list showing concrete agent, review, scheduler, and alert rows with stable labels and details, while keeping the Agent Workbench handoff for deeper review context. Added helper assertions and Playwright coverage for list expansion.
   - **Phase 7.7 notification-center follow-up (2026-06-16):** Expanded the background task drawer with an in-app notification section derived from the same agent/review/scheduler/health inputs, prioritizing alerts and review work before running agents and schedules. Added helper and Playwright coverage for the notification list.
