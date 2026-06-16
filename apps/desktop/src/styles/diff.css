@@ -49,11 +49,69 @@
     background: rgba(238, 234, 225, 0.035);
   }
 
+  .forge-diff-card[data-diff-open="false"] .forge-diff-file-tree {
+    border-top: 1px solid var(--forge-border-subtle);
+  }
+
   .forge-diff-summary span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .forge-diff-file-tree {
+    display: flex;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.375rem;
+    overflow: hidden;
+    padding: 0.375rem 0.625rem 0.5rem;
+  }
+
+  .forge-diff-file-chip {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 13rem;
+    align-items: center;
+    gap: 0.375rem;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 3px);
+    background: rgba(238, 234, 225, 0.04);
+    padding: 0.125rem 0.375rem;
+    color: var(--forge-text-muted);
+    font-size: 10.5px;
+    line-height: 1rem;
+  }
+
+  .forge-diff-file-chip[data-status="added"] {
+    border-color: rgba(155, 185, 135, 0.26);
+    background: rgba(155, 185, 135, 0.06);
+  }
+
+  .forge-diff-file-chip[data-status="deleted"] {
+    border-color: rgba(212, 119, 119, 0.24);
+    background: rgba(212, 119, 119, 0.055);
+  }
+
+  .forge-diff-file-chip-more {
+    flex-shrink: 0;
+    color: var(--forge-text-faint);
+  }
+
+  .forge-diff-file-path {
+    min-width: 0;
+    overflow: hidden;
+    font-family: "Geist Mono", "SF Mono", monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-diff-file-stat {
+    flex-shrink: 0;
+    color: var(--forge-text-faint);
+    font-family: "Geist Mono", "SF Mono", monospace;
+    font-size: 10px;
   }
 
   .forge-diff-line {

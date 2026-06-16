@@ -80,6 +80,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
           </div>
         </div>
         <div data-testid="diff-summary" className="forge-diff-summary">
+          {view.fileCount > 1 ? <span>{view.fileCount} 个文件</span> : null}
           <span>{view.hunkCount} 个变更块</span>
           {view.firstChangedLine ? <span>首处第 {view.firstChangedLine} 行</span> : null}
           <span>{view.lines.length} 行</span>
@@ -94,6 +95,23 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
             {bodyOpen ? "隐藏改动" : "查看改动"}
           </ButtonPrimitive>
         </div>
+        {view.fileCount > 1 && (
+          <div data-testid="diff-file-tree" className="forge-diff-file-tree">
+            {view.visibleFiles.map((file) => (
+              <span key={file.path} className="forge-diff-file-chip" data-status={file.status}>
+                <span className="forge-diff-file-path">{file.path}</span>
+                <span className="forge-diff-file-stat">
+                  +{file.additions}/-{file.deletions}
+                </span>
+              </span>
+            ))}
+            {view.hiddenFileCount > 0 && (
+              <span className="forge-diff-file-chip forge-diff-file-chip-more">
+                +{view.hiddenFileCount} 文件
+              </span>
+            )}
+          </div>
+        )}
         {bodyOpen && (
           <div data-forge-motion="diff-body">
             <DiffBody

@@ -621,6 +621,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `executor/permissions.rs`, `src/components/settings/PermissionsPanel.tsx`, `src/styles/settings.css`, `e2e/workbench.spec.ts`.
 - [ ] 7.5 Implement rich previews: image diff, file tree diff, markdown preview for writes.
   - **Phase 7.5 write-preview follow-up (2026-06-16):** `write_file` / `edit` tool details now derive a structured write preview from tool input and render Markdown writes inline inside the tool detail surface, with code/text fallbacks for other file types. Added a pure Node test for write-preview derivation and a Playwright regression covering the expanded tool-card Markdown preview path. Image diff and full file-tree diff previews remain deferred.
+  - **Phase 7.5 diff-tree follow-up (2026-06-16):** Multi-file `diff_view` cards now derive per-file status and +/- counts from unified git diff text and render a compact file tree strip above the diff body. Added pure Node tests for diff file tree derivation/truncation and a Playwright regression for the multi-file diff UI. Image diff previews remain deferred.
   - Files: `src/components/messages/WriteFilePreview.tsx`, `DiffPreview.tsx`.
 - [ ] 7.6 Harden review flows: approve/reject UI, bulk review, review history.
   - Files: `src/components/review/ReviewPanel.tsx`.

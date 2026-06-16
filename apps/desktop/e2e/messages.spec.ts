@@ -1841,6 +1841,53 @@ test.beforeEach(async ({ page }) => {
     await expect(preview.locator(".markdown-content")).toContainText("Gateway");
   });
 
+  test("diff cards show a compact file tree for multi-file changes", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "diff_view",
+        session_id: sessionId,
+        block_id: "multi-file-diff",
+        file_path: "workspace",
+        old_content: "",
+        new_content: [
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "@@ -1 +1,2 @@",
+          "-old",
+          "+new",
+          "+enabled",
+          "diff --git a/docs/runtime.md b/docs/runtime.md",
+          "--- /dev/null",
+          "+++ b/docs/runtime.md",
+          "@@ -0,0 +1 @@",
+          "+# Runtime",
+        ].join("\n"),
+      },
+    ], 1);
+
+    const tree = page.getByTestId("diff-file-tree");
+    await expect(tree).toBeVisible();
+    await expect(tree).toContainText("src/App.tsx");
+    await expect(tree).toContainText("docs/runtime.md");
+    await expect(tree).toContainText("+2");
+    await expect(tree).toContainText("+1");
+  });
+
   test("user messages can carry pasted code paths and logs without breaking the lane", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
