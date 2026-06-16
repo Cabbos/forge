@@ -41,6 +41,130 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       last_checkpoint: null,
       message: "No checkpoint yet",
     };
+    const cleanOptionalString = (value: unknown) => {
+      const trimmed = typeof value === "string" ? value.trim() : "";
+      return trimmed ? trimmed : null;
+    };
+    const mockProfiles = () => {
+      // @ts-expect-error acceptance mock
+      if (!Array.isArray(window.__mockProfiles)) {
+        const now = Date.now();
+        // @ts-expect-error acceptance mock
+        window.__mockProfiles = [
+          {
+            id: "default",
+            name: "默认",
+            default_provider: "deepseek",
+            default_model: "deepseek-v4-flash[1m]",
+            default_workspace: workingDir,
+            api_key_overrides: null,
+            created_at_ms: now - 300_000,
+            updated_at_ms: now - 300_000,
+          },
+          {
+            id: "work",
+            name: "Work profile",
+            default_provider: "openai",
+            default_model: "gpt-4o",
+            default_workspace: "/Users/test/work",
+            api_key_overrides: null,
+            created_at_ms: now - 200_000,
+            updated_at_ms: now - 200_000,
+          },
+          {
+            id: "personal",
+            name: "Personal profile",
+            default_provider: "anthropic",
+            default_model: "claude-sonnet-4",
+            default_workspace: "/Users/test/personal",
+            api_key_overrides: null,
+            created_at_ms: now - 100_000,
+            updated_at_ms: now - 100_000,
+          },
+        ];
+      }
+      // @ts-expect-error acceptance mock
+      return window.__mockProfiles as Array<Record<string, unknown>>;
+    };
+    const activeProfileId = () => {
+      const profiles = mockProfiles();
+      // @ts-expect-error acceptance mock
+      const active = cleanOptionalString(window.__mockActiveProfileId);
+      if (active && profiles.some((profile) => profile.id === active)) return active;
+      const fallback = String(profiles[0]?.id ?? "default");
+      // @ts-expect-error acceptance mock
+      window.__mockActiveProfileId = fallback;
+      return fallback;
+    };
+    const profilePayload = () => ({
+      profiles: mockProfiles(),
+      active_profile_id: activeProfileId(),
+    });
+    const profileFromInput = (input: Record<string, unknown>, existing?: Record<string, unknown>) => {
+      const now = Date.now();
+      return {
+        id: String(input.id ?? existing?.id ?? crypto.randomUUID()),
+        name: String(input.name ?? existing?.name ?? "New profile").trim(),
+        default_provider: cleanOptionalString(input.default_provider ?? existing?.default_provider),
+        default_model: cleanOptionalString(input.default_model ?? existing?.default_model),
+        default_workspace: cleanOptionalString(input.default_workspace ?? existing?.default_workspace),
+        api_key_overrides: existing?.api_key_overrides ?? null,
+        created_at_ms: Number(existing?.created_at_ms ?? now),
+        updated_at_ms: now,
+      };
+    };
+    const mockMemoryFacts = () => {
+      // @ts-expect-error acceptance mock
+      if (!Array.isArray(window.__mockMemoryFacts)) {
+        const now = Date.now();
+        // @ts-expect-error acceptance mock
+        window.__mockMemoryFacts = [
+          {
+            id: "fact-default",
+            text: "Default profile checkout note",
+            tags: ["default"],
+            profile_id: "default",
+            source: "manual",
+            created_at_ms: now - 90_000,
+            updated_at_ms: now - 90_000,
+          },
+          {
+            id: "fact-work",
+            text: "Gateway rollout notes belong to work",
+            tags: ["gateway", "work"],
+            profile_id: "work",
+            source: "manual",
+            created_at_ms: now - 60_000,
+            updated_at_ms: now - 60_000,
+          },
+          {
+            id: "fact-personal",
+            text: "Personal tax note stays out of work",
+            tags: ["personal"],
+            profile_id: "personal",
+            source: "manual",
+            created_at_ms: now - 30_000,
+            updated_at_ms: now - 30_000,
+          },
+        ];
+      }
+      // @ts-expect-error acceptance mock
+      return window.__mockMemoryFacts as Array<Record<string, unknown>>;
+    };
+    const memoryFactFromInput = (input: Record<string, unknown>, existing?: Record<string, unknown>) => {
+      const now = Date.now();
+      const rawTags = Array.isArray(input.tags) ? input.tags : Array.isArray(existing?.tags) ? existing.tags : [];
+      const tags = [...new Set(rawTags.map((tag) => String(tag).trim()).filter(Boolean))];
+      return {
+        id: String(input.id ?? existing?.id ?? crypto.randomUUID()),
+        text: String(input.text ?? existing?.text ?? "").trim(),
+        tags,
+        profile_id: cleanOptionalString(input.profile_id ?? existing?.profile_id),
+        source: cleanOptionalString(input.source ?? existing?.source) ?? "manual",
+        created_at_ms: Number(existing?.created_at_ms ?? now),
+        updated_at_ms: now,
+      };
+    };
     const diagnosticsReport = () => ({
       ok: true,
       generatedAtMs: Date.now(),
@@ -814,6 +938,77 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error mock
           if (window.__mockApiKeyStatus) return window.__mockApiKeyStatus;
           return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+        case "list_profiles":
+          return profilePayload();
+        case "upsert_profile": {
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const profiles = mockProfiles();
+          const id = cleanOptionalString(input.id);
+          const existingIndex = id ? profiles.findIndex((profile) => profile.id === id) : -1;
+          const profile = profileFromInput(input, existingIndex >= 0 ? profiles[existingIndex] : undefined);
+          if (existingIndex >= 0) profiles[existingIndex] = profile;
+          else profiles.push(profile);
+          // @ts-expect-error acceptance mock
+          window.__lastUpsertProfileArgs = args;
+          return profile;
+        }
+        case "delete_profile": {
+          const id = String(args.id ?? "");
+          // @ts-expect-error acceptance mock
+          window.__mockProfiles = mockProfiles().filter((profile) => profile.id !== id);
+          if (activeProfileId() === id) {
+            // @ts-expect-error acceptance mock
+            window.__mockActiveProfileId = "default";
+          }
+          // @ts-expect-error acceptance mock
+          window.__lastDeleteProfileArgs = args;
+          return true;
+        }
+        case "set_active_profile": {
+          const id = String(args.id ?? "");
+          if (!mockProfiles().some((profile) => profile.id === id)) throw new Error(`Profile not found: ${id}`);
+          // @ts-expect-error acceptance mock
+          window.__mockActiveProfileId = id;
+          // @ts-expect-error acceptance mock
+          window.__lastSetActiveProfileArgs = args;
+          return profilePayload();
+        }
+        case "list_memory_facts": {
+          const query = String(args.query ?? "").trim().toLowerCase();
+          const profileId = cleanOptionalString(args.profileId ?? args.profile_id);
+          return mockMemoryFacts().filter((fact) => {
+            if (profileId && fact.profile_id !== profileId) return false;
+            if (!query) return true;
+            return [
+              fact.text,
+              fact.profile_id,
+              fact.source,
+              ...(Array.isArray(fact.tags) ? fact.tags : []),
+            ].join(" ").toLowerCase().includes(query);
+          });
+        }
+        case "upsert_memory_fact": {
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const facts = mockMemoryFacts();
+          const id = cleanOptionalString(input.id);
+          const existingIndex = id ? facts.findIndex((fact) => fact.id === id) : -1;
+          const fact = memoryFactFromInput(input, existingIndex >= 0 ? facts[existingIndex] : undefined);
+          if (!fact.text) throw new Error("Memory fact text must not be empty.");
+          if (existingIndex >= 0) facts[existingIndex] = fact;
+          else facts.unshift(fact);
+          // @ts-expect-error acceptance mock
+          window.__lastUpsertMemoryFactArgs = args;
+          return { fact, was_update: existingIndex >= 0 };
+        }
+        case "delete_memory_fact": {
+          const id = String(args.id ?? "");
+          const before = mockMemoryFacts().length;
+          // @ts-expect-error acceptance mock
+          window.__mockMemoryFacts = mockMemoryFacts().filter((fact) => fact.id !== id);
+          // @ts-expect-error acceptance mock
+          window.__lastDeleteMemoryFactArgs = args;
+          return mockMemoryFacts().length < before;
+        }
         case "get_project_runtime_status":
           // @ts-expect-error mock
           window.__lastProjectRuntimeStatusArgs = args;

@@ -164,6 +164,49 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(toggleArgs).toEqual({ capabilityId: "mcp:obsidian", enabled: false });
   });
 
+  test("settings memory follows the active profile scope", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "资料" }).click();
+
+    const workProfile = dialog.locator(".forge-memory-fact", { hasText: "Work profile" });
+    await expect(workProfile).toContainText("openai");
+    await workProfile.getByRole("button", { name: "设为活跃" }).click();
+    await expect(workProfile.getByRole("button", { name: "当前活跃" })).toBeVisible();
+    const activeProfileArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetActiveProfileArgs;
+    });
+    expect(activeProfileArgs).toEqual({ id: "work" });
+
+    await dialog.getByRole("button", { name: "记忆" }).click();
+    await expect(dialog).toContainText("Gateway rollout notes belong to work");
+    await expect(dialog).toContainText("Work profile");
+    await expect(dialog).not.toContainText("Personal tax note stays out of work");
+
+    await dialog.getByPlaceholder("搜索记忆…").fill("personal");
+    await expect(dialog).toContainText("未找到匹配项");
+    await dialog.getByPlaceholder("搜索记忆…").fill("");
+
+    await dialog.getByRole("button", { name: "新建" }).click();
+    await dialog.getByPlaceholder("输入记忆事实…").fill("Acceptance profile fact");
+    await dialog.getByPlaceholder("标签, 逗号分隔").fill("acceptance, profile");
+    await dialog.getByRole("button", { name: "保存" }).click();
+    await expect(dialog).toContainText("Acceptance profile fact");
+
+    const upsertArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertMemoryFactArgs;
+    });
+    expect(upsertArgs).toMatchObject({
+      input: {
+        text: "Acceptance profile fact",
+        tags: ["acceptance", "profile"],
+        profile_id: "work",
+      },
+    });
+  });
+
   test("settings scheduler supports create, run, disable, and delete round-trip", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog");
