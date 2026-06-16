@@ -32,6 +32,10 @@ pub struct AgentA2ATaskProjection {
     pub worktree_path: Option<String>,
     pub cleaned_up: Option<bool>,
     pub suggested_action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_at_ms: Option<u64>,
     // Phase 4-A enriched fields — derived from AgentTaskRecord / artifacts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<String>,

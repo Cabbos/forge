@@ -27,6 +27,8 @@ export interface WorkbenchReviewItem {
   changedFiles: string[];
   suggestedAction: string | null;
   worktreePath: string | null;
+  reviewDecision: string | null;
+  reviewedAtMs: number | null;
 }
 
 export interface WorkbenchReviewView {
@@ -75,21 +77,24 @@ export function deriveWorkbenchReviewView(state: AgentA2AProjection | null): Wor
     const task = normalizeA2ATaskProjection(rawTask);
     if (task.execution_mode !== "worktree_worker") continue;
 
+    const reviewDecision = task.review_decision ?? null;
     const item: WorkbenchReviewItem = {
       taskId: task.task_id,
       title: task.title,
       role: task.role,
       status: task.status,
-      label: task.failure_kind === "review_rejection" ? "审阅拒绝" : "需要审阅",
+      label: reviewLabel(reviewDecision, task.failure_kind),
       detail: task.failure_message ?? task.latest_message ?? null,
       changedFiles: task.changed_files,
       suggestedAction: task.suggested_action,
       worktreePath: task.worktree_path,
+      reviewDecision,
+      reviewedAtMs: task.reviewed_at_ms ?? null,
     };
 
     if (task.needs_human_review === true) {
       queue.push(item);
-    } else if (task.failure_kind === "review_rejection") {
+    } else if (reviewDecision === "approved" || reviewDecision === "rejected" || task.failure_kind === "review_rejection") {
       history.push(item);
     }
   }
@@ -105,6 +110,8 @@ export function deriveWorkbenchReviewView(state: AgentA2AProjection | null): Wor
 export function normalizeA2ATaskProjection(task: AgentA2ATaskProjection): AgentA2ATaskProjection {
   return {
     ...task,
+    review_decision: task.review_decision ?? null,
+    reviewed_at_ms: task.reviewed_at_ms ?? null,
     parent_task_id: task.parent_task_id ?? null,
     created_at_ms: task.created_at_ms ?? 0,
     started_at_ms: task.started_at_ms ?? null,
@@ -127,4 +134,10 @@ export function normalizeA2ATaskProjection(task: AgentA2ATaskProjection): AgentA
     changed_files: task.changed_files ?? [],
     test_report_excerpt: task.test_report_excerpt ?? null,
   };
+}
+
+function reviewLabel(reviewDecision: string | null, failureKind: string | null): string {
+  if (reviewDecision === "approved") return "审阅通过";
+  if (reviewDecision === "rejected" || failureKind === "review_rejection") return "审阅拒绝";
+  return "需要审阅";
 }

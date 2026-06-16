@@ -6,6 +6,36 @@ use crate::agent::a2a::types::{
     AgentTaskFailure, AgentTaskId, AgentTaskRecord, AgentTaskStatus,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentReviewDecision {
+    Approve,
+    Reject,
+}
+
+impl AgentReviewDecision {
+    fn metadata_value(self) -> &'static str {
+        match self {
+            Self::Approve => "approved",
+            Self::Reject => "rejected",
+        }
+    }
+
+    fn suggested_action(self) -> &'static str {
+        match self {
+            Self::Approve => "Review approved by controller.",
+            Self::Reject => "Review rejected by controller. Do not merge this worktree.",
+        }
+    }
+
+    fn message_prefix(self) -> &'static str {
+        match self {
+            Self::Approve => "Review approved",
+            Self::Reject => "Review rejected",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AgentA2ABus {
     pub tasks: Vec<AgentTaskRecord>,
@@ -274,6 +304,99 @@ impl AgentA2ABus {
         );
     }
 
+    pub(crate) fn record_review_decision(
+        &mut self,
+        task_id: &AgentTaskId,
+        decision: AgentReviewDecision,
+        message: impl Into<String>,
+        timestamp_ms: u64,
+    ) -> Result<(), String> {
+        let message = message.into();
+        let Some(result) = self.update_task(task_id, timestamp_ms, |task| {
+            if task.execution_mode != AgentExecutionMode::WorktreeWorker {
+                return Err("Only worktree worker tasks can be reviewed".to_string());
+            }
+            let mut metadata = latest_worktree_metadata(task)
+                .ok_or_else(|| "Task does not have worktree metadata".to_string())?;
+            if metadata.get("needs_human_review").and_then(|v| v.as_bool()) != Some(true) {
+                return Err("Task is not awaiting human review".to_string());
+            }
+            let Some(object) = metadata.as_object_mut() else {
+                return Err("Worktree metadata is not an object".to_string());
+            };
+            object.insert("needs_human_review".to_string(), serde_json::json!(false));
+            object.insert(
+                "review_decision".to_string(),
+                serde_json::json!(decision.metadata_value()),
+            );
+            object.insert(
+                "reviewed_at_ms".to_string(),
+                serde_json::json!(timestamp_ms),
+            );
+            if !message.trim().is_empty() {
+                object.insert(
+                    "review_message".to_string(),
+                    serde_json::json!(message.clone()),
+                );
+            }
+            object.insert(
+                "suggested_action".to_string(),
+                serde_json::json!(decision.suggested_action()),
+            );
+
+            task.artifacts.push(AgentArtifact {
+                artifact_id: format!(
+                    "review-{}-{}-{}",
+                    decision.metadata_value(),
+                    task.task_id.as_str(),
+                    timestamp_ms
+                ),
+                task_id: task.task_id.clone(),
+                kind: crate::agent::a2a::types::AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: metadata.to_string(),
+                created_at_ms: timestamp_ms,
+            });
+
+            match decision {
+                AgentReviewDecision::Approve => {
+                    clear_active_lease(task);
+                }
+                AgentReviewDecision::Reject => {
+                    task.status = AgentTaskStatus::Failed;
+                    task.ended_at_ms = Some(timestamp_ms);
+                    clear_active_lease(task);
+                    task.failure = Some(AgentTaskFailure {
+                        kind: "review_rejection".to_string(),
+                        message: if message.trim().is_empty() {
+                            "Review rejected".to_string()
+                        } else {
+                            message.clone()
+                        },
+                        retryable: false,
+                        created_at_ms: timestamp_ms,
+                    });
+                }
+            }
+
+            Ok(task.agent_id.clone())
+        }) else {
+            return Err("Task not found".to_string());
+        };
+        let agent_id = result?;
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            match decision {
+                AgentReviewDecision::Approve => AgentMessageKind::Progress,
+                AgentReviewDecision::Reject => AgentMessageKind::Failed,
+            },
+            review_message(decision, &message),
+            timestamp_ms,
+        );
+        Ok(())
+    }
+
     pub(crate) fn fail_task(
         &mut self,
         task_id: &AgentTaskId,
@@ -386,19 +509,7 @@ impl AgentA2ABus {
                     AgentTaskStatus::Pending | AgentTaskStatus::Cancelled => {}
                 }
                 let latest_artifact = task.artifacts.last();
-                let mut worktree_meta: Option<serde_json::Value> = None;
-                // Search for the most recent worktree metadata artifact (Evidence with title "Worktree metadata").
-                for artifact in task.artifacts.iter().rev() {
-                    if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::Evidence
-                        && artifact.title == "Worktree metadata"
-                    {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&artifact.content)
-                        {
-                            worktree_meta = Some(v);
-                        }
-                        break;
-                    }
-                }
+                let worktree_meta = latest_worktree_metadata(task);
                 // Phase 4-B: extract changed files from DiffSummary artifacts.
                 let diff_text = task.artifacts.iter().rev().find_map(|a| {
                     if a.kind == crate::agent::a2a::types::AgentArtifactKind::DiffSummary
@@ -479,6 +590,13 @@ impl AgentA2ABus {
                         v.get("suggested_action")
                             .and_then(|x| x.as_str().map(|s| s.to_string()))
                     }),
+                    review_decision: worktree_meta.as_ref().and_then(|v| {
+                        v.get("review_decision")
+                            .and_then(|x| x.as_str().map(|s| s.to_string()))
+                    }),
+                    reviewed_at_ms: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("reviewed_at_ms").and_then(|x| x.as_u64())),
                     // Phase 4-A enriched fields.
                     parent_task_id: task
                         .parent_task_id
@@ -669,6 +787,28 @@ fn clear_active_lease(task: &mut AgentTaskRecord) {
     task.lease_acquired_at_ms = None;
     task.lease_expires_at_ms = None;
     task.last_heartbeat_at_ms = None;
+}
+
+fn latest_worktree_metadata(task: &AgentTaskRecord) -> Option<serde_json::Value> {
+    task.artifacts.iter().rev().find_map(|artifact| {
+        if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::Evidence
+            && artifact.title == "Worktree metadata"
+        {
+            serde_json::from_str::<serde_json::Value>(&artifact.content).ok()
+        } else {
+            None
+        }
+    })
+}
+
+fn review_message(decision: AgentReviewDecision, message: &str) -> String {
+    let prefix = decision.message_prefix();
+    let message = message.trim();
+    if message.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}: {message}")
+    }
 }
 
 fn is_terminal_status(status: &AgentTaskStatus) -> bool {
@@ -984,6 +1124,95 @@ mod tests {
             task_proj.reason_codes,
             vec!["diff was truncated", "tests failed"]
         );
+    }
+
+    #[test]
+    fn approve_review_clears_pending_review_metadata() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = reviewed_worktree_task(&mut bus);
+
+        bus.record_review_decision(&task_id, AgentReviewDecision::Approve, "Looks good", 50)
+            .expect("approve review");
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Completed);
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.needs_human_review, Some(false));
+        assert_eq!(task_proj.review_decision.as_deref(), Some("approved"));
+        assert_eq!(task_proj.reviewed_at_ms, Some(50));
+        assert_eq!(
+            task_proj.latest_message.as_deref(),
+            Some("Review approved: Looks good")
+        );
+    }
+
+    #[test]
+    fn reject_review_marks_task_failed_without_pending_review() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = reviewed_worktree_task(&mut bus);
+
+        bus.record_review_decision(
+            &task_id,
+            AgentReviewDecision::Reject,
+            "Permission surface changed outside scope",
+            50,
+        )
+        .expect("reject review");
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Failed);
+        assert_eq!(
+            task.failure.as_ref().map(|failure| failure.kind.as_str()),
+            Some("review_rejection")
+        );
+        assert_eq!(
+            task.failure.as_ref().map(|failure| failure.retryable),
+            Some(false)
+        );
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.needs_human_review, Some(false));
+        assert_eq!(task_proj.review_decision.as_deref(), Some("rejected"));
+        assert_eq!(task_proj.reviewed_at_ms, Some(50));
+        assert_eq!(task_proj.failure_kind.as_deref(), Some("review_rejection"));
+    }
+
+    fn reviewed_worktree_task(bus: &mut AgentA2ABus) -> AgentTaskId {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement settings recovery polish",
+            "Polish settings recovery",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-review-task-1",
+                    "cleaned_up": false,
+                    "diff_available": true,
+                    "diff_truncated": false,
+                    "tests_passed": true,
+                    "needs_human_review": true,
+                    "suggested_action": "Review and merge after checking settings recovery.",
+                    "reason_codes": ["tests_passed", "diff_available"],
+                })
+                .to_string(),
+                created_at_ms: 30,
+            },
+            30,
+        );
+        bus.complete_task(&task_id, "Patch ready for controller review", 40);
+        task_id
     }
 
     // ── Phase 4-A tests: enriched projection fields ──

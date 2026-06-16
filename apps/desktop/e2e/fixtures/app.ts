@@ -201,6 +201,64 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         last_error: null,
       };
     };
+    const a2aStates = () => {
+      // @ts-expect-error mock
+      if (!window.__mockA2AStates || typeof window.__mockA2AStates !== "object") window.__mockA2AStates = {};
+      // @ts-expect-error mock
+      return window.__mockA2AStates as Record<string, Record<string, unknown>>;
+    };
+    const reviewAgentA2AState = (args: Record<string, unknown>) => {
+      const sessionId = String(args.sessionId ?? "");
+      const state = a2aStates()[sessionId];
+      if (!state || !Array.isArray(state.tasks)) throw new Error(`A2A state not found: ${sessionId}`);
+      const decision = String(args.decision ?? "approve");
+      const reviewedDecision = decision === "reject" ? "rejected" : "approved";
+      const taskIds = new Set(Array.isArray(args.taskIds) ? args.taskIds.map(String) : []);
+      const now = Date.now();
+      const reviewMessage = decision === "reject" ? "Review rejected" : "Review approved";
+      const tasks = state.tasks.map((rawTask) => {
+        const task = rawTask as Record<string, unknown>;
+        if (!taskIds.has(String(task.task_id))) return task;
+        const messages = Array.isArray(task.messages) ? task.messages.slice() : [];
+        messages.push({
+          message_id: `mock-review-${String(task.task_id)}-${now}`,
+          kind: decision === "reject" ? "failed" : "progress",
+          content: reviewMessage,
+          created_at_ms: now,
+        });
+        return {
+          ...task,
+          status: decision === "reject" ? "failed" : task.status,
+          needs_human_review: false,
+          review_decision: reviewedDecision,
+          reviewed_at_ms: now,
+          latest_message: reviewMessage,
+          messages,
+          failure_kind: decision === "reject" ? "review_rejection" : task.failure_kind ?? null,
+          failure_message: decision === "reject" ? String(args.message ?? "Review rejected") : task.failure_message ?? null,
+          retryable: decision === "reject" ? false : task.retryable ?? null,
+          suggested_action: decision === "reject"
+            ? "Review rejected by controller. Do not merge this worktree."
+            : "Review approved by controller.",
+        };
+      });
+      const nextState = {
+        ...state,
+        tasks,
+        running_count: tasks.filter((task) => task.status === "running").length,
+        completed_count: tasks.filter((task) => task.status === "completed").length,
+        failed_count: tasks.filter((task) => task.status === "failed").length,
+        interrupted_count: tasks.filter((task) => task.status === "interrupted").length,
+      };
+      a2aStates()[sessionId] = nextState;
+      // @ts-expect-error mock
+      window.__lastReviewAgentA2ATasksArgs = args;
+      return {
+        session_id: sessionId,
+        source: "live",
+        state: nextState,
+      };
+    };
     const openKeyvalDb = async () => {
       let db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("keyval-store");
@@ -458,6 +516,8 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             recent_history: schedulerHistory(),
             load_error: null,
           };
+        case "review_agent_a2a_tasks":
+          return reviewAgentA2AState(args);
         case "upsert_scheduled_task": {
           const input = (args.input ?? {}) as Record<string, unknown>;
           const tasks = schedulerTasks();

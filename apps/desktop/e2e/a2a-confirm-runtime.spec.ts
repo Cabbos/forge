@@ -260,6 +260,39 @@ test.describe("A2A runtime surfaces", () => {
     await expect(workspace).toContainText("Review rejected unsafe permission edit");
   });
 
+  test("hub panel can approve a review queue item", async ({ page }) => {
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, reviewQueueEvents(sessionId));
+    await openProjectArchive(page, "agents");
+
+    const workspace = page.locator(".forge-a2a-workspace");
+    await workspace.getByRole("button", { name: "通过审阅 Implement settings recovery polish" }).click();
+
+    await expect(workspace).toContainText("审阅历史");
+    await expect(workspace).toContainText("审阅通过");
+    await expect(workspace).toContainText("Review approved");
+    await expect(workspace).not.toContainText("1 个待审阅");
+    await expect.poll(() => page.evaluate(() => {
+      // @ts-expect-error mock
+      return window.__lastReviewAgentA2ATasksArgs;
+    })).toMatchObject({
+      sessionId,
+      taskIds: ["review-task-1"],
+      decision: "approve",
+    });
+  });
+
   test("global background status bar opens the agent task list", async ({ page }) => {
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock

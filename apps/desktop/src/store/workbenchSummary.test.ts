@@ -312,4 +312,25 @@ describe("deriveWorkbenchReviewView", () => {
     assert.strictEqual(result.history[0].detail, "Scope too broad");
     assert.deepStrictEqual(result.history[0].changedFiles, ["apps/desktop/src-tauri/src/executor/permissions.rs"]);
   });
+
+  it("keeps approved review decisions in review history", () => {
+    const approved = task({
+      task_id: "approved",
+      title: "Approved worker task",
+      execution_mode: "worktree_worker",
+      status: "completed",
+      needs_human_review: false,
+      latest_message: "Review approved: Looks good",
+      changed_files: ["apps/desktop/src/components/settings/RecoveryPanel.tsx"],
+    }) as AgentA2ATaskProjection & { review_decision: string; reviewed_at_ms: number };
+    approved.review_decision = "approved";
+    approved.reviewed_at_ms = 50;
+
+    const result = deriveWorkbenchReviewView(projection([approved]));
+
+    assert.deepStrictEqual(result.queue, []);
+    assert.deepStrictEqual(result.history.map((item) => item.taskId), ["approved"]);
+    assert.strictEqual(result.history[0].label, "审阅通过");
+    assert.strictEqual(result.history[0].detail, "Review approved: Looks good");
+  });
 });

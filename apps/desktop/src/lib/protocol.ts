@@ -225,6 +225,8 @@ export interface AgentA2ATaskProjection {
   worktree_path: string | null;
   cleaned_up: boolean | null;
   suggested_action: string | null;
+  review_decision?: string | null;
+  reviewed_at_ms?: number | null;
   // Phase 4-A enriched fields — derived from AgentTaskRecord / artifacts.
   parent_task_id: string | null;
   created_at_ms: number;

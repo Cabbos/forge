@@ -40,6 +40,10 @@ pub(crate) fn save_session_ledger_at(
     Ok(())
 }
 
+pub(crate) fn save_session_ledger(session_id: &str, bus: &AgentA2ABus) -> Result<(), String> {
+    save_session_ledger_at(&app_data_dir(), session_id, bus)
+}
+
 pub(crate) fn load_session_ledger_at(
     root: &Path,
     session_id: &str,
@@ -53,6 +57,10 @@ pub(crate) fn load_session_ledger_at(
     let bus = serde_json::from_str::<AgentA2ABus>(&json)
         .map_err(|e| format!("parse A2A ledger '{session_id}': {e}"))?;
     Ok(Some(bus))
+}
+
+pub(crate) fn load_session_ledger(session_id: &str) -> Result<Option<AgentA2ABus>, String> {
+    load_session_ledger_at(&app_data_dir(), session_id)
 }
 
 pub(crate) fn load_session_projection(

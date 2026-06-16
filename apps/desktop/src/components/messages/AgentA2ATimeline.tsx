@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
+import { reviewAgentA2ATasks, type AgentA2AReviewDecision } from "@/lib/ipc/a2a";
 import {
   deriveWorkbenchReviewView,
   deriveWorkbenchSummary,
@@ -20,6 +22,7 @@ import {
   type WorkbenchReviewItem,
   type WorkbenchReviewView,
 } from "@/lib/workbenchSummary";
+import { useStore } from "@/store";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 function iconFor(status: string) {
@@ -84,13 +87,21 @@ function messageKindLabel(kind: string) {
 function WorktreeReviewPanel({ task: rawTask }: { task: AgentA2ATaskProjection }) {
   const task = normalizeA2ATaskProjection(rawTask);
   const isReviewRequired = task.needs_human_review === true;
+  const reviewDecision = task.review_decision ?? null;
+  const reviewBadge = isReviewRequired
+    ? "需要人工审阅"
+    : reviewDecision === "approved"
+      ? "审阅通过"
+      : reviewDecision === "rejected"
+        ? "审阅拒绝"
+        : "审阅状态未知";
 
   return (
     <div className="forge-a2a-worktree-panel" data-review-required={isReviewRequired}>
       <div className="forge-a2a-worktree-header">
         <ShieldAlert className="size-3" />
         <span className="forge-a2a-worktree-badge">
-          {isReviewRequired ? "需要人工审阅" : "审阅状态未知"}
+          {reviewBadge}
         </span>
         <span className="forge-a2a-worktree-not-merged">未自动合并</span>
       </div>
@@ -173,10 +184,16 @@ function WorktreeReviewPanel({ task: rawTask }: { task: AgentA2ATaskProjection }
 function ReviewWorkbenchItem({
   item,
   tone,
+  busyKey,
+  onReview,
 }: {
   item: WorkbenchReviewItem;
   tone: "queue" | "history";
+  busyKey?: string | null;
+  onReview?: (taskIds: string[], decision: AgentA2AReviewDecision) => Promise<void>;
 }) {
+  const disabled = busyKey != null;
+
   return (
     <li className="forge-a2a-review-item" data-tone={tone}>
       <div className="forge-a2a-review-item-main">
@@ -199,12 +216,47 @@ function ReviewWorkbenchItem({
       {item.suggestedAction && (
         <p className="forge-a2a-review-action">{item.suggestedAction}</p>
       )}
+      {tone === "queue" && onReview && (
+        <div className="forge-a2a-review-actions" aria-label={`${item.title} 审阅操作`}>
+          <ButtonPrimitive
+            type="button"
+            className="forge-a2a-review-action-button"
+            aria-label={`通过审阅 ${item.title}`}
+            disabled={disabled}
+            onClick={() => { void onReview([item.taskId], "approve"); }}
+          >
+            <CheckCircle2 className="size-3" />
+            <span>通过</span>
+          </ButtonPrimitive>
+          <ButtonPrimitive
+            type="button"
+            className="forge-a2a-review-action-button"
+            data-tone="reject"
+            aria-label={`拒绝审阅 ${item.title}`}
+            disabled={disabled}
+            onClick={() => { void onReview([item.taskId], "reject"); }}
+          >
+            <XCircle className="size-3" />
+            <span>拒绝</span>
+          </ButtonPrimitive>
+        </div>
+      )}
     </li>
   );
 }
 
-function WorkbenchReviewSummary({ view }: { view: WorkbenchReviewView }) {
+function WorkbenchReviewSummary({
+  view,
+  busyKey,
+  onReview,
+}: {
+  view: WorkbenchReviewView;
+  busyKey?: string | null;
+  onReview?: (taskIds: string[], decision: AgentA2AReviewDecision) => Promise<void>;
+}) {
   if (view.queue.length === 0 && view.history.length === 0) return null;
+  const queueIds = view.queue.map((item) => item.taskId);
+  const disabled = busyKey != null;
 
   return (
     <div className="forge-a2a-review-summary" aria-label="审阅摘要">
@@ -212,11 +264,44 @@ function WorkbenchReviewSummary({ view }: { view: WorkbenchReviewView }) {
         <section className="forge-a2a-review-section" aria-label="审阅队列">
           <div className="forge-a2a-review-section-header">
             <span className="forge-a2a-review-section-title">审阅队列</span>
-            <span className="forge-a2a-review-section-count">{view.queue.length} 个待审阅</span>
+            <div className="forge-a2a-review-section-meta">
+              <span className="forge-a2a-review-section-count">{view.queue.length} 个待审阅</span>
+              {onReview && (
+                <div className="forge-a2a-review-bulk-actions" aria-label="批量审阅操作">
+                  <ButtonPrimitive
+                    type="button"
+                    className="forge-a2a-review-action-button"
+                    aria-label="全部通过审阅"
+                    disabled={disabled}
+                    onClick={() => { void onReview(queueIds, "approve"); }}
+                  >
+                    <CheckCircle2 className="size-3" />
+                    <span>全部通过</span>
+                  </ButtonPrimitive>
+                  <ButtonPrimitive
+                    type="button"
+                    className="forge-a2a-review-action-button"
+                    data-tone="reject"
+                    aria-label="全部拒绝审阅"
+                    disabled={disabled}
+                    onClick={() => { void onReview(queueIds, "reject"); }}
+                  >
+                    <XCircle className="size-3" />
+                    <span>全部拒绝</span>
+                  </ButtonPrimitive>
+                </div>
+              )}
+            </div>
           </div>
           <ul className="forge-a2a-review-list">
             {view.queue.map((item) => (
-              <ReviewWorkbenchItem key={item.taskId} item={item} tone="queue" />
+              <ReviewWorkbenchItem
+                key={item.taskId}
+                item={item}
+                tone="queue"
+                busyKey={busyKey}
+                onReview={onReview}
+              />
             ))}
           </ul>
         </section>
@@ -374,7 +459,39 @@ export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | n
   );
 }
 
-export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null }) {
+export function AgentA2AWorkspace({
+  state,
+  sessionId,
+}: {
+  state: AgentA2AProjection | null;
+  sessionId?: string | null;
+}) {
+  const [reviewBusyKey, setReviewBusyKey] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const handleReview = async (taskIds: string[], decision: AgentA2AReviewDecision) => {
+    if (!sessionId || taskIds.length === 0) return;
+    const key = taskIds.length === 1 ? `${taskIds[0]}:${decision}` : `bulk:${decision}`;
+    setReviewBusyKey(key);
+    setReviewError(null);
+    try {
+      const next = await reviewAgentA2ATasks({
+        sessionId,
+        taskIds,
+        decision,
+        message: null,
+      });
+      useStore.setState((current) => {
+        const agentA2ABySession = new Map(current.agentA2ABySession);
+        agentA2ABySession.set(next.session_id, next.state);
+        return { agentA2ABySession };
+      });
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReviewBusyKey(null);
+    }
+  };
+
   if (!state || state.tasks.length === 0) {
     return (
       <section className="forge-a2a-workspace" aria-label="子任务">
@@ -407,7 +524,16 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
         </div>
       </div>
 
-      <WorkbenchReviewSummary view={reviewView} />
+      <WorkbenchReviewSummary
+        view={reviewView}
+        busyKey={reviewBusyKey}
+        onReview={sessionId ? handleReview : undefined}
+      />
+      {reviewError && (
+        <p className="forge-a2a-review-error" role="alert">
+          {reviewError}
+        </p>
+      )}
 
       <div className="forge-a2a-workspace-task-list">
         {state.tasks.map((task) => (
