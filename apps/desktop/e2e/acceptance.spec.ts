@@ -182,7 +182,18 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await task.getByRole("button", { name: "立即运行" }).click();
     await task.getByText(/最近运行记录/).click();
-    await expect(task).toContainText("完成");
+    await expect(task).toContainText("已排队");
+    await expect(task).toContainText("Queued Gateway trigger");
+    const queuedTriggers = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__mockGatewayTriggers;
+    });
+    const expectedWorkspace = await page.evaluate(() => window.localStorage.getItem("forge-working-dir"));
+    expect(queuedTriggers[0]).toMatchObject({
+      message: "Run a compact product acceptance check.",
+      profile_id: null,
+      workspace_path: expectedWorkspace,
+    });
 
     await task.getByRole("button", { name: "禁用" }).click();
     await expect(task).toContainText("已禁用");

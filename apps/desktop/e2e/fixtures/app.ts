@@ -646,13 +646,28 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           if (!task) throw new Error(`Scheduled task not found: ${id}`);
           task.last_run_at_ms = now;
           task.updated_at_ms = now;
+          const trigger = {
+            id: crypto.randomUUID(),
+            message: String(task.text ?? ""),
+            profile_id: typeof task.profile_id === "string" && task.profile_id ? task.profile_id : null,
+            provider: null,
+            model: null,
+            workspace_path: workingDir,
+            attempt_count: 0,
+            claimed_at_ms: null,
+            received_at_ms: now,
+          };
+          // @ts-expect-error mock
+          if (!Array.isArray(window.__mockGatewayTriggers)) window.__mockGatewayTriggers = [];
+          // @ts-expect-error mock
+          window.__mockGatewayTriggers.unshift(trigger);
           schedulerHistory().unshift({
             id: crypto.randomUUID(),
             task_id: id,
             started_at_ms: now,
             ended_at_ms: now + 1,
-            status: "completed",
-            message: `Ran ${String(task.title)}`,
+            status: "queued",
+            message: `Queued Gateway trigger for task "${String(task.title)}": "${String(task.text)}".`,
           });
           // @ts-expect-error mock
           window.__lastRunScheduledTaskNowArgs = args;
