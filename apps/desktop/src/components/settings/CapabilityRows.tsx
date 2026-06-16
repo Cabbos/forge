@@ -28,7 +28,7 @@ export function CapabilityRow({
   description: ReactNode;
   nameClassName?: string;
   descriptionClassName?: string;
-  action: ReactNode;
+  action?: ReactNode;
   status?: EcosystemItemStatus;
   statusMessage?: string | null;
   configurable?: boolean;

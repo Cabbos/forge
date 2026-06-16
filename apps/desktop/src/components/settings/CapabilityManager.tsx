@@ -47,11 +47,13 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
 
   const tabCapabilities = useMemo<Record<CapabilityTab, CapabilityInfo[]>>(() => ({
     skills: capabilities.filter((c) => c.kind === "skill" || c.kind === "tool"),
+    providers: capabilities.filter((c) => c.kind === "provider"),
     mcp: capabilities.filter((c) => c.kind === "mcp_server"),
     hooks: capabilities.filter((c) => c.kind === "hook"),
   }), [capabilities]);
   const counts: Record<CapabilityTab, number> = {
     skills: tabCapabilities.skills.length,
+    providers: tabCapabilities.providers.length,
     mcp: tabCapabilities.mcp.length,
     hooks: tabCapabilities.hooks.length,
   };

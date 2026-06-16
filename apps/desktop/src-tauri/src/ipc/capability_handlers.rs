@@ -8,6 +8,7 @@ use crate::harness::capability::{
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::skills::SkillLoader;
 use crate::protocol::events::StreamEvent;
+use crate::settings;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -50,6 +51,7 @@ pub async fn list_capabilities(
             });
         }
     }
+    result.extend(provider_capability_infos());
     Ok(result)
 }
 
@@ -58,6 +60,7 @@ pub(crate) fn capability_kind_label(kind: &CapabilityKind) -> &'static str {
         CapabilityKind::Skill => "skill",
         CapabilityKind::Hook => "hook",
         CapabilityKind::McpServer => "mcp_server",
+        CapabilityKind::Provider => "provider",
         CapabilityKind::Tool => "tool",
     }
 }
@@ -164,6 +167,106 @@ fn ecosystem_item_from_entry(entry: CapabilityEntry) -> EcosystemItem {
     let mut item = EcosystemItem::from_capability_entry(&entry).with_status(status, status_message);
     item.config_summary = config_summary;
     item
+}
+
+fn provider_capability_infos() -> Vec<CapabilityInfo> {
+    settings::Settings::load()
+        .key_status()
+        .into_iter()
+        .map(|key| CapabilityInfo {
+            id: provider_item_id(&key.provider),
+            name: provider_display_name(&key.provider),
+            description: provider_description(&key.provider),
+            kind: capability_kind_label(&CapabilityKind::Provider).to_string(),
+            source: "~/.forge/config.json".into(),
+            version: provider_default_model(&key.provider)
+                .unwrap_or("custom")
+                .to_string(),
+            enabled: key.set,
+        })
+        .collect()
+}
+
+fn provider_ecosystem_items() -> Vec<EcosystemItem> {
+    settings::Settings::load()
+        .key_status()
+        .into_iter()
+        .map(provider_ecosystem_item)
+        .collect()
+}
+
+fn provider_ecosystem_item(key: settings::KeyStatus) -> EcosystemItem {
+    let default_model = provider_default_model(&key.provider);
+    EcosystemItem {
+        id: provider_item_id(&key.provider),
+        name: provider_display_name(&key.provider),
+        description: provider_description(&key.provider),
+        kind: CapabilityKind::Provider,
+        source: "~/.forge/config.json".into(),
+        version: default_model.unwrap_or("custom").to_string(),
+        enabled: key.set,
+        status: if key.set {
+            EcosystemItemStatus::Healthy
+        } else {
+            EcosystemItemStatus::Unavailable
+        },
+        status_message: Some(if key.set {
+            format!("API key configured ({})", key.preview)
+        } else {
+            "API key missing".to_string()
+        }),
+        configurable: true,
+        config_summary: Some(match default_model {
+            Some(model) => format!("Default model: {model}"),
+            None => "Custom provider".to_string(),
+        }),
+    }
+}
+
+fn provider_item_id(provider: &str) -> String {
+    format!("provider:{}", provider.trim().to_lowercase())
+}
+
+fn provider_display_name(provider: &str) -> String {
+    match provider.trim().to_lowercase().as_str() {
+        "anthropic" => "Anthropic".into(),
+        "openai" => "OpenAI".into(),
+        "openrouter" => "OpenRouter".into(),
+        "deepseek" => "DeepSeek".into(),
+        other if !other.is_empty() => other.to_string(),
+        _ => "Provider".into(),
+    }
+}
+
+fn provider_description(provider: &str) -> String {
+    let Some(default_model) = provider_default_model(provider) else {
+        return "Custom model provider".to_string();
+    };
+    let context =
+        crate::agent::provider_capabilities::context_window_tokens(provider, default_model)
+            .map(format_context_window)
+            .unwrap_or_else(|| "context unknown".into());
+    format!("Default model {default_model} · {context}")
+}
+
+fn provider_default_model(provider: &str) -> Option<&'static str> {
+    let normalized = provider.trim().to_lowercase();
+    match normalized.as_str() {
+        "anthropic" | "openai" | "openrouter" | "deepseek" => Some(
+            crate::agent::provider_capabilities::default_model(&normalized),
+        ),
+        _ => None,
+    }
+}
+
+fn format_context_window(tokens: u32) -> String {
+    if tokens >= 1_000_000 {
+        format!("{}M context", tokens / 1_000_000)
+    } else if tokens >= 1_000 {
+        format!("{}K context", tokens / 1_000)
+    } else {
+        format!("{tokens} context")
+    }
 }
 
 #[derive(Debug)]
@@ -383,6 +486,7 @@ mod tests {
             capability_kind_label(&CapabilityKind::McpServer),
             "mcp_server"
         );
+        assert_eq!(capability_kind_label(&CapabilityKind::Provider), "provider");
         assert_eq!(capability_kind_label(&CapabilityKind::Tool), "tool");
     }
 
@@ -595,6 +699,44 @@ mod tests {
 
         assert_eq!(item.status, EcosystemItemStatus::Healthy);
         assert!(item.status_message.is_none());
+    }
+
+    #[test]
+    fn provider_ecosystem_item_marks_configured_key_healthy() {
+        let item = provider_ecosystem_item(settings::KeyStatus {
+            provider: "openai".into(),
+            set: true,
+            preview: "sk-o...1234".into(),
+        });
+
+        assert_eq!(item.id, "provider:openai");
+        assert_eq!(item.name, "OpenAI");
+        assert_eq!(item.kind, CapabilityKind::Provider);
+        assert!(item.enabled);
+        assert_eq!(item.status, EcosystemItemStatus::Healthy);
+        assert_eq!(
+            item.status_message.as_deref(),
+            Some("API key configured (sk-o...1234)")
+        );
+        assert_eq!(
+            item.config_summary.as_deref(),
+            Some("Default model: gpt-4o")
+        );
+    }
+
+    #[test]
+    fn provider_ecosystem_item_marks_missing_key_unavailable() {
+        let item = provider_ecosystem_item(settings::KeyStatus {
+            provider: "deepseek".into(),
+            set: false,
+            preview: String::new(),
+        });
+
+        assert_eq!(item.id, "provider:deepseek");
+        assert!(!item.enabled);
+        assert_eq!(item.status, EcosystemItemStatus::Unavailable);
+        assert_eq!(item.status_message.as_deref(), Some("API key missing"));
+        assert!(item.description.contains("1M context"));
     }
 
     #[test]
@@ -973,6 +1115,7 @@ pub async fn list_ecosystem_items(
             });
         }
     }
+    items.extend(provider_ecosystem_items());
 
     Ok(items)
 }

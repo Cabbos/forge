@@ -122,7 +122,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     const manager = dialog.getByTestId("capability-manager");
     await expect(manager.getByTestId("capability-summary-strip")).toContainText("已启用");
-    await expect(manager.getByTestId("capability-summary-strip")).toContainText("4/4");
+    await expect(manager.getByTestId("capability-summary-strip")).toContainText("5/6");
     await expect(manager.getByTestId("capability-summary-strip")).toContainText("可用工具");
     await expect(manager.getByTestId("capability-summary-strip")).toContainText("2/3");
 
@@ -130,6 +130,16 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(manager).toContainText("Skill metadata loaded.");
     await manager.getByRole("button", { name: "Code Review 详情" }).click();
     await expect(dialog.getByRole("dialog", { name: "Code Review 详情" })).toContainText("正常");
+    await dialog.getByRole("button", { name: "关闭详情" }).click();
+
+    await manager.getByRole("tab", { name: /模型/ }).click();
+    await expect(manager).toContainText("DeepSeek");
+    await expect(manager).toContainText("API key configured");
+    await expect(manager).toContainText("OpenAI");
+    await expect(manager).toContainText("API key missing");
+    await manager.getByRole("button", { name: "OpenAI 详情" }).click();
+    await expect(dialog.getByRole("dialog", { name: "OpenAI 详情" })).toContainText("模型服务");
+    await expect(dialog.getByRole("dialog", { name: "OpenAI 详情" })).toContainText("Default model: gpt-4o");
     await dialog.getByRole("button", { name: "关闭详情" }).click();
 
     await manager.getByRole("tab", { name: /连接/ }).click();

@@ -210,6 +210,8 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       return [
         { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: enabled.read_file !== false },
         { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: enabled["code-review"] !== false },
+        { id: "provider:deepseek", name: "DeepSeek", description: "Default model deepseek-v4-flash[1m] · 1M context", kind: "provider", source: "~/.forge/config.json", version: "deepseek-v4-flash[1m]", enabled: true },
+        { id: "provider:openai", name: "OpenAI", description: "Default model gpt-4o · 128K context", kind: "provider", source: "~/.forge/config.json", version: "gpt-4o", enabled: false },
         { id: "mcp:obsidian", name: "Obsidian MCP", description: "Project notes", kind: "mcp_server", source: "~/.forge/mcp.json", version: "local", enabled: enabled["mcp:obsidian"] !== false },
         { id: "hook:pre-commit", name: "Pre-commit Hook", description: "Run checks before commit", kind: "hook", source: "local", version: "1", enabled: enabled["hook:pre-commit"] !== false },
       ];
@@ -219,6 +221,8 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       return [
         { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: enabled.read_file !== false, status: "healthy", statusMessage: "Built-in tool is available.", configurable: false, configSummary: null },
         { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: enabled["code-review"] !== false, status: "healthy", statusMessage: "Skill metadata loaded.", configurable: false, configSummary: null },
+        { id: "provider:deepseek", name: "DeepSeek", description: "Default model deepseek-v4-flash[1m] · 1M context", kind: "provider", source: "~/.forge/config.json", version: "deepseek-v4-flash[1m]", enabled: true, status: "healthy", statusMessage: "API key configured (sk-e...23ef)", configurable: true, configSummary: "Default model: deepseek-v4-flash[1m]" },
+        { id: "provider:openai", name: "OpenAI", description: "Default model gpt-4o · 128K context", kind: "provider", source: "~/.forge/config.json", version: "gpt-4o", enabled: false, status: "unavailable", statusMessage: "API key missing", configurable: true, configSummary: "Default model: gpt-4o" },
         { id: "mcp:obsidian", name: "Obsidian MCP", description: "Project notes", kind: "mcp_server", source: "~/.forge/mcp.json", version: "local", enabled: enabled["mcp:obsidian"] !== false, status: "warning", statusMessage: "Token is missing.", configurable: true, configSummary: "command: obsidian-mcp --stdio" },
         { id: "hook:pre-commit", name: "Pre-commit Hook", description: "Run checks before commit", kind: "hook", source: "local", version: "1", enabled: enabled["hook:pre-commit"] !== false, status: "healthy", statusMessage: "Hook is installed.", configurable: false, configSummary: null },
       ];

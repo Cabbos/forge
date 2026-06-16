@@ -302,7 +302,7 @@ export interface EcosystemItem {
   id: string;
   name: string;
   description: string;
-  kind: string; // "skill" | "hook" | "mcp_server" | "tool"
+  kind: string; // "skill" | "hook" | "mcp_server" | "provider" | "tool"
   source: string;
   version: string;
   enabled: boolean;

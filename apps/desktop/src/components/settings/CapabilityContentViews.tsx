@@ -52,6 +52,14 @@ export function CapabilityContentViews({
           onDetails={setSelectedId}
         />
       )}
+      {tab === "providers" && (
+        <ProvidersContent
+          providers={capabilities.providers}
+          search={search}
+          getEcosystem={getEcosystem}
+          onDetails={setSelectedId}
+        />
+      )}
       {tab === "hooks" && (
         <HooksContent
           hooks={capabilities.hooks}
@@ -183,6 +191,44 @@ function MCPContent({
       {filtered.length === 0 && (
         <div className="forge-capability-empty">
           没有匹配的连接
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProvidersContent({
+  providers,
+  search,
+  getEcosystem,
+  onDetails,
+}: {
+  providers: CapabilityInfo[];
+  search: string;
+  getEcosystem: (cap: CapabilityInfo) => EcosystemItem | undefined;
+  onDetails: (id: string) => void;
+}) {
+  const filtered = filterCapabilities(providers, search, "providers");
+
+  return (
+    <section className="forge-capability-list">
+      {filtered.map((provider) => {
+        const eco = getEcosystem(provider);
+        return (
+          <CapabilityRow
+            key={provider.id}
+            capability={provider}
+            description={provider.description}
+            status={eco?.status}
+            statusMessage={eco?.statusMessage}
+            configurable={eco?.configurable}
+            onDetails={eco ? () => onDetails(provider.id) : undefined}
+          />
+        );
+      })}
+      {filtered.length === 0 && (
+        <div className="forge-capability-empty">
+          没有匹配的模型服务
         </div>
       )}
     </section>

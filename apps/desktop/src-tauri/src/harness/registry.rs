@@ -35,6 +35,7 @@ impl CapabilityRegistry {
             CapabilityKind::Skill => "skill",
             CapabilityKind::Hook => "hook",
             CapabilityKind::McpServer => "mcp_server",
+            CapabilityKind::Provider => "provider",
             CapabilityKind::Tool => "tool",
         };
         let enabled = self

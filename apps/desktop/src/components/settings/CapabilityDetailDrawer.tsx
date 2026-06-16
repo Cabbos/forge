@@ -83,10 +83,11 @@ export function CapabilityDetailDrawer({
             {kind === "tool" && "工具"}
             {kind === "hook" && "自动化"}
             {kind === "mcp_server" && "MCP 连接"}
+            {kind === "provider" && "模型服务"}
           </dd>
 
           <dt>来源</dt>
-          <dd className={cn(kind === "mcp_server" && "forge-capability-description-mono")}>
+          <dd className={cn((kind === "mcp_server" || kind === "provider") && "forge-capability-description-mono")}>
             {source || "内置"}
           </dd>
 

@@ -7,6 +7,7 @@ pub enum CapabilityKind {
     Skill,
     Hook,
     McpServer,
+    Provider,
     Tool,
 }
 
@@ -123,9 +124,9 @@ pub enum EcosystemItemStatus {
 }
 
 /// A richer serializable item for the ecosystem Settings UI and diagnostics.
-/// Built from registry entries, skill scans, and (future) provider/extension
-/// inventory.  This does NOT replace `CapabilityMetadata` — it wraps it with
-/// UI-facing fields.
+/// Built from registry entries, skill scans, provider status, and (future)
+/// extension inventory.  This does NOT replace `CapabilityMetadata` — it wraps
+/// it with UI-facing fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EcosystemItem {
@@ -167,7 +168,7 @@ impl EcosystemItem {
             enabled: entry.enabled,
             status: EcosystemItemStatus::Unknown,
             status_message: None,
-            configurable: matches!(m.kind, CapabilityKind::McpServer),
+            configurable: matches!(m.kind, CapabilityKind::McpServer | CapabilityKind::Provider),
             config_summary: None,
         }
     }
