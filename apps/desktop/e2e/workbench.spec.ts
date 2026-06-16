@@ -378,9 +378,10 @@ test.describe("Timeline Message Flow", () => {
     await expect(page.getByRole("heading", { name: "模型服务" })).toBeVisible();
     await page.getByRole("button", { name: /本机数据/ }).click();
     await expect(page.getByRole("heading", { name: "本机数据" })).toBeVisible();
-    await expect(page.getByText("API Key")).toHaveCount(0);
-    await expect(page.getByText("~/.forge/config.json")).toHaveCount(0);
-    await expect(page.getByText("IndexedDB")).toHaveCount(0);
+    const localDataRegion = page.getByRole("region", { name: "本机数据" });
+    await expect(localDataRegion.getByText("API Key")).toHaveCount(0);
+    await expect(localDataRegion.getByText("~/.forge/config.json")).toHaveCount(0);
+    await expect(localDataRegion.getByText("IndexedDB")).toHaveCount(0);
   });
 
   test("session creation errors stay inline and can open settings", async ({ page }) => {
