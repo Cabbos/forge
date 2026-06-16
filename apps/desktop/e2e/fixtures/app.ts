@@ -41,6 +41,52 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       last_checkpoint: null,
       message: "No checkpoint yet",
     };
+    const diagnosticsReport = () => ({
+      ok: true,
+      generatedAtMs: Date.now(),
+      checks: [
+        {
+          id: "config",
+          label: "配置文件",
+          status: "pass",
+          message: "Forge config is readable.",
+          detail: { path: "~/.forge/config.json" },
+        },
+        {
+          id: "gateway_service",
+          label: "Gateway service",
+          status: "pass",
+          message: "Gateway service is installed and running.",
+          detail: { backend: "launchd", service_id: "com.forge.gateway" },
+        },
+      ],
+    });
+    const gatewayRuntimeStatus = () => ({
+      ok: true,
+      message: "Gateway runtime is healthy.",
+      uptime_seconds: 125,
+      active_sessions: 0,
+      pending_triggers: 0,
+      pending_session_inputs: 0,
+      claimed_triggers: 0,
+      dead_letter_runs: 0,
+      recent_runs: [],
+      recent_session_inputs: [],
+      runtime_tasks: [
+        {
+          name: "webhook_listener",
+          running: true,
+          last_started_at_ms: Date.now() - 60_000,
+          last_error: null,
+        },
+        {
+          name: "scheduler_tick",
+          running: true,
+          last_started_at_ms: Date.now() - 30_000,
+          last_error: null,
+        },
+      ],
+    });
     const mcpContextSources = {
       resources: [
         {
@@ -355,6 +401,33 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "confirm_response":
         case "set_api_key":
           return undefined;
+        case "get_diagnostics_report":
+          // @ts-expect-error acceptance mock
+          window.__diagnosticsReportRequestCount = Number(window.__diagnosticsReportRequestCount ?? 0) + 1;
+          // @ts-expect-error acceptance mock
+          return window.__mockDiagnosticsReport ?? diagnosticsReport();
+        case "get_gateway_runtime_status":
+          // @ts-expect-error acceptance mock
+          return window.__mockGatewayRuntimeStatus ?? gatewayRuntimeStatus();
+        case "list_gateway_triggers":
+          // @ts-expect-error acceptance mock
+          return Array.isArray(window.__mockGatewayTriggers) ? window.__mockGatewayTriggers : [];
+        case "list_gateway_sessions":
+          // @ts-expect-error acceptance mock
+          return Array.isArray(window.__mockGatewaySessions) ? window.__mockGatewaySessions : [];
+        case "run_repair_action":
+          // @ts-expect-error acceptance mock
+          window.__lastRepairActionArgs = args;
+          return {
+            action_id: String(args.actionId ?? "restart_gateway"),
+            success: true,
+            message: "Repair action completed.",
+            verification: {
+              label: "Gateway service",
+              ok: true,
+              message: "Gateway service is running.",
+            },
+          };
         case "list_permission_rules":
           return permissionRules();
         case "set_permission_rule": {
