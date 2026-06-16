@@ -332,6 +332,13 @@ export type StreamEvent =
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
   | { event_type: "agent_a2a_updated"; session_id: string; state: AgentA2AProjection }
+  | {
+      event_type: "ecosystem_changed";
+      session_id: string;
+      item_id: string;
+      action: string;
+      enabled?: boolean | null;
+    }
   | { event_type: "delivery_summary"; session_id: string; block_id: string; summary: DeliverySummary }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }

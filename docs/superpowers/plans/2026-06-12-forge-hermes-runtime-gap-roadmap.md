@@ -214,9 +214,10 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 3-D follow-up (2026-06-15):** `configure_ecosystem_item` now supports MCP server configuration write-back for existing `mcp:<id>` entries by updating the source `.forge/mcp.json` entry (name, description, command, args, enabled) while preserving unknown fields and other servers. Non-MCP item kinds still return an explicit unsupported error until provider/skill config schemas stabilize.
   - Added TS types (`EcosystemItem`, `EcosystemItemStatus`, `ToolInventoryEntry`) and wrapper functions in `lib/tauri.ts`.
   - Files: `ipc/capability_handlers.rs`, `lib.rs`, `lib/tauri.ts`.
-- [ ] 3.4 Add `StreamEvent::EcosystemChanged` so UI refreshes when items install/uninstall.
+- [x] 3.4 Add `StreamEvent::EcosystemChanged` so UI refreshes when items install/uninstall.
   - **Phase 3-A decision (2026-06-12): DEFERRED.** Query invalidation after toggle (invalidateQueries for capabilities, ecosystemItems, toolInventory in handleToggle) already provides sufficient UI refresh. Adding a new StreamEvent variant requires Rust+TS protocol sync and adds no additional value over the existing invalidation pattern. Will revisit when background skill installation or MCP server discovery changes happen outside the toggle flow (Phase 3-B or later).
-  - Files: No changes needed.
+  - **Phase 3-E follow-up (2026-06-16):** Added `StreamEvent::EcosystemChanged` / `ecosystem_changed` and emit it from capability enable/disable, MCP ecosystem configuration, and skill install flows. The frontend dispatcher handles it globally and invalidates `capabilities`, `ecosystemItems`, and `toolInventory` queries so background ecosystem mutations refresh Settings without relying only on local button handlers.
+  - Files: `src-tauri/src/protocol/events.rs`, `src-tauri/src/ipc/capability_handlers.rs`, `src/lib/protocol.ts`, `src/store/event-dispatch.ts`, `src/store/ecosystem-events.ts`.
 - [x] 3.5 Build Settings > Tools/Providers/Skills panel with tabs, search, enable toggles, and config drawers.
   - **Phase 3-A (2026-06-12):** Enhanced existing `CapabilityManager` / `CapabilityContentViews` / `CapabilityRows` components rather than creating separate `EcosystemSettings.tsx`. Added: status badges (healthy/unavailable/warning) on capability rows, `CapabilityDetailDrawer` component for item detail view with status/health/config info, config-aware "暂不支持界面配置" hint for non-configurable items. Created `useEcosystemItemsQuery` and `useToolInventoryQuery` hooks following existing patterns. Tab structure (skills/tools→Skills, mcp→MCP, hooks→Hooks) preserved.
   - Files: `src/components/settings/CapabilityManager.tsx`, `CapabilityContentViews.tsx`, `CapabilityRows.tsx`, `CapabilityDetailDrawer.tsx` (new), `src/hooks/queries/useEcosystemItemsQuery.ts` (new), `useToolInventoryQuery.ts` (new), `queryKeys.ts`.
@@ -231,7 +232,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 3.8 Tests: plugin manager unit tests, UI component tests with mocked IPC.
   - **Phase 3-A partial (2026-06-12):** Added Rust tests for `EcosystemItem` model, IPC helpers, and diagnostics inventory aggregation. Existing frontend node tests (blocks, health-alerts, recovery-notices) and `npm run build` pass, but dedicated UI component tests with mocked IPC remain deferred because this app does not currently have a lightweight component-test harness for Settings panels.
   - **Phase 3-B partial (2026-06-12):** Added 12 pure-helper tests for `deriveToolCounts` in `store/processActivity.test.ts` using the existing `node --test` pattern. No UI component tests for ToolActivitySummary/ProjectCockpit — these are stateless render components that receive derived data as props; the pure-helper coverage validates the count derivation logic, and `npm run build` catches TS/JSX errors in the components. Full component-test harness (mocked IPC, React Testing Library) remains deferred.
-  - Files: `harness/capability.rs`, `ipc/capability_handlers.rs`, `diagnostics/mod.rs`, `store/processActivity.test.ts`.
+  - **Phase 3-E partial (2026-06-16):** Added Rust protocol/helper coverage for `ecosystem_changed` and a focused node test for the frontend ecosystem query invalidation helper. Full Settings component-test harness remains deferred.
+  - Files: `harness/capability.rs`, `ipc/capability_handlers.rs`, `diagnostics/mod.rs`, `store/processActivity.test.ts`, `store/ecosystem-events.test.ts`.
 
 **Phase 3-A summary (2026-06-12):**
 
@@ -239,7 +241,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 |------|--------|-------|
 | EcosystemItem model | ✅ Done | stable fields, status enum, builder methods |
 | IPC commands (4) | ✅ Done | list/set/inventory/configure (stub) |
-| EcosystemChanged event | ⏸️ Deferred | Query invalidation sufficient for now |
+| EcosystemChanged event | ✅ Done | Backend stream event refreshes ecosystem queries after toggle/config/install |
 | Settings UI enhancement | ✅ Done | Status badges, detail drawer, config awareness |
 | Tool inventory & counts | ✅ Done | Tool inventory IPC, summary count in UI |
 | Diagnostics integration | ✅ Done | Unhealthy counts, status enrichment; MCP config probe added in Phase 3-C |

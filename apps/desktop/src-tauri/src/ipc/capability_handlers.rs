@@ -7,8 +7,12 @@ use crate::harness::capability::{
 };
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::skills::SkillLoader;
+use crate::protocol::events::StreamEvent;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
+
+const ECOSYSTEM_EVENT_SESSION_ID: &str = "global";
 
 #[derive(Serialize)]
 pub struct CapabilityInfo {
@@ -79,6 +83,36 @@ fn global_registry_capability_infos(entries: Vec<CapabilityEntry>) -> Vec<Capabi
 
 pub(crate) fn is_hidden_global_capability(entry: &CapabilityEntry) -> bool {
     is_internal_infrastructure_capability(entry) || is_workspace_scoped_capability(entry)
+}
+
+fn ecosystem_changed_event(
+    item_id: impl Into<String>,
+    action: impl Into<String>,
+    enabled: Option<bool>,
+) -> StreamEvent {
+    StreamEvent::EcosystemChanged {
+        session_id: ECOSYSTEM_EVENT_SESSION_ID.to_string(),
+        item_id: item_id.into(),
+        action: action.into(),
+        enabled,
+    }
+}
+
+fn emit_ecosystem_changed(
+    app_handle: &tauri::AppHandle,
+    item_id: impl Into<String>,
+    action: impl Into<String>,
+    enabled: Option<bool>,
+) {
+    if let Err(error) = app_handle.emit(
+        "session-output",
+        ecosystem_changed_event(item_id, action, enabled),
+    ) {
+        crate::app_log!(
+            "WARN",
+            "[event_bus] failed to emit ecosystem_changed event: {error}"
+        );
+    }
 }
 
 fn is_internal_infrastructure_capability(entry: &CapabilityEntry) -> bool {
@@ -350,6 +384,20 @@ mod tests {
             "mcp_server"
         );
         assert_eq!(capability_kind_label(&CapabilityKind::Tool), "tool");
+    }
+
+    #[test]
+    fn ecosystem_changed_event_uses_global_stream_contract() {
+        let event = ecosystem_changed_event("skill-a", "enabled", Some(true));
+        assert_eq!(event.event_type(), "ecosystem_changed");
+        assert_eq!(event.session_id(), ECOSYSTEM_EVENT_SESSION_ID);
+
+        let json = serde_json::to_value(&event).expect("serialize event");
+        assert_eq!(json["event_type"], "ecosystem_changed");
+        assert_eq!(json["session_id"], ECOSYSTEM_EVENT_SESSION_ID);
+        assert_eq!(json["item_id"], "skill-a");
+        assert_eq!(json["action"], "enabled");
+        assert_eq!(json["enabled"], true);
     }
 
     #[test]
@@ -668,15 +716,31 @@ mod tests {
 
 #[tauri::command]
 pub async fn toggle_capability(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     capability_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    toggle_capability_for_state(state.inner(), &capability_id, enabled).await?;
+    emit_ecosystem_changed(
+        &app_handle,
+        capability_id,
+        if enabled { "enabled" } else { "disabled" },
+        Some(enabled),
+    );
+    Ok(())
+}
+
+async fn toggle_capability_for_state(
+    state: &Arc<AppState>,
+    capability_id: &str,
     enabled: bool,
 ) -> Result<(), String> {
     // Try registry first, then skill loader
     match state
         .harness
         .capability_registry
-        .toggle_with_event(&capability_id, enabled)
+        .toggle_with_event(capability_id, enabled)
         .await
     {
         Ok(_) => {
@@ -691,7 +755,7 @@ pub async fn toggle_capability(
                 let _ = session
                     .harness
                     .capability_registry
-                    .toggle_with_event(&capability_id, enabled)
+                    .toggle_with_event(capability_id, enabled)
                     .await;
             }
             Ok(())
@@ -700,7 +764,7 @@ pub async fn toggle_capability(
             let skill_loader = SkillLoader::new();
             skill_loader.attach_database(state.harness.database.clone());
             let _ = skill_loader.scan_all().await;
-            skill_loader.toggle(&capability_id, enabled).await;
+            skill_loader.toggle(capability_id, enabled).await;
             let skills = skill_loader.all_skills().await;
             if skills.iter().any(|s| s.id == capability_id) {
                 let sessions = state
@@ -715,7 +779,7 @@ pub async fn toggle_capability(
                     session
                         .harness
                         .skill_loader
-                        .toggle(&capability_id, enabled)
+                        .toggle(capability_id, enabled)
                         .await;
                 }
                 Ok(())
@@ -801,6 +865,7 @@ fn read_skill_metadata(dir: &Path) -> Result<(String, String), String> {
 
 #[tauri::command]
 pub async fn install_skill(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     repo: String,
 ) -> Result<CapabilityInfo, String> {
@@ -817,7 +882,7 @@ pub async fn install_skill(
     if dest.exists() {
         let (desc, _) = read_skill_metadata(&dest)?;
         let _ = state.harness.skill_loader.scan_all().await;
-        return Ok(CapabilityInfo {
+        let info = CapabilityInfo {
             id: name.clone(),
             name: name.clone(),
             description: desc,
@@ -825,7 +890,9 @@ pub async fn install_skill(
             source: repo,
             version: "1.0.0".into(),
             enabled: true,
-        });
+        };
+        emit_ecosystem_changed(&app_handle, &info.id, "installed", Some(info.enabled));
+        return Ok(info);
     }
 
     std::fs::create_dir_all(&skills_dir).map_err(|e| e.to_string())?;
@@ -847,7 +914,7 @@ pub async fn install_skill(
     let _ = state.harness.skill_loader.scan_all().await;
     let (desc, _) = read_skill_metadata(&dest).unwrap_or_default();
 
-    Ok(CapabilityInfo {
+    let info = CapabilityInfo {
         id: name.clone(),
         name: name.clone(),
         description: desc,
@@ -855,7 +922,9 @@ pub async fn install_skill(
         source: repo,
         version: "1.0.0".into(),
         enabled: true,
-    })
+    };
+    emit_ecosystem_changed(&app_handle, &info.id, "installed", Some(info.enabled));
+    Ok(info)
 }
 
 // ── Ecosystem IPC (Phase 3-A) ──────────────────────────────────────────────
@@ -912,11 +981,19 @@ pub async fn list_ecosystem_items(
 /// Delegates to the existing `toggle_capability` path for consistency.
 #[tauri::command]
 pub async fn set_ecosystem_enabled(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
-    toggle_capability(state, id, enabled).await
+    toggle_capability_for_state(state.inner(), &id, enabled).await?;
+    emit_ecosystem_changed(
+        &app_handle,
+        id,
+        if enabled { "enabled" } else { "disabled" },
+        Some(enabled),
+    );
+    Ok(())
 }
 
 /// Get a lightweight tool inventory: names, kinds, enabled status, and
@@ -970,6 +1047,7 @@ pub async fn get_tool_inventory(
 /// error until they have a stable persistent config model.
 #[tauri::command]
 pub async fn configure_ecosystem_item(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
     id: String,
     config: serde_json::Value,
@@ -991,7 +1069,8 @@ pub async fn configure_ecosystem_item(
 
     let update = configure_mcp_ecosystem_item_at(Path::new(&meta.source), &id, config)?;
     if let Some(enabled) = update.enabled {
-        toggle_capability(state, id, enabled).await?;
+        toggle_capability_for_state(state.inner(), &id, enabled).await?;
     }
+    emit_ecosystem_changed(&app_handle, id, "configured", update.enabled);
     Ok(())
 }

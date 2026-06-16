@@ -233,6 +233,16 @@ pub enum StreamEvent {
         state: AgentA2AProjection,
     },
 
+    // ── Ecosystem / Tooling Projection ──
+    #[serde(rename = "ecosystem_changed")]
+    EcosystemChanged {
+        session_id: String,
+        item_id: String,
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+    },
+
     // ── Delivery Summary ──
     #[serde(rename = "delivery_summary")]
     DeliverySummary {
@@ -344,6 +354,7 @@ impl StreamEvent {
             | WorkflowUpdated { session_id, .. }
             | AgentTurnUpdated { session_id, .. }
             | AgentA2AUpdated { session_id, .. }
+            | EcosystemChanged { session_id, .. }
             | DeliverySummary { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
@@ -389,6 +400,7 @@ impl StreamEvent {
             WorkflowUpdated { .. } => "workflow_updated",
             AgentTurnUpdated { .. } => "agent_turn_updated",
             AgentA2AUpdated { .. } => "agent_a2a_updated",
+            EcosystemChanged { .. } => "ecosystem_changed",
             DeliverySummary { .. } => "delivery_summary",
             SessionStarted { .. } => "session_started",
             SessionStatus { .. } => "session_status",
@@ -769,6 +781,15 @@ mod tests {
                     state: AgentA2AProjection::default(),
                 },
                 "agent_a2a_updated",
+            ),
+            (
+                StreamEvent::EcosystemChanged {
+                    session_id: "global".into(),
+                    item_id: "skill-a".into(),
+                    action: "enabled".into(),
+                    enabled: Some(true),
+                },
+                "ecosystem_changed",
             ),
             (
                 StreamEvent::Usage {

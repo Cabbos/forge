@@ -1,4 +1,5 @@
 import type { SessionState, StreamEvent } from "../lib/protocol";
+import { queryClient } from "../lib/query-client";
 import { getModelContextWindow } from "../lib/providers";
 import {
   applyCompactResultToBlocks,
@@ -20,6 +21,7 @@ import {
   touchSession,
 } from "./session-utils";
 import type { AppStore } from "./types";
+import { invalidateEcosystemQueries } from "./ecosystem-events";
 import { upsertRecoveryNotice } from "./recovery-notices";
 import { upsertHealthAlert } from "./health-alerts";
 
@@ -94,6 +96,11 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       const agentA2ABySession = new Map(get().agentA2ABySession);
       agentA2ABySession.set(session_id, event.state);
       set({ agentA2ABySession });
+      return;
+    }
+
+    if (event_type === "ecosystem_changed") {
+      invalidateEcosystemQueries(queryClient);
       return;
     }
 
