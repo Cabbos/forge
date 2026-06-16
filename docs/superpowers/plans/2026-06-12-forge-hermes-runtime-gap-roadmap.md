@@ -260,7 +260,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 3.6 per-group tool counts | ✅ Done | `summarizeActivity` + `deriveToolCounts` annotations |
 | 3.6 per-tool-name breakdown | ✅ Done | `deriveToolCounts.perTool` + top-tool surface |
 | 3.8 pure-helper tests | ✅ Done | 12 node tests for `deriveToolCounts` |
-| 3.8 UI component tests | ⏸️ Deferred | No component harness; pure-helper coverage + build check |
+| 3.8 UI / mocked IPC coverage | ✅ Done | Existing Playwright harness covers Settings ecosystem health, inventory, detail drawer, search, and toggle write-back |
 | Rust agent loop changes | 🚫 None | Constraint honored — zero Rust changes |
 | New dependencies | 🚫 None | No new packages |
 
@@ -532,7 +532,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 
 **Work breakdown:**
 
-- [ ] 6.1 Implement background gateway service binary and IPC contract.
+- [x] 6.1 Implement background gateway service binary and IPC contract.
   - **Phase 6.1 runtime-status follow-up (2026-06-15):** Gateway `runtime_status` now reports the background runtime loops that make the daemon useful as a host: webhook listener, trigger runner, and scheduler tick. The gateway binary marks each loop as started, records webhook startup failure detail if it exits, and exposes the task list through CLI/Diagnostics. This is observability scaffolding for the later true session-host contract; it does not yet move live desktop sessions into the daemon.
   - **Phase 6.1 session-registry follow-up (2026-06-15):** Gateway session metadata is now persisted at `~/.forge/gateway-sessions.json`. `register_session`/`unregister_session` update the registry atomically, and a gateway restart restores session metadata as `restored_from_registry` without counting it as a live active session until the owner re-registers. This gives CLI/Diagnostics a durable registry while keeping the active-session count honest.
   - **Phase 6.1 client-attach follow-up (2026-06-15):** Gateway client now has typed `register_session`/`unregister_session` request builders plus best-effort helpers. This keeps the eventual desktop lifecycle attach small and avoids scattering JSON-RPC method strings through `create_session`/resume/delete paths.
@@ -549,6 +549,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 6.1 session-event-tail follow-up (2026-06-15):** Gateway now exposes pollable read-only transcript tailing through `tail_session_events`, with cursor/limit/reset metadata and a transcript helper that does not synthesize interrupted tool/shell closures for live tails. `forge_session events <session_id> [--after <cursor>] [--limit <count>]`, Bun `forge session events`, Tauri IPC, TypeScript IPC wrapper, and Settings > Diagnostics session rows can all read the same gateway event tail. This gives attach clients a stream-like read surface while true gateway-owned live stream ownership remains deferred.
   - **Phase 6.1 session-input-inbox follow-up (2026-06-15):** Gateway now has a durable session input inbox (`~/.forge/session-inputs.json`) and `enqueue_session_input` RPC. `forge session input <session_id> <message>`, Tauri IPC, TypeScript IPC, and Settings > Diagnostics session rows can queue input addressed to an existing session, and `runtime_status`/Diagnostics expose pending input count. Desktop now polls live-session input through gateway `list_session_inputs`/`complete_session_input`, accepts records only after reserving the existing send-input turn, and then reuses the normal send-input context/continuity/snapshot path. Gateway-owned live stream/control is still deferred.
   - **Phase 6.1 session-input-history follow-up (2026-06-15):** Gateway now writes bounded session input completion history to `~/.forge/session-input-completions.json` when an owner runtime completes a queued input. `runtime_status` returns recent completion records, and `forge_trigger status` prints the latest completed session inputs so operators can distinguish "still pending" from "accepted by runtime" without reading logs.
+  - **Status sync (2026-06-16):** The background gateway binary and IPC/control-plane contract are complete. The remaining boundary is deeper runtime ownership: live agent loops still run in the desktop process, while gateway clients get registry, attach, snapshot, transcript tail, trigger, dashboard, and session-input control surfaces.
   - Files: `src-tauri/src/bin/gateway.rs`, `runtime/gateway.rs`.
 - [x] 6.2 Add service management commands: `forge service install`, `start`, `stop`, `restart`, `uninstall`.
   - **Phase 6.2 follow-up (2026-06-15):** launchd service management is now exposed as reusable Rust APIs (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). `forge_service` and Diagnostics gateway repair share the same restart path instead of duplicating `launchctl` bootout/bootstrap logic. CI-safe tests cover public API availability and launchctl output parsing for running, already-loaded, not-running, and "Could not find service" cases.
