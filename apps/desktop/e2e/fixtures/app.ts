@@ -112,17 +112,6 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       status: "pending",
       created_at: "2026-05-13T00:00:00.000Z",
     });
-    const permissionRules = () => {
-      // @ts-expect-error mock
-      if (!Array.isArray(window.__mockPermissionRules)) window.__mockPermissionRules = [];
-      // @ts-expect-error mock
-      return window.__mockPermissionRules as Array<Record<string, unknown>>;
-    };
-    const permissionRule = (toolName: string, decision: string) => ({
-      tool_name: toolName,
-      decision,
-      created_at: "2026-06-16T00:00:00.000Z",
-    });
     const openKeyvalDb = async () => {
       let db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("keyval-store");
@@ -323,119 +312,10 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "confirm_response":
         case "set_api_key":
           return undefined;
-        case "list_permission_rules":
-          return permissionRules();
-        case "set_permission_rule": {
-          const toolName = String(args.toolName ?? "");
-          const decision = String(args.decision ?? "allow");
-          const next = [
-            ...permissionRules().filter((rule) => rule.tool_name !== toolName),
-            permissionRule(toolName, decision),
-          ].sort((a, b) => String(a.tool_name).localeCompare(String(b.tool_name)));
-          // @ts-expect-error mock
-          window.__mockPermissionRules = next;
-          // @ts-expect-error mock
-          window.__lastSetPermissionRuleArgs = args;
-          return next;
-        }
-        case "reset_permission_rule": {
-          const toolName = String(args.toolName ?? "");
-          const next = permissionRules().filter((rule) => rule.tool_name !== toolName);
-          // @ts-expect-error mock
-          window.__mockPermissionRules = next;
-          // @ts-expect-error mock
-          window.__lastResetPermissionRuleArgs = args;
-          return next;
-        }
         case "list_sessions":
           // @ts-expect-error mock
           if (Array.isArray(window.__mockListSessions)) return window.__mockListSessions;
           return persistedSessionsForBackend();
-        case "get_session_store_stats":
-          // @ts-expect-error mock
-          if (window.__mockSessionStoreStats) return window.__mockSessionStoreStats;
-          return {
-            total_snapshots: 0,
-            corrupted_snapshots: 0,
-            total_bytes: 0,
-            oldest_updated_at_ms: null,
-            newest_updated_at_ms: null,
-            by_provider: {},
-            by_workspace: {},
-          };
-        case "search_session_store":
-          // @ts-expect-error mock
-          window.__lastSearchSessionStoreArgs = args;
-          // @ts-expect-error mock
-          if (Array.isArray(window.__mockSessionStoreSearchResults)) {
-            const query = String(args.query ?? "").toLowerCase();
-            // @ts-expect-error mock
-            return window.__mockSessionStoreSearchResults.filter((snapshot) => {
-              const haystack = [
-                snapshot.session_id,
-                snapshot.provider,
-                snapshot.model,
-                snapshot.working_dir,
-                snapshot.summary,
-              ].join(" ").toLowerCase();
-              return !query || haystack.includes(query);
-            });
-          }
-          return [];
-        case "rename_session_snapshot":
-          {
-            const sessionId = String(args.sessionId ?? "");
-            const summary = String(args.summary ?? "");
-            // @ts-expect-error mock
-            window.__lastRenamedSessionSnapshotArgs = { sessionId, summary };
-            // @ts-expect-error mock
-            const snapshots = Array.isArray(window.__mockSessionStoreSearchResults)
-              // @ts-expect-error mock
-              ? window.__mockSessionStoreSearchResults
-              : [];
-            const snapshot = snapshots.find((item) => item.session_id === sessionId);
-            if (!snapshot) return null;
-            snapshot.summary = summary;
-            snapshot.updated_at_ms = Date.now();
-            return snapshot;
-          }
-        case "export_session_store":
-          {
-            // @ts-expect-error mock
-            window.__lastExportSessionStoreCalled = true;
-            // @ts-expect-error mock
-            const snapshots = Array.isArray(window.__mockSessionStoreSearchResults)
-              // @ts-expect-error mock
-              ? window.__mockSessionStoreSearchResults
-              : [];
-            return {
-              schema_version: 1,
-              exported_at_ms: Date.now(),
-              snapshots,
-            };
-          }
-        case "prune_session_store":
-          {
-            // @ts-expect-error mock
-            window.__lastPruneSessionStoreArgs = args;
-            // @ts-expect-error mock
-            const snapshots = Array.isArray(window.__mockSessionStoreSearchResults)
-              // @ts-expect-error mock
-              ? window.__mockSessionStoreSearchResults
-              : [];
-            const keepRecent = Number(args.keepRecent ?? snapshots.length);
-            const deleted = snapshots.splice(keepRecent).map((snapshot) => snapshot.session_id);
-            // @ts-expect-error mock
-            if (window.__mockSessionStoreStats) {
-              // @ts-expect-error mock
-              window.__mockSessionStoreStats.total_snapshots = snapshots.length;
-            }
-            return {
-              deleted_session_ids: deleted,
-              kept_session_ids: snapshots.map((snapshot) => snapshot.session_id),
-              skipped_corrupted: 0,
-            };
-          }
         case "load_app_metadata":
           return appMetadataFromIndexedDb();
         case "save_app_metadata":

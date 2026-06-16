@@ -136,12 +136,6 @@ pub enum StreamEvent {
         kind: String, // "dangerous_cmd" | "file_delete" | "api_call"
         #[serde(skip_serializing_if = "Option::is_none")]
         boundary: Option<WriteBoundary>,
-        /// When true, this confirm is a replayed/interrupted descriptor from a
-        /// restored session. The frontend should render it as non-interactive
-        /// (same visual path as `closeInterruptedConfirmBlocks` with reason
-        /// "session_restored").
-        #[serde(default, skip_serializing_if = "is_false")]
-        replayed_interrupted: bool,
     },
 
     // ── Context Management ──
@@ -270,45 +264,6 @@ pub enum StreamEvent {
         output_tokens: u32,
         estimated_cost_usd: f64,
     },
-
-    // ── Recovery Notice ──
-    #[serde(rename = "recovery_notice")]
-    RecoveryNotice {
-        session_id: String,
-        notice_id: String,
-        title: String,
-        message: String,
-        reason: String,
-        recoverable: bool,
-    },
-
-    // ── Diagnostics / Health ──
-    /// Emitted when a diagnostics report is refreshed (e.g. after the check
-    /// runner completes). Carries a summary suitable for a status bar badge and
-    /// an optional serialized report for a diagnostics panel.
-    #[serde(rename = "diagnostics_update")]
-    DiagnosticsUpdate {
-        session_id: String,
-        ok: bool,
-        pass_count: u32,
-        warn_count: u32,
-        fail_count: u32,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        report_json: Option<String>,
-    },
-    /// Emitted when a health threshold is crossed (e.g. session hung, gateway
-    /// down, disk space low). Carries an alert level, message, and optional
-    /// remediation hint.
-    #[serde(rename = "health_alert")]
-    HealthAlert {
-        session_id: String,
-        alert_id: String,
-        level: String, // "info" | "warn" | "critical"
-        title: String,
-        message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        remediation: Option<String>,
-    },
 }
 
 impl StreamEvent {
@@ -349,10 +304,7 @@ impl StreamEvent {
             | SessionStatus { session_id, .. }
             | SessionStopped { session_id, .. }
             | Error { session_id, .. }
-            | Usage { session_id, .. }
-            | RecoveryNotice { session_id, .. }
-            | DiagnosticsUpdate { session_id, .. }
-            | HealthAlert { session_id, .. } => session_id,
+            | Usage { session_id, .. } => session_id,
         }
     }
 
@@ -395,15 +347,8 @@ impl StreamEvent {
             SessionStopped { .. } => "session_stopped",
             Error { .. } => "error",
             Usage { .. } => "usage",
-            RecoveryNotice { .. } => "recovery_notice",
-            DiagnosticsUpdate { .. } => "diagnostics_update",
-            HealthAlert { .. } => "health_alert",
         }
     }
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[cfg(test)]
@@ -535,7 +480,6 @@ mod tests {
                     question: "q".into(),
                     kind: "k".into(),
                     boundary: None,
-                    replayed_interrupted: false,
                 },
                 "confirm_ask",
             ),
@@ -778,39 +722,6 @@ mod tests {
                     estimated_cost_usd: 0.0,
                 },
                 "usage",
-            ),
-            (
-                StreamEvent::RecoveryNotice {
-                    session_id: "s".into(),
-                    notice_id: "n".into(),
-                    title: "t".into(),
-                    message: "m".into(),
-                    reason: "r".into(),
-                    recoverable: true,
-                },
-                "recovery_notice",
-            ),
-            (
-                StreamEvent::DiagnosticsUpdate {
-                    session_id: "s".into(),
-                    ok: true,
-                    pass_count: 5,
-                    warn_count: 1,
-                    fail_count: 0,
-                    report_json: None,
-                },
-                "diagnostics_update",
-            ),
-            (
-                StreamEvent::HealthAlert {
-                    session_id: "s".into(),
-                    alert_id: "a".into(),
-                    level: "warn".into(),
-                    title: "t".into(),
-                    message: "m".into(),
-                    remediation: Some("r".into()),
-                },
-                "health_alert",
             ),
         ];
 

@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ComponentProps } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import type { SettingsSectionId } from "@/components/settings/SettingsCenterShell";
+import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
 import { deleteSession, setApiKey } from "@/lib/tauri";
-import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
+import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { getModelLabel, getProviderLabel } from "@/lib/providers";
@@ -23,7 +22,6 @@ export function useSettingsDialogController({
   onOpenChange,
 }: UseSettingsDialogControllerOptions = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("models");
   const [editing, setEditing] = useState<string | null>(null);
   const [value, setValue] = useState("");
   const [visible, setVisible] = useState(false);
@@ -146,8 +144,6 @@ export function useSettingsDialogController({
     dialogOpen,
     setDialogOpen,
     dialogRef,
-    activeSection,
-    setActiveSection,
     configuredCount,
     providerTotal,
     sessionCount,

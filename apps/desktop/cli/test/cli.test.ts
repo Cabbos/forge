@@ -81,33 +81,13 @@ describe("runCli", () => {
     expect(stdout.join("")).toContain("Forge doctor");
   });
 
-  test("routes run command (requires --prompt)", async () => {
-    const { io, stderr } = createIo();
+  test("routes run command", async () => {
+    const { io, stdout } = createIo();
 
-    // Without --prompt, runCommand returns 1 with error message
     const code = await runCli(["run"], { io });
 
-    expect(code).toBe(1);
-    expect(stderr.join("")).toContain("prompt is required");
-  });
-
-  test("routes service command", async () => {
-    const { io, stderr } = createIo();
-
-    // No subcommand — should show usage
-    const code = await runCli(["service"], { io });
-
-    expect(code).toBe(1);
-    expect(stderr.join("")).toContain("Usage: forge service");
-  });
-
-  test("routes trigger command", async () => {
-    const { io, stderr } = createIo();
-
-    const code = await runCli(["trigger"], { io });
-
-    expect(code).toBe(1);
-    expect(stderr.join("")).toContain("Usage: forge trigger");
+    expect(code).toBe(0);
+    expect(stdout.join("")).toContain("Forge run is not wired yet.");
   });
 
   test("returns non-zero for unknown commands", async () => {

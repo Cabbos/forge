@@ -139,8 +139,8 @@ assertIncludes(composerLaneBlock, "max-width: min(760px, 100%);", "composer lane
 assertNotIncludes(composerLaneBlock, "max-width: min(820px, 100%);", "composer lane should not drift wider than messages");
 
 const composerFocusBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer:focus-within');
-assertIncludes(composerFocusBlock, "border-color: var(--forge-material-border-focus);", "composer focused border");
-assertIncludes(composerFocusBlock, "background: var(--forge-composer-surface-focus);", "composer focused material");
+assertIncludes(composerFocusBlock, "border-color: #D1C7BA;", "composer focused border");
+assertIncludes(composerFocusBlock, "background: #FFFBF4;", "composer focused material");
 assertIncludes(composerFocusBlock, "box-shadow: var(--forge-composer-shadow-focus);", "composer focused elevation");
 
 const composerRunningBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer[data-streaming="true"],\n  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer[data-state="running"]');
@@ -256,7 +256,7 @@ assertIncludes(statusRowBlock, "border-radius: 6px;", "thinking disclosure has m
 assertIncludes(statusRowBlock, "padding: 0 0.25rem;", "thinking disclosure compact padding");
 
 const messagePanelBlock = selectorBlock(files.messagePanel, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel');
-assertIncludes(messagePanelBlock, "border-radius: 8px;", "message panel radius");
+assertIncludes(messagePanelBlock, "border-radius: 12px;", "message panel radius");
 assertIncludes(messagePanelBlock, "background: #FEFCF8 !important;", "message panel material");
 
 const confirmButtonBlock = selectorBlock(files.confirm, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button');

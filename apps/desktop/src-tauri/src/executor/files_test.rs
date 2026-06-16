@@ -34,10 +34,7 @@ mod tests {
         assert!(result.path.ends_with("new.txt"));
         assert_eq!(result.old_content, "");
         assert_eq!(result.new_content, "hello world");
-        assert_eq!(
-            fs::read_to_string(workspace.join("new.txt")).unwrap(),
-            "hello world"
-        );
+        assert_eq!(fs::read_to_string(workspace.join("new.txt")).unwrap(), "hello world");
         let _ = fs::remove_dir_all(&workspace);
     }
 
@@ -151,9 +148,7 @@ mod tests {
     fn search_files_rejects_invalid_regex() {
         let workspace = temp_workspace("search-regex");
         let executor = FileExecutor::new(workspace.clone());
-        let err = executor
-            .search_files("[")
-            .expect_err("should reject invalid regex");
+        let err = executor.search_files("[").expect_err("should reject invalid regex");
         assert!(err.contains("Invalid regex"));
         let _ = fs::remove_dir_all(&workspace);
     }

@@ -1,10 +1,5 @@
 import type { BlockState, DeliverySummary, StreamEvent } from "../lib/protocol";
 
-export const SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE =
-  "Tool call interrupted by session restore before it returned.";
-
-const SESSION_RESTORED_TOOL_INTERRUPTION_REASON = "session_restored";
-
 export function transcriptEventsToBlocks(events: StreamEvent[]): BlockState[] {
   let blocks: BlockState[] = [];
   for (const event of events) {
@@ -76,7 +71,6 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
           ...next[existingIdx].metadata,
           is_error: event.is_error,
           duration_ms: event.duration_ms,
-          ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       };
       return next;
@@ -92,34 +86,9 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
           is_error: event.is_error,
           duration_ms: event.duration_ms,
           tool_name: "Tool",
-          ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       },
     ];
-  }
-
-  // Phase 1.6: dedupe tool_call_start — if a block with the same block_id
-  // already exists (e.g. from a prior transcript load), update its metadata
-  // instead of appending a duplicate. This keeps the block list clean when
-  // startup replays active tool-call descriptors that were already in the
-  // transcript.
-  if (event_type === "tool_call_start") {
-    const next = [...blocks];
-    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
-    if (existingIdx >= 0) {
-      next[existingIdx] = {
-        ...next[existingIdx],
-        event_type: "tool_call",
-        metadata: {
-          ...next[existingIdx].metadata,
-          tool_name: event.tool_name,
-          tool_input: event.tool_input,
-        },
-      };
-      return next;
-    }
-    const block = eventToBlock(event);
-    return block ? [...next, block] : next;
   }
 
   if (event_type === "thinking_chunk" || event_type === "text_chunk" || event_type === "shell_output") {
@@ -161,25 +130,6 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
           ...next[existingIdx],
           metadata: { ...next[existingIdx].metadata, exit_code: event.exit_code },
         };
-      }
-    }
-    return next;
-  }
-
-  // Phase 1.5: dedupe replayed confirm_ask — if a confirm_ask block with the
-  // same block_id already exists (e.g. from a previous transcript replay or
-  // live session), replace it instead of appending a duplicate. This keeps the
-  // block list clean when startup restores a session that already had its
-  // transcript loaded.
-  if (event_type === "confirm_ask" && (event as { replayed_interrupted?: boolean }).replayed_interrupted) {
-    const next = [...blocks];
-    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
-    const block = eventToBlock(event);
-    if (block) {
-      if (existingIdx >= 0) {
-        next[existingIdx] = block;
-      } else {
-        next.push(block);
       }
     }
     return next;
@@ -377,7 +327,6 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         metadata: {
           is_error: event.is_error,
           duration_ms: event.duration_ms,
-          ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       };
     case "diff_view":
@@ -398,22 +347,6 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         metadata: { command: event.command },
       };
     case "confirm_ask":
-      if (event.replayed_interrupted) {
-        return {
-          ...base,
-          event_type: "confirm_ask",
-          content: event.question,
-          isComplete: true,
-          metadata: {
-            kind: event.kind,
-            boundary: event.boundary ?? null,
-            confirmed: true,
-            answer: null,
-            confirm_interrupted: true,
-            confirm_interrupted_reason: "session_restored",
-          },
-        };
-      }
       return {
         ...base,
         event_type: "confirm_ask",
@@ -467,16 +400,6 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
     default:
       return null;
   }
-}
-
-export function interruptedToolResultMetadata(result: string, isError: boolean): Record<string, unknown> {
-  if (!isError || result !== SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE) {
-    return {};
-  }
-  return {
-    tool_interrupted: true,
-    tool_interrupted_reason: SESSION_RESTORED_TOOL_INTERRUPTION_REASON,
-  };
 }
 
 function compactSkipMessage(reason: string) {

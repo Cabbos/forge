@@ -17,24 +17,6 @@ import type { McpContextSelection } from "../lib/tauri";
 import type { ProviderId } from "../lib/providers";
 import type { Workspace } from "../lib/workspaces";
 
-export interface RuntimeRecoveryNotice {
-  notice_id: string;
-  session_id: string;
-  title: string;
-  message: string;
-  reason: string;
-  recoverable: boolean;
-}
-
-export interface RuntimeHealthAlert {
-  alert_id: string;
-  session_id: string;
-  level: "info" | "warn" | "critical";
-  title: string;
-  message: string;
-  remediation?: string | null;
-}
-
 export interface AppStore {
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
@@ -52,12 +34,6 @@ export interface AppStore {
   firstLoopDraftBySession: Map<string, FirstLoopDraft>;
   deliverySummaryBySession: Map<string, DeliverySummary>;
   agentA2ABySession: Map<string, import("../lib/protocol").AgentA2AProjection>;
-
-  recoveryNotices: RuntimeRecoveryNotice[];
-  dismissRecoveryNotice: (noticeId: string) => void;
-
-  healthAlerts: RuntimeHealthAlert[];
-  dismissHealthAlert: (alertId: string) => void;
 
   selectedProvider: ProviderId;
   setSelectedProvider: (p: string) => void;

@@ -599,8 +599,8 @@
     background:
       linear-gradient(180deg, rgba(254, 252, 248, 0.72), rgba(242, 239, 232, 0) 220px),
       var(--forge-bg-base);
-    padding-top: var(--forge-conversation-gutter-y);
-    padding-bottom: var(--forge-conversation-gutter-y);
+    padding-top: 2rem;
+    padding-bottom: 1.5rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-conversation-lane {
@@ -615,21 +615,20 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-conversation-turn + .forge-conversation-turn {
-    padding-top: 1rem;
+    padding-top: 1.5rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-block + .forge-message-block {
-    margin-top: var(--forge-message-gap);
+    margin-top: 1.125rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-block[data-block-role="trace"] + .forge-message-block[data-block-role="trace"] {
     margin-top: 0.5rem;
   }
 
-  .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-block[data-block-role="user"] + .forge-message-block[data-block-role="trace"],
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-block[data-block-role="assistant"] + .forge-message-block[data-block-role="trace"],
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-message-block[data-block-role="trace"] + .forge-message-block[data-block-role="assistant"] {
-    margin-top: 0.5rem;
+    margin-top: 0.75rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-conversation-turn[data-turn-rail="assistant"] .forge-message-block[data-block-role="trace"],
@@ -656,7 +655,7 @@
     padding: 0.75rem 0.875rem;
     box-shadow: none;
     font-size: 14px;
-    line-height: var(--forge-user-line-height);
+    line-height: 23px;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .user-command-note[data-long="true"] {
@@ -753,7 +752,7 @@
     background: transparent;
     padding: 0 0.25rem;
     color: var(--forge-text-faint);
-    font-size: 10.5px;
+    font-size: 11px;
     line-height: 1rem;
   }
 
@@ -787,7 +786,7 @@
     border-color: #DDD2C3;
     border-radius: 10px;
     background: #FEFCF8;
-    padding: 0 0.75rem;
+    padding: 0 0.875rem;
     color: var(--forge-text-muted);
     box-shadow: 0 6px 16px rgba(79, 62, 42, 0.035);
   }
@@ -800,7 +799,6 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .tool-machine-plate[data-state="running"],
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-evidence-row[data-state="running"] {
-    min-height: 2.75rem;
     border-color: rgba(184, 138, 86, 0.28);
     background: #FFF4DE;
   }

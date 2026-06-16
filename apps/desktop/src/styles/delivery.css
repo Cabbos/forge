@@ -106,8 +106,8 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-card {
     max-width: min(620px, 100%);
-    border-color: #DED6CB;
-    border-radius: 8px;
+    border-color: #DED6CB !important;
+    border-radius: 14px;
     background: #FEFCF8 !important;
     box-shadow: 0 6px 18px rgba(79, 62, 42, 0.045);
   }
@@ -127,11 +127,11 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-item {
-    min-height: 3.25rem;
+    min-height: 1.875rem;
     width: auto;
     max-width: min(100%, 17rem);
     align-items: center;
-    border-color: #DED6CB;
+    border-color: transparent;
     border-radius: 8px;
     background: #FAF7F1;
     padding: 0.3125rem 0.5625rem;
@@ -153,7 +153,7 @@
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-value {
     display: inline;
     margin-top: 0;
-    color: rgb(36, 42, 36);
+    color: var(--forge-text-primary);
     font-size: 12px;
     line-height: 18px;
     -webkit-line-clamp: 1;
@@ -176,10 +176,10 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-action {
     width: auto;
-    height: 1.75rem;
+    height: 2rem;
     justify-content: center;
     border-color: #E0C9AF;
-    border-radius: 8px;
+    border-radius: 10px;
     background: #F3E7D8;
     padding: 0 0.75rem;
     color: #8A5C2C;

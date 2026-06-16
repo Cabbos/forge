@@ -778,8 +778,6 @@ async fn agent_turn_stops_with_tool_loop_detected_when_same_tool_repeats() {
         repeated_read("call-2"),
         repeated_read("call-3"),
         repeated_read("call-4"),
-        repeated_read("call-5"),
-        repeated_read("call-6"),
         StreamResult {
             assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
             tool_calls: vec![],
@@ -847,8 +845,6 @@ async fn agent_turn_stops_with_repeated_no_progress_when_tools_keep_failing() {
         missing_read("call-2", "missing-2.txt"),
         missing_read("call-3", "missing-3.txt"),
         missing_read("call-4", "missing-4.txt"),
-        missing_read("call-5", "missing-5.txt"),
-        missing_read("call-6", "missing-6.txt"),
         StreamResult {
             assistant_content: vec![serde_json::json!({"type": "text", "text": "done"})],
             tool_calls: vec![],
@@ -4282,18 +4278,6 @@ fn restore_state_preserves_goal_ledger() {
     assert_eq!(current.tasks[1].status, GoalTaskStatus::Completed);
 
     let _ = std::fs::remove_dir_all(workspace);
-}
-
-#[test]
-fn session_status_resuming_as_str() {
-    assert_eq!(SessionStatus::Resuming.as_str(), "resuming");
-    assert_eq!(SessionStatus::Starting.as_str(), "starting");
-    assert_eq!(SessionStatus::Running.as_str(), "running");
-    assert_eq!(SessionStatus::Stopped.as_str(), "stopped");
-    assert_eq!(
-        SessionStatus::Error("timeout".to_string()).as_str(),
-        "error"
-    );
 }
 
 #[test]

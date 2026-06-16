@@ -25,7 +25,7 @@ export function persistedSessionFromBackend(info: SessionInfo): PersistedSession
 }
 
 function coerceSessionStatus(status: string): SessionState["status"] {
-  if (status === "running" || status === "error" || status === "resuming") return status;
+  if (status === "running" || status === "error") return status;
   return "stopped";
 }
 

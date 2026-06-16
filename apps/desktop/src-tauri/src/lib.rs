@@ -3,26 +3,18 @@
 pub mod adapters;
 mod agent;
 mod app_metadata;
-mod autosave;
 mod consts;
 pub mod continuity;
-pub mod diagnostics;
 pub mod eval_headless;
 mod executor;
 mod forge_wiki;
-pub mod gateway;
 pub mod harness;
 mod ipc;
-mod log_store;
 mod logger;
 mod memory;
 mod parser;
 mod process_runner;
-mod profile;
 mod protocol;
-pub mod scheduler;
-pub mod service;
-pub mod session_store;
 pub mod settings;
 mod state;
 mod transcript;
@@ -32,7 +24,6 @@ mod workspace_safety;
 use harness::Harness;
 use state::AppState;
 use std::sync::Arc;
-use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -65,42 +56,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
-        .setup(|app| {
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let state: Arc<AppState> = handle.state::<Arc<AppState>>().inner().clone();
-                ipc::session_lifecycle::startup_restore_active_session(&state, &handle).await;
-            });
-            // Phase 2.4: spawn the session watchdog background task.
-            diagnostics::watchdog::spawn_session_watchdog(app.handle().clone());
-            diagnostics::watchdog::spawn_gateway_watchdog(app.handle().clone());
-            std::thread::spawn(|| {
-                match diagnostics::update_repair::execute_update_repair_for_current_version() {
-                    Ok(run) if run.executed => crate::app_log!(
-                        "INFO",
-                        "Update repair checked version {}: success={}, needed={}, actions={}",
-                        run.app_version,
-                        run.repair_run.success,
-                        run.repair_run.plan.needed,
-                        run.repair_run.results.len()
-                    ),
-                    Ok(run) => crate::app_log!(
-                        "INFO",
-                        "Update repair already checked for version {}",
-                        run.app_version
-                    ),
-                    Err(error) => crate::app_log!("WARN", "Update repair check failed: {error}"),
-                }
-            });
-            ipc::session_lifecycle::spawn_gateway_session_heartbeat(app.handle().clone());
-            ipc::session_input_inbox::spawn_gateway_session_input_poller(app.handle().clone());
+        .setup(|_app| {
             crate::app_log!("INFO", "DeepSeek Agent started");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ipc::handlers::create_session,
-            ipc::a2a_handlers::get_agent_a2a_state,
-            ipc::a2a_handlers::list_agent_a2a_states,
             ipc::mcp_context::list_mcp_context_sources,
             ipc::handlers::resume_session,
             ipc::handlers::send_input,
@@ -108,11 +69,6 @@ pub fn run() {
             ipc::session_lifecycle::kill_session,
             ipc::session_lifecycle::delete_session,
             ipc::session_lifecycle::list_sessions,
-            ipc::session_store_handlers::get_session_store_stats,
-            ipc::session_store_handlers::search_session_store,
-            ipc::session_store_handlers::rename_session_snapshot,
-            ipc::session_store_handlers::export_session_store,
-            ipc::session_store_handlers::prune_session_store,
             app_metadata::load_app_metadata,
             app_metadata::save_app_metadata,
             ipc::confirmations::confirm_response,
@@ -126,13 +82,6 @@ pub fn run() {
             ipc::capability_handlers::list_capabilities,
             ipc::capability_handlers::toggle_capability,
             ipc::capability_handlers::install_skill,
-            ipc::capability_handlers::list_ecosystem_items,
-            ipc::capability_handlers::set_ecosystem_enabled,
-            ipc::capability_handlers::get_tool_inventory,
-            ipc::capability_handlers::configure_ecosystem_item,
-            ipc::permission_handlers::list_permission_rules,
-            ipc::permission_handlers::set_permission_rule,
-            ipc::permission_handlers::reset_permission_rule,
             ipc::workspace_files::open_file,
             ipc::workspace_files::preview_file,
             ipc::project_runtime::get_project_runtime_status,
@@ -147,13 +96,6 @@ pub fn run() {
             ipc::memory_handlers::forget_memory,
             ipc::memory_handlers::pin_memory,
             ipc::memory_handlers::select_context_memories,
-            ipc::profile_handlers::list_profiles,
-            ipc::profile_handlers::upsert_profile,
-            ipc::profile_handlers::delete_profile,
-            ipc::profile_handlers::set_active_profile,
-            ipc::memory_handlers::list_memory_facts,
-            ipc::memory_handlers::upsert_memory_fact,
-            ipc::memory_handlers::delete_memory_fact,
             ipc::workflow_handlers::get_workflow_state,
             ipc::workflow_handlers::override_workflow_route,
             ipc::forge_wiki_handlers::get_forge_wiki_state,
@@ -165,43 +107,7 @@ pub fn run() {
             ipc::forge_wiki_handlers::accept_forge_wiki_update_proposal,
             ipc::forge_wiki_handlers::discard_forge_wiki_update_proposal,
             transcript::load_session_transcript,
-            ipc::diagnostics_handlers::get_diagnostics_report,
-            ipc::diagnostics_handlers::get_gateway_runtime_status,
-            ipc::diagnostics_handlers::enqueue_gateway_trigger,
-            ipc::diagnostics_handlers::list_gateway_triggers,
-            ipc::diagnostics_handlers::list_gateway_sessions,
-            ipc::diagnostics_handlers::cancel_gateway_trigger,
-            ipc::diagnostics_handlers::replay_gateway_trigger_run,
-            ipc::diagnostics_handlers::get_gateway_trigger_run,
-            ipc::diagnostics_handlers::attach_gateway_session,
-            ipc::diagnostics_handlers::get_gateway_session_snapshot,
-            ipc::diagnostics_handlers::tail_gateway_session_events,
-            ipc::diagnostics_handlers::enqueue_gateway_session_input,
-            ipc::diagnostics_handlers::get_recent_logs,
-            ipc::diagnostics_handlers::run_repair_action,
-            ipc::diagnostics_handlers::list_repair_actions,
-            ipc::scheduler_handlers::list_scheduled_tasks,
-            ipc::scheduler_handlers::upsert_scheduled_task,
-            ipc::scheduler_handlers::delete_scheduled_task,
-            ipc::scheduler_handlers::set_scheduled_task_enabled,
-            ipc::scheduler_handlers::run_scheduled_task_now,
-            ipc::service_handlers::get_service_status,
-            ipc::service_handlers::set_autostart,
         ])
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                crate::autosave::flush_all_sessions(app_handle);
-                if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
-                    let state = state.inner().clone();
-                    tauri::async_runtime::block_on(async move {
-                        crate::ipc::session_lifecycle::unregister_all_gateway_sessions_best_effort(
-                            &state,
-                        )
-                        .await;
-                    });
-                }
-            }
-        });
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }

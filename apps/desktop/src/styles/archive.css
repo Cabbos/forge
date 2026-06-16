@@ -12,18 +12,6 @@
     background: var(--forge-material-overlay);
   }
 
-  .forge-app-shell[data-design-version="v3-light-workbench"] .forge-inspector {
-    background: #ECE2D4;
-  }
-
-  .forge-app-shell[data-design-version="v3-light-workbench"] .forge-inspector-subtitle {
-    color: rgb(95, 93, 85);
-  }
-
-  .forge-app-shell[data-design-version="v3-light-workbench"] .forge-archive-summary-value {
-    color: rgb(36, 42, 36);
-  }
-
   .forge-inspector-header {
     display: flex;
     min-height: var(--forge-titlebar-height);

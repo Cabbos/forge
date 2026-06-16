@@ -34,9 +34,6 @@ pub fn log(level: &str, message: &str) {
             .unwrap_or(0);
         let _ = writeln!(f, "[{}] {} {}", secs, level, message);
     }
-
-    // Also write to the structured log store.
-    crate::log_store::log_event(level, "app", message, None);
 }
 
 pub fn log_path_str() -> String {

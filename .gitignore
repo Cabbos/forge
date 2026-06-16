@@ -14,11 +14,9 @@ target/
 .env
 .env.*
 !.env.example
-.forge/
 .forge/*.db
 .forge/*.db-shm
 .forge/*.db-wal
-.claude/worktrees/
 
 # Caches
 .DS_Store

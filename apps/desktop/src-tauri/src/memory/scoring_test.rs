@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use super::super::scoring::{select_relevant_memories, select_relevant_memories_with_audit};
+    use super::super::scoring::{
+        select_relevant_memories, select_relevant_memories_with_audit,
+    };
     use crate::memory::model::{
         MemoryCategory, MemoryScope, MemoryStatus, RejectReason, WikiMemory,
     };
@@ -153,11 +155,7 @@ mod tests {
         memory.confidence = 0.8;
         let memories = vec![memory];
         let selected = select_relevant_memories(&memories, "content", Some("/tmp/forge"), 5);
-        assert_eq!(
-            selected.len(),
-            1,
-            "high confidence candidate should be selected"
-        );
+        assert_eq!(selected.len(), 1, "high confidence candidate should be selected");
         assert!(selected[0].reason.contains("自动记录"));
     }
 
@@ -174,10 +172,7 @@ mod tests {
         )];
         let selected = select_relevant_memories(&memories, "query", Some("/tmp/forge"), 5);
         assert_eq!(selected.len(), 1);
-        assert!(
-            selected[0].score > 3.0,
-            "pinned memory should have high score"
-        );
+        assert!(selected[0].score > 3.0, "pinned memory should have high score");
         assert!(selected[0].reason.contains("已固定"));
     }
 
@@ -317,12 +312,8 @@ mod tests {
             "body",
             Some("/tmp/forge"),
         )];
-        let selected =
-            select_relevant_memories(&memories, "completely unrelated", Some("/tmp/forge"), 5);
-        assert!(
-            selected.is_empty(),
-            "no relevance signal should reject memory"
-        );
+        let selected = select_relevant_memories(&memories, "completely unrelated", Some("/tmp/forge"), 5);
+        assert!(selected.is_empty(), "no relevance signal should reject memory");
     }
 
     #[test]
@@ -413,8 +404,7 @@ mod tests {
             None, // No project_path
         );
         let memories = vec![memory];
-        let audit =
-            select_relevant_memories_with_audit(&memories, "继续修复", Some("/tmp/forge"), 5);
+        let audit = select_relevant_memories_with_audit(&memories, "继续修复", Some("/tmp/forge"), 5);
         assert!(audit.selected.is_empty());
         assert_eq!(audit.rejected.len(), 1);
         assert_eq!(audit.rejected[0].reason, RejectReason::OrphanProjectMemory);
@@ -434,10 +424,7 @@ mod tests {
         let memories = vec![memory];
         let audit = select_relevant_memories_with_audit(&memories, "项目", Some("/tmp/forge"), 5);
         assert!(
-            !audit
-                .rejected
-                .iter()
-                .any(|r| r.reason == RejectReason::OrphanProjectMemory),
+            !audit.rejected.iter().any(|r| r.reason == RejectReason::OrphanProjectMemory),
             "ProjectFact should not be blocked by orphan gate"
         );
     }
@@ -455,10 +442,7 @@ mod tests {
         );
         let memories = vec![memory];
         let selected = select_relevant_memories(&memories, "不用重新问我这个项目是什么", None, 5);
-        assert!(
-            selected.is_empty(),
-            "task-like global preference should be rejected"
-        );
+        assert!(selected.is_empty(), "task-like global preference should be rejected");
     }
 
     #[test]
@@ -476,9 +460,6 @@ mod tests {
         // Query with no matching keywords and no category signal
         let audit = select_relevant_memories_with_audit(&memories, "zzz", Some("/tmp/forge"), 5);
         assert!(audit.selected.is_empty());
-        assert!(audit
-            .rejected
-            .iter()
-            .any(|r| r.reason == RejectReason::NoRelevanceSignal));
+        assert!(audit.rejected.iter().any(|r| r.reason == RejectReason::NoRelevanceSignal));
     }
 }

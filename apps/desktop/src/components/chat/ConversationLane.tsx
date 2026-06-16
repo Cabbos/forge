@@ -1,6 +1,6 @@
 import type { Ref } from "react";
 import { ToolActivityGroup } from "@/components/messages/ToolActivityGroup";
-import { StartReadinessCard } from "@/components/session/StartReadinessCard";
+import { StartReadinessCard } from "@/components/workbench/StartReadinessCard";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import type { ConversationTurn, MessageItem } from "@/components/chat/messageGrouping";
 

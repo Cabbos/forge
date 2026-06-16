@@ -1,11 +1,8 @@
 pub mod extraction;
-pub mod facts;
 pub mod hygiene;
 pub mod model;
 pub mod risk;
 pub mod scoring;
-#[cfg(test)]
-mod scoring_test;
 pub mod storage;
 
 pub use extraction::extract_candidates_from_user_message;

@@ -119,10 +119,7 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
             costUsd: 0,
             contextUsage: s.contextUsage ?? null,
             streaming: false,
-            // For Tauri, respect the backend-reported status (including "resuming").
-            // For IndexedDB-only hydration, force "stopped" so stale persisted state
-            // doesn't show a phantom running/resuming session.
-            status: tauriRuntime ? s.status : ("stopped" as const),
+            status: "stopped" as const,
           });
           if (s.workflowState) {
             workflowBySession.set(s.id, s.workflowState);

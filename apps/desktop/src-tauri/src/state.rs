@@ -2,11 +2,8 @@ use crate::agent::session::{AgentSession, SessionStatus};
 use crate::continuity::ContinuityService;
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
-use crate::memory::facts::MemoryFactStore;
 use crate::memory::WikiMemoryStore;
-use crate::profile::ProfileStore;
 use crate::protocol::events::DeliverySummary;
-use crate::scheduler::SchedulerStore;
 use crate::workflow::WorkflowState;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -31,13 +28,10 @@ pub struct AppState {
     pub harness: Arc<Harness>,
     pub dev_server: Arc<RwLock<Option<ManagedDevServer>>>,
     pub wiki_memory: Arc<WikiMemoryStore>,
-    pub memory_facts: Arc<MemoryFactStore>,
-    pub profiles: Arc<ProfileStore>,
     pub continuity: Arc<ContinuityService>,
     pub forge_wiki: Arc<ForgeWikiStore>,
     pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
     pub delivery_states: Arc<RwLock<HashMap<String, DeliverySummary>>>,
-    pub scheduler: Arc<SchedulerStore>,
 }
 
 impl AppState {
@@ -51,13 +45,10 @@ impl AppState {
             harness,
             dev_server: Arc::new(RwLock::new(None)),
             wiki_memory: Arc::new(WikiMemoryStore::default()),
-            memory_facts: Arc::new(MemoryFactStore::new(MemoryFactStore::default_path())),
-            profiles: Arc::new(ProfileStore::new(ProfileStore::default_path())),
             continuity,
             forge_wiki: Arc::new(ForgeWikiStore::new()),
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
             delivery_states: Arc::new(RwLock::new(HashMap::new())),
-            scheduler: Arc::new(SchedulerStore::new(SchedulerStore::default_path())),
         }
     }
 

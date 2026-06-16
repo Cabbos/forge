@@ -6,7 +6,6 @@ import {
 } from "../src/lib/headless.ts";
 import { renderJson, renderRunSummary } from "../src/lib/output.ts";
 import type { SpawnRunner } from "../src/lib/spawn.ts";
-import { parseRunArgs, runCommand } from "../src/commands/run.ts";
 
 describe("headless helpers", () => {
   test("builds the Forge headless cargo command", () => {
@@ -35,20 +34,6 @@ describe("headless helpers", () => {
       model,
       workspace_path: workspacePath,
     });
-  });
-
-  test("builds headless request with optional profile_id", () => {
-    const request = buildHeadlessRequest({
-      prompt: "test",
-      provider: "forge",
-      model: "local-forge",
-      workspacePath: "/repo",
-      profileId: "my-profile",
-    });
-    expect(request.profile_id).toBe("my-profile");
-    // Verify it serializes properly
-    const json = JSON.stringify(request);
-    expect(json).toContain('"profile_id":"my-profile"');
   });
 
   test("runs headless through injected spawn, writes JSON stdin, and parses JSON stdout", async () => {
@@ -143,172 +128,22 @@ describe("headless helpers", () => {
   });
 });
 
-// ── parseRunArgs ─────────────────────────────────────────────────────────────
-
-describe("parseRunArgs", () => {
-  test("parses --profile flag with long form", () => {
-    const result = parseRunArgs(["--profile", "work", "--prompt", "hello"]);
-    expect(result.profileId).toBe("work");
-    expect(result.prompt).toBe("hello");
+describe("run output helpers", () => {
+  test("renders pretty JSON with trailing newline", () => {
+    expect(renderJson({ ok: true })).toBe('{\n  "ok": true\n}\n');
   });
 
-  test("parses -p short flag", () => {
-    const result = parseRunArgs(["-p", "work", "--prompt", "hello"]);
-    expect(result.profileId).toBe("work");
-    expect(result.prompt).toBe("hello");
-  });
-
-  test("parses positional prompt without --prompt flag", () => {
-    const result = parseRunArgs(["--profile", "work", "do something"]);
-    expect(result.profileId).toBe("work");
-    expect(result.prompt).toBe("do something");
-  });
-
-  test("rejects --profile with missing value (end of args)", () => {
-    expect(() => parseRunArgs(["--profile"])).toThrow(
-      "--profile requires a value",
+  test("renders a compact run summary", () => {
+    expect(
+      renderRunSummary({
+        provider: "forge",
+        model: "local-forge",
+        changed_files: ["src/a.ts", "src/b.ts"],
+        verification_result: { passed: true },
+        final_answer: "Applied the change.",
+      }),
+    ).toBe(
+      "Provider: forge\nModel: local-forge\nChanged files: 2\nValidation: passed\nFinal answer: Applied the change.\n",
     );
-  });
-
-  test("rejects --profile with next arg being another flag", () => {
-    expect(() => parseRunArgs(["--profile", "--prompt", "hello"])).toThrow(
-      "--profile requires a value",
-    );
-  });
-
-  test("rejects -p with missing value", () => {
-    expect(() => parseRunArgs(["-p"])).toThrow(
-      "--profile requires a value",
-    );
-  });
-
-  test("rejects empty prompt", () => {
-    expect(() => parseRunArgs([])).toThrow("prompt is required");
-    expect(() => parseRunArgs(["--profile", "w"])).toThrow("prompt is required");
-    expect(() => parseRunArgs(["--prompt", "  "])).toThrow("prompt is required");
-  });
-
-  test("parses --provider and --model alongside --profile", () => {
-    const result = parseRunArgs([
-      "--profile", "work",
-      "--provider", "anthropic",
-      "--model", "claude-opus-4-8",
-      "--prompt", "hello",
-    ]);
-    expect(result.profileId).toBe("work");
-    expect(result.provider).toBe("anthropic");
-    expect(result.model).toBe("claude-opus-4-8");
-    expect(result.prompt).toBe("hello");
-  });
-
-  test("parses -m short flag for model", () => {
-    const result = parseRunArgs(["-p", "w", "-m", "gpt-5", "--prompt", "x"]);
-    expect(result.profileId).toBe("w");
-    expect(result.model).toBe("gpt-5");
-  });
-
-  test("parses --workspace / -w flag", () => {
-    const result = parseRunArgs(["--workspace", "/tmp/proj", "--prompt", "x"]);
-    expect(result.workspacePath).toBe("/tmp/proj");
-  });
-
-  test("profileId is undefined when --profile not provided", () => {
-    const result = parseRunArgs(["--prompt", "hello"]);
-    expect(result.profileId).toBeUndefined();
-  });
-
-  test("provider and model default to undefined when not provided", () => {
-    const result = parseRunArgs(["--prompt", "hello"]);
-    expect(result.provider).toBeUndefined();
-    expect(result.model).toBeUndefined();
-  });
-
-  test("first positional arg is prompt when no --prompt flag", () => {
-    const result = parseRunArgs(["ship the fix"]);
-    expect(result.prompt).toBe("ship the fix");
-  });
-
-  test("skips unknown flags without crashing", () => {
-    const result = parseRunArgs(["--unknown-flag", "value", "--prompt", "hello"]);
-    expect(result.prompt).toBe("hello");
-  });
-});
-
-// ── runCommand integration ────────────────────────────────────────────────────
-
-describe("runCommand", () => {
-  test("returns 0 and prints JSON on successful headless run", async () => {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const spawn: SpawnRunner = async () => ({
-      exitCode: 0,
-      stdout: JSON.stringify({ ok: true }),
-      stderr: "",
-    });
-
-    const exitCode = await runCommand(
-      ["--profile", "work", "--prompt", "ship it"],
-      {
-        io: {
-          stdout: (t) => stdout.push(t),
-          stderr: (t) => stderr.push(t),
-        },
-        spawn,
-        cwd: "/repo/forge",
-      },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(stderr).toHaveLength(0);
-    const combined = stdout.join("");
-    expect(combined).toContain("Starting headless run with profile: work");
-    expect(combined).toContain('"ok": true');
-  });
-
-  test("returns 1 and prints error on parse failure", async () => {
-    const stderr: string[] = [];
-    const exitCode = await runCommand([], {
-      io: {
-        stdout: () => {},
-        stderr: (t) => stderr.push(t),
-      },
-    });
-
-    expect(exitCode).toBe(1);
-    expect(stderr.join("")).toContain("prompt is required");
-  });
-
-  test("returns 1 and prints error when profile value is missing", async () => {
-    const stderr: string[] = [];
-    const exitCode = await runCommand(["--profile", "--prompt", "hello"], {
-      io: {
-        stdout: () => {},
-        stderr: (t) => stderr.push(t),
-      },
-    });
-
-    expect(exitCode).toBe(1);
-    expect(stderr.join("")).toContain("--profile requires a value");
-  });
-
-  test("runs without --profile flag (profileId undefined)", async () => {
-    const stdout: string[] = [];
-    const spawn: SpawnRunner = async () => ({
-      exitCode: 0,
-      stdout: JSON.stringify({ ok: true }),
-      stderr: "",
-    });
-
-    const exitCode = await runCommand(["--prompt", "hello"], {
-      io: {
-        stdout: (t) => stdout.push(t),
-        stderr: () => {},
-      },
-      spawn,
-      cwd: "/repo/forge",
-    });
-
-    expect(exitCode).toBe(0);
-    expect(stdout.join("")).toContain("profile: (none)");
   });
 });

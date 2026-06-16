@@ -6,8 +6,6 @@ export type HeadlessRequest = {
   provider: string;
   model: string;
   workspace_path: string;
-  /** Optional profile id for future runtime profile selection (Phase 5-B). */
-  profile_id?: string;
 };
 
 export type BuildHeadlessRequestInput = {
@@ -15,8 +13,6 @@ export type BuildHeadlessRequestInput = {
   provider: string;
   model: string;
   workspacePath: string;
-  /** Optional profile id for future runtime profile selection (Phase 5-B). */
-  profileId?: string;
 };
 
 export type HeadlessCommandPlan = {
@@ -36,7 +32,6 @@ export function buildHeadlessRequest(input: BuildHeadlessRequestInput): Headless
     provider: input.provider,
     model: input.model,
     workspace_path: input.workspacePath,
-    ...(input.profileId ? { profile_id: input.profileId } : {}),
   };
 }
 

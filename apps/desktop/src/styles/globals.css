@@ -22,7 +22,6 @@
 @import "./command.css";
 @import "./answer-index.css";
 @import "./settings.css";
-@import "./history.css";
 
 @tailwind base;
 @tailwind components;
@@ -95,7 +94,6 @@
     --forge-material-overlay: rgba(254, 252, 248, 0.97);
     --forge-material-quiet: #FAF7F1;
     --forge-material-shadow: 0 10px 24px rgba(79, 62, 42, 0.065), 0 1px 0 rgba(255, 251, 244, 0.88) inset;
-    --forge-material-shadow-strong: 0 14px 32px rgba(79, 62, 42, 0.11), 0 0 0 1px rgba(184, 138, 86, 0.08), 0 1px 0 rgba(255, 251, 244, 0.9) inset;
     --forge-code-bg: #FEFCF8;
     --forge-code-text: #2B2925;
     --forge-code-header: #8A5C2C;

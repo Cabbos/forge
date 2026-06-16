@@ -5,13 +5,17 @@ use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::auto_compact::AutoCompactGuard;
-use crate::agent::context_builder::{ContextBundle, ContextSourceKind, HiddenContextPart};
+use crate::agent::context_builder::{
+    ContextBundle, ContextSourceKind, HiddenContextPart,
+};
 use crate::agent::event_sink::EventEmitter;
 use crate::agent::goal_state::GoalLedger;
 use crate::agent::loop_guard::LoopGuard;
 use crate::agent::session_events;
 pub(crate) use crate::agent::session_guards::TurnInflightGuard;
-use crate::agent::session_guards::{lock_unpoisoned, try_begin_turn};
+use crate::agent::session_guards::{
+    lock_unpoisoned, try_begin_turn,
+};
 use crate::agent::snapshot::AgentSessionSnapshot;
 use crate::agent::tool_results::repair_tool_use_adjacency;
 use crate::agent::turn_metrics::{TurnMetrics, TurnUsageSnapshot};
@@ -23,11 +27,15 @@ use crate::agent::turn_state::{
 #[cfg(test)]
 pub(crate) use crate::agent::auto_compact::CompactStats;
 #[cfg(test)]
-pub(crate) use crate::agent::session::r#loop::{final_summary_text, loop_guard_recovery_detail};
-#[cfg(test)]
-pub(crate) use crate::agent::session::tools::{tool_batch_signature, tool_category_signature};
-#[cfg(test)]
 pub(crate) use crate::agent::turn_state::running_tool_trace;
+#[cfg(test)]
+pub(crate) use crate::agent::session::r#loop::{
+    final_summary_text, loop_guard_recovery_detail,
+};
+#[cfg(test)]
+pub(crate) use crate::agent::session::tools::{
+    tool_batch_signature, tool_category_signature,
+};
 use crate::harness::Harness;
 use crate::protocol::events::StreamEvent;
 
@@ -35,11 +43,7 @@ pub(crate) mod a2a;
 pub(crate) mod compact;
 pub(crate) mod lifecycle;
 pub(crate) mod r#loop;
-#[cfg(test)]
-mod loop_test;
 pub(crate) mod tools;
-#[cfg(test)]
-mod tools_test;
 
 const MAX_AGENT_TOOL_ROUNDS: usize = 80;
 /// Max times the agent may auto-continue when the model returns no tool calls
@@ -369,12 +373,7 @@ impl AgentSession {
         app_handle: &tauri::AppHandle,
     ) {
         lifecycle::record_latest_checkpoint_status(
-            self,
-            is_git_repo,
-            dirty,
-            has_checkpoint,
-            label,
-            app_handle,
+            self, is_git_repo, dirty, has_checkpoint, label, app_handle,
         );
     }
 
@@ -399,10 +398,7 @@ impl AgentSession {
         session_events::context_compact_start_event(&self.id)
     }
 
-    pub(crate) fn context_compacted_event(
-        &self,
-        stats: &crate::agent::auto_compact::CompactStats,
-    ) -> StreamEvent {
+    pub(crate) fn context_compacted_event(&self, stats: &crate::agent::auto_compact::CompactStats) -> StreamEvent {
         session_events::context_compacted_event(&self.id, stats)
     }
 

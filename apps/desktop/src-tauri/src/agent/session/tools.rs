@@ -6,8 +6,12 @@ use crate::agent::event_sink::EventEmitter;
 use crate::agent::session::AgentSession;
 use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::time::now_ms;
-use crate::agent::tool_results::{build_tool_result_message_for_model, is_read_only_tool};
-use crate::agent::turn_state::{completed_tool_trace, is_errorish_tool_result, running_tool_trace};
+use crate::agent::tool_results::{
+    build_tool_result_message_for_model, is_read_only_tool,
+};
+use crate::agent::turn_state::{
+    completed_tool_trace, is_errorish_tool_result, running_tool_trace,
+};
 
 impl AgentSession {
     /// Execute a batch of tool calls: sub-agents, read tools in parallel, write tools sequentially.
@@ -85,15 +89,16 @@ impl AgentSession {
                     .unwrap_or_else(|| Arc::new(Notify::new()));
                 let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let wd = self.harness.working_dir.clone();
-                let sub_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
-                    Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
-                        app.clone(),
-                    ))
-                } else if let Some(shared) = tool_emitter_override.clone() {
-                    shared
-                } else {
-                    Arc::new(crate::agent::event_sink::NoopEventEmitter)
-                };
+                let sub_emitter: Arc<dyn EventEmitter> =
+                    if let Some(app) = app_handle {
+                        Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                            app.clone(),
+                        ))
+                    } else if let Some(shared) = tool_emitter_override.clone() {
+                        shared
+                    } else {
+                        Arc::new(crate::agent::event_sink::NoopEventEmitter)
+                    };
                 {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
                     bus.start_task(&a2a_task_id, now_ms());
@@ -232,8 +237,8 @@ impl AgentSession {
                         sub_results.push((idx, api_text));
                     }
                     Err(err) => {
-                        let message =
-                            crate::agent::session_guards::sub_agent_join_error_message(&err);
+                        let message = crate::agent::session_guards::sub_agent_join_error_message(
+                            &err);
                         {
                             let mut bus = lock_unpoisoned(&self.a2a_bus);
                             crate::agent::a2a::supervisor::record_child_failure(
@@ -276,15 +281,16 @@ impl AgentSession {
                 let sid = self.id.clone();
                 let name = tc.name.clone();
                 let input = tc.input.clone();
-                let tool_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
-                    Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
-                        app.clone(),
-                    ))
-                } else if let Some(shared) = tool_emitter_override.clone() {
-                    shared
-                } else {
-                    Arc::new(crate::agent::event_sink::NoopEventEmitter)
-                };
+                let tool_emitter: Arc<dyn EventEmitter> =
+                    if let Some(app) = app_handle {
+                        Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                            app.clone(),
+                        ))
+                    } else if let Some(shared) = tool_emitter_override.clone() {
+                        shared
+                    } else {
+                        Arc::new(crate::agent::event_sink::NoopEventEmitter)
+                    };
                 let id = tc.id.clone();
                 let started_at_ms = now_ms();
                 let cancel_for_tool = cancel.clone();
@@ -331,15 +337,16 @@ impl AgentSession {
                 running_tool_trace(tc.id.clone(), tc.name.clone(), &tc.input, started_at_ms),
                 emitter,
             );
-            let tool_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
-                Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
-                    app.clone(),
-                ))
-            } else if let Some(shared) = tool_emitter_override.clone() {
-                shared
-            } else {
-                Arc::new(crate::agent::event_sink::NoopEventEmitter)
-            };
+            let tool_emitter: Arc<dyn EventEmitter> =
+                if let Some(app) = app_handle {
+                    Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                        app.clone(),
+                    ))
+                } else if let Some(shared) = tool_emitter_override.clone() {
+                    shared
+                } else {
+                    Arc::new(crate::agent::event_sink::NoopEventEmitter)
+                };
             let result = self
                 .harness
                 .execute_tool_with_emitter(

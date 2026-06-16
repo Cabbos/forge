@@ -1,7 +1,7 @@
 import type { KeyboardEventHandler, RefObject } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ArrowUp, FolderOpen, SquarePen } from "lucide-react";
-import { StartReadinessCard } from "@/components/session/StartReadinessCard";
+import { StartReadinessCard } from "@/components/workbench/StartReadinessCard";
 import forgeMark from "@/assets/forge-mark.svg";
 
 const EMPTY_START_HINTS = [

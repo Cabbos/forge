@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { Check, ChevronDown, Edit3, Pin, Trash2, X } from "lucide-react";
 import type {
   ForgeWikiUpdateProposal,
@@ -124,14 +123,14 @@ export function MemoryRow({
             {memory.body}
           </div>
           {canExpand && (
-            <ButtonPrimitive
+            <button
               type="button"
               className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground"
               onClick={() => setExpanded((value) => !value)}
             >
               <ChevronDown className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
               {expanded ? "收起详情" : "展开详情"}
-            </ButtonPrimitive>
+            </button>
           )}
           {intentLabel && (
             <RecordMetaGrid

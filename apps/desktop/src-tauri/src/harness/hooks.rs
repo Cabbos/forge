@@ -288,7 +288,7 @@ impl Hook for WorkspaceBoundaryHook {
     }
 }
 
-pub(crate) fn sensitive_tool_text(tool: &str, input: &serde_json::Value) -> Vec<String> {
+fn sensitive_tool_text(tool: &str, input: &serde_json::Value) -> Vec<String> {
     if mcp::is_public_tool_name(tool) {
         return collect_json_strings(input);
     }
@@ -313,7 +313,7 @@ pub(crate) fn sensitive_tool_text(tool: &str, input: &serde_json::Value) -> Vec<
     }
 }
 
-pub(crate) fn collect_json_strings(value: &serde_json::Value) -> Vec<String> {
+fn collect_json_strings(value: &serde_json::Value) -> Vec<String> {
     match value {
         serde_json::Value::String(text) => vec![text.clone()],
         serde_json::Value::Array(values) => values.iter().flat_map(collect_json_strings).collect(),
@@ -324,7 +324,7 @@ pub(crate) fn collect_json_strings(value: &serde_json::Value) -> Vec<String> {
     }
 }
 
-pub(crate) fn looks_like_secret(text: &str) -> bool {
+fn looks_like_secret(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return false;
@@ -354,10 +354,7 @@ pub(crate) fn looks_like_secret(text: &str) -> bool {
     })
 }
 
-pub(crate) fn ensure_path_in_workspace(
-    working_dir: &std::path::Path,
-    path: &str,
-) -> Result<(), String> {
+fn ensure_path_in_workspace(working_dir: &std::path::Path, path: &str) -> Result<(), String> {
     let requested = std::path::Path::new(path);
     let resolved = if requested.is_absolute() {
         requested.to_path_buf()

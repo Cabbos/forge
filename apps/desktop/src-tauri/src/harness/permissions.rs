@@ -6,21 +6,6 @@ use crate::harness::db::Database;
 use crate::harness::mcp;
 use crate::harness::shell_policy::{classify_shell_command, ShellPolicyDecision, ShellSafetyLevel};
 
-const DEFAULT_ALLOWED_PATTERNS: &[&str] = &[
-    "read_file",
-    "read",
-    "list_directory",
-    "ls",
-    "list",
-    "search_files",
-    "glob",
-    "search_content",
-    "grep",
-    "web_search",
-    "web_fetch",
-    "git_diff",
-];
-
 #[derive(Debug, Clone)]
 pub enum PermissionDecision {
     Allow,
@@ -48,12 +33,20 @@ pub struct PermissionGate {
 impl PermissionGate {
     pub fn new(db: Arc<Database>) -> Self {
         Self {
-            allowed_patterns: RwLock::new(
-                DEFAULT_ALLOWED_PATTERNS
-                    .iter()
-                    .map(|pattern| (*pattern).to_string())
-                    .collect(),
-            ),
+            allowed_patterns: RwLock::new(vec![
+                "read_file".into(),
+                "read".into(),
+                "list_directory".into(),
+                "ls".into(),
+                "list".into(),
+                "search_files".into(),
+                "glob".into(),
+                "search_content".into(),
+                "grep".into(),
+                "web_search".into(),
+                "web_fetch".into(),
+                "git_diff".into(),
+            ]),
             session_cache: RwLock::new(HashMap::new()),
             db,
         }
@@ -67,15 +60,6 @@ impl PermissionGate {
         working_dir: &std::path::Path,
     ) -> PermissionDecision {
         let canonical = canonical_tool(tool);
-        if self.db.is_permission_denied(canonical).unwrap_or(false) {
-            return PermissionDecision::Deny {
-                reason: format!(
-                    "工具 `{}` 已被加入拒绝列表。请在权限设置中重置后再试。",
-                    canonical
-                ),
-            };
-        }
-
         match canonical {
             "write_to_file" | "edit_file" => {
                 if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
@@ -152,9 +136,6 @@ impl PermissionGate {
         let tool = canonical_tool(tool);
 
         // 0. Check persistent database first
-        if self.db.is_permission_denied(tool).unwrap_or(false) {
-            return false;
-        }
         if self.db.is_permission_approved(tool).unwrap_or(false) {
             return true;
         }
@@ -201,25 +182,8 @@ impl PermissionGate {
     /// Permanently approve a tool: add to in-memory allowed patterns and persist to database.
     pub async fn approve_permanently(&self, tool: &str) {
         let tool = canonical_tool(tool);
-        let mut patterns = self.allowed_patterns.write().await;
-        if !patterns.iter().any(|pattern| pattern == tool) {
-            patterns.push(tool.to_string());
-        }
+        self.allowed_patterns.write().await.push(tool.to_string());
         let _ = self.db.upsert_permission(tool, true);
-    }
-
-    /// Permanently deny a tool until the user resets its rule.
-    pub async fn deny_permanently(&self, tool: &str) {
-        let tool = canonical_tool(tool);
-        self.remove_custom_allowed_pattern(tool).await;
-        let _ = self.db.upsert_permission(tool, false);
-    }
-
-    /// Remove a persisted allow/deny rule and fall back to the default policy.
-    pub async fn reset_permission(&self, tool: &str) {
-        let tool = canonical_tool(tool);
-        self.remove_custom_allowed_pattern(tool).await;
-        let _ = self.db.delete_permission(tool);
     }
 
     /// Check if a tool needs confirmation. Returns Some(question) if it does.
@@ -239,16 +203,6 @@ impl PermissionGate {
     /// Clear session cache on session stop.
     pub async fn clear_session(&self, session_id: &str) {
         self.session_cache.write().await.remove(session_id);
-    }
-
-    async fn remove_custom_allowed_pattern(&self, tool: &str) {
-        if DEFAULT_ALLOWED_PATTERNS.contains(&tool) {
-            return;
-        }
-        self.allowed_patterns
-            .write()
-            .await
-            .retain(|pattern| pattern != tool);
     }
 }
 

@@ -152,23 +152,6 @@ impl GoalLedger {
         true
     }
 
-    /// Returns true if the active goal has at least one task in Pending or
-    /// InProgress status — meaning there is still work to do.
-    pub(crate) fn has_pending_tasks(&self) -> bool {
-        let Some(goal) = self.current.as_ref() else {
-            return false;
-        };
-        if goal.status != GoalStatus::Active {
-            return false;
-        }
-        goal.tasks.iter().any(|t| {
-            matches!(
-                t.status,
-                GoalTaskStatus::Pending | GoalTaskStatus::InProgress
-            )
-        })
-    }
-
     pub(crate) fn normalize_for_resume(&mut self, timestamp_ms: u64) {
         let Some(goal) = self.current.as_mut() else {
             return;
@@ -313,39 +296,5 @@ mod tests {
             Some("task was in progress when the session was restored")
         );
         assert_eq!(active.updated_at_ms, 30);
-    }
-
-    #[test]
-    fn has_pending_tasks_returns_true_when_tasks_are_pending() {
-        let ledger = GoalLedger::new_active("g", "o", vec!["t1".to_string(), "t2".to_string()], 1);
-        assert!(ledger.has_pending_tasks());
-    }
-
-    #[test]
-    fn has_pending_tasks_returns_true_when_task_is_in_progress() {
-        let mut ledger = GoalLedger::new_active("g", "o", vec!["t1".to_string()], 1);
-        ledger.update_task_status("task-1", GoalTaskStatus::InProgress, 2);
-        assert!(ledger.has_pending_tasks());
-    }
-
-    #[test]
-    fn has_pending_tasks_returns_false_when_all_tasks_completed() {
-        let mut ledger = GoalLedger::new_active("g", "o", vec!["t1".to_string()], 1);
-        ledger.update_task_status("task-1", GoalTaskStatus::Completed, 2);
-        assert!(!ledger.has_pending_tasks());
-    }
-
-    #[test]
-    fn has_pending_tasks_returns_false_when_no_active_goal() {
-        let ledger = GoalLedger { current: None };
-        assert!(!ledger.has_pending_tasks());
-    }
-
-    #[test]
-    fn has_pending_tasks_returns_false_when_goal_is_blocked() {
-        let mut ledger = GoalLedger::new_active("g", "o", vec!["t1".to_string()], 1);
-        ledger.complete_active(2);
-        ledger.block_active("blocked", 3);
-        assert!(!ledger.has_pending_tasks());
     }
 }

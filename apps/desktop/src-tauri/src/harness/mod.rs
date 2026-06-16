@@ -6,12 +6,8 @@ pub mod capability;
 pub mod db;
 pub mod event_bus;
 pub mod hooks;
-#[cfg(test)]
-mod hooks_test;
 pub mod mcp;
 pub mod permissions;
-#[cfg(test)]
-mod permissions_test;
 pub mod registry;
 pub mod shell_policy;
 pub mod skills;
@@ -24,8 +20,6 @@ use tokio::sync::{Notify, RwLock};
 
 use crate::adapters::base::ToolDef;
 use crate::agent::event_sink::EventEmitter;
-use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
-use crate::agent::time::now_ms;
 use crate::consts::CONFIRM_TIMEOUT;
 use crate::executor::ToolExecutor;
 use crate::harness::capabilities::hooks::BuiltinHookCap;
@@ -54,12 +48,6 @@ pub struct Harness {
     /// Pending confirmations (block_id → oneshot sender)
     pub pending_confirms:
         Arc<RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
-    /// Live pending-confirm descriptors persisted in session snapshots so an
-    /// interrupted confirmation can be replayed on resume.
-    pub(crate) pending_confirm_descriptors: Arc<RwLock<Vec<PendingConfirmDescriptor>>>,
-    /// Live active tool-call descriptors persisted in session snapshots so
-    /// in-flight tool calls are visible after an unexpected quit.
-    pub(crate) active_tool_call_descriptors: Arc<RwLock<Vec<ActiveToolCallDescriptor>>>,
     /// Internal tool executor — used by the execute_tool pipeline.
     tool_executor: Arc<ToolExecutor>,
     /// Workspace MCP server definitions discovered from `.forge/mcp.json`.
@@ -116,13 +104,9 @@ impl Harness {
         let hook_engine = Arc::new(HookEngine::new());
         let skill_loader = Arc::new(SkillLoader::new_for_workspace(&working_dir));
         let event_bus = EventBus::new();
-        let pending_confirm_descriptors = Arc::new(RwLock::new(Vec::new()));
-        let active_tool_call_descriptors = Arc::new(RwLock::new(Vec::new()));
-        let tool_executor = Arc::new(ToolExecutor::new_with_descriptors(
+        let tool_executor = Arc::new(ToolExecutor::new(
             working_dir.clone(),
             pending_confirms.clone(),
-            pending_confirm_descriptors.clone(),
-            active_tool_call_descriptors.clone(),
         ));
 
         // Open SQLite database at <working_dir>/.forge/registry.db
@@ -224,8 +208,6 @@ impl Harness {
             mcp_resource_cache: Arc::new(RwLock::new(None)),
             mcp_prompt_cache: Arc::new(RwLock::new(None)),
             pending_confirms,
-            pending_confirm_descriptors,
-            active_tool_call_descriptors,
             working_dir,
         }
     }
@@ -719,22 +701,11 @@ impl Harness {
                             build_write_boundary(tool_name, &input, &self.working_dir, &kind);
                         let block_id = uuid::Uuid::now_v7().to_string();
                         let (tx, rx) = tokio::sync::oneshot::channel();
-                        let descriptor = PendingConfirmDescriptor::new(
-                            block_id.clone(),
-                            question.clone(),
-                            kind.clone(),
-                            now_ms(),
-                        )
-                        .with_boundary(boundary.clone());
                         {
                             self.pending_confirms
                                 .write()
                                 .await
                                 .insert(block_id.clone(), tx);
-                            self.pending_confirm_descriptors
-                                .write()
-                                .await
-                                .push(descriptor);
                         }
                         emitter.emit(crate::protocol::events::StreamEvent::ConfirmAsk {
                             session_id: session_id.to_string(),
@@ -742,7 +713,6 @@ impl Harness {
                             question,
                             kind,
                             boundary: Some(boundary),
-                            replayed_interrupted: false,
                         });
                         // Wait 120s for user response
                         let mut cancelled = false;
@@ -781,10 +751,6 @@ impl Harness {
                             }
                         };
                         self.pending_confirms.write().await.remove(&block_id);
-                        self.pending_confirm_descriptors
-                            .write()
-                            .await
-                            .retain(|d| d.block_id != block_id);
                         if !approved {
                             let result = if cancelled {
                                 "Tool execution cancelled".to_string()

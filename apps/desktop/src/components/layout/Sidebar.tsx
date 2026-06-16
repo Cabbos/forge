@@ -22,14 +22,11 @@ interface SidebarProps {
 }
 
 const LazySettingsDialog = lazy(() => import("@/components/settings/SettingsDialog").then((module) => ({ default: module.SettingsDialog })));
-const LazyHistoryDialog = lazy(() => import("@/components/history/HistoryView").then((module) => ({ default: module.HistoryDialog })));
 
 export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps) {
   const [sidebarNotice, setSidebarNotice] = useState<SidebarNotice | null>(null);
   const [settingsDialogMounted, setSettingsDialogMounted] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [historyDialogMounted, setHistoryDialogMounted] = useState(false);
-  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const setActiveSession = useStore((s) => s.setActiveSession);
   const sessions = useSessionList();
@@ -41,11 +38,6 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const openSettingsDialog = useCallback(() => {
     setSettingsDialogMounted(true);
     setSettingsDialogOpen(true);
-  }, []);
-
-  const openHistoryDialog = useCallback(() => {
-    setHistoryDialogMounted(true);
-    setHistoryDialogOpen(true);
   }, []);
 
   useEffect(() => {
@@ -111,15 +103,9 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
 
       <SidebarUtilityNav
         activePanel={activePanel}
-        onOpenHistory={openHistoryDialog}
         onOpenPanel={onOpenPanel}
         onOpenSettings={openSettingsDialog}
       />
-      {historyDialogMounted && (
-        <Suspense fallback={null}>
-          <LazyHistoryDialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen} />
-        </Suspense>
-      )}
       {settingsDialogMounted && (
         <Suspense fallback={null}>
           <LazySettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} hideTrigger />

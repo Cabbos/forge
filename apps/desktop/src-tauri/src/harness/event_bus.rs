@@ -155,7 +155,6 @@ impl EventBus {
             question: question.into(),
             kind: kind.into(),
             boundary: None,
-            replayed_interrupted: false,
         });
     }
 

@@ -1,5 +1,5 @@
 import { useActiveBlocks, useStore } from "@/store";
-import { AgentA2AInlineSummary } from "./AgentA2AInlineSummary";
+import { AgentA2AInlineSummary } from "@/components/messages/AgentA2ATimeline";
 import { MessageList } from "./MessageList";
 
 export function ChatView() {
