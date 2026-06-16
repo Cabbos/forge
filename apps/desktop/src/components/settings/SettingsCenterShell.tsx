@@ -19,6 +19,7 @@ import { ProfilesPanel } from "@/components/settings/ProfilesPanel";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
 import { SchedulerPanel } from "@/components/settings/SchedulerPanel";
 import { PermissionsPanel } from "@/components/settings/PermissionsPanel";
+import { CapabilityManager } from "@/components/settings/CapabilityManager";
 
 export type SettingsSectionId =
   | "general"
@@ -160,7 +161,12 @@ export function SettingsCenterShell({
             </SettingsReadOnlyPanel>
           )}
 
-          {activeSection === "tools" && <PermissionsPanel />}
+          {activeSection === "tools" && (
+            <>
+              <CapabilityManager />
+              <PermissionsPanel />
+            </>
+          )}
 
           {activeSection === "memory" && <MemoryPanel />}
 

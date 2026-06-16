@@ -191,6 +191,43 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       decision,
       created_at: "2026-06-16T00:00:00.000Z",
     });
+    const capabilityEnabledState = () => {
+      // @ts-expect-error acceptance mock
+      if (!window.__mockCapabilityEnabled || typeof window.__mockCapabilityEnabled !== "object") {
+        // @ts-expect-error acceptance mock
+        window.__mockCapabilityEnabled = {
+          read_file: true,
+          "code-review": true,
+          "mcp:obsidian": true,
+          "hook:pre-commit": true,
+        };
+      }
+      // @ts-expect-error acceptance mock
+      return window.__mockCapabilityEnabled as Record<string, boolean>;
+    };
+    const mockCapabilities = () => {
+      const enabled = capabilityEnabledState();
+      return [
+        { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: enabled.read_file !== false },
+        { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: enabled["code-review"] !== false },
+        { id: "mcp:obsidian", name: "Obsidian MCP", description: "Project notes", kind: "mcp_server", source: "~/.forge/mcp.json", version: "local", enabled: enabled["mcp:obsidian"] !== false },
+        { id: "hook:pre-commit", name: "Pre-commit Hook", description: "Run checks before commit", kind: "hook", source: "local", version: "1", enabled: enabled["hook:pre-commit"] !== false },
+      ];
+    };
+    const mockEcosystemItems = () => {
+      const enabled = capabilityEnabledState();
+      return [
+        { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: enabled.read_file !== false, status: "healthy", statusMessage: "Built-in tool is available.", configurable: false, configSummary: null },
+        { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: enabled["code-review"] !== false, status: "healthy", statusMessage: "Skill metadata loaded.", configurable: false, configSummary: null },
+        { id: "mcp:obsidian", name: "Obsidian MCP", description: "Project notes", kind: "mcp_server", source: "~/.forge/mcp.json", version: "local", enabled: enabled["mcp:obsidian"] !== false, status: "warning", statusMessage: "Token is missing.", configurable: true, configSummary: "command: obsidian-mcp --stdio" },
+        { id: "hook:pre-commit", name: "Pre-commit Hook", description: "Run checks before commit", kind: "hook", source: "local", version: "1", enabled: enabled["hook:pre-commit"] !== false, status: "healthy", statusMessage: "Hook is installed.", configurable: false, configSummary: null },
+      ];
+    };
+    const mockToolInventory = () => [
+      { id: "read_file", name: "Read File", description: "Read files", kind: "builtin", source: "forge", enabled: true },
+      { id: "write_to_file", name: "Write File", description: "Write files", kind: "builtin", source: "forge", enabled: true },
+      { id: "obsidian.search", name: "Search Notes", description: "Search Obsidian notes", kind: "mcp", source: "mcp:obsidian", enabled: false },
+    ];
     const schedulerTasks = () => {
       // @ts-expect-error mock
       if (!Array.isArray(window.__mockScheduledTasks)) window.__mockScheduledTasks = [];
@@ -716,10 +753,11 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "get_default_working_dir":
           return workingDir;
         case "list_capabilities":
-          return [
-            { id: "read_file", name: "File Reader", description: "Read files", kind: "tool", source: "builtin", version: "1.0", enabled: true },
-            { id: "code-review", name: "Code Review", description: "Review code", kind: "skill", source: "github", version: "1.2", enabled: true },
-          ];
+          return mockCapabilities();
+        case "list_ecosystem_items":
+          return mockEcosystemItems();
+        case "get_tool_inventory":
+          return mockToolInventory();
         case "search_workspace_files":
           {
             // @ts-expect-error mock
@@ -744,6 +782,14 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             return files.filter((path) => path.toLowerCase().includes(String(args.query ?? "").toLowerCase()));
           }
         case "toggle_capability":
+          // @ts-expect-error acceptance mock
+          window.__lastToggleCapabilityArgs = args;
+          capabilityEnabledState()[String(args.capabilityId ?? args.id)] = Boolean(args.enabled);
+          return undefined;
+        case "set_ecosystem_enabled":
+          // @ts-expect-error acceptance mock
+          window.__lastSetEcosystemEnabledArgs = args;
+          capabilityEnabledState()[String(args.id)] = Boolean(args.enabled);
           return undefined;
         case "get_api_key_status":
           // @ts-expect-error mock

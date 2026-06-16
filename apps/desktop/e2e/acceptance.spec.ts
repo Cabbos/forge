@@ -115,6 +115,45 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(resetArgs).toEqual({ toolName: "write_to_file" });
   });
 
+  test("settings tools surfaces ecosystem health, tool inventory, search, and toggles", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "工具" }).click();
+
+    const manager = dialog.getByTestId("capability-manager");
+    await expect(manager.getByTestId("capability-summary-strip")).toContainText("已启用");
+    await expect(manager.getByTestId("capability-summary-strip")).toContainText("4/4");
+    await expect(manager.getByTestId("capability-summary-strip")).toContainText("可用工具");
+    await expect(manager.getByTestId("capability-summary-strip")).toContainText("2/3");
+
+    await expect(manager).toContainText("Code Review");
+    await expect(manager).toContainText("Skill metadata loaded.");
+    await manager.getByRole("button", { name: "Code Review 详情" }).click();
+    await expect(dialog.getByRole("dialog", { name: "Code Review 详情" })).toContainText("正常");
+    await dialog.getByRole("button", { name: "关闭详情" }).click();
+
+    await manager.getByRole("tab", { name: /连接/ }).click();
+    await expect(manager).toContainText("Obsidian MCP");
+    await expect(manager).toContainText("Token is missing.");
+    await manager.getByRole("button", { name: "Obsidian MCP 详情" }).click();
+    await expect(dialog.getByRole("dialog", { name: "Obsidian MCP 详情" })).toContainText("command: obsidian-mcp --stdio");
+    await dialog.getByRole("button", { name: "关闭详情" }).click();
+
+    const search = manager.getByRole("textbox", { name: "搜索连接" });
+    await search.fill("linear");
+    await expect(manager).toContainText("没有匹配的连接");
+    await search.fill("obsidian");
+    await expect(manager).toContainText("Obsidian MCP");
+
+    await manager.getByRole("button", { name: "Obsidian MCP已启用" }).click();
+    await expect(manager.getByRole("button", { name: "Obsidian MCP已停用" })).toBeVisible();
+    const toggleArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastToggleCapabilityArgs;
+    });
+    expect(toggleArgs).toEqual({ capabilityId: "mcp:obsidian", enabled: false });
+  });
+
   test("settings scheduler supports create, run, disable, and delete round-trip", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog");

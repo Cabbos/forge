@@ -221,7 +221,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `src-tauri/src/protocol/events.rs`, `src-tauri/src/ipc/capability_handlers.rs`, `src/lib/protocol.ts`, `src/store/event-dispatch.ts`, `src/store/ecosystem-events.ts`.
 - [x] 3.5 Build Settings > Tools/Providers/Skills panel with tabs, search, enable toggles, and config drawers.
   - **Phase 3-A (2026-06-12):** Enhanced existing `CapabilityManager` / `CapabilityContentViews` / `CapabilityRows` components rather than creating separate `EcosystemSettings.tsx`. Added: status badges (healthy/unavailable/warning) on capability rows, `CapabilityDetailDrawer` component for item detail view with status/health/config info, config-aware "暂不支持界面配置" hint for non-configurable items. Created `useEcosystemItemsQuery` and `useToolInventoryQuery` hooks following existing patterns. Tab structure (skills/tools→Skills, mcp→MCP, hooks→Hooks) preserved.
-  - Files: `src/components/settings/CapabilityManager.tsx`, `CapabilityContentViews.tsx`, `CapabilityRows.tsx`, `CapabilityDetailDrawer.tsx` (new), `src/hooks/queries/useEcosystemItemsQuery.ts` (new), `useToolInventoryQuery.ts` (new), `queryKeys.ts`.
+  - **Phase 3-F settings mount follow-up (2026-06-16):** Mounted `CapabilityManager` in Settings > Tools above the permission rules panel so the ecosystem inventory/status UI is reachable from the product Settings surface, not only as an orphaned component.
+  - Files: `src/components/settings/SettingsCenterShell.tsx`, `CapabilityManager.tsx`, `CapabilityContentViews.tsx`, `CapabilityRows.tsx`, `CapabilityDetailDrawer.tsx` (new), `src/hooks/queries/useEcosystemItemsQuery.ts` (new), `useToolInventoryQuery.ts` (new), `queryKeys.ts`.
 - [x] 3.6 Surface tool call counts per session and per tool in the UI.
   - **Phase 3-A partial (2026-06-12):** Added tool inventory count to CapabilityManager summary strip (available tools count from `get_tool_inventory`). Per-session tool call counts are already available via `AgentTurnProjection.tool_call_count` and `failed_tool_count` (streamed via `agent_turn_updated` events), so no agent loop changes were needed.
   - **Phase 3-B (2026-06-12):** Added `deriveToolCounts(blocks)` pure helper with dedup, per-tool-name breakdown, tool/shell/failed classification, and top-tool detection. Extended `summarizeActivity` to include total/failed tool annotation and top-tool name in per-group summary items. Added `工具调用` metric to `ProjectCockpit` operation metrics reading from `AgentTurnProjection.tool_call_count`/`failed_tool_count`. Added 12 focused node tests for the pure helper covering empty input, dedup, failed classification, shell check/command split, top-tool ranking, and graceful missing-field handling.
@@ -230,11 +231,12 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 3-A (2026-06-12):** Enhanced `diagnostics/mod.rs` `CapabilitySummary` with optional `status` and `status_message` fields. Enhanced `check_capability_inventory` to report unhealthy/unavailable counts when status data is available (warns when unhealthy items exist, lists their names). Updated `diagnostics_handlers.rs` to collect capabilities with status enrichment (MCP servers marked "unknown" with probe-not-implemented message; other items "healthy"/"unknown"). Added shared status helpers in `capability_handlers.rs` (`ecosystem_status_for_capability`, `ecosystem_status_label`) so Settings and Diagnostics use the same semantics.
   - **Phase 3-C follow-up (2026-06-15):** MCP ecosystem status now performs a read-only config probe: it reads the source `mcp.json`, verifies the server entry and command, marks configured servers healthy, marks unreadable/invalid/missing-command servers unavailable, and surfaces a short command/arg summary in Settings.
   - Files: `diagnostics/mod.rs`, `ipc/diagnostics_handlers.rs`.
-- [ ] 3.8 Tests: plugin manager unit tests, UI component tests with mocked IPC.
+- [x] 3.8 Tests: plugin manager unit tests, UI component tests with mocked IPC.
   - **Phase 3-A partial (2026-06-12):** Added Rust tests for `EcosystemItem` model, IPC helpers, and diagnostics inventory aggregation. Existing frontend node tests (blocks, health-alerts, recovery-notices) and `npm run build` pass, but dedicated UI component tests with mocked IPC remain deferred because this app does not currently have a lightweight component-test harness for Settings panels.
   - **Phase 3-B partial (2026-06-12):** Added 12 pure-helper tests for `deriveToolCounts` in `store/processActivity.test.ts` using the existing `node --test` pattern. No UI component tests for ToolActivitySummary/ProjectCockpit — these are stateless render components that receive derived data as props; the pure-helper coverage validates the count derivation logic, and `npm run build` catches TS/JSX errors in the components. Full component-test harness (mocked IPC, React Testing Library) remains deferred.
   - **Phase 3-E partial (2026-06-16):** Added Rust protocol/helper coverage for `ecosystem_changed` and a focused node test for the frontend ecosystem query invalidation helper. Full Settings component-test harness remains deferred.
-  - Files: `harness/capability.rs`, `ipc/capability_handlers.rs`, `diagnostics/mod.rs`, `store/processActivity.test.ts`, `store/ecosystem-events.test.ts`.
+  - **Phase 3-F acceptance follow-up (2026-06-16):** Added mocked IPC acceptance coverage for the Settings ecosystem panel using the existing Playwright harness instead of introducing a separate component-test stack. The test verifies capability summary counts, tool inventory counts, ecosystem health/status messages, detail drawer config summary, search filtering, and capability toggle write-back through `toggle_capability`.
+  - Files: `harness/capability.rs`, `ipc/capability_handlers.rs`, `diagnostics/mod.rs`, `store/processActivity.test.ts`, `store/ecosystem-events.test.ts`, `e2e/fixtures/app.ts`, `e2e/acceptance.spec.ts`.
 
 **Phase 3-A summary (2026-06-12):**
 
@@ -246,7 +248,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Settings UI enhancement | ✅ Done | Status badges, detail drawer, config awareness |
 | Tool inventory & counts | ✅ Done | Tool inventory IPC, summary count in UI |
 | Diagnostics integration | ✅ Done | Unhealthy counts, status enrichment; MCP config probe added in Phase 3-C |
-| Tests | ✅ Done | 14 new Rust tests, all existing pass |
+| Tests | ✅ Done | Rust/unit coverage plus Settings ecosystem mocked-IPC acceptance coverage |
 | Provider/extension inventory | ⏸️ Deferred | No provider source yet; represented as unavailable |
 | In-app config persistence | 🟨 Partial | MCP server write-back is supported; provider/skill config schemas still deferred |
 
