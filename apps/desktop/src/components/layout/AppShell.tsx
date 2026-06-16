@@ -10,6 +10,7 @@ import { getProjectDisplay } from "@/lib/session-display";
 import { useEmptyWorkbenchController } from "./useEmptyWorkbenchController";
 import { RecoveryNoticeBanner } from "./RecoveryNoticeBanner";
 import { HealthAlertBanner } from "./HealthAlertBanner";
+import { NetworkStatusBanner } from "./NetworkStatusBanner";
 import { StatusBar } from "@/components/StatusBar";
 
 const LazySessionView = lazy(() => import("@/components/session/SessionView").then((module) => ({ default: module.SessionView })));
@@ -73,6 +74,7 @@ export function AppShell() {
       <main data-testid="main-workbench" className="forge-main-workbench flex flex-col h-full min-w-0 overflow-hidden">
         <RecoveryNoticeBanner />
         <HealthAlertBanner />
+        <NetworkStatusBanner />
         <AppTitlebar
           session={activeSession}
           project={project}

@@ -300,6 +300,32 @@ test.describe("Recovery notice rendering (Phase 1.7 listener fix)", () => {
     await expect(banner).toContainText("restart Gateway");
   });
 
+  test("offline browser state surfaces a global network banner", async ({
+    page,
+  }) => {
+    await page.evaluate(() => {
+      Object.defineProperty(window.navigator, "onLine", {
+        configurable: true,
+        get: () => false,
+      });
+      window.dispatchEvent(new Event("offline"));
+    });
+
+    const banner = page.getByTestId("network-status-banner");
+    await expect(banner).toBeVisible({ timeout: 5000 });
+    await expect(banner).toContainText("当前处于离线状态");
+
+    await page.evaluate(() => {
+      Object.defineProperty(window.navigator, "onLine", {
+        configurable: true,
+        get: () => true,
+      });
+      window.dispatchEvent(new Event("online"));
+    });
+
+    await expect(banner).toHaveCount(0);
+  });
+
   test("missing API key errors surface as a global health alert", async ({
     page,
   }) => {
