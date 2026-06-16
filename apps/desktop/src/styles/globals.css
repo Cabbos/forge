@@ -40,6 +40,91 @@
     box-shadow: -1px 0 0 var(--forge-border-subtle);
   }
 
+  .forge-background-status-bar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 32px;
+    border-top: 1px solid var(--forge-border-subtle);
+    background: var(--forge-bg-surface);
+    padding: 0.25rem 0.75rem;
+    color: var(--forge-text-muted);
+    font-size: 11px;
+    line-height: 1rem;
+  }
+
+  .forge-background-status-title,
+  .forge-background-status-item,
+  .forge-background-status-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .forge-background-status-title {
+    flex-shrink: 0;
+    color: var(--forge-text-faint);
+    font-weight: 650;
+  }
+
+  .forge-background-status-items {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .forge-background-status-item {
+    max-width: 100%;
+    overflow: hidden;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 4px);
+    background: var(--forge-material-sunken);
+    padding: 0 0.375rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-background-status-item[data-tone="running"] {
+    border-color: rgba(var(--forge-accent-rgb), 0.18);
+    color: var(--forge-accent-muted);
+  }
+
+  .forge-background-status-item[data-tone="review"] {
+    border-color: rgba(var(--forge-amber-rgb), 0.24);
+    color: var(--forge-amber-muted);
+  }
+
+  .forge-background-status-item[data-tone="scheduler"] {
+    color: var(--forge-text-secondary);
+  }
+
+  .forge-background-status-item[data-tone="alert"] {
+    border-color: rgba(var(--forge-danger-rgb), 0.2);
+    color: var(--forge-danger-muted);
+  }
+
+  .forge-background-status-action {
+    flex-shrink: 0;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 4px);
+    background: var(--forge-bg-raised);
+    color: var(--forge-text-muted);
+    transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+
+  .forge-background-status-action:hover {
+    border-color: var(--forge-material-border-hover);
+    background: var(--forge-hover);
+    color: var(--forge-text-primary);
+  }
+
   @media (min-width: 860px) {
     :root[data-project-archive-open="true"] .forge-main-workbench {
       padding-right: var(--forge-inspector-width);

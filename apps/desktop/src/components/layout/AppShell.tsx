@@ -10,6 +10,7 @@ import { getProjectDisplay } from "@/lib/session-display";
 import { useEmptyWorkbenchController } from "./useEmptyWorkbenchController";
 import { RecoveryNoticeBanner } from "./RecoveryNoticeBanner";
 import { HealthAlertBanner } from "./HealthAlertBanner";
+import { StatusBar } from "@/components/StatusBar";
 
 const LazySessionView = lazy(() => import("@/components/session/SessionView").then((module) => ({ default: module.SessionView })));
 const LazyCapabilityDrawer = lazy(() => import("./CapabilityDrawer").then((module) => ({ default: module.CapabilityDrawer })));
@@ -89,6 +90,7 @@ export function AppShell() {
             project={project}
           />
         )}
+        <StatusBar />
       </main>
       {activeSidebarPanel !== null && (
         <Suspense fallback={null}>

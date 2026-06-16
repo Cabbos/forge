@@ -259,6 +259,48 @@ test.describe("A2A runtime surfaces", () => {
     await expect(workspace).toContainText("审阅拒绝");
     await expect(workspace).toContainText("Review rejected unsafe permission edit");
   });
+
+  test("global background status bar opens the agent task list", async ({ page }) => {
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+      // @ts-expect-error mock
+      window.__mockScheduledTasks = [
+        {
+          id: "acceptance-schedule",
+          title: "Daily acceptance check",
+          text: "Run smoke checks",
+          enabled: true,
+          interval_seconds: 3600,
+          next_run_at_ms: Date.now() + 3600_000,
+          last_run_at_ms: null,
+          created_at_ms: Date.now(),
+          updated_at_ms: Date.now(),
+          tags: [],
+          profile_id: null,
+          last_error: null,
+        },
+      ];
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, reviewQueueEvents(sessionId));
+
+    const statusBar = page.getByTestId("background-task-status");
+    await expect(statusBar).toBeVisible();
+    await expect(statusBar).toContainText("1 待审阅");
+    await expect(statusBar).toContainText("1 调度任务");
+
+    await statusBar.getByRole("button", { name: "打开后台任务面板" }).click();
+    await expect(page.locator(".forge-a2a-workspace")).toBeVisible();
+    await expect(page.locator(".forge-a2a-workspace")).toContainText("审阅队列");
+  });
 });
 
 test.describe("confirm_interrupted rendering", () => {
