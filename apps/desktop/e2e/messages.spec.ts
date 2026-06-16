@@ -1796,6 +1796,51 @@ test.beforeEach(async ({ page }) => {
     expect(deliveryMetrics.minItemHeight).toBeGreaterThanOrEqual(52);
   });
 
+  test("write_file tool details show a markdown write preview", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "write-preview-tool",
+        tool_name: "write_file",
+        tool_input: {
+          path: "docs/runtime.md",
+          content: "# Runtime\n\n- Gateway\n- Sessions\n",
+        },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "write-preview-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 42,
+      },
+    ], 1);
+
+    await page.getByTestId("tool-card-trigger").click();
+
+    const preview = page.getByTestId("write-file-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("docs/runtime.md");
+    await expect(preview).toContainText("Markdown");
+    await expect(preview.locator(".markdown-content")).toContainText("Gateway");
+  });
+
   test("user messages can carry pasted code paths and logs without breaking the lane", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
