@@ -1940,6 +1940,48 @@ test.beforeEach(async ({ page }) => {
     await expect(tree).toContainText("+1");
   });
 
+  test("image diff cards show before and after previews", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "diff_view",
+        session_id: sessionId,
+        block_id: "image-diff",
+        file_path: "assets/logo.svg",
+        old_content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#b91c1c" /></svg>',
+        new_content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#0f766e" /></svg>',
+      },
+    ], 1);
+
+    await page.getByTestId("diff-body-toggle").click();
+
+    const imageDiff = page.getByTestId("image-diff-preview");
+    await expect(imageDiff).toBeVisible();
+    await expect(imageDiff).toContainText("之前");
+    await expect(imageDiff).toContainText("之后");
+
+    const before = imageDiff.getByTestId("image-diff-before");
+    const after = imageDiff.getByTestId("image-diff-after");
+    await expect(before).toHaveAttribute("src", /^data:image\/svg\+xml;utf8,/);
+    await expect(after).toHaveAttribute("src", /^data:image\/svg\+xml;utf8,/);
+
+    const boxes = await Promise.all([before.boundingBox(), after.boundingBox()]);
+    expect(boxes.every((box) => (box?.width ?? 0) > 0 && (box?.height ?? 0) > 0)).toBeTruthy();
+  });
+
   test("user messages can carry pasted code paths and logs without breaking the lane", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {

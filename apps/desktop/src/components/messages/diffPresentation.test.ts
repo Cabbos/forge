@@ -51,4 +51,21 @@ describe("deriveDiffView", () => {
     assert.strictEqual(view.visibleFiles.length, 6);
     assert.strictEqual(view.hiddenFileCount, 4);
   });
+
+  it("derives an image diff preview from image file contents", () => {
+    const oldSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red" /></svg>';
+    const newSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="green" /></svg>';
+
+    const view = deriveDiffView(newSvg, false, {
+      filePath: "assets/logo.svg",
+      oldContent: oldSvg,
+      newContent: newSvg,
+    });
+
+    assert.strictEqual(view.imageDiff?.filePath, "assets/logo.svg");
+    assert.strictEqual(view.imageDiff?.beforeLabel, "之前");
+    assert.strictEqual(view.imageDiff?.afterLabel, "之后");
+    assert.ok(view.imageDiff?.beforeSrc?.startsWith("data:image/svg+xml;utf8,"));
+    assert.ok(view.imageDiff?.afterSrc?.startsWith("data:image/svg+xml;utf8,"));
+  });
 });

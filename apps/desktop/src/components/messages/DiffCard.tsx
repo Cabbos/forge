@@ -7,7 +7,7 @@ import { FilePreviewSheet } from "@/components/messages/FilePreviewSheet";
 import type { FileRef } from "@/components/messages/filePreviewTypes";
 import { MessagePanel } from "@/components/messages/MessagePanel";
 import { useStore } from "@/store";
-import { deriveDiffView } from "@/components/messages/diffPresentation";
+import { deriveDiffView, type ImageDiffView } from "@/components/messages/diffPresentation";
 import { DiffBody } from "@/components/messages/DiffBody";
 import { DiffHeaderActions } from "@/components/messages/DiffHeaderActions";
 import { cn } from "@/lib/utils";
@@ -24,11 +24,17 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
   const [expanded, setExpanded] = useState(false);
   const [previewFileRef, setPreviewFileRef] = useState<FileRef | null>(null);
   const filePath = (block.metadata.file_path as string) || "";
+  const oldContent = typeof block.metadata.old_content === "string" ? block.metadata.old_content : "";
   const diff = block.content || "";
 
   if (!diff) return null;
 
-  const view = deriveDiffView(diff, expanded);
+  const view = deriveDiffView(diff, expanded, {
+    filePath,
+    oldContent,
+    newContent: diff,
+  });
+  const showTextDiff = !view.imageDiff || view.hunkCount > 0;
   const toggleBody = () => {
     setBodyOpen((current) => {
       if (current) setExpanded(false);
@@ -81,6 +87,7 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
         </div>
         <div data-testid="diff-summary" className="forge-diff-summary">
           {view.fileCount > 1 ? <span>{view.fileCount} 个文件</span> : null}
+          {view.imageDiff ? <span>图片预览</span> : null}
           <span>{view.hunkCount} 个变更块</span>
           {view.firstChangedLine ? <span>首处第 {view.firstChangedLine} 行</span> : null}
           <span>{view.lines.length} 行</span>
@@ -114,17 +121,50 @@ export function DiffCard({ block, sessionId }: { block: BlockState; sessionId?: 
         )}
         {bodyOpen && (
           <div data-forge-motion="diff-body">
-            <DiffBody
-              visibleLines={view.visibleLines}
-              isLongDiff={view.isLongDiff}
-              expanded={expanded}
-              hiddenLineCount={view.hiddenLineCount}
-              onToggleExpanded={() => setExpanded((current) => !current)}
-            />
+            {view.imageDiff && <ImageDiffPreview imageDiff={view.imageDiff} />}
+            {showTextDiff && (
+              <DiffBody
+                visibleLines={view.visibleLines}
+                isLongDiff={view.isLongDiff}
+                expanded={expanded}
+                hiddenLineCount={view.hiddenLineCount}
+                onToggleExpanded={() => setExpanded((current) => !current)}
+              />
+            )}
           </div>
         )}
       </MessagePanel>
       <FilePreviewSheet fileRef={previewFileRef} sessionId={sessionId} onClose={() => setPreviewFileRef(null)} />
     </div>
+  );
+}
+
+function ImageDiffPreview({ imageDiff }: { imageDiff: ImageDiffView }) {
+  return (
+    <div className="forge-image-diff-preview" data-testid="image-diff-preview" aria-label="图片差异预览">
+      <ImageDiffPane label={imageDiff.beforeLabel} src={imageDiff.beforeSrc} testId="image-diff-before" />
+      <ImageDiffPane label={imageDiff.afterLabel} src={imageDiff.afterSrc} testId="image-diff-after" />
+    </div>
+  );
+}
+
+function ImageDiffPane({
+  label,
+  src,
+  testId,
+}: {
+  label: string;
+  src?: string;
+  testId: string;
+}) {
+  return (
+    <figure className="forge-image-diff-pane">
+      <figcaption>{label}</figcaption>
+      {src ? (
+        <img data-testid={testId} src={src} alt={label} />
+      ) : (
+        <div className="forge-image-diff-empty">无图片</div>
+      )}
+    </figure>
   );
 }

@@ -17,6 +17,20 @@ export interface DiffFileEntry {
   status: "added" | "deleted" | "modified";
 }
 
+export interface ImageDiffView {
+  filePath: string;
+  beforeLabel: string;
+  afterLabel: string;
+  beforeSrc?: string;
+  afterSrc?: string;
+}
+
+interface DiffViewContext {
+  filePath?: string;
+  oldContent?: string;
+  newContent?: string;
+}
+
 export const DIFF_LINE_CLASS: Record<DiffLineType, string> = {
   add: "forge-diff-line forge-diff-line-added",
   remove: "forge-diff-line forge-diff-line-removed",
@@ -25,14 +39,20 @@ export const DIFF_LINE_CLASS: Record<DiffLineType, string> = {
   context: "forge-diff-line forge-diff-line-context",
 };
 
-export function deriveDiffView(diff: string, expanded: boolean) {
+export function deriveDiffView(diff: string, expanded: boolean, context: DiffViewContext = {}) {
   const parsed = parseDiff(diff);
   const isLongDiff = parsed.lines.length > INITIAL_VISIBLE_DIFF_LINES;
   const visibleLines = expanded ? parsed.lines : parsed.lines.slice(0, INITIAL_VISIBLE_DIFF_LINES);
   const visibleFiles = parsed.files.slice(0, INITIAL_VISIBLE_DIFF_FILES);
+  const imageDiff = deriveImageDiffView({
+    filePath: context.filePath ?? "",
+    oldContent: context.oldContent ?? "",
+    newContent: context.newContent ?? diff,
+  });
 
   return {
     ...parsed,
+    imageDiff,
     isLongDiff,
     visibleLines,
     hiddenLineCount: Math.max(0, parsed.lines.length - visibleLines.length),
@@ -41,6 +61,70 @@ export function deriveDiffView(diff: string, expanded: boolean) {
     visibleFiles,
     hiddenFileCount: Math.max(0, parsed.files.length - visibleFiles.length),
   };
+}
+
+function deriveImageDiffView({
+  filePath,
+  oldContent,
+  newContent,
+}: {
+  filePath: string;
+  oldContent: string;
+  newContent: string;
+}): ImageDiffView | undefined {
+  const language = inferImageLanguage(filePath);
+  if (!language) return undefined;
+
+  const beforeSrc = buildImagePreviewSrc(language, oldContent);
+  const afterSrc = buildImagePreviewSrc(language, newContent);
+  if (!beforeSrc && !afterSrc) return undefined;
+
+  return {
+    filePath,
+    beforeLabel: beforeSrc ? "之前" : "之前无图片",
+    afterLabel: afterSrc ? "之后" : "之后无图片",
+    beforeSrc,
+    afterSrc,
+  };
+}
+
+function inferImageLanguage(filePath: string) {
+  const name = filePath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  const extension = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+  if (["gif", "jpeg", "jpg", "png", "svg", "webp"].includes(extension)) return extension;
+  return "";
+}
+
+function buildImagePreviewSrc(language: string, content: string) {
+  const trimmed = content.trim();
+  if (!trimmed) return undefined;
+
+  if (/^data:image\/(?:gif|jpe?g|png|svg\+xml|webp);/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (language === "svg") {
+    const svg = trimmed.replace(/^\uFEFF/, "");
+    if (/^(?:<\?xml[^>]*>\s*)?<svg[\s>]/i.test(svg)) {
+      return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+    }
+  }
+
+  const mimeType = imageMimeType(language);
+  const base64 = trimmed.replace(/\s+/g, "");
+  if (mimeType && /^[A-Za-z0-9+/]+={0,2}$/.test(base64) && base64.length >= 8) {
+    return `data:${mimeType};base64,${base64}`;
+  }
+
+  return undefined;
+}
+
+function imageMimeType(language: string) {
+  if (language === "jpg" || language === "jpeg") return "image/jpeg";
+  if (language === "png") return "image/png";
+  if (language === "gif") return "image/gif";
+  if (language === "webp") return "image/webp";
+  return undefined;
 }
 
 function parseDiff(diff: string) {
