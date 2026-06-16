@@ -426,6 +426,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [x] 5.8 Add cron/scheduled task engine: declarative tasks, next-run display, run history.
   - Files: `scheduler/mod.rs`, `ipc/scheduler_handlers.rs`, `state.rs`, `lib.rs`, `ipc/mod.rs`.
   - **Phase 5-C (2026-06-12):** Created `SchedulerStore` with `ScheduledTask` (id, title, text, enabled, interval_seconds, next_run_at_ms, last_run_at_ms, created_at_ms, updated_at_ms, tags, profile_id, last_error) and `RunHistoryEntry` (id, task_id, started_at_ms, ended_at_ms, status, message). Persisted as JSON at `~/.forge/scheduler.json` with schema_version. CRUD operations: list_payload (tasks + recent history + load_error), upsert, delete, set_enabled, run_task_now, run_due_tasks. MVP runner records deterministic history entries (completed/skipped) without creating agent sessions or invoking gateway. 5 IPC commands registered: list_scheduled_tasks, upsert_scheduled_task, delete_scheduled_task, set_scheduled_task_enabled, run_scheduled_task_now. 26 focused Rust tests passing (create/list/update/delete, enabled/disabled, next_run computation, due-run history, persistence roundtrip, corrupt JSON, atomic save, history pruning). SchedulerStore wired into AppState.
+  - **Phase 5-E sync (2026-06-16):** The gateway daemon now owns the background scheduler loop. `bin/gateway.rs` starts `spawn_scheduler_tick`, marks `scheduler_tick` in `runtime_status`, and queues due scheduler tasks into the shared `TriggerStore`. The existing trigger runner then converts those pending triggers into `EvalHeadlessRequest` runs and records run history in the gateway run ledger. The local `run_task_now` deterministic MVP remains as a non-gateway fallback; the gateway-backed path is the runtime cron path.
 - [x] 5.9 Add Settings > Scheduler panel.
   - Files: `src/components/settings/SchedulerPanel.tsx`, `src/hooks/queries/useSchedulerQuery.ts`, `src/hooks/queries/queryKeys.ts`, `src/lib/tauri.ts`, `src/styles/settings.css`, `SettingsCenterShell.tsx`.
   - **Phase 5-C (2026-06-12):** Full CRUD SchedulerPanel wired into Settings > 调度 (Clock icon). Create/edit task with title, prompt text, tags, interval (seconds), profile_id. Inline enable/disable toggle, run now button, delete. Shows next run timestamp, last run, last error, tags, per-task history (last 5 entries), and global history panel. Mutation error handling, loading/error/empty states. Dense work-focused UI following existing forge-settings conventions. Frontend types and invoke wrappers in tauri.ts. `npm run build` passes.
@@ -442,7 +443,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.5 Profile switcher | ✅ Done | Settings UI, CLI `--profile`, headless/gateway profile resolution, desktop new-session defaults, composer-visible sync, and active-profile memory facts done; WikiMemory/facts unification tracked as memory polish |
 | 5.6 Shared runtime / gateway | ✅ Done | Gateway session registry, attach, snapshot detail, event tail, and session input inbox shared by CLI, desktop, and Diagnostics; true gateway-owned live loop remains Phase 6.1 |
 | 5.7 Messaging triggers | ✅ Done | TCP webhook, Gateway IPC enqueue, trigger runner, run history, CLI controls, Diagnostics controls, and dashboard status exist |
-| 5.8 Scheduler engine | ✅ Done | Phase 5-C local MVP; background tick/gateway cron deferred |
+| 5.8 Scheduler engine | ✅ Done | Local CRUD/history plus gateway-owned scheduler tick and trigger-runner execution path |
 | 5.9 Scheduler panel | ✅ Done | Phase 5-C Settings panel added |
 | Embeddings | ⏸️ Deferred | Honest placeholder comment; no implementation |
 | WikiMemoryStore unification | ⏸️ Deferred | Existing context memory and new user-managed facts are separate stores |
@@ -474,7 +475,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.8 Scheduler domain | ✅ Done | `SchedulerStore` + `ScheduledTask` + `RunHistoryEntry` in `scheduler/mod.rs` |
 | 5.8 JSON persistence | ✅ Done | Atomic save at `~/.forge/scheduler.json`, schema_version, corrupt JSON handling |
 | 5.8 CRUD operations | ✅ Done | list/upsert/delete/set_enabled/run_task_now/run_due_tasks |
-| 5.8 MVP runner | ✅ Done | Deterministic history entries; no agent sessions or gateway invocation |
+| 5.8 Local fallback runner | ✅ Done | Deterministic history entries still exist for non-gateway run-now calls |
 | 5.8 Next-run computation | ✅ Done | `compute_next_run()` with interval, last_run, manual-only JS-safe far-future sentinel |
 | 5.8 IPC commands (5) | ✅ Done | list/upsert/delete/set_enabled/run_now registered in lib.rs |
 | 5.8 SchedulerStore in AppState | ✅ Done | Added to state.rs, initialized in AppState::new |
@@ -483,8 +484,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 5.9 Inline CRUD, enable/disable, run now, delete | ✅ Done | All operations wired with mutation error handling |
 | 5.9 Next run, last run, history display | ✅ Done | Per-task last 5 entries + global history panel |
 | Tests | ✅ Done | 26 Rust tests + npm build + cargo fmt + git diff --check all pass |
-| Background tick | ⏸️ Deferred | Frontend-driven via run_scheduled_task_now; no background cron yet |
-| Agent session execution | ⏸️ Deferred | MVP records history only; actual execution deferred to future phase |
+| Background tick | ✅ Done | Gateway binary spawns `spawn_scheduler_tick` and reports `scheduler_tick` in runtime status |
+| Agent session execution | ✅ Done | Due tasks queue gateway triggers; `spawn_trigger_runner` turns them into headless requests and records run history |
 | Gateway-backed cron | ✅ Done | Scheduler tick queues due tasks into `TriggerStore`; gateway runner consumes them as headless requests |
 | New dependencies | 🚫 None | No new crates or npm packages |
 | CRITICAL paths touched | 🚫 None | No edits to session.rs, executor/, adapters/, protocol/events.rs, agent/a2a/ |
@@ -511,7 +512,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 **Acceptance gate (updated Phase 5-C):**
 
 - Desktop and CLI can read/write the same memory. **(Phase 5-A: ✅ Done)**
-- A scheduled task records next-run display and run history in the local scheduler. **(Phase 5-C: ✅ Done — deterministic MVP history; actual agent session execution deferred)**
+- A scheduled task records next-run display and run history in the local scheduler. **(✅ Done — local scheduler history plus gateway trigger-run history for due background execution)**
 - A messaging trigger creates a new session via HTTP/TCP webhook. **(✅ Done for local gateway trigger ingestion — TCP webhook, IPC enqueue, gateway runner, CLI controls, Diagnostics enqueue/list/cancel/replay/detail controls, and isolated webhook smoke exist)**
 - Settings > Scheduler panel allows create, edit, enable/disable, run now, delete. **(Phase 5-C: ✅ Done)**
 
