@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "continuity-pipeline-keyboard-shortcuts",
+    "title": "Continuity pipeline: keyboard shortcut labels",
+    "prompt": "在当前 TypeScript 项目中新增 src/keyboard-shortcuts.ts，导出 type Shortcut = { key: string; label: string; scope: \"global\" | \"task\" }，并导出 formatShortcut(shortcut: Shortcut): string。global 快捷键输出 \"Global: <label> (<key>)\"，task 快捷键输出 \"Task: <label> (<key>)\"。新增 src/keyboard-shortcuts.test.ts 覆盖两种 scope、空 label 保持空字符串、不会改变输入对象。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/tasks.tsx",
+      "src/storage.ts"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "python3 scripts/assert-continuity.py"
+    ],
+    "post_validation_commands": [
+      "npm test",
+      "npx tsc --noEmit",
+      "python3 scripts/assert-continuity.py --min-experiences 1 --max-dirty-candidates 0 --require-formed-reflections --require-fts-match --require-event user_message --require-event reflection --require-event tool_execution --require-event file_change --require-experience-text src/keyboard-shortcuts.ts --require-shell-success-clean --max-evidence-duplicates 0"
+    ],
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/keyboard-shortcuts.ts",
+      "src/keyboard-shortcuts.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "max_duration_seconds": 900,
+    "tags": [
+      "continuity-pipeline",
+      "typescript",
+      "keyboard",
+      "sqlite-assertions"
+    ],
+    "metadata": {
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "regression"
+    }
+  }
+}

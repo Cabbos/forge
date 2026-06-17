@@ -17,10 +17,10 @@ def load_continuity_case_tasks() -> list[dict]:
     return tasks
 
 
-def test_continuity_stress_suite_has_at_least_ten_cases() -> None:
+def test_continuity_stress_suite_has_at_least_thirteen_cases() -> None:
     tasks = load_continuity_case_tasks()
 
-    assert len(tasks) >= 10
+    assert len(tasks) >= 13
 
 
 def test_continuity_cases_run_business_and_sqlite_post_validation() -> None:
