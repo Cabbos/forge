@@ -35,13 +35,15 @@ The desktop app now includes the Hermes-parity runtime scaffolding that is being
 - Diagnostics: doctor checks, gateway runtime status, repair actions, trigger/session queues, and runtime loop visibility.
 - Permissions: per-tool allow, deny, reset, and default policy states for write, edit, shell, and MCP operations.
 - Review and background work: Agent Workbench review queue/history, derived A2A parent/child lineage badges, plus a global background status bar and task list.
-- Acceptance: browser smoke coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI.
+- Acceptance: browser smoke coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI, plus a real Rust `run_worktree_worker` harness gate.
 
 ## Level 3 Runtime Evidence
 
 Forge Level 3 Runtime backs long-running agent work with an append-only loop event journal, rebuildable projections, durable human gates, policy and budget preflight, typed completion evidence, crash/replay regression coverage, and gateway runner leases.
 
-The current acceptance suite advertises and runs those runtime gates before the desktop smoke tests, so product claims about durable loop state are backed by replay, policy, gate, completion, gateway status, subagent projection, and mocked desktop acceptance checks.
+The current acceptance suite advertises and runs those runtime gates before the desktop smoke tests, so product claims about durable loop state are backed by replay, policy, gate, completion, gateway status, subagent projection, mocked desktop acceptance checks, and a real Rust `run_worktree_worker` harness using the mock adapter/harness.
+
+That worker evidence covers the child runtime harness only: there is still no Tauri/WebDriver force-quit harness, executor-level live IO tracing, or provider cost stream.
 
 ## Product Tracking
 

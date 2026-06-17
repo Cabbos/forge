@@ -19,14 +19,17 @@ Runs the Forge Level 3 runtime acceptance gates:
   3. Eval runner test suite
   4. Loop event journal contract tests
   5. Projection rebuild/replay tests
-  6. Policy and budget preflight tests
-  7. Durable human gate tests
-  8. Typed completion evidence tests
-  9. Gateway loop runner status smoke
-  10. Subagent runtime event projection smoke
-  11. Completion contract mocked desktop smoke
-  12. Desktop Phase 7 and A2A worker lifecycle smoke specs
-  13. Rich preview e2e smoke specs
+  6. Policy preflight tests
+  7. Budget preflight tests
+  8. Durable human gate tests
+  9. Typed completion evidence tests
+  10. Gateway loop runner status smoke
+  11. Subagent runtime event projection smoke
+  12. Live worktree worker lifecycle harness
+  13. Completion contract desktop helper smoke
+  14. Completion contract mocked desktop smoke
+  15. Desktop Phase 7 and A2A worker lifecycle smoke specs
+  16. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -51,6 +54,7 @@ COMMAND_LABELS=(
   "typed completion evidence tests"
   "gateway loop runner status smoke"
   "subagent runtime event projection smoke"
+  "live worktree worker lifecycle harness"
   "completion contract desktop helper smoke"
   "completion contract mocked desktop smoke"
   "desktop Phase 7 and A2A worker lifecycle smoke specs"
@@ -69,6 +73,7 @@ COMMANDS=(
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib"
   "node --test apps/desktop/src/store/blocks.test.ts"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib"
   "node --test apps/desktop/src/lib/loopRuntime.test.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"

@@ -135,7 +135,7 @@ scripts/acceptance.sh          # build + eval + Level 3 runtime + desktop smoke
 scripts/acceptance.sh --dry-run
 ```
 
-当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。
+当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含真实 Rust `run_worktree_worker` harness（mock adapter/harness），但不包含 Tauri/WebDriver force-quit harness、executor-level live IO tracing 或 provider cost stream。
 
 也可以直接运行 Rust 测试：
 
@@ -196,7 +196,7 @@ Forge 的可信度来自几个工程约束：
 - Playwright E2E 与 Rust 后端检查共同覆盖关键路径。
 - Gateway runtime、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
 - 子任务、审阅队列、健康告警和后台调度通过 Agent Workbench 与全局状态栏持续暴露。
-- Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、crash/replay regression coverage 和 gateway runner lease 支撑长期 agent 工作。
+- Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、crash/replay regression coverage、gateway runner lease 和真实 Rust `run_worktree_worker` harness 支撑长期 agent 工作；provider cost stream、executor-level live IO tracing 和 Tauri/WebDriver force-quit harness 仍未声明覆盖。
 
 当前正在继续加强的方向：
 

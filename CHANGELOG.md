@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added Level 3 loop runtime acceptance coverage for the append-only event journal, rebuildable projections, durable human gates, policy/budget preflight, typed completion evidence, crash/replay regressions, gateway runner leases, subagent runtime projection, and mocked desktop completion-contract smoke.
+- Added Level 3 loop runtime acceptance coverage for the append-only event journal, rebuildable projections, durable human gates, policy/budget preflight, typed completion evidence, crash/replay regressions, gateway runner leases, subagent runtime projection, mocked desktop completion-contract smoke, and the real Rust `run_worktree_worker` harness using the mock adapter/harness. This does not claim a Tauri/WebDriver force-quit harness, executor-level live IO tracing, or a provider cost stream.
 - Expanded Forge Eval Runner into a trusted backtest workflow with trust gates, dataset fingerprints, experiment snapshots, layered scorers, red-team lanes, sandbox leakage checks, report comparison, trace promotion, queue status, worker cancellation diagnostics, trajectory artifacts, cost budgets, and PASS_TO_PASS / FAIL_TO_PASS validation.
 - Added desktop session History management coverage: search, provider filtering, resume, delete, rename, export, and conservative prune flows.
 - Expanded Settings runtime surfaces for diagnostics, gateway runtime status, service/autostart visibility, scheduler CRUD/run/disable/delete, and permission allow/deny/reset controls.

@@ -517,7 +517,7 @@ The first execution pass should not try to make the gateway run autonomous codin
 
 This keeps the first slice small enough to review, while leaving a real runtime artifact for later completion, policy, runner, and UI work.
 
-## Implementation Status as of 2026-06-17
+## Implementation Status as of 2026-06-18
 
 Tasks 1-8 have landed in the current implementation line:
 
@@ -537,11 +537,20 @@ The TDD and commit steps below are now historical execution records. They remain
 in the plan as implementation evidence, but there is no active Task 3.5-8
 instruction left to restart.
 
+2026-06-18 Phase 4-I follow-up: the final acceptance plan now includes the
+real Rust worktree worker lifecycle harness as `live worktree worker lifecycle
+harness`, running `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+agent::a2a::child::tests::run_worktree_worker --lib`. This promotes existing
+`ChildAgentRuntime::run_worktree_worker` success and already-in-use human-review
+coverage into reproducible acceptance evidence without changing the Level 3 MVP
+boundary.
+
 Known Level 3 MVP boundaries after Task 8:
 
 - Gateway automatic recovery and continuation of a full agent coding loop remains future work.
 - Gateway-created loop tasks still bind to existing desktop session/session owner; no default headless `AgentSession` is claimed.
 - File IO is boundary telemetry from worktree/diff events, not executor-level live read/write tracing.
+- The worktree worker lifecycle has a real Rust harness acceptance gate, but no Tauri/WebDriver force-quit harness or executor-level live IO trace is claimed.
 - Token/cost can be unknown/null with explicit unknown flags.
 - Commit remains human-gated and is never automatic after contract satisfaction.
 
@@ -2291,6 +2300,17 @@ Obsidian Level 3 plan backs the product claim with explicit evidence and keeps
 the MVP boundary honest: no automatic gateway continuation after crash, no
 default headless `AgentSession`, no executor-level live file IO tracing, no
 precise unknown cost metering, and no automatic commits.
+
+**2026-06-18 Phase 4-I acceptance evidence:** The acceptance script now gates
+the existing real worktree worker lifecycle harness with
+`cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+agent::a2a::child::tests::run_worktree_worker --lib`. That focused Rust gate covers
+`ChildAgentRuntime::run_worktree_worker` creating a real temporary git
+repo/worktree, collecting diff/usage/summary behavior through the mock
+adapter/harness, and the already-in-use path that requires human review. This is
+evidence for the child runtime harness only; it does not add a Tauri/WebDriver
+force-quit harness, executor-level live IO tracing, provider token/cost streams,
+new `StreamEvent` variants, or auto commit/merge/push behavior.
 
 **2026-06-17 full signoff evidence:** A sandboxed `scripts/acceptance.sh` run
 first passed desktop and website builds, then stopped at `npm run test:eval`

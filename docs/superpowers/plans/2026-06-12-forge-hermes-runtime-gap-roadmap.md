@@ -326,6 +326,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 4-F lineage tests (2026-06-17):** Added Rust tests for bus-level parent-aware assignment, nonexistent-parent rejection, root `assign_task` parent preservation, parent-aware delegate assignment, parent-aware worktree-worker assignment, child projection `parent_task_id`, legacy serde/default backcompat, bus serialization roundtrip, session snapshot/restore, and the real `execute_tools` delegate branch for explicit-parent success, missing-parent rejection, unknown-parent rejection, and no root fallback. Cost tracking, automatic delegate parent selection, and live worker lifecycle e2e remain deferred.
   - **Phase 4-G lineage projection tests (2026-06-17):** Extended `projection_derives_parent_child_task_ids_in_creation_order` to cover ordered parent child lists, child/root empty lists, parent serialization with child ids, and empty child-list JSON omission. Extended Playwright A2A runtime mocks to carry `child_task_ids` and assert the Workbench child-count indicator through its accessible label.
   - **Phase 4-H lifecycle product smoke (2026-06-18):** Extended mocked Playwright A2A runtime coverage to exercise worker lifecycle visibility in the Agent Workbench: running workers show `latest_progress`/`latest_message`, interrupted workers show `resume_note`, failed workers show localized `failure_kind` plus retryable affordance, and cancelled workers show the user-cancelled lifecycle state. This is contract-shaped mocked product smoke only; true live worker lifecycle harness coverage remains deferred.
+  - **Phase 4-I live worktree harness gate (2026-06-18):** Promoted the existing real Rust `ChildAgentRuntime::run_worktree_worker` harness tests into `scripts/acceptance.sh` as the `live worktree worker lifecycle harness` gate. The gate runs `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib`, covering both the success path that creates a real temporary repo/worktree, collects diff/usage/summary evidence, and the already-in-use path that requires human review. This is a runnable Rust harness, not a Tauri/WebDriver force-quit harness and not executor-level live IO/provider-cost streaming.
   - Files: `agent/a2a/bus.rs`, `agent/a2a/supervisor.rs`, `agent/session/a2a.rs`, `agent/session/tools_test.rs`, `store/workbenchSummary.test.ts`, `e2e/a2a-confirm-runtime.spec.ts`, `e2e/acceptance.spec.ts`.
 
 **Phase 4-A summary (2026-06-12):**
@@ -340,7 +341,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; true live IO and cost tabs deferred |
 | 4.7 Failure reasons | ✅ Done | failure_kind + retryable badge + localized labels |
 | 4.8 Lineage persistence | 🟨 Partial | Existing bus/session snapshot preserves populated child pointers; projection derives parent-side child ids from those pointers; legacy records without `parent_task_id` still deserialize; full parent-session lineage and persisted parent-side child arrays deferred |
-| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view, lineage, and mocked worker lifecycle product smoke coverage; true live worker harness and provider cost tests deferred |
+| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view, lineage, mocked lifecycle product smoke, and real `run_worktree_worker` harness coverage; provider cost tests and Tauri/WebDriver live UI harness deferred |
 | Rust agent loop changes | 🟨 Minimal | `execute_tools` requires a supplied existing `parent_task_id` for lineage assignment; missing/unknown parents are rejected with no root fallback; no synthetic parent ids, no edits to `run_worktree_worker`, executor hooks, or adapters |
 | New dependencies | 🚫 None | No new packages |
 
@@ -451,24 +452,42 @@ npm --prefix apps/desktop run test:e2e -- e2e/a2a-confirm-runtime.spec.ts # pass
 node --test scripts/acceptance.test.mjs # pass, 1 passed
 ```
 
+**Phase 4-I summary (2026-06-18):** Promote true worktree worker lifecycle harness into acceptance evidence.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Acceptance gate | ✅ Done | `scripts/acceptance.sh` now includes `live worktree worker lifecycle harness` near the subagent runtime and desktop smoke gates |
+| Real Rust harness | ✅ Done | Gate runs `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib` |
+| Success path evidence | ✅ Done | Existing `agent::a2a::child::tests::run_worktree_worker_creates_worktree_collects_diff_and_returns_summary` creates a real temporary git repo/worktree through `ChildAgentRuntime::run_worktree_worker`, uses the mock adapter/harness, and verifies diff, usage, and summary behavior |
+| Human-review path evidence | ✅ Done | Existing `agent::a2a::child::tests::run_worktree_worker_already_in_use_requires_human_review` covers the already-in-use worktree lifecycle path and its human-review requirement |
+| Not claimed | 🚫 Deferred | No Tauri/WebDriver force-quit harness, no executor-level live IO tracing, no provider token/cost stream, no new `StreamEvent` variants, and no auto commit/merge/push behavior |
+
+Phase 4-I evidence:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib
+node --test scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+```
+
 **Known deferred items (Phase 4):**
 - True live file IO stream — requires executor/ToolExecutor hooks (CRITICAL risk path)
 - Token/cost per-task streaming — requires adapter trait changes
 - New `StreamEvent` variants for subagent-specific events
 - Parent-session structs and persisted parent-side child-id arrays — current durable contract stores the child-to-parent pointer only; Phase 4-G derives projection-only `child_task_ids`
 - Automatic parent selection for ordinary `delegate_task` calls — current guarded path requires a supplied existing A2A parent id, rejects missing/unknown parent ids, and never silently creates a root fallback
-- True live worker lifecycle harness — mocked product smoke has landed, but no runnable worktree-worker process harness is claimed yet
+- Tauri/WebDriver force-quit or live desktop worker harness — Phase 4-I gates the real Rust `run_worktree_worker` harness only
 - Executor-level IO tracing and provider token/cost streaming remain deferred
 
 **Acceptance gate:**
 
-- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-B shows diff-derived file visibility; true live IO and cost remain deferred)**
+- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; executor-level live IO and provider cost streaming remain deferred)**
 - Parent-child relationship is visible and survives restart. **(Phase 4-G: child projections expose `parent_task_id`; parent projections derive ordered `child_task_ids` from persisted child pointers; normal delegate auto-parent selection, parent-session structs, and persisted parent-side child arrays deferred)**
 - Each failure type has a distinct message and recovery hint. **(Phase 4-A: failure_kind + retryable + resume_note)**
 
 **Verification plan:**
 
-- `cargo test` subagent/worker tests. **(Phase 4-F: a2a projection/bus tests pass — includes lineage assignment validation, missing/unknown parent rejection, legacy serde backcompat, snapshot restore, and real `execute_tools` delegate branch coverage)**
+- `cargo test` subagent/worker tests. **(Phase 4-F: a2a projection/bus tests pass — includes lineage assignment validation, missing/unknown parent rejection, legacy serde backcompat, snapshot restore, and real `execute_tools` delegate branch coverage; Phase 4-I: acceptance now runs `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib`)**
 - `npm run test` workbench tests. **(Phase 4-B: deriveWorkbenchSummary node tests pass — includes diff metrics)**
 - Manual UX: spawn a worktree worker, observe stream, fail a smoke test, inspect reason.
 
