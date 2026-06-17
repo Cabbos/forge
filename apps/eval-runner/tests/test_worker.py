@@ -26,7 +26,7 @@ def write_tasks(path: Path) -> None:
     )
 
 
-def make_pending_run(run_id: str) -> EvaluationRun:
+def make_pending_run(run_id: str, *, max_retries: int = 0) -> EvaluationRun:
     now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
     return EvaluationRun(
         run_id=run_id,
@@ -40,6 +40,7 @@ def make_pending_run(run_id: str) -> EvaluationRun:
         started_at=now,
         ended_at=now,
         duration_ms=0,
+        max_retries=max_retries,
     )
 
 
@@ -108,6 +109,65 @@ def test_worker_skips_cancelled_run(tmp_path: Path) -> None:
     assert result is None
     fetched = storage.get_run("run-1")
     assert fetched.status == RunStatus.CANCELLED
+
+
+def test_worker_does_not_retry_cancelled_run(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    run = storage.create_run(make_pending_run("run-1", max_retries=2))
+    storage.cancel_run(run.run_id)
+
+    result = EvalWorker(storage=storage, forge_command=None).run_once()
+
+    assert result is None
+    fetched = storage.get_run(run.run_id)
+    assert fetched.status == RunStatus.CANCELLED
+    assert fetched.retry_count == 0
+    assert fetched.traces == []
+
+
+def test_worker_writes_stderr_summaries_for_lifecycle_events(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    worker = EvalWorker(storage=storage, forge_command=None, worker_id="worker-1")
+    storage.create_run(make_pending_run("run-complete"))
+
+    worker.run_once()
+
+    completed_stderr = capsys.readouterr().err
+    assert "[worker worker-1] claimed run run-complete status=running" in completed_stderr
+    assert "[worker worker-1] completed run run-complete tasks=1" in completed_stderr
+
+    storage.create_run(
+        make_pending_run("run-retry", max_retries=1).model_copy(
+            update={"requested_task_ids": ["missing-task"]}
+        )
+    )
+
+    worker.run_once()
+
+    retried_stderr = capsys.readouterr().err
+    assert "[worker worker-1] claimed run run-retry status=running" in retried_stderr
+    assert "[worker worker-1] retried run run-retry retry=1/1" in retried_stderr
+
+    worker.run_once()
+
+    failed_stderr = capsys.readouterr().err
+    assert "[worker worker-1] claimed run run-retry status=running" in failed_stderr
+    assert "[worker worker-1] failed run run-retry retries=1/1" in failed_stderr
 
 
 def test_worker_retries_failed_run_then_marks_terminal(tmp_path: Path) -> None:
@@ -201,7 +261,7 @@ def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
     assert len(heartbeats) >= 2, f"Expected at least 2 heartbeats during slow task, got {len(heartbeats)}"
 
 
-def test_worker_detects_cancellation_after_task_returns(tmp_path: Path) -> None:
+def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) -> None:
     """If a run is cancelled DURING task execution, worker must not overwrite with COMPLETED."""
     import threading
     import time
@@ -260,6 +320,8 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path) -> None:
     assert fetched.status == RunStatus.CANCELLED, (
         f"Expected cancelled after task returned, got {fetched.status}"
     )
+    assert fetched.traces[0].task_id == "task-pass"
+    assert "[worker local-worker] cancelled run run-1 tasks=1" in capsys.readouterr().err
 
 
 def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
