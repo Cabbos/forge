@@ -718,9 +718,150 @@ json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout
     assert trace.failure_category == FailureCategory.NONE
 
 
+def test_forge_runner_accepts_json_object_after_log_lines(tmp_path: Path) -> None:
+    script = tmp_path / "fake_forge_with_logs.py"
+    script.write_text(
+        """
+import json
+
+print("starting forge eval")
+print(json.dumps({
+    "final_answer": "done",
+    "verification_result": {"command": "pytest", "passed": True, "exit_code": 0},
+    "changed_files": ["src/calculator.py"],
+    "file_diffs": [],
+    "tool_calls": [],
+    "shell_outputs": []
+}))
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="small-edit-success",
+        title="Small edit",
+        prompt="Fix add",
+        expected_files_changed=["src/calculator.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.failure_category == FailureCategory.NONE
+    assert trace.final_answer == "done"
+
+
+def test_forge_runner_reports_missing_final_answer_as_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_missing_final_answer.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": []}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="missing-final-answer",
+        title="Missing final answer",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "final_answer" in (trace.failure_reason or "")
+
+
+def test_forge_runner_reports_malformed_tool_calls_as_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_malformed_tool_calls.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "tool_calls": {"command": "not-a-list"},
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="malformed-tool-calls",
+        title="Malformed tool calls",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "ValidationError" in (trace.failure_reason or "")
+
+
+def test_forge_runner_maps_unknown_failure_category_to_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_unknown_failure_category.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "failure_category": "mystery_failure",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="unknown-failure-category",
+        title="Unknown failure category",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "forge_contract_error"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+
+
 def test_forge_runner_reports_invalid_stdout_as_contract_error(tmp_path: Path) -> None:
     script = tmp_path / "fake_invalid_stdout.py"
-    script.write_text("print('not json')\n", encoding="utf-8")
+    script.write_text(
+        "import sys\nprint('not json')\nprint('bad stderr', file=sys.stderr)\n",
+        encoding="utf-8",
+    )
     task = EvaluationTask(
         id="invalid-stdout",
         title="Invalid stdout",
@@ -735,7 +876,37 @@ def test_forge_runner_reports_invalid_stdout_as_contract_error(tmp_path: Path) -
 
     assert trace.error == "invalid_forge_trace"
     assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
-    assert trace.failure_reason.startswith("Forge command returned invalid trace JSON:")
+    assert "JSONDecodeError" in (trace.failure_reason or "")
+    assert "stdout preview: not json" in (trace.failure_reason or "")
+    assert "stderr preview: bad stderr" in (trace.failure_reason or "")
+    assert trace.shell_outputs[-1].stdout == "not json\n"
+    assert trace.shell_outputs[-1].stderr == "bad stderr\n"
+
+
+def test_forge_runner_reports_log_lines_without_json_as_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_logs_without_json.py"
+    script.write_text(
+        "import sys\nprint('starting forge eval')\nprint('still not json', file=sys.stderr)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="logs-without-json",
+        title="Logs without json",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "stdout preview: starting forge eval" in (trace.failure_reason or "")
+    assert "stderr preview: still not json" in (trace.failure_reason or "")
 
 
 def test_forge_runner_returns_runner_error_when_command_is_missing() -> None:

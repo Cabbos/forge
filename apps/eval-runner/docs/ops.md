@@ -98,6 +98,13 @@ npm run eval:forge:smoke:real
 7. 执行 tool calls、验证命令、修复循环
 8. 输出 trace JSON → Python runner 生成 report
 
+`forge_eval_agent` 可以在 stdout 先输出少量日志，再输出最终 trace JSON
+object；Python runner 会提取最后一个 JSON object。stdout 中完全没有 JSON、
+JSON 不是 object、缺少 `final_answer`、`tool_calls` / `shell_outputs` 等字段类型
+不符合 trace contract，都会归类为 `forge_contract_error`。这类失败的
+`failure_reason` 会带上异常类型和 stdout/stderr 前 500 字符预览；完整 stdout
+和 stderr 仍会保存在 trace 的 `shell_outputs` 里。
+
 需要 `~/.forge/config.json` 中配置对应 provider 的 API key，或设置环境变量：
 
 ```json

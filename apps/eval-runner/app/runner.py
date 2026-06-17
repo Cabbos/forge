@@ -267,7 +267,7 @@ class ForgeAgentRunner:
                 )
 
             try:
-                raw_payload = json.loads(completed.stdout or "{}")
+                raw_payload = parse_forge_stdout(completed.stdout)
                 trace = self._trace_from_payload(
                     task,
                     raw_payload,
@@ -280,7 +280,11 @@ class ForgeAgentRunner:
                     task=task,
                     started_at=started_at,
                     error="invalid_forge_trace",
-                    failure_reason=f"Forge command returned invalid trace JSON: {exc}",
+                    failure_reason=invalid_trace_failure_reason(
+                        exc,
+                        stdout=completed.stdout,
+                        stderr=completed.stderr,
+                    ),
                     failure_category=FailureCategory.FORGE_CONTRACT_ERROR,
                     shell_outputs=[*setup_outputs, command_output],
                 )
@@ -296,6 +300,10 @@ class ForgeAgentRunner:
         workspace: Path,
     ) -> AgentTrace:
         ended_at = utc_now()
+        final_answer = payload.get("final_answer")
+        if not isinstance(final_answer, str):
+            raise ValueError("Forge trace is missing required string field: final_answer")
+
         tool_calls = TypeAdapter(list[ShellOutput]).validate_python(payload.get("tool_calls", []))
         validation_outputs = [
             *run_validation_commands(task, workspace),
@@ -373,7 +381,7 @@ class ForgeAgentRunner:
             scope_violations=scope_violations,
             expected_files_changed=task.expected_files_changed,
             forbidden_files_changed=task.forbidden_files_changed,
-            final_answer=payload.get("final_answer", ""),
+            final_answer=final_answer,
             verification_result=verification_result,
             error=error,
             failure_reason=failure_reason,
@@ -443,6 +451,40 @@ def normalize_command(command: str | Sequence[str] | None) -> list[str] | None:
 
 def command_label(command: Sequence[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
+
+
+def parse_forge_stdout(stdout: str) -> dict[str, Any]:
+    text = stdout.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.rfind("\n{")
+        if start != -1:
+            parsed = json.loads(text[start + 1 :])
+        else:
+            start = text.find("{")
+            if start == -1:
+                raise
+            parsed = json.loads(text[start:])
+    if not isinstance(parsed, dict):
+        raise TypeError("Forge command stdout must contain a JSON object.")
+    return parsed
+
+
+def invalid_trace_failure_reason(exc: Exception, *, stdout: str, stderr: str) -> str:
+    reason = (
+        "Forge command returned invalid trace JSON: "
+        f"{type(exc).__name__}: {exc}"
+    )
+    stdout_preview = text_preview(stdout, 500)
+    stderr_preview = text_preview(stderr, 500)
+    if stdout_preview:
+        reason += f" | stdout preview: {stdout_preview}"
+    if stderr_preview:
+        reason += f" | stderr preview: {stderr_preview}"
+    return reason
 
 
 def mock_metadata(task: EvaluationTask) -> dict[str, Any]:
