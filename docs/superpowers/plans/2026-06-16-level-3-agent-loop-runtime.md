@@ -519,24 +519,31 @@ This keeps the first slice small enough to review, while leaving a real runtime 
 
 ## Implementation Status as of 2026-06-17
 
-Tasks 1-3 have already landed in the current implementation line:
+Tasks 1-8 have landed in the current implementation line:
 
 | Task | Commit | Status |
 |---|---|---|
 | Task 1: durable loop task ledger | `3a1f3bf feat(runtime): add durable loop task ledger` | Implemented/committed |
 | Task 2: loop policy and human gates | `2b8e2c6 feat(runtime): add loop policy and human gates` | Implemented/committed |
 | Task 3: completion contracts | `f9c67d4 feat(runtime): evaluate loop completion contracts` | Implemented/committed |
+| Task 3.5: runtime contract reconciliation | `ea693c6 feat(runtime): reconcile loop runtime contract` | Implemented/committed |
+| Task 4: subagent runtime event protocol | `844ccf6 feat(runtime): add subagent runtime event protocol` | Implemented/committed |
+| Task 5: live IO and usage ledger | `a3a1965 feat(runtime): record subagent file and usage telemetry` | Implemented/committed |
+| Task 6: gateway-owned runner MVP | `f8ce269 feat(runtime): add gateway loop runner leases` | Implemented/committed |
+| Task 7: UI/dashboard consumption | `47bf27a feat(desktop): surface loop runtime tasks` | Implemented/committed |
+| Task 8: acceptance, crash/replay, and docs | `d493421 feat(runtime): verify level 3 loop runtime` | Implemented/committed |
 
-Review after Task 3 found drift between the frozen durable contract and the code now in `apps/desktop/src-tauri/src/loop_runtime`. Task 3.5 is inserted before Task 4 so the subsequent runner/protocol/UI work does not build on an incomplete event envelope, status enum, runtime event enum, projection replay, or journal idempotency fingerprint.
+The TDD and commit steps below are now historical execution records. They remain
+in the plan as implementation evidence, but there is no active Task 3.5-8
+instruction left to restart.
 
-The unchecked TDD and commit steps in Tasks 1A, 2, and 3 below are historical execution records, not active instructions for the next agent. The next active implementation task is Task 3.5. Do not restart Tasks 1-3 because they already landed in the commits above.
+Known Level 3 MVP boundaries after Task 8:
 
-Known remaining Level 3 gaps after Task 3.5:
-
-- Runner ownership and lease recovery remain incomplete.
-- A2A correlation into loop runtime events remains incomplete.
-- Policy enforcement is not yet wired into every side-effect path.
-- Acceptance gates do not yet prove the full Level 3 runtime story.
+- Gateway automatic recovery and continuation of a full agent coding loop remains future work.
+- Gateway-created loop tasks still bind to existing desktop session/session owner; no default headless `AgentSession` is claimed.
+- File IO is boundary telemetry from worktree/diff events, not executor-level live read/write tracing.
+- Token/cost can be unknown/null with explicit unknown flags.
+- Commit remains human-gated and is never automatic after contract satisfaction.
 
 ---
 
@@ -552,7 +559,7 @@ Known remaining Level 3 gaps after Task 3.5:
 - Read: `apps/desktop/src-tauri/src/protocol/events.rs`
 - Read: `apps/desktop/src/lib/protocol.ts`
 
-- [ ] **Step 0.1: Query existing runtime flows with GitNexus**
+- [x] **Step 0.1: Query existing runtime flows with GitNexus**
 
 Run:
 
@@ -572,7 +579,7 @@ StreamEvent DiagnosticsUpdate HealthAlert agent_a2a_updated
 
 Expected: list of relevant symbols and processes, especially gateway server dispatch, A2A bus, child worktree worker, protocol events, and frontend protocol mirror.
 
-- [ ] **Step 0.2: Run impact checks before any symbol edit**
+- [x] **Step 0.2: Run impact checks before any symbol edit**
 
 Before editing each symbol, run the corresponding upstream impact:
 
@@ -585,7 +592,7 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 
 Expected: HIGH risk is likely for protocol/session symbols. If HIGH or CRITICAL appears, report it before edits and widen tests.
 
-- [ ] **Step 0.3: Freeze public contract names**
+- [x] **Step 0.3: Freeze public contract names**
 
 Confirm these public method names before implementation:
 
@@ -629,7 +636,7 @@ Expected: no product code changed in Task 0 unless this plan is updated.
 - Read: `apps/desktop/src-tauri/src/gateway/session_input.rs`
 - Read: `apps/desktop/src-tauri/src/gateway/server.rs`
 
-- [ ] **Step 0.5.1: Write the source-of-truth matrix into this plan**
+- [x] **Step 0.5.1: Write the source-of-truth matrix into this plan**
 
 Confirm the matrix in `Source-of-Truth Matrix` matches code reality:
 
@@ -645,7 +652,7 @@ Profile/memory stores: context/profile input facts.
 
 Expected: no runtime code changes.
 
-- [ ] **Step 0.5.2: Freeze task state transitions**
+- [x] **Step 0.5.2: Freeze task state transitions**
 
 Document this state machine before implementing `LoopEventJournal`:
 
@@ -668,7 +675,7 @@ interrupted -> canceled
 
 Invalid transitions must produce an auditable `TaskTransitionRejected` event or gateway error; they must not mutate projection directly.
 
-- [ ] **Step 0.5.3: Freeze event envelope and idempotency rules**
+- [x] **Step 0.5.3: Freeze event envelope and idempotency rules**
 
 Record:
 
@@ -683,7 +690,7 @@ correlation_id: user turn, trigger run, session input, or review cycle
 
 Expected: subsequent tasks use these names exactly.
 
-- [ ] **Step 0.5.4: Decide canonical docs**
+- [x] **Step 0.5.4: Decide canonical docs**
 
 Write this rule into both repo plan and Obsidian note:
 
@@ -694,7 +701,7 @@ Obsidian role: strategy, decision log, and handoff summary
 
 Expected: Obsidian remains useful for product memory without drifting into an alternate engineering source of truth.
 
-- [ ] **Step 0.5.5: Freeze Phase 1 implementation boundary**
+- [x] **Step 0.5.5: Freeze Phase 1 implementation boundary**
 
 Record these boundaries before code:
 
@@ -715,7 +722,7 @@ Expected: implementation cannot drift into runner, UI, or protocol event work du
 
 ## Task 1A: Append-Only Loop Event Journal and Projection
 
-> **Historical status:** Implemented/committed as part of `3a1f3bf feat(runtime): add durable loop task ledger`. The unchecked steps, expected failures, and commit command in this section are archival context only. Do not execute this task again; Task 3.5 is the next active task.
+> **Historical status:** Implemented/committed as part of `3a1f3bf feat(runtime): add durable loop task ledger`. The TDD steps, expected failures, and commit command in this section are archival context only. Do not execute this task again.
 
 **Files:**
 - Create: `apps/desktop/src-tauri/src/loop_runtime/mod.rs`
@@ -929,7 +936,7 @@ Response:
 }
 ```
 
-- [ ] **Step 1.1: Write failing event journal and projection tests**
+- [x] **Step 1.1: Write failing event journal and projection tests**
 
 Add tests in `journal.rs` and `projection.rs` for:
 
@@ -1041,7 +1048,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime --lib
 
 Expected: FAIL because `LoopEventJournal`, `LoopEventEnvelope`, `LoopTaskProjection`, and `LoopTaskStatus` do not exist.
 
-- [ ] **Step 1.2: Implement versioned event, task projection, and journal types**
+- [x] **Step 1.2: Implement versioned event, task projection, and journal types**
 
 Create the module with:
 
@@ -1081,7 +1088,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime --lib
 
 Expected: PASS.
 
-- [ ] **Step 1.3: Attach `LoopEventJournal` and projection store to `GatewayState`**
+- [x] **Step 1.3: Attach `LoopEventJournal` and projection store to `GatewayState`**
 
 Modify `GatewayState` to hold:
 
@@ -1114,7 +1121,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
 
 Expected: PASS with no behavior change for existing gateway methods.
 
-- [ ] **Step 1.4: Add gateway JSON-RPC create/list/get/cancel methods**
+- [x] **Step 1.4: Add gateway JSON-RPC create/list/get/cancel methods**
 
 Add protocol request/response types:
 
@@ -1192,7 +1199,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
 
 Expected: gateway protocol/server tests pass with task methods.
 
-- [ ] **Step 1.5: Add gateway protocol/server tests**
+- [x] **Step 1.5: Add gateway protocol/server tests**
 
 Add tests near the existing gateway dispatch tests:
 
@@ -1240,7 +1247,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway::server --l
 
 Expected: PASS.
 
-- [ ] **Step 1.6: Commit Task 1**
+- [x] **Step 1.6: Commit Task 1**
 
 Stage the intended changes first:
 
@@ -1264,7 +1271,7 @@ git commit -m "feat(runtime): add durable loop task ledger"
 
 ## Task 2: Policy, Budget, and Durable Human Gates
 
-> **Historical status:** Implemented/committed as `2b8e2c6 feat(runtime): add loop policy and human gates`. The unchecked steps, expected failures, and commit command in this section are archival context only. Task 3.5 may add attribution records but must not reimplement policy enforcement.
+> **Historical status:** Implemented/committed as `2b8e2c6 feat(runtime): add loop policy and human gates`. The TDD steps, expected failures, and commit command in this section are archival context only. Later tasks add attribution records without reimplementing policy enforcement.
 
 **Files:**
 - Create: `apps/desktop/src-tauri/src/loop_runtime/policy.rs`
@@ -1277,7 +1284,7 @@ git commit -m "feat(runtime): add durable loop task ledger"
 - Test: `apps/desktop/src-tauri/src/loop_runtime/policy.rs`
 - Test: `apps/desktop/src-tauri/src/loop_runtime/gates.rs`
 
-- [ ] **Step 2.1: Write policy preflight tests**
+- [x] **Step 2.1: Write policy preflight tests**
 
 Policy decisions are intent-level and must happen before side effects:
 
@@ -1315,7 +1322,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_policy --lib
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 2.2: Write durable human gate tests**
+- [x] **Step 2.2: Write durable human gate tests**
 
 Human gates are records emitted through events:
 
@@ -1348,7 +1355,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml human_gate --lib
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 2.3: Implement conservative policy and budget defaults**
+- [x] **Step 2.3: Implement conservative policy and budget defaults**
 
 Defaults:
 
@@ -1380,7 +1387,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime --lib
 
 Expected: PASS.
 
-- [ ] **Step 2.4: Commit Task 2**
+- [x] **Step 2.4: Commit Task 2**
 
 ```bash
 git add apps/desktop/src-tauri/src/loop_runtime
@@ -1398,7 +1405,7 @@ git commit -m "feat(runtime): add loop policy and human gates"
 
 ## Task 3: Completion Contract Evaluator
 
-> **Historical status:** Implemented/committed as `f9c67d4 feat(runtime): evaluate loop completion contracts`. The unchecked steps, expected failures, and commit command in this section are archival context only. Task 3.5 reconciles completion event recording and non-complete statuses before Task 4.
+> **Historical status:** Implemented/committed as `f9c67d4 feat(runtime): evaluate loop completion contracts`. The TDD steps, expected failures, and commit command in this section are archival context only. Later tasks reconcile completion event recording and non-complete statuses before protocol/UI consumption.
 
 **Files:**
 - Create: `apps/desktop/src-tauri/src/loop_runtime/completion.rs`
@@ -1408,7 +1415,7 @@ git commit -m "feat(runtime): add loop policy and human gates"
 - Modify: `apps/desktop/src-tauri/src/gateway/server.rs`
 - Test: `apps/desktop/src-tauri/src/loop_runtime/completion.rs`
 
-- [ ] **Step 3.1: Write evaluator tests**
+- [x] **Step 3.1: Write evaluator tests**
 
 Cover exact stop reasons:
 
@@ -1440,7 +1447,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml completion --lib
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 3.2: Implement typed evidence evaluator**
+- [x] **Step 3.2: Implement typed evidence evaluator**
 
 The evaluator must classify:
 
@@ -1462,7 +1469,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime --lib
 
 Expected: PASS.
 
-- [ ] **Step 3.3: Add gateway evaluation method**
+- [x] **Step 3.3: Add gateway evaluation method**
 
 Add `evaluate_loop_task_completion` so desktop, CLI, and dashboard can show why a loop is not done.
 
@@ -1474,7 +1481,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
 
 Expected: PASS.
 
-- [ ] **Step 3.4: Commit Task 3**
+- [x] **Step 3.4: Commit Task 3**
 
 ```bash
 git add apps/desktop/src-tauri/src/loop_runtime apps/desktop/src-tauri/src/gateway/protocol.rs apps/desktop/src-tauri/src/gateway/server.rs
@@ -1781,7 +1788,7 @@ npm --prefix apps/desktop run build
 
 Expected: PASS.
 
-- [ ] **Step 4.4: Commit Task 4**
+- [x] **Step 4.4: Commit Task 4**
 
 ```bash
 git add apps/desktop/src-tauri/src/protocol/events.rs apps/desktop/src/lib/protocol.ts apps/desktop/src/store/index.ts apps/desktop/src-tauri/src/agent/a2a
@@ -1827,7 +1834,10 @@ Not claimed:
 - No usage ledger aggregation or precise cost metering.
 - No runner ownership, gateway autonomous resume, default headless `AgentSession`, UI rendering, acceptance-script updates, or auto-commit behavior.
 
-Remaining gaps: Task 5 telemetry emission, Task 6 runner ownership, Task 7 UI consumption, and Task 8 acceptance/docs.
+Historical note: at Task 4 handoff the remaining gaps were Task 5 telemetry
+emission, Task 6 runner ownership, Task 7 UI consumption, and Task 8
+acceptance/docs. Those slices have since landed in later commits listed in the
+implementation status table above.
 
 ---
 
@@ -2106,7 +2116,7 @@ npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
 
 Expected: PASS.
 
-- [ ] **Step 7.4: Commit Task 7**
+- [x] **Step 7.4: Commit Task 7**
 
 ```bash
 git add apps/desktop/src/lib/loopRuntime.ts apps/desktop/src/lib/loopRuntime.test.ts apps/desktop/src/components/loop apps/desktop/src/components/tasks/TaskManager.tsx apps/desktop/src/components/messages/AgentA2ATimeline.tsx apps/desktop/src-tauri/src/gateway/dashboard.rs apps/desktop/e2e/acceptance.spec.ts
@@ -2120,9 +2130,11 @@ gitnexus_detect_changes(repo: "forge", scope: "staged")
 git commit -m "feat(desktop): surface loop runtime tasks"
 ```
 
-**2026-06-17 Task 7 implementation evidence:** Task 7 is implemented in the working tree and awaits controller review/commit gate. The desktop now has `loopRuntime.ts` projection helpers/tests, a compact `LoopTaskPanel`, StatusBar/TaskManager consumption of active-session loop tasks, A2A file IO / usage fact rows backed by `subagent_runtime_event`, and a static gateway dashboard table backed by `loop_tasks` in the dashboard snapshot. The UI keeps the MVP boundary explicit: loop tasks can wait for input/review, completion blockers stay visible, token/cost can be unknown, and commit remains human-gated. Evidence to preserve for the gate: `node --test apps/desktop/src/lib/loopRuntime.test.ts` first failed because `runtimeFactsForSubagentTask` was missing and then passed after the helper was added. Review fixes then made the dashboard reuse one loaded loop projection for both runtime status stats and loop task rows, made compact A2A runtime facts session-scoped, and replaced localized-label background filtering with raw loop task status filtering. Verification passed: `node --test apps/desktop/src/lib/loopRuntime.test.ts`, `node --test apps/desktop/src/lib/backgroundTaskStatus.test.ts`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib`, `npm --prefix apps/desktop run build`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts`, and `git diff --check`.
+**2026-06-17 Task 7 implementation evidence:** Task 7 is implemented and committed in `47bf27a feat(desktop): surface loop runtime tasks`. The desktop now has `loopRuntime.ts` projection helpers/tests, a compact `LoopTaskPanel`, StatusBar/TaskManager consumption of active-session loop tasks, A2A file IO / usage fact rows backed by `subagent_runtime_event`, and a static gateway dashboard table backed by `loop_tasks` in the dashboard snapshot. The UI keeps the MVP boundary explicit: loop tasks can wait for input/review, completion blockers stay visible, token/cost can be unknown, and commit remains human-gated. Evidence to preserve for the gate: `node --test apps/desktop/src/lib/loopRuntime.test.ts` first failed because `runtimeFactsForSubagentTask` was missing and then passed after the helper was added. Review fixes then made the dashboard reuse one loaded loop projection for both runtime status stats and loop task rows, made compact A2A runtime facts session-scoped, and replaced localized-label background filtering with raw loop task status filtering. Verification passed: `node --test apps/desktop/src/lib/loopRuntime.test.ts`, `node --test apps/desktop/src/lib/backgroundTaskStatus.test.ts`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib`, `npm --prefix apps/desktop run build`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts`, `git diff --check`, and staged GitNexus change detection.
 
-**Remaining Task 7 gaps before commit:** controller review, `gitnexus_detect_changes()`, final staging, and commit. Task 7 still does not claim gateway automatic recovery/continuation, default headless `AgentSession`, executor-level live read/write tracing, precise cost when unknown, or auto-commit.
+Task 7 still does not claim gateway automatic recovery/continuation, default
+headless `AgentSession`, executor-level live read/write tracing, precise cost
+when unknown, or auto-commit.
 
 ---
 

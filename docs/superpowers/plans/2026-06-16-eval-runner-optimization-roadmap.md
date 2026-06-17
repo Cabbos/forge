@@ -81,7 +81,7 @@ Run these gates in order. A later gate should not be used to explain away a fail
 - Test: `apps/eval-runner/tests/test_reporting.py`
 - Docs: `apps/eval-runner/docs/architecture.md`
 
-- [ ] **Step 1: Write failing tests for fail-closed trust gates**
+- [x] **Step 1: Write failing tests for fail-closed trust gates**
 
 Add tests proving the eval runner refuses to call an experiment trusted when the harness self-check failed, the dataset fingerprint is missing, or a model-graded scorer has not been calibrated.
 
@@ -100,7 +100,7 @@ def test_trust_gates_fail_closed_without_harness_check():
     assert result.blockers == ["harness_untrusted"]
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails**
+- [x] **Step 2: Run the focused test and verify it fails**
 
 Run:
 
@@ -111,7 +111,7 @@ uv run pytest tests/test_reporting.py::test_trust_gates_fail_closed_without_harn
 
 Expected: FAIL because `app.trust_gates` does not exist.
 
-- [ ] **Step 3: Add a trust gate result model**
+- [x] **Step 3: Add a trust gate result model**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -122,7 +122,7 @@ class TrustGateResult(EvalModel):
     warnings: list[str] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement fail-closed trust gate evaluation**
+- [x] **Step 4: Implement fail-closed trust gate evaluation**
 
 Create `apps/eval-runner/app/trust_gates.py`:
 
@@ -149,14 +149,14 @@ def evaluate_trust_gates(
     return TrustGateResult(trusted=not blockers, blockers=blockers)
 ```
 
-- [ ] **Step 5: Document the trust scorecard**
+- [x] **Step 5: Document the trust scorecard**
 
 In `apps/eval-runner/docs/architecture.md`, document that a run has two separate statuses:
 
 - `execution_status`: whether tasks ran to completion.
 - `trust_status`: whether the harness, dataset, scorer, and red-team gates make the score decision-worthy.
 
-- [ ] **Step 6: Run reporting tests**
+- [x] **Step 6: Run reporting tests**
 
 Run:
 
@@ -167,7 +167,7 @@ uv run pytest tests/test_reporting.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/trust_gates.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_reporting.py apps/eval-runner/docs/architecture.md
@@ -184,7 +184,7 @@ git commit -m "feat(eval): add trust gate scorecard"
 - Test: `apps/eval-runner/tests/test_cases.py`
 - Docs: `apps/eval-runner/README.md`
 
-- [ ] **Step 1: Write failing tests for case quality diagnostics**
+- [x] **Step 1: Write failing tests for case quality diagnostics**
 
 Add tests that prove the loader can report missing verification, missing expected file assertions, and impossible fixture paths without rejecting intentionally contract-only cases.
 
@@ -218,7 +218,7 @@ def test_case_quality_reports_missing_verification_for_executable_case(tmp_path)
     ]
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails**
+- [x] **Step 2: Run the focused test and verify it fails**
 
 Run:
 
@@ -229,7 +229,7 @@ uv run pytest tests/test_cases.py::test_case_quality_reports_missing_verificatio
 
 Expected: FAIL because `validate_case_quality` does not exist.
 
-- [ ] **Step 3: Add a small quality issue model**
+- [x] **Step 3: Add a small quality issue model**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -241,7 +241,7 @@ class CaseQualityIssue(EvalModel):
     message: str
 ```
 
-- [ ] **Step 4: Implement case quality validation**
+- [x] **Step 4: Implement case quality validation**
 
 Add to `apps/eval-runner/app/cases.py`:
 
@@ -275,7 +275,7 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
     return issues
 ```
 
-- [ ] **Step 5: Run case tests**
+- [x] **Step 5: Run case tests**
 
 Run:
 
@@ -286,7 +286,7 @@ uv run pytest tests/test_cases.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/cases.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_cases.py apps/eval-runner/README.md
@@ -302,7 +302,7 @@ git commit -m "feat(eval): add case quality diagnostics"
 - Modify: `apps/eval-runner/tests/test_continuity_eval_cases.py`
 - Modify: `apps/eval-runner/tests/test_reporting.py`
 
-- [ ] **Step 1: Decide the status of every continuity pipeline case**
+- [x] **Step 1: Decide the status of every continuity pipeline case**
 
 For each `apps/eval-runner/eval_cases/continuity-pipeline-*/case.json`, choose one of:
 
@@ -323,7 +323,7 @@ or:
 }
 ```
 
-- [ ] **Step 2: Write a test that no executable continuity case is unverified**
+- [x] **Step 2: Write a test that no executable continuity case is unverified**
 
 Add to `apps/eval-runner/tests/test_continuity_eval_cases.py`:
 
@@ -346,7 +346,7 @@ def test_continuity_cases_are_verified_or_marked_contract_only():
     ] == []
 ```
 
-- [ ] **Step 3: Run the test and verify it fails before case edits**
+- [x] **Step 3: Run the test and verify it fails before case edits**
 
 Run:
 
@@ -357,7 +357,7 @@ uv run pytest tests/test_continuity_eval_cases.py::test_continuity_cases_are_ver
 
 Expected: FAIL until each case is verified or marked contract-only.
 
-- [ ] **Step 4: Update case JSON files**
+- [x] **Step 4: Update case JSON files**
 
 For cases backed by `_fixtures/continuity-ts-tooling`, add:
 
@@ -375,7 +375,7 @@ For prompt-only contract cases that are not meant to pass local verification, ad
 
 Preserve existing `metadata.mock` blocks by adding `contract_only` beside `mock`, not replacing it.
 
-- [ ] **Step 5: Run full eval tests**
+- [x] **Step 5: Run full eval tests**
 
 Run:
 
@@ -385,7 +385,7 @@ npm run test:eval
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/eval_cases apps/eval-runner/tests/test_continuity_eval_cases.py apps/eval-runner/tests/test_reporting.py
@@ -402,7 +402,7 @@ git commit -m "test(eval): clarify continuity case verification"
 - Test: `apps/eval-runner/tests/test_runner.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing tests for malformed Forge output**
+- [x] **Step 1: Write failing tests for malformed Forge output**
 
 Add tests covering missing `final_answer`, malformed `tool_calls`, unknown failure categories, stdout with extra non-JSON logs, and a Forge command that emits valid JSON after log lines.
 
@@ -440,7 +440,7 @@ print(json.dumps({
     assert trace.final_answer == "done"
 ```
 
-- [ ] **Step 2: Run focused runner tests and verify failure**
+- [x] **Step 2: Run focused runner tests and verify failure**
 
 Run:
 
@@ -451,7 +451,7 @@ uv run pytest tests/test_runner.py::test_forge_runner_accepts_json_object_after_
 
 Expected: FAIL because current parser uses `json.loads(completed.stdout or "{}")`.
 
-- [ ] **Step 3: Implement robust JSON extraction**
+- [x] **Step 3: Implement robust JSON extraction**
 
 Add to `apps/eval-runner/app/runner.py`:
 
@@ -486,11 +486,11 @@ with:
 raw_payload = parse_forge_stdout(completed.stdout)
 ```
 
-- [ ] **Step 4: Add stderr and stdout previews to invalid contract traces**
+- [x] **Step 4: Add stderr and stdout previews to invalid contract traces**
 
 When `invalid_forge_trace` is returned, include the command output in `shell_outputs` and set `failure_reason` to include the exception type plus the first 500 characters of stdout/stderr.
 
-- [ ] **Step 5: Run runner tests and full eval tests**
+- [x] **Step 5: Run runner tests and full eval tests**
 
 Run:
 
@@ -503,7 +503,7 @@ npm run test:eval
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/runner.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_runner.py apps/eval-runner/docs/ops.md
@@ -524,7 +524,7 @@ git commit -m "fix(eval): harden forge runner contract parsing"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/docs/architecture.md`
 
-- [ ] **Step 1: Write failing tests for dataset fingerprint stability**
+- [x] **Step 1: Write failing tests for dataset fingerprint stability**
 
 Add to `apps/eval-runner/tests/test_storage.py`:
 
@@ -540,7 +540,7 @@ def test_dataset_fingerprint_is_stable_for_same_cases():
     assert dataset_fingerprint(tasks) == dataset_fingerprint(load_cases(Path("eval_cases/small-edit-success")))
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -551,7 +551,7 @@ uv run pytest tests/test_storage.py::test_dataset_fingerprint_is_stable_for_same
 
 Expected: FAIL because `app.datasets` does not exist.
 
-- [ ] **Step 3: Add dataset fingerprinting**
+- [x] **Step 3: Add dataset fingerprinting**
 
 Create `apps/eval-runner/app/datasets.py`:
 
@@ -584,7 +584,7 @@ def dataset_fingerprint(tasks: list[EvaluationTask]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 ```
 
-- [ ] **Step 4: Add experiment snapshot models**
+- [x] **Step 4: Add experiment snapshot models**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -601,7 +601,7 @@ class ExperimentSnapshot(EvalModel):
     created_at: datetime
 ```
 
-- [ ] **Step 5: Persist experiment metadata in SQLite**
+- [x] **Step 5: Persist experiment metadata in SQLite**
 
 Add an `eval_experiments` table to `SQLiteStorage._init_schema`:
 
@@ -620,7 +620,7 @@ CREATE TABLE IF NOT EXISTS eval_experiments (
 );
 ```
 
-- [ ] **Step 6: Add CLI option to write an experiment snapshot**
+- [x] **Step 6: Add CLI option to write an experiment snapshot**
 
 Add to `apps/eval-runner/app/cli.py`:
 
@@ -641,7 +641,7 @@ When `--experiment-name` is present and `--output` is provided, include:
 
 in the output artifact.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -652,7 +652,7 @@ uv run pytest tests/test_storage.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/eval-runner/app/datasets.py apps/eval-runner/app/experiments.py apps/eval-runner/app/models.py apps/eval-runner/app/storage.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_storage.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/architecture.md
@@ -670,7 +670,7 @@ git commit -m "feat(eval): add dataset fingerprints and experiment snapshots"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Test: `apps/eval-runner/tests/test_reporting.py`
 
-- [ ] **Step 1: Write tests for repeated trial aggregation**
+- [x] **Step 1: Write tests for repeated trial aggregation**
 
 Add to `apps/eval-runner/tests/test_reporting.py`:
 
@@ -691,7 +691,7 @@ def test_trial_aggregation_marks_flaky_task():
     assert result["a"]["flaky"] is True
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -702,7 +702,7 @@ uv run pytest tests/test_reporting.py::test_trial_aggregation_marks_flaky_task -
 
 Expected: FAIL because `aggregate_trial_metrics` does not exist.
 
-- [ ] **Step 3: Implement trial aggregation**
+- [x] **Step 3: Implement trial aggregation**
 
 Add to `apps/eval-runner/app/reporting.py`:
 
@@ -729,7 +729,7 @@ def aggregate_trial_metrics(tasks: list[TaskMetric]) -> dict[str, dict[str, floa
     return result
 ```
 
-- [ ] **Step 4: Add CLI `--trials`**
+- [x] **Step 4: Add CLI `--trials`**
 
 Add to `apps/eval-runner/app/cli.py`:
 
@@ -739,7 +739,7 @@ parser.add_argument("--trials", type=int, default=1)
 
 Run the loaded cases `args.trials` times and include all traces in the report artifact. Keep stdout as the aggregate report.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -750,7 +750,7 @@ uv run pytest tests/test_cli.py tests/test_reporting.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/cli.py apps/eval-runner/app/reporting.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_cli.py apps/eval-runner/tests/test_reporting.py
@@ -769,7 +769,7 @@ git commit -m "feat(eval): add repeated trials and flake detection"
 - Test: `apps/eval-runner/tests/test_metrics.py`
 - Test: `apps/eval-runner/tests/test_reporting.py`
 
-- [ ] **Step 1: Write scorer tests**
+- [x] **Step 1: Write scorer tests**
 
 Add to `apps/eval-runner/tests/test_metrics.py`:
 
@@ -784,7 +784,7 @@ def test_budget_scorer_flags_excess_model_rounds(make_trace):
     assert scores["budget_ok"].label == "max_model_rounds_exceeded"
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -795,7 +795,7 @@ uv run pytest tests/test_metrics.py::test_budget_scorer_flags_excess_model_round
 
 Expected: FAIL because `app.scoring` does not exist.
 
-- [ ] **Step 3: Add score model**
+- [x] **Step 3: Add score model**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -807,7 +807,7 @@ class EvalScore(EvalModel):
     explanation: str | None = None
 ```
 
-- [ ] **Step 4: Implement code-based scorers**
+- [x] **Step 4: Implement code-based scorers**
 
 Create `apps/eval-runner/app/scoring.py`:
 
@@ -840,7 +840,7 @@ def score_trace(trace: AgentTrace, *, max_model_rounds: int | None = None) -> di
     return scores
 ```
 
-- [ ] **Step 5: Add judge calibration guardrails**
+- [x] **Step 5: Add judge calibration guardrails**
 
 Create `apps/eval-runner/app/judge_calibration.py`:
 
@@ -869,11 +869,11 @@ Add tests requiring any future LLM-as-judge or semantic scorer to declare:
 
 Default rule: uncalibrated judge scores are report-only and must not fail CI.
 
-- [ ] **Step 6: Include score summaries in reports**
+- [x] **Step 6: Include score summaries in reports**
 
 Add aggregate score averages to `BacktestReport` as `score_summary: dict[str, float] = Field(default_factory=dict)` and populate it in `build_report`.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -884,7 +884,7 @@ uv run pytest tests/test_metrics.py tests/test_reporting.py -v
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/eval-runner/app/scoring.py apps/eval-runner/app/judge_calibration.py apps/eval-runner/app/models.py apps/eval-runner/app/reporting.py apps/eval-runner/tests/test_metrics.py apps/eval-runner/tests/test_reporting.py
@@ -902,7 +902,7 @@ git commit -m "feat(eval): add layered scorers and calibration"
 - Test: `apps/eval-runner/tests/test_cases.py`
 - Test: `apps/eval-runner/tests/test_cli.py`
 
-- [ ] **Step 1: Write tests for deterministic user-style prompt variants**
+- [x] **Step 1: Write tests for deterministic user-style prompt variants**
 
 Add to `apps/eval-runner/tests/test_cases.py`:
 
@@ -921,7 +921,7 @@ def test_prompt_mutation_creates_stable_user_style_variant():
     assert variant.metadata["mutation_style"] == "terse-bug-report"
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -932,7 +932,7 @@ uv run pytest tests/test_cases.py::test_prompt_mutation_creates_stable_user_styl
 
 Expected: FAIL because `app.prompt_mutation` does not exist.
 
-- [ ] **Step 3: Implement deterministic mutations**
+- [x] **Step 3: Implement deterministic mutations**
 
 Create `apps/eval-runner/app/prompt_mutation.py`:
 
@@ -957,7 +957,7 @@ def mutate_prompt(task: EvaluationTask, *, style: str) -> EvaluationTask:
     return task.model_copy(update={"id": f"{task.id}__{style}", "prompt": prompt, "metadata": metadata})
 ```
 
-- [ ] **Step 4: Add CLI mutation option**
+- [x] **Step 4: Add CLI mutation option**
 
 Add:
 
@@ -967,7 +967,7 @@ parser.add_argument("--prompt-mutation", action="append", default=[])
 
 When present, run both base cases and mutated cases unless `--mutations-only` is added.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -978,7 +978,7 @@ uv run pytest tests/test_cases.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/prompt_mutation.py apps/eval-runner/app/cases.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_cases.py apps/eval-runner/tests/test_cli.py
@@ -994,7 +994,7 @@ git commit -m "feat(eval): add realistic prompt mutations"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/README.md`
 
-- [ ] **Step 1: Write failing tests for CLI threshold exits**
+- [x] **Step 1: Write failing tests for CLI threshold exits**
 
 Add to `apps/eval-runner/tests/test_cli.py`:
 
@@ -1016,7 +1016,7 @@ def test_cli_exits_nonzero_when_success_rate_below_threshold(capsys):
     assert "success_rate below threshold" in captured.err
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails**
+- [x] **Step 2: Run the focused test and verify it fails**
 
 Run:
 
@@ -1027,7 +1027,7 @@ uv run pytest tests/test_cli.py::test_cli_exits_nonzero_when_success_rate_below_
 
 Expected: FAIL because `--min-success-rate` does not exist.
 
-- [ ] **Step 3: Add CLI threshold flags**
+- [x] **Step 3: Add CLI threshold flags**
 
 Add parser flags in `apps/eval-runner/app/cli.py`:
 
@@ -1037,7 +1037,7 @@ parser.add_argument("--max-scope-violation-rate", type=float, default=None)
 parser.add_argument("--max-avg-model-rounds", type=float, default=None)
 ```
 
-- [ ] **Step 4: Implement threshold evaluation**
+- [x] **Step 4: Implement threshold evaluation**
 
 Add:
 
@@ -1072,7 +1072,7 @@ for failure in failures:
 return 1 if failures else 0
 ```
 
-- [ ] **Step 5: Run CLI tests and smoke command**
+- [x] **Step 5: Run CLI tests and smoke command**
 
 Run:
 
@@ -1084,7 +1084,7 @@ uv run python -m app.cli --cases eval_cases --provider mock --min-success-rate 0
 
 Expected: tests PASS; command exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/cli.py apps/eval-runner/tests/test_cli.py apps/eval-runner/README.md
@@ -1104,7 +1104,7 @@ git commit -m "feat(eval): add cli quality thresholds"
 - Create: `apps/eval-runner/eval_cases/red_team/**/case.json`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing tests for red-team case generation**
+- [x] **Step 1: Write failing tests for red-team case generation**
 
 Add tests proving red-team cases are deterministic, tagged, and excluded from normal success-rate comparisons unless `--include-red-team` is present.
 
@@ -1121,7 +1121,7 @@ def test_red_team_case_marks_secret_leak_probe():
     assert probe.metadata["red_team_category"] == "secret_leak"
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1132,7 +1132,7 @@ uv run pytest tests/test_cases.py::test_red_team_case_marks_secret_leak_probe -v
 
 Expected: FAIL because `app.red_team` does not exist.
 
-- [ ] **Step 3: Add deterministic red-team transforms**
+- [x] **Step 3: Add deterministic red-team transforms**
 
 Create `apps/eval-runner/app/red_team.py` with probes for:
 
@@ -1142,7 +1142,7 @@ Create `apps/eval-runner/app/red_team.py` with probes for:
 - Unsafe tool use: requests to run destructive shell commands or network exfiltration.
 - Future-state lookup: requests to inspect git history, remotes, reflogs, tags, or branches for the answer.
 
-- [ ] **Step 4: Add red-team scoring labels**
+- [x] **Step 4: Add red-team scoring labels**
 
 In `apps/eval-runner/app/scoring.py`, add advisory and gateable score names:
 
@@ -1156,7 +1156,7 @@ In `apps/eval-runner/app/scoring.py`, add advisory and gateable score names:
 
 Any detected secret leak, future-state lookup, or forbidden file write is a critical fail.
 
-- [ ] **Step 5: Add CLI controls**
+- [x] **Step 5: Add CLI controls**
 
 Add:
 
@@ -1168,7 +1168,7 @@ parser.add_argument("--max-red-team-failure-rate", type=float, default=None)
 
 Normal backtests should not mix red-team failures into product success rate by default. CI can run a separate red-team lane with stricter thresholds.
 
-- [ ] **Step 6: Add seed red-team cases**
+- [x] **Step 6: Add seed red-team cases**
 
 Create a small starter suite under `apps/eval-runner/eval_cases/red_team`:
 
@@ -1180,7 +1180,7 @@ Create a small starter suite under `apps/eval-runner/eval_cases/red_team`:
 
 Each case should include explicit `forbidden_files_changed`, expected failure/success metadata, and deterministic mock behavior.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -1191,7 +1191,7 @@ uv run pytest tests/test_cases.py tests/test_metrics.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/eval-runner/app/red_team.py apps/eval-runner/app/scoring.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_cases.py apps/eval-runner/tests/test_metrics.py apps/eval-runner/tests/test_cli.py apps/eval-runner/eval_cases/red_team apps/eval-runner/docs/ops.md
@@ -1209,7 +1209,7 @@ git commit -m "feat(eval): add red-team regression pack"
 - Test: `apps/eval-runner/tests/test_api.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing API test for queue status**
+- [x] **Step 1: Write failing API test for queue status**
 
 Add to `apps/eval-runner/tests/test_api.py`:
 
@@ -1225,7 +1225,7 @@ def test_queue_status_counts_runs_by_status(client):
     assert "oldest_pending_run_id" in payload
 ```
 
-- [ ] **Step 2: Run the focused test and verify it fails**
+- [x] **Step 2: Run the focused test and verify it fails**
 
 Run:
 
@@ -1236,7 +1236,7 @@ uv run pytest tests/test_api.py::test_queue_status_counts_runs_by_status -v
 
 Expected: FAIL with 404.
 
-- [ ] **Step 3: Add response model**
+- [x] **Step 3: Add response model**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -1247,7 +1247,7 @@ class QueueStatus(EvalModel):
     oldest_running_run_id: str | None = None
 ```
 
-- [ ] **Step 4: Add storage helper**
+- [x] **Step 4: Add storage helper**
 
 Add to storage protocol:
 
@@ -1265,7 +1265,7 @@ SELECT status, COUNT(*) FROM eval_runs GROUP BY status
 
 and oldest pending/running IDs ordered by `created_at ASC, id ASC`.
 
-- [ ] **Step 5: Add FastAPI route**
+- [x] **Step 5: Add FastAPI route**
 
 Add to `create_app`:
 
@@ -1275,7 +1275,7 @@ def get_queue_status() -> QueueStatus:
     return get_storage().queue_status()
 ```
 
-- [ ] **Step 6: Run API and storage tests**
+- [x] **Step 6: Run API and storage tests**
 
 Run:
 
@@ -1286,7 +1286,7 @@ uv run pytest tests/test_api.py tests/test_storage.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/main.py apps/eval-runner/app/storage.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_api.py apps/eval-runner/docs/ops.md
@@ -1303,7 +1303,7 @@ git commit -m "feat(eval): expose queue status"
 - Test: `apps/eval-runner/tests/test_worker.py`
 - Test: `apps/eval-runner/tests/test_storage.py`
 
-- [ ] **Step 1: Write tests for stale run reclaim and cancellation summary**
+- [x] **Step 1: Write tests for stale run reclaim and cancellation summary**
 
 Add a worker test that creates a queued run, cancels it during a long fake task, and asserts the final run stays `cancelled` with partial traces preserved and no retry scheduled.
 
@@ -1321,7 +1321,7 @@ def test_worker_does_not_retry_cancelled_run(storage, monkeypatch):
     assert storage.get_run(run.run_id).status == RunStatus.CANCELLED
 ```
 
-- [ ] **Step 2: Run focused worker test and verify current behavior**
+- [x] **Step 2: Run focused worker test and verify current behavior**
 
 Run:
 
@@ -1332,11 +1332,11 @@ uv run pytest tests/test_worker.py::test_worker_does_not_retry_cancelled_run -v
 
 Expected: PASS if cancelled pending runs are not claimed; otherwise FAIL and fix claim logic.
 
-- [ ] **Step 3: Ensure claim logic never claims cancelled runs**
+- [x] **Step 3: Ensure claim logic never claims cancelled runs**
 
 In `InMemoryStorage.claim_pending_run` and `SQLiteStorage.claim_pending_run`, only claim rows with `status = pending` or stale `running`. Never claim `cancelled`, `completed`, or `failed`.
 
-- [ ] **Step 4: Improve worker stderr summaries**
+- [x] **Step 4: Improve worker stderr summaries**
 
 In `app/worker.py`, print one-line summaries for claimed, completed, failed, retried, and cancelled runs:
 
@@ -1346,7 +1346,7 @@ print(f"[worker {self.worker_id}] completed run {run.run_id} tasks={len(traces)}
 
 Import `sys` at module top if needed.
 
-- [ ] **Step 5: Run worker and storage tests**
+- [x] **Step 5: Run worker and storage tests**
 
 Run:
 
@@ -1357,7 +1357,7 @@ uv run pytest tests/test_worker.py tests/test_storage.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/worker.py apps/eval-runner/app/storage.py apps/eval-runner/tests/test_worker.py apps/eval-runner/tests/test_storage.py
@@ -1374,7 +1374,7 @@ git commit -m "fix(eval): polish worker cancellation and lease handling"
 - Test: `apps/eval-runner/tests/test_reporting.py`
 - Docs: `apps/eval-runner/README.md`
 
-- [ ] **Step 1: Write tests for report regression detection**
+- [x] **Step 1: Write tests for report regression detection**
 
 Add:
 
@@ -1400,7 +1400,7 @@ def test_compare_reports_flags_success_rate_regression():
     assert result["regressions"][0]["severity"] == "critical"
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1411,7 +1411,7 @@ uv run pytest tests/test_reporting.py::test_compare_reports_flags_success_rate_r
 
 Expected: FAIL because `app.report_compare` does not exist.
 
-- [ ] **Step 3: Add comparison helper**
+- [x] **Step 3: Add comparison helper**
 
 Create `apps/eval-runner/app/report_compare.py`:
 
@@ -1456,7 +1456,7 @@ def compare_reports(previous: BacktestReport, current: BacktestReport) -> dict[s
     return {"regressions": regressions}
 ```
 
-- [ ] **Step 4: Run reporting tests**
+- [x] **Step 4: Run reporting tests**
 
 Run:
 
@@ -1467,7 +1467,7 @@ uv run pytest tests/test_reporting.py -v
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/eval-runner/app/report_compare.py apps/eval-runner/tests/test_reporting.py apps/eval-runner/README.md
@@ -1485,7 +1485,7 @@ git commit -m "feat(eval): add report comparison helper"
 - Test: `apps/eval-runner/tests/test_cases.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write a test for promoting a failed trace into a case**
+- [x] **Step 1: Write a test for promoting a failed trace into a case**
 
 Add to `apps/eval-runner/tests/test_cases.py`:
 
@@ -1501,7 +1501,7 @@ def test_failed_trace_can_be_promoted_to_eval_case(make_trace):
     assert task.metadata["failure_reason"] == "test failed"
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1512,7 +1512,7 @@ uv run pytest tests/test_cases.py::test_failed_trace_can_be_promoted_to_eval_cas
 
 Expected: FAIL because `app.trace_import` does not exist.
 
-- [ ] **Step 3: Implement trace promotion**
+- [x] **Step 3: Implement trace promotion**
 
 Create `apps/eval-runner/app/trace_import.py`:
 
@@ -1536,7 +1536,7 @@ def case_from_trace(trace: AgentTrace) -> EvaluationTask:
     )
 ```
 
-- [ ] **Step 4: Add CLI import command**
+- [x] **Step 4: Add CLI import command**
 
 Add a subcommand shape to `app.cli`:
 
@@ -1546,7 +1546,7 @@ uv run python -m app.cli promote-trace --trace artifacts/run-id/trace.json --out
 
 The command writes one `case.json` per failed trace.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -1557,7 +1557,7 @@ uv run pytest tests/test_cases.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/trace_import.py apps/eval-runner/app/models.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_cases.py apps/eval-runner/docs/ops.md
@@ -1578,7 +1578,7 @@ git commit -m "feat(eval): promote traces into eval cases"
 - Test: `apps/eval-runner/tests/test_smoke.py`
 - Docs: `apps/eval-runner/docs/architecture.md`
 
-- [ ] **Step 1: Write a failing test for workspace cleanliness**
+- [x] **Step 1: Write a failing test for workspace cleanliness**
 
 Add to `apps/eval-runner/tests/test_runner.py`:
 
@@ -1596,7 +1596,7 @@ def test_sandbox_rejects_dirty_workspace_after_case(tmp_path):
     assert ".env" in result.untracked_files
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1607,7 +1607,7 @@ uv run pytest tests/test_runner.py::test_sandbox_rejects_dirty_workspace_after_c
 
 Expected: FAIL because `app.sandbox` does not exist.
 
-- [ ] **Step 3: Add sandbox result and leakage check models**
+- [x] **Step 3: Add sandbox result and leakage check models**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -1625,7 +1625,7 @@ class LeakageCheck(EvalModel):
     scrubbed_items: list[str] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement workspace cleanliness check**
+- [x] **Step 4: Implement workspace cleanliness check**
 
 Create `apps/eval-runner/app/sandbox.py`:
 
@@ -1672,7 +1672,7 @@ def assert_clean_workspace(workspace: Path, *, allowed_untracked: list[str]) -> 
     )
 ```
 
-- [ ] **Step 5: Add future-state leakage scrubbing**
+- [x] **Step 5: Add future-state leakage scrubbing**
 
 In `apps/eval-runner/app/sandbox.py`, add a `scrub_future_repo_state(workspace: Path) -> LeakageCheck` helper that removes or neutralizes:
 
@@ -1687,7 +1687,7 @@ Add a focused test where a workspace contains a future fix commit in `git log --
 
 Default rule: if scrubbing cannot prove the workspace is clean, the trust gate must return `harness_untrusted`.
 
-- [ ] **Step 6: Add command-level leakage detectors**
+- [x] **Step 6: Add command-level leakage detectors**
 
 Detect shell outputs and tool calls that attempt future-state lookup:
 
@@ -1701,7 +1701,7 @@ git show <future-looking-ref>
 
 These should not necessarily stop exploratory local development, but in trusted eval mode they must create a critical `future_state_leakage` score failure and mark the run untrusted.
 
-- [ ] **Step 7: Write a failing test for patch replay**
+- [x] **Step 7: Write a failing test for patch replay**
 
 Add:
 
@@ -1725,7 +1725,7 @@ def test_patch_replay_applies_trace_diff(tmp_path):
     assert (workspace / "hello.txt").read_text(encoding="utf-8") == "hello forge\n"
 ```
 
-- [ ] **Step 8: Implement patch replay**
+- [x] **Step 8: Implement patch replay**
 
 Create `apps/eval-runner/app/patches.py`:
 
@@ -1752,7 +1752,7 @@ def replay_patch(workspace: Path, diffs: list[FileDiff]) -> WorkspaceCheck:
     )
 ```
 
-- [ ] **Step 9: Add golden harness check**
+- [x] **Step 9: Add golden harness check**
 
 Create `apps/eval-runner/app/harness_checks.py`:
 
@@ -1770,7 +1770,7 @@ def run_golden_harness_check(cases_path: Path) -> bool:
     return all(trace.verification_result is not None and trace.verification_result.passed for trace in traces)
 ```
 
-- [ ] **Step 10: Run tests**
+- [x] **Step 10: Run tests**
 
 Run:
 
@@ -1781,7 +1781,7 @@ uv run pytest tests/test_runner.py tests/test_smoke.py -v
 
 Expected: PASS.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add apps/eval-runner/app/sandbox.py apps/eval-runner/app/patches.py apps/eval-runner/app/harness_checks.py apps/eval-runner/app/runner.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_runner.py apps/eval-runner/tests/test_smoke.py apps/eval-runner/docs/architecture.md
@@ -1801,7 +1801,7 @@ git commit -m "feat(eval): add sandbox leakage and patch replay checks"
 - Test: `apps/eval-runner/tests/test_reporting.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write a failing test for adapter metadata**
+- [x] **Step 1: Write a failing test for adapter metadata**
 
 Add to `apps/eval-runner/tests/test_runner.py`:
 
@@ -1819,7 +1819,7 @@ def test_agent_adapter_metadata_is_attached_to_trace():
     }
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1830,7 +1830,7 @@ uv run pytest tests/test_runner.py::test_agent_adapter_metadata_is_attached_to_t
 
 Expected: FAIL because `app.agent_adapter` does not exist.
 
-- [ ] **Step 3: Add adapter and trajectory models**
+- [x] **Step 3: Add adapter and trajectory models**
 
 Create `apps/eval-runner/app/agent_adapter.py`:
 
@@ -1852,7 +1852,7 @@ trajectory_path: str | None = None
 cost_usd: float | None = Field(default=None, ge=0)
 ```
 
-- [ ] **Step 4: Export per-task trajectories**
+- [x] **Step 4: Export per-task trajectories**
 
 In `SQLiteStorage._write_run_artifacts`, add one text or JSON trajectory file per trace:
 
@@ -1863,7 +1863,7 @@ trajectory_path.write_text(trace.model_dump_json(indent=2), encoding="utf-8")
 
 Register each file as an `EvalArtifact` with kind `trajectory`.
 
-- [ ] **Step 5: Add budget score aggregation**
+- [x] **Step 5: Add budget score aggregation**
 
 In `apps/eval-runner/app/reporting.py`, include:
 
@@ -1873,7 +1873,7 @@ total_cost_usd = sum(trace.cost_usd or 0.0 for trace in traces)
 
 Add `total_cost_usd: float = 0.0` to `BacktestReport`.
 
-- [ ] **Step 6: Add CI budget threshold**
+- [x] **Step 6: Add CI budget threshold**
 
 In `apps/eval-runner/app/cli.py`, add:
 
@@ -1883,7 +1883,7 @@ parser.add_argument("--max-total-cost-usd", type=float, default=None)
 
 Fail with exit code 1 if the report cost exceeds the threshold.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -1894,7 +1894,7 @@ uv run pytest tests/test_runner.py tests/test_reporting.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/eval-runner/app/agent_adapter.py apps/eval-runner/app/models.py apps/eval-runner/app/runner.py apps/eval-runner/app/reporting.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_runner.py apps/eval-runner/tests/test_reporting.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/ops.md
@@ -1913,7 +1913,7 @@ git commit -m "feat(eval): add agent adapter trajectories and cost budgets"
 - Test: `apps/eval-runner/tests/test_metrics.py`
 - Docs: `apps/eval-runner/README.md`
 
-- [ ] **Step 1: Write failing tests for regression and fix tests**
+- [x] **Step 1: Write failing tests for regression and fix tests**
 
 Add:
 
@@ -1933,7 +1933,7 @@ def test_task_supports_regression_and_fix_validation_commands():
     assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1944,7 +1944,7 @@ uv run pytest tests/test_runner.py::test_task_supports_regression_and_fix_valida
 
 Expected: FAIL because the fields do not exist.
 
-- [ ] **Step 3: Add split validation fields**
+- [x] **Step 3: Add split validation fields**
 
 Add to `EvaluationTask`:
 
@@ -1953,7 +1953,7 @@ pass_to_pass_commands: list[str] = Field(default_factory=list)
 fail_to_pass_commands: list[str] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Execute split validation commands**
+- [x] **Step 4: Execute split validation commands**
 
 In `ForgeAgentRunner._trace_from_payload`, run:
 
@@ -1964,7 +1964,7 @@ fix_outputs = run_shell_commands(task.fail_to_pass_commands, workspace)
 
 Append both sets to `shell_outputs`. If any `pass_to_pass_commands` fail, set `failure_category=verification_failed` with `failure_reason="Regression validation failed"`. If all regression commands pass but any `fail_to_pass_commands` fail, set `failure_reason="Bug-fix validation failed"`.
 
-- [ ] **Step 5: Add scorer labels**
+- [x] **Step 5: Add scorer labels**
 
 In `app/scoring.py`, add score names:
 
@@ -1975,7 +1975,7 @@ In `app/scoring.py`, add score names:
 
 Score them from shell output command groups.
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -1986,7 +1986,7 @@ uv run pytest tests/test_runner.py tests/test_metrics.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/models.py apps/eval-runner/app/runner.py apps/eval-runner/app/scoring.py apps/eval-runner/tests/test_runner.py apps/eval-runner/tests/test_metrics.py apps/eval-runner/README.md
@@ -2004,7 +2004,7 @@ git commit -m "feat(eval): split regression and bugfix validation"
 - Modify: root `README.md` only if top-level commands changed
 - Modify: `CHANGELOG.md` if user-visible eval runner commands or API surfaces changed
 
-- [ ] **Step 1: Run full eval test suite**
+- [x] **Step 1: Run full eval test suite**
 
 Run:
 
@@ -2014,7 +2014,7 @@ npm run test:eval
 
 Expected: PASS.
 
-- [ ] **Step 2: Run mock backtest with thresholds**
+- [x] **Step 2: Run mock backtest with thresholds**
 
 Run:
 
@@ -2025,7 +2025,7 @@ uv run python -m app.cli --cases eval_cases --provider mock --min-success-rate 0
 
 Expected: command exits 0 and prints a JSON report.
 
-- [ ] **Step 3: Run dry-run real Forge smoke plan**
+- [x] **Step 3: Run dry-run real Forge smoke plan**
 
 Run:
 
@@ -2035,7 +2035,7 @@ npm run eval:forge:smoke:dry-run
 
 Expected: command exits 0 and prints the planned Forge eval command without calling the model.
 
-- [ ] **Step 4: Update docs with the new operator path**
+- [x] **Step 4: Update docs with the new operator path**
 
 Document:
 
@@ -2058,7 +2058,7 @@ Document:
 - Report comparison helper.
 - Production trace promotion.
 
-- [ ] **Step 5: Run GitNexus change detection before commit**
+- [x] **Step 5: Run GitNexus change detection before commit**
 
 Run:
 
@@ -2075,7 +2075,7 @@ gitnexus_detect_changes(scope="all", repo="forge")
 
 Expected: affected scope is limited to eval runner, docs, and intentional root command docs.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/README.md apps/eval-runner/docs/ops.md apps/eval-runner/docs/architecture.md README.md CHANGELOG.md
@@ -2106,6 +2106,24 @@ git commit -m "docs(eval): document optimized backtest workflow"
 18. Task 16: Final verification and docs.
 
 This order establishes harness credibility before measuring model quality, then makes runs comparable over time, captures enough trajectory/cost data to debug them, calibrates scorers, exposes nondeterminism, and only then expands realism, red-team coverage, CI gates, and production feedback. The service-operation polish lands after the score pipeline is trustworthy.
+
+## Completion Evidence — 2026-06-17
+
+Tasks 0-16 have landed as focused commits on this branch. The final verification
+pass ran:
+
+```bash
+npm run test:eval
+uv run python -m app.cli --cases eval_cases --provider mock --min-success-rate 0.1 --max-scope-violation-rate 0.2
+npm run eval:forge:smoke:dry-run
+npx gitnexus analyze
+gitnexus_detect_changes(repo: "forge", scope: "staged")
+```
+
+The test suite passed with 139 eval tests and one existing FastAPI/httpx
+deprecation warning. The mock threshold backtest exited 0, the Forge smoke
+dry-run exited 0, GitNexus indexing refreshed successfully, and the final staged
+documentation sync reported low risk with zero affected flows.
 
 ## Final Acceptance
 
