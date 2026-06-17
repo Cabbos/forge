@@ -97,6 +97,60 @@ def test_cli_promotes_failed_trace_artifact_to_eval_case(tmp_path: Path) -> None
     assert promoted["task"]["metadata"]["failure_reason"] == "test failed"
 
 
+def test_cli_promote_trace_redacts_and_dedupes_failed_traces(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from app.models import AgentTrace, FailureCategory
+
+    now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+    trace = AgentTrace(
+        task_id="secret-failure",
+        user_prompt="Fix leaked token ghp_1234567890abcdef",
+        model="local-forge",
+        provider="forge",
+        context_files=["src/app.py"],
+        expected_files_changed=["src/app.py"],
+        final_answer="failed",
+        error="verification_failed",
+        failure_reason="test failed",
+        failure_category=FailureCategory.VERIFICATION_FAILED,
+        started_at=now,
+        ended_at=now,
+        duration_ms=120,
+    )
+    trace_path = tmp_path / "trace.json"
+    output_dir = tmp_path / "promoted"
+    trace_path.write_text(
+        json.dumps({"traces": [trace.model_dump(mode="json"), trace.model_dump(mode="json")]}),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "promote-trace",
+            "--trace",
+            str(trace_path),
+            "--output",
+            str(output_dir),
+            "--redact-secrets",
+            "--dedupe",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert len(payload["written"]) == 1
+    case_text = (output_dir / "secret-failure" / "case.json").read_text(encoding="utf-8")
+    assert "ghp_" not in case_text
+    assert "[REDACTED_SECRET]" in case_text
+
+
 def test_cli_runs_mock_cases_and_prints_backtest_report(tmp_path: Path) -> None:
     cases_dir = tmp_path / "eval_cases"
     write_case(cases_dir, "small-edit-success", expected_success=True)

@@ -67,6 +67,13 @@ class FlakeTriageReport(EvalModel):
     quarantine_candidates: list[str] = Field(default_factory=list)
 
 
+class TracePromotionDecision(EvalModel):
+    task_id: str
+    written: bool
+    output_path: str | None = None
+    reason: str | None = None
+
+
 class WorkspaceCheck(EvalModel):
     ok: bool
     untracked_files: list[str] = Field(default_factory=list)

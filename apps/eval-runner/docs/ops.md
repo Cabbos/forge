@@ -190,6 +190,22 @@ uv run python -m app.cli flake-triage \
 输出会把 case 分为 `stable_pass`、`stable_fail`、`flaky` 或 `needs_review`，
 并列出建议 quarantine 的 case ID。
 
+### Safe production trace promotion
+
+把生产失败 trace 提升为离线 regression case 时，默认先启用 secret redaction 和
+dedupe：
+
+```bash
+uv run python -m app.cli promote-trace \
+  --trace output/production-failures.json \
+  --output eval_cases/promoted \
+  --redact-secrets \
+  --dedupe
+```
+
+redaction 会替换常见 `sk-*`、`ghp_*`、`xox*` token 形态；dedupe 会跳过同一
+task、prompt、failure category、failure reason 的重复失败。
+
 ### 3. 三种 Smoke 模式
 
 | 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |

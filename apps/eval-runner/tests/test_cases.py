@@ -88,6 +88,50 @@ def test_failed_trace_can_be_promoted_to_eval_case() -> None:
     assert task.metadata["failure_reason"] == "test failed"
 
 
+def test_promote_trace_redacts_secret_like_values_and_dedupes(tmp_path):
+    from app.trace_import import promote_failed_traces
+
+    trace = {
+        "task_id": "prod-secret-failure",
+        "user_prompt": "Fix API key sk-live-1234567890abcdef",
+        "model": "local-forge",
+        "provider": "forge",
+        "context_files": ["src/app.py"],
+        "raw_events": [],
+        "tool_calls": [],
+        "shell_outputs": [],
+        "file_diffs": [],
+        "changed_files": ["src/app.py"],
+        "scope_violations": [],
+        "expected_files_changed": ["src/app.py"],
+        "forbidden_files_changed": [".env"],
+        "final_answer": "failed",
+        "verification_result": None,
+        "error": "verification_failed",
+        "failure_reason": "secret in prompt",
+        "failure_category": "verification_failed",
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "started_at": "2026-06-17T00:00:00+00:00",
+        "ended_at": "2026-06-17T00:00:01+00:00",
+        "duration_ms": 1000,
+    }
+    artifact = tmp_path / "trace.json"
+    artifact.write_text(json.dumps({"traces": [trace, trace]}), encoding="utf-8")
+
+    written = promote_failed_traces(
+        artifact,
+        tmp_path / "cases",
+        redact_secrets=True,
+        dedupe=True,
+    )
+
+    assert len(written) == 1
+    case_text = written[0].read_text(encoding="utf-8")
+    assert "sk-live" not in case_text
+    assert "[REDACTED_SECRET]" in case_text
+
+
 def test_load_cases_reads_case_directories_and_resolves_fixture_paths(tmp_path: Path) -> None:
     cases_dir = tmp_path / "eval_cases"
     first_dir = write_case(cases_dir, "small-edit-success", title="Small edit succeeds")

@@ -258,9 +258,16 @@ def promote_trace_main(argv: list[str]) -> int:
     )
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--redact-secrets", action="store_true")
+    parser.add_argument("--dedupe", action="store_true")
     args = parser.parse_args(argv)
 
-    written = promote_failed_traces(args.trace, args.output)
+    written = promote_failed_traces(
+        args.trace,
+        args.output,
+        redact_secrets=args.redact_secrets,
+        dedupe=args.dedupe,
+    )
     print(json.dumps({"written": [str(path) for path in written]}, indent=2))
     return 0
 

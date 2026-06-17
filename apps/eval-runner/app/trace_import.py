@@ -1,19 +1,41 @@
+import hashlib
 import json
+import re
 from pathlib import Path
 
 from pydantic import TypeAdapter
 
 from app.models import AgentTrace, EvaluationTask, FailureCategory
 
+SECRET_PATTERN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_]{10,}|xox[baprs]-[A-Za-z0-9-]{10,})"
+)
 
-def case_from_trace(trace: AgentTrace) -> EvaluationTask:
+
+def redact_text(value: str) -> str:
+    return SECRET_PATTERN.sub("[REDACTED_SECRET]", value)
+
+
+def trace_dedupe_key(trace: AgentTrace) -> str:
+    payload = "|".join(
+        [
+            trace.task_id,
+            trace.user_prompt,
+            trace.failure_category.value,
+            trace.failure_reason or "",
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def case_from_trace(trace: AgentTrace, *, prompt: str | None = None) -> EvaluationTask:
     verification_command = (
         trace.verification_result.command if trace.verification_result is not None else None
     )
     return EvaluationTask(
         id=trace.task_id,
         title=f"Promoted trace: {trace.task_id}",
-        prompt=trace.user_prompt,
+        prompt=prompt if prompt is not None else trace.user_prompt,
         context_files=trace.context_files,
         verification_command=verification_command,
         expected_success=False,
@@ -33,12 +55,25 @@ def load_traces(trace_path: Path) -> list[AgentTrace]:
     return TypeAdapter(list[AgentTrace]).validate_python(raw_traces)
 
 
-def promote_failed_traces(trace_path: Path, output_dir: Path) -> list[Path]:
+def promote_failed_traces(
+    trace_path: Path,
+    output_dir: Path,
+    *,
+    redact_secrets: bool = False,
+    dedupe: bool = False,
+) -> list[Path]:
     written: list[Path] = []
+    seen_keys: set[str] = set()
     for trace in load_traces(trace_path):
         if not is_failed_trace(trace):
             continue
-        task = case_from_trace(trace)
+        if dedupe:
+            key = trace_dedupe_key(trace)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+        prompt = redact_text(trace.user_prompt) if redact_secrets else trace.user_prompt
+        task = case_from_trace(trace, prompt=prompt)
         written.append(write_promoted_case(task, output_dir))
     return written
 
