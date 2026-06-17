@@ -242,6 +242,28 @@ class ReportArtifact(EvalModel):
     path: Path
     report: BacktestReport
     trace_count: int = Field(default=0, ge=0)
+    experiment: dict[str, Any] = Field(default_factory=dict)
+
+
+class BaselineRecord(EvalModel):
+    name: str
+    artifact_path: str
+    promoted_at: datetime
+    trusted: bool = True
+    dataset_fingerprint: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    success_rate: float = Field(ge=0.0, le=1.0)
+    scope_violation_rate: float = Field(ge=0.0, le=1.0)
+    note: str | None = None
+
+    @field_serializer("promoted_at")
+    def serialize_promoted_at(self, value: datetime) -> str:
+        return value.isoformat()
+
+
+class BaselineRegistryPayload(EvalModel):
+    records: list[BaselineRecord] = Field(default_factory=list)
 
 
 class EvalArtifact(EvalModel):

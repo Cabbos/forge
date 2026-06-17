@@ -130,17 +130,33 @@ run 持续不变。
 8. 对比最近一次可信 baseline：
 
    ```bash
-   python - <<'PY'
-   import json
-   from pathlib import Path
-   from app.models import BacktestReport
-   from app.report_compare import compare_reports
-
-   old = BacktestReport.model_validate(json.loads(Path("output/baseline.json").read_text())["report"])
-   new = BacktestReport.model_validate(json.loads(Path("output/local-regression.json").read_text())["report"])
-   print(compare_reports(old, new).model_dump_json(indent=2))
-   PY
+   uv run python -m app.cli baseline latest \
+     --registry output/baselines.json \
+     --name local-regression
    ```
+
+### Trusted baseline registry
+
+把一次通过 release gate 的 artifact 提升为可信 baseline：
+
+```bash
+uv run python -m app.cli baseline promote \
+  --registry output/baselines.json \
+  --artifact output/local-regression.json \
+  --name local-regression \
+  --note "green release gate"
+```
+
+读取最近一次可信 baseline：
+
+```bash
+uv run python -m app.cli baseline latest \
+  --registry output/baselines.json \
+  --name local-regression
+```
+
+如果某次 run 只用于记录、不应作为 trusted gate，可加 `--untrusted`；`latest`
+只返回 trusted baseline。
 
 ### 3. 三种 Smoke 模式
 

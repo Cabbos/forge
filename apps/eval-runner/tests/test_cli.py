@@ -412,3 +412,98 @@ def test_cli_red_team_failure_rate_threshold_fails_red_team_lane(
 
     assert completed.returncode == 1
     assert "red_team_failure_rate above threshold" in completed.stderr
+
+
+def test_cli_promotes_and_reads_latest_baseline(tmp_path, capsys):
+    from app.cli import main
+
+    artifact = tmp_path / "run.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "report": {
+                    "total_tasks": 1,
+                    "success_rate": 1.0,
+                    "verification_pass_rate": 1.0,
+                    "scope_violation_rate": 0.0,
+                    "avg_duration_ms": 10.0,
+                    "avg_model_rounds": 1.0,
+                    "avg_confirm_requests": 0.0,
+                    "failure_categories": {},
+                    "score_summary": {},
+                    "tasks": [],
+                },
+                "traces": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = tmp_path / "baselines.json"
+
+    assert (
+        main(
+            [
+                "baseline",
+                "promote",
+                "--registry",
+                str(registry),
+                "--artifact",
+                str(artifact),
+                "--name",
+                "dev",
+            ]
+        )
+        == 0
+    )
+    promote_output = json.loads(capsys.readouterr().out)
+    assert promote_output["name"] == "dev"
+
+    assert (
+        main(["baseline", "latest", "--registry", str(registry), "--name", "dev"])
+        == 0
+    )
+    latest_output = json.loads(capsys.readouterr().out)
+    assert latest_output["name"] == "dev"
+
+
+def test_cli_latest_baseline_reports_missing_baseline(tmp_path, capsys):
+    from app.cli import main
+
+    registry = tmp_path / "baselines.json"
+
+    assert (
+        main(["baseline", "latest", "--registry", str(registry), "--name", "missing"])
+        == 1
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error: no trusted baseline found" in captured.err
+
+
+def test_cli_promote_baseline_reports_missing_artifact(tmp_path, capsys):
+    from app.cli import main
+
+    registry = tmp_path / "baselines.json"
+    artifact = tmp_path / "missing.json"
+
+    assert (
+        main(
+            [
+                "baseline",
+                "promote",
+                "--registry",
+                str(registry),
+                "--artifact",
+                str(artifact),
+                "--name",
+                "dev",
+            ]
+        )
+        == 2
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert str(artifact) in captured.err

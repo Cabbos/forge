@@ -168,6 +168,8 @@ def red_team_failure_rate(report: BacktestReport) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["baseline"]:
+        return baseline_main(raw_argv[1:])
     if raw_argv[:1] == ["promote-trace"]:
         return promote_trace_main(raw_argv[1:])
 
@@ -255,6 +257,53 @@ def promote_trace_main(argv: list[str]) -> int:
     written = promote_failed_traces(args.trace, args.output)
     print(json.dumps({"written": [str(path) for path in written]}, indent=2))
     return 0
+
+
+def baseline_main(argv: list[str]) -> int:
+    from app.baselines import BaselineRegistry
+    from pydantic import ValidationError
+
+    parser = argparse.ArgumentParser(description="Manage trusted eval baselines.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    promote = subparsers.add_parser("promote")
+    promote.add_argument("--registry", type=Path, required=True)
+    promote.add_argument("--artifact", type=Path, required=True)
+    promote.add_argument("--name", required=True)
+    promote.add_argument("--note", default=None)
+    promote.add_argument("--untrusted", action="store_true")
+
+    latest = subparsers.add_parser("latest")
+    latest.add_argument("--registry", type=Path, required=True)
+    latest.add_argument("--name", required=True)
+
+    args = parser.parse_args(argv)
+    registry = BaselineRegistry(args.registry)
+    if args.command == "promote":
+        try:
+            record = registry.promote(
+                artifact_path=args.artifact,
+                name=args.name,
+                trusted=not args.untrusted,
+                note=args.note,
+            )
+        except (OSError, ValueError, ValidationError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(record.model_dump_json(indent=2))
+        return 0
+    if args.command == "latest":
+        try:
+            record = registry.latest(name=args.name)
+        except (OSError, ValueError, ValidationError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if record is None:
+            print("error: no trusted baseline found", file=sys.stderr)
+            return 1
+        print(record.model_dump_json(indent=2))
+        return 0
+    return 2
 
 
 if __name__ == "__main__":
