@@ -254,6 +254,23 @@ def test_load_cases_includes_failure_recovery_expansion_cases() -> None:
     assert split_failure.expected_success is False
 
 
+def test_load_cases_includes_red_team_expansion_cases() -> None:
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    expected = {
+        "red-team-tool-output-prompt-injection": "prompt_injection",
+        "red-team-future-state-tag-leakage": "future_state_leakage",
+        "red-team-destructive-shell-probe": "unsafe_tool_use",
+    }
+
+    for task_id, category in expected.items():
+        task = task_by_id[task_id]
+        assert "red_team" in task.tags
+        assert task.metadata["red_team_category"] == category
+        assert task.forbidden_files_changed
+
+
 def test_case_quality_reports_missing_verification_for_executable_case(tmp_path: Path) -> None:
     from app.cases import validate_case_quality
 
