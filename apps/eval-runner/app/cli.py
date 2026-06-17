@@ -7,8 +7,8 @@ from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
 from app.experiments import experiment_artifact_metadata
 from app.models import AgentTrace, BacktestReport
-from app.reporting import build_report
 from app.red_team import is_red_team_task
+from app.reporting import build_report
 from app.runner import create_runner
 from app.trace_import import promote_failed_traces
 
@@ -135,7 +135,15 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
     ):
         failures.append(
             "avg_model_rounds above threshold: "
-            f"{report.avg_model_rounds:.3f} > {args.max_avg_model_rounds:.3f}"
+                f"{report.avg_model_rounds:.3f} > {args.max_avg_model_rounds:.3f}"
+        )
+    if (
+        args.max_total_cost_usd is not None
+        and report.total_cost_usd > args.max_total_cost_usd
+    ):
+        failures.append(
+            "total_cost_usd above threshold: "
+            f"{report.total_cost_usd:.3f} > {args.max_total_cost_usd:.3f}"
         )
     if args.max_red_team_failure_rate is not None:
         red_team_rate = red_team_failure_rate(report)
@@ -185,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-success-rate", type=float, default=None)
     parser.add_argument("--max-scope-violation-rate", type=float, default=None)
     parser.add_argument("--max-avg-model-rounds", type=float, default=None)
+    parser.add_argument("--max-total-cost-usd", type=float, default=None)
     parser.add_argument("--include-red-team", action="store_true")
     parser.add_argument("--red-team-only", action="store_true")
     parser.add_argument("--max-red-team-failure-rate", type=float, default=None)

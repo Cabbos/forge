@@ -74,6 +74,7 @@ def test_worker_claims_pending_run_executes_tasks_and_persists_artifacts(tmp_pat
     assert {artifact.kind for artifact in restarted.list_artifacts("run-1")} == {
         "report",
         "trace",
+        "trajectory",
     }
 
 
@@ -202,7 +203,6 @@ def test_worker_retries_failed_run_then_marks_terminal(tmp_path: Path) -> None:
 
 def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
     """Background heartbeat should refresh lease while a long task is running."""
-    import threading
     import time
     from datetime import UTC, datetime
 
@@ -258,7 +258,9 @@ def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
     finally:
         worker_mod.create_runner = original_create_runner
 
-    assert len(heartbeats) >= 2, f"Expected at least 2 heartbeats during slow task, got {len(heartbeats)}"
+    assert len(heartbeats) >= 2, (
+        f"Expected at least 2 heartbeats during slow task, got {len(heartbeats)}"
+    )
 
 
 def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) -> None:
@@ -389,7 +391,6 @@ def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) 
 def test_worker_exception_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
     """If cancel happens before retry/fail write, final status must be CANCELLED."""
     import time
-    from datetime import UTC, datetime
 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
@@ -440,7 +441,6 @@ def test_worker_exception_race_with_cancel_preserves_cancelled(tmp_path: Path) -
 def test_worker_retry_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
     """If cancel happens before retry write, final status must be CANCELLED."""
     import time
-    from datetime import UTC, datetime
 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
@@ -570,8 +570,8 @@ def test_worker_consumes_multiple_queued_runs_and_persists_artifacts(tmp_path: P
     # Verify artifacts persisted for both runs
     artifacts1 = storage.list_artifacts("run-1")
     artifacts2 = storage.list_artifacts("run-2")
-    assert {a.kind for a in artifacts1} == {"report", "trace"}
-    assert {a.kind for a in artifacts2} == {"report", "trace"}
+    assert {a.kind for a in artifacts1} == {"report", "trace", "trajectory"}
+    assert {a.kind for a in artifacts2} == {"report", "trace", "trajectory"}
 
     # Verify trace files exist on disk
     trace1 = next(a for a in artifacts1 if a.kind == "trace")

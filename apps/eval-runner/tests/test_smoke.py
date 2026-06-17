@@ -159,7 +159,7 @@ class TestQueuedServiceSmoke:
             artifacts_resp = httpx.get(f"{base_url}/runs/{run_id}/artifacts", timeout=5)
             assert artifacts_resp.status_code == 200
             artifacts = artifacts_resp.json()
-            assert {a["kind"] for a in artifacts} == {"report", "trace"}
+            assert {a["kind"] for a in artifacts} == {"report", "trace", "trajectory"}
             for artifact in artifacts:
                 assert Path(artifact["path"]).exists()
 
@@ -258,7 +258,11 @@ class TestQueuedServiceSmoke:
                 run_resp = httpx.get(f"{base_url}/runs/{run_id}", timeout=5)
                 assert run_resp.json()["status"] == "completed"
                 artifacts_resp = httpx.get(f"{base_url}/runs/{run_id}/artifacts", timeout=5)
-                assert {a["kind"] for a in artifacts_resp.json()} == {"report", "trace"}
+                assert {a["kind"] for a in artifacts_resp.json()} == {
+                    "report",
+                    "trace",
+                    "trajectory",
+                }
         finally:
             server.terminate()
             try:

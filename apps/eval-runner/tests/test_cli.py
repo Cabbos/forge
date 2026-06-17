@@ -301,6 +301,35 @@ def test_cli_exits_nonzero_when_success_rate_below_threshold(capsys) -> None:
     assert "success_rate below threshold" in captured.err
 
 
+def test_cli_exits_nonzero_when_total_cost_exceeds_threshold(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    write_case(
+        cases_dir,
+        "costly-case",
+        metadata={"mock": {"cost_usd": 0.25}},
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--max-total-cost-usd",
+            "0.10",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "total_cost_usd above threshold" in completed.stderr
+
+
 def test_cli_excludes_red_team_cases_unless_requested(tmp_path: Path) -> None:
     cases_dir = tmp_path / "eval_cases"
     write_case(cases_dir, "normal-case", expected_success=True)

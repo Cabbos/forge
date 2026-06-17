@@ -225,7 +225,13 @@ def test_sqlite_storage_survives_restart_and_keeps_large_trace_json_out_of_db(
         "report",
         "stdout",
         "trace",
+        "trajectory",
     }
+    trajectory = next(
+        artifact for artifact in restarted.list_artifacts("run-1") if artifact.kind == "trajectory"
+    )
+    trajectory_payload = json.loads(Path(trajectory.path).read_text(encoding="utf-8"))
+    assert trajectory_payload["task_id"] == "task-pass"
 
     with sqlite3.connect(db_path) as connection:
         stored_text = "\n".join(

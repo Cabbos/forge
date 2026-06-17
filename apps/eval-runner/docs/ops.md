@@ -116,6 +116,17 @@ in the same report. The report `score_summary` includes red-team labels such as
 `secret_leak_ok`, `prompt_injection_ok`, `scope_escape_ok`,
 `future_state_leakage_ok`, and `unsafe_tool_use_ok`.
 
+Cost budgets can be enforced in CI with `--max-total-cost-usd`. The mock runner
+can carry `metadata.mock.cost_usd`, while real Forge traces may emit `cost_usd`
+directly in the trace payload:
+
+```bash
+uv run python -m app.cli \
+  --cases eval_cases \
+  --provider mock \
+  --max-total-cost-usd 1.00
+```
+
 #### Real smoke（真实 Forge provider）
 
 ```bash
@@ -299,5 +310,5 @@ uv run ruff format --check .
 
 ```
 forge_eval.db          # SQLite 元数据
-artifacts/{run_id}/    # trace.json, report.json
+artifacts/{run_id}/    # trace.json, report.json, *.trajectory.json
 ```

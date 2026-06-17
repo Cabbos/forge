@@ -18,6 +18,19 @@ from app.runner import (
 )
 
 
+def test_agent_adapter_metadata_is_attached_to_trace() -> None:
+    from app.agent_adapter import AgentAdapterSpec
+
+    spec = AgentAdapterSpec(name="forge", version="local", command="forge_eval_agent")
+
+    assert spec.model_dump() == {
+        "name": "forge",
+        "version": "local",
+        "command": "forge_eval_agent",
+        "supports_trajectory": True,
+    }
+
+
 def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     task = EvaluationTask(
         id="add-cli-flag",

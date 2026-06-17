@@ -79,6 +79,7 @@ def make_trace(
     failure_category: FailureCategory = FailureCategory.NONE,
     scope_violations: list[str] | None = None,
     raw_events: list[dict] | None = None,
+    cost_usd: float | None = None,
 ) -> AgentTrace:
     started_at = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
     ended_at = datetime(2026, 6, 4, 10, 0, 1, tzinfo=UTC)
@@ -112,6 +113,7 @@ def make_trace(
         confirm_requests=confirm_requests,
         repair_attempts_used=repair_attempts_used,
         validation_attempts=validation_attempts,
+        cost_usd=cost_usd,
         started_at=started_at,
         ended_at=ended_at,
         duration_ms=duration_ms,
@@ -213,6 +215,31 @@ def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
     assert report.tasks[0].passed is True
     assert report.tasks[1].scope_violations == ["forbidden_change:.env"]
     assert report.tasks[2].failure_reason == "Task failed."
+
+
+def test_build_report_sums_total_cost_usd() -> None:
+    report = build_report(
+        [
+            make_trace(
+                "cost-a",
+                verification_passed=True,
+                duration_ms=1000,
+                model_rounds=2,
+                confirm_requests=0,
+                cost_usd=0.05,
+            ),
+            make_trace(
+                "cost-b",
+                verification_passed=True,
+                duration_ms=1000,
+                model_rounds=2,
+                confirm_requests=0,
+                cost_usd=0.15,
+            ),
+        ]
+    )
+
+    assert report.total_cost_usd == 0.2
 
 
 def test_trial_aggregation_marks_flaky_task() -> None:

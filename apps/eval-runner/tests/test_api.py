@@ -236,7 +236,11 @@ def test_api_with_sqlite_storage_lists_runs_and_artifacts_after_restart(
 
     artifacts = restarted_client.get(f"/runs/{run_id}/artifacts")
     assert artifacts.status_code == 200
-    assert {artifact["kind"] for artifact in artifacts.json()} == {"report", "trace"}
+    assert {artifact["kind"] for artifact in artifacts.json()} == {
+        "report",
+        "trace",
+        "trajectory",
+    }
     assert all(Path(artifact["path"]).exists() for artifact in artifacts.json())
 
 
@@ -415,7 +419,10 @@ def test_api_can_filter_runs_by_status(tmp_path: Path) -> None:
     assert len(all_runs.json()) == 3
 
 
-def test_api_queued_run_includes_max_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_queued_run_includes_max_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
     monkeypatch.setenv("FORGE_EVAL_RUN_EXECUTION_MODE", "queued")
@@ -424,7 +431,12 @@ def test_api_queued_run_includes_max_retries(tmp_path: Path, monkeypatch: pytest
 
     created = client.post(
         "/runs",
-        json={"task_ids": ["task-pass"], "provider": "mock", "model": "portfolio-v1", "max_retries": 3},
+        json={
+            "task_ids": ["task-pass"],
+            "provider": "mock",
+            "model": "portfolio-v1",
+            "max_retries": 3,
+        },
     )
 
     assert created.status_code == 201
@@ -454,7 +466,10 @@ def test_api_cancel_completed_run_returns_409(tmp_path: Path) -> None:
     assert fetched.json()["status"] == "completed"
 
 
-def test_api_cancellation_during_task_preserves_cancelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_cancellation_during_task_preserves_cancelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """If a run is cancelled while a slow task is executing, the final status must be CANCELLED."""
     import threading
     import time

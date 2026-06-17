@@ -135,6 +135,8 @@ class AgentTrace(EvalModel):
     validation_attempts: int = Field(default=0, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    trajectory_path: str | None = None
+    cost_usd: float | None = Field(default=None, ge=0)
     started_at: datetime
     ended_at: datetime
     duration_ms: int = Field(ge=0)
@@ -226,6 +228,7 @@ class BacktestReport(EvalModel):
     avg_confirm_requests: float
     avg_repair_attempts_used: float = 0.0
     avg_validation_attempts: float = 0.0
+    total_cost_usd: float = 0.0
     failure_categories: dict[str, int] = Field(default_factory=dict)
     score_summary: dict[str, float] = Field(default_factory=dict)
     tasks: list[TraceSummary] = Field(default_factory=list)

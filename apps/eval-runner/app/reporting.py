@@ -17,12 +17,13 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
             scope_violation_rate=0.0,
             avg_duration_ms=0.0,
             avg_model_rounds=0.0,
-        avg_confirm_requests=0.0,
-        failure_categories={},
-        score_summary={},
-        tasks=[],
-        continuity=None,
-    )
+            avg_confirm_requests=0.0,
+            total_cost_usd=0.0,
+            failure_categories={},
+            score_summary={},
+            tasks=[],
+            continuity=None,
+        )
 
     verification_passed = sum(
         1
@@ -61,6 +62,7 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         avg_confirm_requests=metrics.average_confirm_requests,
         avg_repair_attempts_used=metrics.average_repair_attempts_used,
         avg_validation_attempts=metrics.average_validation_attempts,
+        total_cost_usd=sum(trace.cost_usd or 0.0 for trace in traces),
         failure_categories=metrics.failure_categories,
         score_summary=build_score_summary(traces),
         tasks=task_summaries,
