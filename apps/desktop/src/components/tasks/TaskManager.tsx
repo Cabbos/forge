@@ -1,5 +1,6 @@
 import { Activity, Bell, CalendarClock, ShieldAlert } from "lucide-react";
 import type { BackgroundTaskListItem, BackgroundTaskNotificationItem } from "@/lib/backgroundTaskStatus";
+import { LoopTaskPanel } from "@/components/loop/LoopTaskPanel";
 
 function iconFor(kind: BackgroundTaskListItem["kind"]) {
   if (kind === "scheduler") return CalendarClock;
@@ -9,6 +10,7 @@ function iconFor(kind: BackgroundTaskListItem["kind"]) {
 }
 
 function labelFor(kind: BackgroundTaskListItem["kind"]) {
+  if (kind === "loop") return "Loop";
   if (kind === "scheduler") return "调度";
   if (kind === "alert") return "告警";
   if (kind === "review") return "审阅";
@@ -16,6 +18,7 @@ function labelFor(kind: BackgroundTaskListItem["kind"]) {
 }
 
 function notificationLabelFor(kind: BackgroundTaskNotificationItem["kind"]) {
+  if (kind === "loop") return "Loop 待处理";
   if (kind === "scheduler") return "调度已启用";
   if (kind === "alert") return "运行告警";
   if (kind === "review") return "需要审阅";
@@ -74,6 +77,9 @@ export function TaskManager({
                   <span className="forge-background-task-kind">{labelFor(task.kind)}</span>
                   <span className="forge-background-task-title">{task.title}</span>
                   <span className="forge-background-task-detail">{task.detail}</span>
+                  {task.kind === "loop" && task.loopTask && task.loopSummary && (
+                    <LoopTaskPanel task={task.loopTask} summary={task.loopSummary} />
+                  )}
                 </li>
               );
             })}

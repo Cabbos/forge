@@ -16,6 +16,11 @@ import {
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
 import { reviewAgentA2ATasks, type AgentA2AReviewDecision } from "@/lib/ipc/a2a";
 import {
+  runtimeFactsForSubagentTask,
+  type LoopRuntimeFact,
+  type LoopRuntimeFactSource,
+} from "@/lib/loopRuntime";
+import {
   deriveWorkbenchFileView,
   deriveWorkbenchReviewView,
   deriveWorkbenchSummary,
@@ -377,12 +382,51 @@ function TaskProcess({ task }: { task: AgentA2ATaskProjection }) {
   );
 }
 
+function RuntimeFactSections({ facts }: { facts: LoopRuntimeFact[] }) {
+  if (facts.length === 0) return null;
+  const fileFacts = facts.filter((fact) => fact.kind === "file_io");
+  const usageFacts = facts.filter((fact) => fact.kind === "usage");
+
+  return (
+    <div className="forge-a2a-runtime-facts" data-testid="a2a-runtime-facts">
+      {fileFacts.length > 0 && (
+        <section className="forge-a2a-runtime-fact-section" aria-label="Runtime file IO">
+          <span className="forge-a2a-runtime-fact-title">文件 IO</span>
+          <div className="forge-a2a-runtime-fact-list">
+            {fileFacts.map((fact) => (
+              <div key={fact.id} className="forge-a2a-runtime-fact-row">
+                <span>{fact.label}</span>
+                <code>{fact.detail}</code>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {usageFacts.length > 0 && (
+        <section className="forge-a2a-runtime-fact-section" aria-label="Runtime usage">
+          <span className="forge-a2a-runtime-fact-title">用量</span>
+          <div className="forge-a2a-runtime-fact-list">
+            {usageFacts.map((fact) => (
+              <div key={fact.id} className="forge-a2a-runtime-fact-row">
+                <span>{fact.label}</span>
+                <span>{fact.detail}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function TaskRow({
   task: rawTask,
   mode = "compact",
+  runtimeFacts = [],
 }: {
   task: AgentA2ATaskProjection;
   mode?: "compact" | "panel";
+  runtimeFacts?: LoopRuntimeFact[];
 }) {
   const task = normalizeA2ATaskProjection(rawTask);
   const Icon = iconFor(task.status);
@@ -458,10 +502,30 @@ function TaskRow({
           <span>{task.resume_note}</span>
         </div>
       )}
+      <RuntimeFactSections facts={runtimeFacts} />
       {mode === "panel" && <TaskProcess task={task} />}
       {hasMeta && <WorktreeReviewPanel task={task} />}
     </div>
   );
+}
+
+function runtimeFactSourcesForTasks({
+  entries,
+  taskIds,
+  sessionId,
+}: {
+  entries: ReturnType<typeof useStore.getState>["subagentRuntimeByTask"];
+  taskIds: Set<string>;
+  sessionId?: string | null;
+}): LoopRuntimeFactSource[] {
+  return [...entries.values()]
+    .filter((entry) => taskIds.has(entry.task_id))
+    .filter((entry) => !sessionId || entry.session_id === sessionId)
+    .map((entry) => ({
+      loop_task_id: entry.loop_task_id ?? null,
+      task_id: entry.task_id,
+      latest_event: entry.latest_event,
+    }));
 }
 
 export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | null }) {
@@ -503,6 +567,7 @@ export function AgentA2AWorkspace({
 }) {
   const [reviewBusyKey, setReviewBusyKey] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const subagentRuntimeByTask = useStore((s) => s.subagentRuntimeByTask);
   const handleReview = async (taskIds: string[], decision: AgentA2AReviewDecision) => {
     if (!sessionId || taskIds.length === 0) return;
     const key = taskIds.length === 1 ? `${taskIds[0]}:${decision}` : `bulk:${decision}`;
@@ -541,6 +606,12 @@ export function AgentA2AWorkspace({
   const summary = deriveWorkbenchSummary(state);
   const reviewView = deriveWorkbenchReviewView(state);
   const fileView = deriveWorkbenchFileView(state);
+  const taskIds = new Set(state.tasks.map((task) => task.task_id));
+  const runtimeSources = runtimeFactSourcesForTasks({
+    entries: subagentRuntimeByTask,
+    taskIds,
+    sessionId,
+  });
 
   return (
     <section className="forge-a2a-workspace" aria-label="子任务">
@@ -574,15 +645,35 @@ export function AgentA2AWorkspace({
 
       <div className="forge-a2a-workspace-task-list">
         {state.tasks.map((task) => (
-          <TaskRow key={task.task_id} task={task} mode="panel" />
+          <TaskRow
+            key={task.task_id}
+            task={task}
+            mode="panel"
+            runtimeFacts={runtimeFactsForSubagentTask(runtimeSources, task.task_id)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-export function AgentA2ATimeline({ state }: { state: AgentA2AProjection | null }) {
+export function AgentA2ATimeline({
+  state,
+  sessionId,
+}: {
+  state: AgentA2AProjection | null;
+  sessionId?: string | null;
+}) {
+  const subagentRuntimeByTask = useStore((s) => s.subagentRuntimeByTask);
   if (!state || state.tasks.length === 0) return null;
+  const taskIds = new Set(state.tasks.map((task) => task.task_id));
+  const runtimeSources = sessionId
+    ? runtimeFactSourcesForTasks({
+        entries: subagentRuntimeByTask,
+        taskIds,
+        sessionId,
+      })
+    : [];
 
   return (
     <div className="forge-a2a-timeline" data-testid="agent-a2a-timeline">
@@ -594,7 +685,11 @@ export function AgentA2ATimeline({ state }: { state: AgentA2AProjection | null }
       </div>
       <div className="forge-a2a-task-list">
         {state.tasks.map((task) => (
-          <TaskRow key={task.task_id} task={task} />
+          <TaskRow
+            key={task.task_id}
+            task={task}
+            runtimeFacts={runtimeFactsForSubagentTask(runtimeSources, task.task_id)}
+          />
         ))}
       </div>
     </div>

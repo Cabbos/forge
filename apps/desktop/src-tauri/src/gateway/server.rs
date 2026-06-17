@@ -20,7 +20,7 @@ use crate::gateway::session_input::{
     new_session_input_record, SessionInputCompletionRecord, SessionInputStore,
 };
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
-use crate::loop_runtime::runner::{loop_runner_queue_stats, LoopRunnerQueueStats};
+use crate::loop_runtime::runner::{LoopRunnerQueueStats, LoopTaskRunner};
 use crate::loop_runtime::{
     evaluate_completion, LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent,
     LoopTaskProjectionStore, LoopTaskRecord,
@@ -76,6 +76,8 @@ pub struct GatewayDashboardSnapshot {
     pub ok: bool,
     pub generated_at_ms: u64,
     pub status: GatewayRuntimeStatus,
+    #[serde(default)]
+    pub loop_tasks: Vec<LoopTaskRecord>,
     pub sessions: Vec<GatewaySessionInfo>,
     pub queued_triggers: Vec<PendingTrigger>,
     pub recent_runs: Vec<TriggerRunRecord>,
@@ -1110,7 +1112,8 @@ fn handle_dashboard_snapshot(state: &GatewayState, id: String) -> GatewayReply {
 }
 
 fn build_dashboard_snapshot(state: &GatewayState) -> GatewayDashboardSnapshot {
-    let status = build_runtime_status(state);
+    let (loop_tasks, loop_stats) = load_loop_tasks_and_stats(state);
+    let status = build_runtime_status_with_loop_stats(state, loop_stats);
     let sessions = state.list_sessions();
     let queued_triggers = state.trigger_store.list();
     let recent_runs = status.recent_runs.clone();
@@ -1122,6 +1125,7 @@ fn build_dashboard_snapshot(state: &GatewayState) -> GatewayDashboardSnapshot {
         ok: status.ok,
         generated_at_ms: now_millis(),
         status,
+        loop_tasks,
         sessions,
         queued_triggers,
         recent_runs,
@@ -1172,6 +1176,28 @@ fn build_dashboard_event_log(
 }
 
 fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
+    let (_loop_tasks, loop_stats) = load_loop_tasks_and_stats(state);
+    build_runtime_status_with_loop_stats(state, loop_stats)
+}
+
+fn load_loop_tasks_and_stats(state: &GatewayState) -> (Vec<LoopTaskRecord>, LoopRunnerQueueStats) {
+    state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+        .map(|projection| {
+            let stats = LoopTaskRunner::queue_stats(&projection, now_millis());
+            (projection.tasks, stats)
+        })
+        .unwrap_or_else(|error| {
+            log::warn!("failed to load loop task projection for runtime status: {error}");
+            (Vec::new(), LoopRunnerQueueStats::default())
+        })
+}
+
+fn build_runtime_status_with_loop_stats(
+    state: &GatewayState,
+    loop_stats: LoopRunnerQueueStats,
+) -> GatewayRuntimeStatus {
     let triggers = state.trigger_store.list();
     let runs = state.trigger_run_store.list();
     let pending_triggers = count_pending_triggers(&triggers);
@@ -1180,12 +1206,6 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         .iter()
         .filter(|run| run.status == "dead_letter")
         .count();
-    let loop_stats =
-        loop_runner_queue_stats(&state.loop_event_journal, &state.loop_task_projection_store)
-            .unwrap_or_else(|error| {
-                log::warn!("failed to compute loop runner queue stats: {error}");
-                LoopRunnerQueueStats::default()
-            });
     let runtime_tasks = state.runtime_tasks();
     let loop_runner = loop_runner_status(&runtime_tasks).to_string();
 
@@ -2476,6 +2496,13 @@ mod tests {
             .session_input_store
             .complete_with_record("input-1")
             .expect("completion");
+        state
+            .loop_event_journal
+            .append(LoopEventEnvelope::task_created_for_test(
+                "loop-dashboard",
+                "review runtime UI",
+            ))
+            .expect("append loop task");
         state.mark_runtime_task_failed(WEBHOOK_LISTENER_TASK, "address already in use");
 
         let reply = dispatch(
@@ -2496,7 +2523,9 @@ mod tests {
                 assert_eq!(snapshot.status.loop_runner, "stopped");
                 assert_eq!(snapshot.status.pending_triggers, 1);
                 assert_eq!(snapshot.status.claimed_triggers, 1);
-                assert_eq!(snapshot.status.pending_loop_tasks, 0);
+                assert_eq!(snapshot.status.pending_loop_tasks, 1);
+                assert_eq!(snapshot.loop_tasks.len(), 1);
+                assert_eq!(snapshot.loop_tasks[0].id, "loop-dashboard");
                 assert_eq!(snapshot.sessions.len(), 1);
                 assert_eq!(snapshot.sessions[0].session_id, "session-1");
                 assert_eq!(snapshot.queued_triggers.len(), 2);

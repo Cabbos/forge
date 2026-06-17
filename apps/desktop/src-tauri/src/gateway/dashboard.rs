@@ -388,11 +388,13 @@ fn dashboard_html() -> &'static str {
       ], status.runtime_tasks || []));
 
       replace('loop-tasks', table([
-        { label: 'Runner', value: (row) => row.loop_runner },
-        { label: 'Pending', value: (row) => row.pending_loop_tasks },
-        { label: 'Running', value: (row) => row.running_loop_tasks },
-        { label: 'Stale leases', value: (row) => row.stale_loop_task_leases }
-      ], [status]));
+        { label: 'Task', value: (row) => row.id, code: true },
+        { label: 'Status', value: (row) => row.status },
+        { label: 'Goal', value: (row) => row.goal },
+        { label: 'Session', value: (row) => row.session_id || '-', code: true },
+        { label: 'Latest event', value: (row) => row.latest_event_id || '-', code: true },
+        { label: 'Updated', value: (row) => time(row.updated_at_ms) }
+      ], snapshot.loop_tasks || []));
 
       replace('sessions', table([
         { label: 'Session', value: (row) => row.session_id, code: true },
@@ -500,6 +502,7 @@ mod tests {
         assert!(response.contains("/api/dashboard"));
         assert!(response.contains("Runtime Tasks"));
         assert!(response.contains("Loop Tasks"));
+        assert!(response.contains("Latest event"));
         assert!(response.contains("Sessions"));
         assert!(response.contains("Queued Triggers"));
         assert!(response.contains("Event Log"));

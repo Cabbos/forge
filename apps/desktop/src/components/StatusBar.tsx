@@ -18,12 +18,20 @@ export function StatusBar() {
   const agentA2A = useStore((s) =>
     activeSessionId ? s.agentA2ABySession.get(activeSessionId) ?? null : null,
   );
+  const loopTasks = useStore((s) =>
+    activeSessionId
+      ? [...s.loopRuntimeByTask.values()]
+          .filter((entry) => entry.session_id === activeSessionId)
+          .map((entry) => entry.task)
+      : [],
+  );
   const healthAlerts = useStore((s) => s.healthAlerts);
   const { data: scheduler } = useSchedulerQuery();
   const view = deriveBackgroundTaskStatus({
     agentA2A,
     scheduler,
     healthAlerts,
+    loopTasks,
   });
 
   if (!view.visible) return null;

@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { setup } from "./fixtures/app";
+import { simulateStream } from "./mock-ipc";
 
 test.describe("Phase 7 acceptance surfaces", () => {
   test.beforeEach(async ({ page }) => {
@@ -305,5 +306,188 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await task.getByRole("button", { name: "删除" }).click();
     await expect(dialog.locator(".forge-scheduler-task-card", { hasText: "Daily acceptance check" })).toHaveCount(0);
+  });
+
+  test("loop runtime appears in background drawer and A2A runtime facts", async ({ page }) => {
+    const sessionId = "acceptance-loop-runtime-session";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "agent_a2a_updated",
+        session_id: sessionId,
+        state: {
+          running_count: 0,
+          completed_count: 2,
+          failed_count: 0,
+          interrupted_count: 0,
+          tasks: [
+            {
+              task_id: "a2a-runtime-ui",
+              agent_id: "agent-1",
+              role: "implementer",
+              execution_mode: "worktree_worker",
+              status: "completed",
+              title: "Runtime UI implementer",
+              messages: [],
+              latest_message: "Rendered runtime facts from stream events.",
+              failure_message: null,
+              updated_at_ms: Date.now(),
+              artifact_count: 1,
+              latest_artifact_kind: "patch_proposal",
+              latest_artifact_title: "Runtime UI patch",
+              needs_human_review: true,
+              reason_codes: ["human_gated_commit"],
+              tests_passed: true,
+              diff_truncated: false,
+              worktree_path: "/tmp/forge-loop-runtime",
+              cleaned_up: false,
+              suggested_action: "Review before merge; commit remains human-gated.",
+              parent_task_id: null,
+              created_at_ms: Date.now() - 60_000,
+              started_at_ms: Date.now() - 58_000,
+              ended_at_ms: Date.now() - 1_000,
+              duration_ms: 57_000,
+              retryable: null,
+              failure_kind: null,
+              resume_note: null,
+              latest_progress: null,
+              lease_owner: null,
+              lease_acquired_at_ms: null,
+              lease_expires_at_ms: null,
+              last_heartbeat_at_ms: null,
+              attempt_count: 1,
+              max_attempts: 3,
+              diff_available: true,
+              changed_file_count: 2,
+              changed_files: ["apps/desktop/src/lib/loopRuntime.ts", "apps/desktop/src/components/loop/LoopTaskPanel.tsx"],
+              test_report_excerpt: "node --test apps/desktop/src/lib/loopRuntime.test.ts passed",
+            },
+            {
+              task_id: "a2a-runtime-usage",
+              agent_id: "agent-2",
+              role: "reviewer",
+              execution_mode: "worktree_worker",
+              status: "completed",
+              title: "Runtime usage auditor",
+              messages: [],
+              latest_message: "Usage facts recorded with unknown output/cost.",
+              failure_message: null,
+              updated_at_ms: Date.now(),
+              artifact_count: 0,
+              latest_artifact_kind: null,
+              latest_artifact_title: null,
+              needs_human_review: false,
+              reason_codes: [],
+              tests_passed: null,
+              diff_truncated: null,
+              worktree_path: null,
+              cleaned_up: null,
+              suggested_action: null,
+              parent_task_id: null,
+              created_at_ms: Date.now() - 50_000,
+              started_at_ms: Date.now() - 48_000,
+              ended_at_ms: Date.now() - 1_000,
+              duration_ms: 47_000,
+              retryable: null,
+              failure_kind: null,
+              resume_note: null,
+              latest_progress: null,
+              lease_owner: null,
+              lease_acquired_at_ms: null,
+              lease_expires_at_ms: null,
+              last_heartbeat_at_ms: null,
+              attempt_count: 1,
+              max_attempts: 3,
+              diff_available: null,
+              changed_file_count: null,
+              changed_files: [],
+              test_report_excerpt: null,
+            },
+          ],
+        },
+      },
+      {
+        event_type: "subagent_runtime_event",
+        session_id: sessionId,
+        loop_task_id: "loop-runtime-ui",
+        task_id: "a2a-runtime-ui",
+        event: { type: "file_io", operation: "diff_observed", path: "apps/desktop/src/components/loop/LoopTaskPanel.tsx" },
+      },
+      {
+        event_type: "subagent_runtime_event",
+        session_id: sessionId,
+        loop_task_id: "loop-runtime-ui",
+        task_id: "a2a-runtime-usage",
+        event: {
+          type: "usage_recorded",
+          model: "claude-sonnet",
+          input_tokens: 3200,
+          output_tokens: null,
+          estimated_cost_micros: null,
+        },
+      },
+      {
+        event_type: "loop_runtime_updated",
+        session_id: sessionId,
+        loop_task_id: "loop-runtime-ui",
+        task: {
+          id: "loop-runtime-ui",
+          goal: "Ship Runtime UI and Dashboard Consumption",
+          session_id: sessionId,
+          profile_id: null,
+          workspace_path: "/Users/cabbos/project/forge",
+          status: "waiting_for_review",
+          owner: { kind: "gateway" },
+          policy: {},
+          budget: {},
+          completion_contract: {},
+          created_at_ms: Date.now() - 120_000,
+          updated_at_ms: Date.now(),
+          lease: null,
+          open_gates: [],
+          evidence: [],
+          policy_decisions: [],
+          latest_budget_snapshot: {
+            budget_exceeded: true,
+            model_rounds_used: 6,
+            tool_calls_used: 18,
+            elapsed_ms: 95_000,
+            has_unknown_cost: true,
+          },
+          latest_event_id: "evt-loop-runtime-review",
+          outcome: { message: "Waiting for controller review before any commit." },
+          completion_result: {
+            status: "blocked",
+            reasons: ["missing_required_check:npm --prefix apps/desktop run build"],
+          },
+        },
+      },
+    ], 1);
+
+    await expect(page.getByTestId("background-task-status")).toContainText("1 Loop 任务");
+    await page.getByRole("button", { name: "展开后台任务列表" }).click();
+    const drawer = page.getByTestId("background-task-list");
+    await expect(drawer).toContainText("Ship Runtime UI and Dashboard Consumption");
+    await expect(drawer).toContainText("缺少检查 npm --prefix apps/desktop run build");
+    await expect(drawer.getByTestId("loop-review-required")).toContainText("需要人工审阅");
+    await expect(drawer).toContainText("成本未知");
+
+    await page.getByRole("button", { name: "打开后台任务面板" }).click();
+    const workbench = page.getByRole("region", { name: "子任务" });
+    await expect(workbench).toContainText("Runtime UI implementer");
+    await expect(workbench).toContainText("需要人工审阅");
+    await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "文件 IO" })).toContainText("LoopTaskPanel.tsx");
+    await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");
   });
 });

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { deriveBackgroundTaskStatus } from "./backgroundTaskStatus.ts";
-import type { AgentA2AProjection, AgentA2ATaskProjection } from "./protocol.ts";
+import type { AgentA2AProjection, AgentA2ATaskProjection, LoopTaskRecord } from "./protocol.ts";
 import type { SchedulerListPayload, ScheduledTask } from "./tauri.ts";
 import type { RuntimeHealthAlert } from "../store/types.ts";
 
@@ -56,6 +56,31 @@ function projection(tasks: AgentA2ATaskProjection[]): AgentA2AProjection {
     failed_count: tasks.filter((item) => item.status === "failed").length,
     interrupted_count: tasks.filter((item) => item.status === "interrupted").length,
     tasks,
+  };
+}
+
+function loopTask(overrides: Partial<LoopTaskRecord> = {}): LoopTaskRecord {
+  return {
+    id: overrides.id ?? "loop-1",
+    goal: overrides.goal ?? "Ship Level 3 runtime UI",
+    status: overrides.status ?? "waiting_for_input",
+    owner: overrides.owner ?? { kind: "gateway" },
+    policy: overrides.policy ?? {},
+    budget: overrides.budget ?? {},
+    completion_contract: overrides.completion_contract ?? {},
+    created_at_ms: overrides.created_at_ms ?? 1,
+    updated_at_ms: overrides.updated_at_ms ?? 2,
+    session_id: overrides.session_id ?? null,
+    profile_id: overrides.profile_id ?? null,
+    workspace_path: overrides.workspace_path ?? null,
+    lease: overrides.lease ?? null,
+    open_gates: overrides.open_gates ?? [],
+    evidence: overrides.evidence ?? [],
+    policy_decisions: overrides.policy_decisions ?? [],
+    latest_budget_snapshot: overrides.latest_budget_snapshot ?? null,
+    latest_event_id: overrides.latest_event_id ?? null,
+    outcome: overrides.outcome ?? null,
+    completion_result: overrides.completion_result ?? null,
   };
 }
 
@@ -140,6 +165,74 @@ describe("deriveBackgroundTaskStatus", () => {
       "review:Background worker:等待人工审阅",
       "agent:Background worker:子任务运行中",
       "scheduler:Daily check:3600s 间隔",
+    ]);
+    assert.strictEqual(result.hasAgentWork, true);
+  });
+
+  it("surfaces waiting loop runtime tasks as background work", () => {
+    const result = deriveBackgroundTaskStatus({
+      agentA2A: null,
+      scheduler: { tasks: [], recent_history: [], load_error: null },
+      healthAlerts: [],
+      loopTasks: [
+        loopTask({
+          id: "loop-waiting",
+          goal: "Ship Level 3 runtime UI",
+          status: "waiting_for_input",
+          outcome: { message: "Requires existing desktop session owner." },
+        }),
+      ],
+    });
+
+    assert.strictEqual(result.visible, true);
+    assert.deepStrictEqual(result.items.map((item) => item.label), ["1 Loop 任务"]);
+    assert.deepStrictEqual(result.tasks.map((item) => `${item.kind}:${item.title}:${item.detail}`), [
+      "loop:Ship Level 3 runtime UI:Requires existing desktop session owner.",
+    ]);
+    assert.deepStrictEqual(result.notifications.map((item) => `${item.kind}:${item.title}`), [
+      "loop:Ship Level 3 runtime UI",
+    ]);
+    assert.strictEqual(result.hasAgentWork, true);
+  });
+
+  it("hides terminal loop runtime tasks from background work", () => {
+    const result = deriveBackgroundTaskStatus({
+      agentA2A: null,
+      scheduler: { tasks: [], recent_history: [], load_error: null },
+      healthAlerts: [],
+      loopTasks: [
+        loopTask({ id: "loop-complete", status: "completed" }),
+        loopTask({ id: "loop-canceled", status: "canceled" }),
+        loopTask({ id: "loop-failed", status: "failed" }),
+      ],
+    });
+
+    assert.strictEqual(result.visible, false);
+    assert.deepStrictEqual(result.items, []);
+    assert.deepStrictEqual(result.tasks, []);
+    assert.strictEqual(result.hasAgentWork, false);
+  });
+
+  it("keeps running waiting review and interrupted loop tasks visible", () => {
+    const result = deriveBackgroundTaskStatus({
+      agentA2A: null,
+      scheduler: { tasks: [], recent_history: [], load_error: null },
+      healthAlerts: [],
+      loopTasks: [
+        loopTask({ id: "loop-running", goal: "Running loop", status: "running" }),
+        loopTask({ id: "loop-input", goal: "Waiting input loop", status: "waiting_for_input" }),
+        loopTask({ id: "loop-review", goal: "Waiting review loop", status: "waiting_for_review" }),
+        loopTask({ id: "loop-interrupted", goal: "Interrupted loop", status: "interrupted" }),
+      ],
+    });
+
+    assert.strictEqual(result.visible, true);
+    assert.deepStrictEqual(result.items.map((item) => item.label), ["4 Loop 任务"]);
+    assert.deepStrictEqual(result.tasks.map((item) => item.title), [
+      "Running loop",
+      "Waiting input loop",
+      "Waiting review loop",
+      "Interrupted loop",
     ]);
     assert.strictEqual(result.hasAgentWork, true);
   });

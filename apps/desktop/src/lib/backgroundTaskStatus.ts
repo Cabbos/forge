@@ -1,20 +1,23 @@
-import type { AgentA2AProjection } from "./protocol.ts";
+import type { AgentA2AProjection, LoopTaskRecord } from "./protocol.ts";
 import type { SchedulerListPayload } from "./tauri.ts";
 import type { RuntimeHealthAlert } from "../store/types.ts";
+import { summarizeLoopTask, type LoopRuntimeSummary } from "./loopRuntime.ts";
 import { normalizeA2ATaskProjection } from "./workbenchSummary.ts";
 
 export interface BackgroundTaskStatusItem {
-  key: "agents-running" | "review-needed" | "scheduler" | "health-alerts";
+  key: "agents-running" | "review-needed" | "loop-runtime" | "scheduler" | "health-alerts";
   label: string;
   tone: "running" | "review" | "scheduler" | "alert";
 }
 
 export interface BackgroundTaskListItem {
   id: string;
-  kind: "agent" | "review" | "scheduler" | "alert";
+  kind: "agent" | "review" | "scheduler" | "alert" | "loop";
   title: string;
   detail: string;
   tone: BackgroundTaskStatusItem["tone"];
+  loopTask?: LoopTaskRecord;
+  loopSummary?: LoopRuntimeSummary;
 }
 
 export interface BackgroundTaskNotificationItem extends BackgroundTaskListItem {}
@@ -31,15 +34,20 @@ export function deriveBackgroundTaskStatus({
   agentA2A,
   scheduler,
   healthAlerts,
+  loopTasks = [],
 }: {
   agentA2A: AgentA2AProjection | null;
   scheduler: SchedulerListPayload | null | undefined;
   healthAlerts: RuntimeHealthAlert[];
+  loopTasks?: LoopTaskRecord[];
 }): BackgroundTaskStatusView {
   const runningAgents = agentA2A?.running_count ?? 0;
   const reviewNeeded = (agentA2A?.tasks ?? []).filter(
     (task) => normalizeA2ATaskProjection(task).needs_human_review === true,
   ).length;
+  const activeLoopTasks = loopTasks
+    .filter((task) => isVisibleLoopTaskStatus(task.status))
+    .map(summarizeLoopTask);
   const enabledScheduledTasks = (scheduler?.tasks ?? []).filter((task) => task.enabled).length;
   const alertCount = healthAlerts.length;
 
@@ -57,6 +65,13 @@ export function deriveBackgroundTaskStatus({
       key: "review-needed",
       label: `${reviewNeeded} 待审阅`,
       tone: "review",
+    });
+  }
+  if (activeLoopTasks.length > 0) {
+    items.push({
+      key: "loop-runtime",
+      label: `${activeLoopTasks.length} Loop 任务`,
+      tone: activeLoopTasks.some((task) => task.tone === "running") ? "running" : "review",
     });
   }
   if (enabledScheduledTasks > 0) {
@@ -121,6 +136,27 @@ export function deriveBackgroundTaskStatus({
       });
     }
   }
+  for (const loopTask of activeLoopTasks) {
+    const detail = loopTask.budgetWarning ?? loopTask.detail;
+    tasks.push({
+      id: `loop:${loopTask.taskId}`,
+      kind: "loop",
+      title: loopTask.title,
+      detail,
+      tone: loopTask.tone === "running" ? "running" : "review",
+      loopTask: loopTask.rawTask,
+      loopSummary: loopTask,
+    });
+    notifications.push({
+      id: `notification:loop:${loopTask.taskId}`,
+      kind: "loop",
+      title: loopTask.title,
+      detail,
+      tone: loopTask.tone === "running" ? "running" : "review",
+      loopTask: loopTask.rawTask,
+      loopSummary: loopTask,
+    });
+  }
   for (const task of scheduler?.tasks ?? []) {
     if (!task.enabled) continue;
     const detail = task.interval_seconds === 0 ? "手动触发" : `${task.interval_seconds}s 间隔`;
@@ -151,7 +187,7 @@ export function deriveBackgroundTaskStatus({
 
   return {
     visible: items.length > 0,
-    hasAgentWork: runningAgents > 0 || reviewNeeded > 0,
+    hasAgentWork: runningAgents > 0 || reviewNeeded > 0 || activeLoopTasks.length > 0,
     items,
     tasks,
     notifications: sortNotifications(notifications),
@@ -162,8 +198,13 @@ function sortNotifications(notifications: BackgroundTaskNotificationItem[]) {
   const priority: Record<BackgroundTaskNotificationItem["kind"], number> = {
     alert: 0,
     review: 1,
-    agent: 2,
-    scheduler: 3,
+    loop: 2,
+    agent: 3,
+    scheduler: 4,
   };
   return [...notifications].sort((a, b) => priority[a.kind] - priority[b.kind]);
+}
+
+function isVisibleLoopTaskStatus(status: string): boolean {
+  return status !== "completed" && status !== "canceled" && status !== "failed";
 }

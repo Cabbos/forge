@@ -2036,7 +2036,7 @@ git commit -m "feat(runtime): add gateway loop runner leases"
 - Modify: `apps/desktop/src-tauri/src/gateway/dashboard.rs`
 - Test: `apps/desktop/e2e/acceptance.spec.ts`
 
-- [ ] **Step 7.1: Write projection helper tests**
+- [x] **Step 7.1: Write projection helper tests**
 
 Test status labels, blocked reasons, and budget warnings:
 
@@ -2067,7 +2067,7 @@ node --test apps/desktop/src/lib/loopRuntime.test.ts
 
 Expected: FAIL before helper exists.
 
-- [ ] **Step 7.2: Implement compact UI surfaces**
+- [x] **Step 7.2: Implement compact UI surfaces**
 
 Add UI only after event/ledger contracts exist:
 
@@ -2087,7 +2087,7 @@ npm --prefix apps/desktop run build
 
 Expected: PASS.
 
-- [ ] **Step 7.3: Add mocked acceptance coverage**
+- [x] **Step 7.3: Add mocked acceptance coverage**
 
 Extend `e2e/acceptance.spec.ts` to prove:
 
@@ -2119,6 +2119,10 @@ gitnexus_detect_changes(repo: "forge", scope: "staged")
 ```bash
 git commit -m "feat(desktop): surface loop runtime tasks"
 ```
+
+**2026-06-17 Task 7 implementation evidence:** Task 7 is implemented in the working tree and awaits controller review/commit gate. The desktop now has `loopRuntime.ts` projection helpers/tests, a compact `LoopTaskPanel`, StatusBar/TaskManager consumption of active-session loop tasks, A2A file IO / usage fact rows backed by `subagent_runtime_event`, and a static gateway dashboard table backed by `loop_tasks` in the dashboard snapshot. The UI keeps the MVP boundary explicit: loop tasks can wait for input/review, completion blockers stay visible, token/cost can be unknown, and commit remains human-gated. Evidence to preserve for the gate: `node --test apps/desktop/src/lib/loopRuntime.test.ts` first failed because `runtimeFactsForSubagentTask` was missing and then passed after the helper was added. Review fixes then made the dashboard reuse one loaded loop projection for both runtime status stats and loop task rows, made compact A2A runtime facts session-scoped, and replaced localized-label background filtering with raw loop task status filtering. Verification passed: `node --test apps/desktop/src/lib/loopRuntime.test.ts`, `node --test apps/desktop/src/lib/backgroundTaskStatus.test.ts`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib`, `npm --prefix apps/desktop run build`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts`, and `git diff --check`.
+
+**Remaining Task 7 gaps before commit:** controller review, `gitnexus_detect_changes()`, final staging, and commit. Task 7 still does not claim gateway automatic recovery/continuation, default headless `AgentSession`, executor-level live read/write tracing, precise cost when unknown, or auto-commit.
 
 ---
 
