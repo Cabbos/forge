@@ -182,3 +182,38 @@ def test_cli_runs_multiple_trials_and_writes_all_traces(tmp_path: Path) -> None:
         "trial-case",
         "trial-case",
     ]
+
+
+def test_cli_can_run_prompt_mutations_only(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    output_path = tmp_path / "artifacts" / "mutations.json"
+    write_case(cases_dir, "mutation-case")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--prompt-mutation",
+            "terse-bug-report",
+            "--mutations-only",
+            "--output",
+            str(output_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+    stdout_payload = json.loads(completed.stdout)
+    assert stdout_payload["total_tasks"] == 1
+
+    artifact = json.loads(output_path.read_text(encoding="utf-8"))
+    assert artifact["traces"][0]["task_id"] == "mutation-case__terse-bug-report"
+    assert artifact["traces"][0]["user_prompt"].startswith("This is broken.")

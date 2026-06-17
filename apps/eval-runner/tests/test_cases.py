@@ -245,3 +245,23 @@ def test_case_quality_allows_contract_only_cases_without_executable_assertions(
     )
 
     assert validate_case_quality(load_cases(case)) == []
+
+
+def test_prompt_mutation_creates_stable_user_style_variant() -> None:
+    from app.models import EvaluationTask
+    from app.prompt_mutation import mutate_prompt
+
+    task = EvaluationTask(
+        id="a",
+        title="A",
+        prompt="Implement normalizeInput.",
+        context_files=["src/normalize.ts"],
+    )
+
+    variant = mutate_prompt(task, style="terse-bug-report")
+
+    assert variant.id == "a__terse-bug-report"
+    assert "normalizeInput" in variant.prompt
+    assert variant.context_files == ["src/normalize.ts"]
+    assert variant.metadata["base_task_id"] == "a"
+    assert variant.metadata["mutation_style"] == "terse-bug-report"

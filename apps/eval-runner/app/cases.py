@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from app.models import CaseQualityIssue, EvaluationTask
+from app.prompt_mutation import mutate_prompt
 
 CASE_FILE_NAMES = {"case.json", "task.json"}
 
@@ -67,6 +68,18 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
                 )
             )
     return issues
+
+
+def expand_prompt_mutations(
+    tasks: list[EvaluationTask],
+    *,
+    styles: list[str],
+    mutations_only: bool = False,
+) -> list[EvaluationTask]:
+    if not styles:
+        return tasks
+    mutated = [mutate_prompt(task, style=style) for task in tasks for style in styles]
+    return mutated if mutations_only else [*tasks, *mutated]
 
 
 def _load_case_directory(path: Path) -> list[EvaluationTask]:

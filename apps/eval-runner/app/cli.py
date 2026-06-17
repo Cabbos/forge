@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-from app.cases import CaseLoadError, load_cases
+from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
 from app.experiments import experiment_artifact_metadata
 from app.models import AgentTrace, BacktestReport
@@ -18,8 +18,14 @@ def run_backtest_with_traces(
     model: str,
     forge_command: str | None,
     trials: int = 1,
+    prompt_mutations: list[str] | None = None,
+    mutations_only: bool = False,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
-    tasks = load_cases(cases_path)
+    tasks = load_backtest_tasks(
+        cases_path,
+        prompt_mutations=prompt_mutations or [],
+        mutations_only=mutations_only,
+    )
     runner = create_runner(provider=provider, model=model, forge_command=forge_command)
     traces = [runner.run_task(task) for _ in range(trials) for task in tasks]
     return build_report(traces), traces
@@ -32,6 +38,8 @@ def run_backtest(
     model: str,
     forge_command: str | None,
     trials: int = 1,
+    prompt_mutations: list[str] | None = None,
+    mutations_only: bool = False,
 ) -> BacktestReport:
     report, _ = run_backtest_with_traces(
         cases_path,
@@ -39,8 +47,24 @@ def run_backtest(
         model=model,
         forge_command=forge_command,
         trials=trials,
+        prompt_mutations=prompt_mutations,
+        mutations_only=mutations_only,
     )
     return report
+
+
+def load_backtest_tasks(
+    cases_path: Path,
+    *,
+    prompt_mutations: list[str],
+    mutations_only: bool = False,
+):
+    tasks = load_cases(cases_path)
+    return expand_prompt_mutations(
+        tasks,
+        styles=prompt_mutations,
+        mutations_only=mutations_only,
+    )
 
 
 def write_backtest_artifact(
@@ -78,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--experiment-name", default=None)
     parser.add_argument("--trials", type=int, default=1)
+    parser.add_argument("--prompt-mutation", action="append", default=[])
+    parser.add_argument("--mutations-only", action="store_true")
     args = parser.parse_args(argv)
 
     if args.trials < 1:
@@ -92,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
             model=model,
             forge_command=settings.forge_agent_command,
             trials=args.trials,
+            prompt_mutations=args.prompt_mutation,
+            mutations_only=args.mutations_only,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -102,7 +130,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.experiment_name is not None:
             experiment = experiment_artifact_metadata(
                 name=args.experiment_name,
-                tasks=load_cases(args.cases),
+                tasks=load_backtest_tasks(
+                    args.cases,
+                    prompt_mutations=args.prompt_mutation,
+                    mutations_only=args.mutations_only,
+                ),
                 provider=args.provider,
                 model=model,
             )
