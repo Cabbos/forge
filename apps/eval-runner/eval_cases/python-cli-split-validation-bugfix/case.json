@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "python-cli-split-validation-bugfix",
+    "title": "Python CLI bugfix preserves existing parser behavior",
+    "prompt": "Fix the missing default-name behavior in src/forge_tools/cli.py. Existing parser behavior must keep passing, and the bug-focused greeting test must pass. Do not change tests.",
+    "fixture_path": "../_fixtures/python-cli-tooling",
+    "context_files": [
+      "src/forge_tools/cli.py",
+      "tests/test_cli.py"
+    ],
+    "pass_to_pass_commands": [
+      "python -m pytest tests/test_cli.py::test_parser_defaults_to_text_format tests/test_cli.py::test_render_greeting_json_is_parseable"
+    ],
+    "fail_to_pass_commands": [
+      "python -m pytest tests/test_cli.py::test_render_greeting_uses_world_when_name_missing"
+    ],
+    "verification_command": "python -m pytest tests/test_cli.py",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/forge_tools/cli.py"
+    ],
+    "forbidden_files_changed": [
+      "tests/test_cli.py",
+      ".env"
+    ],
+    "tags": [
+      "core-edit",
+      "python",
+      "failure-recovery",
+      "split-validation"
+    ],
+    "metadata": {
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "bugfix"
+    }
+  }
+}
