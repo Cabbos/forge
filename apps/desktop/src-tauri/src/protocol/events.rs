@@ -2,6 +2,7 @@ use crate::agent::a2a::projection::AgentA2AProjection;
 use crate::agent::turn_state::AgentTurnProjection;
 use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
 use crate::harness::write_boundary::WriteBoundary;
+use crate::loop_runtime::LoopTaskRecord;
 use crate::memory::{SelectedContextMemory, WikiMemory};
 use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,42 @@ pub struct DeliverySummary {
     pub record_status: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub record_target_pages: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SubagentRuntimePayload {
+    Started {
+        role: String,
+    },
+    Status {
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    FileIo {
+        path: String,
+        operation: String,
+    },
+    UsageRecorded {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input_tokens: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_tokens: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        estimated_cost_micros: Option<u64>,
+    },
+    Ended {
+        status: String,
+    },
+    Failed {
+        reason: String,
+    },
+    Interrupted {
+        reason: String,
+    },
 }
 
 /// Streaming events emitted from Rust backend to frontend.
@@ -233,6 +270,22 @@ pub enum StreamEvent {
         state: AgentA2AProjection,
     },
 
+    // ── Subagent / Loop Runtime Projection ──
+    #[serde(rename = "subagent_runtime_event")]
+    SubagentRuntimeEvent {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        loop_task_id: Option<String>,
+        task_id: String,
+        event: SubagentRuntimePayload,
+    },
+    #[serde(rename = "loop_runtime_updated")]
+    LoopRuntimeUpdated {
+        session_id: String,
+        loop_task_id: String,
+        task: LoopTaskRecord,
+    },
+
     // ── Ecosystem / Tooling Projection ──
     #[serde(rename = "ecosystem_changed")]
     EcosystemChanged {
@@ -354,6 +407,8 @@ impl StreamEvent {
             | WorkflowUpdated { session_id, .. }
             | AgentTurnUpdated { session_id, .. }
             | AgentA2AUpdated { session_id, .. }
+            | SubagentRuntimeEvent { session_id, .. }
+            | LoopRuntimeUpdated { session_id, .. }
             | EcosystemChanged { session_id, .. }
             | DeliverySummary { session_id, .. }
             | SessionStarted { session_id, .. }
@@ -400,6 +455,8 @@ impl StreamEvent {
             WorkflowUpdated { .. } => "workflow_updated",
             AgentTurnUpdated { .. } => "agent_turn_updated",
             AgentA2AUpdated { .. } => "agent_a2a_updated",
+            SubagentRuntimeEvent { .. } => "subagent_runtime_event",
+            LoopRuntimeUpdated { .. } => "loop_runtime_updated",
             EcosystemChanged { .. } => "ecosystem_changed",
             DeliverySummary { .. } => "delivery_summary",
             SessionStarted { .. } => "session_started",
@@ -421,6 +478,22 @@ fn is_false(value: &bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagent_runtime_event_serializes_snake_case() {
+        let event = StreamEvent::SubagentRuntimeEvent {
+            session_id: "s1".to_string(),
+            loop_task_id: Some("loop-1".to_string()),
+            task_id: "t1".to_string(),
+            event: SubagentRuntimePayload::Started {
+                role: "implementer".to_string(),
+            },
+        };
+
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "subagent_runtime_event");
+        assert_eq!(json["event"]["type"], "started");
+    }
 
     /// Guardrail: every StreamEvent variant must have an `event_type` that
     /// matches the TypeScript discriminated union in src/lib/protocol.ts.
@@ -781,6 +854,26 @@ mod tests {
                     state: AgentA2AProjection::default(),
                 },
                 "agent_a2a_updated",
+            ),
+            (
+                StreamEvent::SubagentRuntimeEvent {
+                    session_id: "s".into(),
+                    loop_task_id: Some("loop".into()),
+                    task_id: "task".into(),
+                    event: SubagentRuntimePayload::Status {
+                        status: "running".into(),
+                        message: None,
+                    },
+                },
+                "subagent_runtime_event",
+            ),
+            (
+                StreamEvent::LoopRuntimeUpdated {
+                    session_id: "gateway".into(),
+                    loop_task_id: "loop".into(),
+                    task: LoopTaskRecord::new_for_test("loop", "goal"),
+                },
+                "loop_runtime_updated",
             ),
             (
                 StreamEvent::EcosystemChanged {

@@ -1127,6 +1127,86 @@ mod tests {
     }
 
     #[test]
+    fn projection_contract_retains_review_lease_file_and_test_facts() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement runtime projection",
+            "Add additive protocol events",
+            10,
+        );
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-runtime-worker",
+                    "diff_available": true,
+                    "diff_truncated": false,
+                    "tests_passed": true,
+                    "needs_human_review": true,
+                    "reason_codes": ["tests_passed", "diff_available"],
+                    "suggested_action": "Review before merge.",
+                })
+                .to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "diff-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::DiffSummary,
+                title: "Worktree diff".to_string(),
+                content: "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-old\n+new".to_string(),
+                created_at_ms: 26,
+            },
+            26,
+        );
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "test-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::TestReport,
+                title: "Test report".to_string(),
+                content: r#"{"summary": "12 tests passed"}"#.to_string(),
+                created_at_ms: 27,
+            },
+            27,
+        );
+        bus.complete_task(&task_id, "Patch ready", 30);
+
+        let projection = bus.projection();
+        assert_eq!(projection.completed_count, 1);
+        assert_eq!(projection.running_count, 0);
+        assert_eq!(projection.failed_count, 0);
+        assert_eq!(projection.interrupted_count, 0);
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.status, "completed");
+        assert_eq!(task_proj.lease_owner, None);
+        assert_eq!(task_proj.attempt_count, 1);
+        assert_eq!(task_proj.needs_human_review, Some(true));
+        assert_eq!(task_proj.tests_passed, Some(true));
+        assert_eq!(task_proj.diff_available, Some(true));
+        assert_eq!(task_proj.changed_file_count, Some(1));
+        assert_eq!(task_proj.changed_files, vec!["src/main.rs"]);
+        assert_eq!(
+            task_proj.test_report_excerpt.as_deref(),
+            Some("12 tests passed")
+        );
+    }
+
+    #[test]
     fn approve_review_clears_pending_review_metadata() {
         let mut bus = AgentA2ABus::default();
         let task_id = reviewed_worktree_task(&mut bus);

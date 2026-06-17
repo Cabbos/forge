@@ -29,6 +29,8 @@ export const useStore = create<AppStore>((set, get) => ({
   firstLoopDraftBySession: new Map(),
   deliverySummaryBySession: new Map(),
   agentA2ABySession: new Map(),
+  subagentRuntimeByTask: new Map(),
+  loopRuntimeByTask: new Map(),
   recoveryNotices: [],
   healthAlerts: [],
 

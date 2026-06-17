@@ -7,6 +7,14 @@ import {
   SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
 } from "./blocks.ts";
 import type { StreamEvent } from "../lib/protocol.ts";
+import {
+  applyLoopRuntimeUpdate,
+  applySubagentRuntimeEvent,
+} from "./runtime-projections.ts";
+import type {
+  LoopRuntimeByTask,
+  SubagentRuntimeByTask,
+} from "./types.ts";
 
 describe("eventToBlock", () => {
   it("context_compact_start returns a running block", () => {
@@ -352,3 +360,183 @@ describe("tool_call_start deduplication (Phase 1.6)", () => {
     assert.strictEqual(block!.metadata.tool_interrupted_reason, "session_restored");
   });
 });
+
+describe("subagent runtime projections", () => {
+  it("stores subagent runtime events outside transcript blocks", () => {
+    const blocks = applyTranscriptEventToBlocks([], {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: { type: "started", role: "implementer" },
+    });
+    let runtimeByTask: SubagentRuntimeByTask = new Map();
+
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: { type: "started", role: "implementer" },
+    });
+
+    assert.strictEqual(blocks.length, 0);
+    assert.deepStrictEqual(
+      runtimeByTask.get("s1:task-1"),
+      {
+        session_id: "s1",
+        loop_task_id: "loop-1",
+        task_id: "task-1",
+        latest_event: { type: "started", role: "implementer" },
+        status: "started",
+        role: "implementer",
+      },
+    );
+  });
+
+  it("preserves status text when status payload omits message", () => {
+    let runtimeByTask: SubagentRuntimeByTask = new Map();
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      task_id: "task-1",
+      event: { type: "status", status: "running", message: "Reading files" },
+    });
+
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      task_id: "task-1",
+      event: { type: "status", status: "running" },
+    });
+
+    assert.strictEqual(runtimeByTask.get("s1:task-1")!.message, "Reading files");
+
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      task_id: "task-1",
+      event: { type: "status", status: "running", message: null },
+    });
+
+    assert.strictEqual(runtimeByTask.get("s1:task-1")!.message, "Reading files");
+
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      task_id: "task-1",
+      event: { type: "status", status: "running", message: "Running checks" },
+    });
+
+    assert.strictEqual(runtimeByTask.get("s1:task-1")!.message, "Running checks");
+  });
+
+  it("preserves meaningful state across telemetry-only subagent events", () => {
+    let runtimeByTask: SubagentRuntimeByTask = new Map([
+      [
+        "s1:task-1",
+        {
+          session_id: "s1",
+          loop_task_id: "loop-1",
+          task_id: "task-1",
+          latest_event: { type: "failed", reason: "needs review" },
+          status: "running",
+          role: "implementer",
+          message: "Applying patch",
+          reason: "needs review",
+        },
+      ],
+    ]);
+
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: { type: "file_io", path: "src/App.tsx", operation: "write" },
+    });
+
+    assert.deepStrictEqual(runtimeByTask.get("s1:task-1"), {
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      latest_event: { type: "file_io", path: "src/App.tsx", operation: "write" },
+      status: "running",
+      role: "implementer",
+      message: "Applying patch",
+      reason: "needs review",
+    });
+
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: {
+        type: "usage_recorded",
+        model: "test-model",
+        input_tokens: null,
+        output_tokens: null,
+        estimated_cost_micros: null,
+      },
+    });
+
+    assert.deepStrictEqual(runtimeByTask.get("s1:task-1"), {
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      latest_event: {
+        type: "usage_recorded",
+        model: "test-model",
+        input_tokens: null,
+        output_tokens: null,
+        estimated_cost_micros: null,
+      },
+      status: "running",
+      role: "implementer",
+      message: "Applying patch",
+      reason: "needs review",
+    });
+  });
+
+  it("stores gateway loop runtime updates before session lookup", () => {
+    const blocks = applyTranscriptEventToBlocks([], {
+      event_type: "loop_runtime_updated",
+      session_id: "gateway",
+      loop_task_id: "loop-1",
+      task: testLoopTaskRecord(),
+    });
+    let runtimeByTask: LoopRuntimeByTask = new Map();
+
+    runtimeByTask = applyLoopRuntimeUpdate(runtimeByTask, {
+      event_type: "loop_runtime_updated",
+      session_id: "gateway",
+      loop_task_id: "loop-1",
+      task: testLoopTaskRecord(),
+    });
+
+    assert.strictEqual(blocks.length, 0);
+    assert.deepStrictEqual(
+      runtimeByTask.get("gateway:loop-1"),
+      {
+        session_id: "gateway",
+        loop_task_id: "loop-1",
+        task: testLoopTaskRecord(),
+      },
+    );
+  });
+});
+
+function testLoopTaskRecord() {
+  return {
+    id: "loop-1",
+    goal: "Ship runtime protocol",
+    status: "running",
+    owner: { kind: "gateway" },
+    policy: {},
+    budget: {},
+    completion_contract: {},
+    created_at_ms: 1,
+    updated_at_ms: 10,
+  };
+}

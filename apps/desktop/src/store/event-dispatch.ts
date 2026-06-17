@@ -24,6 +24,10 @@ import type { AppStore } from "./types";
 import { invalidateEcosystemQueries } from "./ecosystem-events";
 import { upsertRecoveryNotice } from "./recovery-notices";
 import { upsertHealthAlert } from "./health-alerts";
+import {
+  applyLoopRuntimeUpdate,
+  applySubagentRuntimeEvent,
+} from "./runtime-projections";
 
 type StoreSet = (partial: Partial<AppStore>) => void;
 type StoreGet = () => AppStore;
@@ -96,6 +100,20 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       const agentA2ABySession = new Map(get().agentA2ABySession);
       agentA2ABySession.set(session_id, event.state);
       set({ agentA2ABySession });
+      return;
+    }
+
+    if (event_type === "subagent_runtime_event") {
+      set({
+        subagentRuntimeByTask: applySubagentRuntimeEvent(get().subagentRuntimeByTask, event),
+      });
+      return;
+    }
+
+    if (event_type === "loop_runtime_updated") {
+      set({
+        loopRuntimeByTask: applyLoopRuntimeUpdate(get().loopRuntimeByTask, event),
+      });
       return;
     }
 

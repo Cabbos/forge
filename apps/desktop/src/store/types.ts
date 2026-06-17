@@ -4,11 +4,13 @@ import type {
   ContextUsageState,
   DeliverySummary,
   ForgeWikiUpdateProposal,
+  LoopTaskRecord,
   McpContextStatus,
   SelectedContextMemory,
   SelectedForgeWikiPage,
   SessionState,
   StreamEvent,
+  SubagentRuntimePayload,
   WikiMemory,
   WorkflowState,
 } from "../lib/protocol";
@@ -35,6 +37,26 @@ export interface RuntimeHealthAlert {
   remediation?: string | null;
 }
 
+export interface SubagentRuntimeEntry {
+  session_id: string;
+  loop_task_id?: string | null;
+  task_id: string;
+  latest_event: SubagentRuntimePayload;
+  status: string;
+  role?: string | null;
+  message?: string | null;
+  reason?: string | null;
+}
+
+export interface LoopRuntimeEntry {
+  session_id: string;
+  loop_task_id: string;
+  task: LoopTaskRecord;
+}
+
+export type SubagentRuntimeByTask = Map<string, SubagentRuntimeEntry>;
+export type LoopRuntimeByTask = Map<string, LoopRuntimeEntry>;
+
 export interface AppStore {
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
@@ -52,6 +74,8 @@ export interface AppStore {
   firstLoopDraftBySession: Map<string, FirstLoopDraft>;
   deliverySummaryBySession: Map<string, DeliverySummary>;
   agentA2ABySession: Map<string, import("../lib/protocol").AgentA2AProjection>;
+  subagentRuntimeByTask: SubagentRuntimeByTask;
+  loopRuntimeByTask: LoopRuntimeByTask;
 
   recoveryNotices: RuntimeRecoveryNotice[];
   dismissRecoveryNotice: (noticeId: string) => void;

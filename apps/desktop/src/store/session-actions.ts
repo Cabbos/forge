@@ -82,6 +82,8 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
       const firstLoopDraftBySession = new Map(get().firstLoopDraftBySession);
       const deliverySummaryBySession = new Map(get().deliverySummaryBySession);
       const agentA2ABySession = new Map(get().agentA2ABySession);
+      const subagentRuntimeByTask = new Map(get().subagentRuntimeByTask);
+      const loopRuntimeByTask = new Map(get().loopRuntimeByTask);
       sessions.delete(id);
       selectedContextBySession.delete(id);
       forgeWikiContextBySession.delete(id);
@@ -93,6 +95,12 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
       firstLoopDraftBySession.delete(id);
       deliverySummaryBySession.delete(id);
       agentA2ABySession.delete(id);
+      for (const key of subagentRuntimeByTask.keys()) {
+        if (key.startsWith(`${id}:`)) subagentRuntimeByTask.delete(key);
+      }
+      for (const key of loopRuntimeByTask.keys()) {
+        if (key.startsWith(`${id}:`)) loopRuntimeByTask.delete(key);
+      }
       const remainingSessionIds = workspaceSessionIds(sessions, get().activeWorkspaceId);
       const activeSessionId =
         get().activeSessionId === id
@@ -111,6 +119,8 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
         firstLoopDraftBySession,
         deliverySummaryBySession,
         agentA2ABySession,
+        subagentRuntimeByTask,
+        loopRuntimeByTask,
       });
       clearPendingBlockPersist(id);
       if (hasTauriRuntime()) {

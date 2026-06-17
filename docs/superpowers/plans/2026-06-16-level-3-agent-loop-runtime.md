@@ -1682,12 +1682,15 @@ Expected: repo plan/code/tests remain engineering source of truth; Obsidian is s
 - Modify: `apps/desktop/src-tauri/src/protocol/events.rs`
 - Modify: `apps/desktop/src/lib/protocol.ts`
 - Modify: `apps/desktop/src/store/index.ts`
-- Modify: `apps/desktop/src-tauri/src/agent/a2a/types.rs`
+- Modify: `apps/desktop/src/store/types.ts`
+- Modify: `apps/desktop/src/store/event-dispatch.ts`
+- Create: `apps/desktop/src/store/runtime-projections.ts`
+- Modify as needed: `apps/desktop/src-tauri/src/agent/a2a/types.rs`
 - Modify: `apps/desktop/src-tauri/src/agent/a2a/bus.rs`
 - Test: `apps/desktop/src-tauri/src/agent/a2a/bus.rs`
 - Test: `apps/desktop/src/store/blocks.test.ts` or new focused store test
 
-- [ ] **Step 4.1: Write Rust protocol serialization tests**
+- [x] **Step 4.1: Write Rust protocol serialization tests**
 
 First verify the existing A2A contract:
 
@@ -1722,7 +1725,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml subagent_runtime_ev
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 4.2: Implement additive protocol events**
+- [x] **Step 4.2: Implement additive protocol events**
 
 Add events without removing `agent_a2a_updated`:
 
@@ -1765,7 +1768,7 @@ npm --prefix apps/desktop run build
 
 Expected: PASS.
 
-- [ ] **Step 4.3: Store runtime events separately from transcript blocks**
+- [x] **Step 4.3: Store runtime events separately from transcript blocks**
 
 Add a runtime projection map keyed by session/task id. Do not render raw events into the transcript.
 
@@ -1791,6 +1794,40 @@ gitnexus_detect_changes(repo: "forge", scope: "staged")
 ```bash
 git commit -m "feat(runtime): add subagent runtime event protocol"
 ```
+
+### 2026-06-17 Task 4 implementation evidence
+
+Task 3.5 has landed at `ea693c6 feat(runtime): reconcile loop runtime contract`. Task 4 is implemented in the working tree as an additive protocol/store slice only; commit remains delegated to the separate commit-gate subagent.
+
+What changed:
+
+- Added Rust `StreamEvent::SubagentRuntimeEvent`, `StreamEvent::LoopRuntimeUpdated`, and `SubagentRuntimePayload` with stable snake_case serde tags.
+- Mirrored the new runtime protocol in `apps/desktop/src/lib/protocol.ts`.
+- Added frontend runtime projection maps for subagent events and loop task updates, keyed by `session_id:task_id` / `session_id:loop_task_id`.
+- Runtime projection updates preserve prior meaningful status/message/reason across telemetry-only `file_io` and `usage_recorded` events; `latest_event` carries the newest telemetry payload.
+- The TypeScript `LoopTaskRecord` mirror keeps Rust-required fields required (`policy`, `budget`, `completion_contract`, `created_at_ms`).
+- Handled `subagent_runtime_event` and `loop_runtime_updated` in `createOutputEventDispatcher` before transcript block conversion; `loop_runtime_updated` supports the `session_id: "gateway"` sentinel before session lookup.
+- Kept `agent_a2a_updated` intact and added an A2A projection contract guard covering counts, lease/attempt state, review metadata, changed files, and test report excerpts.
+
+Evidence/tests:
+
+```bash
+cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml subagent_runtime_event --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib
+node --test apps/desktop/src/store/blocks.test.ts
+node --test apps/desktop/src/store/event-dispatch.test.mjs
+npm --prefix apps/desktop run build
+git diff --check
+```
+
+Not claimed:
+
+- No actual live file IO emitters.
+- No usage ledger aggregation or precise cost metering.
+- No runner ownership, gateway autonomous resume, default headless `AgentSession`, UI rendering, acceptance-script updates, or auto-commit behavior.
+
+Remaining gaps: Task 5 telemetry emission, Task 6 runner ownership, Task 7 UI consumption, and Task 8 acceptance/docs.
 
 ---
 

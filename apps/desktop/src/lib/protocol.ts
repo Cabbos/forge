@@ -266,6 +266,44 @@ export interface AgentA2AProjection {
   tasks: AgentA2ATaskProjection[];
 }
 
+export type SubagentRuntimePayload =
+  | { type: "started"; role: string }
+  | { type: "status"; status: string; message?: string | null }
+  | { type: "file_io"; path: string; operation: string }
+  | {
+      type: "usage_recorded";
+      model?: string | null;
+      input_tokens?: number | null;
+      output_tokens?: number | null;
+      estimated_cost_micros?: number | null;
+    }
+  | { type: "ended"; status: string }
+  | { type: "failed"; reason: string }
+  | { type: "interrupted"; reason: string };
+
+export interface LoopTaskRecord {
+  id: string;
+  goal: string;
+  session_id?: string | null;
+  profile_id?: string | null;
+  workspace_path?: string | null;
+  status: string;
+  owner: Record<string, unknown>;
+  policy: Record<string, unknown>;
+  budget: Record<string, unknown>;
+  completion_contract: Record<string, unknown>;
+  created_at_ms: number;
+  updated_at_ms: number;
+  lease?: Record<string, unknown> | null;
+  open_gates?: unknown[];
+  evidence?: unknown[];
+  policy_decisions?: unknown[];
+  latest_budget_snapshot?: Record<string, unknown> | null;
+  latest_event_id?: string | null;
+  outcome?: Record<string, unknown> | null;
+  completion_result?: Record<string, unknown> | null;
+}
+
 export type StreamEvent =
   // ── Transcript ──
   | { event_type: "user_message"; session_id: string; block_id: string; content: string }
@@ -332,6 +370,19 @@ export type StreamEvent =
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
   | { event_type: "agent_a2a_updated"; session_id: string; state: AgentA2AProjection }
+  | {
+      event_type: "subagent_runtime_event";
+      session_id: string;
+      loop_task_id?: string | null;
+      task_id: string;
+      event: SubagentRuntimePayload;
+    }
+  | {
+      event_type: "loop_runtime_updated";
+      session_id: string;
+      loop_task_id: string;
+      task: LoopTaskRecord;
+    }
   | {
       event_type: "ecosystem_changed";
       session_id: string;
