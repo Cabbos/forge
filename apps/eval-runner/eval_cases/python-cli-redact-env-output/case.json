@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "python-cli-redact-env-output",
+    "title": "Python CLI redacts secret-like env output",
+    "prompt": "Update src/forge_tools/redaction.py so FORGE_TOKEN and OPENAI_API_KEY values are redacted while unrelated env output is unchanged. Run the redaction pytest file.",
+    "fixture_path": "../_fixtures/python-cli-tooling",
+    "context_files": [
+      "src/forge_tools/redaction.py",
+      "tests/test_redaction.py"
+    ],
+    "validation_commands": [
+      "python -m pytest tests/test_redaction.py"
+    ],
+    "verification_command": "python -m pytest tests/test_redaction.py",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/forge_tools/redaction.py"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      "src/forge_tools/cli.py"
+    ],
+    "tags": [
+      "core-edit",
+      "python",
+      "secret-redaction",
+      "success"
+    ],
+    "metadata": {
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "regression"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "python-cli-argparse-default-output",
+    "title": "Python CLI defaults to world greeting",
+    "prompt": "Fix src/forge_tools/cli.py so render_greeting(None, output_format=\"text\") returns \"hello world\" while preserving JSON output. Run the focused pytest command.",
+    "fixture_path": "../_fixtures/python-cli-tooling",
+    "context_files": [
+      "src/forge_tools/cli.py",
+      "tests/test_cli.py"
+    ],
+    "validation_commands": [
+      "python -m pytest tests/test_cli.py"
+    ],
+    "verification_command": "python -m pytest tests/test_cli.py",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/forge_tools/cli.py"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      "pyproject.toml"
+    ],
+    "tags": [
+      "core-edit",
+      "python",
+      "cli",
+      "success"
+    ],
+    "metadata": {
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "regression"
+    }
+  }
+}
