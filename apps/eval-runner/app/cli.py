@@ -168,6 +168,8 @@ def red_team_failure_rate(report: BacktestReport) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["render-report"]:
+        return render_report_main(raw_argv[1:])
     if raw_argv[:1] == ["baseline"]:
         return baseline_main(raw_argv[1:])
     if raw_argv[:1] == ["promote-trace"]:
@@ -330,6 +332,34 @@ def baseline_main(argv: list[str]) -> int:
         )
         return 1 if args.fail_on_critical and has_critical else 0
     return 2
+
+
+def render_report_main(argv: list[str]) -> int:
+    from app.artifacts import load_report_artifact
+    from app.report_render import render_html_report, render_markdown_report
+    from pydantic import ValidationError
+
+    parser = argparse.ArgumentParser(description="Render an eval report artifact.")
+    parser.add_argument("--artifact", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--format", choices=["markdown", "html"], default="markdown")
+    parser.add_argument("--title", default="Forge Eval Report")
+    args = parser.parse_args(argv)
+
+    try:
+        report = load_report_artifact(args.artifact).report
+        rendered = (
+            render_html_report(report, title=args.title)
+            if args.format == "html"
+            else render_markdown_report(report, title=args.title)
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered, encoding="utf-8")
+    except (OSError, ValueError, ValidationError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({"output": str(args.output), "format": args.format}, indent=2))
+    return 0
 
 
 if __name__ == "__main__":

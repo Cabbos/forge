@@ -252,6 +252,17 @@ The comparison gate reports critical regressions for large success-rate drops,
 scope-violation spikes, and score summary drops, plus warnings for sharp
 model-round increases.
 
+Render a saved artifact into an operator-readable Markdown or static HTML
+summary:
+
+```bash
+uv run python -m app.cli render-report \
+  --artifact output/local-regression.json \
+  --output output/local-regression.md \
+  --format markdown \
+  --title "Local Regression"
+```
+
 ## Trusted Backtest Operator Path
 
 Treat an eval run as two decisions: `execution_status` says whether the tasks

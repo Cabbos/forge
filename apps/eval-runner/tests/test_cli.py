@@ -616,3 +616,46 @@ def test_cli_baseline_compare_fails_on_critical_regression(tmp_path, capsys):
     )
     output = capsys.readouterr().out
     assert '"metric": "avg_model_rounds"' in output
+
+
+def test_cli_render_report_writes_markdown(tmp_path):
+    from app.cli import main
+
+    artifact = tmp_path / "run.json"
+    output = tmp_path / "report.md"
+    artifact.write_text(
+        json.dumps(
+            {
+                "report": {
+                    "total_tasks": 1,
+                    "success_rate": 1.0,
+                    "verification_pass_rate": 1.0,
+                    "scope_violation_rate": 0.0,
+                    "avg_duration_ms": 10.0,
+                    "avg_model_rounds": 1.0,
+                    "avg_confirm_requests": 0.0,
+                    "failure_categories": {},
+                    "score_summary": {},
+                    "tasks": [],
+                },
+                "traces": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "render-report",
+                "--artifact",
+                str(artifact),
+                "--output",
+                str(output),
+                "--title",
+                "Release Gate",
+            ]
+        )
+        == 0
+    )
+    assert "# Release Gate" in output.read_text(encoding="utf-8")
