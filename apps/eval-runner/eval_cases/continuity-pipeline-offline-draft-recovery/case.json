@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "continuity-pipeline-offline-draft-recovery",
+    "title": "Continuity pipeline: offline draft recovery",
+    "prompt": "在当前 TypeScript 项目中新增 src/offline-drafts.ts，导出 type Draft = { id: string; body: string; updatedAt: string; synced: boolean }，并导出 recoverUnsyncedDrafts(drafts: Draft[]): Draft[]。函数返回 synced=false 的草稿，按 updatedAt 从新到旧排序，不改变输入数组。新增 src/offline-drafts.test.ts 覆盖过滤、排序、空列表、输入数组不可变。更新 package.json 的 test script，让 npm test 能运行这个测试。最后确认 npm test 和 npx tsc --noEmit 都通过。不要修改 .env、.forge、package-lock.json。",
+    "fixture_path": "../_fixtures/continuity-ts-tooling",
+    "context_files": [
+      "package.json",
+      "tsconfig.json",
+      "src/storage.ts",
+      "src/tasks.tsx"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "python3 scripts/assert-continuity.py"
+    ],
+    "post_validation_commands": [
+      "npm test",
+      "npx tsc --noEmit",
+      "python3 scripts/assert-continuity.py --min-experiences 1 --max-dirty-candidates 0 --require-formed-reflections --require-fts-match --require-event user_message --require-event reflection --require-event tool_execution --require-event file_change --require-experience-text src/offline-drafts.ts --require-shell-success-clean --max-evidence-duplicates 0"
+    ],
+    "expected_success": true,
+    "expected_files_changed": [
+      "package.json",
+      "src/offline-drafts.ts",
+      "src/offline-drafts.test.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      ".forge/registry.db",
+      "package-lock.json"
+    ],
+    "max_duration_seconds": 900,
+    "tags": [
+      "continuity-pipeline",
+      "typescript",
+      "offline",
+      "sqlite-assertions"
+    ],
+    "metadata": {
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "regression"
+    }
+  }
+}
