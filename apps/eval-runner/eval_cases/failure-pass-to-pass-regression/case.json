@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "failure-pass-to-pass-regression",
+    "title": "Failure recovery: pass-to-pass regression is visible",
+    "prompt": "Simulate a bugfix attempt where the new bug test passes but an existing behavior test regresses. The report should classify the failure as verification_failed with regression validation context.",
+    "fixture_path": "../_fixtures/python-cli-tooling",
+    "context_files": [
+      "src/forge_tools/cli.py",
+      "tests/test_cli.py"
+    ],
+    "pass_to_pass_commands": [
+      "python -m pytest tests/test_cli.py::test_parser_defaults_to_text_format"
+    ],
+    "fail_to_pass_commands": [
+      "python -m pytest tests/test_cli.py::test_render_greeting_uses_world_when_name_missing"
+    ],
+    "verification_command": "python -m pytest tests/test_cli.py",
+    "expected_success": false,
+    "expected_files_changed": [
+      "src/forge_tools/cli.py"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      "tests/test_cli.py"
+    ],
+    "tags": [
+      "failure-recovery",
+      "split-validation",
+      "regression"
+    ],
+    "metadata": {
+      "mock": {
+        "error": "verification_failed",
+        "failure_category": "verification_failed",
+        "failure_reason": "Regression validation failed",
+        "changed_files": [
+          "src/forge_tools/cli.py"
+        ],
+        "model_rounds": 3,
+        "validation_attempts": 2,
+        "duration_ms": 540
+      },
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "diagnostic"
+    }
+  }
+}

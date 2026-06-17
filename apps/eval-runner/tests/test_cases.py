@@ -239,6 +239,21 @@ def test_load_cases_includes_agent_loop_stop_reason_backtests() -> None:
         assert stop_reason in raw_stop_reasons
 
 
+def test_load_cases_includes_failure_recovery_expansion_cases() -> None:
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    setup_failure = task_by_id["failure-setup-command-error"]
+    assert setup_failure.expected_success is False
+    assert "failure-recovery" in setup_failure.tags
+    assert setup_failure.metadata["mock"]["failure_category"] == "runner_error"
+
+    split_failure = task_by_id["failure-pass-to-pass-regression"]
+    assert split_failure.pass_to_pass_commands
+    assert split_failure.fail_to_pass_commands
+    assert split_failure.expected_success is False
+
+
 def test_case_quality_reports_missing_verification_for_executable_case(tmp_path: Path) -> None:
     from app.cases import validate_case_quality
 
