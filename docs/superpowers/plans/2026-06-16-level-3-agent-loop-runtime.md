@@ -2139,7 +2139,7 @@ git commit -m "feat(desktop): surface loop runtime tasks"
 - Modify: `docs/superpowers/plans/2026-06-16-level-3-agent-loop-runtime.md`
 - Modify: `/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Runtime Plan.md`
 
-- [ ] **Step 8.1: Add crash/replay regression tests**
+- [x] **Step 8.1: Add crash/replay regression tests**
 
 Add tests that make the Level 3 claim credible:
 
@@ -2187,7 +2187,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime --lib
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 8.2: Extend final acceptance**
+- [x] **Step 8.2: Extend final acceptance**
 
 Add dry-run and real gates:
 
@@ -2211,7 +2211,7 @@ scripts/acceptance.sh --dry-run
 
 Expected: PASS and the dry-run output names Level 3 runtime gates.
 
-- [ ] **Step 8.3: Produce a backing engineering packet**
+- [x] **Step 8.3: Produce a backing engineering packet**
 
 Add a short section to README/desktop README/changelog and the Obsidian plan that can back the product claim:
 
@@ -2234,7 +2234,7 @@ git diff --check
 
 Expected: PASS.
 
-- [ ] **Step 8.4: Full signoff**
+- [x] **Step 8.4: Full signoff**
 
 Run:
 
@@ -2247,7 +2247,7 @@ scripts/acceptance.sh
 
 Expected: PASS.
 
-- [ ] **Step 8.5: Final commit**
+- [x] **Step 8.5: Final commit**
 
 Stage the intended changes:
 
@@ -2266,6 +2266,19 @@ Then:
 ```bash
 git commit -m "feat(runtime): verify level 3 loop runtime"
 ```
+
+**2026-06-17 Task 8 implementation evidence:** Crash/replay coverage now includes
+`loop_runtime::replay_tests`, proving projection corruption rebuilds from the
+append-only journal and waiting human gates survive replay. The final acceptance
+script advertises and runs the Level 3 runtime gates before desktop smoke:
+loop event journal contracts, projection replay, policy/budget preflight,
+durable human gates, typed completion evidence, gateway loop runner status,
+subagent runtime projection, and completion-contract desktop smoke. The docs
+packet in root README, desktop README, CHANGELOG, Hermes roadmap, and the
+Obsidian Level 3 plan backs the product claim with explicit evidence and keeps
+the MVP boundary honest: no automatic gateway continuation after crash, no
+default headless `AgentSession`, no executor-level live file IO tracing, no
+precise unknown cost metering, and no automatic commits.
 
 ---
 

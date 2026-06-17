@@ -13,12 +13,20 @@ for arg in "$@"; do
       cat <<'EOF'
 Usage: scripts/acceptance.sh [--dry-run]
 
-Runs the Forge Phase 7 acceptance gates:
+Runs the Forge Level 3 runtime acceptance gates:
   1. Desktop production build
   2. Website production build
   3. Eval runner test suite
-  4. Desktop acceptance e2e smoke specs
-  5. Rich preview e2e smoke specs
+  4. Loop event journal contract tests
+  5. Projection rebuild/replay tests
+  6. Policy and budget preflight tests
+  7. Durable human gate tests
+  8. Typed completion evidence tests
+  9. Gateway loop runner status smoke
+  10. Subagent runtime event projection smoke
+  11. Completion contract mocked desktop smoke
+  12. Desktop Phase 7 smoke specs
+  13. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -31,23 +39,54 @@ EOF
   esac
 done
 
+COMMAND_LABELS=(
+  "desktop production build"
+  "website production build"
+  "eval runner test suite"
+  "loop event journal contract tests"
+  "projection rebuild/replay tests"
+  "policy preflight tests"
+  "budget preflight tests"
+  "durable human gate tests"
+  "typed completion evidence tests"
+  "gateway loop runner status smoke"
+  "subagent runtime event projection smoke"
+  "completion contract desktop helper smoke"
+  "completion contract mocked desktop smoke"
+  "desktop Phase 7 smoke specs"
+  "rich preview e2e smoke specs"
+)
+
 COMMANDS=(
   "npm run build:desktop"
   "npm run build:website"
   "npm run test:eval"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::policy --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib"
+  "node --test apps/desktop/src/store/blocks.test.ts"
+  "node --test apps/desktop/src/lib/loopRuntime.test.ts"
+  "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"write_file tool details show|diff cards show|image diff cards show\""
 )
 
-echo "Forge Phase 7 acceptance suite"
+echo "Forge Level 3 runtime acceptance suite"
 echo "Working directory: $ROOT_DIR"
 echo
 
-for command in "${COMMANDS[@]}"; do
+for index in "${!COMMANDS[@]}"; do
+  label="${COMMAND_LABELS[$index]}"
+  command="${COMMANDS[$index]}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] $command"
+    echo "[dry-run] $label: $command"
   else
-    echo "==> $command"
+    echo "==> $label"
+    echo "    $command"
     (cd "$ROOT_DIR" && eval "$command")
   fi
 done

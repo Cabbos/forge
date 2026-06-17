@@ -8,6 +8,9 @@ pub mod runner;
 pub mod store;
 pub mod types;
 
+#[cfg(test)]
+mod replay_tests;
+
 pub use budget::{BudgetDecision, BudgetSnapshot, LoopUsageLedger, UsageEvent};
 pub use completion::evaluate_completion;
 pub use gates::{

@@ -37,6 +37,12 @@ The desktop app now includes the Hermes-parity runtime scaffolding that is being
 - Review and background work: Agent Workbench review queue/history plus a global background status bar and task list.
 - Acceptance: browser smoke coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI.
 
+## Level 3 Runtime Evidence
+
+Forge Level 3 Runtime backs long-running agent work with an append-only loop event journal, rebuildable projections, durable human gates, policy and budget preflight, typed completion evidence, crash/replay regression coverage, and gateway runner leases.
+
+The current acceptance suite advertises and runs those runtime gates before the desktop smoke tests, so product claims about durable loop state are backed by replay, policy, gate, completion, gateway status, subagent projection, and mocked desktop acceptance checks.
+
 ## Product Tracking
 
 Roadmap items live in the private GitHub Project:

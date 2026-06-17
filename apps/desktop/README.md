@@ -128,14 +128,14 @@ npm run test:e2e       # Playwright E2E 测试
 npm run check:backend  # Rust fmt + clippy + test
 ```
 
-仓库根目录提供 Phase 7 验收脚本：
+仓库根目录提供 Level 3 runtime 验收脚本：
 
 ```bash
-scripts/acceptance.sh          # build + eval + desktop acceptance smoke
+scripts/acceptance.sh          # build + eval + Level 3 runtime + desktop smoke
 scripts/acceptance.sh --dry-run
 ```
 
-当前 acceptance smoke 覆盖 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅和后台任务列表。
+当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅和后台任务列表。
 
 也可以直接运行 Rust 测试：
 
@@ -196,11 +196,12 @@ Forge 的可信度来自几个工程约束：
 - Playwright E2E 与 Rust 后端检查共同覆盖关键路径。
 - Gateway runtime、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
 - 子任务、审阅队列、健康告警和后台调度通过 Agent Workbench 与全局状态栏持续暴露。
+- Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、crash/replay regression coverage 和 gateway runner lease 支撑长期 agent 工作。
 
 当前正在继续加强的方向：
 
 - 更完整的真实 Tauri force-quit/reopen 恢复验收。
-- 更直接的 Agent loop 单元测试和后台 gateway session-host 合约。
+- 更直接的后台 gateway session-host 合约和真实 crash/reopen 验收。
 - 更清晰的工具编排边界、审阅动作契约和图片/富媒体 diff 预览。
 - 更稳定的会话恢复、长期上下文行为和跨入口 profile/runtime 状态。
 

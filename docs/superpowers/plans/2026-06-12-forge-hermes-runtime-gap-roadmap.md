@@ -691,6 +691,25 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - No HIGH or CRITICAL GitNexus impact regressions.
 - Manual UX walkthrough by controller (Codex) signs off.
 
+**Level 3 Runtime follow-up, 2026-06-17:**
+
+Forge Level 3 Runtime now has an engineering evidence packet for long-running
+agent work:
+
+- Append-only loop event journal.
+- Rebuildable projections, including projection corruption replay coverage.
+- Durable human gates that survive replay and keep side effects blocked.
+- Policy and budget preflight tests before risky side effects.
+- Typed completion evidence for command, risk, review, docs, and commit facts.
+- Crash/replay regression coverage.
+- Gateway runner leases and stale-lease interruption.
+- Subagent runtime projection smoke and mocked desktop completion-contract smoke.
+
+This does not claim automatic gateway continuation after a crash, default
+headless `AgentSession` ownership, executor-level live file IO tracing, precise
+cost when usage is unknown, or automatic commits. Those remain future runtime
+hardening work.
+
 **Verification plan:**
 
 - `npm run build:desktop`
