@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "desktop-background-task-status-ordering",
+    "title": "Desktop runtime: background task status ordering",
+    "prompt": "Fix src/backgroundTasks.ts so running tasks appear before queued tasks, queued tasks before failed/completed tasks, and ordering does not mutate the input array. Run npm test -- src/backgroundTasks.test.ts and npm run typecheck.",
+    "fixture_path": "../_fixtures/desktop-runtime-contracts",
+    "context_files": [
+      "src/backgroundTasks.ts",
+      "src/backgroundTasks.test.ts"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "npm test -- src/backgroundTasks.test.ts",
+      "npm run typecheck"
+    ],
+    "verification_command": "npm test -- src/backgroundTasks.test.ts",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/backgroundTasks.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      "package-lock.json",
+      "src/backgroundTasks.test.ts"
+    ],
+    "tags": [
+      "desktop-runtime",
+      "background-task-status",
+      "typescript",
+      "success"
+    ],
+    "metadata": {
+      "lifecycle": {
+        "status": "active",
+        "owner": "desktop-runtime"
+      },
+      "split": "regression"
+    }
+  }
+}
