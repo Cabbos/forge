@@ -168,6 +168,8 @@ def red_team_failure_rate(report: BacktestReport) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["case-lifecycle"]:
+        return case_lifecycle_main(raw_argv[1:])
     if raw_argv[:1] == ["render-report"]:
         return render_report_main(raw_argv[1:])
     if raw_argv[:1] == ["baseline"]:
@@ -360,6 +362,24 @@ def render_report_main(argv: list[str]) -> int:
         return 2
     print(json.dumps({"output": str(args.output), "format": args.format}, indent=2))
     return 0
+
+
+def case_lifecycle_main(argv: list[str]) -> int:
+    from app.case_lifecycle import inspect_case_lifecycle
+
+    parser = argparse.ArgumentParser(description="Inspect eval case lifecycle metadata.")
+    parser.add_argument("--cases", type=Path, required=True)
+    parser.add_argument("--fail-on-quarantined", action="store_true")
+    args = parser.parse_args(argv)
+
+    try:
+        report = inspect_case_lifecycle(load_cases(args.cases))
+    except CaseLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(report.model_dump_json(indent=2))
+    has_quarantined = report.counts.get("quarantined", 0) > 0
+    return 1 if args.fail_on_quarantined and has_quarantined else 0
 
 
 if __name__ == "__main__":

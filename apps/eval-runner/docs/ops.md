@@ -158,6 +158,25 @@ uv run python -m app.cli baseline latest \
 如果某次 run 只用于记录、不应作为 trusted gate，可加 `--untrusted`；`latest`
 只返回 trusted baseline。
 
+### Case lifecycle diagnostics
+
+Case 可以在 `metadata.lifecycle` 中声明生命周期状态：
+
+- `active`：默认状态，参与常规 gate。
+- `flaky`：仍可运行，但需要关注稳定性。
+- `quarantined`：已隔离，默认不应通过 release gate。
+- `retired`：保留历史，不再作为主要信号。
+
+检查生命周期元数据：
+
+```bash
+uv run python -m app.cli case-lifecycle \
+  --cases eval_cases \
+  --fail-on-quarantined
+```
+
+诊断会统计各状态数量，并报告缺少 owner、未知 status、quarantined case 等问题。
+
 ### 3. 三种 Smoke 模式
 
 | 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |

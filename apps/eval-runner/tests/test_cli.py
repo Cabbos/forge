@@ -659,3 +659,41 @@ def test_cli_render_report_writes_markdown(tmp_path):
         == 0
     )
     assert "# Release Gate" in output.read_text(encoding="utf-8")
+
+
+def test_cli_case_lifecycle_fails_on_quarantined_case(tmp_path, capsys):
+    from app.cli import main
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "flaky-case",
+                "title": "Flaky case",
+                "prompt": "Fix parser",
+                "metadata": {
+                    "lifecycle": {
+                        "status": "quarantined",
+                        "reason": "intermittent provider timeout",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "case-lifecycle",
+                "--cases",
+                str(case),
+                "--fail-on-quarantined",
+            ]
+        )
+        == 1
+    )
+
+    output = capsys.readouterr().out
+    assert '"quarantined": 1' in output
+    assert '"code": "quarantined_case"' in output

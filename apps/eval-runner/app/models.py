@@ -44,6 +44,17 @@ class CaseQualityIssue(EvalModel):
     message: str
 
 
+class CaseLifecycleIssue(EvalModel):
+    task_id: str
+    code: str
+    message: str
+
+
+class CaseLifecycleReport(EvalModel):
+    counts: dict[str, int] = Field(default_factory=dict)
+    issues: list[CaseLifecycleIssue] = Field(default_factory=list)
+
+
 class WorkspaceCheck(EvalModel):
     ok: bool
     untracked_files: list[str] = Field(default_factory=list)

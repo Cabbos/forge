@@ -224,6 +224,34 @@ def test_case_quality_reports_missing_verification_for_executable_case(tmp_path:
     ]
 
 
+def test_case_lifecycle_reports_quarantined_and_missing_owner(tmp_path):
+    case = tmp_path / "case.json"
+    case.write_text(
+        """
+        {
+          "id": "flaky-case",
+          "title": "Flaky case",
+          "prompt": "Fix parser",
+          "metadata": {
+            "lifecycle": {
+              "status": "quarantined",
+              "reason": "intermittent provider timeout"
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    from app.case_lifecycle import inspect_case_lifecycle
+    from app.cases import load_cases
+
+    result = inspect_case_lifecycle(load_cases(case))
+
+    assert result.counts == {"quarantined": 1}
+    assert result.issues[0].code == "missing_owner"
+    assert result.issues[1].code == "quarantined_case"
+
+
 def test_case_quality_reports_missing_expected_files_for_executable_case(
     tmp_path: Path,
 ) -> None:
