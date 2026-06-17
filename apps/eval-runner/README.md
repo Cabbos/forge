@@ -340,6 +340,8 @@ Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id
     "fixture_path": "fixture",
     "context_files": ["src/calculator.py", "tests/test_calculator.py"],
     "validation_commands": ["python -m pytest tests/test_calculator.py"],
+    "pass_to_pass_commands": ["python -m pytest tests/test_existing.py"],
+    "fail_to_pass_commands": ["python -m pytest tests/test_bugfix.py"],
     "verification_command": "python -m pytest tests/test_calculator.py",
     "expected_files_changed": ["src/calculator.py"],
     "forbidden_files_changed": [".env"],
@@ -421,7 +423,14 @@ It should write a JSON object to stdout. The runner maps it into `AgentTrace`:
 
 Scope checks are automatic: files in `forbidden_files_changed`, or files outside `expected_files_changed` when that list is provided, mark the trace as `scope_violation` even if verification passed.
 
-For stronger backtests, put independent judge commands in `validation_commands`. These run inside the disposable workspace after Forge finishes and override any `verification_result` returned by the external command.
+For stronger backtests, put independent judge commands in `validation_commands`.
+These run inside the disposable workspace after Forge finishes and override any
+`verification_result` returned by the external command. Use
+`pass_to_pass_commands` for existing behavior that must keep passing and
+`fail_to_pass_commands` for bug-focused tests that must now pass. Split
+validation failures are surfaced separately as `Regression validation failed`
+or `Bug-fix validation failed`, and `score_summary` includes `regression_ok`
+and `bugfix_ok`.
 
 ## Run With Docker
 

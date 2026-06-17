@@ -136,6 +136,34 @@ def test_budget_scorer_flags_excess_model_rounds() -> None:
     assert scores["budget_ok"].label == "max_model_rounds_exceeded"
 
 
+def test_split_validation_scores_from_command_groups() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace("split", passed=True, duration_ms=10, tool_count=0)
+    trace = trace.model_copy(
+        update={
+            "raw_events": [
+                {
+                    "event_type": "split_validation_commands",
+                    "pass_to_pass_commands": ["pytest tests/test_existing.py"],
+                    "fail_to_pass_commands": ["pytest tests/test_bug.py"],
+                }
+            ],
+            "shell_outputs": [
+                ShellOutput(command="pytest tests/test_existing.py", exit_code=0),
+                ShellOutput(command="pytest tests/test_bug.py", exit_code=1),
+            ],
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["regression_ok"].score == 1.0
+    assert scores["regression_ok"].label == "ok"
+    assert scores["bugfix_ok"].score == 0.0
+    assert scores["bugfix_ok"].label == "bugfix_validation_failed"
+
+
 def test_scorer_agreement_compares_labels_by_score_name() -> None:
     from app.judge_calibration import scorer_agreement
     from app.models import EvalScore

@@ -31,6 +31,19 @@ def test_agent_adapter_metadata_is_attached_to_trace() -> None:
     }
 
 
+def test_task_supports_regression_and_fix_validation_commands() -> None:
+    task = EvaluationTask(
+        id="split-tests",
+        title="Split tests",
+        prompt="Fix bug",
+        pass_to_pass_commands=["pytest tests/test_existing.py"],
+        fail_to_pass_commands=["pytest tests/test_bug.py"],
+    )
+
+    assert task.pass_to_pass_commands == ["pytest tests/test_existing.py"]
+    assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
+
+
 def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     task = EvaluationTask(
         id="add-cli-flag",
@@ -60,6 +73,77 @@ def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     assert trace.failure_reason is None
     assert trace.duration_ms >= 0
     assert trace.model_dump(mode="json")["started_at"].endswith("+00:00")
+
+
+def test_forge_runner_reports_regression_validation_failure(tmp_path: Path) -> None:
+    script = tmp_path / "fake_success.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    regression_command = f"{sys.executable} -c \"import sys; sys.exit(3)\""
+    task = EvaluationTask(
+        id="regression-split",
+        title="Regression split",
+        prompt="Fix bug.",
+        expected_files_changed=["src/app.py"],
+        pass_to_pass_commands=[regression_command],
+        fail_to_pass_commands=[f"{sys.executable} -c \"print('bug fixed')\""],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == regression_command
+    assert trace.failure_category == FailureCategory.VERIFICATION_FAILED
+    assert trace.failure_reason == "Regression validation failed"
+
+
+def test_forge_runner_reports_bugfix_validation_failure(tmp_path: Path) -> None:
+    script = tmp_path / "fake_success.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    regression_command = f"{sys.executable} -c \"print('existing tests pass')\""
+    bugfix_command = f"{sys.executable} -c \"import sys; sys.exit(4)\""
+    task = EvaluationTask(
+        id="bugfix-split",
+        title="Bugfix split",
+        prompt="Fix bug.",
+        expected_files_changed=["src/app.py"],
+        pass_to_pass_commands=[regression_command],
+        fail_to_pass_commands=[bugfix_command],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == bugfix_command
+    assert [output.command for output in trace.shell_outputs[-2:]] == [
+        regression_command,
+        bugfix_command,
+    ]
+    assert trace.failure_category == FailureCategory.VERIFICATION_FAILED
+    assert trace.failure_reason == "Bug-fix validation failed"
 
 
 def test_sandbox_rejects_dirty_workspace_after_case(tmp_path: Path) -> None:

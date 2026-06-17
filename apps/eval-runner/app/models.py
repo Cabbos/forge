@@ -65,6 +65,8 @@ class EvaluationTask(EvalModel):
     setup_commands: list[str] = Field(default_factory=list)
     validation_commands: list[str] = Field(default_factory=list)
     post_validation_commands: list[str] = Field(default_factory=list)
+    pass_to_pass_commands: list[str] = Field(default_factory=list)
+    fail_to_pass_commands: list[str] = Field(default_factory=list)
     verification_command: str | None = None
     expected_success: bool = True
     expected_files_changed: list[str] = Field(default_factory=list)
