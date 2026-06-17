@@ -80,6 +80,16 @@ run 持续不变。
 - `trust_status`：harness、dataset fingerprint、scorer calibration、red-team gate
   是否足以让分数进入发布决策。
 
+推荐的 Phase 2 操作链路：
+
+1. 用 `--output` 跑正常 backtest，保留 report/traces artifact。
+2. 将成功 artifact promote 成 trusted baseline。
+3. 将 candidate artifact 与最新 trusted baseline 比较。
+4. 渲染 Markdown/HTML report 供人工 review。
+5. 重复 trials 后跑 flake triage。
+6. 用 `--redact-secrets` 和 `--dedupe` 提升生产失败 trace。
+7. 渲染 CI summary 供 PR comment 或 job summary 使用。
+
 推荐顺序：
 
 1. 先跑 golden harness self-check。若 mock golden case 不能稳定通过，trust gate
@@ -153,6 +163,16 @@ uv run python -m app.cli baseline promote \
 uv run python -m app.cli baseline latest \
   --registry output/baselines.json \
   --name local-regression
+```
+
+比较 candidate artifact：
+
+```bash
+uv run python -m app.cli baseline compare \
+  --registry output/baselines.json \
+  --name local-regression \
+  --artifact output/candidate.json \
+  --fail-on-critical
 ```
 
 如果某次 run 只用于记录、不应作为 trusted gate，可加 `--untrusted`；`latest`

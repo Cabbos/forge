@@ -239,6 +239,14 @@ turning failed traces back into eval case directories while preserving prompt,
 context, expected/forbidden file assertions, verification command, and failure
 metadata.
 
+## Phase 2 Operator Workflow
+
+Phase 2 keeps the report artifact as the boundary between execution and release
+decisions. The baseline registry stores trusted report artifact pointers. Report
+rendering, flake triage, case lifecycle diagnostics, and CI summaries all consume
+the same `BacktestReport` contract, so operators do not need to inspect raw trace
+JSON unless a task needs deeper debugging.
+
 ## Forge + forge-eval-runner 关系
 
 ```mermaid

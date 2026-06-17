@@ -261,6 +261,27 @@ uv run python -m app.cli render-report \
   --output output/local-regression.md \
   --format markdown \
   --title "Local Regression"
+
+uv run python -m app.cli render-report \
+  --artifact output/local-regression.json \
+  --output output/local-regression.html \
+  --format html \
+  --title "Local Regression"
+
+uv run python -m app.cli flake-triage \
+  --artifact output/local-regression.json \
+  --fail-on-flaky
+
+uv run python -m app.cli promote-trace \
+  --trace artifacts/run/trace.json \
+  --output eval_cases/promoted \
+  --redact-secrets \
+  --dedupe
+
+uv run python -m app.cli ci-summary \
+  --previous output/baseline.json \
+  --current output/candidate.json \
+  --output output/ci-summary.md
 ```
 
 ## Trusted Backtest Operator Path

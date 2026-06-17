@@ -1,6 +1,6 @@
 # Eval Runner Phase 2 Ops Roadmap Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Turn Forge Eval Runner from a trusted local backtest harness into an operator-ready release gate with baseline management, readable reports, case lifecycle tracking, flake triage, safer trace promotion, and CI-facing summaries.
 
@@ -62,7 +62,7 @@
 - Create: `apps/eval-runner/app/artifacts.py`
 - Test: `apps/eval-runner/tests/test_reporting.py`
 
-- [ ] **Step 1: Write failing tests for artifact report loading**
+- [x] **Step 1: Write failing tests for artifact report loading**
 
 Add to `apps/eval-runner/tests/test_reporting.py`:
 
@@ -130,7 +130,7 @@ def test_load_report_artifact_accepts_raw_report_shape(tmp_path):
     assert loaded.trace_count == 0
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run:
 
@@ -141,7 +141,7 @@ uv run pytest tests/test_reporting.py::test_load_report_artifact_accepts_cli_art
 
 Expected: FAIL because `app.artifacts` does not exist.
 
-- [ ] **Step 3: Add artifact loading models**
+- [x] **Step 3: Add artifact loading models**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -153,7 +153,7 @@ class ReportArtifact(EvalModel):
     experiment: dict[str, str] | None = None
 ```
 
-- [ ] **Step 4: Implement artifact loading**
+- [x] **Step 4: Implement artifact loading**
 
 Create `apps/eval-runner/app/artifacts.py`:
 
@@ -201,7 +201,7 @@ def object_value(value: Any, *, key: str, path: Path) -> dict[str, Any]:
     return value
 ```
 
-- [ ] **Step 5: Run focused tests and verify pass**
+- [x] **Step 5: Run focused tests and verify pass**
 
 Run:
 
@@ -212,7 +212,7 @@ uv run pytest tests/test_reporting.py::test_load_report_artifact_accepts_cli_art
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/artifacts.py apps/eval-runner/app/models.py apps/eval-runner/tests/test_reporting.py
@@ -231,7 +231,7 @@ git commit -m "feat(eval): add report artifact loader"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing tests for baseline promotion and lookup**
+- [x] **Step 1: Write failing tests for baseline promotion and lookup**
 
 Create `apps/eval-runner/tests/test_baselines.py`:
 
@@ -303,7 +303,7 @@ def test_baseline_registry_ignores_untrusted_for_latest_trusted(tmp_path):
     assert latest.artifact_path == str(good)
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run:
 
@@ -314,7 +314,7 @@ uv run pytest tests/test_baselines.py -v
 
 Expected: FAIL because `app.baselines` does not exist.
 
-- [ ] **Step 3: Add baseline models**
+- [x] **Step 3: Add baseline models**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -340,7 +340,7 @@ class BaselineRegistryPayload(EvalModel):
     records: list[BaselineRecord] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement registry persistence**
+- [x] **Step 4: Implement registry persistence**
 
 Create `apps/eval-runner/app/baselines.py`:
 
@@ -401,7 +401,7 @@ class BaselineRegistry:
         )
 ```
 
-- [ ] **Step 5: Add CLI subcommands**
+- [x] **Step 5: Add CLI subcommands**
 
 Modify the top of `main()` in `apps/eval-runner/app/cli.py`:
 
@@ -451,7 +451,7 @@ def baseline_main(argv: list[str]) -> int:
     return 2
 ```
 
-- [ ] **Step 6: Add CLI tests**
+- [x] **Step 6: Add CLI tests**
 
 Add to `apps/eval-runner/tests/test_cli.py`:
 
@@ -490,7 +490,7 @@ def test_cli_promotes_and_reads_latest_baseline(tmp_path, capsys):
     assert '"name": "dev"' in output
 ```
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -501,7 +501,7 @@ uv run pytest tests/test_baselines.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add apps/eval-runner/app/baselines.py apps/eval-runner/app/models.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_baselines.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/ops.md
@@ -519,7 +519,7 @@ git commit -m "feat(eval): add trusted baseline registry"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/README.md`
 
-- [ ] **Step 1: Write failing test for baseline comparison**
+- [x] **Step 1: Write failing test for baseline comparison**
 
 Add to `apps/eval-runner/tests/test_reporting.py`:
 
@@ -553,7 +553,7 @@ def test_compare_reports_flags_score_summary_drop():
     } in result["regressions"]
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -564,7 +564,7 @@ uv run pytest tests/test_reporting.py::test_compare_reports_flags_score_summary_
 
 Expected: FAIL because `compare_reports()` does not compare score summary keys.
 
-- [ ] **Step 3: Extend comparison logic**
+- [x] **Step 3: Extend comparison logic**
 
 Modify `apps/eval-runner/app/report_compare.py`:
 
@@ -586,7 +586,7 @@ Modify `apps/eval-runner/app/report_compare.py`:
             )
 ```
 
-- [ ] **Step 4: Add `baseline compare` CLI**
+- [x] **Step 4: Add `baseline compare` CLI**
 
 Add a `compare` subparser inside `baseline_main()`:
 
@@ -617,7 +617,7 @@ Add the command branch:
         return 1 if args.fail_on_critical and has_critical else 0
 ```
 
-- [ ] **Step 5: Add CLI regression test**
+- [x] **Step 5: Add CLI regression test**
 
 Add to `apps/eval-runner/tests/test_cli.py`:
 
@@ -660,7 +660,7 @@ def test_cli_baseline_compare_fails_on_critical_regression(tmp_path, capsys):
     assert '"metric": "success_rate"' in capsys.readouterr().out
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -671,7 +671,7 @@ uv run pytest tests/test_reporting.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/report_compare.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_reporting.py apps/eval-runner/tests/test_cli.py apps/eval-runner/README.md
@@ -689,7 +689,7 @@ git commit -m "feat(eval): compare reports against trusted baselines"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/README.md`
 
-- [ ] **Step 1: Write failing renderer tests**
+- [x] **Step 1: Write failing renderer tests**
 
 Create `apps/eval-runner/tests/test_report_render.py`:
 
@@ -732,7 +732,7 @@ def test_render_html_report_escapes_title():
     assert "<table" in html
 ```
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run:
 
@@ -743,7 +743,7 @@ uv run pytest tests/test_report_render.py -v
 
 Expected: FAIL because `app.report_render` does not exist.
 
-- [ ] **Step 3: Implement report renderer**
+- [x] **Step 3: Implement report renderer**
 
 Create `apps/eval-runner/app/report_render.py`:
 
@@ -829,7 +829,7 @@ def render_html_report(report: BacktestReport, *, title: str = "Forge Eval Repor
 """
 ```
 
-- [ ] **Step 4: Add `render-report` CLI**
+- [x] **Step 4: Add `render-report` CLI**
 
 Add to the top of `main()` in `apps/eval-runner/app/cli.py`:
 
@@ -864,7 +864,7 @@ def render_report_main(argv: list[str]) -> int:
     return 0
 ```
 
-- [ ] **Step 5: Add CLI test**
+- [x] **Step 5: Add CLI test**
 
 Add to `apps/eval-runner/tests/test_cli.py`:
 
@@ -900,7 +900,7 @@ def test_cli_render_report_writes_markdown(tmp_path):
     assert "# Release Gate" in output.read_text(encoding="utf-8")
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -911,7 +911,7 @@ uv run pytest tests/test_report_render.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/report_render.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_report_render.py apps/eval-runner/tests/test_cli.py apps/eval-runner/README.md
@@ -930,7 +930,7 @@ git commit -m "feat(eval): render operator reports"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Add to `apps/eval-runner/tests/test_cases.py`:
 
@@ -963,7 +963,7 @@ def test_case_lifecycle_reports_quarantined_and_missing_owner(tmp_path):
     assert result.issues[1].code == "quarantined_case"
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -974,7 +974,7 @@ uv run pytest tests/test_cases.py::test_case_lifecycle_reports_quarantined_and_m
 
 Expected: FAIL because `app.case_lifecycle` does not exist.
 
-- [ ] **Step 3: Add lifecycle models**
+- [x] **Step 3: Add lifecycle models**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -990,7 +990,7 @@ class CaseLifecycleReport(EvalModel):
     issues: list[CaseLifecycleIssue] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement lifecycle diagnostics**
+- [x] **Step 4: Implement lifecycle diagnostics**
 
 Create `apps/eval-runner/app/case_lifecycle.py`:
 
@@ -1037,7 +1037,7 @@ def inspect_case_lifecycle(tasks: list[EvaluationTask]) -> CaseLifecycleReport:
     return CaseLifecycleReport(counts=dict(counts), issues=issues)
 ```
 
-- [ ] **Step 5: Add CLI command**
+- [x] **Step 5: Add CLI command**
 
 Add to the top of `main()` in `apps/eval-runner/app/cli.py`:
 
@@ -1063,7 +1063,7 @@ def case_lifecycle_main(argv: list[str]) -> int:
     return 1 if args.fail_on_quarantined and has_quarantined else 0
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -1074,7 +1074,7 @@ uv run pytest tests/test_cases.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/case_lifecycle.py apps/eval-runner/app/models.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_cases.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/ops.md
@@ -1093,7 +1093,7 @@ git commit -m "feat(eval): add case lifecycle diagnostics"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing flake triage tests**
+- [x] **Step 1: Write failing flake triage tests**
 
 Add to `apps/eval-runner/tests/test_reporting.py`:
 
@@ -1116,7 +1116,7 @@ def test_flake_triage_classifies_mixed_trial_results():
     assert result.quarantine_candidates == ["parser-case"]
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1127,7 +1127,7 @@ uv run pytest tests/test_reporting.py::test_flake_triage_classifies_mixed_trial_
 
 Expected: FAIL because `app.flake_triage` does not exist.
 
-- [ ] **Step 3: Add flake triage models**
+- [x] **Step 3: Add flake triage models**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -1144,7 +1144,7 @@ class FlakeTriageReport(EvalModel):
     quarantine_candidates: list[str] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement triage**
+- [x] **Step 4: Implement triage**
 
 Create `apps/eval-runner/app/flake_triage.py`:
 
@@ -1182,7 +1182,7 @@ def triage_trial_metrics(
     return FlakeTriageReport(items=items, quarantine_candidates=quarantine_candidates)
 ```
 
-- [ ] **Step 5: Add CLI `flake-triage`**
+- [x] **Step 5: Add CLI `flake-triage`**
 
 Add to the top of `main()`:
 
@@ -1213,7 +1213,7 @@ def flake_triage_main(argv: list[str]) -> int:
     return 1 if args.fail_on_flaky and report.quarantine_candidates else 0
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -1224,7 +1224,7 @@ uv run pytest tests/test_reporting.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/flake_triage.py apps/eval-runner/app/models.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_reporting.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/ops.md
@@ -1243,7 +1243,7 @@ git commit -m "feat(eval): add repeated-trial flake triage"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing tests for redaction and dedupe**
+- [x] **Step 1: Write failing tests for redaction and dedupe**
 
 Add to `apps/eval-runner/tests/test_cases.py`:
 
@@ -1288,7 +1288,7 @@ def test_promote_trace_redacts_secret_like_values_and_dedupes(tmp_path):
     assert "[REDACTED_SECRET]" in case_text
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1299,7 +1299,7 @@ uv run pytest tests/test_cases.py::test_promote_trace_redacts_secret_like_values
 
 Expected: FAIL because `promote_failed_traces()` does not support redaction/dedupe arguments.
 
-- [ ] **Step 3: Add promotion decision model**
+- [x] **Step 3: Add promotion decision model**
 
 Add to `apps/eval-runner/app/models.py`:
 
@@ -1311,7 +1311,7 @@ class TracePromotionDecision(EvalModel):
     reason: str | None = None
 ```
 
-- [ ] **Step 4: Implement redaction and dedupe**
+- [x] **Step 4: Implement redaction and dedupe**
 
 Modify `apps/eval-runner/app/trace_import.py`:
 
@@ -1352,7 +1352,7 @@ def promote_failed_traces(
 
 Inside the trace loop, keep a `seen_keys: set[str] = set()`. Skip duplicate keys when `dedupe` is true. Before writing the case, use `prompt = redact_text(trace.user_prompt) if redact_secrets else trace.user_prompt`.
 
-- [ ] **Step 5: Extend CLI flags**
+- [x] **Step 5: Extend CLI flags**
 
 In `promote_trace_main()` add:
 
@@ -1372,7 +1372,7 @@ Call:
     )
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -1383,7 +1383,7 @@ uv run pytest tests/test_cases.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/eval-runner/app/trace_import.py apps/eval-runner/app/models.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_cases.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/ops.md
@@ -1401,7 +1401,7 @@ git commit -m "feat(eval): harden trace promotion"
 - Test: `apps/eval-runner/tests/test_cli.py`
 - Docs: `apps/eval-runner/docs/ops.md`
 
-- [ ] **Step 1: Write failing CI summary test**
+- [x] **Step 1: Write failing CI summary test**
 
 Add to `apps/eval-runner/tests/test_report_render.py`:
 
@@ -1427,7 +1427,7 @@ def test_ci_summary_renders_regression_table():
     assert "| success_rate | critical | 1.000 | 0.000 | -1.000 |" in markdown
 ```
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run:
 
@@ -1438,7 +1438,7 @@ uv run pytest tests/test_report_render.py::test_ci_summary_renders_regression_ta
 
 Expected: FAIL because `app.ci_summary` does not exist.
 
-- [ ] **Step 3: Implement CI summary renderer**
+- [x] **Step 3: Implement CI summary renderer**
 
 Create `apps/eval-runner/app/ci_summary.py`:
 
@@ -1469,7 +1469,7 @@ def render_ci_summary(comparison: dict[str, list[dict[str, Any]]]) -> str:
     return "\n".join(lines) + "\n"
 ```
 
-- [ ] **Step 4: Add CLI command**
+- [x] **Step 4: Add CLI command**
 
 Add to the top of `main()`:
 
@@ -1503,7 +1503,7 @@ def ci_summary_main(argv: list[str]) -> int:
     return 0
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run:
 
@@ -1514,7 +1514,7 @@ uv run pytest tests/test_report_render.py tests/test_cli.py -v
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/app/ci_summary.py apps/eval-runner/app/cli.py apps/eval-runner/tests/test_report_render.py apps/eval-runner/tests/test_cli.py apps/eval-runner/docs/ops.md
@@ -1531,7 +1531,7 @@ git commit -m "feat(eval): render ci comparison summaries"
 - Modify: `apps/eval-runner/docs/architecture.md`
 - Modify: `CHANGELOG.md`
 
-- [ ] **Step 1: Update operator docs**
+- [x] **Step 1: Update operator docs**
 
 Document these workflows in `apps/eval-runner/docs/ops.md`:
 
@@ -1545,7 +1545,7 @@ Document these workflows in `apps/eval-runner/docs/ops.md`:
 7. Render a CI summary for pull request comments.
 ```
 
-- [ ] **Step 2: Update README commands**
+- [x] **Step 2: Update README commands**
 
 Add these examples to `apps/eval-runner/README.md`:
 
@@ -1559,7 +1559,7 @@ uv run python -m app.cli promote-trace --trace artifacts/run/trace.json --output
 uv run python -m app.cli ci-summary --previous output/baseline.json --current output/candidate.json --output output/ci-summary.md
 ```
 
-- [ ] **Step 3: Update architecture docs**
+- [x] **Step 3: Update architecture docs**
 
 Add a Phase 2 section to `apps/eval-runner/docs/architecture.md`:
 
@@ -1571,7 +1571,7 @@ the same BacktestReport contract, so operators do not need to inspect raw trace
 JSON unless a task needs deeper debugging.
 ```
 
-- [ ] **Step 4: Run full validation**
+- [x] **Step 4: Run full validation**
 
 Run:
 
@@ -1590,7 +1590,7 @@ git diff --check
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Run GitNexus change detection before commit**
+- [x] **Step 5: Run GitNexus change detection before commit**
 
 Run:
 
@@ -1600,7 +1600,7 @@ gitnexus_detect_changes(repo: "forge", scope: "staged")
 
 Expected: affected scope is limited to eval-runner modules, eval-runner tests, eval-runner docs, and root changelog.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/eval-runner/README.md apps/eval-runner/docs/ops.md apps/eval-runner/docs/architecture.md CHANGELOG.md
