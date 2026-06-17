@@ -18,7 +18,7 @@ flowchart TD
         M[calculate_metrics()<br/>纯函数，无副作用]
         BR[build_report()<br/>回测报告聚合]
         S[EvalStorage<br/>InMemory / SQLite]
-        DB[(SQLite<br/>eval_runs / eval_run_tasks / eval_artifacts)]
+        DB[(SQLite<br/>eval_runs / eval_run_tasks /<br/>eval_artifacts / eval_experiments)]
         FS[artifacts/{run_id}<br/>trace.json / report.json]
     end
 
@@ -148,6 +148,20 @@ Runs track execution and trust as separate decisions:
 - `trust_status` records whether the harness self-check, dataset fingerprint, scorer calibration, and red-team gates make the score decision-worthy.
 
 Trust gates fail closed. A run with completed task execution can still be untrusted when the harness is untrusted, the dataset has no fingerprint, a model-graded scorer is uncalibrated, or red-team checks fail.
+
+## Dataset And Experiment Snapshots
+
+`dataset_fingerprint()` hashes the stable evaluation surface for a loaded task
+set: task ids, prompts, context, fixture path, setup/validation commands,
+expected/forbidden file assertions, tags, and metadata. Task order is ignored,
+so the same dataset produces the same fingerprint even when cases are loaded in
+a different order.
+
+CLI artifacts can include an `experiment` block when `--experiment-name` and
+`--output` are provided. That block records the experiment name, dataset
+fingerprint, provider, and model beside the report and traces. SQLite also
+creates an `eval_experiments` table so durable experiment snapshots can be
+attached to stored runs without changing the existing run response contract.
 
 ## Forge + forge-eval-runner 关系
 

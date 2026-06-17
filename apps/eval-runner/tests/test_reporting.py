@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from app.models import AgentTrace, FailureCategory, ShellOutput, VerificationResult
+from app.models import AgentTrace, FailureCategory, ShellOutput, TaskMetric, VerificationResult
 from app.reporting import build_report
 
 
@@ -155,6 +155,35 @@ def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
     assert report.tasks[0].passed is True
     assert report.tasks[1].scope_violations == ["forbidden_change:.env"]
     assert report.tasks[2].failure_reason == "Task failed."
+
+
+def test_trial_aggregation_marks_flaky_task() -> None:
+    from app.reporting import aggregate_trial_metrics
+
+    trials = [
+        TaskMetric(
+            task_id="a",
+            passed=True,
+            verification_passed=True,
+            tool_calls=1,
+            duration_ms=10,
+            failure_category=FailureCategory.NONE,
+        ),
+        TaskMetric(
+            task_id="a",
+            passed=False,
+            verification_passed=False,
+            tool_calls=1,
+            duration_ms=12,
+            failure_category=FailureCategory.VERIFICATION_FAILED,
+        ),
+    ]
+
+    result = aggregate_trial_metrics(trials)
+
+    assert result["a"]["attempts"] == 2
+    assert result["a"]["pass_rate"] == 0.5
+    assert result["a"]["flaky"] is True
 
 
 def test_build_report_summarizes_continuity_benefit_diagnostics() -> None:

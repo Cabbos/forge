@@ -1,8 +1,8 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any
 
 from app.metrics import calculate_metrics
-from app.models import AgentTrace, BacktestReport, ContinuityReport, TraceSummary
+from app.models import AgentTrace, BacktestReport, ContinuityReport, TaskMetric, TraceSummary
 
 
 def build_report(traces: list[AgentTrace]) -> BacktestReport:
@@ -63,6 +63,25 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         tasks=task_summaries,
         continuity=build_continuity_report(traces),
     )
+
+
+def aggregate_trial_metrics(
+    tasks: list[TaskMetric],
+) -> dict[str, dict[str, float | int | bool]]:
+    grouped: dict[str, list[TaskMetric]] = defaultdict(list)
+    for task in tasks:
+        grouped[task.task_id].append(task)
+
+    result: dict[str, dict[str, float | int | bool]] = {}
+    for task_id, attempts in grouped.items():
+        passed = sum(1 for attempt in attempts if attempt.passed)
+        pass_rate = passed / len(attempts)
+        result[task_id] = {
+            "attempts": len(attempts),
+            "pass_rate": pass_rate,
+            "flaky": 0 < passed < len(attempts),
+        }
+    return result
 
 
 def build_continuity_report(traces: list[AgentTrace]) -> ContinuityReport | None:

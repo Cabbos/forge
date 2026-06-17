@@ -385,6 +385,19 @@ class SQLiteStorage:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS eval_experiments (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    dataset_fingerprint TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    git_commit TEXT,
+                    command TEXT,
+                    environment_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
+                );
                 """
             )
             ensure_column(connection, "eval_runs", "case_source", "TEXT")

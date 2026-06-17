@@ -106,3 +106,79 @@ def test_cli_writes_full_trace_artifact_when_output_path_is_provided(tmp_path: P
     assert artifact["traces"][0]["task_id"] == "trace-debug"
     assert artifact["traces"][0]["raw_events"] == [{"event_type": "text_chunk", "content": "done"}]
     assert artifact["traces"][0]["tool_calls"][0]["command"] == "edit_file src/app.py"
+
+
+def test_cli_writes_experiment_snapshot_when_name_and_output_are_provided(
+    tmp_path: Path,
+) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    output_path = tmp_path / "artifacts" / "experiment.json"
+    write_case(cases_dir, "experiment-case")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--model",
+            "deterministic-agent-v1",
+            "--output",
+            str(output_path),
+            "--experiment-name",
+            "nightly-smoke",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+    artifact = json.loads(output_path.read_text(encoding="utf-8"))
+    assert artifact["experiment"]["name"] == "nightly-smoke"
+    assert artifact["experiment"]["provider"] == "mock"
+    assert artifact["experiment"]["model"] == "deterministic-agent-v1"
+    assert len(artifact["experiment"]["dataset_fingerprint"]) == 64
+
+
+def test_cli_runs_multiple_trials_and_writes_all_traces(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    output_path = tmp_path / "artifacts" / "trials.json"
+    write_case(cases_dir, "trial-case")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--trials",
+            "3",
+            "--output",
+            str(output_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+    stdout_payload = json.loads(completed.stdout)
+    assert stdout_payload["total_tasks"] == 3
+    assert stdout_payload["success_rate"] == 1.0
+
+    artifact = json.loads(output_path.read_text(encoding="utf-8"))
+    assert artifact["report"]["total_tasks"] == 3
+    assert [trace["task_id"] for trace in artifact["traces"]] == [
+        "trial-case",
+        "trial-case",
+        "trial-case",
+    ]

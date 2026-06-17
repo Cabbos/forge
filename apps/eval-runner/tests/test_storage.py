@@ -11,6 +11,7 @@ from app.models import (
     AgentTrace,
     EvalArtifact,
     EvaluationRun,
+    EvaluationTask,
     FailureCategory,
     RunStatus,
     ShellOutput,
@@ -105,6 +106,56 @@ def make_artifact(artifacts_path: Path, run_id: str, *, kind: str = "stdout") ->
         size_bytes=artifact_path.stat().st_size,
         created_at=datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC),
     )
+
+
+def test_dataset_fingerprint_is_stable_for_same_cases() -> None:
+    from app.cases import load_cases
+    from app.datasets import dataset_fingerprint
+
+    tasks = load_cases(Path("eval_cases/small-edit-success"))
+
+    assert dataset_fingerprint(tasks) == dataset_fingerprint(
+        load_cases(Path("eval_cases/small-edit-success"))
+    )
+
+
+def test_dataset_fingerprint_is_independent_of_case_order(tmp_path: Path) -> None:
+    from app.datasets import dataset_fingerprint
+
+    first = EvaluationTask(id="a", title="A", prompt="Do A.")
+    second = EvaluationTask(id="b", title="B", prompt="Do B.")
+
+    assert dataset_fingerprint([first, second]) == dataset_fingerprint([second, first])
+
+
+def test_sqlite_storage_creates_experiment_snapshot_table(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    db_path = tmp_path / "forge_eval.db"
+
+    SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=db_path,
+        artifacts_path=tmp_path / "artifacts",
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(eval_experiments)").fetchall()
+        }
+
+    assert {
+        "id",
+        "run_id",
+        "dataset_fingerprint",
+        "provider",
+        "model",
+        "git_commit",
+        "command",
+        "environment_json",
+        "created_at",
+    } <= columns
 
 
 def storage_factories() -> list[tuple[str, StorageFactory]]:

@@ -213,6 +213,22 @@ class EvalArtifact(EvalModel):
         return value.isoformat()
 
 
+class ExperimentSnapshot(EvalModel):
+    experiment_id: str
+    run_id: str
+    dataset_fingerprint: str
+    provider: str
+    model: str
+    git_commit: str | None = None
+    command: str | None = None
+    environment: dict[str, str] = Field(default_factory=dict)
+    created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.isoformat()
+
+
 class RunCreateRequest(EvalModel):
     task_ids: list[str] | None = None
     provider: str = "mock"
