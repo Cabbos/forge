@@ -46,6 +46,25 @@ uv run python -m app.worker --once
 
 Worker 支持 `SIGTERM`/`SIGINT` 优雅停止。
 
+### 队列状态
+
+服务启动后可用 `/queue/status` 查看当前队列概览：
+
+```bash
+curl http://localhost:8000/queue/status
+```
+
+响应包含各 run status 计数，以及最早的 pending/running run ID，便于判断
+worker 是否积压或卡住：
+
+```json
+{
+  "counts": {"pending": 2, "running": 1, "completed": 10},
+  "oldest_pending_run_id": "run-a",
+  "oldest_running_run_id": "run-b"
+}
+```
+
 ### 3. 三种 Smoke 模式
 
 | 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |

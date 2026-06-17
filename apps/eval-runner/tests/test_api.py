@@ -288,6 +288,20 @@ def test_api_can_create_queued_run_for_worker_execution(
     assert fetched.json()["traces"][0]["task_id"] == "task-pass"
 
 
+def test_queue_status_counts_runs_by_status(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    client = TestClient(create_app(storage=InMemoryStorage(tasks_path=tasks_path)))
+    client.post("/runs", json={"task_ids": ["task-pass"], "provider": "mock"})
+
+    response = client.get("/queue/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["counts"]["completed"] >= 1
+    assert "oldest_pending_run_id" in payload
+
+
 def test_api_can_cancel_pending_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)

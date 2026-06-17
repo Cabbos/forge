@@ -163,6 +163,12 @@ class MetricsSummary(EvalModel):
     tasks: list[TaskMetric] = Field(default_factory=list)
 
 
+class QueueStatus(EvalModel):
+    counts: dict[str, int] = Field(default_factory=dict)
+    oldest_pending_run_id: str | None = None
+    oldest_running_run_id: str | None = None
+
+
 class TraceSummary(EvalModel):
     task_id: str
     passed: bool

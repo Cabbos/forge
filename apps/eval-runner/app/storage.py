@@ -16,6 +16,7 @@ from app.models import (
     EvaluationTask,
     FailureCategory,
     MetricsSummary,
+    QueueStatus,
     RunStatus,
 )
 from app.reporting import build_report
@@ -32,6 +33,7 @@ class EvalStorage(Protocol):
     def save_run(self, run: EvaluationRun) -> EvaluationRun: ...
     def get_run(self, run_id: str) -> EvaluationRun | None: ...
     def list_runs(self, status_filter: str | None = None) -> list[EvaluationRun]: ...
+    def queue_status(self) -> QueueStatus: ...
     def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None: ...
     def save_task(self, run_id: str, trace: AgentTrace) -> None: ...
     def save_artifact(self, artifact: EvalArtifact) -> EvalArtifact: ...
@@ -93,6 +95,22 @@ class InMemoryStorage:
         if status_filter:
             runs = [r for r in runs if r.status.value == status_filter]
         return runs
+
+    def queue_status(self) -> QueueStatus:
+        counts: dict[str, int] = {}
+        oldest_pending_run_id: str | None = None
+        oldest_running_run_id: str | None = None
+        for run in self._runs.values():
+            counts[run.status.value] = counts.get(run.status.value, 0) + 1
+            if run.status == RunStatus.PENDING and oldest_pending_run_id is None:
+                oldest_pending_run_id = run.run_id
+            if run.status == RunStatus.RUNNING and oldest_running_run_id is None:
+                oldest_running_run_id = run.run_id
+        return QueueStatus(
+            counts=counts,
+            oldest_pending_run_id=oldest_pending_run_id,
+            oldest_running_run_id=oldest_running_run_id,
+        )
 
     def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
         now = datetime.now(UTC)
@@ -297,6 +315,20 @@ class SQLiteStorage:
                     "SELECT id FROM eval_runs ORDER BY created_at ASC, id ASC"
                 ).fetchall()
         return [run for row in rows if (run := self.get_run(row["id"])) is not None]
+
+    def queue_status(self) -> QueueStatus:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM eval_runs GROUP BY status"
+            ).fetchall()
+            counts = {row["status"]: row["count"] for row in rows}
+            oldest_pending_run_id = self._oldest_run_id_by_status(connection, RunStatus.PENDING)
+            oldest_running_run_id = self._oldest_run_id_by_status(connection, RunStatus.RUNNING)
+        return QueueStatus(
+            counts=counts,
+            oldest_pending_run_id=oldest_pending_run_id,
+            oldest_running_run_id=oldest_running_run_id,
+        )
 
     def save_task(self, run_id: str, trace: AgentTrace) -> None:
         run = self.get_run(run_id)
@@ -713,6 +745,23 @@ class SQLiteStorage:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         return connection
+
+    def _oldest_run_id_by_status(
+        self,
+        connection: sqlite3.Connection,
+        status: RunStatus,
+    ) -> str | None:
+        row = connection.execute(
+            """
+            SELECT id
+            FROM eval_runs
+            WHERE status = ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            (status.value,),
+        ).fetchone()
+        return row["id"] if row is not None else None
 
 
 def replace_trace(traces: Sequence[AgentTrace], trace: AgentTrace) -> list[AgentTrace]:

@@ -263,6 +263,34 @@ def test_storage_contract_claims_only_pending_runs(
 
 
 @pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_reports_queue_status(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    storage.create_run(make_run("completed-run").model_copy(update={"status": RunStatus.COMPLETED}))
+    storage.create_run(make_run("pending-run").model_copy(update={"status": RunStatus.PENDING}))
+    storage.create_run(make_run("running-run").model_copy(update={"status": RunStatus.RUNNING}))
+
+    status = storage.queue_status()
+
+    assert status.counts == {
+        "completed": 1,
+        "pending": 1,
+        "running": 1,
+    }
+    assert status.oldest_pending_run_id == "pending-run"
+    assert status.oldest_running_run_id == "running-run"
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
 def test_storage_contract_cancels_pending_run(
     tmp_path: Path,
     storage_name: str,
