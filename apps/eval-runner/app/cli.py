@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.experiments import experiment_artifact_metadata
 from app.models import AgentTrace, BacktestReport
 from app.reporting import build_report
+from app.red_team import is_red_team_task
 from app.runner import create_runner
 
 
@@ -20,11 +21,15 @@ def run_backtest_with_traces(
     trials: int = 1,
     prompt_mutations: list[str] | None = None,
     mutations_only: bool = False,
+    include_red_team: bool = False,
+    red_team_only: bool = False,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
     tasks = load_backtest_tasks(
         cases_path,
         prompt_mutations=prompt_mutations or [],
         mutations_only=mutations_only,
+        include_red_team=include_red_team,
+        red_team_only=red_team_only,
     )
     runner = create_runner(provider=provider, model=model, forge_command=forge_command)
     traces = [runner.run_task(task) for _ in range(trials) for task in tasks]
@@ -40,6 +45,8 @@ def run_backtest(
     trials: int = 1,
     prompt_mutations: list[str] | None = None,
     mutations_only: bool = False,
+    include_red_team: bool = False,
+    red_team_only: bool = False,
 ) -> BacktestReport:
     report, _ = run_backtest_with_traces(
         cases_path,
@@ -49,6 +56,8 @@ def run_backtest(
         trials=trials,
         prompt_mutations=prompt_mutations,
         mutations_only=mutations_only,
+        include_red_team=include_red_team,
+        red_team_only=red_team_only,
     )
     return report
 
@@ -58,13 +67,33 @@ def load_backtest_tasks(
     *,
     prompt_mutations: list[str],
     mutations_only: bool = False,
+    include_red_team: bool = False,
+    red_team_only: bool = False,
 ):
     tasks = load_cases(cases_path)
+    tasks = filter_red_team_tasks(
+        tasks,
+        include_red_team=include_red_team,
+        red_team_only=red_team_only,
+    )
     return expand_prompt_mutations(
         tasks,
         styles=prompt_mutations,
         mutations_only=mutations_only,
     )
+
+
+def filter_red_team_tasks(
+    tasks,
+    *,
+    include_red_team: bool = False,
+    red_team_only: bool = False,
+):
+    if red_team_only:
+        return [task for task in tasks if is_red_team_task(task)]
+    if include_red_team:
+        return tasks
+    return [task for task in tasks if not is_red_team_task(task)]
 
 
 def write_backtest_artifact(
@@ -107,7 +136,25 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
             "avg_model_rounds above threshold: "
             f"{report.avg_model_rounds:.3f} > {args.max_avg_model_rounds:.3f}"
         )
+    if args.max_red_team_failure_rate is not None:
+        red_team_rate = red_team_failure_rate(report)
+        if red_team_rate > args.max_red_team_failure_rate:
+            failures.append(
+                "red_team_failure_rate above threshold: "
+                f"{red_team_rate:.3f} > {args.max_red_team_failure_rate:.3f}"
+            )
     return failures
+
+
+def red_team_failure_rate(report: BacktestReport) -> float:
+    red_team_tasks = [
+        task for task in report.tasks if task.task_id.startswith("red-team-")
+        or "__red-team-" in task.task_id
+    ]
+    if not red_team_tasks:
+        return 0.0
+    failed = sum(1 for task in red_team_tasks if not task.passed)
+    return failed / len(red_team_tasks)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,6 +180,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-success-rate", type=float, default=None)
     parser.add_argument("--max-scope-violation-rate", type=float, default=None)
     parser.add_argument("--max-avg-model-rounds", type=float, default=None)
+    parser.add_argument("--include-red-team", action="store_true")
+    parser.add_argument("--red-team-only", action="store_true")
+    parser.add_argument("--max-red-team-failure-rate", type=float, default=None)
     args = parser.parse_args(argv)
 
     if args.trials < 1:
@@ -149,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
             trials=args.trials,
             prompt_mutations=args.prompt_mutation,
             mutations_only=args.mutations_only,
+            include_red_team=args.include_red_team,
+            red_team_only=args.red_team_only,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -163,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.cases,
                     prompt_mutations=args.prompt_mutation,
                     mutations_only=args.mutations_only,
+                    include_red_team=args.include_red_team,
+                    red_team_only=args.red_team_only,
                 ),
                 provider=args.provider,
                 model=model,

@@ -10,6 +10,7 @@ def write_case(
     *,
     expected_success: bool = True,
     metadata: dict | None = None,
+    tags: list[str] | None = None,
 ) -> None:
     case_dir = cases_dir / case_id
     (case_dir / "fixture" / "src").mkdir(parents=True)
@@ -26,6 +27,7 @@ def write_case(
                     "verification_command": "pytest",
                     "expected_success": expected_success,
                     "expected_files_changed": ["src/app.py"],
+                    "tags": tags or [],
                     "metadata": metadata or {},
                 }
             }
@@ -236,3 +238,87 @@ def test_cli_exits_nonzero_when_success_rate_below_threshold(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "success_rate below threshold" in captured.err
+
+
+def test_cli_excludes_red_team_cases_unless_requested(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    write_case(cases_dir, "normal-case", expected_success=True)
+    write_case(
+        cases_dir,
+        "red-team-secret-leak",
+        expected_success=False,
+        tags=["red_team", "secret_leak"],
+        metadata={"red_team_category": "secret_leak"},
+    )
+
+    default_completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    include_completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--include-red-team",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert default_completed.returncode == 0, default_completed.stderr
+    assert json.loads(default_completed.stdout)["total_tasks"] == 1
+    assert json.loads(default_completed.stdout)["success_rate"] == 1.0
+    assert include_completed.returncode == 0, include_completed.stderr
+    assert json.loads(include_completed.stdout)["total_tasks"] == 2
+    assert json.loads(include_completed.stdout)["success_rate"] == 0.5
+
+
+def test_cli_red_team_failure_rate_threshold_fails_red_team_lane(
+    tmp_path: Path,
+) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    write_case(cases_dir, "normal-case", expected_success=True)
+    write_case(
+        cases_dir,
+        "red-team-secret-leak",
+        expected_success=False,
+        tags=["red_team", "secret_leak"],
+        metadata={"red_team_category": "secret_leak"},
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--red-team-only",
+            "--max-red-team-failure-rate",
+            "0.0",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "red_team_failure_rate above threshold" in completed.stderr

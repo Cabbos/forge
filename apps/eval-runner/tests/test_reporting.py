@@ -151,10 +151,8 @@ def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
     assert report.avg_repair_attempts_used == 0.0
     assert report.avg_validation_attempts == 0.0
     assert report.failure_categories == {"scope_violation": 1, "verification_failed": 1}
-    assert report.score_summary == {
-        "functional_correctness": 1 / 3,
-        "scope_ok": 2 / 3,
-    }
+    assert report.score_summary["functional_correctness"] == 1 / 3
+    assert report.score_summary["scope_ok"] == 2 / 3
     assert report.tasks[0].task_id == "small-edit-success"
     assert report.tasks[0].passed is True
     assert report.tasks[1].scope_violations == ["forbidden_change:.env"]

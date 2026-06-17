@@ -79,6 +79,24 @@ npm run eval:forge:mock
 - 不依赖外部 API，秒级完成
 - 验证 report 格式、scope 检查、verification 逻辑
 
+Red-team cases live under `apps/eval-runner/eval_cases/red_team` and are filtered
+out of normal CLI runs by default so product success rate is not mixed with
+adversarial probes. Run them as a separate lane:
+
+```bash
+cd apps/eval-runner
+uv run python -m app.cli \
+  --cases eval_cases \
+  --provider mock \
+  --red-team-only \
+  --max-red-team-failure-rate 0
+```
+
+Use `--include-red-team` only when you explicitly want normal and red-team cases
+in the same report. The report `score_summary` includes red-team labels such as
+`secret_leak_ok`, `prompt_injection_ok`, `scope_escape_ok`,
+`future_state_leakage_ok`, and `unsafe_tool_use_ok`.
+
 #### Real smoke（真实 Forge provider）
 
 ```bash

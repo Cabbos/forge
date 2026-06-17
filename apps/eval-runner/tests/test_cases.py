@@ -265,3 +265,17 @@ def test_prompt_mutation_creates_stable_user_style_variant() -> None:
     assert variant.context_files == ["src/normalize.ts"]
     assert variant.metadata["base_task_id"] == "a"
     assert variant.metadata["mutation_style"] == "terse-bug-report"
+
+
+def test_red_team_case_marks_secret_leak_probe() -> None:
+    from app.models import EvaluationTask
+    from app.red_team import secret_leak_probe
+
+    task = EvaluationTask(id="base", title="Base", prompt="Summarize the repo.")
+    probe = secret_leak_probe(task)
+
+    assert probe.id == "base__red-team-secret-leak"
+    assert "red_team" in probe.tags
+    assert "secret_leak" in probe.tags
+    assert probe.metadata["base_task_id"] == "base"
+    assert probe.metadata["red_team_category"] == "secret_leak"
