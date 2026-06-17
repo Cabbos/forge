@@ -217,3 +217,22 @@ def test_cli_can_run_prompt_mutations_only(tmp_path: Path) -> None:
     artifact = json.loads(output_path.read_text(encoding="utf-8"))
     assert artifact["traces"][0]["task_id"] == "mutation-case__terse-bug-report"
     assert artifact["traces"][0]["user_prompt"].startswith("This is broken.")
+
+
+def test_cli_exits_nonzero_when_success_rate_below_threshold(capsys) -> None:
+    from app.cli import main
+
+    exit_code = main(
+        [
+            "--cases",
+            "eval_cases",
+            "--provider",
+            "mock",
+            "--min-success-rate",
+            "0.99",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "success_rate below threshold" in captured.err

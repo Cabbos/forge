@@ -201,6 +201,18 @@ The output file contains:
 }
 ```
 
+For CI gates, add threshold flags. The CLI still prints the report, then exits
+with code `1` and writes threshold failures to stderr when any limit is missed:
+
+```bash
+uv run python -m app.cli \
+  --cases eval_cases \
+  --provider mock \
+  --min-success-rate 0.75 \
+  --max-scope-violation-rate 0.05 \
+  --max-avg-model-rounds 25
+```
+
 ## Three Ways to Run
 
 The eval runner supports three execution modes, from fastest/most deterministic to slowest/most realistic:

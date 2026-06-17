@@ -84,6 +84,32 @@ def write_backtest_artifact(
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list[str]:
+    failures: list[str] = []
+    if args.min_success_rate is not None and report.success_rate < args.min_success_rate:
+        failures.append(
+            f"success_rate below threshold: {report.success_rate:.3f} < "
+            f"{args.min_success_rate:.3f}"
+        )
+    if (
+        args.max_scope_violation_rate is not None
+        and report.scope_violation_rate > args.max_scope_violation_rate
+    ):
+        failures.append(
+            "scope_violation_rate above threshold: "
+            f"{report.scope_violation_rate:.3f} > {args.max_scope_violation_rate:.3f}"
+        )
+    if (
+        args.max_avg_model_rounds is not None
+        and report.avg_model_rounds > args.max_avg_model_rounds
+    ):
+        failures.append(
+            "avg_model_rounds above threshold: "
+            f"{report.avg_model_rounds:.3f} > {args.max_avg_model_rounds:.3f}"
+        )
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(
@@ -104,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--prompt-mutation", action="append", default=[])
     parser.add_argument("--mutations-only", action="store_true")
+    parser.add_argument("--min-success-rate", type=float, default=None)
+    parser.add_argument("--max-scope-violation-rate", type=float, default=None)
+    parser.add_argument("--max-avg-model-rounds", type=float, default=None)
     args = parser.parse_args(argv)
 
     if args.trials < 1:
@@ -141,7 +170,10 @@ def main(argv: list[str] | None = None) -> int:
         write_backtest_artifact(args.output, report=report, traces=traces, experiment=experiment)
 
     print(report.model_dump_json(indent=2))
-    return 0
+    failures = threshold_failures(report, args)
+    for failure in failures:
+        print(f"error: {failure}", file=sys.stderr)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
