@@ -4,6 +4,62 @@ from app.models import AgentTrace, FailureCategory, ShellOutput, VerificationRes
 from app.reporting import build_report
 
 
+def test_trust_gates_fail_closed_without_harness_check() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=False,
+        dataset_fingerprint="abc",
+        scorer_calibrated=True,
+        red_team_passed=True,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["harness_untrusted"]
+
+
+def test_trust_gates_fail_closed_without_dataset_fingerprint() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=True,
+        dataset_fingerprint=None,
+        scorer_calibrated=True,
+        red_team_passed=True,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["dataset_unfingerprinted"]
+
+
+def test_trust_gates_fail_closed_without_scorer_calibration() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=True,
+        dataset_fingerprint="abc",
+        scorer_calibrated=False,
+        red_team_passed=True,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["scorer_uncalibrated"]
+
+
+def test_trust_gates_fail_closed_when_red_team_fails() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=True,
+        dataset_fingerprint="abc",
+        scorer_calibrated=True,
+        red_team_passed=False,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["red_team_failed"]
+
+
 def make_trace(
     task_id: str,
     *,

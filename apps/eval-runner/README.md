@@ -338,6 +338,13 @@ Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id
 
 `metadata.mock` is only used by the deterministic mock provider. It lets offline cases simulate changed files, raw events, tool commands, model rounds, confirmation requests, token counts, and failure categories without depending on a live Forge app.
 
+Case quality diagnostics are available through `app.cases.validate_case_quality`.
+The loader still accepts lightweight contract cases, but executable cases should
+include either `verification_command` or `validation_commands`, expected changed
+file assertions, and an existing `fixture_path` when one is declared. Prompt-only
+contract cases can set `metadata.contract_only: true` to opt out of executable
+quality warnings while still participating in API and trace-contract checks.
+
 ## Running Against Forge
 
 Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to the Forge headless binary, then create a run with `provider: "forge"`:

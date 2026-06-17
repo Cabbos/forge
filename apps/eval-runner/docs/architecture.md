@@ -140,6 +140,15 @@ flowchart TD
     AT --> RP[BacktestReport<br/>success_rate, verification_pass_rate,<br/>scope_violation_rate,<br/>avg_duration_ms,<br/>avg_model_rounds,<br/>avg_confirm_requests,<br/>failure_categories,<br/>per-task trace summary]
 ```
 
+## Trust Scorecard
+
+Runs track execution and trust as separate decisions:
+
+- `execution_status` records whether tasks ran to completion, failed, timed out, or were cancelled.
+- `trust_status` records whether the harness self-check, dataset fingerprint, scorer calibration, and red-team gates make the score decision-worthy.
+
+Trust gates fail closed. A run with completed task execution can still be untrusted when the harness is untrusted, the dataset has no fingerprint, a model-graded scorer is uncalibrated, or red-team checks fail.
+
 ## Forge + forge-eval-runner 关系
 
 ```mermaid

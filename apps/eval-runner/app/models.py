@@ -30,6 +30,19 @@ class EvalModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TrustGateResult(EvalModel):
+    trusted: bool
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CaseQualityIssue(EvalModel):
+    task_id: str
+    severity: str
+    code: str
+    message: str
+
+
 class EvaluationTask(EvalModel):
     id: str
     title: str

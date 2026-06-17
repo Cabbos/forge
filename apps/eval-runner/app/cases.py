@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from app.models import EvaluationTask
+from app.models import CaseQualityIssue, EvaluationTask
 
 CASE_FILE_NAMES = {"case.json", "task.json"}
 
@@ -31,6 +31,42 @@ def load_cases(path: Path | str) -> list[EvaluationTask]:
 
     _raise_for_duplicate_ids(tasks)
     return tasks
+
+
+def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]:
+    issues: list[CaseQualityIssue] = []
+    for task in tasks:
+        contract_only = bool(task.metadata.get("contract_only"))
+        has_verification = bool(task.verification_command or task.validation_commands)
+
+        if not contract_only and not has_verification:
+            issues.append(
+                CaseQualityIssue(
+                    task_id=task.id,
+                    severity="warning",
+                    code="missing_verification",
+                    message="Executable eval case has no verification_command or validation_commands.",
+                )
+            )
+        if not contract_only and not task.expected_files_changed:
+            issues.append(
+                CaseQualityIssue(
+                    task_id=task.id,
+                    severity="warning",
+                    code="missing_expected_files",
+                    message="Executable eval case has no expected_files_changed assertions.",
+                )
+            )
+        if task.fixture_path and not Path(task.fixture_path).exists():
+            issues.append(
+                CaseQualityIssue(
+                    task_id=task.id,
+                    severity="error",
+                    code="missing_fixture_path",
+                    message="Eval case fixture_path does not exist.",
+                )
+            )
+    return issues
 
 
 def _load_case_directory(path: Path) -> list[EvaluationTask]:

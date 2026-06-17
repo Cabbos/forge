@@ -135,3 +135,113 @@ def test_load_cases_includes_agent_loop_stop_reason_backtests() -> None:
         assert mock["failure_category"] == "budget_exhausted"
         assert mock["error"] == stop_reason
         assert stop_reason in raw_stop_reasons
+
+
+def test_case_quality_reports_missing_verification_for_executable_case(tmp_path: Path) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "needs-verification",
+                "title": "Needs verification",
+                "prompt": "Change src/foo.py",
+                "context_files": ["src/foo.py"],
+                "expected_files_changed": ["src/foo.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [issue.model_dump() for issue in issues] == [
+        {
+            "task_id": "needs-verification",
+            "severity": "warning",
+            "code": "missing_verification",
+            "message": "Executable eval case has no verification_command or validation_commands.",
+        }
+    ]
+
+
+def test_case_quality_reports_missing_expected_files_for_executable_case(
+    tmp_path: Path,
+) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "missing-expected-files",
+                "title": "Missing expected files",
+                "prompt": "Change src/foo.py",
+                "verification_command": "pytest",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [issue.model_dump() for issue in issues] == [
+        {
+            "task_id": "missing-expected-files",
+            "severity": "warning",
+            "code": "missing_expected_files",
+            "message": "Executable eval case has no expected_files_changed assertions.",
+        }
+    ]
+
+
+def test_case_quality_reports_missing_fixture_path(tmp_path: Path) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "missing-fixture",
+                "title": "Missing fixture",
+                "prompt": "Change src/foo.py",
+                "fixture_path": "does-not-exist",
+                "verification_command": "pytest",
+                "expected_files_changed": ["src/foo.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [issue.model_dump() for issue in issues] == [
+        {
+            "task_id": "missing-fixture",
+            "severity": "error",
+            "code": "missing_fixture_path",
+            "message": "Eval case fixture_path does not exist.",
+        }
+    ]
+
+
+def test_case_quality_allows_contract_only_cases_without_executable_assertions(
+    tmp_path: Path,
+) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "contract-only",
+                "title": "Contract only",
+                "prompt": "Check contract shape.",
+                "metadata": {"contract_only": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert validate_case_quality(load_cases(case)) == []
