@@ -1974,6 +1974,151 @@ async fn worktree_worker_delegate_uses_shared_emitter_for_child_tool_confirmatio
 }
 
 #[tokio::test]
+async fn execute_tools_delegate_uses_existing_parent_task_id_for_child_projection() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-delegate-existing-parent-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(FakeAdapter::new(vec![StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "child complete",
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    }]));
+    let session = AgentSession::new(
+        "session-delegate-existing-parent".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    let parent_id = {
+        let mut bus = lock_unpoisoned(&session.a2a_bus);
+        crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Parent A2A task",
+            "Plan child work",
+            10,
+        )
+    };
+    let tool_calls = vec![ToolCall {
+        id: "call-delegate-child".to_string(),
+        name: "delegate_task".to_string(),
+        input: serde_json::json!({
+            "task": "Inspect child lineage",
+            "parent_task_id": parent_id.as_str(),
+        }),
+    }];
+    let emitter = crate::agent::event_sink::NoopEventEmitter;
+
+    session
+        .execute_tools(&tool_calls, &emitter, None, None, Arc::new(Notify::new()))
+        .await;
+
+    let projection = session.a2a_projection();
+    let child = projection
+        .tasks
+        .iter()
+        .find(|task| task.task_id != parent_id.as_str())
+        .expect("child projection");
+    assert_eq!(child.parent_task_id.as_deref(), Some(parent_id.as_str()));
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn execute_tools_delegate_without_parent_task_id_creates_root_projection() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-delegate-root-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(FakeAdapter::new(vec![StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "root child complete",
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    }]));
+    let session = AgentSession::new(
+        "session-delegate-root".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    let tool_calls = vec![ToolCall {
+        id: "call-delegate-root".to_string(),
+        name: "delegate_task".to_string(),
+        input: serde_json::json!({
+            "task": "Inspect root lineage",
+        }),
+    }];
+    let emitter = crate::agent::event_sink::NoopEventEmitter;
+
+    session
+        .execute_tools(&tool_calls, &emitter, None, None, Arc::new(Notify::new()))
+        .await;
+
+    let projection = session.a2a_projection();
+    assert_eq!(projection.tasks.len(), 1);
+    assert_eq!(projection.tasks[0].parent_task_id, None);
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn execute_tools_delegate_rejects_missing_parent_task_id() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-delegate-missing-parent-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let adapter = Arc::new(FakeAdapter::new(vec![StreamResult {
+        assistant_content: vec![serde_json::json!({
+            "type": "text",
+            "text": "should not run",
+        })],
+        tool_calls: vec![],
+        stop_reason: Some("end_turn".to_string()),
+    }]));
+    let session = AgentSession::new(
+        "session-delegate-missing-parent".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    let tool_calls = vec![ToolCall {
+        id: "call-delegate-missing-parent".to_string(),
+        name: "delegate_task".to_string(),
+        input: serde_json::json!({
+            "task": "Inspect missing parent behavior",
+            "parent_task_id": "missing-parent",
+        }),
+    }];
+    let emitter = crate::agent::event_sink::NoopEventEmitter;
+
+    session
+        .execute_tools(&tool_calls, &emitter, None, None, Arc::new(Notify::new()))
+        .await;
+
+    assert!(
+        session.a2a_projection().tasks.is_empty(),
+        "explicit missing parents must be rejected instead of becoming root tasks"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
 async fn full_agent_turn_multiple_tool_calls_preserve_order() {
     // This test proves that when the model requests multiple tool calls,
     // the results are assembled in the ORIGINAL tool_call order,

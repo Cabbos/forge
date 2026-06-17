@@ -291,7 +291,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 
 - [ ] 4.1 Extend `AgentSession` and `Subagent` structs to track parent session id, child ids, and lineage.
   - **Phase 4-A partial (2026-06-12):** Enriched existing `AgentA2AProjection` / `AgentA2ATaskProjection` over the existing `agent_a2a_updated` channel instead of touching `AgentSession` or `ChildAgentRuntime.run_worktree_worker`. Added `parent_task_id`, timing fields (`created_at_ms`, `started_at_ms`, `ended_at_ms`, `duration_ms`), failure classification (`failure_kind`, `retryable`), `resume_note`, and `latest_progress` — all derived from already-available `AgentTaskRecord` and artifact fields. `AgentSession`/`SubAgent` parent-session and child-id tracking remains deferred; the current runtime does not yet populate `parent_task_id` for normal delegate tasks.
-  - Files: `agent/a2a/projection.rs`, `agent/a2a/bus.rs`, `lib/protocol.ts`.
+  - **Phase 4-F lineage contract follow-up (2026-06-17):** Added a bus-level parent-aware assignment contract (`AgentA2ABus::assign_child_task`) plus supervisor wrappers for delegate, patch-proposal, and worktree-worker child tasks. The original `assign_task` path remains the root-task path and still creates tasks with `parent_task_id: None`; `assign_child_task` now rejects nonexistent parent ids instead of creating orphan lineage. `AgentSession.execute_tools` has a guarded connection that requires an explicit `parent_task_id` and validates that the id already exists in the current session A2A bus; missing or unknown explicit parents are rejected and do not fall back to root assignment. The public `delegate_task` schema still does not advertise automatic parent selection, so normal delegate production lineage remains deferred unless a real A2A parent task id is supplied.
+  - Files: `agent/a2a/bus.rs`, `agent/a2a/supervisor.rs`, `agent/session/tools.rs`, `agent/session/tools_test.rs`.
 - [ ] 4.2 Add `StreamEvent` variants: `SubagentStart`, `SubagentStatus`, `SubagentFileIo`, `SubagentCost`, `SubagentEnd`, `SubagentFailed`, `SubagentInterrupted`.
   - **DEFERRED (Phase 4-B):** The enriched `agent_a2a_updated` projection already carries status transitions and failure details. New `StreamEvent` variants for subagent-specific streaming would require touching `ChildAgentRuntime.run_worktree_worker` (CRITICAL risk per GitNexus impact), which is explicitly out of scope for 4-A. The existing `agent_a2a_updated` event carries all the new fields and is the preferred path.
   - Files: `protocol/events.rs`, `lib/protocol.ts`.
@@ -313,26 +314,28 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - Files: `agent/a2a/projection.rs`, `agent/a2a/bus.rs`, `components/messages/AgentA2ATimeline.tsx`.
 - [ ] 4.8 Persist subagent lineage to session snapshot for resume.
   - **Phase 4-A partial (2026-06-12):** The snapshot/resume system already saves and restores full `AgentA2ABus` state, including existing `AgentTaskRecord.parent_task_id` when present. `normalize_for_resume` already marks interrupted worktree workers with `resume_note` and worktree path. Phase 4-A surfaced those persisted fields in the projection, but true parent-session/child-id lineage population remains deferred.
-  - Files: `agent/a2a/types.rs` (existing), `agent/a2a/bus.rs`.
+  - **Phase 4-F lineage persistence follow-up (2026-06-17):** Added session snapshot/restore coverage proving a populated `parent_task_id` survives through `AgentSession.snapshot()` and `restore_state()`. Added bus serialization roundtrip coverage as the durable sidecar shape, including serde default/backcompat for legacy records without `parent_task_id`; the repository source of truth remains the A2A bus/snapshot contract.
+  - Files: `agent/a2a/types.rs` (existing), `agent/a2a/bus.rs`, `agent/session/a2a.rs`.
 - [ ] 4.9 Tests: unit tests for cost tracking, status transitions, and failure classification; e2e for worker lifecycle.
   - **Phase 4-B partial (2026-06-12):** Added Rust unit tests in `bus.rs` covering `extract_files_from_diff_text` (modified, added, deleted, rename, fallback headers, dedup), `extract_test_report_excerpt` (summary field, result field, fallback), projection diff fields (no diff artifact, changed files extraction, 8-file limit, diff_available from metadata, no metadata, test report excerpt). Added 8 node tests for `deriveWorkbenchSummary` covering tasksWithDiff, visible changedFiles deduplication, truncated projection semantics, zero-diff defaults, null/empty inputs, and sparse legacy payloads. Cost tracking and e2e worker lifecycle tests remain deferred.
   - **Phase 4-E file-view tests (2026-06-16):** Added node coverage for `deriveWorkbenchFileView` grouping, visible/reported/hidden counts, empty/null inputs, and no-diff tasks. Extended Playwright A2A runtime coverage to assert the Hub Workbench file view renders file totals, hidden count, and changed paths from mocked A2A projection state.
-  - Files: `agent/a2a/bus.rs`, `store/workbenchSummary.test.ts`.
+  - **Phase 4-F lineage tests (2026-06-17):** Added Rust tests for bus-level parent-aware assignment, nonexistent-parent rejection, root `assign_task` parent preservation, parent-aware delegate assignment, parent-aware worktree-worker assignment, child projection `parent_task_id`, legacy serde/default backcompat, bus serialization roundtrip, session snapshot/restore, and the real `execute_tools` delegate branch for explicit-parent success, missing-parent rejection, unknown-parent rejection, and no root fallback. Cost tracking, automatic delegate parent selection, and live worker lifecycle e2e remain deferred.
+  - Files: `agent/a2a/bus.rs`, `agent/a2a/supervisor.rs`, `agent/session/a2a.rs`, `agent/session/tools_test.rs`, `store/workbenchSummary.test.ts`.
 
 **Phase 4-A summary (2026-06-12):**
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 4.1 Parent/child lineage projection | 🟨 Partial | `parent_task_id` field visible when present; runtime population deferred |
+| 4.1 Parent/child lineage projection | 🟨 Partial | `parent_task_id` field visible and bus/supervisor parent-aware assignment populates child pointers when given a real A2A parent; nonexistent parents are rejected; automatic delegate parent selection, parent-side child ids, and parent-session structs deferred |
 | 4.2 New StreamEvent variants | ⏸️ Deferred | Enriched existing `agent_a2a_updated` path instead |
 | 4.3 Status stream | ✅ Done | Timing, progress, resume_note on existing projection |
 | 4.4 File IO stream | ⏸️ Deferred | Requires executor hooks (CRITICAL risk path) |
 | 4.5 Cost/token stream | ⏸️ Deferred | Requires adapter trait changes |
 | 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; true live IO and cost tabs deferred |
 | 4.7 Failure reasons | ✅ Done | failure_kind + retryable badge + localized labels |
-| 4.8 Lineage persistence | 🟨 Partial | Existing bus snapshot preserves fields when present; full lineage deferred |
-| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view coverage; cost/live-worker lifecycle deferred |
-| Rust agent loop changes | 🚫 None | Constraint honored — zero edits to run_worktree_worker |
+| 4.8 Lineage persistence | 🟨 Partial | Existing bus/session snapshot preserves populated child pointers; legacy records without `parent_task_id` still deserialize; full parent-session lineage deferred |
+| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view + lineage coverage, including real `execute_tools` branch validation; cost/live-worker lifecycle deferred |
+| Rust agent loop changes | 🟨 Minimal | `execute_tools` requires a supplied existing `parent_task_id` for lineage assignment; missing/unknown parents are rejected with no root fallback; no synthetic parent ids, no edits to `run_worktree_worker`, executor hooks, or adapters |
 | New dependencies | 🚫 None | No new packages |
 
 **Phase 4-B summary (2026-06-12):**
@@ -384,21 +387,45 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | A2A Playwright coverage | ✅ Done | Hub Workbench asserts file view totals and changed paths from mocked projection state |
 | CRITICAL paths touched | 🚫 None | No edits to executor/, adapters/, child.rs, worktree.rs, supervisor.rs, or session loop |
 
+**Phase 4-F summary (2026-06-17):** A2A lineage runtime population.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Parent-aware assignment contract | ✅ Done | `AgentA2ABus::assign_child_task` creates child tasks with a parent pointer while preserving assignment messages, and rejects nonexistent parents; `assign_task` stays root-only |
+| Supervisor wrappers | ✅ Done | Supervisor can assign delegate, patch-proposal, and worktree-worker child tasks with an existing parent task id |
+| Runtime entry validation | 🟨 Guarded | `execute_tools` requires an explicit existing `parent_task_id` for lineage assignment; missing or unknown parents are rejected and do not create a root fallback; normal delegate schema does not auto-select parents |
+| Projection lineage | ✅ Done | Child projections expose populated `parent_task_id`; current model is child pointer only |
+| Snapshot/restore | ✅ Done | Session snapshot/restore and bus serialization roundtrip retain populated lineage; legacy `parent_task_id` absence remains serde-compatible |
+| Tests | ✅ Done | `agent::a2a`, `agent::session::tools_test`, `execute_tools_delegate`, `agent::session::a2a`, and fmt checks pass |
+| Not claimed | 🚫 Deferred | No normal delegate auto-lineage without a real parent id, no parent-side child-id array, no recursive delegate_task, no live file IO stream, no token/cost stream, no executor/provider changes |
+
+Phase 4-F evidence:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib # pass, 108 passed
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::tools_test --lib # pass, 9 passed
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml execute_tools_delegate --lib # pass, 3 passed
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a --lib # pass, 2 passed
+cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check # pass
+```
+
 **Known deferred items (Phase 4-B):**
 - True live file IO stream — requires executor/ToolExecutor hooks (CRITICAL risk path)
 - Token/cost per-task streaming — requires adapter trait changes
 - New `StreamEvent` variants for subagent-specific events
+- Parent-session structs and parent-side child-id arrays — current contract stores the child-to-parent pointer only
+- Automatic parent selection for ordinary `delegate_task` calls — current guarded path requires a supplied existing A2A parent id, rejects missing/unknown parent ids, and never silently creates a root fallback
 - e2e worker lifecycle tests (depends on runnable worktree worker harness; Phase 4-D adds unit coverage for lease/heartbeat/cancel/retry)
 
 **Acceptance gate:**
 
 - A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-B: status/timing shown; diff-derived file visibility shown; cost deferred)**
-- Parent-child relationship is visible and survives restart. **(Phase 4-A partial: projected when present and preserved by existing bus snapshot; normal delegate task population deferred)**
+- Parent-child relationship is visible and survives restart. **(Phase 4-F: projected when an existing parent id is supplied, preserved by bus/session snapshot, and legacy records remain readable; normal delegate auto-parent selection and parent-side child arrays deferred)**
 - Each failure type has a distinct message and recovery hint. **(Phase 4-A: failure_kind + retryable + resume_note)**
 
 **Verification plan:**
 
-- `cargo test` subagent/worker tests. **(Phase 4-B: a2a projection/bus tests pass — includes diff extraction, file count, test excerpt)**
+- `cargo test` subagent/worker tests. **(Phase 4-F: a2a projection/bus tests pass — includes lineage assignment validation, missing/unknown parent rejection, legacy serde backcompat, snapshot restore, and real `execute_tools` delegate branch coverage)**
 - `npm run test` workbench tests. **(Phase 4-B: deriveWorkbenchSummary node tests pass — includes diff metrics)**
 - Manual UX: spawn a worktree worker, observe stream, fail a smoke test, inspect reason.
 

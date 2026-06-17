@@ -202,6 +202,7 @@ pub(crate) fn default_max_task_attempts() -> u32 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AgentTaskRecord {
     pub task_id: AgentTaskId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<AgentTaskId>,
     pub agent_id: AgentId,
     pub role: AgentRole,
@@ -327,6 +328,29 @@ mod tests {
         assert!(!record.permissions.allow_workspace_write);
         assert!(!record.permissions.allow_shell);
         assert!(!record.permissions.allow_delegate);
+    }
+
+    #[test]
+    fn task_record_deserializes_legacy_json_without_parent_task_id() {
+        let record = AgentTaskRecord::new(
+            AgentTaskId::new("task-legacy"),
+            AgentId::new("agent-legacy"),
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Legacy task",
+            "Inspect old ledger",
+            10,
+        );
+        let mut value = serde_json::to_value(record).expect("serialize task record");
+        value
+            .as_object_mut()
+            .expect("task record object")
+            .remove("parent_task_id");
+
+        let restored: AgentTaskRecord =
+            serde_json::from_value(value).expect("deserialize legacy task record");
+
+        assert_eq!(restored.parent_task_id, None);
     }
 
     #[test]

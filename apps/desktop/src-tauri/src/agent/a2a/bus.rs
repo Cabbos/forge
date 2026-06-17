@@ -81,6 +81,49 @@ impl AgentA2ABus {
         task_id
     }
 
+    pub(crate) fn assign_child_task(
+        &mut self,
+        parent_task_id: &AgentTaskId,
+        role: AgentRole,
+        execution_mode: AgentExecutionMode,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        timestamp_ms: u64,
+    ) -> Result<AgentTaskId, String> {
+        if self.task(parent_task_id).is_none() {
+            return Err(format!(
+                "parent task '{}' does not exist",
+                parent_task_id.as_str()
+            ));
+        }
+
+        self.next_task_index += 1;
+        self.next_agent_index += 1;
+        let task_id = AgentTaskId::new(format!("a2a-task-{}", self.next_task_index));
+        let agent_id = AgentId::new(format!("a2a-agent-{}", self.next_agent_index));
+        let title = title.into();
+        let prompt = prompt.into();
+        let mut record = AgentTaskRecord::new(
+            task_id.clone(),
+            agent_id.clone(),
+            role,
+            execution_mode,
+            title.clone(),
+            prompt,
+            timestamp_ms,
+        );
+        record.parent_task_id = Some(parent_task_id.clone());
+        self.tasks.push(record);
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::TaskAssigned,
+            title,
+            timestamp_ms,
+        );
+        Ok(task_id)
+    }
+
     pub(crate) fn task(&self, task_id: &AgentTaskId) -> Option<&AgentTaskRecord> {
         self.tasks.iter().find(|task| task.task_id == *task_id)
     }
@@ -1437,6 +1480,116 @@ mod tests {
         assert_eq!(child_proj.task_id, "child-1");
         assert_eq!(
             child_proj.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+
+    #[test]
+    fn assign_child_task_populates_parent_and_assign_task_stays_root() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        let child_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child implementer",
+                "child prompt",
+                20,
+            )
+            .expect("child task assigned");
+        let root_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Root",
+            "root prompt",
+            30,
+        );
+
+        let parent = bus.task(&parent_id).expect("parent task");
+        let child = bus.task(&child_id).expect("child task");
+        let root = bus.task(&root_id).expect("root task");
+
+        assert_eq!(parent.parent_task_id, None);
+        assert_eq!(child.parent_task_id.as_ref(), Some(&parent_id));
+        assert_eq!(root.parent_task_id, None);
+
+        let projection = bus.projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+        let root_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == root_id.as_str())
+            .expect("root projection");
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert_eq!(root_projection.parent_task_id, None);
+    }
+
+    #[test]
+    fn assign_child_task_rejects_missing_parent() {
+        let mut bus = AgentA2ABus::default();
+        let missing_parent_id = AgentTaskId::new("missing-parent");
+        let result = bus.assign_child_task(
+            &missing_parent_id,
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Child implementer",
+            "child prompt",
+            20,
+        );
+
+        assert!(
+            result.is_err(),
+            "missing parents must reject child assignment"
+        );
+        assert!(
+            bus.projection().tasks.is_empty(),
+            "rejecting a missing parent must leave the bus unchanged"
+        );
+    }
+
+    #[test]
+    fn parent_task_id_survives_bus_serialization_roundtrip() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Parent review",
+            "Review plan",
+            10,
+        );
+        let child_id = crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+            &mut bus,
+            &parent_id,
+            "Child worker",
+            "Implement plan",
+            20,
+        )
+        .expect("child task assigned");
+
+        let json = serde_json::to_string(&bus).expect("serialize bus");
+        let restored: AgentA2ABus = serde_json::from_str(&json).expect("deserialize bus");
+        let projection = restored.projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
             Some(parent_id.as_str())
         );
     }

@@ -59,6 +59,57 @@ pub(crate) fn assign_worktree_worker_task(
     )
 }
 
+pub(crate) fn assign_delegate_child_task(
+    bus: &mut AgentA2ABus,
+    parent_task_id: &AgentTaskId,
+    title: &str,
+    prompt: &str,
+    timestamp_ms: u64,
+) -> Result<AgentTaskId, String> {
+    bus.assign_child_task(
+        parent_task_id,
+        AgentRole::Researcher,
+        AgentExecutionMode::ReadOnly,
+        title,
+        prompt,
+        timestamp_ms,
+    )
+}
+
+pub(crate) fn assign_patch_proposal_child_task(
+    bus: &mut AgentA2ABus,
+    parent_task_id: &AgentTaskId,
+    title: &str,
+    prompt: &str,
+    timestamp_ms: u64,
+) -> Result<AgentTaskId, String> {
+    bus.assign_child_task(
+        parent_task_id,
+        AgentRole::Implementer,
+        AgentExecutionMode::PatchProposal,
+        title,
+        prompt,
+        timestamp_ms,
+    )
+}
+
+pub(crate) fn assign_worktree_worker_child_task(
+    bus: &mut AgentA2ABus,
+    parent_task_id: &AgentTaskId,
+    title: &str,
+    prompt: &str,
+    timestamp_ms: u64,
+) -> Result<AgentTaskId, String> {
+    bus.assign_child_task(
+        parent_task_id,
+        AgentRole::Implementer,
+        AgentExecutionMode::WorktreeWorker,
+        title,
+        prompt,
+        timestamp_ms,
+    )
+}
+
 pub(crate) fn extract_patch_proposal(raw: &str) -> Option<PatchProposal> {
     // Try to find a JSON block containing patch_proposal.
     // Prefer raw JSON first because wrapped sub-agent results may contain escaped
@@ -668,6 +719,80 @@ Analysis.
         assert!(task.permissions.allow_workspace_write);
         assert!(task.permissions.allow_shell);
         assert!(!task.permissions.allow_delegate);
+    }
+
+    #[test]
+    fn assign_delegate_child_task_populates_parent_projection() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = assign_delegate_task(&mut bus, "Parent research", "Plan task", 10);
+        let child_id =
+            assign_delegate_child_task(&mut bus, &parent_id, "Child research", "Inspect files", 20)
+                .expect("child task assigned");
+
+        let child = bus.task(&child_id).expect("child task");
+        assert_eq!(child.parent_task_id.as_ref(), Some(&parent_id));
+
+        let projection = bus.projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+
+    #[test]
+    fn assign_worktree_worker_child_task_populates_parent_projection() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = assign_delegate_task(&mut bus, "Parent implementation", "Plan work", 10);
+        let child_id = assign_worktree_worker_child_task(
+            &mut bus,
+            &parent_id,
+            "Child worktree worker",
+            "Implement change",
+            20,
+        )
+        .expect("child task assigned");
+
+        let child = bus.task(&child_id).expect("child task");
+        assert_eq!(child.parent_task_id.as_ref(), Some(&parent_id));
+        assert_eq!(
+            child.execution_mode,
+            crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker
+        );
+
+        let projection = bus.projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+
+    #[test]
+    fn assign_delegate_child_task_rejects_missing_parent() {
+        let mut bus = AgentA2ABus::default();
+        let missing_parent_id = AgentTaskId::new("missing-parent");
+        let result = assign_delegate_child_task(
+            &mut bus,
+            &missing_parent_id,
+            "Child research",
+            "Inspect files",
+            20,
+        );
+
+        assert!(
+            result.is_err(),
+            "missing parents must reject child assignment"
+        );
+        assert!(bus.projection().tasks.is_empty());
     }
 
     #[test]

@@ -50,31 +50,84 @@ impl AgentSession {
                     }
                     _ => crate::agent::a2a::types::AgentExecutionMode::ReadOnly,
                 };
-                let a2a_task_id = {
+                let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
+                let a2a_task_id_result = {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
-                    match execution_mode {
-                        crate::agent::a2a::types::AgentExecutionMode::PatchProposal => {
-                            crate::agent::a2a::supervisor::assign_patch_proposal_task(
+                    match delegate_parent_task_id_from_input(&tc.input, &bus) {
+                        Ok(parent_task_id) => match (&execution_mode, parent_task_id.as_ref()) {
+                            (
+                                crate::agent::a2a::types::AgentExecutionMode::PatchProposal,
+                                Some(parent_task_id),
+                            ) => crate::agent::a2a::supervisor::assign_patch_proposal_child_task(
                                 &mut bus,
+                                parent_task_id,
                                 "Delegated patch proposal task",
                                 &task,
                                 started_at_ms,
-                            )
-                        }
-                        crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
-                            crate::agent::a2a::supervisor::assign_worktree_worker_task(
+                            ),
+                            (
+                                crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker,
+                                Some(parent_task_id),
+                            ) => crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+                                &mut bus,
+                                parent_task_id,
+                                "Delegated worktree worker task",
+                                &task,
+                                started_at_ms,
+                            ),
+                            (_, Some(parent_task_id)) => {
+                                crate::agent::a2a::supervisor::assign_delegate_child_task(
+                                    &mut bus,
+                                    parent_task_id,
+                                    "Delegated research task",
+                                    &task,
+                                    started_at_ms,
+                                )
+                            }
+                            (crate::agent::a2a::types::AgentExecutionMode::PatchProposal, None) => {
+                                Ok(crate::agent::a2a::supervisor::assign_patch_proposal_task(
+                                    &mut bus,
+                                    "Delegated patch proposal task",
+                                    &task,
+                                    started_at_ms,
+                                ))
+                            }
+                            (
+                                crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker,
+                                None,
+                            ) => Ok(crate::agent::a2a::supervisor::assign_worktree_worker_task(
                                 &mut bus,
                                 "Delegated worktree worker task",
                                 &task,
                                 started_at_ms,
-                            )
-                        }
-                        _ => crate::agent::a2a::supervisor::assign_delegate_task(
-                            &mut bus,
-                            "Delegated research task",
-                            &task,
-                            started_at_ms,
-                        ),
+                            )),
+                            _ => Ok(crate::agent::a2a::supervisor::assign_delegate_task(
+                                &mut bus,
+                                "Delegated research task",
+                                &task,
+                                started_at_ms,
+                            )),
+                        },
+                        Err(message) => Err(message),
+                    }
+                };
+                let a2a_task_id = match a2a_task_id_result {
+                    Ok(task_id) => task_id,
+                    Err(message) => {
+                        emitter.emit(self.tool_call_result_event(&tc.id, &message, true, 0));
+                        self.record_latest_tool_emitter(
+                            completed_tool_trace(
+                                tc.id.clone(),
+                                tc.name.clone(),
+                                &tc.input,
+                                &message,
+                                started_at_ms,
+                                now_ms(),
+                            ),
+                            emitter,
+                        );
+                        sub_results.push((idx, message));
+                        continue;
                     }
                 };
                 self.emit_a2a_projection(emitter);
@@ -83,7 +136,6 @@ impl AgentSession {
                 let cancel = lock_unpoisoned(&self.cancel)
                     .clone()
                     .unwrap_or_else(|| Arc::new(Notify::new()));
-                let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let wd = self.harness.working_dir.clone();
                 let sub_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
                     Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
@@ -448,6 +500,29 @@ impl AgentSession {
             }
         }
         self.emit_with_emitter(emitter);
+    }
+}
+
+pub(crate) fn delegate_parent_task_id_from_input(
+    input: &serde_json::Value,
+    bus: &crate::agent::a2a::bus::AgentA2ABus,
+) -> Result<Option<crate::agent::a2a::types::AgentTaskId>, String> {
+    let Some(parent_task_id) = input
+        .get("parent_task_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let parent_task_id = crate::agent::a2a::types::AgentTaskId::new(parent_task_id);
+    if bus.task(&parent_task_id).is_some() {
+        Ok(Some(parent_task_id))
+    } else {
+        Err(format!(
+            "parent_task_id '{}' does not match an existing A2A task",
+            parent_task_id.as_str()
+        ))
     }
 }
 

@@ -63,4 +63,61 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(workspace);
     }
+
+    #[test]
+    fn snapshot_restore_preserves_a2a_parent_task_id() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-session-a2a-lineage-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let session = AgentSession::new(
+            "session-lineage".to_string(),
+            "openai".to_string(),
+            Arc::new(MissingKeyAdapter::new("OpenAI", "gpt-5")),
+            Arc::new(Harness::new(workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        );
+        let mut bus = AgentA2ABus::default();
+        let parent_id = crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Parent review",
+            "Review implementation plan",
+            10,
+        );
+        let child_id = crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+            &mut bus,
+            &parent_id,
+            "Child worktree worker",
+            "Implement the reviewed plan",
+            20,
+        )
+        .expect("child task assigned");
+        session.restore_state(Vec::new(), None, None, None, Some(bus));
+
+        let snapshot = session.snapshot();
+        let restored_session = AgentSession::new(
+            "session-lineage".to_string(),
+            "openai".to_string(),
+            Arc::new(MissingKeyAdapter::new("OpenAI", "gpt-5")),
+            Arc::new(Harness::new(workspace.clone())),
+            "system".to_string(),
+            Some(128_000),
+        );
+        restored_session.restore_state(Vec::new(), None, None, None, snapshot.a2a_state);
+        let projection = restored_session.a2a_projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
 }
