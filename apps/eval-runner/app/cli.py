@@ -10,6 +10,7 @@ from app.models import AgentTrace, BacktestReport
 from app.reporting import build_report
 from app.red_team import is_red_team_task
 from app.runner import create_runner
+from app.trace_import import promote_failed_traces
 
 
 def run_backtest_with_traces(
@@ -158,6 +159,10 @@ def red_team_failure_rate(report: BacktestReport) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["promote-trace"]:
+        return promote_trace_main(raw_argv[1:])
+
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(
         "--cases",
@@ -228,6 +233,19 @@ def main(argv: list[str] | None = None) -> int:
     for failure in failures:
         print(f"error: {failure}", file=sys.stderr)
     return 1 if failures else 0
+
+
+def promote_trace_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Promote failed AgentTrace records into eval case directories."
+    )
+    parser.add_argument("--trace", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+
+    written = promote_failed_traces(args.trace, args.output)
+    print(json.dumps({"written": [str(path) for path in written]}, indent=2))
+    return 0
 
 
 if __name__ == "__main__":

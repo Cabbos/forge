@@ -36,6 +36,67 @@ def write_case(
     )
 
 
+def test_cli_promotes_failed_trace_artifact_to_eval_case(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from app.models import AgentTrace, FailureCategory, VerificationResult
+
+    now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+    trace = AgentTrace(
+        task_id="real-user-failure",
+        user_prompt="Fix the production failure.",
+        model="local-forge",
+        provider="forge",
+        context_files=["src/app.py"],
+        expected_files_changed=["src/app.py"],
+        final_answer="failed",
+        verification_result=VerificationResult(
+            command="pytest tests/test_app.py",
+            passed=False,
+            stdout="",
+            stderr="failed",
+            exit_code=1,
+            duration_ms=120,
+        ),
+        error="verification_failed",
+        failure_reason="test failed",
+        failure_category=FailureCategory.VERIFICATION_FAILED,
+        started_at=now,
+        ended_at=now,
+        duration_ms=120,
+    )
+    trace_path = tmp_path / "trace.json"
+    output_dir = tmp_path / "promoted"
+    trace_path.write_text(
+        json.dumps([trace.model_dump(mode="json")]),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "promote-trace",
+            "--trace",
+            str(trace_path),
+            "--output",
+            str(output_dir),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    promoted = json.loads((output_dir / "real-user-failure" / "case.json").read_text())
+    assert promoted["task"]["id"] == "real-user-failure"
+    assert promoted["task"]["expected_success"] is False
+    assert promoted["task"]["verification_command"] == "pytest tests/test_app.py"
+    assert promoted["task"]["metadata"]["source"] == "trace"
+    assert promoted["task"]["metadata"]["failure_reason"] == "test failed"
+
+
 def test_cli_runs_mock_cases_and_prints_backtest_report(tmp_path: Path) -> None:
     cases_dir = tmp_path / "eval_cases"
     write_case(cases_dir, "small-edit-success", expected_success=True)

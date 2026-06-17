@@ -203,7 +203,31 @@ Total artifacts on disk: 8
 - 🔴 **critical**: `success_rate` 下降 ≥ 0.5 或 `scope_violation_rate` 上升 ≥ 0.5
 - 🟡 **warning**: `avg_model_rounds` 暴涨 (>2x)、`avg_duration_ms` 暴涨 (>3x)、新增 failure category
 
-### 5. 清理
+### 5. 从生产 trace 晋升 Eval Case
+
+失败 trace 可以直接转换成可回归的 eval case：
+
+```bash
+cd apps/eval-runner
+uv run python -m app.cli promote-trace \
+  --trace artifacts/{run_id}/trace.json \
+  --output eval_cases/promoted
+```
+
+`--trace` 支持 API/SQLite 生成的 trace 列表，也支持 CLI backtest artifact 中的
+`{"traces": [...]}` 结构。命令只会为失败 trace 写出 case，输出目录形如：
+
+```text
+eval_cases/promoted/
+  real-user-failure/
+    case.json
+```
+
+生成的 case 会保留原始 prompt、context files、expected/forbidden file 断言、
+verification command，以及 `metadata.source=trace` 和失败原因，便于把线上问题
+纳入后续回归集。
+
+### 6. 清理
 
 ```bash
 cd apps/eval-runner

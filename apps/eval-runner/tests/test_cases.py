@@ -1,9 +1,11 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from app.cases import CaseLoadError, load_cases
+from app.models import AgentTrace, FailureCategory, VerificationResult
 
 
 def write_case(cases_dir: Path, case_id: str, *, title: str | None = None) -> Path:
@@ -28,6 +30,62 @@ def write_case(cases_dir: Path, case_id: str, *, title: str | None = None) -> Pa
         encoding="utf-8",
     )
     return case_dir
+
+
+def make_trace(
+    task_id: str,
+    *,
+    error: str | None = None,
+    failure_reason: str | None = None,
+) -> AgentTrace:
+    now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+    failed = error is not None or failure_reason is not None
+    return AgentTrace(
+        task_id=task_id,
+        user_prompt=f"Fix production issue {task_id}.",
+        model="local-forge",
+        provider="forge",
+        context_files=["src/app.py"],
+        changed_files=["src/app.py"],
+        expected_files_changed=["src/app.py"],
+        forbidden_files_changed=[".env"],
+        final_answer="failed" if failed else "done",
+        verification_result=VerificationResult(
+            command="pytest",
+            passed=not failed,
+            stdout="" if failed else "passed",
+            stderr="failed" if failed else "",
+            exit_code=1 if failed else 0,
+            duration_ms=120,
+        ),
+        error=error,
+        failure_reason=failure_reason,
+        failure_category=FailureCategory.VERIFICATION_FAILED if failed else FailureCategory.NONE,
+        started_at=now,
+        ended_at=now,
+        duration_ms=120,
+    )
+
+
+def test_failed_trace_can_be_promoted_to_eval_case() -> None:
+    from app.trace_import import case_from_trace
+
+    trace = make_trace(
+        task_id="real-user-failure",
+        error="verification_failed",
+        failure_reason="test failed",
+    )
+    task = case_from_trace(trace)
+
+    assert task.id == "real-user-failure"
+    assert task.title == "Promoted trace: real-user-failure"
+    assert task.prompt == "Fix production issue real-user-failure."
+    assert task.expected_success is False
+    assert task.expected_files_changed == ["src/app.py"]
+    assert task.forbidden_files_changed == [".env"]
+    assert task.verification_command == "pytest"
+    assert task.metadata["source"] == "trace"
+    assert task.metadata["failure_reason"] == "test failed"
 
 
 def test_load_cases_reads_case_directories_and_resolves_fixture_paths(tmp_path: Path) -> None:
