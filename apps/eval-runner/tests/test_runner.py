@@ -1,8 +1,15 @@
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
-from app.models import EvaluationTask, FailureCategory
+from app.models import (
+    AgentTrace,
+    EvaluationTask,
+    FailureCategory,
+    FileDiff,
+    ShellOutput,
+)
 from app.runner import (
     DeterministicMockRunner,
     ForgeAgentRunner,
@@ -42,6 +49,95 @@ def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     assert trace.model_dump(mode="json")["started_at"].endswith("+00:00")
 
 
+def test_sandbox_rejects_dirty_workspace_after_case(tmp_path: Path) -> None:
+    from app.sandbox import assert_clean_workspace
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".env").write_text("SECRET=value\n", encoding="utf-8")
+
+    result = assert_clean_workspace(workspace, allowed_untracked=[])
+
+    assert result.ok is False
+    assert ".env" in result.untracked_files
+
+
+def test_sandbox_scrubs_future_state_git_history(tmp_path: Path) -> None:
+    from app.sandbox import scrub_future_repo_state
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run_git(workspace, "init", "-b", "main")
+    run_git(workspace, "config", "user.email", "eval@example.com")
+    run_git(workspace, "config", "user.name", "Eval Runner")
+    (workspace / "app.txt").write_text("current\n", encoding="utf-8")
+    run_git(workspace, "add", "app.txt")
+    run_git(workspace, "commit", "-m", "current state")
+    run_git(workspace, "checkout", "-b", "future-fix")
+    (workspace / "app.txt").write_text("future fix\n", encoding="utf-8")
+    run_git(workspace, "commit", "-am", "future fix")
+    run_git(workspace, "checkout", "main")
+
+    before = git_stdout(workspace, "log", "--all", "--oneline")
+    assert "future fix" in before
+
+    result = scrub_future_repo_state(workspace)
+
+    after = git_stdout(workspace, "log", "--all", "--oneline")
+    assert result.ok is True
+    assert "future fix" not in after
+    assert "branch:future-fix" in result.scrubbed_items
+
+
+def test_sandbox_detects_future_state_lookup_commands() -> None:
+    from datetime import UTC, datetime
+
+    from app.sandbox import detect_future_state_lookup
+
+    now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+    trace = AgentTrace(
+        task_id="future-state-probe",
+        user_prompt="Solve without peeking.",
+        model="deterministic-agent-v1",
+        provider="mock",
+        tool_calls=[ShellOutput(command="git log --all --oneline")],
+        final_answer="done",
+        started_at=now,
+        ended_at=now,
+        duration_ms=10,
+    )
+
+    result = detect_future_state_lookup(trace)
+
+    assert result.ok is False
+    assert "git log --all" in result.findings[0]
+
+
+def test_patch_replay_applies_trace_diff(tmp_path: Path) -> None:
+    from app.patches import replay_patch
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "hello.txt").write_text("hello\n", encoding="utf-8")
+    diff = FileDiff(
+        path="hello.txt",
+        change_type="modified",
+        diff=(
+            "diff --git a/hello.txt b/hello.txt\n"
+            "--- a/hello.txt\n"
+            "+++ b/hello.txt\n"
+            "@@ -1 +1 @@\n"
+            "-hello\n"
+            "+hello forge\n"
+        ),
+    )
+
+    result = replay_patch(workspace, [diff])
+
+    assert result.ok is True
+    assert (workspace / "hello.txt").read_text(encoding="utf-8") == "hello forge\n"
+
+
 def test_mock_runner_records_verification_failure_reason() -> None:
     task = EvaluationTask(
         id="fix-bug",
@@ -60,6 +156,27 @@ def test_mock_runner_records_verification_failure_reason() -> None:
     assert trace.error == "verification_failed"
     assert trace.failure_reason == "Mock verification command returned a non-zero exit code."
     assert trace.failure_category.value == "verification_failed"
+
+
+def run_git(workspace: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+
+def git_stdout(workspace: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return completed.stdout
 
 
 def test_mock_runner_applies_metadata_for_scope_and_multi_step_trace() -> None:

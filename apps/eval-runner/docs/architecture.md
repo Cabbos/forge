@@ -149,6 +149,26 @@ Runs track execution and trust as separate decisions:
 
 Trust gates fail closed. A run with completed task execution can still be untrusted when the harness is untrusted, the dataset has no fingerprint, a model-graded scorer is uncalibrated, or red-team checks fail.
 
+## Sandbox And Leakage Firewall
+
+Trusted evals treat the case workspace as part of the scoring surface, not just a
+temporary directory. The sandbox helpers provide four checks:
+
+- `assert_clean_workspace()` rejects unexpected untracked or modified files after
+  a case run, with a filesystem fallback for non-git fixtures.
+- `scrub_future_repo_state()` removes remotes, non-current branches, tags,
+  reflogs, cached origin metadata, and fixture solution notes before an agent can
+  inspect future state.
+- `detect_future_state_lookup()` flags suspicious commands such as
+  `git log --all`, `git reflog`, `git branch -a`, `git remote -v`, and broad
+  `git show` lookups.
+- `replay_patch()` can apply captured `FileDiff` patches back onto a clean
+  workspace to validate that trace diffs are executable.
+
+Golden harness checks run deterministic expected-success cases through the mock
+runner. If the harness cannot prove those cases pass, the surrounding trust gate
+must fail closed with `harness_untrusted`.
+
 ## Dataset And Experiment Snapshots
 
 `dataset_fingerprint()` hashes the stable evaluation surface for a loaded task

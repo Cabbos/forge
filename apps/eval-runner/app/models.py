@@ -43,6 +43,19 @@ class CaseQualityIssue(EvalModel):
     message: str
 
 
+class WorkspaceCheck(EvalModel):
+    ok: bool
+    untracked_files: list[str] = Field(default_factory=list)
+    modified_files: list[str] = Field(default_factory=list)
+    message: str | None = None
+
+
+class LeakageCheck(EvalModel):
+    ok: bool
+    findings: list[str] = Field(default_factory=list)
+    scrubbed_items: list[str] = Field(default_factory=list)
+
+
 class EvaluationTask(EvalModel):
     id: str
     title: str
