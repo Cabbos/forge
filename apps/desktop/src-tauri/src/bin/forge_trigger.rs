@@ -414,6 +414,10 @@ fn render_runtime_status_lines(status: &GatewayRuntimeStatus) -> Vec<String> {
         format!("Active sessions: {}", status.active_sessions),
         format!("Pending triggers: {}", status.pending_triggers),
         format!("Pending session inputs: {}", status.pending_session_inputs),
+        format!("Loop runner: {}", status.loop_runner),
+        format!("Pending loop tasks: {}", status.pending_loop_tasks),
+        format!("Running loop tasks: {}", status.running_loop_tasks),
+        format!("Stale loop task leases: {}", status.stale_loop_task_leases),
         format!("Claimed triggers: {}", status.claimed_triggers),
         format!("Dead-letter runs: {}", status.dead_letter_runs),
     ];
@@ -700,6 +704,10 @@ mod tests {
             active_sessions: 1,
             pending_triggers: 0,
             pending_session_inputs: 0,
+            loop_runner: "started".into(),
+            pending_loop_tasks: 2,
+            running_loop_tasks: 1,
+            stale_loop_task_leases: 0,
             claimed_triggers: 0,
             dead_letter_runs: 0,
             recent_runs: Vec::new(),
@@ -717,6 +725,9 @@ mod tests {
 
         let lines = super::render_runtime_status_lines(&status);
 
+        assert!(lines.contains(&"Loop runner: started".to_string()));
+        assert!(lines.contains(&"Pending loop tasks: 2".to_string()));
+        assert!(lines.contains(&"Running loop tasks: 1".to_string()));
         assert!(lines.contains(&"Recent session inputs:".to_string()));
         assert!(lines.contains(&"  input-1  session=session-1  completed=20  continue".to_string()));
     }
@@ -733,6 +744,10 @@ mod tests {
                 active_sessions: 1,
                 pending_triggers: 1,
                 pending_session_inputs: 0,
+                loop_runner: "stopped".into(),
+                pending_loop_tasks: 0,
+                running_loop_tasks: 0,
+                stale_loop_task_leases: 0,
                 claimed_triggers: 1,
                 dead_letter_runs: 0,
                 recent_runs: Vec::new(),

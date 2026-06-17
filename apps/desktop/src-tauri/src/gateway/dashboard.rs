@@ -265,6 +265,10 @@ fn dashboard_html() -> &'static str {
         <div id="runtime-tasks"></div>
       </section>
       <section>
+        <h2>Loop Tasks</h2>
+        <div id="loop-tasks"></div>
+      </section>
+      <section>
         <h2>Sessions</h2>
         <div id="sessions"></div>
       </section>
@@ -369,7 +373,11 @@ fn dashboard_html() -> &'static str {
         metric('uptime seconds', status.uptime_seconds),
         metric('active sessions', status.active_sessions),
         metric('pending triggers', status.pending_triggers),
-        metric('pending inputs', status.pending_session_inputs)
+        metric('pending inputs', status.pending_session_inputs),
+        metric('loop runner', status.loop_runner),
+        metric('pending loop tasks', status.pending_loop_tasks),
+        metric('running loop tasks', status.running_loop_tasks),
+        metric('stale loop leases', status.stale_loop_task_leases)
       );
 
       replace('runtime-tasks', table([
@@ -378,6 +386,13 @@ fn dashboard_html() -> &'static str {
         { label: 'Last start', value: (row) => time(row.last_started_at_ms) },
         { label: 'Last error', value: (row) => row.last_error || '-' }
       ], status.runtime_tasks || []));
+
+      replace('loop-tasks', table([
+        { label: 'Runner', value: (row) => row.loop_runner },
+        { label: 'Pending', value: (row) => row.pending_loop_tasks },
+        { label: 'Running', value: (row) => row.running_loop_tasks },
+        { label: 'Stale leases', value: (row) => row.stale_loop_task_leases }
+      ], [status]));
 
       replace('sessions', table([
         { label: 'Session', value: (row) => row.session_id, code: true },
@@ -484,6 +499,7 @@ mod tests {
         assert!(response.contains("Forge Gateway Dashboard"));
         assert!(response.contains("/api/dashboard"));
         assert!(response.contains("Runtime Tasks"));
+        assert!(response.contains("Loop Tasks"));
         assert!(response.contains("Sessions"));
         assert!(response.contains("Queued Triggers"));
         assert!(response.contains("Event Log"));

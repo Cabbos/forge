@@ -20,6 +20,7 @@ use crate::gateway::session_input::{
     new_session_input_record, SessionInputCompletionRecord, SessionInputStore,
 };
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
+use crate::loop_runtime::runner::{loop_runner_queue_stats, LoopRunnerQueueStats};
 use crate::loop_runtime::{
     evaluate_completion, LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent,
     LoopTaskProjectionStore, LoopTaskRecord,
@@ -42,6 +43,14 @@ pub struct GatewayRuntimeStatus {
     pub pending_triggers: usize,
     #[serde(default)]
     pub pending_session_inputs: usize,
+    #[serde(default)]
+    pub loop_runner: String,
+    #[serde(default)]
+    pub pending_loop_tasks: usize,
+    #[serde(default)]
+    pub running_loop_tasks: usize,
+    #[serde(default)]
+    pub stale_loop_task_leases: usize,
     pub claimed_triggers: usize,
     pub dead_letter_runs: usize,
     pub recent_runs: Vec<TriggerRunRecord>,
@@ -318,6 +327,7 @@ impl GatewayState {
 
 pub const WEBHOOK_LISTENER_TASK: &str = "webhook_listener";
 pub const TRIGGER_RUNNER_TASK: &str = "trigger_runner";
+pub const LOOP_RUNNER_TASK: &str = "loop_runner";
 pub const SCHEDULER_TICK_TASK: &str = "scheduler_tick";
 pub const DASHBOARD_HTTP_TASK: &str = "dashboard_http";
 pub const SESSION_STALE_AFTER_MS: u64 = 5 * 60 * 1000;
@@ -1170,6 +1180,14 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         .iter()
         .filter(|run| run.status == "dead_letter")
         .count();
+    let loop_stats =
+        loop_runner_queue_stats(&state.loop_event_journal, &state.loop_task_projection_store)
+            .unwrap_or_else(|error| {
+                log::warn!("failed to compute loop runner queue stats: {error}");
+                LoopRunnerQueueStats::default()
+            });
+    let runtime_tasks = state.runtime_tasks();
+    let loop_runner = loop_runner_status(&runtime_tasks).to_string();
 
     GatewayRuntimeStatus {
         ok: true,
@@ -1178,11 +1196,31 @@ fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
         active_sessions: state.active_sessions(),
         pending_triggers,
         pending_session_inputs: state.session_input_store.list().len(),
+        loop_runner,
+        pending_loop_tasks: loop_stats.pending_loop_tasks,
+        running_loop_tasks: loop_stats.running_loop_tasks,
+        stale_loop_task_leases: loop_stats.stale_loop_task_leases,
         claimed_triggers,
         dead_letter_runs,
         recent_runs: runs.into_iter().take(20).collect(),
         recent_session_inputs: state.session_input_store.recent_completions(20),
-        runtime_tasks: state.runtime_tasks(),
+        runtime_tasks,
+    }
+}
+
+fn loop_runner_status(runtime_tasks: &[GatewayRuntimeTaskStatus]) -> &'static str {
+    let Some(task) = runtime_tasks
+        .iter()
+        .find(|task| task.name == LOOP_RUNNER_TASK)
+    else {
+        return "stopped";
+    };
+    if task.last_error.is_some() {
+        "failed"
+    } else if task.running {
+        "started"
+    } else {
+        "stopped"
     }
 }
 
@@ -1201,6 +1239,7 @@ fn default_runtime_task_map() -> HashMap<String, GatewayRuntimeTaskStatus> {
     [
         WEBHOOK_LISTENER_TASK,
         TRIGGER_RUNNER_TASK,
+        LOOP_RUNNER_TASK,
         SCHEDULER_TICK_TASK,
         DASHBOARD_HTTP_TASK,
     ]
@@ -1226,6 +1265,7 @@ fn ordered_runtime_tasks(
     for name in [
         WEBHOOK_LISTENER_TASK,
         TRIGGER_RUNNER_TASK,
+        LOOP_RUNNER_TASK,
         SCHEDULER_TICK_TASK,
         DASHBOARD_HTTP_TASK,
     ] {
@@ -1240,6 +1280,7 @@ fn ordered_runtime_tasks(
             ![
                 WEBHOOK_LISTENER_TASK,
                 TRIGGER_RUNNER_TASK,
+                LOOP_RUNNER_TASK,
                 SCHEDULER_TICK_TASK,
                 DASHBOARD_HTTP_TASK,
             ]
@@ -2287,6 +2328,28 @@ mod tests {
             .trigger_store
             .push(test_trigger("claimed-1", Some(1234)));
         state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-pending",
+                    "pending loop task",
+                ),
+            )
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-running",
+                    "running loop task",
+                ),
+            )
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(loop_task_started_event("loop-running", "lease-stale", 1, 2))
+            .unwrap();
+        state
             .trigger_run_store
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-dead".into(),
@@ -2348,6 +2411,10 @@ mod tests {
                 assert_eq!(status.claimed_triggers, 1);
                 assert_eq!(status.dead_letter_runs, 1);
                 assert_eq!(status.pending_session_inputs, 0);
+                assert_eq!(status.loop_runner, "stopped");
+                assert_eq!(status.pending_loop_tasks, 1);
+                assert_eq!(status.running_loop_tasks, 1);
+                assert_eq!(status.stale_loop_task_leases, 1);
                 assert_eq!(status.recent_runs.len(), 2);
                 assert_eq!(status.recent_runs[0].id, "run-ok");
                 assert_eq!(status.recent_session_inputs.len(), 1);
@@ -2362,6 +2429,7 @@ mod tests {
                     [
                         (WEBHOOK_LISTENER_TASK, false),
                         (TRIGGER_RUNNER_TASK, false),
+                        (LOOP_RUNNER_TASK, false),
                         (SCHEDULER_TICK_TASK, false),
                         (DASHBOARD_HTTP_TASK, false),
                     ]
@@ -2425,8 +2493,10 @@ mod tests {
                     serde_json::from_value(resp.result).expect("parse dashboard snapshot");
                 assert!(snapshot.ok);
                 assert!(snapshot.generated_at_ms > 0);
+                assert_eq!(snapshot.status.loop_runner, "stopped");
                 assert_eq!(snapshot.status.pending_triggers, 1);
                 assert_eq!(snapshot.status.claimed_triggers, 1);
+                assert_eq!(snapshot.status.pending_loop_tasks, 0);
                 assert_eq!(snapshot.sessions.len(), 1);
                 assert_eq!(snapshot.sessions[0].session_id, "session-1");
                 assert_eq!(snapshot.queued_triggers.len(), 2);
@@ -2606,6 +2676,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(task_names.contains(&DASHBOARD_HTTP_TASK.to_string()));
+        assert!(task_names.contains(&LOOP_RUNNER_TASK.to_string()));
     }
 
     #[test]
@@ -3314,6 +3385,39 @@ mod tests {
             attempt_count: 0,
             claimed_at_ms,
             received_at_ms: 1,
+        }
+    }
+
+    fn loop_task_started_event(
+        task_id: &str,
+        lease_id: &str,
+        acquired_at_ms: u64,
+        expires_at_ms: u64,
+    ) -> crate::loop_runtime::LoopEventEnvelope {
+        crate::loop_runtime::LoopEventEnvelope {
+            schema_version: crate::loop_runtime::LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-started"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: crate::loop_runtime::LoopRuntimeEvent::TaskStarted {
+                task_id: task_id.to_string(),
+                lease: crate::loop_runtime::LoopTaskLease {
+                    lease_id: lease_id.to_string(),
+                    owner_pid: 7,
+                    acquired_at_ms,
+                    expires_at_ms,
+                    heartbeat_at_ms: acquired_at_ms,
+                },
+            },
+            actor: crate::loop_runtime::LoopActor::Runner {
+                runner_id: "test-loop-runner".to_string(),
+            },
+            lease_id: Some(lease_id.to_string()),
+            attempt: Some(1),
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: acquired_at_ms,
         }
     }
 }

@@ -1905,7 +1905,7 @@ npm --prefix apps/desktop run build
 
 Expected: PASS.
 
-- [ ] **Step 5.4: Commit Task 5**
+- [x] **Step 5.4: Commit Task 5**
 
 ```bash
 git add apps/desktop/src-tauri/src/loop_runtime apps/desktop/src-tauri/src/agent/a2a apps/desktop/src-tauri/src/agent/sub.rs
@@ -1919,7 +1919,7 @@ gitnexus_detect_changes(repo: "forge", scope: "staged")
 git commit -m "feat(runtime): record subagent file and usage telemetry"
 ```
 
-**2026-06-17 Task 5 implementation evidence:** Task 5 adds `LoopUsageLedger` / `UsageEvent` aggregation with explicit unknown input/output/cost flags, records subagent model turn count, tool call count, elapsed time, and unknown token/cost facts in subagent result JSON, and projects worktree boundary file IO from A2A metadata (`worktree_created`, `diff_observed`, `test_report_observed`, `worktree_preserved`, `worktree_cleaned`). This is boundary-level telemetry only: it does not claim executor-level live read/write tracing, precise cost when provider data is absent, runner ownership, autonomous gateway resume, UI rendering, or auto-commit behavior. Evidence so far: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib` first failed on missing `LoopUsageLedger`/`UsageEvent`, then passed; `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib` passed. Commit remains a separate human/commit-gate step, so Step 5.4 stays unchecked.
+**2026-06-17 Task 5 implementation evidence:** Task 5 adds `LoopUsageLedger` / `UsageEvent` aggregation with explicit unknown input/output/cost flags, records subagent model turn count, tool call count, elapsed time, and unknown token/cost facts in subagent result JSON, and projects worktree boundary file IO from A2A metadata (`worktree_created`, `diff_observed`, `test_report_observed`, `worktree_preserved`, `worktree_cleaned`). This is boundary-level telemetry only: it does not claim executor-level live read/write tracing, precise cost when provider data is absent, runner ownership, autonomous gateway resume, UI rendering, or auto-commit behavior. Evidence: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib`, focused adapter usage tests, `npm --prefix apps/desktop run build`, `git diff --check`, and commit `a3a1965 feat(runtime): record subagent file and usage telemetry`.
 
 **2026-06-17 spec review fixes:** Task 5 telemetry now serializes unknown `input_tokens`, `output_tokens`, and `estimated_cost_micros` as explicit `null` values alongside `has_unknown_*` flags; subagents capture known provider usage already emitted via existing adapter `StreamEvent::Usage` paths without changing `StreamResult`; and `diff_observed` file IO now trusts only diff file markers instead of arbitrary indented context lines. Evidence: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib` passes with null-serialization coverage, and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib` passes with known-usage and diff-parser regression coverage.
 
@@ -1937,7 +1937,7 @@ git commit -m "feat(runtime): record subagent file and usage telemetry"
 - Modify: `apps/desktop/src-tauri/src/gateway/dashboard.rs`
 - Test: `apps/desktop/src-tauri/src/loop_runtime/runner.rs`
 
-- [ ] **Step 6.1: Write lease transition tests**
+- [x] **Step 6.1: Write lease transition tests**
 
 Pin the runner state machine:
 
@@ -1950,7 +1950,7 @@ fn runner_claims_pending_task_with_lease() {
 
     assert_eq!(task.status, LoopTaskStatus::Running);
     assert_eq!(task.lease.as_ref().unwrap().lease_id, lease.lease_id);
-    assert_eq!(task.lease.as_ref().unwrap().owner_pid, Some(1234));
+    assert_eq!(task.lease.as_ref().unwrap().owner_pid, 1234);
 }
 ```
 
@@ -1962,7 +1962,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runner --lib
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 6.2: Implement queue ownership without full autonomous coding**
+- [x] **Step 6.2: Implement queue ownership without full autonomous coding**
 
 Use the existing trigger runner as the pattern, not as the loop runner itself. `gateway/runner.rs` already claims pending triggers with a lease, records attempts, retries, and dead-letters through `TriggerRunStore`; the loop runner should reuse that operational shape while writing loop events instead of mutating task projection directly.
 
@@ -1988,7 +1988,7 @@ wait for an explicit decision before any side effect continues
 
 It must not auto-resume model calls, shell commands, file writes, commits, pushes, or worktree merges. Full autonomous recovery comes after ledger, policy, review gates, and acceptance coverage are stable.
 
-- [ ] **Step 6.3: Surface runner status in dashboard/runtime_status**
+- [x] **Step 6.3: Surface runner status in dashboard/runtime_status**
 
 Add:
 
@@ -2007,7 +2007,9 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
 
 Expected: PASS.
 
-- [ ] **Step 6.4: Commit Task 6**
+**2026-06-17 Task 6 implementation evidence:** Task 6 adds `loop_runtime::runner` with a gateway-owned lease state machine that claims pending tasks, records `TaskStarted`, records `TaskWaitingForInput`, evaluates completion after the waiting state is projected, and interrupts stale running leases as `TaskInterrupted`. The gateway daemon now starts the loop runner and reports `loop_runner`, `pending_loop_tasks`, `running_loop_tasks`, and `stale_loop_task_leases` through `runtime_status`, the static dashboard, diagnostics fallback, and `forge_trigger` status rendering. This remains an MVP runner: it does not spawn a headless `AgentSession`, does not auto-resume model calls, does not run shell/file side effects, does not commit/push, and does not merge worktrees. Evidence: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runner --lib` first failed on missing `LoopTaskRunner`, then passed; `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib` first failed on missing status fields, then passed.
+
+- [x] **Step 6.4: Commit Task 6**
 
 ```bash
 git add apps/desktop/src-tauri/src/loop_runtime apps/desktop/src-tauri/src/gateway apps/desktop/src-tauri/src/bin/gateway.rs

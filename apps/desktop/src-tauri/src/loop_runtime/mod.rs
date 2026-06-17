@@ -4,6 +4,7 @@ pub mod gates;
 pub mod journal;
 pub mod policy;
 pub mod projection;
+pub mod runner;
 pub mod store;
 pub mod types;
 

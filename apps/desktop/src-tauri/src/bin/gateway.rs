@@ -59,6 +59,26 @@ async fn main() {
     );
     state.mark_runtime_task_started(forge::gateway::server::TRIGGER_RUNNER_TASK);
 
+    // Spawn loop runtime runner. The first MVP only claims durable loop-task
+    // leases and records waiting/interrupted states; it does not create a
+    // headless AgentSession or resume side effects.
+    let loop_runner_journal = state.loop_event_journal.clone();
+    let loop_runner_projection = state.loop_task_projection_store.clone();
+    let loop_runner_runtime_state = state.clone();
+    state.mark_runtime_task_started(forge::gateway::server::LOOP_RUNNER_TASK);
+    tokio::spawn(async move {
+        if let Err(e) = forge::loop_runtime::runner::serve_loop_runner(
+            loop_runner_journal,
+            loop_runner_projection,
+        )
+        .await
+        {
+            log::error!("Loop runner died: {e}");
+            loop_runner_runtime_state
+                .mark_runtime_task_failed(forge::gateway::server::LOOP_RUNNER_TASK, e);
+        }
+    });
+
     // Spawn scheduler tick in background. Due tasks are queued into the same
     // trigger store, then picked up by the trigger runner above.
     let scheduler_store = Arc::new(forge::scheduler::SchedulerStore::new(
