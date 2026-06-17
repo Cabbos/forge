@@ -27,6 +27,7 @@ test("acceptance script dry-run lists the final product gates", () => {
   assert.match(output, /gateway loop runner status smoke/);
   assert.match(output, /subagent runtime event projection smoke/);
   assert.match(output, /completion contract mocked desktop smoke/);
+  assert.match(output, /desktop Phase 7 .*A2A worker lifecycle smoke/);
   assert.match(output, /resume\.spec\.ts/);
   assert.match(output, /workbench\.spec\.ts/);
   assert.match(output, /a2a-confirm-runtime\.spec\.ts/);

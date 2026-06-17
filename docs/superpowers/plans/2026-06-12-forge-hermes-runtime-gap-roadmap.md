@@ -325,6 +325,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 4-E file-view tests (2026-06-16):** Added node coverage for `deriveWorkbenchFileView` grouping, visible/reported/hidden counts, empty/null inputs, and no-diff tasks. Extended Playwright A2A runtime coverage to assert the Hub Workbench file view renders file totals, hidden count, and changed paths from mocked A2A projection state.
   - **Phase 4-F lineage tests (2026-06-17):** Added Rust tests for bus-level parent-aware assignment, nonexistent-parent rejection, root `assign_task` parent preservation, parent-aware delegate assignment, parent-aware worktree-worker assignment, child projection `parent_task_id`, legacy serde/default backcompat, bus serialization roundtrip, session snapshot/restore, and the real `execute_tools` delegate branch for explicit-parent success, missing-parent rejection, unknown-parent rejection, and no root fallback. Cost tracking, automatic delegate parent selection, and live worker lifecycle e2e remain deferred.
   - **Phase 4-G lineage projection tests (2026-06-17):** Extended `projection_derives_parent_child_task_ids_in_creation_order` to cover ordered parent child lists, child/root empty lists, parent serialization with child ids, and empty child-list JSON omission. Extended Playwright A2A runtime mocks to carry `child_task_ids` and assert the Workbench child-count indicator through its accessible label.
+  - **Phase 4-H lifecycle product smoke (2026-06-18):** Extended mocked Playwright A2A runtime coverage to exercise worker lifecycle visibility in the Agent Workbench: running workers show `latest_progress`/`latest_message`, interrupted workers show `resume_note`, failed workers show localized `failure_kind` plus retryable affordance, and cancelled workers show the user-cancelled lifecycle state. This is contract-shaped mocked product smoke only; true live worker lifecycle harness coverage remains deferred.
   - Files: `agent/a2a/bus.rs`, `agent/a2a/supervisor.rs`, `agent/session/a2a.rs`, `agent/session/tools_test.rs`, `store/workbenchSummary.test.ts`, `e2e/a2a-confirm-runtime.spec.ts`, `e2e/acceptance.spec.ts`.
 
 **Phase 4-A summary (2026-06-12):**
@@ -339,7 +340,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; true live IO and cost tabs deferred |
 | 4.7 Failure reasons | ✅ Done | failure_kind + retryable badge + localized labels |
 | 4.8 Lineage persistence | 🟨 Partial | Existing bus/session snapshot preserves populated child pointers; projection derives parent-side child ids from those pointers; legacy records without `parent_task_id` still deserialize; full parent-session lineage and persisted parent-side child arrays deferred |
-| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view + lineage coverage, including real `execute_tools` branch validation; cost/live-worker lifecycle deferred |
+| 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view, lineage, and mocked worker lifecycle product smoke coverage; true live worker harness and provider cost tests deferred |
 | Rust agent loop changes | 🟨 Minimal | `execute_tools` requires a supplied existing `parent_task_id` for lineage assignment; missing/unknown parents are rejected with no root fallback; no synthetic parent ids, no edits to `run_worktree_worker`, executor hooks, or adapters |
 | New dependencies | 🚫 None | No new packages |
 
@@ -432,17 +433,36 @@ npm --prefix apps/desktop run test:e2e -- e2e/a2a-confirm-runtime.spec.ts -g "hu
 npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "loop runtime appears" # pass, 1 passed
 ```
 
-**Known deferred items (Phase 4-B):**
+**Phase 4-H summary (2026-06-18):** A2A worker lifecycle product smoke.
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Mocked lifecycle smoke | ✅ Done | `e2e/a2a-confirm-runtime.spec.ts` now covers running, interrupted, failed, and cancelled worker rows through the existing Agent Workbench UI |
+| Running visibility | ✅ Done | Contract-shaped mock asserts `latest_progress` and `latest_message` are visible |
+| Interruption recovery hint | ✅ Done | Mocked interrupted worker asserts localized status and `resume_note` visibility |
+| Failure/retry visibility | ✅ Done | Mocked failed worker asserts localized `failure_kind`, failure message, and retryable marker |
+| Acceptance script labeling | ✅ Done | `scripts/acceptance.sh --dry-run` advertises the desktop Phase 7 and A2A worker lifecycle smoke gate without expanding the command |
+| Not claimed | 🚫 Deferred | No real worker process harness, no edits to `run_worktree_worker`, no executor-level IO hooks, no provider token/cost stream |
+
+Phase 4-H evidence:
+
+```bash
+npm --prefix apps/desktop run test:e2e -- e2e/a2a-confirm-runtime.spec.ts # pass, 7 passed
+node --test scripts/acceptance.test.mjs # pass, 1 passed
+```
+
+**Known deferred items (Phase 4):**
 - True live file IO stream — requires executor/ToolExecutor hooks (CRITICAL risk path)
 - Token/cost per-task streaming — requires adapter trait changes
 - New `StreamEvent` variants for subagent-specific events
 - Parent-session structs and persisted parent-side child-id arrays — current durable contract stores the child-to-parent pointer only; Phase 4-G derives projection-only `child_task_ids`
 - Automatic parent selection for ordinary `delegate_task` calls — current guarded path requires a supplied existing A2A parent id, rejects missing/unknown parent ids, and never silently creates a root fallback
-- e2e worker lifecycle tests (depends on runnable worktree worker harness; Phase 4-D adds unit coverage for lease/heartbeat/cancel/retry)
+- True live worker lifecycle harness — mocked product smoke has landed, but no runnable worktree-worker process harness is claimed yet
+- Executor-level IO tracing and provider token/cost streaming remain deferred
 
 **Acceptance gate:**
 
-- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-B: status/timing shown; diff-derived file visibility shown; cost deferred)**
+- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-B shows diff-derived file visibility; true live IO and cost remain deferred)**
 - Parent-child relationship is visible and survives restart. **(Phase 4-G: child projections expose `parent_task_id`; parent projections derive ordered `child_task_ids` from persisted child pointers; normal delegate auto-parent selection, parent-session structs, and persisted parent-side child arrays deferred)**
 - Each failure type has a distinct message and recovery hint. **(Phase 4-A: failure_kind + retryable + resume_note)**
 

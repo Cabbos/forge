@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { setup, openProjectArchive } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
-import type { StreamEvent } from "../src/lib/protocol";
+import type { AgentA2ATaskProjection, StreamEvent } from "../src/lib/protocol";
 
 const sessionId = "a2a-confirm-runtime-session";
 
@@ -234,6 +234,170 @@ function reviewQueueEvents(sessionId: string): StreamEvent[] {
   ];
 }
 
+function lifecycleTaskProjection(
+  overrides: Partial<AgentA2ATaskProjection> &
+    Pick<AgentA2ATaskProjection, "task_id" | "agent_id" | "role" | "execution_mode" | "status" | "title">,
+): AgentA2ATaskProjection {
+  const now = Date.now();
+  return {
+    messages: [],
+    latest_message: null,
+    failure_message: null,
+    updated_at_ms: now,
+    artifact_count: 0,
+    latest_artifact_kind: null,
+    latest_artifact_title: null,
+    needs_human_review: null,
+    reason_codes: [],
+    tests_passed: null,
+    diff_truncated: null,
+    worktree_path: null,
+    cleaned_up: null,
+    suggested_action: null,
+    review_decision: null,
+    reviewed_at_ms: null,
+    parent_task_id: null,
+    child_task_ids: [],
+    created_at_ms: now - 60_000,
+    started_at_ms: null,
+    ended_at_ms: null,
+    duration_ms: null,
+    retryable: null,
+    failure_kind: null,
+    resume_note: null,
+    latest_progress: null,
+    lease_owner: null,
+    lease_acquired_at_ms: null,
+    lease_expires_at_ms: null,
+    last_heartbeat_at_ms: null,
+    attempt_count: 1,
+    max_attempts: 3,
+    diff_available: null,
+    changed_file_count: null,
+    changed_files: [],
+    test_report_excerpt: null,
+    ...overrides,
+  };
+}
+
+function workerLifecycleEvents(sessionId: string): StreamEvent[] {
+  const now = Date.now();
+  return [
+    {
+      event_type: "session_started",
+      session_id: sessionId,
+      agent_type: "deepseek",
+      model: "deepseek-v4-flash",
+    },
+    {
+      event_type: "agent_a2a_updated",
+      session_id: sessionId,
+      state: {
+        running_count: 1,
+        completed_count: 0,
+        failed_count: 1,
+        interrupted_count: 1,
+        tasks: [
+          lifecycleTaskProjection({
+            task_id: "lifecycle-running",
+            agent_id: "agent-running",
+            role: "worker",
+            execution_mode: "worktree_worker",
+            status: "running",
+            title: "Lifecycle running worker",
+            messages: [
+              {
+                message_id: "lifecycle-running-progress",
+                kind: "progress",
+                content: "Worker accepted command",
+                created_at_ms: now - 30_000,
+              },
+            ],
+            latest_message: "Worker accepted command",
+            latest_progress: "正在执行验收脚本",
+            started_at_ms: now - 45_000,
+            lease_owner: "controller-main",
+            lease_acquired_at_ms: now - 45_000,
+            lease_expires_at_ms: now + 60_000,
+            last_heartbeat_at_ms: now - 5_000,
+          }),
+          lifecycleTaskProjection({
+            task_id: "lifecycle-interrupted",
+            agent_id: "agent-interrupted",
+            role: "worker",
+            execution_mode: "worktree_worker",
+            status: "interrupted",
+            title: "Lifecycle interrupted worker",
+            messages: [
+              {
+                message_id: "lifecycle-interrupted-message",
+                kind: "interrupted",
+                content: "Worker paused before writing changes",
+                created_at_ms: now - 24_000,
+              },
+            ],
+            latest_message: "Worker paused before writing changes",
+            resume_note: "恢复后将从上次进度继续",
+            started_at_ms: now - 40_000,
+            ended_at_ms: now - 20_000,
+            duration_ms: 20_000,
+            worktree_path: "/tmp/forge-lifecycle-interrupted",
+            cleaned_up: false,
+          }),
+          lifecycleTaskProjection({
+            task_id: "lifecycle-failed",
+            agent_id: "agent-failed",
+            role: "worker",
+            execution_mode: "worktree_worker",
+            status: "failed",
+            title: "Lifecycle failed worker",
+            messages: [
+              {
+                message_id: "lifecycle-failed-message",
+                kind: "failed",
+                content: "Smoke command failed",
+                created_at_ms: now - 18_000,
+              },
+            ],
+            latest_message: "Worker failed during smoke",
+            failure_message: "Shell command exited 1",
+            failure_kind: "tool_error",
+            retryable: true,
+            tests_passed: false,
+            started_at_ms: now - 35_000,
+            ended_at_ms: now - 10_000,
+            duration_ms: 25_000,
+          }),
+          lifecycleTaskProjection({
+            task_id: "lifecycle-cancelled",
+            agent_id: "agent-cancelled",
+            role: "worker",
+            execution_mode: "worktree_worker",
+            status: "cancelled",
+            title: "Lifecycle cancelled worker",
+            messages: [
+              {
+                message_id: "lifecycle-cancelled-message",
+                kind: "cancelled",
+                content: "Controller cancelled worker before merge",
+                created_at_ms: now - 12_000,
+              },
+            ],
+            latest_message: "用户取消了 worker",
+            failure_message: "Controller cancelled worker before merge",
+            failure_kind: "user_cancelled",
+            retryable: false,
+            started_at_ms: now - 32_000,
+            ended_at_ms: now - 12_000,
+            duration_ms: 20_000,
+            cleaned_up: true,
+          }),
+        ],
+      },
+    },
+  ];
+}
+
 test.beforeEach(async ({ page }) => {
   await setup(page, { workingDir: "/tmp/forge-a2a-workspace" });
   await page.goto("http://localhost:1420");
@@ -350,6 +514,59 @@ test.describe("A2A runtime surfaces", () => {
       taskIds: ["review-task-1"],
       decision: "approve",
     });
+  });
+
+  test("hub panel shows mocked A2A worker lifecycle statuses", async ({ page }) => {
+    const lifecycleSessionId = "a2a-worker-lifecycle-session";
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, lifecycleSessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, lifecycleSessionId, workerLifecycleEvents(lifecycleSessionId));
+    await openProjectArchive(page, "agents");
+
+    const workspace = page.locator(".forge-a2a-workspace");
+    await expect(workspace).toBeVisible();
+    await expect(workspace).toContainText("1 运行");
+    await expect(workspace).toContainText("1 失败");
+    await expect(workspace).toContainText("1 中断");
+
+    const running = workspace.locator(".forge-a2a-task-row-wrapper", {
+      hasText: "Lifecycle running worker",
+    });
+    await expect(running).toContainText("运行中");
+    await expect(running).toContainText("正在执行验收脚本");
+    await expect(running).toContainText("Worker accepted command");
+
+    const interrupted = workspace.locator(".forge-a2a-task-row-wrapper", {
+      hasText: "Lifecycle interrupted worker",
+    });
+    await expect(interrupted).toContainText("已中断");
+    await expect(interrupted).toContainText("恢复后将从上次进度继续");
+    await expect(interrupted).toContainText("Worker paused before writing changes");
+
+    const failed = workspace.locator(".forge-a2a-task-row-wrapper", {
+      hasText: "Lifecycle failed worker",
+    });
+    await expect(failed).toContainText("失败");
+    await expect(failed).toContainText("工具错误");
+    await expect(failed).toContainText("Shell command exited 1");
+    await expect(failed.locator(".forge-a2a-task-retryable[title='可重试']")).toBeVisible();
+
+    const cancelledRow = workspace.locator(".forge-a2a-task-row[data-status='cancelled']", {
+      hasText: "Lifecycle cancelled worker",
+    });
+    await expect(cancelledRow).toBeVisible();
+    await expect(cancelledRow).toContainText("用户取消");
+    await expect(cancelledRow).toContainText("用户取消了 worker");
   });
 
   test("global background status bar opens the agent task list", async ({ page }) => {

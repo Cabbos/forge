@@ -25,7 +25,7 @@ Runs the Forge Level 3 runtime acceptance gates:
   9. Gateway loop runner status smoke
   10. Subagent runtime event projection smoke
   11. Completion contract mocked desktop smoke
-  12. Desktop Phase 7 smoke specs
+  12. Desktop Phase 7 and A2A worker lifecycle smoke specs
   13. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
@@ -53,7 +53,7 @@ COMMAND_LABELS=(
   "subagent runtime event projection smoke"
   "completion contract desktop helper smoke"
   "completion contract mocked desktop smoke"
-  "desktop Phase 7 smoke specs"
+  "desktop Phase 7 and A2A worker lifecycle smoke specs"
   "rich preview e2e smoke specs"
 )
 
