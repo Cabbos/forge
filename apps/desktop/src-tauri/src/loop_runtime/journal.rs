@@ -236,6 +236,23 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "task_id": task_id,
             "snapshot": snapshot,
         }),
+        LoopRuntimeEvent::SubagentFileIoRecorded {
+            task_id,
+            child_task_id,
+            path,
+            operation,
+        } => serde_json::json!({
+            "type": "subagent_file_io_recorded",
+            "task_id": task_id,
+            "child_task_id": child_task_id,
+            "path": path,
+            "operation": operation,
+        }),
+        LoopRuntimeEvent::UsageLedgerRecorded { task_id, usage } => serde_json::json!({
+            "type": "usage_ledger_recorded",
+            "task_id": task_id,
+            "usage": usage,
+        }),
         LoopRuntimeEvent::CompletionEvaluated { task_id, result } => serde_json::json!({
             "type": "completion_evaluated",
             "task_id": task_id,

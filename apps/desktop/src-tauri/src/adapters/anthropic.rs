@@ -273,40 +273,12 @@ impl AnthropicAdapter {
         );
         tools
     }
-}
 
-#[async_trait]
-impl AiAdapter for AnthropicAdapter {
-    fn set_external_tools(&self, tools: Vec<ToolDef>) {
-        *self
-            .external_tools
-            .write()
-            .expect("external tools lock poisoned") = tools;
-    }
-
-    fn model_id(&self) -> &str {
-        &self.model
-    }
-
-    fn model_name(&self) -> &str {
-        match self.model.as_str() {
-            "deepseek-v4-pro[1m]" => "DeepSeek V4 Pro 1M",
-            "deepseek-v4-pro" => "DeepSeek V4 Pro",
-            "deepseek-v4-flash[1m]" => "DeepSeek V4 Flash 1M",
-            "deepseek-v4-flash" => "DeepSeek V4 Flash",
-            "claude-opus-4-7" => "Claude Opus 4.7",
-            "claude-sonnet-4-6" => "Claude Sonnet 4.6",
-            "claude-haiku-4-5-20251001" => "Claude Haiku 4.5",
-            "glm-5-flash" => "GLM 5 Flash",
-            _ => &self.model,
-        }
-    }
-
-    /// Non-streaming API call — no frontend events. Used by sub-agents.
-    async fn call(
+    async fn call_non_streaming(
         &self,
         messages: &[ChatMessage],
         cancel: Arc<Notify>,
+        usage_emitter: Option<(&str, &dyn EventEmitter)>,
     ) -> Result<StreamResult, AdapterError> {
         let body = self.request_for_messages(messages, false, true);
 
@@ -344,6 +316,17 @@ impl AiAdapter for AnthropicAdapter {
             Err(e) => return Err(AdapterError::Stream(e.to_string())),
         };
 
+        if let Some((session_id, emitter)) = usage_emitter {
+            if let Some((input_tokens, output_tokens)) = anthropic_usage_from_response(&parsed) {
+                emitter.emit(StreamEvent::Usage {
+                    session_id: session_id.to_string(),
+                    input_tokens,
+                    output_tokens,
+                    estimated_cost_usd: estimate_cost(&self.model, input_tokens, output_tokens),
+                });
+            }
+        }
+
         let content = parsed["content"].as_array().cloned().unwrap_or_default();
 
         let tool_calls: Vec<ToolCall> = content
@@ -363,6 +346,54 @@ impl AiAdapter for AnthropicAdapter {
             tool_calls,
             stop_reason,
         })
+    }
+}
+
+#[async_trait]
+impl AiAdapter for AnthropicAdapter {
+    fn set_external_tools(&self, tools: Vec<ToolDef>) {
+        *self
+            .external_tools
+            .write()
+            .expect("external tools lock poisoned") = tools;
+    }
+
+    fn model_id(&self) -> &str {
+        &self.model
+    }
+
+    fn model_name(&self) -> &str {
+        match self.model.as_str() {
+            "deepseek-v4-pro[1m]" => "DeepSeek V4 Pro 1M",
+            "deepseek-v4-pro" => "DeepSeek V4 Pro",
+            "deepseek-v4-flash[1m]" => "DeepSeek V4 Flash 1M",
+            "deepseek-v4-flash" => "DeepSeek V4 Flash",
+            "claude-opus-4-7" => "Claude Opus 4.7",
+            "claude-sonnet-4-6" => "Claude Sonnet 4.6",
+            "claude-haiku-4-5-20251001" => "Claude Haiku 4.5",
+            "glm-5-flash" => "GLM 5 Flash",
+            _ => &self.model,
+        }
+    }
+
+    /// Non-streaming API call — no frontend events. Used by sub-agents.
+    async fn call(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call_non_streaming(messages, cancel, None).await
+    }
+
+    async fn call_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[ChatMessage],
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call_non_streaming(messages, cancel, Some((session_id, emitter)))
+            .await
     }
 
     async fn compact_summary(
@@ -812,6 +843,13 @@ pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> f64 
         + (output_tokens as f64 / 1_000_000.0) * output_price
 }
 
+fn anthropic_usage_from_response(parsed: &serde_json::Value) -> Option<(u32, u32)> {
+    let usage = parsed["usage"].as_object()?;
+    let input_tokens = usage.get("input_tokens")?.as_u64()?.try_into().ok()?;
+    let output_tokens = usage.get("output_tokens")?.as_u64()?.try_into().ok()?;
+    Some((input_tokens, output_tokens))
+}
+
 /// Flush accumulated text or thinking content into the assistant content list.
 fn flush_content(block_type: Option<&str>, text: &str, content: &mut Vec<serde_json::Value>) {
     match block_type {
@@ -831,6 +869,23 @@ mod tests {
     use std::io::{Read, Write};
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[derive(Default)]
+    struct CaptureEmitter {
+        events: parking_lot::Mutex<Vec<StreamEvent>>,
+    }
+
+    impl CaptureEmitter {
+        fn events(&self) -> Vec<StreamEvent> {
+            self.events.lock().clone()
+        }
+    }
+
+    impl EventEmitter for CaptureEmitter {
+        fn emit(&self, event: StreamEvent) {
+            self.events.lock().push(event);
+        }
+    }
 
     #[test]
     fn external_tools_can_be_replaced_after_session_creation() {
@@ -916,6 +971,61 @@ mod tests {
         assert!(request_messages
             .iter()
             .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_uses_subagent_tools_and_emits_usage() {
+        let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 123,
+                "output_tokens": 45
+            }
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        let result = adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+        let request_body = received_body
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured request body");
+        let tool_names = request_body["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(request_body["stream"], false);
+        assert_eq!(
+            result.assistant_content,
+            vec![serde_json::json!({"type": "text", "text": "ok"})]
+        );
+        assert!(tool_names.contains(&"read_file"));
+        assert!(!tool_names.contains(&"write_to_file"));
+        assert!(!tool_names.contains(&"edit_file"));
+        assert!(!tool_names.contains(&"run_shell"));
+        assert!(!tool_names.contains(&"delegate_task"));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::Usage {
+                session_id,
+                input_tokens: 123,
+                output_tokens: 45,
+                ..
+            } if session_id == "subagent"
+        )));
     }
 
     #[test]

@@ -291,6 +291,25 @@ impl LoopTaskProjection {
                     task.latest_event_id = Some(event.event_id.clone());
                     task.latest_budget_snapshot = Some(snapshot.clone());
                 }
+                LoopRuntimeEvent::SubagentFileIoRecorded { task_id, .. }
+                | LoopRuntimeEvent::UsageLedgerRecorded { task_id, .. } => {
+                    if task_id != &event.task_id {
+                        return Err(format!(
+                            "telemetry task id mismatch: envelope {}, payload {}",
+                            event.task_id, task_id
+                        ));
+                    }
+                    let Some(task) = tasks.get_mut(task_id) else {
+                        return Err(format!(
+                            "telemetry recorded before task creation: {task_id}"
+                        ));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    task.updated_at_ms = event.created_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
+                }
                 LoopRuntimeEvent::CompletionEvaluated { task_id, result } => {
                     if task_id != &event.task_id {
                         return Err(format!(

@@ -1842,7 +1842,7 @@ Remaining gaps: Task 5 telemetry emission, Task 6 runner ownership, Task 7 UI co
 - Test: `apps/desktop/src-tauri/src/agent/a2a/bus.rs`
 - Test: `apps/desktop/src-tauri/src/loop_runtime/budget.rs`
 
-- [ ] **Step 5.1: Write usage aggregation tests**
+- [x] **Step 5.1: Write usage aggregation tests**
 
 Use optional telemetry so adapters can adopt it gradually:
 
@@ -1869,7 +1869,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib
 
 Expected: FAIL before implementation.
 
-- [ ] **Step 5.2: Emit file IO events from worktree worker boundaries**
+- [x] **Step 5.2: Emit file IO events from worktree worker boundaries**
 
 At first, emit events from known boundaries rather than every low-level read:
 
@@ -1882,7 +1882,7 @@ worktree preserved or cleaned
 
 Expected: honest live-adjacent telemetry. Do not claim low-level executor read/write hooks until executor hooks exist.
 
-- [ ] **Step 5.3: Record model/tool usage where already available**
+- [x] **Step 5.3: Record model/tool usage where already available**
 
 Record:
 
@@ -1918,6 +1918,12 @@ gitnexus_detect_changes(repo: "forge", scope: "staged")
 ```bash
 git commit -m "feat(runtime): record subagent file and usage telemetry"
 ```
+
+**2026-06-17 Task 5 implementation evidence:** Task 5 adds `LoopUsageLedger` / `UsageEvent` aggregation with explicit unknown input/output/cost flags, records subagent model turn count, tool call count, elapsed time, and unknown token/cost facts in subagent result JSON, and projects worktree boundary file IO from A2A metadata (`worktree_created`, `diff_observed`, `test_report_observed`, `worktree_preserved`, `worktree_cleaned`). This is boundary-level telemetry only: it does not claim executor-level live read/write tracing, precise cost when provider data is absent, runner ownership, autonomous gateway resume, UI rendering, or auto-commit behavior. Evidence so far: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib` first failed on missing `LoopUsageLedger`/`UsageEvent`, then passed; `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib` passed. Commit remains a separate human/commit-gate step, so Step 5.4 stays unchecked.
+
+**2026-06-17 spec review fixes:** Task 5 telemetry now serializes unknown `input_tokens`, `output_tokens`, and `estimated_cost_micros` as explicit `null` values alongside `has_unknown_*` flags; subagents capture known provider usage already emitted via existing adapter `StreamEvent::Usage` paths without changing `StreamResult`; and `diff_observed` file IO now trusts only diff file markers instead of arbitrary indented context lines. Evidence: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib` passes with null-serialization coverage, and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib` passes with known-usage and diff-parser regression coverage.
+
+**2026-06-17 spec re-review fixes:** Subagent usage capture now calls the non-streaming `call_with_emitter` path, preserving Anthropic's subagent-only tool contract while still emitting known provider usage from both Anthropic and OpenAI-compatible adapters. Worktree boundary parsing also restores `## Untracked files:` section support without accepting normal indented unified-diff context lines. Evidence: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib` passes with provider usage and untracked-file parser coverage, and focused adapter tests confirm non-streaming usage emission without broadening the subagent tool surface.
 
 ---
 

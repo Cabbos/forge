@@ -108,6 +108,71 @@ impl OpenAiCompatibleAdapter {
             tools: if tools.is_empty() { None } else { Some(tools) },
         }
     }
+
+    async fn call_non_streaming(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+        usage_emitter: Option<(&str, &dyn EventEmitter)>,
+    ) -> Result<StreamResult, AdapterError> {
+        let request = self.request_for_messages(messages, false);
+
+        let response = tokio::select! {
+            response = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send() => response,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text: String = tokio::select! {
+                text = response.text() => text,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            }
+            .unwrap_or_default();
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = tokio::select! {
+            json = response.json() => json,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Stream(e.to_string()))?;
+
+        if parsed["error"].is_object() {
+            let message = parsed["error"]["message"]
+                .as_str()
+                .unwrap_or("Unknown OpenAI-compatible API error");
+            return Err(AdapterError::Api {
+                code: "api_error".to_string(),
+                message: message.to_string(),
+            });
+        }
+
+        if let Some((session_id, emitter)) = usage_emitter {
+            if let Some((input_tokens, output_tokens)) = openai_usage_from_response(&parsed) {
+                let cost = crate::adapters::anthropic::estimate_cost(
+                    &self.model,
+                    input_tokens,
+                    output_tokens,
+                );
+                emitter.emit(StreamEvent::Usage {
+                    session_id: session_id.to_string(),
+                    input_tokens,
+                    output_tokens,
+                    estimated_cost_usd: cost,
+                });
+            }
+        }
+
+        Ok(parse_openai_chat_completion(&parsed))
+    }
 }
 
 #[derive(Serialize)]
@@ -188,47 +253,18 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         messages: &[ChatMessage],
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        let request = self.request_for_messages(messages, false);
+        self.call_non_streaming(messages, cancel, None).await
+    }
 
-        let response = tokio::select! {
-            response = self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send() => response,
-            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-        }
-        .map_err(|e| AdapterError::Http(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let text: String = tokio::select! {
-                text = response.text() => text,
-                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-            }
-            .unwrap_or_default();
-            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
-        }
-
-        let parsed: serde_json::Value = tokio::select! {
-            json = response.json() => json,
-            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-        }
-        .map_err(|e| AdapterError::Stream(e.to_string()))?;
-
-        if parsed["error"].is_object() {
-            let message = parsed["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown OpenAI-compatible API error");
-            return Err(AdapterError::Api {
-                code: "api_error".to_string(),
-                message: message.to_string(),
-            });
-        }
-
-        Ok(parse_openai_chat_completion(&parsed))
+    async fn call_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[ChatMessage],
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call_non_streaming(messages, cancel, Some((session_id, emitter)))
+            .await
     }
 
     async fn compact_summary(
@@ -584,6 +620,13 @@ fn drain_openai_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
     events
 }
 
+fn openai_usage_from_response(parsed: &serde_json::Value) -> Option<(u32, u32)> {
+    let usage = parsed["usage"].as_object()?;
+    let input_tokens = usage.get("prompt_tokens")?.as_u64()?.try_into().ok()?;
+    let output_tokens = usage.get("completion_tokens")?.as_u64()?.try_into().ok()?;
+    Some((input_tokens, output_tokens))
+}
+
 fn parse_openai_chat_completion(parsed: &serde_json::Value) -> StreamResult {
     let mut assistant_content: Vec<serde_json::Value> = Vec::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -881,6 +924,23 @@ mod tests {
     use std::io::{Read, Write};
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[derive(Default)]
+    struct CaptureEmitter {
+        events: parking_lot::Mutex<Vec<StreamEvent>>,
+    }
+
+    impl CaptureEmitter {
+        fn events(&self) -> Vec<StreamEvent> {
+            self.events.lock().clone()
+        }
+    }
+
+    impl EventEmitter for CaptureEmitter {
+        fn emit(&self, event: StreamEvent) {
+            self.events.lock().push(event);
+        }
+    }
 
     #[test]
     fn external_tools_are_included_in_openai_compatible_definitions() {
@@ -1269,6 +1329,52 @@ mod tests {
         assert!(request_messages
             .iter()
             .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_uses_non_streaming_request_and_emits_usage() {
+        let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33
+            }
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        let result = adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+        let request_body = received_body
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured request body");
+
+        assert_eq!(request_body["stream"], false);
+        assert_eq!(
+            result.assistant_content,
+            vec![serde_json::json!({"type": "text", "text": "ok"})]
+        );
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::Usage {
+                session_id,
+                input_tokens: 77,
+                output_tokens: 33,
+                ..
+            } if session_id == "subagent"
+        )));
     }
 
     #[test]

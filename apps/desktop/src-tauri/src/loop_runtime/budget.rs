@@ -3,6 +3,124 @@ use crate::loop_runtime::types::LoopBudget;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UsageEvent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub estimated_cost_micros: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoopUsageLedger {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub estimated_cost_micros: Option<u64>,
+    #[serde(default)]
+    pub has_unknown_input_tokens: bool,
+    #[serde(default)]
+    pub has_unknown_output_tokens: bool,
+    #[serde(default)]
+    pub has_unknown_cost: bool,
+    #[serde(default)]
+    pub turn_count: u32,
+    #[serde(default)]
+    pub tool_call_count: u32,
+    #[serde(default)]
+    pub elapsed_ms: u64,
+}
+
+impl LoopUsageLedger {
+    pub fn from_events(events: Vec<UsageEvent>) -> Self {
+        let has_events = !events.is_empty();
+        let model = first_stable_model(&events);
+        let (input_tokens, has_unknown_input_tokens) =
+            sum_optional_usage(events.iter().map(|event| event.input_tokens));
+        let (output_tokens, has_unknown_output_tokens) =
+            sum_optional_usage(events.iter().map(|event| event.output_tokens));
+        let (estimated_cost_micros, has_unknown_cost) =
+            sum_optional_usage(events.iter().map(|event| event.estimated_cost_micros));
+
+        Self {
+            model,
+            input_tokens,
+            output_tokens,
+            estimated_cost_micros,
+            has_unknown_input_tokens: has_unknown_input_tokens || !has_events,
+            has_unknown_output_tokens: has_unknown_output_tokens || !has_events,
+            has_unknown_cost: has_unknown_cost || !has_events,
+            turn_count: 0,
+            tool_call_count: 0,
+            elapsed_ms: 0,
+        }
+    }
+
+    pub fn with_runtime_counts(
+        mut self,
+        turn_count: u32,
+        tool_call_count: u32,
+        elapsed_ms: u64,
+    ) -> Self {
+        self.turn_count = turn_count;
+        self.tool_call_count = tool_call_count;
+        self.elapsed_ms = elapsed_ms;
+        self
+    }
+
+    pub fn unknown(
+        model: Option<String>,
+        turn_count: u32,
+        tool_call_count: u32,
+        elapsed_ms: u64,
+    ) -> Self {
+        Self::from_events(vec![UsageEvent {
+            model,
+            input_tokens: None,
+            output_tokens: None,
+            estimated_cost_micros: None,
+        }])
+        .with_runtime_counts(turn_count, tool_call_count, elapsed_ms)
+    }
+}
+
+fn first_stable_model(events: &[UsageEvent]) -> Option<String> {
+    let mut models = events
+        .iter()
+        .filter_map(|event| event.model.as_deref())
+        .filter(|model| !model.trim().is_empty());
+    let first = models.next()?.to_string();
+    if models.all(|model| model == first) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn sum_optional_usage(values: impl Iterator<Item = Option<u64>>) -> (Option<u64>, bool) {
+    let mut total = 0u64;
+    let mut has_known = false;
+    let mut has_unknown = false;
+    for value in values {
+        match value {
+            Some(known) => {
+                has_known = true;
+                total = total.saturating_add(known);
+            }
+            None => has_unknown = true,
+        }
+    }
+    (has_known.then_some(total), has_unknown)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BudgetSnapshot {
     pub budget_exceeded: bool,
     pub model_call_in_flight: bool,
@@ -125,8 +243,77 @@ impl BudgetDecision {
 mod tests {
     use crate::loop_runtime::{
         BudgetSnapshot, HumanGateType, LoopActor, LoopBudget, LoopEventEnvelope, LoopRuntimeEvent,
-        LoopTaskProjection, LOOP_RUNTIME_SCHEMA_VERSION,
+        LoopTaskProjection, LoopUsageLedger, UsageEvent, LOOP_RUNTIME_SCHEMA_VERSION,
     };
+
+    #[test]
+    fn usage_ledger_sums_known_tokens_and_preserves_unknown_cost() {
+        let usage = LoopUsageLedger::from_events(vec![
+            UsageEvent {
+                model: Some("claude".into()),
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                estimated_cost_micros: None,
+            },
+            UsageEvent {
+                model: Some("claude".into()),
+                input_tokens: Some(25),
+                output_tokens: None,
+                estimated_cost_micros: Some(10),
+            },
+        ]);
+
+        assert_eq!(usage.input_tokens, Some(125));
+        assert_eq!(usage.output_tokens, Some(50));
+        assert_eq!(usage.estimated_cost_micros, Some(10));
+        assert!(usage.has_unknown_output_tokens);
+        assert!(usage.has_unknown_cost);
+    }
+
+    #[test]
+    fn usage_ledger_marks_empty_usage_as_unknown() {
+        let usage = LoopUsageLedger::from_events(Vec::new());
+
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.output_tokens, None);
+        assert_eq!(usage.estimated_cost_micros, None);
+        assert!(usage.has_unknown_input_tokens);
+        assert!(usage.has_unknown_output_tokens);
+        assert!(usage.has_unknown_cost);
+    }
+
+    #[test]
+    fn usage_ledger_serializes_unknown_usage_as_explicit_nulls() {
+        let usage = LoopUsageLedger::unknown(Some("claude".to_string()), 2, 3, 4000);
+
+        let json = serde_json::to_value(usage).unwrap();
+
+        assert_eq!(json["input_tokens"], serde_json::Value::Null);
+        assert_eq!(json["output_tokens"], serde_json::Value::Null);
+        assert_eq!(json["estimated_cost_micros"], serde_json::Value::Null);
+        assert_eq!(json["has_unknown_input_tokens"], true);
+        assert_eq!(json["has_unknown_output_tokens"], true);
+        assert_eq!(json["has_unknown_cost"], true);
+        assert_eq!(json["turn_count"], 2);
+        assert_eq!(json["tool_call_count"], 3);
+        assert_eq!(json["elapsed_ms"], 4000);
+    }
+
+    #[test]
+    fn usage_event_serializes_unknown_usage_as_explicit_nulls() {
+        let event = UsageEvent {
+            model: Some("claude".to_string()),
+            input_tokens: None,
+            output_tokens: None,
+            estimated_cost_micros: None,
+        };
+
+        let json = serde_json::to_value(event).unwrap();
+
+        assert_eq!(json["input_tokens"], serde_json::Value::Null);
+        assert_eq!(json["output_tokens"], serde_json::Value::Null);
+        assert_eq!(json["estimated_cost_micros"], serde_json::Value::Null);
+    }
 
     #[test]
     fn budget_snapshot_blocks_not_started_tool_after_budget_exceeded() {

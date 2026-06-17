@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::loop_runtime::LoopUsageLedger;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentA2AProjection {
     pub running_count: usize,
@@ -77,6 +79,11 @@ pub struct AgentA2ATaskProjection {
     pub changed_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test_report_excerpt: Option<String>,
+    // Task 5 — boundary-level telemetry, derived from worktree metadata artifacts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_io_events: Vec<AgentFileIoEventProjection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_ledger: Option<LoopUsageLedger>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,4 +92,10 @@ pub struct AgentA2AMessageProjection {
     pub kind: String,
     pub content: String,
     pub created_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentFileIoEventProjection {
+    pub path: String,
+    pub operation: String,
 }

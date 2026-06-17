@@ -1,10 +1,13 @@
 use serde::Serialize;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Notify;
 
 use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::event_sink::EventEmitter;
 use crate::harness::Harness;
+use crate::loop_runtime::{LoopUsageLedger, UsageEvent};
+use crate::protocol::events::StreamEvent;
 
 const MAX_ROUNDS: usize = 20;
 const MAX_RESULT_CHARS: usize = 8000;
@@ -30,6 +33,107 @@ struct ToolCallTrace {
 struct SubAgentResult {
     result: String,
     steps: Vec<RoundTrace>,
+    usage: LoopUsageLedger,
+}
+
+struct SubAgentUsageTracker {
+    model: Option<String>,
+    started_at: Instant,
+    events: Vec<UsageEvent>,
+    turn_count: u32,
+    tool_call_count: u32,
+}
+
+impl SubAgentUsageTracker {
+    fn new(model: &str) -> Self {
+        Self {
+            model: (!model.trim().is_empty()).then(|| model.to_string()),
+            started_at: Instant::now(),
+            events: Vec::new(),
+            turn_count: 0,
+            tool_call_count: 0,
+        }
+    }
+
+    fn record_model_round(&mut self, tool_call_count: usize, usage_events: Vec<UsageEvent>) {
+        self.turn_count = self.turn_count.saturating_add(1);
+        self.tool_call_count = self
+            .tool_call_count
+            .saturating_add(tool_call_count.try_into().unwrap_or(u32::MAX));
+        if usage_events.is_empty() {
+            self.events.push(UsageEvent {
+                model: self.model.clone(),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_micros: None,
+            });
+        } else {
+            self.events
+                .extend(usage_events.into_iter().map(|mut event| {
+                    if event.model.is_none() {
+                        event.model = self.model.clone();
+                    }
+                    event
+                }));
+        }
+    }
+
+    fn ledger(&self) -> LoopUsageLedger {
+        LoopUsageLedger::from_events(self.events.clone()).with_runtime_counts(
+            self.turn_count,
+            self.tool_call_count,
+            self.started_at
+                .elapsed()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        )
+    }
+}
+
+struct UsageCaptureEmitter {
+    model: Option<String>,
+    events: parking_lot::Mutex<Vec<UsageEvent>>,
+}
+
+impl UsageCaptureEmitter {
+    fn new(model: &str) -> Self {
+        Self {
+            model: (!model.trim().is_empty()).then(|| model.to_string()),
+            events: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn drain(&self) -> Vec<UsageEvent> {
+        std::mem::take(&mut *self.events.lock())
+    }
+}
+
+impl EventEmitter for UsageCaptureEmitter {
+    fn emit(&self, event: StreamEvent) {
+        if let StreamEvent::Usage {
+            input_tokens,
+            output_tokens,
+            estimated_cost_usd,
+            ..
+        } = event
+        {
+            self.events.lock().push(UsageEvent {
+                model: self.model.clone(),
+                input_tokens: Some(input_tokens.into()),
+                output_tokens: Some(output_tokens.into()),
+                estimated_cost_micros: estimated_cost_micros(estimated_cost_usd),
+            });
+        }
+    }
+}
+
+fn estimated_cost_micros(estimated_cost_usd: f64) -> Option<u64> {
+    if estimated_cost_usd.is_finite() && estimated_cost_usd >= 0.0 {
+        Some((estimated_cost_usd * 1_000_000.0).round() as u64)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,15 +185,21 @@ impl SubAgent {
         let task_msg = ChatMessage::user(task);
         let mut messages: Vec<ChatMessage> = vec![system, task_msg];
         let mut traces: Vec<RoundTrace> = Vec::new();
+        let mut usage = SubAgentUsageTracker::new(adapter.model_id());
+        let usage_capture = UsageCaptureEmitter::new(adapter.model_id());
 
         for round in 0..MAX_ROUNDS {
-            let stream_result = match adapter.call(&messages, cancel.clone()).await {
+            let stream_result = match adapter
+                .call_with_emitter("subagent", &messages, &usage_capture, cancel.clone())
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     crate::app_log!("INFO", "[subagent] API error: {}", e);
-                    return build_error_json(&format!("API error: {e}"), &traces);
+                    return build_error_json(&format!("API error: {e}"), &traces, usage.ledger());
                 }
             };
+            usage.record_model_round(stream_result.tool_calls.len(), usage_capture.drain());
 
             let thinking = extract_by_type(&stream_result.assistant_content, "thinking");
             let text = extract_by_type(&stream_result.assistant_content, "text");
@@ -109,7 +219,7 @@ impl SubAgent {
                     tool_calls: vec![],
                 });
                 let result_text = text.clone();
-                return build_result_json(&result_text, &traces);
+                return build_result_json(&result_text, &traces, usage.ledger());
             }
 
             crate::app_log!(
@@ -219,13 +329,17 @@ impl SubAgent {
         messages.push(ChatMessage::user(
             "Summarize your findings concisely. Do not use tools.",
         ));
-        match adapter.call(&messages, cancel.clone()).await {
+        match adapter
+            .call_with_emitter("subagent", &messages, &usage_capture, cancel.clone())
+            .await
+        {
             Ok(r) => {
+                usage.record_model_round(r.tool_calls.len(), usage_capture.drain());
                 let text = extract_by_type(&r.assistant_content, "text");
                 crate::app_log!("INFO", "[subagent] complete: {} chars", text.len());
-                build_result_json(&text, &traces)
+                build_result_json(&text, &traces, usage.ledger())
             }
-            Err(e) => build_error_json(&format!("Final error: {e}"), &traces),
+            Err(e) => build_error_json(&format!("Final error: {e}"), &traces, usage.ledger()),
         }
     }
 
@@ -314,14 +428,20 @@ impl SubAgent {
 
         let task_msg = ChatMessage::user(task);
         let mut messages: Vec<ChatMessage> = vec![system, task_msg];
+        let mut usage = SubAgentUsageTracker::new(adapter.model_id());
+        let usage_capture = UsageCaptureEmitter::new(adapter.model_id());
 
         for _round in 0..MAX_ROUNDS {
-            let stream_result = match adapter.call(&messages, cancel.clone()).await {
+            let stream_result = match adapter
+                .call_with_emitter("subagent", &messages, &usage_capture, cancel.clone())
+                .await
+            {
                 Ok(r) => r,
                 Err(e) => {
-                    return build_error_json(&format!("API error: {e}"), &[]);
+                    return build_error_json(&format!("API error: {e}"), &[], usage.ledger());
                 }
             };
+            usage.record_model_round(stream_result.tool_calls.len(), usage_capture.drain());
 
             if !stream_result.assistant_content.is_empty() {
                 messages.push(ChatMessage::assistant(serde_json::Value::Array(
@@ -331,7 +451,7 @@ impl SubAgent {
 
             if stream_result.tool_calls.is_empty() {
                 let text = extract_by_type(&stream_result.assistant_content, "text");
-                return build_result_json(&text, &[]);
+                return build_result_json(&text, &[], usage.ledger());
             }
 
             let mut result_map = std::collections::HashMap::new();
@@ -377,7 +497,7 @@ impl SubAgent {
             messages.push(model_tool_results.message);
         }
 
-        build_error_json("Max rounds reached", &[])
+        build_error_json("Max rounds reached", &[], usage.ledger())
     }
 }
 
@@ -464,18 +584,20 @@ fn extract_by_type(content: &[serde_json::Value], target_type: &str) -> String {
     extract_by_type(content, "thinking")
 }
 
-fn build_result_json(text: &str, traces: &[RoundTrace]) -> String {
+fn build_result_json(text: &str, traces: &[RoundTrace], usage: LoopUsageLedger) -> String {
     let payload = SubAgentResult {
         result: truncate_any(text.to_string(), MAX_RESULT_CHARS),
         steps: traces.to_vec(),
+        usage,
     };
     serde_json::to_string(&payload).unwrap_or_else(|_| text.to_string())
 }
 
-fn build_error_json(error: &str, traces: &[RoundTrace]) -> String {
+fn build_error_json(error: &str, traces: &[RoundTrace], usage: LoopUsageLedger) -> String {
     let payload = SubAgentResult {
         result: error.to_string(),
         steps: traces.to_vec(),
+        usage,
     };
     serde_json::to_string(&payload).unwrap_or_else(|_| error.to_string())
 }

@@ -7,7 +7,7 @@ pub mod projection;
 pub mod store;
 pub mod types;
 
-pub use budget::{BudgetDecision, BudgetSnapshot};
+pub use budget::{BudgetDecision, BudgetSnapshot, LoopUsageLedger, UsageEvent};
 pub use completion::evaluate_completion;
 pub use gates::{
     HumanGateDecision, HumanGateDecisionKind, HumanGateRecord, HumanGateStatus, HumanGateType,

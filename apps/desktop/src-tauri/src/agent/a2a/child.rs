@@ -554,6 +554,36 @@ mod tests {
             }
         }
 
+        async fn stream_message_with_emitter(
+            &self,
+            session_id: &str,
+            messages: &[crate::adapters::base::ChatMessage],
+            emitter: &dyn EventEmitter,
+            cancel: Arc<Notify>,
+        ) -> Result<crate::adapters::base::StreamResult, crate::adapters::base::AdapterError>
+        {
+            self.call_with_emitter(session_id, messages, emitter, cancel)
+                .await
+        }
+
+        async fn call_with_emitter(
+            &self,
+            session_id: &str,
+            messages: &[crate::adapters::base::ChatMessage],
+            emitter: &dyn EventEmitter,
+            cancel: Arc<Notify>,
+        ) -> Result<crate::adapters::base::StreamResult, crate::adapters::base::AdapterError>
+        {
+            let result = self.call(messages, cancel).await?;
+            emitter.emit(crate::protocol::events::StreamEvent::Usage {
+                session_id: session_id.to_string(),
+                input_tokens: 10,
+                output_tokens: 5,
+                estimated_cost_usd: 0.00001,
+            });
+            Ok(result)
+        }
+
         fn model_id(&self) -> &str {
             "mock"
         }
@@ -629,6 +659,18 @@ mod tests {
             "worktree path should contain task id, got: {}",
             summary.worktree_path
         );
+        let result_json: serde_json::Value =
+            serde_json::from_str(&summary.result).expect("subagent result json");
+        let usage = result_json.get("usage").expect("usage ledger");
+        assert_eq!(usage["model"].as_str(), Some("mock"));
+        assert_eq!(usage["input_tokens"].as_u64(), Some(20));
+        assert_eq!(usage["output_tokens"].as_u64(), Some(10));
+        assert_eq!(usage["estimated_cost_micros"].as_u64(), Some(20));
+        assert_eq!(usage["has_unknown_input_tokens"].as_bool(), Some(false));
+        assert_eq!(usage["has_unknown_output_tokens"].as_bool(), Some(false));
+        assert_eq!(usage["has_unknown_cost"].as_bool(), Some(false));
+        assert_eq!(usage["turn_count"].as_u64(), Some(2));
+        assert_eq!(usage["tool_call_count"].as_u64(), Some(1));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

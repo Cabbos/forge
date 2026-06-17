@@ -215,6 +215,8 @@ pub(crate) fn extract_worktree_artifacts(
     if let Ok(summary) =
         serde_json::from_str::<crate::agent::a2a::worktree::WorktreeWorkerSummary>(raw)
     {
+        let file_io_events = boundary_file_io_events(&summary);
+        let usage_ledger = usage_ledger_from_worker_result(&summary.result);
         let meta = serde_json::json!({
             "worktree_path": summary.worktree_path,
             "cleaned_up": summary.cleaned_up,
@@ -224,6 +226,8 @@ pub(crate) fn extract_worktree_artifacts(
             "needs_human_review": summary.needs_human_review,
             "suggested_action": summary.suggested_action,
             "reason_codes": summary.reason_codes,
+            "file_io_events": file_io_events,
+            "usage_ledger": usage_ledger,
         });
         artifacts.push(AgentArtifact {
             artifact_id: format!("meta-{}", task_id.as_str()),
@@ -236,6 +240,100 @@ pub(crate) fn extract_worktree_artifacts(
     }
 
     artifacts
+}
+
+fn usage_ledger_from_worker_result(raw: &str) -> Option<crate::loop_runtime::LoopUsageLedger> {
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    serde_json::from_value(value.get("usage")?.clone()).ok()
+}
+
+fn boundary_file_io_events(summary: &WorktreeWorkerSummary) -> Vec<serde_json::Value> {
+    let mut events = Vec::new();
+    if worktree_was_created(summary) {
+        push_file_io_event(&mut events, &summary.worktree_path, "worktree_created");
+    }
+    if let Some(diff) = &summary.diff {
+        for path in files_from_diff_text(diff) {
+            push_file_io_event(&mut events, &path, "diff_observed");
+        }
+    }
+    if summary
+        .test_report
+        .as_ref()
+        .is_some_and(|report| !report.trim().is_empty())
+    {
+        push_file_io_event(&mut events, &summary.worktree_path, "test_report_observed");
+    }
+    if worktree_was_created(summary) {
+        push_file_io_event(
+            &mut events,
+            &summary.worktree_path,
+            if summary.cleaned_up {
+                "worktree_cleaned"
+            } else {
+                "worktree_preserved"
+            },
+        );
+    }
+    events
+}
+
+fn push_file_io_event(events: &mut Vec<serde_json::Value>, path: &str, operation: &str) {
+    events.push(serde_json::json!({
+        "path": path,
+        "operation": operation,
+    }));
+}
+
+fn worktree_was_created(summary: &WorktreeWorkerSummary) -> bool {
+    !summary.reason_codes.iter().any(|reason| {
+        matches!(
+            reason.as_str(),
+            "not_a_git_repo" | "git_error" | "already_in_use"
+        )
+    })
+}
+
+fn files_from_diff_text(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut in_untracked_files = false;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            in_untracked_files = false;
+            let mut parts = rest.splitn(2, ' ');
+            let a = parts.next().unwrap_or("");
+            let b = parts.next().unwrap_or("");
+            let path = if b == "/dev/null" { a } else { b };
+            push_unique_diff_path(&mut paths, normalize_diff_path(path));
+        } else if let Some(rest) = line.strip_prefix("+++ ") {
+            in_untracked_files = false;
+            push_unique_diff_path(&mut paths, normalize_diff_path(rest));
+        } else if let Some(rest) = line.strip_prefix("--- ") {
+            in_untracked_files = false;
+            push_unique_diff_path(&mut paths, normalize_diff_path(rest));
+        } else if line.trim() == "## Untracked files:" {
+            in_untracked_files = true;
+        } else if in_untracked_files {
+            if let Some(path) = line.strip_prefix("  ") {
+                push_unique_diff_path(&mut paths, path.trim());
+            } else if !line.trim().is_empty() {
+                in_untracked_files = false;
+            }
+        }
+    }
+    paths
+}
+
+fn normalize_diff_path(path: &str) -> &str {
+    path.trim()
+        .trim_start_matches("a/")
+        .trim_start_matches("b/")
+}
+
+fn push_unique_diff_path(paths: &mut Vec<String>, path: &str) {
+    if !path.is_empty() && path != "/dev/null" && !paths.iter().any(|existing| existing == path) {
+        paths.push(path.to_string());
+    }
 }
 
 /// Arbitration result when multiple worktree workers have completed.
@@ -650,6 +748,54 @@ Analysis.
         assert!(meta.contains("tests_passed"));
         assert!(meta.contains("reason_codes"));
         assert!(meta.contains("diff was truncated"));
+    }
+
+    #[test]
+    fn boundary_file_io_uses_diff_headers_and_ignores_context_lines() {
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+  let not_a_path = true;
+  src/fake_from_context.rs
+-old
++new
+";
+
+        let paths = files_from_diff_text(diff);
+
+        assert_eq!(paths, vec!["src/lib.rs"]);
+        assert!(!paths.iter().any(|path| path == "src/fake_from_context.rs"));
+    }
+
+    #[test]
+    fn boundary_file_io_filters_dev_null_markers() {
+        let diff = "\
+diff --git a/src/removed.rs b/src/removed.rs
+--- a/src/removed.rs
++++ /dev/null
+diff --git /dev/null b/src/added.rs
+--- /dev/null
++++ b/src/added.rs
+";
+
+        let paths = files_from_diff_text(diff);
+
+        assert_eq!(paths, vec!["src/removed.rs", "src/added.rs"]);
+    }
+
+    #[test]
+    fn boundary_file_io_captures_untracked_section_paths() {
+        let diff = "\
+## Untracked files:
+  src/new_file.rs
+  docs/new-note.md
+";
+
+        let paths = files_from_diff_text(diff);
+
+        assert_eq!(paths, vec!["src/new_file.rs", "docs/new-note.md"]);
     }
 
     #[test]

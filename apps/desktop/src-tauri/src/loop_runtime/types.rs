@@ -1,4 +1,4 @@
-use crate::loop_runtime::budget::BudgetSnapshot;
+use crate::loop_runtime::budget::{BudgetSnapshot, LoopUsageLedger};
 use crate::loop_runtime::gates::{HumanGateDecision, HumanGateRecord, HumanGateType};
 use crate::loop_runtime::policy::LoopActionIntent;
 use serde::{Deserialize, Serialize};
@@ -274,6 +274,16 @@ pub enum LoopRuntimeEvent {
         task_id: String,
         snapshot: BudgetSnapshot,
     },
+    SubagentFileIoRecorded {
+        task_id: String,
+        child_task_id: String,
+        path: String,
+        operation: String,
+    },
+    UsageLedgerRecorded {
+        task_id: String,
+        usage: LoopUsageLedger,
+    },
     CompletionEvaluated {
         task_id: String,
         result: LoopCompletionResult,
@@ -293,6 +303,8 @@ impl LoopRuntimeEvent {
             Self::EvidenceRecorded { .. } => "evidence_recorded",
             Self::PolicyDecisionRecorded { .. } => "policy_decision_recorded",
             Self::BudgetSnapshotRecorded { .. } => "budget_snapshot_recorded",
+            Self::SubagentFileIoRecorded { .. } => "subagent_file_io_recorded",
+            Self::UsageLedgerRecorded { .. } => "usage_ledger_recorded",
             Self::CompletionEvaluated { .. } => "completion_evaluated",
         }
     }

@@ -1,5 +1,6 @@
 use crate::agent::a2a::projection::{
     AgentA2AMessageProjection, AgentA2AProjection, AgentA2ATaskProjection,
+    AgentFileIoEventProjection,
 };
 use crate::agent::a2a::types::{
     AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole,
@@ -545,6 +546,20 @@ impl AgentA2ABus {
                     .as_ref()
                     .and_then(|v| v.get("diff_available").and_then(|x| x.as_bool()));
                 let duration_ms = compute_duration_ms(task.started_at_ms, task.ended_at_ms);
+                let file_io_events = worktree_meta
+                    .as_ref()
+                    .and_then(|value| value.get("file_io_events"))
+                    .map(extract_file_io_events)
+                    .unwrap_or_default();
+                let usage_ledger = worktree_meta
+                    .as_ref()
+                    .and_then(|value| value.get("usage_ledger"))
+                    .and_then(|value| {
+                        serde_json::from_value::<crate::loop_runtime::LoopUsageLedger>(
+                            value.clone(),
+                        )
+                        .ok()
+                    });
                 AgentA2ATaskProjection {
                     task_id: task.task_id.as_str().to_string(),
                     agent_id: task.agent_id.as_str().to_string(),
@@ -622,6 +637,8 @@ impl AgentA2ABus {
                     changed_file_count,
                     changed_files,
                     test_report_excerpt,
+                    file_io_events,
+                    usage_ledger,
                 }
             })
             .collect();
@@ -757,6 +774,22 @@ fn extract_test_report_excerpt(content: &str) -> Option<String> {
         .lines()
         .find(|l| !l.trim().is_empty())
         .map(|l| l.trim().to_string())
+}
+
+fn extract_file_io_events(value: &serde_json::Value) -> Vec<AgentFileIoEventProjection> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|event| {
+            let path = event.get("path").and_then(|value| value.as_str())?;
+            let operation = event.get("operation").and_then(|value| value.as_str())?;
+            Some(AgentFileIoEventProjection {
+                path: path.to_string(),
+                operation: operation.to_string(),
+            })
+        })
+        .collect()
 }
 
 /// Compute duration in milliseconds for a finished task.
@@ -1204,6 +1237,69 @@ mod tests {
             task_proj.test_report_excerpt.as_deref(),
             Some("12 tests passed")
         );
+    }
+
+    #[test]
+    fn projection_exposes_worktree_boundary_file_io_and_usage_ledger() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+        use crate::loop_runtime::{LoopUsageLedger, UsageEvent};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement telemetry",
+            "Record boundary telemetry",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        let usage = LoopUsageLedger::from_events(vec![UsageEvent {
+            model: Some("claude".to_string()),
+            input_tokens: Some(100),
+            output_tokens: None,
+            estimated_cost_micros: None,
+        }])
+        .with_runtime_counts(2, 3, 4000);
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-worker",
+                    "cleaned_up": false,
+                    "file_io_events": [
+                        { "path": "/tmp/forge-worker", "operation": "worktree_created" },
+                        { "path": "apps/desktop/src-tauri/src/agent/sub.rs", "operation": "diff_observed" },
+                        { "path": "/tmp/forge-worker", "operation": "worktree_preserved" }
+                    ],
+                    "usage_ledger": usage,
+                })
+                .to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+
+        let projection = bus.projection();
+        let task = &projection.tasks[0];
+        assert_eq!(task.file_io_events.len(), 3);
+        assert_eq!(task.file_io_events[0].operation, "worktree_created");
+        assert_eq!(
+            task.file_io_events[1].path,
+            "apps/desktop/src-tauri/src/agent/sub.rs"
+        );
+        let usage = task.usage_ledger.as_ref().expect("usage ledger");
+        assert_eq!(usage.model.as_deref(), Some("claude"));
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, None);
+        assert!(usage.has_unknown_output_tokens);
+        assert!(usage.has_unknown_cost);
+        assert_eq!(usage.turn_count, 2);
+        assert_eq!(usage.tool_call_count, 3);
+        assert_eq!(usage.elapsed_ms, 4000);
     }
 
     #[test]
