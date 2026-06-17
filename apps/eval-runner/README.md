@@ -40,6 +40,18 @@ forge-eval-runner/
   app/
     cases.py      JSON eval case loader for files or directories
     cli.py        Minimal backtest CLI for local/offline runs
+    datasets.py   Stable dataset fingerprints for loaded case sets
+    experiments.py  Immutable experiment artifact metadata
+    trust_gates.py  Fail-closed run trust scorecard helpers
+    scoring.py    Layered code, scope, red-team, and split-validation scorers
+    judge_calibration.py  Golden-label calibration for report-only judges
+    prompt_mutation.py  Deterministic developer-style prompt variants
+    red_team.py   Red-team case classification helpers
+    sandbox.py    Workspace cleanliness and future-state leakage checks
+    patches.py    Patch replay and normalized patch helpers
+    harness_checks.py  Golden harness self-checks
+    agent_adapter.py  Stable external-agent trace adapter contract
+    trace_import.py  Production trace to eval case promotion
     main.py       FastAPI app and route handlers
     models.py     Pydantic task, trace, run, and metrics schemas
     runner.py     Deterministic mock coding-agent runner
@@ -70,6 +82,8 @@ forge-eval-runner/
 - `GET /runs/{run_id}/metrics`
 - `GET /runs/{run_id}/report`
 - `GET /runs/{run_id}/artifacts`
+- `POST /runs/{run_id}/cancel`
+- `GET /queue/status`
 
 ## Run Locally
 
@@ -142,7 +156,7 @@ FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
 uv run python -m app.worker
 ```
 
-The worker claims the oldest `pending` run, marks it `running`, executes each task through the existing runner boundary, writes per-task summaries, stores trace/report artifacts, and marks the run `completed`.
+The worker claims the oldest `pending` run, marks it `running`, executes each task through the existing runner boundary, writes per-task summaries, stores trace/report artifacts, and marks the run `completed`. Cancellation requests preserve the trace/report artifacts produced before cancellation, and the worker records stderr previews plus `failure_reason` for failed tasks so operators can diagnose a bad run without rerunning it blindly. `GET /queue/status` reports counts by run status plus the oldest pending/running run IDs, which is the first check for stuck workers or stale leases.
 
 ## Run Eval Cases With CLI
 
@@ -214,10 +228,76 @@ uv run python -m app.cli \
   --max-avg-model-rounds 25
 ```
 
+Other useful gates are `--max-total-cost-usd`, `--red-team-only`,
+`--include-red-team`, `--max-red-team-failure-rate`, `--trials`,
+`--experiment-name`, `--prompt-mutation`, and `--mutations-only`.
+
 For release checks or notebook analysis, `app.report_compare.compare_reports`
 compares two `BacktestReport` payloads and returns critical regressions for
 large success-rate drops or scope-violation spikes, plus warnings for sharp
 model-round increases.
+
+## Trusted Backtest Operator Path
+
+Treat an eval run as two decisions: `execution_status` says whether the tasks
+ran, while `trust_status` says whether the result is decision-worthy. A completed
+run can still be untrusted when golden harness checks fail, the dataset has no
+fingerprint, an LLM-as-judge scorer is not calibrated against goldens, or the
+red-team lane fails.
+
+For local release confidence:
+
+1. Run golden/mock harness checks and keep uncalibrated judge or semantic scores
+   report-only until `judge_calibration` marks them gateable.
+2. Run normal cases with a stable dataset fingerprint, an immutable experiment
+   snapshot, repeated trials, and threshold gates:
+
+   ```bash
+   uv run python -m app.cli \
+     --cases eval_cases \
+     --provider mock \
+     --trials 3 \
+     --experiment-name local-regression \
+     --output output/local-regression.json \
+     --min-success-rate 0.1 \
+     --max-scope-violation-rate 0.2 \
+     --max-total-cost-usd 1.00
+   ```
+
+3. Run prompt-mutation probes separately when you want user-style wording
+   coverage without changing the source cases:
+
+   ```bash
+   uv run python -m app.cli \
+     --cases eval_cases \
+     --provider mock \
+     --prompt-mutation terse-bug-report \
+     --min-success-rate 0.1
+   ```
+
+4. Run adversarial cases as their own red-team lane:
+
+   ```bash
+   uv run python -m app.cli \
+     --cases eval_cases \
+     --provider mock \
+     --red-team-only \
+     --max-red-team-failure-rate 0
+   ```
+
+5. Inspect `score_summary` for layered scorers: functional correctness, scope,
+   prompt injection, secret leakage, unsafe tool use, future-state leakage,
+   `regression_ok`, and `bugfix_ok`.
+6. Inspect trace artifacts for `trajectory_path` and `cost_usd`; SQLite-backed
+   runs also emit per-task `*.trajectory.json` artifacts beside `trace.json` and
+   `report.json`.
+7. Compare the new report against the last trusted baseline with
+   `app.report_compare.compare_reports`, then promote production failures back
+   into offline regression cases with `python -m app.cli promote-trace`.
+
+Executable cases should be verified. Prompt-only or adapter-contract cases can
+set `metadata.contract_only: true`; they stay useful for contract coverage but
+should not be treated like code-verified PASS_TO_PASS / FAIL_TO_PASS tasks.
 
 ## Three Ways to Run
 
@@ -461,9 +541,7 @@ This project maps directly to real agent-platform work:
 
 ## Next Iterations
 
-- Persist runs to SQLite or Postgres.
 - Add a frontend trace viewer with timeline and diff panels.
-- Wire `ForgeAgentRunner` to Forge's real headless/Tauri backend entry point.
 - Execute verification commands in an isolated container.
 - Compare multiple models/providers across the same task set.
 - Export run reports as JSON, Markdown, or HTML.
