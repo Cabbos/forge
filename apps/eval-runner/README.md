@@ -458,6 +458,8 @@ curl http://localhost:8000/runs/<run_id>/artifacts
 
 Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id>/case.json` with fixture paths resolved relative to that file:
 
+For coverage expectations and lane-specific commands, see `docs/case-matrix.md`.
+
 ```json
 {
   "schema_version": 1,
