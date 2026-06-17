@@ -697,3 +697,67 @@ def test_cli_case_lifecycle_fails_on_quarantined_case(tmp_path, capsys):
     output = capsys.readouterr().out
     assert '"quarantined": 1' in output
     assert '"code": "quarantined_case"' in output
+
+
+def test_cli_flake_triage_fails_on_flaky_trials(tmp_path, capsys):
+    from datetime import UTC, datetime
+
+    from app.cli import main
+    from app.models import AgentTrace, FailureCategory, VerificationResult
+
+    def trace(passed: bool) -> AgentTrace:
+        now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+        return AgentTrace(
+            task_id="parser-case",
+            user_prompt="Fix parser.",
+            model="deterministic-agent-v1",
+            provider="mock",
+            context_files=[],
+            final_answer="done" if passed else "failed",
+            verification_result=VerificationResult(
+                command="pytest",
+                passed=passed,
+                stdout="passed" if passed else "",
+                stderr="" if passed else "failed",
+                exit_code=0 if passed else 1,
+                duration_ms=10,
+            ),
+            failure_category=FailureCategory.NONE
+            if passed
+            else FailureCategory.VERIFICATION_FAILED,
+            started_at=now,
+            ended_at=now,
+            duration_ms=10,
+        )
+
+    traces = [trace(True), trace(False)]
+    artifact = tmp_path / "trials.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "report": {
+                    "total_tasks": 2,
+                    "success_rate": 0.5,
+                    "verification_pass_rate": 0.5,
+                    "scope_violation_rate": 0.0,
+                    "avg_duration_ms": 10.0,
+                    "avg_model_rounds": 0.0,
+                    "avg_confirm_requests": 0.0,
+                    "failure_categories": {"verification_failed": 1},
+                    "score_summary": {},
+                    "tasks": [],
+                },
+                "traces": [item.model_dump(mode="json") for item in traces],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(["flake-triage", "--artifact", str(artifact), "--fail-on-flaky"])
+        == 1
+    )
+
+    output = capsys.readouterr().out
+    assert '"classification": "flaky"' in output
+    assert '"quarantine_candidates": [' in output

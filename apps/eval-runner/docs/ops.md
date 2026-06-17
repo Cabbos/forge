@@ -177,6 +177,19 @@ uv run python -m app.cli case-lifecycle \
 
 诊断会统计各状态数量，并报告缺少 owner、未知 status、quarantined case 等问题。
 
+### Repeated-trial flake triage
+
+对 `--trials` 产生的 artifact 做稳定性分类：
+
+```bash
+uv run python -m app.cli flake-triage \
+  --artifact output/local-regression.json \
+  --fail-on-flaky
+```
+
+输出会把 case 分为 `stable_pass`、`stable_fail`、`flaky` 或 `needs_review`，
+并列出建议 quarantine 的 case ID。
+
 ### 3. 三种 Smoke 模式
 
 | 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |

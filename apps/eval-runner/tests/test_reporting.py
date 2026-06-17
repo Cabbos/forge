@@ -318,6 +318,24 @@ def test_trial_aggregation_marks_flaky_task() -> None:
     assert result["a"]["flaky"] is True
 
 
+def test_flake_triage_classifies_mixed_trial_results():
+    from app.flake_triage import triage_trial_metrics
+
+    result = triage_trial_metrics(
+        {
+            "parser-case": {"attempts": 3, "pass_rate": 0.667, "flaky": True},
+            "stable-fail": {"attempts": 3, "pass_rate": 0.0, "flaky": False},
+            "stable-pass": {"attempts": 3, "pass_rate": 1.0, "flaky": False},
+        }
+    )
+
+    assert result.items[0].task_id == "parser-case"
+    assert result.items[0].classification == "flaky"
+    assert result.items[1].classification == "stable_fail"
+    assert result.items[2].classification == "stable_pass"
+    assert result.quarantine_candidates == ["parser-case"]
+
+
 def test_build_report_summarizes_continuity_benefit_diagnostics() -> None:
     report = build_report(
         [

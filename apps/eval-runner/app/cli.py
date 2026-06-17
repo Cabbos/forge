@@ -168,6 +168,8 @@ def red_team_failure_rate(report: BacktestReport) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["flake-triage"]:
+        return flake_triage_main(raw_argv[1:])
     if raw_argv[:1] == ["case-lifecycle"]:
         return case_lifecycle_main(raw_argv[1:])
     if raw_argv[:1] == ["render-report"]:
@@ -380,6 +382,35 @@ def case_lifecycle_main(argv: list[str]) -> int:
     print(report.model_dump_json(indent=2))
     has_quarantined = report.counts.get("quarantined", 0) > 0
     return 1 if args.fail_on_quarantined and has_quarantined else 0
+
+
+def flake_triage_main(argv: list[str]) -> int:
+    from app.artifacts import load_report_artifact
+    from app.flake_triage import triage_trial_metrics
+    from app.metrics import calculate_metrics
+    from app.reporting import aggregate_trial_metrics
+    from pydantic import ValidationError
+
+    parser = argparse.ArgumentParser(description="Classify repeated-trial flakes.")
+    parser.add_argument("--artifact", type=Path, required=True)
+    parser.add_argument("--fail-on-flaky", action="store_true")
+    args = parser.parse_args(argv)
+
+    try:
+        artifact = load_report_artifact(args.artifact)
+        artifact_payload = json.loads(artifact.path.read_text(encoding="utf-8"))
+        raw_traces = (
+            artifact_payload.get("traces", []) if isinstance(artifact_payload, dict) else []
+        )
+        traces = [AgentTrace.model_validate(trace) for trace in raw_traces]
+        report = triage_trial_metrics(
+            aggregate_trial_metrics(calculate_metrics(traces).tasks)
+        )
+    except (OSError, ValueError, ValidationError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(report.model_dump_json(indent=2))
+    return 1 if args.fail_on_flaky and report.quarantine_candidates else 0
 
 
 if __name__ == "__main__":

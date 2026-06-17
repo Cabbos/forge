@@ -55,6 +55,18 @@ class CaseLifecycleReport(EvalModel):
     issues: list[CaseLifecycleIssue] = Field(default_factory=list)
 
 
+class FlakeTriageItem(EvalModel):
+    task_id: str
+    attempts: int = Field(ge=1)
+    pass_rate: float = Field(ge=0.0, le=1.0)
+    classification: str
+
+
+class FlakeTriageReport(EvalModel):
+    items: list[FlakeTriageItem] = Field(default_factory=list)
+    quarantine_candidates: list[str] = Field(default_factory=list)
+
+
 class WorkspaceCheck(EvalModel):
     ok: bool
     untracked_files: list[str] = Field(default_factory=list)
