@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -235,6 +236,12 @@ class BacktestReport(EvalModel):
     score_summary: dict[str, float] = Field(default_factory=dict)
     tasks: list[TraceSummary] = Field(default_factory=list)
     continuity: ContinuityReport | None = None
+
+
+class ReportArtifact(EvalModel):
+    path: Path
+    report: BacktestReport
+    trace_count: int = Field(default=0, ge=0)
 
 
 class EvalArtifact(EvalModel):

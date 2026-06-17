@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 from app.models import (
@@ -352,3 +353,63 @@ def test_build_report_summarizes_continuity_benefit_diagnostics() -> None:
     assert report.continuity.notable_failure_count == 1
     assert report.continuity.experience_status_counts == {"candidate": 2, "accepted": 1}
     assert report.continuity.experience_kind_counts == {"workflow": 2, "lesson": 1}
+
+
+def test_load_report_artifact_accepts_cli_artifact_shape(tmp_path):
+    from app.artifacts import load_report_artifact
+
+    artifact = tmp_path / "run.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "report": {
+                    "total_tasks": 1,
+                    "success_rate": 1.0,
+                    "verification_pass_rate": 1.0,
+                    "scope_violation_rate": 0.0,
+                    "avg_duration_ms": 12.0,
+                    "avg_model_rounds": 1.0,
+                    "avg_confirm_requests": 0.0,
+                    "failure_categories": {},
+                    "score_summary": {"functional_correctness": 1.0},
+                    "tasks": [],
+                },
+                "traces": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_report_artifact(artifact)
+
+    assert loaded.path == artifact
+    assert loaded.report.success_rate == 1.0
+    assert loaded.trace_count == 0
+
+
+def test_load_report_artifact_accepts_raw_report_shape(tmp_path):
+    from app.artifacts import load_report_artifact
+
+    artifact = tmp_path / "report.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "total_tasks": 1,
+                "success_rate": 0.0,
+                "verification_pass_rate": 0.0,
+                "scope_violation_rate": 1.0,
+                "avg_duration_ms": 40.0,
+                "avg_model_rounds": 3.0,
+                "avg_confirm_requests": 1.0,
+                "failure_categories": {"scope_violation": 1},
+                "score_summary": {},
+                "tasks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_report_artifact(artifact)
+
+    assert loaded.report.scope_violation_rate == 1.0
+    assert loaded.trace_count == 0
