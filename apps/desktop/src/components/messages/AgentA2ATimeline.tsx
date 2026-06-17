@@ -444,6 +444,7 @@ function TaskRow({
     ? formatDuration(Date.now() - task.started_at_ms)
     : null;
   const hasRetryable = task.retryable === true && task.status === "failed";
+  const childTaskCount = task.child_task_ids.length;
 
   return (
     <div className="forge-a2a-task-row-wrapper" data-mode={mode}>
@@ -455,6 +456,16 @@ function TaskRow({
         {task.parent_task_id && (
           <span className="forge-a2a-task-lineage" title={`Parent: ${task.parent_task_id}`}>
             <GitBranch className="size-3" />
+          </span>
+        )}
+        {childTaskCount > 0 && (
+          <span
+            className="forge-a2a-task-lineage forge-a2a-task-lineage--children"
+            title={`Children: ${task.child_task_ids.join(", ")}`}
+            aria-label={`子任务 ${childTaskCount} 个: ${task.child_task_ids.join(", ")}`}
+          >
+            <GitBranch className="size-3" />
+            {childTaskCount}
           </span>
         )}
         {task.artifact_count > 0 && (

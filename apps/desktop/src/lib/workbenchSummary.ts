@@ -175,6 +175,7 @@ export function normalizeA2ATaskProjection(task: AgentA2ATaskProjection): AgentA
     review_decision: task.review_decision ?? null,
     reviewed_at_ms: task.reviewed_at_ms ?? null,
     parent_task_id: task.parent_task_id ?? null,
+    child_task_ids: task.child_task_ids ?? [],
     created_at_ms: task.created_at_ms ?? 0,
     started_at_ms: task.started_at_ms ?? null,
     ended_at_ms: task.ended_at_ms ?? null,

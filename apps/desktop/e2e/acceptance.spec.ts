@@ -354,6 +354,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
               cleaned_up: false,
               suggested_action: "Review before merge; commit remains human-gated.",
               parent_task_id: null,
+              child_task_ids: ["a2a-runtime-usage", "a2a-runtime-review"],
               created_at_ms: Date.now() - 60_000,
               started_at_ms: Date.now() - 58_000,
               ended_at_ms: Date.now() - 1_000,
@@ -394,7 +395,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
               worktree_path: null,
               cleaned_up: null,
               suggested_action: null,
-              parent_task_id: null,
+              parent_task_id: "a2a-runtime-ui",
+              child_task_ids: [],
               created_at_ms: Date.now() - 50_000,
               started_at_ms: Date.now() - 48_000,
               ended_at_ms: Date.now() - 1_000,
@@ -486,6 +488,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await page.getByRole("button", { name: "打开后台任务面板" }).click();
     const workbench = page.getByRole("region", { name: "子任务" });
     await expect(workbench).toContainText("Runtime UI implementer");
+    await expect(workbench.locator('[aria-label="子任务 2 个: a2a-runtime-usage, a2a-runtime-review"]')).toContainText("2");
     await expect(workbench).toContainText("需要人工审阅");
     await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "文件 IO" })).toContainText("LoopTaskPanel.tsx");
     await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");

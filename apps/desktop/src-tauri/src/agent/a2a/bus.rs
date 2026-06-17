@@ -6,6 +6,7 @@ use crate::agent::a2a::types::{
     AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole,
     AgentTaskFailure, AgentTaskId, AgentTaskRecord, AgentTaskStatus,
 };
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -541,6 +542,16 @@ impl AgentA2ABus {
 
     pub(crate) fn projection(&self) -> AgentA2AProjection {
         let mut projection = AgentA2AProjection::default();
+        let mut child_task_ids_by_parent: HashMap<AgentTaskId, Vec<String>> = HashMap::new();
+        for task in &self.tasks {
+            if let Some(parent_task_id) = task.parent_task_id.as_ref() {
+                child_task_ids_by_parent
+                    .entry(parent_task_id.clone())
+                    .or_default()
+                    .push(task.task_id.as_str().to_string());
+            }
+        }
+
         projection.tasks = self
             .tasks
             .iter()
@@ -603,6 +614,10 @@ impl AgentA2ABus {
                         )
                         .ok()
                     });
+                let child_task_ids = child_task_ids_by_parent
+                    .get(&task.task_id)
+                    .cloned()
+                    .unwrap_or_default();
                 AgentA2ATaskProjection {
                     task_id: task.task_id.as_str().to_string(),
                     agent_id: task.agent_id.as_str().to_string(),
@@ -660,6 +675,7 @@ impl AgentA2ABus {
                         .parent_task_id
                         .as_ref()
                         .map(|id| id.as_str().to_string()),
+                    child_task_ids,
                     created_at_ms: task.created_at_ms,
                     started_at_ms: task.started_at_ms,
                     ended_at_ms: task.ended_at_ms,
@@ -1482,6 +1498,82 @@ mod tests {
             child_proj.parent_task_id.as_deref(),
             Some(parent_id.as_str())
         );
+    }
+
+    #[test]
+    fn projection_derives_parent_child_task_ids_in_creation_order() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        let child_a_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child A",
+                "child A prompt",
+                20,
+            )
+            .expect("child A assigned");
+        let child_b_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Reviewer,
+                AgentExecutionMode::PatchProposal,
+                "Child B",
+                "child B prompt",
+                30,
+            )
+            .expect("child B assigned");
+        let root_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Root",
+            "root prompt",
+            40,
+        );
+
+        let projection = bus.projection();
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_a_id.as_str())
+            .expect("child projection");
+        let root_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == root_id.as_str())
+            .expect("root projection");
+
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![child_a_id.as_str().to_string(), child_b_id.as_str().to_string()]
+        );
+        let parent_json =
+            serde_json::to_value(parent_projection).expect("serialize parent projection");
+        assert_eq!(
+            parent_json.get("child_task_ids"),
+            Some(&serde_json::json!([child_a_id.as_str(), child_b_id.as_str()]))
+        );
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert!(child_projection.child_task_ids.is_empty());
+        assert!(root_projection.child_task_ids.is_empty());
+
+        let root_json = serde_json::to_value(root_projection).expect("serialize root projection");
+        assert!(root_json.get("child_task_ids").is_none());
     }
 
     #[test]

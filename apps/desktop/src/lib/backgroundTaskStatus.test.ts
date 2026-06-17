@@ -28,6 +28,7 @@ function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProj
     cleaned_up: overrides.cleaned_up ?? null,
     suggested_action: overrides.suggested_action ?? null,
     parent_task_id: overrides.parent_task_id ?? null,
+    child_task_ids: overrides.child_task_ids ?? [],
     created_at_ms: overrides.created_at_ms ?? 0,
     started_at_ms: overrides.started_at_ms ?? null,
     ended_at_ms: overrides.ended_at_ms ?? null,

@@ -9,6 +9,7 @@ import {
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "../lib/protocol.ts";
 
 function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProjection {
+  const lineageOverrides = overrides as Partial<AgentA2ATaskProjection> & { child_task_ids?: string[] };
   return {
     task_id: overrides.task_id ?? "task-1",
     agent_id: overrides.agent_id ?? "agent-1",
@@ -32,6 +33,7 @@ function task(overrides: Partial<AgentA2ATaskProjection> = {}): AgentA2ATaskProj
     suggested_action: overrides.suggested_action ?? null,
     // Phase 4-A fields
     parent_task_id: overrides.parent_task_id ?? null,
+    child_task_ids: lineageOverrides.child_task_ids ?? [],
     created_at_ms: overrides.created_at_ms ?? 0,
     started_at_ms: overrides.started_at_ms ?? null,
     ended_at_ms: overrides.ended_at_ms ?? null,
@@ -272,6 +274,45 @@ describe("deriveWorkbenchSummary", () => {
     assert.strictEqual(normalized.last_heartbeat_at_ms, null);
     assert.strictEqual(normalized.attempt_count, 0);
     assert.strictEqual(normalized.max_attempts, 3);
+  });
+
+  it("normalizes missing child task ids on sparse legacy task projections", () => {
+    const legacyTask = {
+      task_id: "legacy",
+      agent_id: "agent",
+      role: "implementer",
+      execution_mode: "worktree_worker",
+      status: "running",
+      title: "Legacy worker",
+      messages: [],
+      latest_message: null,
+      failure_message: null,
+      updated_at_ms: 0,
+      artifact_count: 0,
+      latest_artifact_kind: null,
+      latest_artifact_title: null,
+      needs_human_review: null,
+      reason_codes: [],
+      tests_passed: null,
+      diff_truncated: null,
+      worktree_path: null,
+      cleaned_up: null,
+      suggested_action: null,
+    } as unknown as AgentA2ATaskProjection;
+
+    const normalized = normalizeA2ATaskProjection(legacyTask);
+
+    assert.deepStrictEqual(normalized.child_task_ids, []);
+  });
+
+  it("preserves projected child task ids while normalizing lineage fields", () => {
+    const normalized = normalizeA2ATaskProjection(task({
+      task_id: "parent",
+      child_task_ids: ["child-a", "child-b"],
+    } as Partial<AgentA2ATaskProjection> & { child_task_ids: string[] }));
+
+    assert.deepStrictEqual(normalized.child_task_ids, ["child-a", "child-b"]);
+    assert.strictEqual(normalized.parent_task_id, null);
   });
 });
 

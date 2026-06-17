@@ -41,6 +41,8 @@ pub struct AgentA2ATaskProjection {
     // Phase 4-A enriched fields — derived from AgentTaskRecord / artifacts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_task_ids: Vec<String>,
     #[serde(default)]
     pub created_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]

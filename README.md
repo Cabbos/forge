@@ -34,7 +34,7 @@ The desktop app now includes the Hermes-parity runtime scaffolding that is being
 - Settings: models, workspace, tools, memory, data, diagnostics, scheduler, and general service/autostart surfaces.
 - Diagnostics: doctor checks, gateway runtime status, repair actions, trigger/session queues, and runtime loop visibility.
 - Permissions: per-tool allow, deny, reset, and default policy states for write, edit, shell, and MCP operations.
-- Review and background work: Agent Workbench review queue/history plus a global background status bar and task list.
+- Review and background work: Agent Workbench review queue/history, derived A2A parent/child lineage badges, plus a global background status bar and task list.
 - Acceptance: browser smoke coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI.
 
 ## Level 3 Runtime Evidence

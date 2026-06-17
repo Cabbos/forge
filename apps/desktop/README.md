@@ -135,7 +135,7 @@ scripts/acceptance.sh          # build + eval + Level 3 runtime + desktop smoke
 scripts/acceptance.sh --dry-run
 ```
 
-当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅和后台任务列表。
+当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。
 
 也可以直接运行 Rust 测试：
 
