@@ -2292,6 +2292,19 @@ the MVP boundary honest: no automatic gateway continuation after crash, no
 default headless `AgentSession`, no executor-level live file IO tracing, no
 precise unknown cost metering, and no automatic commits.
 
+**2026-06-17 full signoff evidence:** A sandboxed `scripts/acceptance.sh` run
+first passed desktop and website builds, then stopped at `npm run test:eval`
+because the sandbox could not write `/Users/cabbos/.forge`. The controller reran
+the same full suite with normal home access and it passed completely: desktop
+production build, website production build, eval runner tests (139 passed, 1
+warning), loop event journal contracts (13 passed), projection rebuild/replay (2
+passed), policy preflight (3 passed), budget preflight (7 passed), durable human
+gate tests (5 passed), typed completion evidence (14 passed), gateway loop
+runner status smoke (1 passed), subagent runtime projection smoke (22 passed),
+completion contract desktop helper smoke (6 passed), completion contract mocked
+desktop smoke (8 passed), desktop Phase 7 smoke specs (32 passed), and rich
+preview smoke specs (4 passed).
+
 ---
 
 ## Credible Agent Engineering Bar
@@ -2367,6 +2380,12 @@ npm run build:website
 npm run test:eval
 scripts/acceptance.sh
 ```
+
+2026-06-17 evidence: the full `scripts/acceptance.sh` suite passed after a
+sandbox-only `/Users/cabbos/.forge` writability failure was rerun with normal
+home access. The passing run covered desktop build, website build, eval runner
+tests (139 passed), all Level 3 runtime gates, 32 desktop smoke specs, and 4
+rich-preview smoke specs.
 
 ## Stop Conditions
 
