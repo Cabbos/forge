@@ -170,6 +170,52 @@ def test_compare_reports_flags_model_round_warning() -> None:
     assert result["regressions"][0]["severity"] == "warning"
 
 
+def test_compare_reports_flags_score_summary_drop():
+    from app.models import BacktestReport
+    from app.report_compare import compare_reports
+
+    previous = BacktestReport(
+        total_tasks=1,
+        success_rate=1.0,
+        verification_pass_rate=1.0,
+        scope_violation_rate=0.0,
+        avg_duration_ms=10.0,
+        avg_model_rounds=1.0,
+        avg_confirm_requests=0.0,
+        failure_categories={},
+        score_summary={"regression_ok": 1.0},
+        tasks=[],
+    )
+    current = previous.model_copy(update={"score_summary": {"regression_ok": 0.0}})
+
+    result = compare_reports(previous, current)
+
+    assert {
+        "metric": "score_summary.regression_ok",
+        "severity": "critical",
+        "previous": 1.0,
+        "current": 0.0,
+        "delta": -1.0,
+    } in result["regressions"]
+
+
+def test_compare_reports_treats_missing_score_summary_keys_as_zero():
+    from app.report_compare import compare_reports
+
+    previous = make_report(score_summary={"regression_ok": 1.0})
+    current = make_report(score_summary={})
+
+    result = compare_reports(previous, current)
+
+    assert {
+        "metric": "score_summary.regression_ok",
+        "severity": "critical",
+        "previous": 1.0,
+        "current": 0.0,
+        "delta": -1.0,
+    } in result["regressions"]
+
+
 def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
     report = build_report(
         [

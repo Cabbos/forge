@@ -232,9 +232,24 @@ Other useful gates are `--max-total-cost-usd`, `--red-team-only`,
 `--include-red-team`, `--max-red-team-failure-rate`, `--trials`,
 `--experiment-name`, `--prompt-mutation`, and `--mutations-only`.
 
-For release checks or notebook analysis, `app.report_compare.compare_reports`
-compares two `BacktestReport` payloads and returns critical regressions for
-large success-rate drops or scope-violation spikes, plus warnings for sharp
+For release checks, promote the last trusted artifact and compare candidates
+through the baseline registry:
+
+```bash
+uv run python -m app.cli baseline promote \
+  --registry output/baselines.json \
+  --artifact output/local-regression.json \
+  --name local-regression
+
+uv run python -m app.cli baseline compare \
+  --registry output/baselines.json \
+  --name local-regression \
+  --artifact output/candidate.json \
+  --fail-on-critical
+```
+
+The comparison gate reports critical regressions for large success-rate drops,
+scope-violation spikes, and score summary drops, plus warnings for sharp
 model-round increases.
 
 ## Trusted Backtest Operator Path
@@ -292,8 +307,9 @@ For local release confidence:
    runs also emit per-task `*.trajectory.json` artifacts beside `trace.json` and
    `report.json`.
 7. Compare the new report against the last trusted baseline with
-   `app.report_compare.compare_reports`, then promote production failures back
-   into offline regression cases with `python -m app.cli promote-trace`.
+   `python -m app.cli baseline compare --fail-on-critical`, then promote
+   production failures back into offline regression cases with
+   `python -m app.cli promote-trace`.
 
 Executable cases should be verified. Prompt-only or adapter-contract cases can
 set `metadata.contract_only: true`; they stay useful for contract coverage but

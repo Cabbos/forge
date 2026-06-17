@@ -507,3 +507,112 @@ def test_cli_promote_baseline_reports_missing_artifact(tmp_path, capsys):
     assert captured.out == ""
     assert "error:" in captured.err
     assert str(artifact) in captured.err
+
+
+def test_cli_baseline_compare_fails_on_critical_regression(tmp_path, capsys):
+    from app.cli import main
+
+    def artifact(path, success_rate, avg_model_rounds=1.0):
+        path.write_text(
+            json.dumps(
+                {
+                    "report": {
+                        "total_tasks": 1,
+                        "success_rate": success_rate,
+                        "verification_pass_rate": success_rate,
+                        "scope_violation_rate": 0.0,
+                        "avg_duration_ms": 10.0,
+                        "avg_model_rounds": avg_model_rounds,
+                        "avg_confirm_requests": 0.0,
+                        "failure_categories": {},
+                        "score_summary": {},
+                        "tasks": [],
+                    },
+                    "traces": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    baseline = tmp_path / "baseline.json"
+    candidate = tmp_path / "candidate.json"
+    registry = tmp_path / "baselines.json"
+    artifact(baseline, 1.0)
+    artifact(candidate, 0.0)
+
+    assert (
+        main(
+            [
+                "baseline",
+                "promote",
+                "--registry",
+                str(registry),
+                "--artifact",
+                str(baseline),
+                "--name",
+                "dev",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "baseline",
+                "compare",
+                "--registry",
+                str(registry),
+                "--name",
+                "dev",
+                "--artifact",
+                str(candidate),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert '"metric": "success_rate"' in output
+
+    assert (
+        main(
+            [
+                "baseline",
+                "compare",
+                "--registry",
+                str(registry),
+                "--name",
+                "dev",
+                "--artifact",
+                str(candidate),
+                "--fail-on-critical",
+            ]
+        )
+        == 1
+    )
+
+    output = capsys.readouterr().out
+    assert '"metric": "success_rate"' in output
+
+    warning_only = tmp_path / "warning-only.json"
+    artifact(warning_only, 1.0, avg_model_rounds=3.0)
+
+    assert (
+        main(
+            [
+                "baseline",
+                "compare",
+                "--registry",
+                str(registry),
+                "--name",
+                "dev",
+                "--artifact",
+                str(warning_only),
+                "--fail-on-critical",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert '"metric": "avg_model_rounds"' in output

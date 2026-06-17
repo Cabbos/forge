@@ -42,4 +42,20 @@ def compare_reports(
             }
         )
 
+    score_names = set(previous.score_summary) | set(current.score_summary)
+    for name in sorted(score_names):
+        previous_score = previous.score_summary.get(name, 0.0)
+        current_score = current.score_summary.get(name, 0.0)
+        delta = current_score - previous_score
+        if delta <= -0.5:
+            regressions.append(
+                {
+                    "metric": f"score_summary.{name}",
+                    "severity": "critical",
+                    "previous": previous_score,
+                    "current": current_score,
+                    "delta": delta,
+                }
+            )
+
     return {"regressions": regressions}

@@ -277,6 +277,12 @@ def baseline_main(argv: list[str]) -> int:
     latest.add_argument("--registry", type=Path, required=True)
     latest.add_argument("--name", required=True)
 
+    compare = subparsers.add_parser("compare")
+    compare.add_argument("--registry", type=Path, required=True)
+    compare.add_argument("--name", required=True)
+    compare.add_argument("--artifact", type=Path, required=True)
+    compare.add_argument("--fail-on-critical", action="store_true")
+
     args = parser.parse_args(argv)
     registry = BaselineRegistry(args.registry)
     if args.command == "promote":
@@ -303,6 +309,26 @@ def baseline_main(argv: list[str]) -> int:
             return 1
         print(record.model_dump_json(indent=2))
         return 0
+    if args.command == "compare":
+        from app.artifacts import load_report_artifact
+        from app.report_compare import compare_reports
+
+        try:
+            record = registry.latest(name=args.name)
+            if record is None:
+                print("error: no trusted baseline found", file=sys.stderr)
+                return 1
+            previous = load_report_artifact(Path(record.artifact_path)).report
+            current = load_report_artifact(args.artifact).report
+        except (OSError, ValueError, ValidationError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        result = compare_reports(previous, current)
+        print(json.dumps(result, indent=2))
+        has_critical = any(
+            item.get("severity") == "critical" for item in result["regressions"]
+        )
+        return 1 if args.fail_on_critical and has_critical else 0
     return 2
 
 
