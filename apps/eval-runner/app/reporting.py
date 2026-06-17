@@ -3,6 +3,7 @@ from typing import Any
 
 from app.metrics import calculate_metrics
 from app.models import AgentTrace, BacktestReport, ContinuityReport, TaskMetric, TraceSummary
+from app.scoring import score_trace
 
 
 def build_report(traces: list[AgentTrace]) -> BacktestReport:
@@ -16,11 +17,12 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
             scope_violation_rate=0.0,
             avg_duration_ms=0.0,
             avg_model_rounds=0.0,
-            avg_confirm_requests=0.0,
-            failure_categories={},
-            tasks=[],
-            continuity=None,
-        )
+        avg_confirm_requests=0.0,
+        failure_categories={},
+        score_summary={},
+        tasks=[],
+        continuity=None,
+    )
 
     verification_passed = sum(
         1
@@ -60,9 +62,20 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         avg_repair_attempts_used=metrics.average_repair_attempts_used,
         avg_validation_attempts=metrics.average_validation_attempts,
         failure_categories=metrics.failure_categories,
+        score_summary=build_score_summary(traces),
         tasks=task_summaries,
         continuity=build_continuity_report(traces),
     )
+
+
+def build_score_summary(traces: list[AgentTrace]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    counts: Counter[str] = Counter()
+    for trace in traces:
+        for name, score in score_trace(trace).items():
+            totals[name] = totals.get(name, 0.0) + score.score
+            counts[name] += 1
+    return {name: totals[name] / counts[name] for name in sorted(totals)}
 
 
 def aggregate_trial_metrics(

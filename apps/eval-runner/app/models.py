@@ -85,6 +85,18 @@ class VerificationResult(EvalModel):
     duration_ms: int = Field(default=0, ge=0)
 
 
+class EvalScore(EvalModel):
+    name: str
+    score: float = Field(ge=0.0, le=1.0)
+    label: str
+    explanation: str | None = None
+    source: str = "code"
+    calibration_dataset_id: str | None = None
+    calibration_agreement: float | None = Field(default=None, ge=0.0, le=1.0)
+    calibration_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    gate_ci: bool = True
+
+
 class AgentTrace(EvalModel):
     task_id: str
     user_prompt: str
@@ -196,6 +208,7 @@ class BacktestReport(EvalModel):
     avg_repair_attempts_used: float = 0.0
     avg_validation_attempts: float = 0.0
     failure_categories: dict[str, int] = Field(default_factory=dict)
+    score_summary: dict[str, float] = Field(default_factory=dict)
     tasks: list[TraceSummary] = Field(default_factory=list)
     continuity: ContinuityReport | None = None
 

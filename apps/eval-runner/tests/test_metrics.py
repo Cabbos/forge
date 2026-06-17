@@ -124,3 +124,44 @@ def test_calculate_metrics_treats_scope_violations_as_failures() -> None:
     assert metrics.tasks[0].scope_ok is False
     assert metrics.tasks[0].changed_files == 1
     assert metrics.tasks[0].failure_category == FailureCategory.SCOPE_VIOLATION
+
+
+def test_budget_scorer_flags_excess_model_rounds() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace("a", passed=True, duration_ms=10, tool_count=1, model_rounds=51)
+    scores = score_trace(trace, max_model_rounds=50)
+
+    assert scores["budget_ok"].score == 0.0
+    assert scores["budget_ok"].label == "max_model_rounds_exceeded"
+
+
+def test_scorer_agreement_compares_labels_by_score_name() -> None:
+    from app.judge_calibration import scorer_agreement
+    from app.models import EvalScore
+
+    golden = [
+        EvalScore(name="task_success", score=1.0, label="pass"),
+        EvalScore(name="tool_use", score=0.0, label="bad"),
+    ]
+    candidate = [
+        EvalScore(name="tool_use", score=1.0, label="good"),
+        EvalScore(name="task_success", score=0.8, label="pass"),
+    ]
+
+    assert scorer_agreement(golden, candidate) == 0.5
+
+
+def test_uncalibrated_judge_score_is_report_only() -> None:
+    from app.judge_calibration import score_can_gate_ci
+    from app.models import EvalScore
+
+    score = EvalScore(
+        name="semantic_quality",
+        score=0.0,
+        label="bad",
+        source="llm_judge",
+        gate_ci=True,
+    )
+
+    assert score_can_gate_ci(score) is False
