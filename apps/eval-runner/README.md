@@ -46,6 +46,7 @@ forge-eval-runner/
     trace.py      Trace timestamp and mock diff helpers
     metrics.py    Success, coverage, duration, and failure aggregation
     reporting.py  Backtest report aggregation and per-task summaries
+    report_compare.py  Report-to-report regression helper
     storage.py    Memory and SQLite task/run/artifact storage boundary
     config.py     Environment-driven settings
   eval_cases/
@@ -212,6 +213,11 @@ uv run python -m app.cli \
   --max-scope-violation-rate 0.05 \
   --max-avg-model-rounds 25
 ```
+
+For release checks or notebook analysis, `app.report_compare.compare_reports`
+compares two `BacktestReport` payloads and returns critical regressions for
+large success-rate drops or scope-violation spikes, plus warnings for sharp
+model-round increases.
 
 ## Three Ways to Run
 

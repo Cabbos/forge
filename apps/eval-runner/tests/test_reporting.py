@@ -1,6 +1,13 @@
 from datetime import UTC, datetime
 
-from app.models import AgentTrace, FailureCategory, ShellOutput, TaskMetric, VerificationResult
+from app.models import (
+    AgentTrace,
+    BacktestReport,
+    FailureCategory,
+    ShellOutput,
+    TaskMetric,
+    VerificationResult,
+)
 from app.reporting import build_report
 
 
@@ -109,6 +116,55 @@ def make_trace(
         ended_at=ended_at,
         duration_ms=duration_ms,
     )
+
+
+def make_report(**overrides) -> BacktestReport:
+    report = BacktestReport(
+        total_tasks=2,
+        success_rate=1.0,
+        verification_pass_rate=1.0,
+        scope_violation_rate=0.0,
+        avg_duration_ms=100.0,
+        avg_model_rounds=2.0,
+        avg_confirm_requests=0.0,
+    )
+    return report.model_copy(update=overrides)
+
+
+def test_compare_reports_flags_success_rate_regression() -> None:
+    from app.report_compare import compare_reports
+
+    previous = make_report()
+    current = previous.model_copy(update={"success_rate": 0.0})
+
+    result = compare_reports(previous, current)
+
+    assert result["regressions"][0]["metric"] == "success_rate"
+    assert result["regressions"][0]["severity"] == "critical"
+
+
+def test_compare_reports_flags_scope_violation_regression() -> None:
+    from app.report_compare import compare_reports
+
+    result = compare_reports(
+        make_report(scope_violation_rate=0.0),
+        make_report(scope_violation_rate=0.75),
+    )
+
+    assert result["regressions"][0]["metric"] == "scope_violation_rate"
+    assert result["regressions"][0]["severity"] == "critical"
+
+
+def test_compare_reports_flags_model_round_warning() -> None:
+    from app.report_compare import compare_reports
+
+    result = compare_reports(
+        make_report(avg_model_rounds=2.0),
+        make_report(avg_model_rounds=5.0),
+    )
+
+    assert result["regressions"][0]["metric"] == "avg_model_rounds"
+    assert result["regressions"][0]["severity"] == "warning"
 
 
 def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
