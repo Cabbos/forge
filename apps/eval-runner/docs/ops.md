@@ -206,6 +206,19 @@ uv run python -m app.cli promote-trace \
 redaction 会替换常见 `sk-*`、`ghp_*`、`xox*` token 形态；dedupe 会跳过同一
 task、prompt、failure category、failure reason 的重复失败。
 
+### CI markdown summary
+
+CI 或 PR 评论可以生成简洁 Markdown summary：
+
+```bash
+uv run python -m app.cli ci-summary \
+  --previous output/baseline.json \
+  --current output/candidate.json \
+  --output output/ci-summary.md
+```
+
+summary 复用 `compare_reports` 输出，适合直接贴到 PR comment 或 job summary。
+
 ### 3. 三种 Smoke 模式
 
 | 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |

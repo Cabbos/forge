@@ -34,3 +34,24 @@ def test_render_html_report_escapes_title():
 
     assert "&lt;release&gt;" in html
     assert "<table" in html
+
+
+def test_ci_summary_renders_regression_table():
+    from app.ci_summary import render_ci_summary
+
+    markdown = render_ci_summary(
+        comparison={
+            "regressions": [
+                {
+                    "metric": "success_rate",
+                    "severity": "critical",
+                    "previous": 1.0,
+                    "current": 0.0,
+                    "delta": -1.0,
+                }
+            ]
+        }
+    )
+
+    assert "## Forge Eval CI Summary" in markdown
+    assert "| success_rate | critical | 1.000 | 0.000 | -1.000 |" in markdown

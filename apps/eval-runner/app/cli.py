@@ -168,6 +168,8 @@ def red_team_failure_rate(report: BacktestReport) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if raw_argv[:1] == ["ci-summary"]:
+        return ci_summary_main(raw_argv[1:])
     if raw_argv[:1] == ["flake-triage"]:
         return flake_triage_main(raw_argv[1:])
     if raw_argv[:1] == ["case-lifecycle"]:
@@ -418,6 +420,33 @@ def flake_triage_main(argv: list[str]) -> int:
         return 2
     print(report.model_dump_json(indent=2))
     return 1 if args.fail_on_flaky and report.quarantine_candidates else 0
+
+
+def ci_summary_main(argv: list[str]) -> int:
+    from app.artifacts import load_report_artifact
+    from app.ci_summary import render_ci_summary
+    from app.report_compare import compare_reports
+    from pydantic import ValidationError
+
+    parser = argparse.ArgumentParser(description="Render a PR-friendly eval summary.")
+    parser.add_argument("--previous", type=Path, required=True)
+    parser.add_argument("--current", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+
+    try:
+        comparison = compare_reports(
+            load_report_artifact(args.previous).report,
+            load_report_artifact(args.current).report,
+        )
+        summary = render_ci_summary(comparison)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(summary, encoding="utf-8")
+    except (OSError, ValueError, ValidationError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({"output": str(args.output)}, indent=2))
+    return 0
 
 
 if __name__ == "__main__":

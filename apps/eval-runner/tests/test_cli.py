@@ -815,3 +815,54 @@ def test_cli_flake_triage_fails_on_flaky_trials(tmp_path, capsys):
     output = capsys.readouterr().out
     assert '"classification": "flaky"' in output
     assert '"quarantine_candidates": [' in output
+
+
+def test_cli_ci_summary_writes_markdown_summary(tmp_path):
+    from app.cli import main
+
+    def artifact(path, success_rate):
+        path.write_text(
+            json.dumps(
+                {
+                    "report": {
+                        "total_tasks": 1,
+                        "success_rate": success_rate,
+                        "verification_pass_rate": success_rate,
+                        "scope_violation_rate": 0.0,
+                        "avg_duration_ms": 10.0,
+                        "avg_model_rounds": 1.0,
+                        "avg_confirm_requests": 0.0,
+                        "failure_categories": {},
+                        "score_summary": {},
+                        "tasks": [],
+                    },
+                    "traces": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    previous = tmp_path / "previous.json"
+    current = tmp_path / "current.json"
+    output = tmp_path / "summary.md"
+    artifact(previous, 1.0)
+    artifact(current, 0.0)
+
+    assert (
+        main(
+            [
+                "ci-summary",
+                "--previous",
+                str(previous),
+                "--current",
+                str(current),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+
+    markdown = output.read_text(encoding="utf-8")
+    assert "## Forge Eval CI Summary" in markdown
+    assert "| success_rate | critical | 1.000 | 0.000 | -1.000 |" in markdown
