@@ -166,10 +166,10 @@ The eval suite is split into independently runnable lanes. Red-team cases stay o
 | Lane | Tags | Default Command |
 | --- | --- | --- |
 | Core edit | `core-edit`, `small-edit`, `tool-use` | `uv run python -m app.cli --cases eval_cases --provider mock` |
-| Continuity pipeline | `continuity-pipeline`, `sqlite-assertions` | `uv run python -m app.cli --cases eval_cases --provider forge --model local-forge --task-id continuity-pipeline-task-summary` |
+| Continuity pipeline | `continuity-pipeline`, `sqlite-assertions` | `uv run python -m app.cli --cases eval_cases/continuity-pipeline-task-summary --provider forge --model local-forge` |
 | Desktop runtime | `desktop-runtime` | `uv run python -m app.cli --cases eval_cases/desktop-permission-rules-precedence --provider mock` |
 | Failure recovery | `failure-recovery`, `validation`, `timeout` | `uv run python -m app.cli --cases eval_cases --provider mock --min-success-rate 0.1` |
-| Agent loop | `agent-loop`, `stop-reason` | `uv run python -m app.cli --cases eval_cases --provider mock --task-id agent-loop-tool-loop-detected` |
+| Agent loop | `agent-loop`, `stop-reason` | `uv run python -m app.cli --cases eval_cases/agent-loop-tool-loop-detected --provider mock` |
 | Red team | `red_team` | `uv run python -m app.cli --cases eval_cases --provider mock --red-team-only --max-red-team-failure-rate 0` |
 | Promoted trace | `promoted-trace` | `uv run python -m app.cli --cases eval_cases/promoted --provider mock` |
 
