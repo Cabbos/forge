@@ -700,6 +700,35 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
 
 **Goal:** Make completion, review, and commit eligibility auditable without letting the runtime commit, merge, or push.
 
+**Status (2026-06-18): Committed in `33bee230` (`feat(runtime): harden review to commit eligibility`).** Completion evaluation now emits explicit `review_status`, `commit_eligible`, `commit_blockers`, `human_gate_id`, and `last_review_decision` facts with serde defaults for older records. A satisfied build/test/docs contract can become `ready_for_review` when review is required; no-review contracts report `not_required` instead of inventing a human-review blocker. Missing or rejected human review keeps `commit_eligible` false when review is required and records the blocker/rejection reason. Commit evidence is only accepted as contract evidence when it references an approved human gate, and runtime policy keeps commit intent human-gated even if eligibility facts are true.
+
+**Quality follow-up (2026-06-18):** `LoopEventJournal::new(path)` now shares a process-wide mutex per normalized path so separate journal instances serialize load/prepare/append on the same JSONL file. A2A review bridge idempotency keys and review evidence ids now use stable semantic keys based on loop task, gate, decision, and reason instead of timestamps, so exact retries coalesce. The loop-evidence bridge is explicit best-effort: if loop journal/projection writes fail after the A2A review state is saved, Forge logs a warning and still returns the A2A review state. Completion facts now require no remaining open gates for `commit_eligible`, and `commit_blockers` includes open-gate blockers plus required-commit blockers such as `missing_commit`, `commit_missing_human_gate`, and `commit_without_approved_human_gate:*`.
+
+**What changed:** A2A review IPC now accepts an optional `loop_task_id` / `loopTaskId`. The frontend only sends it when the selected reviewed A2A task(s) have the same non-null runtime `loop_task_id`; the Rust bridge records loop review gate/evidence only when that loop task exists and its `session_id` matches the reviewed A2A session. Mismatched or missing loop ids do not write broad loop evidence. `LoopTaskPanel`, Agent Workbench review calls, TypeScript protocol/summary helpers, and the acceptance mock now surface `ready for human review`, `blocked by review`, `commit eligible after human review`, and `commit remains human-gated` without adding commit/merge/push controls. The acceptance mock uses a completed loop task with an approved review and commit eligibility, while ordinary terminal loop tasks remain hidden from background work.
+
+**Why it matters:** Forge can now explain the handoff from completion evidence to human review and commit readiness without pretending the runtime is allowed to commit. Review approval satisfies a configured gate; it is not a correctness guarantee and it is not an automatic Git operation.
+
+**Review and change detection:** The spec reviewer and quality reviewer approved after the follow-up fix loops. GitNexus `detect_changes` returned **CRITICAL** because Task 6 intentionally touched a broad runtime/IPC/UI surface; the staged changed files were expected for the Task 6 scope and excluded unrelated metadata and roadmap files.
+
+**Evidence/tests:**
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::policy --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::a2a_handlers --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
+node --test apps/desktop/src/lib/loopRuntime.test.ts
+node --test apps/desktop/src/lib/backgroundTaskStatus.test.ts
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
+git diff --check
+```
+
+**Not claimed:** No auto commit/merge/push, no worktree merge automation, no gateway autonomous resume, no headless `AgentSession` ownership change, and no correctness guarantee from review approval.
+
+**Interview-ready explanation:** "Forge does not let the runtime commit. It computes auditable eligibility: which checks passed, whether docs evidence exists, whether a human review gate was approved or rejected, and whether a commit record is tied to that human gate. A2A review decisions only enter the loop ledger when they carry a matching loop task id for the same session, so a completed worker cannot accidentally imply approval for a parent loop."
+
 **Files:**
 - Modify: `apps/desktop/src-tauri/src/loop_runtime/completion.rs`
 - Modify: `apps/desktop/src-tauri/src/loop_runtime/gates.rs`
@@ -726,7 +755,7 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 
 **Implementation steps:**
 
-- [ ] **Step 6.1: Write completion blocker tests**
+- [x] **Step 6.1: Write completion blocker tests**
 
   Tests must prove:
 
@@ -745,7 +774,7 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 
   Expected first result: FAIL for missing commit eligibility shape.
 
-- [ ] **Step 6.2: Add explicit commit eligibility facts**
+- [x] **Step 6.2: Add explicit commit eligibility facts**
 
   Add projection fields or evidence records for:
 
@@ -759,11 +788,11 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 
   These facts describe readiness only. They must not contain a command executor for commits.
 
-- [ ] **Step 6.3: Bridge A2A review decisions into loop completion**
+- [x] **Step 6.3: Bridge A2A review decisions into loop completion**
 
   When an A2A review decision changes, record loop evidence or gate decisions only for the matching loop task/session. Do not infer approval from a completed worker without an explicit review decision.
 
-- [ ] **Step 6.4: Update UI copy and controls**
+- [x] **Step 6.4: Update UI copy and controls**
 
   `LoopTaskPanel` and A2A review UI should show:
 
@@ -774,11 +803,11 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 
   Do not add a button that runs commit/merge/push.
 
-- [ ] **Step 6.5: Add product smoke coverage**
+- [x] **Step 6.5: Add product smoke coverage**
 
   Extend `apps/desktop/e2e/acceptance.spec.ts` to assert that a completed loop shows review/commit eligibility but not an automatic commit action.
 
-- [ ] **Step 6.6: Run focused verification**
+- [x] **Step 6.6: Run focused verification**
 
   Run:
 
@@ -803,6 +832,7 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 - No worktree merge automation.
 - No guarantee that review approval means the code is correct; it only satisfies the configured gate.
 - No gateway autonomous resume.
+- No headless `AgentSession` ownership change.
 
 ---
 
