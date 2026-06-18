@@ -68,6 +68,24 @@ impl HumanGateDecision {
             reason,
         }
     }
+
+    pub fn denied(decided_by: Option<String>, reason: Option<String>) -> Self {
+        Self {
+            kind: HumanGateDecisionKind::Denied,
+            decided_at_ms: now_millis(),
+            decided_by,
+            reason,
+        }
+    }
+
+    pub fn canceled(decided_by: Option<String>, reason: Option<String>) -> Self {
+        Self {
+            kind: HumanGateDecisionKind::Canceled,
+            decided_at_ms: now_millis(),
+            decided_by,
+            reason,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -178,6 +196,18 @@ mod tests {
         let error = LoopTaskProjection::from_events(&events).unwrap_err();
 
         assert!(error.contains("duplicate human gate requested"));
+    }
+
+    #[test]
+    fn denied_decision_records_reviewer_and_reason() {
+        let decision = HumanGateDecision::denied(
+            Some("reviewer".to_string()),
+            Some("needs tests".to_string()),
+        );
+
+        assert_eq!(decision.kind, HumanGateDecisionKind::Denied);
+        assert_eq!(decision.decided_by.as_deref(), Some("reviewer"));
+        assert_eq!(decision.reason.as_deref(), Some("needs tests"));
     }
 
     fn human_gate_resolved_for_test(

@@ -10,6 +10,11 @@ export interface LoopRuntimeSummary {
   tone: LoopRuntimeTone;
   needsHumanDecision: boolean;
   budgetWarning: string | null;
+  reviewStatus: string | null;
+  commitEligible: boolean;
+  commitBlockers: string[];
+  humanGateId: string | null;
+  lastReviewDecision: Record<string, unknown> | null;
   rawTask: LoopTaskRecord;
 }
 
@@ -36,21 +41,45 @@ export interface LoopRuntimeFact {
 }
 
 export function summarizeLoopTask(task: LoopTaskRecord): LoopRuntimeSummary {
-  const completionReasons = stringArray(readRecord(task.completion_result)?.reasons);
+  const completion = readRecord(task.completion_result);
+  const completionReasons = stringArray(completion?.reasons);
+  const reviewStatus = stringValue(completion?.review_status);
+  const commitEligible = completion?.commit_eligible === true;
+  const commitBlockers = stringArray(completion?.commit_blockers);
+  const humanGateId = stringValue(completion?.human_gate_id);
+  const lastReviewDecision = readRecord(completion?.last_review_decision);
   const outcomeMessage = stringValue(readRecord(task.outcome)?.message);
   const budgetSnapshot = readRecord(task.latest_budget_snapshot);
   const budgetWarning = budgetWarningFor(budgetSnapshot);
   const usageDetail = usageDetailFor(budgetSnapshot);
-  const detail = detailFor(task.status, completionReasons, outcomeMessage, usageDetail);
+  const detail = detailFor(
+    task.status,
+    completionReasons,
+    outcomeMessage,
+    usageDetail,
+    reviewStatus,
+    commitEligible,
+    commitBlockers,
+  );
 
   return {
     taskId: task.id,
     title: task.goal,
-    label: labelForStatus(task.status, completionReasons),
+    label: labelForStatus(task.status, completionReasons, reviewStatus, commitEligible),
     detail,
-    tone: toneForStatus(task.status, completionReasons),
-    needsHumanDecision: task.status === "waiting_for_input" || task.status === "waiting_for_review",
+    tone: toneForStatus(task.status, completionReasons, reviewStatus, commitEligible),
+    needsHumanDecision:
+      task.status === "waiting_for_input" ||
+      task.status === "waiting_for_review" ||
+      reviewStatus === "ready_for_review" ||
+      reviewStatus === "rejected" ||
+      (commitEligible && reviewStatus === "approved"),
     budgetWarning,
+    reviewStatus,
+    commitEligible,
+    commitBlockers,
+    humanGateId,
+    lastReviewDecision,
     rawTask: task,
   };
 }
@@ -126,7 +155,15 @@ function usageReasonLabel(reason: string | null | undefined): string | null {
   return null;
 }
 
-function labelForStatus(status: string, completionReasons: string[]): string {
+function labelForStatus(
+  status: string,
+  completionReasons: string[],
+  reviewStatus: string | null,
+  commitEligible: boolean,
+): string {
+  if (commitEligible && reviewStatus === "approved") return "commit eligible after human review";
+  if (reviewStatus === "rejected") return "blocked by review";
+  if (reviewStatus === "ready_for_review") return "ready for human review";
   if (status === "waiting_for_review") return "等待验证";
   if (status === "waiting_for_input") return "等待输入";
   if (status === "interrupted") return "已中断";
@@ -138,10 +175,17 @@ function labelForStatus(status: string, completionReasons: string[]): string {
   return "等待中";
 }
 
-function toneForStatus(status: string, completionReasons: string[]): LoopRuntimeTone {
+function toneForStatus(
+  status: string,
+  completionReasons: string[],
+  reviewStatus: string | null,
+  commitEligible: boolean,
+): LoopRuntimeTone {
   if (status === "completed") return "success";
   if (status === "failed" || status === "canceled" || status === "interrupted") return "failed";
-  if (status === "waiting_for_review" || completionReasons.length > 0) return "review";
+  if (commitEligible) return "success";
+  if (reviewStatus === "rejected") return "failed";
+  if (reviewStatus === "ready_for_review" || status === "waiting_for_review" || completionReasons.length > 0) return "review";
   if (status === "waiting_for_input") return "waiting";
   if (status === "running") return "running";
   return "muted";
@@ -152,7 +196,15 @@ function detailFor(
   completionReasons: string[],
   outcomeMessage: string | null,
   usageDetail: string | null,
+  reviewStatus: string | null,
+  commitEligible: boolean,
+  commitBlockers: string[],
 ): string {
+  if (commitEligible && reviewStatus === "approved") return "commit remains human-gated";
+  if (reviewStatus === "ready_for_review") return "commit remains human-gated";
+  if (reviewStatus === "rejected") {
+    return readableReason(commitBlockers[0] ?? completionReasons[0] ?? "review_rejected");
+  }
   if (completionReasons.length > 0) return readableReason(completionReasons[0]);
   if (outcomeMessage) return outcomeMessage;
   if (usageDetail) return usageDetail;
@@ -183,6 +235,15 @@ function usageDetailFor(snapshot: Record<string, unknown> | null): string | null
 function readableReason(reason: string): string {
   if (reason.startsWith("missing_required_check:")) {
     return `缺少检查 ${reason.slice("missing_required_check:".length)}`;
+  }
+  if (reason.startsWith("review_rejected:")) {
+    return `blocked by review: ${reason.slice("review_rejected:".length)}`;
+  }
+  if (reason === "review_rejected") return "blocked by review";
+  if (reason === "missing_human_review") return "commit remains human-gated";
+  if (reason === "commit_missing_human_gate") return "commit evidence missing human gate";
+  if (reason.startsWith("commit_without_approved_human_gate:")) {
+    return `commit evidence lacks approved gate ${reason.slice("commit_without_approved_human_gate:".length)}`;
   }
   if (reason === "task_waiting_for_input") return "等待用户或桌面运行时输入";
   if (reason === "task_waiting_for_review") return "等待人工审阅";

@@ -1,5 +1,7 @@
+use crate::loop_runtime::gates::{HumanGateDecision, HumanGateDecisionKind};
 use crate::loop_runtime::types::{
-    EvidenceRecord, LoopCompletionResult, LoopCompletionStatus, LoopTaskRecord, LoopTaskStatus,
+    EvidenceRecord, LoopCompletionResult, LoopCompletionStatus, LoopReviewStatus, LoopTaskRecord,
+    LoopTaskStatus,
 };
 
 pub fn evaluate_completion(
@@ -10,22 +12,20 @@ pub fn evaluate_completion(
 
     let runtime_block_reasons = runtime_block_reasons(task);
     if !runtime_block_reasons.is_empty() {
-        return LoopCompletionResult {
-            status: LoopCompletionStatus::Blocked,
-            reasons: runtime_block_reasons,
-        };
-    }
-
-    let review_wait_reasons = review_wait_reasons(task);
-    if !review_wait_reasons.is_empty() {
-        return LoopCompletionResult {
-            status: LoopCompletionStatus::WaitingForReview,
-            reasons: review_wait_reasons,
-        };
+        return result_with_review_facts(
+            LoopCompletionStatus::Blocked,
+            runtime_block_reasons.clone(),
+            completion_facts(task, evidence, &runtime_block_reasons),
+        );
     }
 
     if contract.stop_on_budget_exceeded && evidence.iter().any(is_budget_exceeded) {
-        return result(LoopCompletionStatus::FailedBudget, vec!["budget_exceeded"]);
+        let reasons = vec!["budget_exceeded".to_string()];
+        return result_with_review_facts(
+            LoopCompletionStatus::FailedBudget,
+            reasons.clone(),
+            completion_facts(task, evidence, &reasons),
+        );
     }
 
     let missing_checks = contract
@@ -35,32 +35,44 @@ pub fn evaluate_completion(
         .map(|check| format!("missing_required_check:{check}"))
         .collect::<Vec<_>>();
     if !missing_checks.is_empty() {
-        return LoopCompletionResult {
-            status: LoopCompletionStatus::Blocked,
-            reasons: missing_checks,
-        };
+        return result_with_review_facts(
+            LoopCompletionStatus::Blocked,
+            missing_checks.clone(),
+            completion_facts(task, evidence, &missing_checks),
+        );
     }
 
     if let Some(max_risk) = contract.max_gitnexus_risk.as_deref() {
         let Some(max_risk_level) = RiskLevel::parse(max_risk) else {
-            return result(
+            let reasons = vec![format!("invalid_max_gitnexus_risk:{max_risk}")];
+            return result_with_review_facts(
                 LoopCompletionStatus::Blocked,
-                vec![format!("invalid_max_gitnexus_risk:{max_risk}")],
+                reasons.clone(),
+                completion_facts(task, evidence, &reasons),
             );
         };
         let Some(actual_risk) = latest_gitnexus_risk(evidence) else {
-            return result(LoopCompletionStatus::Blocked, vec!["missing_gitnexus_risk"]);
+            let reasons = vec!["missing_gitnexus_risk".to_string()];
+            return result_with_review_facts(
+                LoopCompletionStatus::Blocked,
+                reasons.clone(),
+                completion_facts(task, evidence, &reasons),
+            );
         };
         let Some(actual_risk_level) = RiskLevel::parse(actual_risk) else {
-            return result(
+            let reasons = vec![format!("invalid_gitnexus_risk:{actual_risk}")];
+            return result_with_review_facts(
                 LoopCompletionStatus::FailedRisk,
-                vec![format!("invalid_gitnexus_risk:{actual_risk}")],
+                reasons.clone(),
+                completion_facts(task, evidence, &reasons),
             );
         };
         if actual_risk_level > max_risk_level {
-            return result(
+            let reasons = vec![format!("gitnexus_risk_exceeded:{actual_risk}>{max_risk}")];
+            return result_with_review_facts(
                 LoopCompletionStatus::FailedRisk,
-                vec![format!("gitnexus_risk_exceeded:{actual_risk}>{max_risk}")],
+                reasons.clone(),
+                completion_facts(task, evidence, &reasons),
             );
         }
     }
@@ -69,24 +81,52 @@ pub fn evaluate_completion(
     if contract.require_docs && !has_docs_evidence(evidence) {
         blockers.push("missing_docs");
     }
-    if contract.require_commit && !has_commit_evidence(evidence) {
-        blockers.push("missing_commit");
-    }
     if !blockers.is_empty() {
-        return result(LoopCompletionStatus::Blocked, blockers);
-    }
-
-    if contract.require_review_decision && !has_review_decision(evidence) {
-        return result(
-            LoopCompletionStatus::WaitingForReview,
-            vec!["missing_review_decision"],
+        let blockers = blockers.into_iter().map(str::to_string).collect::<Vec<_>>();
+        return result_with_review_facts(
+            LoopCompletionStatus::Blocked,
+            blockers.clone(),
+            completion_facts(task, evidence, &blockers),
         );
     }
 
-    LoopCompletionResult {
-        status: LoopCompletionStatus::Complete,
-        reasons: Vec::new(),
+    let facts = completion_facts(task, evidence, &[]);
+    if matches!(facts.review_status, LoopReviewStatus::Rejected) {
+        return result_with_review_facts(
+            LoopCompletionStatus::WaitingForReview,
+            facts.commit_blockers.clone(),
+            facts,
+        );
     }
+
+    let review_wait_reasons = review_wait_reasons(task);
+    if !review_wait_reasons.is_empty() {
+        return result_with_review_facts(
+            LoopCompletionStatus::WaitingForReview,
+            review_wait_reasons,
+            facts,
+        );
+    }
+
+    if contract.require_review_decision && !has_approved_review_decision(evidence) {
+        return result_with_review_facts(
+            LoopCompletionStatus::WaitingForReview,
+            vec!["missing_review_decision".to_string()],
+            facts,
+        );
+    }
+
+    if contract.require_commit {
+        if let Some(commit_blocker) = commit_evidence_blocker(evidence) {
+            return result_with_review_facts(
+                LoopCompletionStatus::Blocked,
+                vec![commit_blocker],
+                facts,
+            );
+        }
+    }
+
+    result_with_review_facts(LoopCompletionStatus::Complete, Vec::new(), facts)
 }
 
 fn runtime_block_reasons(task: &LoopTaskRecord) -> Vec<String> {
@@ -110,10 +150,19 @@ fn review_wait_reasons(task: &LoopTaskRecord) -> Vec<String> {
     reasons
 }
 
-fn result(status: LoopCompletionStatus, reasons: Vec<impl Into<String>>) -> LoopCompletionResult {
+fn result_with_review_facts(
+    status: LoopCompletionStatus,
+    reasons: Vec<String>,
+    facts: CompletionFacts,
+) -> LoopCompletionResult {
     LoopCompletionResult {
         status,
-        reasons: reasons.into_iter().map(Into::into).collect(),
+        reasons,
+        review_status: facts.review_status,
+        commit_eligible: facts.commit_eligible,
+        commit_blockers: facts.commit_blockers,
+        human_gate_id: facts.human_gate_id,
+        last_review_decision: facts.last_review_decision,
     }
 }
 
@@ -178,27 +227,178 @@ fn has_docs_evidence(evidence: &[EvidenceRecord]) -> bool {
     })
 }
 
-fn has_commit_evidence(evidence: &[EvidenceRecord]) -> bool {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CompletionFacts {
+    review_status: LoopReviewStatus,
+    commit_eligible: bool,
+    commit_blockers: Vec<String>,
+    human_gate_id: Option<String>,
+    last_review_decision: Option<HumanGateDecision>,
+}
+
+fn completion_facts(
+    task: &LoopTaskRecord,
+    evidence: &[EvidenceRecord],
+    contract_blockers: &[String],
+) -> CompletionFacts {
+    let latest_review = latest_review_decision(evidence);
+    let human_gate_id = latest_review
+        .as_ref()
+        .map(|(gate_id, _)| (*gate_id).to_string())
+        .or_else(|| task.open_gates.first().map(|gate| gate.gate_id.clone()));
+    let last_review_decision = latest_review
+        .as_ref()
+        .map(|(_, decision)| (*decision).clone());
+    let mut commit_blockers = contract_blockers.to_vec();
+    for blocker in open_gate_blockers(task) {
+        push_unique(&mut commit_blockers, blocker);
+    }
+    if task.completion_contract.require_commit {
+        if let Some(blocker) = commit_evidence_blocker(evidence) {
+            push_unique(&mut commit_blockers, blocker);
+        }
+    }
+    let review_required =
+        task.completion_contract.require_review_decision || !task.open_gates.is_empty();
+
+    let review_status = match latest_review {
+        Some((_, decision)) if decision.kind == HumanGateDecisionKind::Approved => {
+            LoopReviewStatus::Approved
+        }
+        Some((_, decision)) => {
+            push_unique(&mut commit_blockers, review_blocker(decision));
+            LoopReviewStatus::Rejected
+        }
+        None if !review_required => LoopReviewStatus::NotRequired,
+        None if contract_blockers.is_empty() => {
+            push_unique(&mut commit_blockers, "missing_human_review".to_string());
+            LoopReviewStatus::ReadyForReview
+        }
+        None => {
+            push_unique(&mut commit_blockers, "missing_human_review".to_string());
+            LoopReviewStatus::Blocked
+        }
+    };
+
+    let commit_eligible = commit_blockers.is_empty()
+        && matches!(
+            review_status,
+            LoopReviewStatus::Approved | LoopReviewStatus::NotRequired
+        );
+
+    CompletionFacts {
+        review_status,
+        commit_eligible,
+        commit_blockers,
+        human_gate_id,
+        last_review_decision,
+    }
+}
+
+fn latest_review_decision<'a>(
+    evidence: &'a [EvidenceRecord],
+) -> Option<(&'a str, &'a HumanGateDecision)> {
+    evidence.iter().rev().find_map(|evidence| match evidence {
+        EvidenceRecord::Review {
+            gate_id, decision, ..
+        } => Some((gate_id.as_str(), decision)),
+        _ => None,
+    })
+}
+
+fn has_approved_review_decision(evidence: &[EvidenceRecord]) -> bool {
     evidence.iter().any(|evidence| {
         matches!(
             evidence,
-            EvidenceRecord::Commit { commit_sha, .. } if !commit_sha.trim().is_empty()
+            EvidenceRecord::Review { decision, .. }
+                if decision.kind == HumanGateDecisionKind::Approved
         )
     })
 }
 
-fn has_review_decision(evidence: &[EvidenceRecord]) -> bool {
-    evidence
+fn review_blocker(decision: &HumanGateDecision) -> String {
+    let prefix = match decision.kind {
+        HumanGateDecisionKind::Approved => "review_approved",
+        HumanGateDecisionKind::Denied => "review_rejected",
+        HumanGateDecisionKind::Canceled => "review_canceled",
+    };
+    match decision
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+    {
+        Some(reason) => format!("{prefix}:{reason}"),
+        None => prefix.to_string(),
+    }
+}
+
+fn open_gate_blockers(task: &LoopTaskRecord) -> Vec<String> {
+    task.open_gates
         .iter()
-        .any(|evidence| matches!(evidence, EvidenceRecord::Review { .. }))
+        .map(|gate| format!("open_human_gate:{}", gate.gate_id))
+        .collect()
+}
+
+fn push_unique(values: &mut Vec<String>, value: String) {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn commit_evidence_blocker(evidence: &[EvidenceRecord]) -> Option<String> {
+    let approved_gate_ids = evidence
+        .iter()
+        .filter_map(|evidence| match evidence {
+            EvidenceRecord::Review {
+                gate_id, decision, ..
+            } if decision.kind == HumanGateDecisionKind::Approved => Some(gate_id.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut saw_commit = false;
+    let mut first_blocker = None;
+    for evidence in evidence {
+        let EvidenceRecord::Commit {
+            commit_sha,
+            human_gate_id,
+            ..
+        } = evidence
+        else {
+            continue;
+        };
+        if commit_sha.trim().is_empty() {
+            continue;
+        }
+        saw_commit = true;
+        let Some(human_gate_id) = human_gate_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            first_blocker.get_or_insert_with(|| "commit_missing_human_gate".to_string());
+            continue;
+        };
+        if approved_gate_ids.contains(&human_gate_id) {
+            return None;
+        }
+        first_blocker
+            .get_or_insert_with(|| format!("commit_without_approved_human_gate:{human_gate_id}"));
+    }
+
+    if saw_commit {
+        first_blocker
+    } else {
+        Some("missing_commit".to_string())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::loop_runtime::{
-        evaluate_completion, EvidenceRecord, HumanGateDecision, HumanGateRecord, HumanGateType,
-        LoopCompletionContract, LoopCompletionStatus, LoopTaskOutcome, LoopTaskRecord,
-        LoopTaskStatus,
+        evaluate_completion, EvidenceRecord, HumanGateDecision, HumanGateDecisionKind,
+        HumanGateRecord, HumanGateType, LoopCompletionContract, LoopCompletionStatus,
+        LoopReviewStatus, LoopTaskOutcome, LoopTaskRecord, LoopTaskStatus,
     };
 
     #[test]
@@ -237,7 +437,17 @@ mod tests {
                 EvidenceRecord::command_for_test("build:desktop", true),
                 EvidenceRecord::gitnexus_for_test("medium"),
                 EvidenceRecord::docs_for_test(vec!["README.md"]),
-                EvidenceRecord::commit_for_test("abc1234"),
+                EvidenceRecord::Review {
+                    evidence_id: "evidence-review".to_string(),
+                    gate_id: "gate-1".to_string(),
+                    decision: HumanGateDecision::approved(Some("reviewer".to_string()), None),
+                },
+                EvidenceRecord::Commit {
+                    evidence_id: "evidence-commit".to_string(),
+                    commit_sha: "abc1234".to_string(),
+                    summary: "test commit".to_string(),
+                    human_gate_id: Some("gate-1".to_string()),
+                },
             ],
         );
 
@@ -261,6 +471,250 @@ mod tests {
 
         assert_eq!(result.status, LoopCompletionStatus::WaitingForReview);
         assert_eq!(result.reasons, vec!["missing_review_decision"]);
+    }
+
+    #[test]
+    fn satisfied_build_test_docs_contract_marks_ready_for_review_without_commit_eligibility() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: vec!["build:desktop".to_string(), "test:desktop".to_string()],
+                max_gitnexus_risk: None,
+                require_docs: true,
+                require_commit: false,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+
+        let result = evaluate_completion(
+            &task,
+            &[
+                EvidenceRecord::command_for_test("build:desktop", true),
+                EvidenceRecord::command_for_test("test:desktop", true),
+                EvidenceRecord::docs_for_test(vec!["README.md"]),
+            ],
+        );
+
+        assert_eq!(result.status, LoopCompletionStatus::WaitingForReview);
+        assert_eq!(result.review_status, LoopReviewStatus::ReadyForReview);
+        assert!(!result.commit_eligible);
+        assert_eq!(result.commit_blockers, vec!["missing_human_review"]);
+        assert_eq!(result.human_gate_id, None);
+        assert_eq!(result.last_review_decision, None);
+    }
+
+    #[test]
+    fn satisfied_contract_without_review_requirement_is_not_human_review_blocked() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: vec!["build:desktop".to_string()],
+                max_gitnexus_risk: None,
+                require_docs: true,
+                require_commit: false,
+                require_review_decision: false,
+                stop_on_budget_exceeded: true,
+            });
+
+        let result = evaluate_completion(
+            &task,
+            &[
+                EvidenceRecord::command_for_test("build:desktop", true),
+                EvidenceRecord::docs_for_test(vec!["README.md"]),
+            ],
+        );
+
+        assert_eq!(result.status, LoopCompletionStatus::Complete);
+        assert_eq!(result.review_status, LoopReviewStatus::NotRequired);
+        assert!(result.commit_eligible);
+        assert!(result.commit_blockers.is_empty());
+        assert_eq!(result.human_gate_id, None);
+        assert_eq!(result.last_review_decision, None);
+    }
+
+    #[test]
+    fn rejected_review_keeps_commit_ineligible_and_records_reason() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: vec!["build:desktop".to_string()],
+                max_gitnexus_risk: None,
+                require_docs: true,
+                require_commit: false,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+
+        let result = evaluate_completion(
+            &task,
+            &[
+                EvidenceRecord::command_for_test("build:desktop", true),
+                EvidenceRecord::docs_for_test(vec!["README.md"]),
+                EvidenceRecord::Review {
+                    evidence_id: "evidence-review".to_string(),
+                    gate_id: "gate-1".to_string(),
+                    decision: HumanGateDecision::denied(
+                        Some("reviewer".to_string()),
+                        Some("needs tests".to_string()),
+                    ),
+                },
+            ],
+        );
+
+        assert_eq!(result.status, LoopCompletionStatus::WaitingForReview);
+        assert_eq!(result.review_status, LoopReviewStatus::Rejected);
+        assert!(!result.commit_eligible);
+        assert_eq!(result.commit_blockers, vec!["review_rejected:needs tests"]);
+        assert_eq!(result.human_gate_id.as_deref(), Some("gate-1"));
+        let decision = result
+            .last_review_decision
+            .as_ref()
+            .expect("review decision");
+        assert_eq!(decision.kind, HumanGateDecisionKind::Denied);
+        assert_eq!(decision.reason.as_deref(), Some("needs tests"));
+    }
+
+    #[test]
+    fn commit_evidence_requires_closed_human_gate_reference() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: Vec::new(),
+                max_gitnexus_risk: None,
+                require_docs: false,
+                require_commit: true,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+        let approved_review = EvidenceRecord::Review {
+            evidence_id: "evidence-review".to_string(),
+            gate_id: "gate-1".to_string(),
+            decision: HumanGateDecision::approved(Some("reviewer".to_string()), None),
+        };
+        let commit_without_gate = EvidenceRecord::Commit {
+            evidence_id: "evidence-commit".to_string(),
+            commit_sha: "abc1234".to_string(),
+            summary: "test commit".to_string(),
+            human_gate_id: None,
+        };
+
+        let result = evaluate_completion(&task, &[approved_review.clone(), commit_without_gate]);
+
+        assert_eq!(result.status, LoopCompletionStatus::Blocked);
+        assert_eq!(result.reasons, vec!["commit_missing_human_gate"]);
+        assert_eq!(result.commit_blockers, vec!["commit_missing_human_gate"]);
+        assert!(!result.commit_eligible);
+
+        let commit_with_gate = EvidenceRecord::Commit {
+            evidence_id: "evidence-commit-gated".to_string(),
+            commit_sha: "def5678".to_string(),
+            summary: "human commit".to_string(),
+            human_gate_id: Some("gate-1".to_string()),
+        };
+
+        let result = evaluate_completion(&task, &[approved_review, commit_with_gate]);
+
+        assert_eq!(result.status, LoopCompletionStatus::Complete);
+        assert!(result.reasons.is_empty());
+        assert!(result.commit_eligible);
+        assert_eq!(result.human_gate_id.as_deref(), Some("gate-1"));
+    }
+
+    #[test]
+    fn approved_review_with_open_gate_is_not_commit_eligible_and_records_gate_blocker() {
+        let mut task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: Vec::new(),
+                max_gitnexus_risk: None,
+                require_docs: false,
+                require_commit: false,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+        task.open_gates.push(HumanGateRecord::new(
+            "gate-2".to_string(),
+            HumanGateType::PolicyOverride,
+            "Approve remaining work".to_string(),
+        ));
+
+        let result = evaluate_completion(
+            &task,
+            &[EvidenceRecord::Review {
+                evidence_id: "evidence-review".to_string(),
+                gate_id: "gate-1".to_string(),
+                decision: HumanGateDecision::approved(Some("reviewer".to_string()), None),
+            }],
+        );
+
+        assert_eq!(result.status, LoopCompletionStatus::WaitingForReview);
+        assert_eq!(result.reasons, vec!["open_human_gate:gate-2"]);
+        assert_eq!(result.review_status, LoopReviewStatus::Approved);
+        assert!(!result.commit_eligible);
+        assert_eq!(result.commit_blockers, vec!["open_human_gate:gate-2"]);
+    }
+
+    #[test]
+    fn commit_evidence_wrong_human_gate_is_structured_commit_blocker() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: Vec::new(),
+                max_gitnexus_risk: None,
+                require_docs: false,
+                require_commit: true,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+
+        let result = evaluate_completion(
+            &task,
+            &[
+                EvidenceRecord::Review {
+                    evidence_id: "evidence-review".to_string(),
+                    gate_id: "gate-1".to_string(),
+                    decision: HumanGateDecision::approved(Some("reviewer".to_string()), None),
+                },
+                EvidenceRecord::Commit {
+                    evidence_id: "evidence-commit".to_string(),
+                    commit_sha: "abc1234".to_string(),
+                    summary: "human commit".to_string(),
+                    human_gate_id: Some("gate-2".to_string()),
+                },
+            ],
+        );
+
+        assert_eq!(result.status, LoopCompletionStatus::Blocked);
+        assert_eq!(
+            result.reasons,
+            vec!["commit_without_approved_human_gate:gate-2"]
+        );
+        assert_eq!(
+            result.commit_blockers,
+            vec!["commit_without_approved_human_gate:gate-2"]
+        );
+        assert!(!result.commit_eligible);
+    }
+
+    #[test]
+    fn missing_commit_is_structured_commit_blocker_when_required() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: Vec::new(),
+                max_gitnexus_risk: None,
+                require_docs: false,
+                require_commit: true,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+
+        let result = evaluate_completion(
+            &task,
+            &[EvidenceRecord::Review {
+                evidence_id: "evidence-review".to_string(),
+                gate_id: "gate-1".to_string(),
+                decision: HumanGateDecision::approved(Some("reviewer".to_string()), None),
+            }],
+        );
+
+        assert_eq!(result.status, LoopCompletionStatus::Blocked);
+        assert_eq!(result.reasons, vec!["missing_commit"]);
+        assert_eq!(result.commit_blockers, vec!["missing_commit"]);
+        assert!(!result.commit_eligible);
     }
 
     #[test]
@@ -404,7 +858,7 @@ mod tests {
         let result = evaluate_completion(&task, &[]);
 
         assert_eq!(result.status, LoopCompletionStatus::Blocked);
-        assert_eq!(result.reasons, vec!["missing_docs", "missing_commit"]);
+        assert_eq!(result.reasons, vec!["missing_docs"]);
     }
 
     #[test]
@@ -430,6 +884,45 @@ mod tests {
 
         assert_eq!(result.status, LoopCompletionStatus::Complete);
         assert!(result.reasons.is_empty());
+    }
+
+    #[test]
+    fn runtime_sources_do_not_shell_out_to_git_commit_merge_or_push() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let runtime_files = [
+            "src/loop_runtime/completion.rs",
+            "src/loop_runtime/gates.rs",
+            "src/loop_runtime/policy.rs",
+            "src/loop_runtime/projection.rs",
+            "src/loop_runtime/types.rs",
+            "src/gateway/protocol.rs",
+            "src/gateway/server.rs",
+            "src/ipc/a2a_handlers.rs",
+            "src/agent/a2a/review_gate.rs",
+        ];
+        let forbidden = [
+            "git commit",
+            "git merge",
+            "git push",
+            ".arg(\"commit\")",
+            ".arg(\"merge\")",
+            ".arg(\"push\")",
+            ".args([\"commit\"",
+            ".args([\"merge\"",
+            ".args([\"push\"",
+        ];
+
+        for relative in runtime_files {
+            let raw = std::fs::read_to_string(manifest_dir.join(relative))
+                .unwrap_or_else(|error| panic!("read {relative}: {error}"));
+            let production_source = raw.split("#[cfg(test)]").next().unwrap_or(&raw);
+            for needle in forbidden {
+                assert!(
+                    !production_source.contains(needle),
+                    "runtime production source {relative} must not shell out to {needle}"
+                );
+            }
+        }
     }
 
     fn task_with_sufficient_evidence() -> (LoopTaskRecord, Vec<EvidenceRecord>) {

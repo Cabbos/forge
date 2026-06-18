@@ -1,4 +1,4 @@
-import { AlertTriangle, CircleDashed, FileCheck2, ShieldAlert, TimerReset } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, FileCheck2, ShieldAlert, TimerReset } from "lucide-react";
 import type { LoopTaskRecord } from "@/lib/protocol";
 import type { LoopRuntimeSummary } from "@/lib/loopRuntime";
 
@@ -12,7 +12,12 @@ export function LoopTaskPanel({
   const blockers = completionBlockers(task);
   const budget = budgetSnapshot(task);
   const latestEvent = task.latest_event_id?.trim() || "暂无事件";
-  const reviewRequired = task.status === "waiting_for_review" || blockers.length > 0;
+  const reviewRequired =
+    task.status === "waiting_for_review" ||
+    summary.reviewStatus === "ready_for_review" ||
+    summary.reviewStatus === "rejected" ||
+    blockers.length > 0;
+  const commitStatus = commitStatusFor(summary);
 
   return (
     <div className="forge-loop-task-panel" data-tone={summary.tone} data-testid={`loop-task-panel-${task.id}`}>
@@ -49,11 +54,26 @@ export function LoopTaskPanel({
       {reviewRequired && (
         <div className="forge-loop-task-panel-review" data-testid="loop-review-required">
           <ShieldAlert className="size-3" />
-          <span>需要人工审阅，提交仍由人确认</span>
+          <span>{summary.reviewStatus === "rejected" ? "blocked by review" : "ready for human review"}</span>
+          <span>commit remains human-gated</span>
+        </div>
+      )}
+      {commitStatus && (
+        <div className="forge-loop-task-panel-review" data-testid="loop-commit-gated">
+          {summary.commitEligible ? <CheckCircle2 className="size-3" /> : <ShieldAlert className="size-3" />}
+          <span>{commitStatus}</span>
+          <span>commit remains human-gated</span>
         </div>
       )}
     </div>
   );
+}
+
+function commitStatusFor(summary: LoopRuntimeSummary): string | null {
+  if (summary.commitEligible && summary.reviewStatus === "approved") return "commit eligible after human review";
+  if (summary.commitBlockers.includes("missing_human_review")) return "ready for human review";
+  if (summary.reviewStatus === "rejected") return "blocked by review";
+  return null;
 }
 
 function completionBlockers(task: LoopTaskRecord): string[] {
@@ -79,6 +99,13 @@ function budgetSnapshot(task: LoopTaskRecord): string {
 
 function readableReason(reason: string): string {
   if (reason.startsWith("missing_required_check:")) return `缺少检查 ${reason.slice("missing_required_check:".length)}`;
+  if (reason.startsWith("review_rejected:")) return `blocked by review: ${reason.slice("review_rejected:".length)}`;
+  if (reason === "review_rejected") return "blocked by review";
+  if (reason === "missing_human_review") return "commit remains human-gated";
+  if (reason === "commit_missing_human_gate") return "commit evidence missing human gate";
+  if (reason.startsWith("commit_without_approved_human_gate:")) {
+    return `commit evidence lacks approved gate ${reason.slice("commit_without_approved_human_gate:".length)}`;
+  }
   if (reason === "task_waiting_for_input") return "等待用户或桌面运行时输入";
   if (reason === "task_waiting_for_review") return "等待人工审阅";
   return reason;

@@ -451,7 +451,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
           session_id: sessionId,
           profile_id: null,
           workspace_path: "/Users/cabbos/project/forge",
-          status: "waiting_for_review",
+          status: "completed",
           owner: { kind: "gateway" },
           policy: {},
           budget: {},
@@ -470,22 +470,37 @@ test.describe("Phase 7 acceptance surfaces", () => {
             has_unknown_cost: true,
           },
           latest_event_id: "evt-loop-runtime-review",
-          outcome: { message: "Waiting for controller review before any commit." },
+          outcome: { message: "Review approved; commit remains human-gated." },
           completion_result: {
-            status: "blocked",
-            reasons: ["missing_required_check:npm --prefix apps/desktop run build"],
+            status: "complete",
+            reasons: [],
+            review_status: "approved",
+            commit_eligible: true,
+            commit_blockers: [],
+            human_gate_id: "a2a-review-loop-runtime-ui",
+            last_review_decision: {
+              kind: "approved",
+              decided_at_ms: Date.now(),
+              decided_by: "controller",
+              reason: "review passed",
+            },
           },
         },
       },
     ], 1);
 
-    await expect(page.getByTestId("background-task-status")).toContainText("1 Loop 任务");
+    await expect(page.getByTestId("background-task-status")).toContainText("1 待审阅");
     await page.getByRole("button", { name: "展开后台任务列表" }).click();
     const drawer = page.getByTestId("background-task-list");
     await expect(drawer).toContainText("Ship Runtime UI and Dashboard Consumption");
-    await expect(drawer).toContainText("缺少检查 npm --prefix apps/desktop run build");
-    await expect(drawer.getByTestId("loop-review-required")).toContainText("需要人工审阅");
+    await expect(drawer).toContainText("commit eligible after human review");
+    await expect(drawer).toContainText("commit remains human-gated");
+    await expect(drawer.getByTestId("loop-commit-gated")).toContainText("commit remains human-gated");
     await expect(drawer).toContainText("成本未知");
+    await expect(drawer.getByRole("button", { name: /commit|merge|push|提交|合并|推送/i })).toHaveCount(0);
+    await expect(drawer).not.toContainText("git commit");
+    await expect(drawer).not.toContainText("git merge");
+    await expect(drawer).not.toContainText("git push");
 
     await page.getByRole("button", { name: "打开后台任务面板" }).click();
     const workbench = page.getByRole("region", { name: "子任务" });

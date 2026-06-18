@@ -50,6 +50,88 @@ describe("summarizeLoopTask", () => {
     assert.equal(summary.budgetWarning, "预算已触发，成本未知");
     assert.equal(summary.detail, "8 轮模型 / 24 次工具 / 2m 0s");
   });
+
+  it("surfaces ready-for-review while commit remains human-gated", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "waiting_for_review",
+      completion_result: {
+        status: "waiting_for_review",
+        reasons: ["missing_review_decision"],
+        review_status: "ready_for_review",
+        commit_eligible: false,
+        commit_blockers: ["missing_human_review"],
+      },
+    }));
+
+    assert.equal(summary.label, "ready for human review");
+    assert.equal(summary.commitEligible, false);
+    assert.deepEqual(summary.commitBlockers, ["missing_human_review"]);
+    assert.match(summary.detail, /commit remains human-gated/);
+  });
+
+  it("surfaces commit eligibility after approved human review", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "completed",
+      completion_result: {
+        status: "complete",
+        reasons: [],
+        review_status: "approved",
+        commit_eligible: true,
+        commit_blockers: [],
+        human_gate_id: "gate-1",
+        last_review_decision: { kind: "approved", reason: null },
+      },
+    }));
+
+    assert.equal(summary.label, "commit eligible after human review");
+    assert.equal(summary.commitEligible, true);
+    assert.equal(summary.humanGateId, "gate-1");
+    assert.match(summary.detail, /commit remains human-gated/);
+  });
+
+  it("surfaces rejected review as a commit blocker", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "waiting_for_review",
+      completion_result: {
+        status: "waiting_for_review",
+        reasons: ["review_rejected:needs tests"],
+        review_status: "rejected",
+        commit_eligible: false,
+        commit_blockers: ["review_rejected:needs tests"],
+        human_gate_id: "gate-1",
+        last_review_decision: { kind: "denied", reason: "needs tests" },
+      },
+    }));
+
+    assert.equal(summary.label, "blocked by review");
+    assert.equal(summary.commitEligible, false);
+    assert.deepEqual(summary.commitBlockers, ["review_rejected:needs tests"]);
+    assert.match(summary.detail, /needs tests/);
+  });
+
+  it("does not label no-review completed tasks as human review work", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "completed",
+      completion_result: {
+        status: "complete",
+        reasons: [],
+        review_status: "not_required",
+        commit_eligible: true,
+        commit_blockers: [],
+      },
+    }));
+
+    assert.notEqual(summary.label, "ready for human review");
+    assert.notEqual(summary.label, "blocked by review");
+    assert.notEqual(summary.label, "commit eligible after human review");
+    assert.equal(summary.label, "完成");
+    assert.equal(summary.needsHumanDecision, false);
+    assert.doesNotMatch(summary.detail, /commit remains human-gated/);
+    assert.doesNotMatch(summary.detail, /ready for human review|blocked by review|commit eligible after human review/);
+    assert.equal(summary.reviewStatus, "not_required");
+    assert.equal(summary.commitEligible, true);
+    assert.deepEqual(summary.commitBlockers, []);
+  });
 });
 
 describe("runtimeFactsFromSubagents", () => {

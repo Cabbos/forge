@@ -214,6 +214,36 @@ describe("deriveBackgroundTaskStatus", () => {
     assert.strictEqual(result.hasAgentWork, false);
   });
 
+  it("keeps completed reviewed loop tasks visible while commit remains human gated", () => {
+    const result = deriveBackgroundTaskStatus({
+      agentA2A: null,
+      scheduler: { tasks: [], recent_history: [], load_error: null },
+      healthAlerts: [],
+      loopTasks: [
+        loopTask({
+          id: "loop-reviewed",
+          goal: "Reviewed loop",
+          status: "completed",
+          completion_result: {
+            status: "complete",
+            reasons: [],
+            review_status: "approved",
+            commit_eligible: true,
+            commit_blockers: [],
+            human_gate_id: "gate-1",
+          },
+        }),
+      ],
+    });
+
+    assert.strictEqual(result.visible, true);
+    assert.deepStrictEqual(result.items.map((item) => item.label), ["1 Loop 任务"]);
+    assert.deepStrictEqual(result.tasks.map((item) => `${item.kind}:${item.title}:${item.detail}`), [
+      "loop:Reviewed loop:commit remains human-gated",
+    ]);
+    assert.strictEqual(result.hasAgentWork, true);
+  });
+
   it("keeps running waiting review and interrupted loop tasks visible", () => {
     const result = deriveBackgroundTaskStatus({
       agentA2A: null,

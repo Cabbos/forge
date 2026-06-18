@@ -18,6 +18,7 @@ import { reviewAgentA2ATasks, type AgentA2AReviewDecision } from "@/lib/ipc/a2a"
 import {
   runtimeFactsForSubagentTask,
   type LoopRuntimeFact,
+  type LoopRuntimeFactSource,
 } from "@/lib/loopRuntime";
 import {
   deriveWorkbenchFileView,
@@ -560,29 +561,6 @@ export function AgentA2AWorkspace({
   const [reviewBusyKey, setReviewBusyKey] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const subagentRuntimeByTask = useStore((s) => s.subagentRuntimeByTask);
-  const handleReview = async (taskIds: string[], decision: AgentA2AReviewDecision) => {
-    if (!sessionId || taskIds.length === 0) return;
-    const key = taskIds.length === 1 ? `${taskIds[0]}:${decision}` : `bulk:${decision}`;
-    setReviewBusyKey(key);
-    setReviewError(null);
-    try {
-      const next = await reviewAgentA2ATasks({
-        sessionId,
-        taskIds,
-        decision,
-        message: null,
-      });
-      useStore.setState((current) => {
-        const agentA2ABySession = new Map(current.agentA2ABySession);
-        agentA2ABySession.set(next.session_id, next.state);
-        return { agentA2ABySession };
-      });
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setReviewBusyKey(null);
-    }
-  };
 
   if (!state || state.tasks.length === 0) {
     return (
@@ -604,6 +582,30 @@ export function AgentA2AWorkspace({
     taskIds,
     sessionId,
   });
+  const handleReview = async (reviewTaskIds: string[], decision: AgentA2AReviewDecision) => {
+    if (!sessionId || reviewTaskIds.length === 0) return;
+    const key = reviewTaskIds.length === 1 ? `${reviewTaskIds[0]}:${decision}` : `bulk:${decision}`;
+    setReviewBusyKey(key);
+    setReviewError(null);
+    try {
+      const next = await reviewAgentA2ATasks({
+        sessionId,
+        taskIds: reviewTaskIds,
+        decision,
+        message: null,
+        loopTaskId: loopTaskIdForReview(runtimeSources, reviewTaskIds),
+      });
+      useStore.setState((current) => {
+        const agentA2ABySession = new Map(current.agentA2ABySession);
+        agentA2ABySession.set(next.session_id, next.state);
+        return { agentA2ABySession };
+      });
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReviewBusyKey(null);
+    }
+  };
 
   return (
     <section className="forge-a2a-workspace" aria-label="子任务">
@@ -647,6 +649,22 @@ export function AgentA2AWorkspace({
       </div>
     </section>
   );
+}
+
+function loopTaskIdForReview(
+  runtimeSources: LoopRuntimeFactSource[],
+  taskIds: string[],
+): string | null {
+  const loopTaskIds = new Set<string>();
+  for (const taskId of taskIds) {
+    const idsForTask = runtimeSources
+      .filter((source) => source.task_id === taskId)
+      .map((source) => source.loop_task_id?.trim() || null)
+      .filter((loopTaskId): loopTaskId is string => loopTaskId != null);
+    if (idsForTask.length === 0) return null;
+    for (const loopTaskId of idsForTask) loopTaskIds.add(loopTaskId);
+  }
+  return loopTaskIds.size === 1 ? [...loopTaskIds][0] : null;
 }
 
 export function AgentA2ATimeline({

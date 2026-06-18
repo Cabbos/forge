@@ -57,7 +57,7 @@ Forge 希望用户只需要理解三个产品层级：
 - 记录任务状态、上下文来源、工具证据、检查点、验证结果和恢复状态。
 - 通过 History 搜索、筛选、恢复、重命名、导出和清理本地 session 快照。
 - 在 Settings 中查看诊断、Gateway runtime、调度任务、权限规则、记忆/资料和本机服务状态。
-- 在 Agent Workbench 和全局后台状态栏里查看子任务、审阅队列、调度任务和健康告警。
+- 在 Agent Workbench 和全局后台状态栏里查看子任务、审阅队列、completion/review-to-commit eligibility、调度任务和健康告警。
 
 ## 适合的场景
 
@@ -135,7 +135,7 @@ scripts/acceptance.sh          # build + eval + Level 3 runtime + desktop smoke
 scripts/acceptance.sh --dry-run
 ```
 
-当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、gateway runner status、subagent runtime projection、provider usage known/unknown telemetry、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含真实 Rust `run_worktree_worker` harness（mock adapter/harness）、A2A child runtime 的 live file-ish tool facts、direct ToolExecutor file-ish tools 的 `file_io` stream smoke，以及 `source: "post_shell_delta"` 的 bounded post-shell file-effect evidence smoke。Provider usage 证据覆盖 active Anthropic / OpenAI-compatible model call：provider reported token 会保留为已知值，provider omitted usage 和 unknown pricing 会保留为 `unknown`/`null`；但不包含 Tauri/WebDriver force-quit harness、Shell 内部文件影响追踪、syscall/file-descriptor tracing、full non-git workspace enumeration、billing-grade usage accounting、usage/pricing unknown 时的精确 cost、gateway autonomous resume、automatic parent selection、parent-session structs 或 auto commit/merge/push。
+当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、review-to-commit eligibility、gateway runner status、subagent runtime projection、provider usage known/unknown telemetry、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含真实 Rust `run_worktree_worker` harness（mock adapter/harness）、A2A child runtime 的 live file-ish tool facts、direct ToolExecutor file-ish tools 的 `file_io` stream smoke，以及 `source: "post_shell_delta"` 的 bounded post-shell file-effect evidence smoke。Provider usage 证据覆盖 active Anthropic / OpenAI-compatible model call：provider reported token 会保留为已知值，provider omitted usage 和 unknown pricing 会保留为 `unknown`/`null`；review-to-commit eligibility 只表示 readiness 和 blocker，commit 仍由人执行；但不包含 Tauri/WebDriver force-quit harness、Shell 内部文件影响追踪、syscall/file-descriptor tracing、full non-git workspace enumeration、billing-grade usage accounting、usage/pricing unknown 时的精确 cost、gateway autonomous resume、automatic creation of parent-session context、fuzzy parent/root-task selection 或 auto commit/merge/push。
 
 也可以直接运行 Rust 测试：
 
@@ -196,7 +196,7 @@ Forge 的可信度来自几个工程约束：
 - Playwright E2E 与 Rust 后端检查共同覆盖关键路径。
 - Gateway runtime、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
 - 子任务、审阅队列、健康告警和后台调度通过 Agent Workbench 与全局状态栏持续暴露。
-- Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、crash/replay regression coverage、gateway runner lease、provider usage known/unknown telemetry、A2A child runtime file-ish tool facts、direct ToolExecutor file-ish `file_io` stream、bounded post-shell delta evidence 和真实 Rust `run_worktree_worker` harness 支撑长期 agent 工作；billing-grade usage accounting、usage/pricing unknown 时的精确 cost、Shell 内部文件影响追踪、syscall/file-descriptor tracing、full non-git workspace enumeration、gateway autonomous resume、Tauri/WebDriver force-quit harness、automatic parent selection、parent-session structs 和 auto commit/merge/push 仍未声明覆盖。
+- Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、crash/replay regression coverage、gateway runner lease、provider usage known/unknown telemetry、A2A child runtime file-ish tool facts、direct ToolExecutor file-ish `file_io` stream、bounded post-shell delta evidence 和真实 Rust `run_worktree_worker` harness 支撑长期 agent 工作；billing-grade usage accounting、usage/pricing unknown 时的精确 cost、Shell 内部文件影响追踪、syscall/file-descriptor tracing、full non-git workspace enumeration、gateway autonomous resume、Tauri/WebDriver force-quit harness、automatic creation of parent-session context、fuzzy parent/root-task selection 和 auto commit/merge/push 仍未声明覆盖。
 
 当前正在继续加强的方向：
 

@@ -1,8 +1,9 @@
 use crate::loop_runtime::types::{EvidenceRecord, LoopEventEnvelope, LoopRuntimeEvent};
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[derive(Debug, Clone)]
 pub struct LoopEventJournal {
@@ -18,10 +19,8 @@ pub struct AppendResult {
 
 impl LoopEventJournal {
     pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            lock: Arc::new(Mutex::new(())),
-        }
+        let lock = shared_lock_for_path(&path);
+        Self { path, lock }
     }
 
     pub fn persistent_default() -> Self {
@@ -179,6 +178,30 @@ impl LoopEventJournal {
     }
 }
 
+fn shared_lock_for_path(path: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let key = normalize_journal_lock_path(path);
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
+
+fn normalize_journal_lock_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String> {
     let payload = match &event.event {
         LoopRuntimeEvent::TaskCreated { task } => serde_json::json!({
@@ -330,11 +353,13 @@ fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
             evidence_id,
             commit_sha,
             summary,
+            human_gate_id,
         } => serde_json::json!({
             "kind": "commit",
             "evidence_id": evidence_id,
             "commit_sha": commit_sha,
             "summary": summary,
+            "human_gate_id": human_gate_id,
         }),
         EvidenceRecord::Docs { evidence_id, paths } => serde_json::json!({
             "kind": "docs",
@@ -757,6 +782,41 @@ mod tests {
         assert_eq!(results.iter().filter(|result| result.appended).count(), 1);
         assert_eq!(loaded.len(), 1);
         assert_eq!(sequences.len(), loaded.len());
+    }
+
+    #[test]
+    fn concurrent_duplicate_idempotency_key_across_journal_instances_appends_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let barrier = Arc::new(Barrier::new(32));
+        let mut handles = Vec::new();
+
+        for _ in 0..32 {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let journal = LoopEventJournal::new(path);
+                let event = LoopEventEnvelope::task_created_for_test("loop-1", "ship runtime")
+                    .with_idempotency_key("create:loop-1");
+                barrier.wait();
+                journal.append_idempotent(event).unwrap()
+            }));
+        }
+
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        let loaded = LoopEventJournal::new(path).load_all().unwrap();
+        let sequences = loaded
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(results.iter().filter(|result| result.appended).count(), 1);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(sequences.len(), loaded.len());
+        LoopTaskProjection::from_events(&loaded).unwrap();
     }
 
     #[test]

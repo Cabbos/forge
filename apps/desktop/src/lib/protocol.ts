@@ -306,7 +306,15 @@ export interface LoopTaskRecord {
   latest_budget_snapshot?: Record<string, unknown> | null;
   latest_event_id?: string | null;
   outcome?: Record<string, unknown> | null;
-  completion_result?: Record<string, unknown> | null;
+  completion_result?: {
+    status?: string;
+    reasons?: string[];
+    review_status?: string;
+    commit_eligible?: boolean;
+    commit_blockers?: string[];
+    human_gate_id?: string | null;
+    last_review_decision?: Record<string, unknown> | null;
+  } | Record<string, unknown> | null;
 }
 
 export type StreamEvent =

@@ -46,8 +46,8 @@ export function deriveBackgroundTaskStatus({
     (task) => normalizeA2ATaskProjection(task).needs_human_review === true,
   ).length;
   const activeLoopTasks = loopTasks
-    .filter((task) => isVisibleLoopTaskStatus(task.status))
-    .map(summarizeLoopTask);
+    .map(summarizeLoopTask)
+    .filter(isVisibleLoopTaskSummary);
   const enabledScheduledTasks = (scheduler?.tasks ?? []).filter((task) => task.enabled).length;
   const alertCount = healthAlerts.length;
 
@@ -205,6 +205,10 @@ function sortNotifications(notifications: BackgroundTaskNotificationItem[]) {
   return [...notifications].sort((a, b) => priority[a.kind] - priority[b.kind]);
 }
 
-function isVisibleLoopTaskStatus(status: string): boolean {
-  return status !== "completed" && status !== "canceled" && status !== "failed";
+function isVisibleLoopTaskSummary(task: LoopRuntimeSummary): boolean {
+  const status = task.rawTask.status;
+  if (status !== "completed" && status !== "canceled" && status !== "failed") {
+    return true;
+  }
+  return task.reviewStatus === "approved" && task.commitEligible;
 }

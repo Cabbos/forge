@@ -16,16 +16,19 @@ export async function reviewAgentA2ATasks({
   taskIds,
   decision,
   message = null,
+  loopTaskId = null,
 }: {
   sessionId: string;
   taskIds: string[];
   decision: AgentA2AReviewDecision;
   message?: string | null;
+  loopTaskId?: string | null;
 }): Promise<AgentA2ASessionState> {
   return invoke<AgentA2ASessionState>("review_agent_a2a_tasks", {
     sessionId,
     taskIds,
     decision,
     message,
+    loopTaskId,
   });
 }

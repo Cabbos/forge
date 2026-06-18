@@ -594,6 +594,8 @@ pub enum EvidenceRecord {
         evidence_id: String,
         commit_sha: String,
         summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        human_gate_id: Option<String>,
     },
     Docs {
         evidence_id: String,
@@ -645,6 +647,7 @@ impl EvidenceRecord {
             evidence_id: "evidence-commit".to_string(),
             commit_sha: commit_sha.to_string(),
             summary: "test commit".to_string(),
+            human_gate_id: None,
         }
     }
 
@@ -666,11 +669,32 @@ pub enum LoopCompletionStatus {
     FailedRisk,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopReviewStatus {
+    #[default]
+    NotRequired,
+    ReadyForReview,
+    Approved,
+    Rejected,
+    Blocked,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoopCompletionResult {
     pub status: LoopCompletionStatus,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub review_status: LoopReviewStatus,
+    #[serde(default)]
+    pub commit_eligible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commit_blockers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_gate_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_review_decision: Option<HumanGateDecision>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

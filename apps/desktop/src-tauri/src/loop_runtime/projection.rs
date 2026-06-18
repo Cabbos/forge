@@ -503,8 +503,8 @@ mod tests {
     use crate::loop_runtime::{
         BudgetSnapshot, HeadlessResumeApproval, HeadlessResumeMode, LoopActionIntent, LoopActor,
         LoopCompletionResult, LoopCompletionStatus, LoopEventEnvelope, LoopEventJournal,
-        LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection, LoopTaskProjectionStore,
-        LoopTaskStatus, PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
+        LoopReviewStatus, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection,
+        LoopTaskProjectionStore, LoopTaskStatus, PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
     };
 
     #[test]
@@ -830,6 +830,11 @@ mod tests {
         let result = LoopCompletionResult {
             status: LoopCompletionStatus::Blocked,
             reasons: vec!["missing_required_check:test".to_string()],
+            review_status: LoopReviewStatus::Blocked,
+            commit_eligible: false,
+            commit_blockers: vec!["missing_required_check:test".to_string()],
+            human_gate_id: None,
+            last_review_decision: None,
         };
         let completion = event_for_test(
             "loop-1",

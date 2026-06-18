@@ -141,18 +141,12 @@ impl LoopPolicy {
                 HumanGateType::PolicyOverride,
             ),
             LoopActionIntent::Commit {
-                completion_contract_satisfied,
-                passing_evidence,
-            } => {
-                if self.allow_commit && completion_contract_satisfied && passing_evidence {
-                    LoopPolicyDecision::allowed("allowed_by_completion_contract")
-                } else {
-                    LoopPolicyDecision::blocked(
-                        "commit_requires_completion_contract_and_passing_evidence",
-                        HumanGateType::PolicyOverride,
-                    )
-                }
-            }
+                completion_contract_satisfied: _,
+                passing_evidence: _,
+            } => LoopPolicyDecision::blocked(
+                "commit_remains_human_gated",
+                HumanGateType::PolicyOverride,
+            ),
             LoopActionIntent::PushBranch => LoopPolicyDecision::blocked(
                 "push_requires_human_approval",
                 HumanGateType::PolicyOverride,
@@ -233,6 +227,26 @@ mod tests {
 
         assert!(!decision.allowed);
         assert_eq!(decision.reason, "service_lifecycle_requires_human_approval");
+        assert_eq!(
+            decision.required_gate_type,
+            Some(HumanGateType::PolicyOverride)
+        );
+    }
+
+    #[test]
+    fn loop_policy_keeps_commit_human_gated_even_when_eligibility_is_true() {
+        let mut policy = LoopPolicy::default_for_background_task();
+        policy.allow_commit = true;
+        let decision = policy.decide(
+            LoopActionIntent::Commit {
+                completion_contract_satisfied: true,
+                passing_evidence: true,
+            },
+            &BudgetSnapshot::empty_for_test(),
+        );
+
+        assert!(!decision.allowed);
+        assert_eq!(decision.reason, "commit_remains_human_gated");
         assert_eq!(
             decision.required_gate_type,
             Some(HumanGateType::PolicyOverride)
