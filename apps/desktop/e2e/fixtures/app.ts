@@ -1,8 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { simulateStream, fullConversation } from "../mock-ipc";
-import type { WorkflowState } from "../../src/lib/protocol";
+import type { StreamEvent, WorkflowState } from "../../src/lib/protocol";
 
 /** Setup: inject mock IPC before the app loads */
 export async function setup(page: Page, options?: { workingDir?: string | null }) {
@@ -550,6 +550,15 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       selectedProvider: await readKeyval("forge-provider"),
       selectedModel: await readKeyval("forge-model"),
     });
+    const sessionStoreSnapshots = async () => {
+      // @ts-expect-error mock
+      if (Array.isArray(window.__mockSessionStoreSearchResults)) {
+        // @ts-expect-error mock
+        return window.__mockSessionStoreSearchResults as Array<Record<string, unknown>>;
+      }
+      const snapshots = await readKeyval<Array<Record<string, unknown>>>("forge-session-store-search-results");
+      return Array.isArray(snapshots) ? snapshots : [];
+    };
     // @ts-expect-error mock
     window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
       const projectPath = String(args.projectPath ?? workingDir);
@@ -653,7 +662,8 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           return window.__mockDiagnosticsReport ?? diagnosticsReport();
         case "get_gateway_runtime_status":
           // @ts-expect-error acceptance mock
-          return window.__mockGatewayRuntimeStatus ?? gatewayRuntimeStatus();
+          if (window.__mockGatewayRuntimeStatus) return window.__mockGatewayRuntimeStatus;
+          return await readKeyval("forge-gateway-runtime-status") ?? gatewayRuntimeStatus();
         case "get_service_status":
           return serviceStatus();
         case "set_autostart": {
@@ -804,23 +814,27 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "get_session_store_stats":
           // @ts-expect-error mock
           if (window.__mockSessionStoreStats) return window.__mockSessionStoreStats;
-          return {
-            total_snapshots: 0,
-            corrupted_snapshots: 0,
-            total_bytes: 0,
-            oldest_updated_at_ms: null,
-            newest_updated_at_ms: null,
-            by_provider: {},
-            by_workspace: {},
-          };
+          {
+            const snapshots = await sessionStoreSnapshots();
+            const updatedAt = snapshots
+              .map((snapshot) => Number(snapshot.updated_at_ms))
+              .filter((value) => Number.isFinite(value));
+            return {
+              total_snapshots: snapshots.length,
+              corrupted_snapshots: 0,
+              total_bytes: 0,
+              oldest_updated_at_ms: updatedAt.length > 0 ? Math.min(...updatedAt) : null,
+              newest_updated_at_ms: updatedAt.length > 0 ? Math.max(...updatedAt) : null,
+              by_provider: {},
+              by_workspace: {},
+            };
+          }
         case "search_session_store":
           // @ts-expect-error mock
           window.__lastSearchSessionStoreArgs = args;
-          // @ts-expect-error mock
-          if (Array.isArray(window.__mockSessionStoreSearchResults)) {
+          {
             const query = String(args.query ?? "").toLowerCase();
-            // @ts-expect-error mock
-            return window.__mockSessionStoreSearchResults.filter((snapshot) => {
+            return (await sessionStoreSnapshots()).filter((snapshot) => {
               const haystack = [
                 snapshot.session_id,
                 snapshot.provider,
@@ -831,7 +845,6 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
               return !query || haystack.includes(query);
             });
           }
-          return [];
         case "rename_session_snapshot":
           {
             const sessionId = String(args.sessionId ?? "");
@@ -1316,4 +1329,96 @@ export async function expandArchiveFiles(page: Page) {
     await trigger.click();
   }
   return files;
+}
+
+const APP_URL = "http://localhost:1420";
+const MOCK_RUNTIME_REPLAY_EVENTS_KEY = "forge-mock-runtime-replay-events";
+
+export async function persistMockRuntimeReplayEvents(page: Page, events: StreamEvent[]) {
+  await writeMockKeyval(page, MOCK_RUNTIME_REPLAY_EVENTS_KEY, events);
+}
+
+export async function quitApp(page: Page): Promise<BrowserContext> {
+  const context = page.context();
+  await page.close();
+  return context;
+}
+
+export async function reopenApp(
+  context: BrowserContext,
+  options?: {
+    workingDir?: string | null;
+    url?: string;
+    replayDurableRuntimeEvents?: boolean;
+  },
+): Promise<Page> {
+  const page = await context.newPage();
+  await setup(page, { workingDir: options && "workingDir" in options ? options.workingDir : undefined });
+  await page.goto(options?.url ?? APP_URL);
+  await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+  if (options?.replayDurableRuntimeEvents ?? true) {
+    await replayMockRuntimeEvents(page);
+  }
+  return page;
+}
+
+async function replayMockRuntimeEvents(page: Page) {
+  await page.waitForFunction(() => {
+    // @ts-expect-error Tauri listener registry installed by setup()
+    return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+  });
+  await page.evaluate(async (key) => {
+    const events = await new Promise<StreamEvent[]>((resolve) => {
+      const request = indexedDB.open("keyval-store");
+      request.onerror = () => resolve([]);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains("keyval")) database.createObjectStore("keyval");
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction("keyval", "readonly");
+        const getRequest = tx.objectStore("keyval").get(key);
+        getRequest.onerror = () => {
+          db.close();
+          resolve([]);
+        };
+        getRequest.onsuccess = () => {
+          db.close();
+          resolve(Array.isArray(getRequest.result) ? getRequest.result : []);
+        };
+      };
+    });
+    // @ts-expect-error Tauri listener registry installed by setup()
+    const listeners = window.__tauriListeners?.["session-output"] ?? [];
+    for (const event of events) {
+      for (const listener of listeners) {
+        listener({ payload: event });
+      }
+    }
+  }, MOCK_RUNTIME_REPLAY_EVENTS_KEY);
+}
+
+async function writeMockKeyval(page: Page, key: string, value: unknown) {
+  await page.evaluate(
+    async ({ key, value }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("keyval-store");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains("keyval")) database.createObjectStore("keyval");
+        };
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("keyval", "readwrite");
+        tx.objectStore("keyval").put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    },
+    { key, value },
+  );
 }

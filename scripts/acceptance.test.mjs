@@ -40,4 +40,6 @@ test("acceptance script dry-run lists the final product gates", () => {
   assert.match(output, /acceptance\.spec\.ts/);
   assert.match(output, /messages\.spec\.ts/);
   assert.match(output, /write_file tool details show\|diff cards show\|image diff cards show/);
+  assert.match(output, /mocked desktop restart runtime smoke/);
+  assert.match(output, /npm --prefix apps\/desktop run test:e2e -- e2e\/level3-runtime-restart\.spec\.ts/);
 });

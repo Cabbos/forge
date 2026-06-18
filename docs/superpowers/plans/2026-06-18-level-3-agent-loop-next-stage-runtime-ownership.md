@@ -107,6 +107,8 @@ gitnexus_impact(repo: "forge", target: "classify_tool_category", file_path: "app
 
 **Goal:** Add a product-level harness that proves durable loop/session/A2A runtime state survives a real desktop app quit/reopen sequence without claiming autonomous continuation.
 
+**Current state (2026-06-18):** partial mocked product evidence exists in `apps/desktop/e2e/level3-runtime-restart.spec.ts` and is advertised as `mocked desktop restart runtime smoke`. It closes and reopens a Playwright page through the existing Vite + mocked Tauri IPC harness, replays durable runtime facts from IndexedDB, and verifies no autonomous continuation. This is not full Task 1 completion: true Tauri/WebDriver binary force-quit/reopen remains open because the current e2e contract is Playwright + Vite + mocked Tauri IPC and no `tauri-driver`/WebDriver launcher is present.
+
 **Files:**
 - Create: `apps/desktop/e2e/level3-runtime-restart.spec.ts`
 - Modify: `apps/desktop/e2e/fixtures/app.ts`
@@ -178,7 +180,7 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
 
 - [ ] **Step 1.5: Add acceptance script coverage**
 
-  Add a label such as `Tauri/WebDriver restart runtime harness` to `scripts/acceptance.sh` and add the exact command:
+  Add a label such as `mocked desktop restart runtime smoke` to `scripts/acceptance.sh` until a true Tauri/WebDriver harness exists, and add the exact command:
 
   ```bash
   npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts
@@ -805,7 +807,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
   Update `scripts/acceptance.sh` so the dry-run matrix includes, in order:
 
   - existing Level 3 MVP gates,
-  - Tauri/WebDriver restart harness,
+  - mocked desktop restart runtime smoke as partial evidence until true Tauri/WebDriver restart exists,
   - provider usage known/unknown telemetry,
   - post-shell file-effect evidence,
   - persisted A2A lineage,
@@ -875,7 +877,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
 | --- | --- | --- |
 | Durable ledger/replay remains intact | Existing journal and projection tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib` and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib` |
 | Runner lease/waiting boundary remains intact | Runner/gateway tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib` |
-| Restart runtime ownership | Tauri/WebDriver force-quit/reopen spec | `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` |
+| Restart runtime ownership | Partial mocked desktop restart smoke; true Tauri/WebDriver force-quit/reopen remains open | `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` |
 | Known/unknown provider usage | Adapter and budget tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib` |
 | Direct ToolExecutor file IO | Existing Phase 4-K executor stream tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib` |
 | Post-shell delta evidence | Shell file-effect tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib` |

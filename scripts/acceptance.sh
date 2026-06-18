@@ -32,6 +32,7 @@ Runs the Forge Level 3 runtime acceptance gates:
   16. Completion contract mocked desktop smoke
   17. Desktop Phase 7 and A2A worker lifecycle smoke specs
   18. Rich preview e2e smoke specs
+  19. mocked desktop restart runtime smoke
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -63,6 +64,7 @@ COMMAND_LABELS=(
   "completion contract mocked desktop smoke"
   "desktop Phase 7 and A2A worker lifecycle smoke specs"
   "rich preview e2e smoke specs"
+  "mocked desktop restart runtime smoke"
 )
 
 COMMANDS=(
@@ -84,6 +86,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"write_file tool details show|diff cards show|image diff cards show\""
+  "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
 )
 
 echo "Forge Level 3 runtime acceptance suite"
