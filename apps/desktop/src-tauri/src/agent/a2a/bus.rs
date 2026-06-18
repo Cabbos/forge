@@ -3,8 +3,9 @@ use crate::agent::a2a::projection::{
     AgentFileIoEventProjection,
 };
 use crate::agent::a2a::types::{
-    AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole,
-    AgentTaskFailure, AgentTaskId, AgentTaskRecord, AgentTaskStatus,
+    AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind,
+    AgentParentSessionContext, AgentRole, AgentTaskFailure, AgentTaskId, AgentTaskRecord,
+    AgentTaskStatus,
 };
 use std::collections::HashMap;
 
@@ -42,6 +43,8 @@ impl AgentReviewDecision {
 pub(crate) struct AgentA2ABus {
     pub tasks: Vec<AgentTaskRecord>,
     pub messages: Vec<AgentMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_session_context: Option<AgentParentSessionContext>,
     next_task_index: u64,
     next_agent_index: u64,
     next_message_index: u64,
@@ -91,12 +94,16 @@ impl AgentA2ABus {
         prompt: impl Into<String>,
         timestamp_ms: u64,
     ) -> Result<AgentTaskId, String> {
-        if self.task(parent_task_id).is_none() {
+        let Some(parent_index) = self
+            .tasks
+            .iter()
+            .position(|task| task.task_id == *parent_task_id)
+        else {
             return Err(format!(
                 "parent task '{}' does not exist",
                 parent_task_id.as_str()
             ));
-        }
+        };
 
         self.next_task_index += 1;
         self.next_agent_index += 1;
@@ -114,6 +121,9 @@ impl AgentA2ABus {
             timestamp_ms,
         );
         record.parent_task_id = Some(parent_task_id.clone());
+        if self.tasks[parent_index].record_child_task_id(task_id.clone()) {
+            self.tasks[parent_index].updated_at_ms = timestamp_ms;
+        }
         self.tasks.push(record);
         self.push_message(
             task_id.clone(),
@@ -127,6 +137,14 @@ impl AgentA2ABus {
 
     pub(crate) fn task(&self, task_id: &AgentTaskId) -> Option<&AgentTaskRecord> {
         self.tasks.iter().find(|task| task.task_id == *task_id)
+    }
+
+    pub(crate) fn set_parent_session_context(&mut self, context: AgentParentSessionContext) {
+        self.parent_session_context = Some(context);
+    }
+
+    pub(crate) fn parent_session_context(&self) -> Option<&AgentParentSessionContext> {
+        self.parent_session_context.as_ref()
     }
 
     pub(crate) fn claim_task_lease(
@@ -614,10 +632,26 @@ impl AgentA2ABus {
                         )
                         .ok()
                     });
-                let child_task_ids = child_task_ids_by_parent
-                    .get(&task.task_id)
-                    .cloned()
-                    .unwrap_or_default();
+                let mut child_task_ids = Vec::new();
+                for child_task_id in &task.child_task_ids {
+                    let child_task_id = child_task_id.as_str().to_string();
+                    if !child_task_ids
+                        .iter()
+                        .any(|existing| existing == &child_task_id)
+                    {
+                        child_task_ids.push(child_task_id);
+                    }
+                }
+                if let Some(derived_child_task_ids) = child_task_ids_by_parent.get(&task.task_id) {
+                    for child_task_id in derived_child_task_ids {
+                        if !child_task_ids
+                            .iter()
+                            .any(|existing| existing == child_task_id)
+                        {
+                            child_task_ids.push(child_task_id.clone());
+                        }
+                    }
+                }
                 AgentA2ATaskProjection {
                     task_id: task.task_id.as_str().to_string(),
                     agent_id: task.agent_id.as_str().to_string(),
@@ -1585,6 +1619,91 @@ mod tests {
     }
 
     #[test]
+    fn assign_child_task_persists_parent_child_task_ids() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        let child_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child implementer",
+                "child prompt",
+                20,
+            )
+            .expect("child task assigned");
+
+        let parent = bus.task(&parent_id).expect("parent task");
+        let child = bus.task(&child_id).expect("child task");
+
+        assert_eq!(child.parent_task_id.as_ref(), Some(&parent_id));
+        assert_eq!(parent.child_task_ids, vec![child_id]);
+    }
+
+    #[test]
+    fn projection_prefers_persisted_child_task_ids_and_appends_legacy_ids() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = AgentTaskId::new("parent");
+        let child_a_id = AgentTaskId::new("child-a");
+        let child_b_id = AgentTaskId::new("child-b");
+        let mut parent = AgentTaskRecord::new(
+            parent_id.clone(),
+            AgentId::new("parent-agent"),
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        assert!(parent.record_child_task_id(child_b_id.clone()));
+        assert!(!parent.record_child_task_id(child_b_id.clone()));
+        let mut child_a = AgentTaskRecord::new(
+            child_a_id.clone(),
+            AgentId::new("child-a-agent"),
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Child A",
+            "child A prompt",
+            20,
+        );
+        child_a.parent_task_id = Some(parent_id.clone());
+        let mut child_b = AgentTaskRecord::new(
+            child_b_id.clone(),
+            AgentId::new("child-b-agent"),
+            AgentRole::Reviewer,
+            AgentExecutionMode::PatchProposal,
+            "Child B",
+            "child B prompt",
+            30,
+        );
+        child_b.parent_task_id = Some(parent_id.clone());
+        bus.tasks.push(parent);
+        bus.tasks.push(child_a);
+        bus.tasks.push(child_b);
+
+        let projection = bus.projection();
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![
+                child_b_id.as_str().to_string(),
+                child_a_id.as_str().to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn assign_child_task_populates_parent_and_assign_task_stays_root() {
         let mut bus = AgentA2ABus::default();
         let parent_id = bus.assign_task(
@@ -1639,8 +1758,9 @@ mod tests {
     }
 
     #[test]
-    fn assign_child_task_rejects_missing_parent() {
+    fn assign_child_task_rejects_missing_parent_without_mutating_bus() {
         let mut bus = AgentA2ABus::default();
+        let before = bus.clone();
         let missing_parent_id = AgentTaskId::new("missing-parent");
         let result = bus.assign_child_task(
             &missing_parent_id,
@@ -1659,6 +1779,7 @@ mod tests {
             bus.projection().tasks.is_empty(),
             "rejecting a missing parent must leave the bus unchanged"
         );
+        assert_eq!(bus, before);
     }
 
     #[test]
@@ -1692,6 +1813,85 @@ mod tests {
             child_projection.parent_task_id.as_deref(),
             Some(parent_id.as_str())
         );
+    }
+
+    #[test]
+    fn parent_child_task_ids_survive_bus_serialization_roundtrip() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Parent review",
+            "Review plan",
+            10,
+        );
+        let child_id = crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+            &mut bus,
+            &parent_id,
+            "Child worker",
+            "Implement plan",
+            20,
+        )
+        .expect("child task assigned");
+
+        let json = serde_json::to_string(&bus).expect("serialize bus");
+        let restored: AgentA2ABus = serde_json::from_str(&json).expect("deserialize bus");
+        let parent = restored.task(&parent_id).expect("parent task");
+        let projection = restored.projection();
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+
+        assert_eq!(parent.child_task_ids, vec![child_id.clone()]);
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![child_id.as_str().to_string()]
+        );
+    }
+
+    #[test]
+    fn parent_session_context_roundtrips_and_defaults() {
+        let mut bus = AgentA2ABus::default();
+        let root_task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Root planning task",
+            "Plan child work",
+            10,
+        );
+        bus.set_parent_session_context(crate::agent::a2a::types::AgentParentSessionContext {
+            parent_session_id: "session-1".to_string(),
+            active_parent_task_id: root_task_id.clone(),
+            root_task_id: root_task_id.clone(),
+            selection_reason: "active planner selected child delegate".to_string(),
+            updated_at_ms: 20,
+        });
+
+        let json = serde_json::to_string(&bus).expect("serialize bus");
+        let restored: AgentA2ABus = serde_json::from_str(&json).expect("deserialize bus");
+        let context = restored
+            .parent_session_context()
+            .expect("parent session context");
+
+        assert_eq!(context.parent_session_id, "session-1");
+        assert_eq!(context.active_parent_task_id, root_task_id);
+        assert_eq!(context.root_task_id, root_task_id);
+        assert_eq!(
+            context.selection_reason,
+            "active planner selected child delegate"
+        );
+        assert_eq!(context.updated_at_ms, 20);
+
+        let legacy: AgentA2ABus = serde_json::from_value(serde_json::json!({
+            "tasks": [],
+            "messages": [],
+            "next_task_index": 0,
+            "next_agent_index": 0,
+            "next_message_index": 0
+        }))
+        .expect("legacy bus without parent context");
+        assert!(legacy.parent_session_context().is_none());
     }
 
     #[test]

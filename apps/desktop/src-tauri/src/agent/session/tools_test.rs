@@ -2,7 +2,9 @@
 mod tests {
     use crate::adapters::base::ToolCall;
     use crate::agent::a2a::bus::AgentA2ABus;
-    use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+    use crate::agent::a2a::types::{
+        AgentExecutionMode, AgentParentSessionContext, AgentRole, AgentTaskId,
+    };
     use crate::agent::session::tools::{
         canonical_json, delegate_parent_task_id_from_input, tool_batch_signature,
         tool_category_signature,
@@ -78,9 +80,46 @@ mod tests {
             "parent_task_id": parent_id.as_str(),
         });
 
-        let resolved = delegate_parent_task_id_from_input(&input, &bus).expect("resolve parent");
+        let resolved =
+            delegate_parent_task_id_from_input(&input, &bus, "session-1").expect("resolve parent");
 
         assert_eq!(resolved.as_ref(), Some(&parent_id));
+    }
+
+    #[test]
+    fn delegate_parent_task_id_from_input_explicit_parent_wins_over_root_planning_flag() {
+        let mut bus = AgentA2ABus::default();
+        let explicit_parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Explicit parent task",
+            "Plan explicit child work",
+            10,
+        );
+        let context_parent_id = bus.assign_task(
+            AgentRole::Reviewer,
+            AgentExecutionMode::ReadOnly,
+            "Context parent task",
+            "Plan context child work",
+            20,
+        );
+        bus.set_parent_session_context(AgentParentSessionContext {
+            parent_session_id: "session-1".to_string(),
+            active_parent_task_id: context_parent_id,
+            root_task_id: AgentTaskId::new("root-task"),
+            selection_reason: "active parent selected".to_string(),
+            updated_at_ms: 30,
+        });
+        let input = serde_json::json!({
+            "task": "Run explicit child task",
+            "parent_task_id": explicit_parent_id.as_str(),
+            "root_planning_task": true,
+        });
+
+        let resolved =
+            delegate_parent_task_id_from_input(&input, &bus, "session-1").expect("resolve parent");
+
+        assert_eq!(resolved.as_ref(), Some(&explicit_parent_id));
     }
 
     #[test]
@@ -91,7 +130,7 @@ mod tests {
             "parent_task_id": "missing-parent",
         });
 
-        assert!(delegate_parent_task_id_from_input(&input, &bus).is_err());
+        assert!(delegate_parent_task_id_from_input(&input, &bus, "session-1").is_err());
     }
 
     #[test]
@@ -103,8 +142,111 @@ mod tests {
         });
 
         assert_eq!(
-            delegate_parent_task_id_from_input(&input, &bus).expect("empty parent is absent"),
+            delegate_parent_task_id_from_input(&input, &bus, "session-1")
+                .expect("empty parent is absent"),
             None
         );
+    }
+
+    #[test]
+    fn delegate_parent_task_id_from_input_uses_matching_parent_session_context() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent task",
+            "Plan child work",
+            10,
+        );
+        bus.set_parent_session_context(AgentParentSessionContext {
+            parent_session_id: "session-1".to_string(),
+            active_parent_task_id: parent_id.clone(),
+            root_task_id: parent_id.clone(),
+            selection_reason: "active parent selected".to_string(),
+            updated_at_ms: 20,
+        });
+        let input = serde_json::json!({
+            "task": "Run child task",
+        });
+
+        let resolved =
+            delegate_parent_task_id_from_input(&input, &bus, "session-1").expect("resolve parent");
+
+        assert_eq!(resolved.as_ref(), Some(&parent_id));
+    }
+
+    #[test]
+    fn delegate_parent_task_id_from_input_ignores_other_session_context() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent task",
+            "Plan child work",
+            10,
+        );
+        bus.set_parent_session_context(AgentParentSessionContext {
+            parent_session_id: "other-session".to_string(),
+            active_parent_task_id: parent_id,
+            root_task_id: AgentTaskId::new("root-task"),
+            selection_reason: "active parent selected".to_string(),
+            updated_at_ms: 20,
+        });
+        let input = serde_json::json!({
+            "task": "Run child task",
+        });
+
+        let resolved =
+            delegate_parent_task_id_from_input(&input, &bus, "session-1").expect("resolve parent");
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn delegate_parent_task_id_from_input_ignores_missing_active_parent_context() {
+        let mut bus = AgentA2ABus::default();
+        bus.set_parent_session_context(AgentParentSessionContext {
+            parent_session_id: "session-1".to_string(),
+            active_parent_task_id: AgentTaskId::new("missing-parent"),
+            root_task_id: AgentTaskId::new("missing-root"),
+            selection_reason: "active parent selected".to_string(),
+            updated_at_ms: 20,
+        });
+        let input = serde_json::json!({
+            "task": "Run child task",
+        });
+
+        let resolved =
+            delegate_parent_task_id_from_input(&input, &bus, "session-1").expect("resolve parent");
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn delegate_parent_task_id_from_input_ignores_context_for_root_planning_task() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent task",
+            "Plan child work",
+            10,
+        );
+        bus.set_parent_session_context(AgentParentSessionContext {
+            parent_session_id: "session-1".to_string(),
+            active_parent_task_id: parent_id,
+            root_task_id: AgentTaskId::new("root-task"),
+            selection_reason: "active parent selected".to_string(),
+            updated_at_ms: 20,
+        });
+        let input = serde_json::json!({
+            "task": "Plan a root task",
+            "root_planning_task": true,
+        });
+
+        let resolved =
+            delegate_parent_task_id_from_input(&input, &bus, "session-1").expect("resolve parent");
+
+        assert_eq!(resolved, None);
     }
 }

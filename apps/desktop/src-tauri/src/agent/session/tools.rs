@@ -53,7 +53,7 @@ impl AgentSession {
                 let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let a2a_task_id_result = {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
-                    match delegate_parent_task_id_from_input(&tc.input, &bus) {
+                    match delegate_parent_task_id_from_input(&tc.input, &bus, &self.id) {
                         Ok(parent_task_id) => match (&execution_mode, parent_task_id.as_ref()) {
                             (
                                 crate::agent::a2a::types::AgentExecutionMode::PatchProposal,
@@ -514,24 +514,46 @@ impl AgentSession {
 pub(crate) fn delegate_parent_task_id_from_input(
     input: &serde_json::Value,
     bus: &crate::agent::a2a::bus::AgentA2ABus,
+    current_session_id: &str,
 ) -> Result<Option<crate::agent::a2a::types::AgentTaskId>, String> {
-    let Some(parent_task_id) = input
+    if let Some(parent_task_id) = input
         .get("parent_task_id")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    else {
-        return Ok(None);
-    };
-    let parent_task_id = crate::agent::a2a::types::AgentTaskId::new(parent_task_id);
-    if bus.task(&parent_task_id).is_some() {
-        Ok(Some(parent_task_id))
-    } else {
-        Err(format!(
+    {
+        let parent_task_id = crate::agent::a2a::types::AgentTaskId::new(parent_task_id);
+        if bus.task(&parent_task_id).is_some() {
+            return Ok(Some(parent_task_id));
+        }
+        return Err(format!(
             "parent_task_id '{}' does not match an existing A2A task",
             parent_task_id.as_str()
-        ))
+        ));
     }
+
+    if delegate_is_root_planning_task(input) {
+        return Ok(None);
+    }
+
+    let Some(context) = bus.parent_session_context() else {
+        return Ok(None);
+    };
+    if context.parent_session_id != current_session_id {
+        return Ok(None);
+    }
+    if bus.task(&context.active_parent_task_id).is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(context.active_parent_task_id.clone()))
+}
+
+fn delegate_is_root_planning_task(input: &serde_json::Value) -> bool {
+    input
+        .get("root_planning_task")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 pub(crate) fn tool_batch_signature(tool_calls: &[crate::adapters::base::ToolCall]) -> String {

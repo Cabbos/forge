@@ -262,7 +262,7 @@ impl AnthropicAdapter {
         ToolDef {
             name: "delegate_task".to_string(),
             description: "Dispatch an independent subtask that runs in parallel with other subtasks. Use 'research' mode for read-only investigation, 'patch_proposal' mode for a structured improvement proposal without writing files, and 'worktree_worker' mode for isolated implementation in a temporary git worktree. Each delegate_task runs concurrently.".to_string(),
-            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to analyze, investigate, or implement."},"mode":{"type":"string","enum":["research","patch_proposal","worktree_worker"],"description":"Execution mode. 'research' (default) — read-only investigation returning text findings. 'patch_proposal' — code analysis that produces a structured patch proposal artifact without modifying files. 'worktree_worker' — isolated implementation in a temporary git worktree, returning diff/test artifacts without merging."}},"required":["task"]}),
+            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to analyze, investigate, or implement."},"mode":{"type":"string","enum":["research","patch_proposal","worktree_worker"],"description":"Execution mode. 'research' (default) — read-only investigation returning text findings. 'patch_proposal' — code analysis that produces a structured patch proposal artifact without modifying files. 'worktree_worker' — isolated implementation in a temporary git worktree, returning diff/test artifacts without merging."},"root_planning_task":{"type":"boolean","description":"Set true only when this delegate should start a new root planning task instead of attaching to the active parent task context."}},"required":["task"]}),
         },
     ];
         tools.extend(
@@ -1002,6 +1002,30 @@ mod tests {
         assert!(modes.contains(&"research"));
         assert!(modes.contains(&"patch_proposal"));
         assert!(modes.contains(&"worktree_worker"));
+    }
+
+    #[test]
+    fn delegate_task_schema_exposes_optional_root_planning_task_flag() {
+        let adapter = AnthropicAdapter::new("test-key".to_string()).unwrap();
+        let delegate = adapter
+            .tool_definitions()
+            .into_iter()
+            .find(|tool| tool.name == "delegate_task")
+            .expect("delegate_task tool");
+        let root_planning_task = &delegate.input_schema["properties"]["root_planning_task"];
+        let required = delegate.input_schema["required"]
+            .as_array()
+            .expect("required array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(root_planning_task["type"], "boolean");
+        assert!(root_planning_task["description"]
+            .as_str()
+            .expect("root_planning_task description")
+            .contains("root"));
+        assert!(!required.contains(&"root_planning_task"));
     }
 
     #[tokio::test]

@@ -200,6 +200,51 @@ mod tests {
     }
 
     #[test]
+    fn ledger_roundtrips_parent_child_task_ids() {
+        let root = temp_root("lineage");
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent task",
+            "Plan child work",
+            10,
+        );
+        let child_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child worker",
+                "Implement plan",
+                20,
+            )
+            .expect("child task assigned");
+
+        save_session_ledger_at(&root, "session-1", &bus).expect("save ledger");
+        let restored = load_session_ledger_at(&root, "session-1")
+            .expect("load ledger")
+            .expect("ledger exists");
+        let parent = restored.task(&parent_id).expect("parent task");
+        let projection = load_session_projection_at(&root, "session-1")
+            .expect("load projection")
+            .expect("projection exists");
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+
+        assert_eq!(parent.child_task_ids, vec![child_id.clone()]);
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![child_id.as_str().to_string()]
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn ledger_path_rejects_unsafe_session_ids() {
         let root = temp_root("safety");
 

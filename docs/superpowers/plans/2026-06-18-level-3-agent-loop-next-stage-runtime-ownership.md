@@ -34,7 +34,7 @@ The current truth is strong but bounded:
 - Runner leases are durable, but the runner stops at `waiting_for_input` instead of continuing a complete coding loop.
 - The loop ledger is durable and stricter than projection-style gateway stores.
 - Completion contracts and review/control gates exist, but commit remains a human gate.
-- Runtime facts exist, but shell-internal tracing, full provider usage coverage, automatic parent selection, parent-session structs, persisted parent-side child arrays, and gateway autonomous resume are still unclaimed.
+- Runtime facts exist, but shell-internal tracing, full provider usage coverage, gateway autonomous resume, and auto commit/merge/push are still unclaimed.
 
 ## Non-Goals And Hard Boundaries
 
@@ -239,7 +239,7 @@ node scripts/acceptance.test.mjs
 scripts/acceptance.sh --dry-run
 ```
 
-**Not claimed:** billing-grade usage accounting, exact cost when provider usage or model pricing is unknown, shell-internal file tracing, gateway autonomous resume, automatic parent selection, parent-session structs, or auto commit/merge/push. `codex.rs`, `claude.rs`, and `hermes.rs` are still stubs in this repo and were not given new model-call behavior.
+**Not claimed:** billing-grade usage accounting, exact cost when provider usage or model pricing is unknown, shell-internal file tracing, gateway autonomous resume, or auto commit/merge/push. `codex.rs`, `claude.rs`, and `hermes.rs` are still stubs in this repo and were not given new model-call behavior.
 
 **Files:**
 - Modify: `apps/desktop/src-tauri/src/adapters/base.rs`
@@ -568,6 +568,27 @@ gitnexus_impact(repo: "forge", target: "LoopPolicy", file_path: "apps/desktop/sr
 
 **Goal:** Complete durable A2A lineage by adding parent-session structs, persisted parent-side child arrays, and automatic parent selection for ordinary delegates when a real parent context exists.
 
+**Status (2026-06-18): Implemented.** Before this task, child lineage was durable only on the child record (`parent_task_id`) and parent `child_task_ids` were rebuilt in projection by scanning children. The A2A bus now stores parent-side `child_task_ids` directly on `AgentTaskRecord`, writes both sides during `assign_child_task`, and keeps projection compatible with old ledgers by appending legacy-derived child ids when a parent lacks a persisted array. `AgentParentSessionContext` is stored in A2A durable state with `parent_session_id`, `active_parent_task_id`, `root_task_id`, `selection_reason`, and `updated_at_ms`, so snapshots and sidecar ledgers can carry active parent-selection context.
+
+**What changed:** `assign_child_task` is now an all-or-nothing mutation: missing parents leave the bus unchanged, successful child assignment sets the child's `parent_task_id`, and the parent records the child id idempotently. Projection prefers persisted child order, deduplicates ids, and appends legacy child records that still only have `parent_task_id`. `delegate_task` without an explicit `parent_task_id` now chooses the active parent only when the current `AgentSession.id` matches the stored parent-session context, the active parent exists in the current bus, and the delegate input is not marked as a root planning task. Root-planning delegates can opt out explicitly with the schema-visible optional boolean `root_planning_task: true`; when no valid context exists, no-parent delegates remain root A2A tasks.
+
+**Why it matters:** A parent task can now survive serialization, sidecar replay, and session snapshot restore with its own durable child array instead of relying on the UI/read model to reconstruct lineage. That makes parent ownership auditable before later gateway resume/review flows depend on parent-child task boundaries.
+
+**Evidence/tests (fresh during implementation):**
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml parent --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml delegate_task_schema --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session --lib
+node --test apps/desktop/src/store/workbenchSummary.test.ts
+npm --prefix apps/desktop run test:e2e -- e2e/a2a-confirm-runtime.spec.ts
+git diff --check
+```
+
+**Not claimed:** automatic creation of parent-session context, fuzzy title/prompt-based root planning detection, autonomous gateway resume, default headless `AgentSession`, auto commit/merge/push, or any UI redesign. TypeScript protocol, workbench summary defaults, and A2A e2e mocks already carried `parent_task_id` / `child_task_ids`, so no frontend contract change was required; the model-facing Anthropic `delegate_task` schema now advertises `root_planning_task` as an optional boolean.
+
 **Files:**
 - Modify: `apps/desktop/src-tauri/src/agent/a2a/types.rs`
 - Modify: `apps/desktop/src-tauri/src/agent/a2a/bus.rs`
@@ -596,7 +617,7 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
 
 **Implementation steps:**
 
-- [ ] **Step 5.1: Add persistence tests for parent-side child arrays**
+- [x] **Step 5.1: Add persistence tests for parent-side child arrays**
 
   Tests must prove:
 
@@ -615,7 +636,7 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
 
   Expected first result: FAIL because parent-side child arrays are currently projection-derived, not persisted.
 
-- [ ] **Step 5.2: Add parent-session structs**
+- [x] **Step 5.2: Add parent-session structs**
 
   Add a compact parent session structure that records:
 
@@ -629,11 +650,11 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
 
   Persist it through `AgentSession` snapshot and the A2A sidecar if it is part of A2A durable state.
 
-- [ ] **Step 5.3: Implement durable parent-side arrays**
+- [x] **Step 5.3: Implement durable parent-side arrays**
 
   Extend `AgentTaskRecord` with `child_task_ids` using serde defaults for old records. Update `assign_child_task` to mutate both sides atomically within the bus update path. Projection should read the persisted array and may still rebuild missing legacy arrays for compatibility when a child has `parent_task_id`.
 
-- [ ] **Step 5.4: Implement automatic parent selection for ordinary delegates**
+- [x] **Step 5.4: Implement automatic parent selection for ordinary delegates**
 
   In `agent/session/tools.rs`, when `delegate_task` has no explicit `parent_task_id`, choose the active parent task only if:
 
@@ -644,11 +665,11 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
 
   If no valid active parent exists, keep the current root assignment behavior.
 
-- [ ] **Step 5.5: Update UI and acceptance mocks**
+- [x] **Step 5.5: Update UI and acceptance mocks**
 
-  Update TypeScript protocol and A2A workbench mocks so parent tasks display persisted child arrays after replay. Keep the visible parent/child indicators unchanged unless the persisted data enables a clearer label.
+  TypeScript protocol, workbench summary normalization, and the A2A mocked e2e already carried `parent_task_id` / `child_task_ids`, so this implementation kept visible UI behavior unchanged and verified those existing mocks/tests instead of adding frontend churn.
 
-- [ ] **Step 5.6: Run focused verification**
+- [x] **Step 5.6: Run focused verification**
 
   Run:
 
