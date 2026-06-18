@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "promoted-trace-session-summary-regression",
+    "title": "Promoted trace: session summary regression",
+    "prompt": "Fix the session summary helper so it counts completed, failed, and running sessions separately and returns a stable total. Preserve existing task fields.",
+    "fixture_path": "../../_fixtures/desktop-runtime-contracts",
+    "context_files": [
+      "src/backgroundTasks.ts",
+      "src/backgroundTasks.test.ts"
+    ],
+    "setup_commands": [
+      "npm install"
+    ],
+    "validation_commands": [
+      "npm test -- src/backgroundTasks.test.ts",
+      "npm run typecheck"
+    ],
+    "verification_command": "npm test -- src/backgroundTasks.test.ts",
+    "expected_success": true,
+    "expected_files_changed": [
+      "src/backgroundTasks.ts"
+    ],
+    "forbidden_files_changed": [
+      ".env",
+      "package-lock.json"
+    ],
+    "tags": [
+      "promoted-trace",
+      "desktop-runtime",
+      "background-task-status"
+    ],
+    "metadata": {
+      "source": "trace",
+      "failure_reason": "Session summary collapsed failed and running statuses into one count.",
+      "lifecycle": {
+        "status": "active",
+        "owner": "eval-runner"
+      },
+      "split": "regression"
+    }
+  }
+}

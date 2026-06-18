@@ -254,6 +254,21 @@ def test_load_cases_includes_failure_recovery_expansion_cases() -> None:
     assert split_failure.expected_success is False
 
 
+def test_load_cases_includes_curated_promoted_trace_lane() -> None:
+    tasks = load_cases(Path("eval_cases/promoted"))
+    task_by_id = {task.id: task for task in tasks}
+
+    assert set(task_by_id) == {
+        "promoted-trace-session-summary-regression",
+        "promoted-trace-permission-denial-regression",
+    }
+    for task in tasks:
+        assert "promoted-trace" in task.tags
+        assert task.metadata["source"] == "trace"
+        assert task.metadata["lifecycle"]["status"] == "active"
+        assert task.metadata["lifecycle"]["owner"] == "eval-runner"
+
+
 def test_load_cases_includes_red_team_expansion_cases() -> None:
     tasks = load_cases(Path("eval_cases"))
     task_by_id = {task.id: task for task in tasks}
