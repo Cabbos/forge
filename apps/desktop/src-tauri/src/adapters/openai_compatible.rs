@@ -156,19 +156,13 @@ impl OpenAiCompatibleAdapter {
         }
 
         if let Some((session_id, emitter)) = usage_emitter {
-            if let Some((input_tokens, output_tokens)) = openai_usage_from_response(&parsed) {
-                let cost = crate::adapters::anthropic::estimate_cost(
-                    &self.model,
-                    input_tokens,
-                    output_tokens,
-                );
-                emitter.emit(StreamEvent::Usage {
-                    session_id: session_id.to_string(),
-                    input_tokens,
-                    output_tokens,
-                    estimated_cost_usd: cost,
-                });
-            }
+            crate::adapters::anthropic::emit_usage_events(
+                emitter,
+                session_id,
+                "openai_compatible",
+                &self.model,
+                openai_usage_from_response(&parsed),
+            );
         }
 
         Ok(parse_openai_chat_completion(&parsed))
@@ -366,6 +360,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
         let mut active_text_block_id: Option<String> = None;
         let mut parser = OpenAiStreamParser::default();
+        let mut saw_usage = false;
 
         loop {
             let chunk = tokio::select! {
@@ -406,17 +401,14 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                 }
 
                 if let Some((input_toks, output_toks)) = update.usage {
-                    let cost = crate::adapters::anthropic::estimate_cost(
+                    saw_usage = true;
+                    crate::adapters::anthropic::emit_usage_events(
+                        emitter,
+                        &session,
+                        "openai_compatible",
                         &self.model,
-                        input_toks,
-                        output_toks,
+                        Some((input_toks, output_toks)),
                     );
-                    emitter.emit(StreamEvent::Usage {
-                        session_id: session.clone(),
-                        input_tokens: input_toks,
-                        output_tokens: output_toks,
-                        estimated_cost_usd: cost,
-                    });
                 }
 
                 if let Some(msg) = update.error {
@@ -439,6 +431,16 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                 session_id: session_id.to_string(),
                 block_id: bid,
             });
+        }
+
+        if !saw_usage {
+            crate::adapters::anthropic::emit_usage_events(
+                emitter,
+                session_id,
+                "openai_compatible",
+                &self.model,
+                None,
+            );
         }
 
         for tool_call in &result.tool_calls {
@@ -1375,6 +1377,114 @@ mod tests {
                 ..
             } if session_id == "subagent"
         )));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                model: Some(model),
+                input_tokens: Some(77),
+                output_tokens: Some(33),
+                estimated_cost_micros: Some(20),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
+                ..
+            } if session_id == "subagent"
+                && model == "deepseek-v4-flash"
+                && source == "openai_compatible"
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_unknown_usage_when_provider_omits_usage() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }]
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                model: Some(model),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_micros: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderOmitted,
+                ..
+            } if session_id == "subagent"
+                && model == "deepseek-v4-flash"
+                && source == "openai_compatible"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_known_tokens_and_unknown_cost_for_unknown_pricing() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33
+            }
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_model("mystery-model-v1")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                model: Some(model),
+                input_tokens: Some(77),
+                output_tokens: Some(33),
+                estimated_cost_micros: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+                ..
+            } if session_id == "subagent"
+                && model == "mystery-model-v1"
+                && source == "openai_compatible"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
     }
 
     #[test]

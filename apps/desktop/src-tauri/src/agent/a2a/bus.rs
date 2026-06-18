@@ -1314,6 +1314,8 @@ mod tests {
         bus.start_task(&task_id, 20);
         let usage = LoopUsageLedger::from_events(vec![UsageEvent {
             model: Some("claude".to_string()),
+            source: Some("anthropic".to_string()),
+            reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
             input_tokens: Some(100),
             output_tokens: None,
             estimated_cost_micros: None,
@@ -1557,13 +1559,19 @@ mod tests {
 
         assert_eq!(
             parent_projection.child_task_ids,
-            vec![child_a_id.as_str().to_string(), child_b_id.as_str().to_string()]
+            vec![
+                child_a_id.as_str().to_string(),
+                child_b_id.as_str().to_string()
+            ]
         );
         let parent_json =
             serde_json::to_value(parent_projection).expect("serialize parent projection");
         assert_eq!(
             parent_json.get("child_task_ids"),
-            Some(&serde_json::json!([child_a_id.as_str(), child_b_id.as_str()]))
+            Some(&serde_json::json!([
+                child_a_id.as_str(),
+                child_b_id.as_str()
+            ]))
         );
         assert_eq!(
             child_projection.parent_task_id.as_deref(),

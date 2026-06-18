@@ -7,10 +7,13 @@ import {
   SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
 } from "./blocks.ts";
 import type { StreamEvent } from "../lib/protocol.ts";
+import type { SubagentRuntimePayload } from "../lib/protocol.ts";
 import {
   applyLoopRuntimeUpdate,
   applySubagentRuntimeEvent,
+  runtimeFactSourcesForSubagentTasks,
 } from "./runtime-projections.ts";
+import { runtimeFactsForSubagentTask } from "../lib/loopRuntime.ts";
 import type {
   LoopRuntimeByTask,
   SubagentRuntimeByTask,
@@ -60,6 +63,113 @@ describe("eventToBlock", () => {
     assert.ok(block);
     assert.strictEqual(block!.event_type, "context_compact_skipped");
     assert.strictEqual(block!.isComplete, true);
+  });
+
+  it("provider_usage returns a completed known-usage block with structured metadata", () => {
+    const event: StreamEvent = {
+      event_type: "provider_usage",
+      session_id: "s1",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 1200,
+      output_tokens: 300,
+      estimated_cost_micros: 4567,
+    };
+    const block = eventToBlock(event);
+    assert.ok(block);
+    assert.strictEqual(block!.event_type, "provider_usage");
+    assert.strictEqual(block!.isComplete, true);
+    assert.match(block!.content, /claude-sonnet/);
+    assert.match(block!.content, /input 1200/);
+    assert.match(block!.content, /output 300/);
+    assert.match(block!.content, /cost 4567 micros/);
+    assert.deepStrictEqual(block!.metadata, {
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 1200,
+      output_tokens: 300,
+      estimated_cost_micros: 4567,
+      input_tokens_unknown: false,
+      output_tokens_unknown: false,
+      cost_unknown: false,
+    });
+  });
+
+  it("provider_usage labels provider-omitted unknown usage without dropping metadata", () => {
+    const event: StreamEvent = {
+      event_type: "provider_usage",
+      session_id: "s1",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_omitted",
+      input_tokens: null,
+      output_tokens: null,
+      estimated_cost_micros: null,
+    };
+    const block = eventToBlock(event);
+    assert.ok(block);
+    assert.strictEqual(block!.event_type, "provider_usage");
+    assert.match(block!.content, /provider omitted/);
+    assert.match(block!.content, /input unknown/);
+    assert.match(block!.content, /output unknown/);
+    assert.match(block!.content, /cost unknown/);
+    assert.strictEqual(block!.metadata.reason, "provider_omitted");
+    assert.strictEqual(block!.metadata.input_tokens_unknown, true);
+    assert.strictEqual(block!.metadata.output_tokens_unknown, true);
+    assert.strictEqual(block!.metadata.cost_unknown, true);
+  });
+
+  it("provider_usage labels pricing-unknown cost while preserving known tokens", () => {
+    const event: StreamEvent = {
+      event_type: "provider_usage",
+      session_id: "s1",
+      model: "mystery-model",
+      source: "openai_compatible",
+      reason: "pricing_unknown",
+      input_tokens: 44,
+      output_tokens: 12,
+      estimated_cost_micros: null,
+    };
+    const block = eventToBlock(event);
+    assert.ok(block);
+    assert.strictEqual(block!.event_type, "provider_usage");
+    assert.match(block!.content, /pricing unknown/);
+    assert.match(block!.content, /input 44/);
+    assert.match(block!.content, /output 12/);
+    assert.match(block!.content, /cost unknown/);
+    assert.strictEqual(block!.metadata.input_tokens, 44);
+    assert.strictEqual(block!.metadata.output_tokens, 12);
+    assert.strictEqual(block!.metadata.estimated_cost_micros, null);
+    assert.strictEqual(block!.metadata.cost_unknown, true);
+  });
+
+  it("provider_usage uses backend block IDs so identical usage payloads stay distinct", () => {
+    const first = {
+      event_type: "provider_usage",
+      session_id: "s1",
+      block_id: "usage-block-1",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_omitted",
+      input_tokens: null,
+      output_tokens: null,
+      estimated_cost_micros: null,
+    } as StreamEvent;
+    const second = {
+      ...first,
+      block_id: "usage-block-2",
+    } as StreamEvent;
+
+    const firstBlock = eventToBlock(first);
+    const secondBlock = eventToBlock(second);
+
+    assert.ok(firstBlock);
+    assert.ok(secondBlock);
+    assert.strictEqual(firstBlock!.block_id, "usage-block-1");
+    assert.strictEqual(secondBlock!.block_id, "usage-block-2");
+    assert.notStrictEqual(firstBlock!.block_id, secondBlock!.block_id);
   });
 });
 
@@ -134,6 +244,26 @@ describe("applyTranscriptEventToBlocks compact lifecycle", () => {
     const blocks = applyTranscriptEventToBlocks([], compactedEvent);
     assert.strictEqual(blocks.length, 1);
     assert.strictEqual(blocks[0].event_type, "context_compacted");
+  });
+});
+
+describe("applyTranscriptEventToBlocks provider_usage", () => {
+  it("appends provider_usage as a standalone completed direct-session block", () => {
+    const blocks = applyTranscriptEventToBlocks([], {
+      event_type: "provider_usage",
+      session_id: "s1",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 100,
+      output_tokens: 50,
+      estimated_cost_micros: 123,
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "provider_usage");
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.model, "claude-sonnet");
   });
 });
 
@@ -505,6 +635,7 @@ describe("subagent runtime projections", () => {
       loop_task_id: "loop-1",
       task_id: "task-1",
       latest_event: { type: "file_io", path: "src/App.tsx", operation: "write" },
+      latest_file_io_event: { type: "file_io", path: "src/App.tsx", operation: "write" },
       status: "running",
       role: "implementer",
       message: "Applying patch",
@@ -536,11 +667,76 @@ describe("subagent runtime projections", () => {
         output_tokens: null,
         estimated_cost_micros: null,
       },
+      latest_usage_event: {
+        type: "usage_recorded",
+        model: "test-model",
+        input_tokens: null,
+        output_tokens: null,
+        estimated_cost_micros: null,
+      },
+      latest_file_io_event: { type: "file_io", path: "src/App.tsx", operation: "write" },
       status: "running",
       role: "implementer",
       message: "Applying patch",
       reason: "needs review",
     });
+  });
+
+  it("retains usage and file facts after later subagent runtime events", () => {
+    let runtimeByTask: SubagentRuntimeByTask = new Map();
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: {
+        type: "usage_recorded",
+        model: "claude-sonnet",
+        input_tokens: 40,
+        output_tokens: 8,
+        estimated_cost_micros: 120,
+        source: "anthropic",
+        reason: "provider_reported",
+      },
+    });
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: { type: "file_io", path: "src/App.tsx", operation: "write" },
+    });
+    runtimeByTask = applySubagentRuntimeEvent(runtimeByTask, {
+      event_type: "subagent_runtime_event",
+      session_id: "s1",
+      loop_task_id: "loop-1",
+      task_id: "task-1",
+      event: { type: "ended", status: "completed" },
+    });
+
+    const entry = runtimeByTask.get("s1:task-1") as
+      | (NonNullable<ReturnType<SubagentRuntimeByTask["get"]>> & {
+          latest_usage_event?: SubagentRuntimePayload;
+          latest_file_io_event?: SubagentRuntimePayload;
+        })
+      | undefined;
+
+    assert.ok(entry);
+    assert.strictEqual(entry.latest_event.type, "ended");
+    assert.strictEqual(entry.latest_usage_event?.type, "usage_recorded");
+    assert.strictEqual(entry.latest_file_io_event?.type, "file_io");
+
+    const sources = runtimeFactSourcesForSubagentTasks({
+      entries: runtimeByTask,
+      taskIds: new Set(["task-1"]),
+      sessionId: "s1",
+    });
+    const facts = runtimeFactsForSubagentTask(sources, "task-1");
+
+    assert.deepStrictEqual(facts.map((fact) => fact.kind), ["usage", "file_io"]);
+    assert.strictEqual(facts[0].model, "claude-sonnet");
+    assert.strictEqual(facts[0].inputTokens, 40);
+    assert.strictEqual(facts[1].detail, "src/App.tsx");
   });
 
   it("stores gateway loop runtime updates before session lookup", () => {

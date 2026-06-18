@@ -305,9 +305,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 4-B partial (2026-06-12):** Diff-derived changed-file summary is visible — the workbench now parses existing `DiffSummary` artifacts in `AgentA2ABus.projection()` to extract changed file paths (first 8 unique, deduped from git diff text). `changed_file_count`, `changed_files`, and `diff_available` fields are projected to the frontend. The `WorktreeReviewPanel` renders file path chips and counts. The `deriveWorkbenchSummary` helper computes `tasksWithDiff` and visible/projected `changedFiles` counts; full totals remain on each task via `changed_file_count`. At Phase 4-B time there were no live executor events and no new `StreamEvent` variants.
   - **Phase 4-K executor file-IO follow-up (2026-06-18):** Direct `ToolExecutor` file-ish tools now emit live `file_io` stream facts after successful `read`, `write`, `edit`, `git diff`, `list`, glob/search-files, and grep/search-content operations. The facts carry `session_id`, `block_id`, `path`, `operation`, and `source: "executor"`, and the frontend stores them as metadata on matching existing tool/shell blocks. This still does not trace shell-internal file effects from `run_shell` or infer provider token/cost data.
   - Files: `agent/a2a/projection.rs`, `agent/a2a/bus.rs`, `lib/protocol.ts`, `lib/workbenchSummary.ts`, `components/messages/AgentA2ATimeline.tsx`, `styles/process.css`.
-- [ ] 4.5 Implement cost stream: tokens in/out, tool call count, model, estimated cost.
-  - **DEFERRED (Phase 4-B):** Requires adapter-level hooks in the AI adapters trait. The existing `agent_turn_updated` event carries `AgentTurnProjection.tool_call_count` and `failed_tool_count` which Phase 3-B already surfaces. Token/cost streaming needs adapter changes that ripple across all providers.
-  - Files: `adapters/base.rs`, `adapters/anthropic.rs`, `adapters/openai.rs`.
+- [x] 4.5 Implement cost stream: tokens in/out, tool call count, model, estimated cost.
+  - **Phase 4-L provider usage telemetry follow-up (2026-06-18):** Added additive `provider_usage` stream events for active Anthropic and OpenAI-compatible model calls, with nullable input/output tokens, nullable estimated cost micros, model, adapter source, and reason (`provider_reported`, `provider_omitted`, `pricing_unknown`). Legacy numeric `usage` remains compatible and only emits when token usage and known pricing are both available. `UsageEvent` and `UsageCaptureEmitter` now carry source/reason metadata into `LoopUsageLedger`, and task-aware subagents emit live `usage_recorded` runtime facts from those records. Unknown provider usage and unknown pricing render as explicit `unknown` facts, not zero or default pricing. This is not billing-grade usage accounting, exact cost when usage/pricing is unknown, or autonomous gateway ownership.
+  - Files: `adapters/anthropic.rs`, `adapters/openai_compatible.rs`, `protocol/events.rs`, `loop_runtime/budget.rs`, `agent/sub.rs`, `lib/protocol.ts`, `lib/loopRuntime.ts`.
 - [ ] 4.6 Build Subagent Workbench view: tree of parent/child sessions, status badges, cost tab, file IO tab.
   - **Phase 4-B partial (2026-06-12):** Enhanced existing `AgentA2ATimeline` / `AgentA2AWorkspace` components with parent-child lineage hint, duration/elapsed display, failure kind badge with retryable indicator, resume note for interrupted tasks, latest progress while running, workbench summary counts (review-needed, retained worktrees), **diff-derived changed-file chips in WorktreeReviewPanel** (file path chips, total count, per-task diff indicator), and **test report excerpt**. Stats area now shows tasks-with-diff count. Kept layout dense — no nested cards. No new tab components created (deferred for cost/file IO streams in 4-B).
   - **Phase 4-E file-view follow-up (2026-06-16):** Added a file-centric Workbench summary derived from existing `changed_files` / `changed_file_count` projection fields. It groups visible changed paths across worker tasks, shows visible vs reported totals, and calls out hidden/unexpanded files when projection limits truncate path lists. This improves the Workbench file-IO view without touching executor hooks or claiming true live file IO streaming.
@@ -405,7 +405,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Projection lineage | ✅ Done | Child projections expose populated `parent_task_id`; current model is child pointer only |
 | Snapshot/restore | ✅ Done | Session snapshot/restore and bus serialization roundtrip retain populated lineage; legacy `parent_task_id` absence remains serde-compatible |
 | Tests | ✅ Done | `agent::a2a`, `agent::session::tools_test`, `execute_tools_delegate`, `agent::session::a2a`, and fmt checks pass |
-| Not claimed | 🚫 Deferred | No normal delegate auto-lineage without a real parent id, no persisted parent-side child-id array, no recursive delegate_task, no token/cost stream, and no shell-internal file-effect tracing; Phase 4-K later adds direct ToolExecutor file-ish `file_io` events only |
+| Not claimed | 🚫 Deferred | At Phase 4-F there was no normal delegate auto-lineage without a real parent id, no persisted parent-side child-id array, no recursive delegate_task, no token/cost stream, and no shell-internal file-effect tracing; Phase 4-K later adds direct ToolExecutor file-ish `file_io` events and Phase 4-L later adds active provider usage known/unknown telemetry |
 
 Phase 4-F evidence:
 
@@ -444,7 +444,7 @@ npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "loop runtim
 | Interruption recovery hint | ✅ Done | Mocked interrupted worker asserts localized status and `resume_note` visibility |
 | Failure/retry visibility | ✅ Done | Mocked failed worker asserts localized `failure_kind`, failure message, and retryable marker |
 | Acceptance script labeling | ✅ Done | `scripts/acceptance.sh --dry-run` advertises the desktop Phase 7 and A2A worker lifecycle smoke gate without expanding the command |
-| Not claimed | 🚫 Deferred | No real worker process harness, no edits to `run_worktree_worker`, no executor-level IO hooks, no provider token/cost stream |
+| Not claimed | 🚫 Deferred | At Phase 4-H there was no real worker process harness, no edits to `run_worktree_worker`, no executor-level IO hooks, and no provider token/cost stream; Phase 4-I/4-K/4-L later add the real Rust worker harness, direct file-ish IO facts, and active provider usage known/unknown telemetry |
 
 Phase 4-H evidence:
 
@@ -461,7 +461,7 @@ node --test scripts/acceptance.test.mjs # pass, 1 passed
 | Real Rust harness | ✅ Done | Gate runs `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib` |
 | Success path evidence | ✅ Done | Existing `agent::a2a::child::tests::run_worktree_worker_creates_worktree_collects_diff_and_returns_summary` creates a real temporary git repo/worktree through `ChildAgentRuntime::run_worktree_worker`, uses the mock adapter/harness, and verifies diff, usage, and summary behavior |
 | Human-review path evidence | ✅ Done | Existing `agent::a2a::child::tests::run_worktree_worker_already_in_use_requires_human_review` covers the already-in-use worktree lifecycle path and its human-review requirement |
-| Not claimed | 🚫 Deferred | Phase 4-I did not add a Tauri/WebDriver force-quit harness, executor-level live IO tracing, provider token/cost stream, new `StreamEvent` variants, or auto commit/merge/push behavior; Phase 4-K later adds direct ToolExecutor file-ish `file_io` events only |
+| Not claimed | 🚫 Deferred | Phase 4-I did not add a Tauri/WebDriver force-quit harness, executor-level live IO tracing, provider token/cost stream, new `StreamEvent` variants, or auto commit/merge/push behavior; Phase 4-K later adds direct ToolExecutor file-ish `file_io` events and Phase 4-L later adds active provider usage known/unknown telemetry |
 
 Phase 4-I evidence:
 
@@ -478,11 +478,11 @@ scripts/acceptance.sh --dry-run
 - Parent-session structs and persisted parent-side child-id arrays — current durable contract stores the child-to-parent pointer only; Phase 4-G derives projection-only `child_task_ids`
 - Automatic parent selection for ordinary `delegate_task` calls — current guarded path requires a supplied existing A2A parent id, rejects missing/unknown parent ids, and never silently creates a root fallback
 - Tauri/WebDriver force-quit or live desktop worker harness — Phase 4-I gates the real Rust `run_worktree_worker` harness only
-- Provider token/cost streaming remains deferred when adapter usage/cost is still unknown
+- Billing-grade usage accounting and exact cost remain deferred when provider usage or pricing is unknown; active Anthropic/OpenAI-compatible calls now emit explicit known/unknown provider usage facts
 
 **Acceptance gate:**
 
-- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; Phase 4-J adds A2A child file-ish facts; Phase 4-K adds direct ToolExecutor file-ish `file_io` stream facts; shell-internal IO effects and provider cost streaming remain deferred)**
+- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; Phase 4-J adds A2A child file-ish facts; Phase 4-K adds direct ToolExecutor file-ish `file_io` stream facts; Phase 4-L adds active Anthropic/OpenAI-compatible provider usage known/unknown facts; shell-internal IO effects, billing-grade accounting, and exact cost for unknown usage/pricing remain deferred)**
 - Parent-child relationship is visible and survives restart. **(Phase 4-G: child projections expose `parent_task_id`; parent projections derive ordered `child_task_ids` from persisted child pointers; normal delegate auto-parent selection, parent-session structs, and persisted parent-side child arrays deferred)**
 - Each failure type has a distinct message and recovery hint. **(Phase 4-A: failure_kind + retryable + resume_note)**
 
@@ -978,10 +978,10 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml file_io_event_seria
 node --test apps/desktop/src/store/blocks.test.ts
 ```
 
-Still not claimed: Shell-internal file effects from `run_shell`, provider
-token/cost streaming, gateway autonomous resume, automatic parent selection,
-parent-session structs, auto commit/merge/push, and the Tauri/WebDriver
-force-quit harness.
+Still not claimed: Shell-internal file effects from `run_shell`, billing-grade
+usage accounting or exact cost when provider usage/pricing is unknown, gateway
+autonomous resume, automatic parent selection, parent-session structs, auto
+commit/merge/push, and the Tauri/WebDriver force-quit harness.
 
 ## Appendix — Likely Files/Modules by Domain
 

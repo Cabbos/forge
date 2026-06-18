@@ -41,9 +41,9 @@ The desktop app now includes the Hermes-parity runtime scaffolding that is being
 
 Forge Level 3 Runtime backs long-running agent work with an append-only loop event journal, rebuildable projections, durable human gates, policy and budget preflight, typed completion evidence, crash/replay regression coverage, and gateway runner leases.
 
-The current acceptance suite advertises and runs those runtime gates before the desktop smoke tests, so product claims about durable loop state are backed by replay, policy, gate, completion, gateway status, subagent projection, mocked desktop acceptance checks, A2A child runtime file-IO facts, direct ToolExecutor file-IO stream smoke coverage, and a real Rust `run_worktree_worker` harness using the mock adapter/harness.
+The current acceptance suite advertises and runs those runtime gates before the desktop smoke tests, so product claims about durable loop state are backed by replay, policy, gate, completion, gateway status, subagent projection, provider usage known/unknown telemetry, mocked desktop acceptance checks, A2A child runtime file-IO facts, direct ToolExecutor file-IO stream smoke coverage, and a real Rust `run_worktree_worker` harness using the mock adapter/harness.
 
-The live file-IO evidence covers successful direct executor file-ish tools (`read`, `write`, `edit`, `diff`, `list`, and `search`) plus A2A child file-ish tool facts. Forge still does not claim Tauri/WebDriver force-quit coverage, shell-internal file effect tracing from `run_shell`, provider token/cost streaming, gateway autonomous resume, automatic parent selection, parent-session structs, or automatic commit/merge/push behavior.
+The live file-IO evidence covers successful direct executor file-ish tools (`read`, `write`, `edit`, `diff`, `list`, and `search`) plus A2A child file-ish tool facts. Provider usage evidence covers active Anthropic and OpenAI-compatible model calls: reported tokens are known, omitted usage remains unknown, and unknown pricing leaves cost unknown. Forge still does not claim Tauri/WebDriver force-quit coverage, shell-internal file effect tracing from `run_shell`, billing-grade usage accounting, exact cost when usage/pricing is unknown, gateway autonomous resume, automatic parent selection, parent-session structs, or automatic commit/merge/push behavior.
 
 ## Product Tracking
 

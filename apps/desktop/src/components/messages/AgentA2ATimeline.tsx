@@ -18,7 +18,6 @@ import { reviewAgentA2ATasks, type AgentA2AReviewDecision } from "@/lib/ipc/a2a"
 import {
   runtimeFactsForSubagentTask,
   type LoopRuntimeFact,
-  type LoopRuntimeFactSource,
 } from "@/lib/loopRuntime";
 import {
   deriveWorkbenchFileView,
@@ -29,6 +28,7 @@ import {
   type WorkbenchReviewItem,
   type WorkbenchReviewView,
 } from "@/lib/workbenchSummary";
+import { runtimeFactSourcesForSubagentTasks } from "@/store/runtime-projections";
 import { useStore } from "@/store";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
@@ -520,25 +520,6 @@ function TaskRow({
   );
 }
 
-function runtimeFactSourcesForTasks({
-  entries,
-  taskIds,
-  sessionId,
-}: {
-  entries: ReturnType<typeof useStore.getState>["subagentRuntimeByTask"];
-  taskIds: Set<string>;
-  sessionId?: string | null;
-}): LoopRuntimeFactSource[] {
-  return [...entries.values()]
-    .filter((entry) => taskIds.has(entry.task_id))
-    .filter((entry) => !sessionId || entry.session_id === sessionId)
-    .map((entry) => ({
-      loop_task_id: entry.loop_task_id ?? null,
-      task_id: entry.task_id,
-      latest_event: entry.latest_event,
-    }));
-}
-
 export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | null }) {
   if (!state || state.tasks.length === 0) return null;
 
@@ -618,7 +599,7 @@ export function AgentA2AWorkspace({
   const reviewView = deriveWorkbenchReviewView(state);
   const fileView = deriveWorkbenchFileView(state);
   const taskIds = new Set(state.tasks.map((task) => task.task_id));
-  const runtimeSources = runtimeFactSourcesForTasks({
+  const runtimeSources = runtimeFactSourcesForSubagentTasks({
     entries: subagentRuntimeByTask,
     taskIds,
     sessionId,
@@ -679,7 +660,7 @@ export function AgentA2ATimeline({
   if (!state || state.tasks.length === 0) return null;
   const taskIds = new Set(state.tasks.map((task) => task.task_id));
   const runtimeSources = sessionId
-    ? runtimeFactSourcesForTasks({
+    ? runtimeFactSourcesForSubagentTasks({
         entries: subagentRuntimeByTask,
         taskIds,
         sessionId,

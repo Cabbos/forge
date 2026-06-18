@@ -90,6 +90,15 @@ describe("runtimeFactsFromSubagents", () => {
         kind: "usage",
         label: "claude-sonnet",
         detail: "input 1200 / output unknown / cost unknown",
+        model: "claude-sonnet",
+        source: null,
+        reason: null,
+        inputTokens: 1200,
+        outputTokens: null,
+        estimatedCostMicros: null,
+        inputTokensUnknown: false,
+        outputTokensUnknown: true,
+        costUnknown: true,
       },
     ]);
   });
@@ -135,6 +144,76 @@ describe("runtimeFactsFromSubagents", () => {
         detail: "src/main.rs",
       },
     ]);
+  });
+
+  it("renders provider omitted and pricing unknown usage reasons distinctly", () => {
+    const facts = runtimeFactsFromSubagents([
+      {
+        loop_task_id: "loop-1",
+        task_id: "a2a-provider-omitted",
+        latest_event: {
+          type: "usage_recorded",
+          model: "claude-sonnet",
+          source: "anthropic",
+          reason: "provider_omitted",
+          input_tokens: null,
+          output_tokens: null,
+          estimated_cost_micros: null,
+        },
+      },
+      {
+        loop_task_id: "loop-1",
+        task_id: "a2a-pricing-unknown",
+        latest_event: {
+          type: "usage_recorded",
+          model: "mystery-model",
+          source: "openai_compatible",
+          reason: "pricing_unknown",
+          input_tokens: 1200,
+          output_tokens: 300,
+          estimated_cost_micros: null,
+        },
+      },
+    ], "loop-1");
+
+    assert.deepEqual(facts.map((fact) => fact.detail), [
+      "input unknown / output unknown / cost unknown / provider omitted",
+      "input 1200 / output 300 / cost unknown / pricing unknown",
+    ]);
+  });
+
+  it("exposes provider usage facts with structured fields and unknown flags", () => {
+    const facts = runtimeFactsFromSubagents([
+      {
+        loop_task_id: "loop-1",
+        task_id: "a2a-usage",
+        latest_event: {
+          type: "usage_recorded",
+          model: "claude-sonnet",
+          source: "anthropic",
+          reason: "provider_omitted",
+          input_tokens: null,
+          output_tokens: null,
+          estimated_cost_micros: null,
+        },
+      },
+    ], "loop-1");
+
+    assert.deepEqual(facts[0], {
+      id: "usage:a2a-usage:claude-sonnet",
+      kind: "usage",
+      label: "claude-sonnet",
+      detail: "input unknown / output unknown / cost unknown / provider omitted",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_omitted",
+      inputTokens: null,
+      outputTokens: null,
+      estimatedCostMicros: null,
+      inputTokensUnknown: true,
+      outputTokensUnknown: true,
+      costUnknown: true,
+    });
   });
 });
 

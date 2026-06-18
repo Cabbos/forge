@@ -21,18 +21,19 @@ Runs the Forge Level 3 runtime acceptance gates:
   5. Projection rebuild/replay tests
   6. Policy preflight tests
   7. Budget preflight tests
-  8. Durable human gate tests
-  9. Typed completion evidence tests
-  10. Gateway loop runner status smoke
-  11. Subagent runtime event projection smoke
-  12. Live worktree worker lifecycle harness
-  13. A2A child runtime file IO bridge
-  14. Executor file IO stream smoke
-  15. Completion contract desktop helper smoke
-  16. Completion contract mocked desktop smoke
-  17. Desktop Phase 7 and A2A worker lifecycle smoke specs
-  18. Rich preview e2e smoke specs
-  19. mocked desktop restart runtime smoke
+  8. Provider usage known/unknown telemetry
+  9. Durable human gate tests
+  10. Typed completion evidence tests
+  11. Gateway loop runner status smoke
+  12. Subagent runtime event projection smoke
+  13. Live worktree worker lifecycle harness
+  14. A2A child runtime file IO bridge
+  15. Executor file IO stream smoke
+  16. Completion contract desktop helper smoke
+  17. Completion contract mocked desktop smoke
+  18. Desktop Phase 7 and A2A worker lifecycle smoke specs
+  19. Rich preview e2e smoke specs
+  20. mocked desktop restart runtime smoke
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -53,6 +54,7 @@ COMMAND_LABELS=(
   "projection rebuild/replay tests"
   "policy preflight tests"
   "budget preflight tests"
+  "provider usage known/unknown telemetry"
   "durable human gate tests"
   "typed completion evidence tests"
   "gateway loop runner status smoke"
@@ -75,6 +77,7 @@ COMMANDS=(
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::policy --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib"

@@ -24,6 +24,15 @@ export interface LoopRuntimeFact {
   kind: "file_io" | "usage";
   label: string;
   detail: string;
+  model?: string | null;
+  source?: string | null;
+  reason?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCostMicros?: number | null;
+  inputTokensUnknown?: boolean;
+  outputTokensUnknown?: boolean;
+  costUnknown?: boolean;
 }
 
 export function summarizeLoopTask(task: LoopTaskRecord): LoopRuntimeSummary {
@@ -82,17 +91,38 @@ function runtimeFactFromSource(source: LoopRuntimeFactSource): LoopRuntimeFact |
   }
   if (event.type === "usage_recorded") {
     const model = event.model?.trim() || "unknown model";
+    const reason = usageReasonLabel(event.reason);
+    const inputTokens = finiteNumberOrNull(event.input_tokens);
+    const outputTokens = finiteNumberOrNull(event.output_tokens);
+    const estimatedCostMicros = finiteNumberOrNull(event.estimated_cost_micros);
+    const detail = [
+      `input ${numberOrUnknown(inputTokens)}`,
+      `output ${numberOrUnknown(outputTokens)}`,
+      `cost ${costOrUnknown(estimatedCostMicros)}`,
+    ];
+    if (reason) detail.push(reason);
     return {
       id: `usage:${source.task_id}:${model}`,
       kind: "usage",
       label: model,
-      detail: [
-        `input ${numberOrUnknown(event.input_tokens)}`,
-        `output ${numberOrUnknown(event.output_tokens)}`,
-        `cost ${costOrUnknown(event.estimated_cost_micros)}`,
-      ].join(" / "),
+      detail: detail.join(" / "),
+      model,
+      source: event.source?.trim() || null,
+      reason: event.reason ?? null,
+      inputTokens,
+      outputTokens,
+      estimatedCostMicros,
+      inputTokensUnknown: inputTokens == null,
+      outputTokensUnknown: outputTokens == null,
+      costUnknown: estimatedCostMicros == null,
     };
   }
+  return null;
+}
+
+function usageReasonLabel(reason: string | null | undefined): string | null {
+  if (reason === "provider_omitted") return "provider omitted";
+  if (reason === "pricing_unknown") return "pricing unknown";
   return null;
 }
 
@@ -189,6 +219,10 @@ function stringValue(value: unknown): string | null {
 }
 
 function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 

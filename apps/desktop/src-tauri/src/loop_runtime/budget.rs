@@ -1,11 +1,16 @@
 use crate::loop_runtime::gates::HumanGateType;
 use crate::loop_runtime::types::LoopBudget;
+use crate::protocol::events::ProviderUsageReason;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UsageEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub reason: ProviderUsageReason,
     #[serde(default)]
     pub input_tokens: Option<u64>,
     #[serde(default)]
@@ -83,6 +88,8 @@ impl LoopUsageLedger {
     ) -> Self {
         Self::from_events(vec![UsageEvent {
             model,
+            source: None,
+            reason: ProviderUsageReason::ProviderOmitted,
             input_tokens: None,
             output_tokens: None,
             estimated_cost_micros: None,
@@ -245,18 +252,23 @@ mod tests {
         BudgetSnapshot, HumanGateType, LoopActor, LoopBudget, LoopEventEnvelope, LoopRuntimeEvent,
         LoopTaskProjection, LoopUsageLedger, UsageEvent, LOOP_RUNTIME_SCHEMA_VERSION,
     };
+    use crate::protocol::events::ProviderUsageReason;
 
     #[test]
     fn usage_ledger_sums_known_tokens_and_preserves_unknown_cost() {
         let usage = LoopUsageLedger::from_events(vec![
             UsageEvent {
                 model: Some("claude".into()),
+                source: Some("anthropic".into()),
+                reason: ProviderUsageReason::PricingUnknown,
                 input_tokens: Some(100),
                 output_tokens: Some(50),
                 estimated_cost_micros: None,
             },
             UsageEvent {
                 model: Some("claude".into()),
+                source: Some("anthropic".into()),
+                reason: ProviderUsageReason::ProviderReported,
                 input_tokens: Some(25),
                 output_tokens: None,
                 estimated_cost_micros: Some(10),
@@ -267,6 +279,26 @@ mod tests {
         assert_eq!(usage.output_tokens, Some(50));
         assert_eq!(usage.estimated_cost_micros, Some(10));
         assert!(usage.has_unknown_output_tokens);
+        assert!(usage.has_unknown_cost);
+    }
+
+    #[test]
+    fn usage_ledger_preserves_known_tokens_when_pricing_is_unknown() {
+        let usage = LoopUsageLedger::from_events(vec![UsageEvent {
+            model: Some("mystery-model".into()),
+            source: Some("openai_compatible".into()),
+            reason: ProviderUsageReason::PricingUnknown,
+            input_tokens: Some(77),
+            output_tokens: Some(33),
+            estimated_cost_micros: None,
+        }]);
+
+        assert_eq!(usage.model.as_deref(), Some("mystery-model"));
+        assert_eq!(usage.input_tokens, Some(77));
+        assert_eq!(usage.output_tokens, Some(33));
+        assert_eq!(usage.estimated_cost_micros, None);
+        assert!(!usage.has_unknown_input_tokens);
+        assert!(!usage.has_unknown_output_tokens);
         assert!(usage.has_unknown_cost);
     }
 
@@ -303,6 +335,8 @@ mod tests {
     fn usage_event_serializes_unknown_usage_as_explicit_nulls() {
         let event = UsageEvent {
             model: Some("claude".to_string()),
+            source: Some("anthropic".to_string()),
+            reason: ProviderUsageReason::ProviderOmitted,
             input_tokens: None,
             output_tokens: None,
             estimated_cost_micros: None,
@@ -313,6 +347,8 @@ mod tests {
         assert_eq!(json["input_tokens"], serde_json::Value::Null);
         assert_eq!(json["output_tokens"], serde_json::Value::Null);
         assert_eq!(json["estimated_cost_micros"], serde_json::Value::Null);
+        assert_eq!(json["source"], "anthropic");
+        assert_eq!(json["reason"], "provider_omitted");
     }
 
     #[test]

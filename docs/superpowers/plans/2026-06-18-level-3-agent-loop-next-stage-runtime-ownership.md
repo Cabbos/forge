@@ -224,6 +224,23 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
 
 **Goal:** Normalize provider usage telemetry so known adapter usage becomes runtime facts, and unknown tokens/cost remain explicit unknowns across direct sessions, loop tasks, and A2A child runs.
 
+**Status (2026-06-18): Implemented for the active Anthropic and OpenAI-compatible adapter paths.** Added an additive `provider_usage` stream event with nullable `input_tokens`, `output_tokens`, `estimated_cost_micros`, adapter `source`, model, and reason (`provider_reported`, `provider_omitted`, `pricing_unknown`). Legacy numeric `usage` remains compatible and is emitted only when token usage and known pricing are available; omitted provider usage and unknown pricing are not converted to zero or default Sonnet pricing. `UsageEvent` now carries source/reason metadata, `UsageCaptureEmitter` prefers normalized provider usage records, and task-aware subagents emit live `usage_recorded` runtime facts from the same records used by `LoopUsageLedger`. Direct-session `provider_usage` events now render as completed transcript blocks without double-counting legacy `usage` cost/context state, including provider-omitted and pricing-unknown facts. Frontend runtime usage facts expose structured model/source/reason, nullable token/cost values, and explicit unknown flags while preserving the existing label/detail rows that render `provider omitted` and `pricing unknown` distinctly.
+
+**Evidence/tests (fresh during implementation):**
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib
+node --test apps/desktop/src/lib/loopRuntime.test.ts
+node --test apps/desktop/src/store/blocks.test.ts
+node --test apps/desktop/src/store/event-dispatch.test.ts
+node scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+```
+
+**Not claimed:** billing-grade usage accounting, exact cost when provider usage or model pricing is unknown, shell-internal file tracing, gateway autonomous resume, automatic parent selection, parent-session structs, or auto commit/merge/push. `codex.rs`, `claude.rs`, and `hermes.rs` are still stubs in this repo and were not given new model-call behavior.
+
 **Files:**
 - Modify: `apps/desktop/src-tauri/src/adapters/base.rs`
 - Modify: `apps/desktop/src-tauri/src/adapters/anthropic.rs`
@@ -239,7 +256,7 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
 - Modify: `apps/desktop/src/store/runtime-projections.ts`
 - Modify: `apps/desktop/src/components/messages/AgentA2ATimeline.tsx`
 - Modify: `apps/desktop/src/lib/loopRuntime.ts`
-- Modify tests near existing adapter usage tests, `apps/desktop/src/lib/loopRuntime.test.ts`, and `apps/desktop/e2e/acceptance.spec.ts`
+- Modify tests near existing adapter usage tests, `apps/desktop/src/lib/loopRuntime.test.ts`, `apps/desktop/src/store/blocks.test.ts`, `apps/desktop/src/store/event-dispatch.test.ts`, and `apps/desktop/e2e/acceptance.spec.ts`
 
 **GitNexus impact requirements:**
 
@@ -253,7 +270,7 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 
 **Implementation steps:**
 
-- [ ] **Step 2.1: Inventory current usage emission**
+- [x] **Step 2.1: Inventory current usage emission**
 
   Run:
 
@@ -263,7 +280,7 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 
   Expected: Anthropic has partial known usage emission; `LoopUsageLedger` already preserves unknown input/output/cost; other adapters may need explicit unknown events.
 
-- [ ] **Step 2.2: Write Rust tests for known and unknown adapter usage**
+- [x] **Step 2.2: Write Rust tests for known and unknown adapter usage**
 
   Add focused tests that prove:
 
@@ -281,7 +298,7 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 
   Expected first result: FAIL for missing cross-adapter unknown usage behavior.
 
-- [ ] **Step 2.3: Normalize the usage event shape**
+- [x] **Step 2.3: Normalize the usage event shape**
 
   Add or refine a shared usage telemetry structure in `adapters/base.rs` or `loop_runtime/budget.rs` so adapters can produce:
 
@@ -296,22 +313,27 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 
   If the existing top-level `usage` stream event remains direct-session-only, add runtime usage facts through `subagent_runtime_event` or loop projection without breaking the older event. Keep TypeScript mirrors exact.
 
-- [ ] **Step 2.4: Wire all adapters through the normalized path**
+- [x] **Step 2.4: Wire active adapters through the normalized path**
 
   For adapters that cannot supply usage, emit explicit unknown usage at model-call completion. For adapters that can supply usage, emit known token counts and unknown cost only when pricing is not available.
 
-- [ ] **Step 2.5: Extend frontend projection and UI tests**
+- [x] **Step 2.5: Extend frontend projection and UI tests**
 
   Update `runtime-projections.ts`, `loopRuntime.ts`, and `AgentA2ATimeline.tsx` so known values and unknown flags render distinctly. Add tests proving:
 
   - known token/cost rows show numeric facts,
   - unknown output/cost rows say unknown rather than zero,
+  - direct-session `provider_usage` appends a completed block for known, provider-omitted, and pricing-unknown payloads,
+  - additive `provider_usage` does not double-count legacy `usage` cost/context state,
+  - runtime usage facts expose structured model/source/reason and explicit unknown flags,
   - runtime facts remain session-scoped.
 
   Run:
 
   ```bash
   node --test apps/desktop/src/lib/loopRuntime.test.ts
+  node --test apps/desktop/src/store/blocks.test.ts
+  node --test apps/desktop/src/store/event-dispatch.test.ts
   npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
   ```
 
@@ -323,7 +345,11 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib
   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib
   node --test apps/desktop/src/lib/loopRuntime.test.ts
+  node --test apps/desktop/src/store/blocks.test.ts
+  node --test apps/desktop/src/store/event-dispatch.test.ts
   npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
+  node scripts/acceptance.test.mjs
+  scripts/acceptance.sh --dry-run
   git diff --check
   ```
 

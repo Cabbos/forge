@@ -7,7 +7,7 @@ use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::event_sink::EventEmitter;
 use crate::harness::Harness;
 use crate::loop_runtime::{LoopUsageLedger, UsageEvent};
-use crate::protocol::events::{StreamEvent, SubagentRuntimePayload};
+use crate::protocol::events::{ProviderUsageReason, StreamEvent, SubagentRuntimePayload};
 
 const MAX_ROUNDS: usize = 20;
 const MAX_RESULT_CHARS: usize = 8000;
@@ -55,27 +55,37 @@ impl SubAgentUsageTracker {
         }
     }
 
-    fn record_model_round(&mut self, tool_call_count: usize, usage_events: Vec<UsageEvent>) {
+    fn record_model_round(
+        &mut self,
+        tool_call_count: usize,
+        usage_events: Vec<UsageEvent>,
+    ) -> Vec<UsageEvent> {
         self.turn_count = self.turn_count.saturating_add(1);
         self.tool_call_count = self
             .tool_call_count
             .saturating_add(tool_call_count.try_into().unwrap_or(u32::MAX));
-        if usage_events.is_empty() {
-            self.events.push(UsageEvent {
+        let recorded = if usage_events.is_empty() {
+            vec![UsageEvent {
                 model: self.model.clone(),
+                source: None,
+                reason: ProviderUsageReason::ProviderOmitted,
                 input_tokens: None,
                 output_tokens: None,
                 estimated_cost_micros: None,
-            });
+            }]
         } else {
-            self.events
-                .extend(usage_events.into_iter().map(|mut event| {
+            usage_events
+                .into_iter()
+                .map(|mut event| {
                     if event.model.is_none() {
                         event.model = self.model.clone();
                     }
                     event
-                }));
-        }
+                })
+                .collect::<Vec<_>>()
+        };
+        self.events.extend(recorded.clone());
+        recorded
     }
 
     fn ledger(&self) -> LoopUsageLedger {
@@ -94,6 +104,7 @@ impl SubAgentUsageTracker {
 struct UsageCaptureEmitter {
     model: Option<String>,
     events: parking_lot::Mutex<Vec<UsageEvent>>,
+    saw_provider_usage: parking_lot::Mutex<bool>,
 }
 
 impl UsageCaptureEmitter {
@@ -101,29 +112,57 @@ impl UsageCaptureEmitter {
         Self {
             model: (!model.trim().is_empty()).then(|| model.to_string()),
             events: parking_lot::Mutex::new(Vec::new()),
+            saw_provider_usage: parking_lot::Mutex::new(false),
         }
     }
 
     fn drain(&self) -> Vec<UsageEvent> {
+        *self.saw_provider_usage.lock() = false;
         std::mem::take(&mut *self.events.lock())
     }
 }
 
 impl EventEmitter for UsageCaptureEmitter {
     fn emit(&self, event: StreamEvent) {
-        if let StreamEvent::Usage {
-            input_tokens,
-            output_tokens,
-            estimated_cost_usd,
-            ..
-        } = event
-        {
-            self.events.lock().push(UsageEvent {
-                model: self.model.clone(),
-                input_tokens: Some(input_tokens.into()),
-                output_tokens: Some(output_tokens.into()),
-                estimated_cost_micros: estimated_cost_micros(estimated_cost_usd),
-            });
+        match event {
+            StreamEvent::ProviderUsage {
+                model,
+                source,
+                reason,
+                input_tokens,
+                output_tokens,
+                estimated_cost_micros,
+                ..
+            } => {
+                *self.saw_provider_usage.lock() = true;
+                self.events.lock().push(UsageEvent {
+                    model: model.or_else(|| self.model.clone()),
+                    source,
+                    reason,
+                    input_tokens,
+                    output_tokens,
+                    estimated_cost_micros,
+                });
+            }
+            StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+                estimated_cost_usd,
+                ..
+            } => {
+                if *self.saw_provider_usage.lock() {
+                    return;
+                }
+                self.events.lock().push(UsageEvent {
+                    model: self.model.clone(),
+                    source: None,
+                    reason: ProviderUsageReason::ProviderReported,
+                    input_tokens: Some(input_tokens.into()),
+                    output_tokens: Some(output_tokens.into()),
+                    estimated_cost_micros: estimated_cost_micros(estimated_cost_usd),
+                });
+            }
+            _ => {}
         }
     }
 }
@@ -484,7 +523,11 @@ impl SubAgent {
                     return build_error_json(&format!("API error: {e}"), &[], usage.ledger());
                 }
             };
-            usage.record_model_round(stream_result.tool_calls.len(), usage_capture.drain());
+            let recorded_usage =
+                usage.record_model_round(stream_result.tool_calls.len(), usage_capture.drain());
+            if let Some(context) = runtime_context.as_ref() {
+                emit_subagent_usage_events(emitter.as_ref(), context, &recorded_usage);
+            }
 
             if !stream_result.assistant_content.is_empty() {
                 messages.push(ChatMessage::assistant(serde_json::Value::Array(
@@ -585,6 +628,27 @@ fn emit_subagent_runtime_event(
         task_id: context.task_id.clone(),
         event,
     });
+}
+
+fn emit_subagent_usage_events(
+    emitter: &dyn EventEmitter,
+    context: &SubagentRuntimeContext,
+    events: &[UsageEvent],
+) {
+    for event in events {
+        emit_subagent_runtime_event(
+            emitter,
+            context,
+            SubagentRuntimePayload::UsageRecorded {
+                model: event.model.clone(),
+                source: event.source.clone(),
+                reason: event.reason.clone(),
+                input_tokens: event.input_tokens,
+                output_tokens: event.output_tokens,
+                estimated_cost_micros: event.estimated_cost_micros,
+            },
+        );
+    }
 }
 
 fn runtime_file_io_fact(tool_name: &str, input: &serde_json::Value) -> Option<(String, String)> {
@@ -769,5 +833,42 @@ fn truncate_any(s: String, max: usize) -> String {
         let mut t = s.chars().take(max).collect::<String>();
         t.push_str("\n\n... (truncated)");
         t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_capture_prefers_provider_usage_over_legacy_usage() {
+        let emitter = UsageCaptureEmitter::new("claude-sonnet");
+
+        emitter.emit(StreamEvent::ProviderUsage {
+            session_id: "subagent".to_string(),
+            block_id: uuid::Uuid::now_v7().to_string(),
+            model: Some("claude-sonnet".to_string()),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            estimated_cost_micros: Some(1050),
+            source: Some("anthropic".to_string()),
+            reason: ProviderUsageReason::ProviderReported,
+        });
+        emitter.emit(StreamEvent::Usage {
+            session_id: "subagent".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            estimated_cost_usd: 0.00105,
+        });
+
+        let events = emitter.drain();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].model.as_deref(), Some("claude-sonnet"));
+        assert_eq!(events[0].source.as_deref(), Some("anthropic"));
+        assert_eq!(events[0].reason, ProviderUsageReason::ProviderReported);
+        assert_eq!(events[0].input_tokens, Some(100));
+        assert_eq!(events[0].output_tokens, Some(50));
+        assert_eq!(events[0].estimated_cost_micros, Some(1050));
     }
 }

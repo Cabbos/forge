@@ -267,6 +267,8 @@ export interface AgentA2AProjection {
   tasks: AgentA2ATaskProjection[];
 }
 
+export type ProviderUsageReason = "provider_reported" | "provider_omitted" | "pricing_unknown";
+
 export type SubagentRuntimePayload =
   | { type: "started"; role: string }
   | { type: "status"; status: string; message?: string | null }
@@ -274,6 +276,8 @@ export type SubagentRuntimePayload =
   | {
       type: "usage_recorded";
       model?: string | null;
+      source?: string | null;
+      reason?: ProviderUsageReason | null;
       input_tokens?: number | null;
       output_tokens?: number | null;
       estimated_cost_micros?: number | null;
@@ -399,6 +403,17 @@ export type StreamEvent =
   | { event_type: "session_stopped"; session_id: string; reason: string }
   | { event_type: "error"; session_id: string; block_id: string; message: string; code: string }
   | { event_type: "usage"; session_id: string; input_tokens: number; output_tokens: number; estimated_cost_usd: number }
+  | {
+      event_type: "provider_usage";
+      session_id: string;
+      block_id?: string | null;
+      model?: string | null;
+      input_tokens: number | null;
+      output_tokens: number | null;
+      estimated_cost_micros: number | null;
+      source?: string | null;
+      reason: ProviderUsageReason;
+    }
   // ── Recovery Notice ──
   | {
       event_type: "recovery_notice";

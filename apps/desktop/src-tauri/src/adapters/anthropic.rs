@@ -11,7 +11,7 @@ use super::base::{
 };
 use crate::agent::event_sink::EventEmitter;
 use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
-use crate::protocol::events::StreamEvent;
+use crate::protocol::events::{ProviderUsageReason, StreamEvent};
 use crate::protocol::BlockId;
 
 const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
@@ -317,14 +317,13 @@ impl AnthropicAdapter {
         };
 
         if let Some((session_id, emitter)) = usage_emitter {
-            if let Some((input_tokens, output_tokens)) = anthropic_usage_from_response(&parsed) {
-                emitter.emit(StreamEvent::Usage {
-                    session_id: session_id.to_string(),
-                    input_tokens,
-                    output_tokens,
-                    estimated_cost_usd: estimate_cost(&self.model, input_tokens, output_tokens),
-                });
-            }
+            emit_usage_events(
+                emitter,
+                session_id,
+                "anthropic",
+                &self.model,
+                anthropic_usage_from_response(&parsed),
+            );
         }
 
         let content = parsed["content"].as_array().cloned().unwrap_or_default();
@@ -478,6 +477,7 @@ impl AiAdapter for AnthropicAdapter {
         let mut buffer = String::new();
         let mut active_block_id: Option<String> = None;
         let mut parser = AnthropicStreamParser::default();
+        let mut saw_usage = false;
 
         loop {
             let chunk = tokio::select! {
@@ -580,13 +580,14 @@ impl AiAdapter for AnthropicAdapter {
                         }
 
                         if let Some((input_tokens, output_tokens)) = update.usage {
-                            let cost = estimate_cost(&self.model, input_tokens, output_tokens);
-                            emitter.emit(StreamEvent::Usage {
-                                session_id: session.to_string(),
-                                input_tokens,
-                                output_tokens,
-                                estimated_cost_usd: cost,
-                            });
+                            saw_usage = true;
+                            emit_usage_events(
+                                emitter,
+                                &session,
+                                "anthropic",
+                                &self.model,
+                                Some((input_tokens, output_tokens)),
+                            );
                         }
 
                         if let Some(msg) = update.error {
@@ -603,6 +604,10 @@ impl AiAdapter for AnthropicAdapter {
                     }
                 }
             }
+        }
+
+        if !saw_usage {
+            emit_usage_events(emitter, session_id, "anthropic", &self.model, None);
         }
 
         Ok(parser.finish())
@@ -830,17 +835,83 @@ fn drain_anthropic_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
     events
 }
 
-/// Estimate cost based on model pricing (per 1M tokens).
-pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> f64 {
-    let (input_price, output_price): (f64, f64) = match model {
-        m if m.contains("opus") => (15.0, 75.0),
-        m if m.contains("sonnet") => (3.0, 15.0),
-        m if m.contains("haiku") => (0.8, 4.0),
-        m if m.contains("deepseek") => (0.14, 0.28),
-        _ => (3.0, 15.0), // default sonnet pricing
+pub(crate) fn emit_usage_events(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    source: &str,
+    model: &str,
+    usage: Option<(u32, u32)>,
+) {
+    let (input_tokens, output_tokens, estimated_cost_micros, reason) = match usage {
+        Some((input_tokens, output_tokens)) => {
+            match estimate_cost_micros(model, input_tokens, output_tokens) {
+                Some(estimated_cost_micros) => (
+                    Some(input_tokens.into()),
+                    Some(output_tokens.into()),
+                    Some(estimated_cost_micros),
+                    ProviderUsageReason::ProviderReported,
+                ),
+                None => (
+                    Some(input_tokens.into()),
+                    Some(output_tokens.into()),
+                    None,
+                    ProviderUsageReason::PricingUnknown,
+                ),
+            }
+        }
+        None => (None, None, None, ProviderUsageReason::ProviderOmitted),
     };
-    (input_tokens as f64 / 1_000_000.0) * input_price
-        + (output_tokens as f64 / 1_000_000.0) * output_price
+
+    emitter.emit(StreamEvent::ProviderUsage {
+        session_id: session_id.to_string(),
+        block_id: uuid::Uuid::now_v7().to_string(),
+        model: Some(model.to_string()),
+        input_tokens,
+        output_tokens,
+        estimated_cost_micros,
+        source: Some(source.to_string()),
+        reason,
+    });
+
+    if let (Some(input_tokens), Some(output_tokens), Some(estimated_cost_micros)) =
+        (input_tokens, output_tokens, estimated_cost_micros)
+    {
+        let Ok(input_tokens) = input_tokens.try_into() else {
+            return;
+        };
+        let Ok(output_tokens) = output_tokens.try_into() else {
+            return;
+        };
+        emitter.emit(StreamEvent::Usage {
+            session_id: session_id.to_string(),
+            input_tokens,
+            output_tokens,
+            estimated_cost_usd: estimated_cost_micros as f64 / 1_000_000.0,
+        });
+    }
+}
+
+/// Estimate cost based on known model pricing (per 1M tokens).
+pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> Option<f64> {
+    estimate_cost_micros(model, input_tokens, output_tokens)
+        .map(|micros| micros as f64 / 1_000_000.0)
+}
+
+pub fn estimate_cost_micros(model: &str, input_tokens: u32, output_tokens: u32) -> Option<u64> {
+    let (input_price, output_price): (f64, f64) = pricing_for_model(model)?;
+    let cost = (input_tokens as f64 * input_price) + (output_tokens as f64 * output_price);
+    Some(cost.round() as u64)
+}
+
+fn pricing_for_model(model: &str) -> Option<(f64, f64)> {
+    let model = model.to_ascii_lowercase();
+    match model.as_str() {
+        m if m.contains("opus") => Some((15.0, 75.0)),
+        m if m.contains("sonnet") => Some((3.0, 15.0)),
+        m if m.contains("haiku") => Some((0.8, 4.0)),
+        m if m.contains("deepseek") => Some((0.14, 0.28)),
+        _ => None,
+    }
 }
 
 fn anthropic_usage_from_response(parsed: &serde_json::Value) -> Option<(u32, u32)> {
@@ -1026,6 +1097,110 @@ mod tests {
                 ..
             } if session_id == "subagent"
         )));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                model: Some(model),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                estimated_cost_micros: Some(1044),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
+                ..
+            } if session_id == "subagent"
+                && model == "claude-sonnet-4-6"
+                && source == "anthropic"
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_unknown_usage_when_provider_omits_usage() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn"
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                model: Some(model),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_micros: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderOmitted,
+                ..
+            } if session_id == "subagent"
+                && model == "claude-sonnet-4-6"
+                && source == "anthropic"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_known_tokens_and_unknown_cost_for_unknown_pricing() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 123,
+                "output_tokens": 45
+            }
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_model("mystery-model-v1")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                model: Some(model),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                estimated_cost_micros: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+                ..
+            } if session_id == "subagent"
+                && model == "mystery-model-v1"
+                && source == "anthropic"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
     }
 
     #[test]

@@ -189,6 +189,58 @@ describe("createOutputEventDispatcher live file_io events", () => {
   });
 });
 
+describe("createOutputEventDispatcher live provider_usage events", () => {
+  it("persists provider_usage as a block without updating legacy cost or context usage", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 100,
+      output_tokens: 25,
+      estimated_cost_micros: 1234,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0);
+    assert.strictEqual(session.contextUsage, null);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+    assert.strictEqual(session.blocks[0].metadata.estimated_cost_micros, 1234);
+  });
+
+  it("does not double-count provider_usage after legacy usage updates cost and context", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "usage",
+      session_id: "session-1",
+      input_tokens: 100,
+      output_tokens: 25,
+      estimated_cost_usd: 0.001,
+    });
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      model: "claude-sonnet",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 100,
+      output_tokens: 25,
+      estimated_cost_micros: 1000,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.001);
+    assert.strictEqual(session.contextUsage?.usedTokens, 100);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+  });
+});
+
 function createHarness(blocks: SessionState["blocks"] = []) {
   const state = createDispatcherState([
     [

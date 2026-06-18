@@ -42,6 +42,8 @@ export interface SubagentRuntimeEntry {
   loop_task_id?: string | null;
   task_id: string;
   latest_event: SubagentRuntimePayload;
+  latest_usage_event?: Extract<SubagentRuntimePayload, { type: "usage_recorded" }>;
+  latest_file_io_event?: Extract<SubagentRuntimePayload, { type: "file_io" }>;
   status: string;
   role?: string | null;
   message?: string | null;

@@ -28,6 +28,20 @@ pub struct DeliverySummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderUsageReason {
+    ProviderReported,
+    ProviderOmitted,
+    PricingUnknown,
+}
+
+impl Default for ProviderUsageReason {
+    fn default() -> Self {
+        Self::ProviderReported
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SubagentRuntimePayload {
     Started {
@@ -45,11 +59,15 @@ pub enum SubagentRuntimePayload {
     UsageRecorded {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default)]
+        reason: ProviderUsageReason,
+        #[serde(default)]
         input_tokens: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         output_tokens: Option<u64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         estimated_cost_micros: Option<u64>,
     },
     Ended {
@@ -342,6 +360,24 @@ pub enum StreamEvent {
         output_tokens: u32,
         estimated_cost_usd: f64,
     },
+    #[serde(rename = "provider_usage")]
+    ProviderUsage {
+        session_id: String,
+        #[serde(default = "new_provider_usage_block_id")]
+        block_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default)]
+        input_tokens: Option<u64>,
+        #[serde(default)]
+        output_tokens: Option<u64>,
+        #[serde(default)]
+        estimated_cost_micros: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default)]
+        reason: ProviderUsageReason,
+    },
 
     // ── Recovery Notice ──
     #[serde(rename = "recovery_notice")]
@@ -381,6 +417,10 @@ pub enum StreamEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         remediation: Option<String>,
     },
+}
+
+fn new_provider_usage_block_id() -> String {
+    uuid::Uuid::now_v7().to_string()
 }
 
 impl StreamEvent {
@@ -426,6 +466,7 @@ impl StreamEvent {
             | SessionStopped { session_id, .. }
             | Error { session_id, .. }
             | Usage { session_id, .. }
+            | ProviderUsage { session_id, .. }
             | RecoveryNotice { session_id, .. }
             | DiagnosticsUpdate { session_id, .. }
             | HealthAlert { session_id, .. } => session_id,
@@ -475,6 +516,7 @@ impl StreamEvent {
             SessionStopped { .. } => "session_stopped",
             Error { .. } => "error",
             Usage { .. } => "usage",
+            ProviderUsage { .. } => "provider_usage",
             RecoveryNotice { .. } => "recovery_notice",
             DiagnosticsUpdate { .. } => "diagnostics_update",
             HealthAlert { .. } => "health_alert",
@@ -524,6 +566,53 @@ mod tests {
         assert_eq!(json["path"], "src/main.rs");
         assert_eq!(json["operation"], "read");
         assert_eq!(json["source"], "executor");
+    }
+
+    #[test]
+    fn provider_usage_event_serializes_unknown_cost_as_null_with_reason() {
+        let event = StreamEvent::ProviderUsage {
+            session_id: "s1".to_string(),
+            block_id: "usage-1".to_string(),
+            model: Some("mystery-model".to_string()),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            estimated_cost_micros: None,
+            source: Some("anthropic".to_string()),
+            reason: ProviderUsageReason::PricingUnknown,
+        };
+
+        assert_eq!(event.event_type(), "provider_usage");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "provider_usage");
+        assert_eq!(json["block_id"], "usage-1");
+        assert_eq!(json["model"], "mystery-model");
+        assert_eq!(json["input_tokens"], 100);
+        assert_eq!(json["output_tokens"], 50);
+        assert_eq!(json["estimated_cost_micros"], serde_json::Value::Null);
+        assert_eq!(json["source"], "anthropic");
+        assert_eq!(json["reason"], "pricing_unknown");
+    }
+
+    #[test]
+    fn provider_usage_event_deserializes_legacy_payload_without_block_id() {
+        let event: StreamEvent = serde_json::from_value(serde_json::json!({
+            "event_type": "provider_usage",
+            "session_id": "s1",
+            "model": "legacy-model",
+            "input_tokens": null,
+            "output_tokens": null,
+            "estimated_cost_micros": null,
+            "source": "anthropic",
+            "reason": "provider_omitted"
+        }))
+        .unwrap();
+
+        match event {
+            StreamEvent::ProviderUsage { block_id, .. } => {
+                assert!(!block_id.is_empty());
+            }
+            other => panic!("expected provider_usage, got {other:?}"),
+        }
     }
 
     /// Guardrail: every StreamEvent variant must have an `event_type` that
@@ -933,6 +1022,19 @@ mod tests {
                     estimated_cost_usd: 0.0,
                 },
                 "usage",
+            ),
+            (
+                StreamEvent::ProviderUsage {
+                    session_id: "s".into(),
+                    block_id: "usage-1".into(),
+                    model: Some("m".into()),
+                    input_tokens: Some(1),
+                    output_tokens: Some(2),
+                    estimated_cost_micros: None,
+                    source: Some("anthropic".into()),
+                    reason: ProviderUsageReason::PricingUnknown,
+                },
+                "provider_usage",
             ),
             (
                 StreamEvent::RecoveryNotice {

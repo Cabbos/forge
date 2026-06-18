@@ -434,6 +434,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
         event: {
           type: "usage_recorded",
           model: "claude-sonnet",
+          source: "anthropic",
+          reason: "pricing_unknown",
           input_tokens: 3200,
           output_tokens: null,
           estimated_cost_micros: null,
@@ -492,5 +494,6 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(workbench).toContainText("需要人工审阅");
     await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "文件 IO" })).toContainText("LoopTaskPanel.tsx");
     await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");
+    await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("pricing unknown");
   });
 });

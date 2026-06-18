@@ -501,6 +501,36 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         },
         isComplete: true,
       };
+    case "provider_usage": {
+      const model = event.model?.trim() || null;
+      const source = event.source?.trim() || null;
+      const metadata = {
+        model,
+        source,
+        reason: event.reason,
+        input_tokens: event.input_tokens,
+        output_tokens: event.output_tokens,
+        estimated_cost_micros: event.estimated_cost_micros,
+        input_tokens_unknown: !isFiniteNumber(event.input_tokens),
+        output_tokens_unknown: !isFiniteNumber(event.output_tokens),
+        cost_unknown: !isFiniteNumber(event.estimated_cost_micros),
+      };
+      return {
+        ...base,
+        block_id: event.block_id?.trim() || providerUsageBlockId(event),
+        event_type: "provider_usage",
+        content: providerUsageContent({
+          model,
+          source,
+          reason: event.reason,
+          inputTokens: event.input_tokens,
+          outputTokens: event.output_tokens,
+          estimatedCostMicros: event.estimated_cost_micros,
+        }),
+        metadata,
+        isComplete: true,
+      };
+    }
     default:
       return null;
   }
@@ -526,6 +556,64 @@ function compactSkipMessage(reason: string) {
     default:
       return "当前上下文暂时无需压缩。";
   }
+}
+
+function providerUsageBlockId(event: Extract<StreamEvent, { event_type: "provider_usage" }>) {
+  return [
+    "provider_usage",
+    event.session_id,
+    event.model?.trim() || "unknown-model",
+    event.source?.trim() || "unknown-source",
+    event.reason,
+    numberOrUnknown(event.input_tokens),
+    numberOrUnknown(event.output_tokens),
+    costOrUnknown(event.estimated_cost_micros),
+  ].join(":");
+}
+
+function providerUsageContent({
+  model,
+  source,
+  reason,
+  inputTokens,
+  outputTokens,
+  estimatedCostMicros,
+}: {
+  model: string | null;
+  source: string | null;
+  reason: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  estimatedCostMicros: number | null;
+}) {
+  const parts = [
+    `model ${model || "unknown model"}`,
+    `input ${numberOrUnknown(inputTokens)}`,
+    `output ${numberOrUnknown(outputTokens)}`,
+    `cost ${costOrUnknown(estimatedCostMicros)}`,
+  ];
+  if (source) parts.push(`source ${source}`);
+  const reasonLabel = providerUsageReasonLabel(reason);
+  if (reasonLabel) parts.push(reasonLabel);
+  return `模型用量 · ${parts.join(" / ")}`;
+}
+
+function providerUsageReasonLabel(reason: string): string | null {
+  if (reason === "provider_omitted") return "provider omitted";
+  if (reason === "pricing_unknown") return "pricing unknown";
+  return null;
+}
+
+function numberOrUnknown(value: number | null | undefined): string {
+  return isFiniteNumber(value) ? String(value) : "unknown";
+}
+
+function costOrUnknown(value: number | null | undefined): string {
+  return isFiniteNumber(value) ? `${value} micros` : "unknown";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function deliverySummariesEqual(left: DeliverySummary | null, right: DeliverySummary | null) {

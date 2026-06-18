@@ -840,39 +840,67 @@ mod tests {
         let events = emitter.drain();
         let runtime_events = runtime_events(&events);
         assert!(
-            matches!(
-                runtime_events.as_slice(),
-                [
-                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
-                        session_id,
-                        loop_task_id: None,
-                        task_id,
-                        event: crate::protocol::events::SubagentRuntimePayload::Started { role },
-                    },
-                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
-                        session_id: file_session_id,
-                        loop_task_id: None,
-                        task_id: file_task_id,
-                        event: crate::protocol::events::SubagentRuntimePayload::FileIo { path, operation },
-                    },
-                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
-                        session_id: end_session_id,
-                        loop_task_id: None,
-                        task_id: end_task_id,
-                        event: crate::protocol::events::SubagentRuntimePayload::Ended { status },
-                    },
-                ] if session_id == "parent-session-read"
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::Started { role },
+                } if session_id == "parent-session-read"
                     && task_id == "a2a-task-read"
                     && role == "research"
-                    && file_session_id == "parent-session-read"
-                    && file_task_id == "a2a-task-read"
+            )),
+            "expected started runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::UsageRecorded {
+                        model: Some(model),
+                        input_tokens: Some(10),
+                        output_tokens: Some(5),
+                        estimated_cost_micros: Some(10),
+                        ..
+                    },
+                } if session_id == "parent-session-read"
+                    && task_id == "a2a-task-read"
+                    && model == "mock"
+            )),
+            "expected usage_recorded runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::FileIo { path, operation },
+                } if session_id == "parent-session-read"
+                    && task_id == "a2a-task-read"
                     && path == "notes.md"
                     && operation == "read"
-                    && end_session_id == "parent-session-read"
-                    && end_task_id == "a2a-task-read"
+            )),
+            "expected file_io read runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::Ended { status },
+                } if session_id == "parent-session-read"
+                    && task_id == "a2a-task-read"
                     && status == "completed"
-            ),
-            "expected started/read/ended runtime events, got: {runtime_events:#?}"
+            )),
+            "expected ended runtime event, got: {runtime_events:#?}"
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
