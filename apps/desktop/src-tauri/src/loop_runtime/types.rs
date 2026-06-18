@@ -1,5 +1,6 @@
 use crate::loop_runtime::budget::{BudgetSnapshot, LoopUsageLedger};
 use crate::loop_runtime::gates::{HumanGateDecision, HumanGateRecord, HumanGateType};
+use crate::loop_runtime::headless::{HeadlessResumeApproval, HeadlessResumeMode};
 use crate::loop_runtime::policy::LoopActionIntent;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -149,6 +150,28 @@ impl LoopEventEnvelope {
         }
     }
 
+    pub fn headless_resume_approval_recorded(
+        task_id: String,
+        approval: HeadlessResumeApproval,
+        correlation_id: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> Self {
+        Self {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: new_loop_event_id(),
+            task_id: task_id.clone(),
+            sequence: 0,
+            event: LoopRuntimeEvent::HeadlessResumeApprovalRecorded { task_id, approval },
+            actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id,
+            causation_id: None,
+            idempotency_key,
+            created_at_ms: now_millis(),
+        }
+    }
+
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
         self
@@ -266,6 +289,10 @@ pub enum LoopRuntimeEvent {
         task_id: String,
         evidence: EvidenceRecord,
     },
+    HeadlessResumeApprovalRecorded {
+        task_id: String,
+        approval: HeadlessResumeApproval,
+    },
     PolicyDecisionRecorded {
         task_id: String,
         decision: PolicyDecisionRecord,
@@ -301,6 +328,7 @@ impl LoopRuntimeEvent {
             Self::HumanGateRequested { .. } => "human_gate_requested",
             Self::HumanGateResolved { .. } => "human_gate_resolved",
             Self::EvidenceRecorded { .. } => "evidence_recorded",
+            Self::HeadlessResumeApprovalRecorded { .. } => "headless_resume_approval_recorded",
             Self::PolicyDecisionRecorded { .. } => "policy_decision_recorded",
             Self::BudgetSnapshotRecorded { .. } => "budget_snapshot_recorded",
             Self::SubagentFileIoRecorded { .. } => "subagent_file_io_recorded",
@@ -333,6 +361,10 @@ pub struct LoopTaskRecord {
     pub status: LoopTaskStatus,
     pub owner: LoopTaskOwner,
     pub policy: LoopPolicy,
+    #[serde(default)]
+    pub headless_resume_mode: HeadlessResumeMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_resume_approval: Option<HeadlessResumeApproval>,
     pub budget: LoopBudget,
     pub completion_contract: LoopCompletionContract,
     pub created_at_ms: u64,
@@ -375,6 +407,8 @@ impl LoopTaskRecord {
             status: LoopTaskStatus::Pending,
             owner: LoopTaskOwner::Gateway,
             policy: policy.unwrap_or_else(LoopPolicy::default_for_background_task),
+            headless_resume_mode: HeadlessResumeMode::Disabled,
+            headless_resume_approval: None,
             budget: budget.unwrap_or_else(LoopBudget::default_for_background_task),
             completion_contract: completion_contract
                 .unwrap_or_else(LoopCompletionContract::default_for_background_task),
@@ -402,6 +436,8 @@ impl LoopTaskRecord {
             status: LoopTaskStatus::Pending,
             owner: LoopTaskOwner::Gateway,
             policy: LoopPolicy::default_for_background_task(),
+            headless_resume_mode: HeadlessResumeMode::Disabled,
+            headless_resume_approval: None,
             budget: LoopBudget::default_for_background_task(),
             completion_contract: LoopCompletionContract::default_for_background_task(),
             created_at_ms: 1,
@@ -675,7 +711,8 @@ pub fn now_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::loop_runtime::{
-        LoopActor, LoopEventEnvelope, LoopRuntimeEvent, LoopTaskRecord, LOOP_RUNTIME_SCHEMA_VERSION,
+        HeadlessResumeMode, LoopActor, LoopEventEnvelope, LoopRuntimeEvent, LoopTaskRecord,
+        LOOP_RUNTIME_SCHEMA_VERSION,
     };
 
     #[test]
@@ -704,5 +741,19 @@ mod tests {
             envelope.event,
             LoopRuntimeEvent::TaskCreated { .. }
         ));
+    }
+
+    #[test]
+    fn old_loop_task_record_json_without_headless_fields_defaults_to_disabled() {
+        let mut value =
+            serde_json::to_value(LoopTaskRecord::new_for_test("loop-old", "old task")).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("headless_resume_mode");
+        object.remove("headless_resume_approval");
+
+        let task: LoopTaskRecord = serde_json::from_value(value).unwrap();
+
+        assert_eq!(task.headless_resume_mode, HeadlessResumeMode::Disabled);
+        assert!(task.headless_resume_approval.is_none());
     }
 }

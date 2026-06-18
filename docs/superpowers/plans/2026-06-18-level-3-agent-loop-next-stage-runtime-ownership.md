@@ -431,6 +431,24 @@ scripts/acceptance.sh --dry-run
 
 **Goal:** Introduce a gated ownership path for gateway autonomous resume/headless `AgentSession` without enabling it by default.
 
+**Task 4A partial current state (2026-06-18):**
+
+- **Status:** disabled-by-default policy/approval contract only.
+- **What changed:** added `loop_runtime::headless` contract types (`HeadlessResumeMode`, `HeadlessResumeApproval`, `HeadlessAgentLease`), durable `headless_resume_approval_recorded`, projection-visible approval state with serde defaults for old task records, and gateway `request_headless_resume`.
+- **Why it matters:** Forge can persist and replay human approval intent for future headless ownership without pretending the gateway can resume work today. Missing approval appends no event. Explicit approval is durable and idempotent, but responses still report `gateway_can_resume: false`.
+- **Runner behavior:** pending tasks still stop at `waiting_for_input`; no headless `AgentSession` is created with or without approval.
+- **Evidence/tests:**
+
+  ```bash
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::projection --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::types --lib
+  ```
+
+- **Not claimed:** default autonomous gateway continuation, unattended production coding loop, real headless `AgentSession` creation or execution, snapshot-backed headless resume, broad provider/session headless support, auto commit/merge/push, or any change to commit/merge/push behavior.
+- **Next path:** implement the actual gated owner runtime only after separate impact analysis for `AgentSession`, gateway dispatch, budget/policy preflight, snapshot replay, and lease ownership. Keep the full Task 4 checkbox/steps open until a real approved headless owner can safely create/resume a session under policy.
+
 **Files:**
 - Create: `apps/desktop/src-tauri/src/loop_runtime/headless.rs`
 - Modify: `apps/desktop/src-tauri/src/loop_runtime/mod.rs`

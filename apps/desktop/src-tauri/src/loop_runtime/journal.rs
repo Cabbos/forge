@@ -97,6 +97,30 @@ impl LoopEventJournal {
                 return Err(format!("idempotency conflict for key: {key}"));
             }
         }
+        if let LoopRuntimeEvent::HeadlessResumeApprovalRecorded { task_id, approval } = &event.event
+        {
+            if let Some((recorded, recorded_approval)) =
+                existing.iter().find_map(|existing| match &existing.event {
+                    LoopRuntimeEvent::HeadlessResumeApprovalRecorded {
+                        task_id: recorded_task_id,
+                        approval: recorded_approval,
+                    } if existing.task_id == event.task_id && recorded_task_id == task_id => {
+                        Some((existing, recorded_approval))
+                    }
+                    _ => None,
+                })
+            {
+                if recorded_approval == approval {
+                    return Ok(AppendResult {
+                        appended: false,
+                        event: recorded.clone(),
+                    });
+                }
+                return Err(format!(
+                    "duplicate headless resume approval recorded: {task_id}"
+                ));
+            }
+        }
 
         let event = self.prepare_event(event, &existing);
         self.append_prepared(&event)?;
@@ -220,6 +244,13 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "task_id": task_id,
             "evidence": evidence_fingerprint(evidence),
         }),
+        LoopRuntimeEvent::HeadlessResumeApprovalRecorded { task_id, approval } => {
+            serde_json::json!({
+                "type": "headless_resume_approval_recorded",
+                "task_id": task_id,
+                "approval": approval,
+            })
+        }
         LoopRuntimeEvent::PolicyDecisionRecorded { task_id, decision } => serde_json::json!({
             "type": "policy_decision_recorded",
             "task_id": task_id,
@@ -335,6 +366,7 @@ fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    use crate::loop_runtime::HeadlessResumeApproval;
     use crate::loop_runtime::{
         EvidenceRecord, HumanGateDecision, HumanGateDecisionKind, LoopActionIntent, LoopActor,
         LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus,
@@ -606,6 +638,94 @@ mod tests {
     }
 
     #[test]
+    fn headless_resume_approval_same_payload_with_different_key_reuses_existing_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                LoopEventEnvelope::task_created_for_test("loop-1", "ship runtime")
+                    .with_idempotency_key("create:loop-1"),
+            )
+            .unwrap();
+        let first = headless_resume_approval_event_for_test("loop-1", "human-reviewer", 42)
+            .with_idempotency_key("headless:approval:one");
+        let second = headless_resume_approval_event_for_test("loop-1", "human-reviewer", 42)
+            .with_idempotency_key("headless:approval:two");
+
+        let first_result = journal.append_idempotent(first).unwrap();
+        let second_result = journal.append_idempotent(second).unwrap();
+
+        assert!(first_result.appended);
+        assert!(!second_result.appended);
+        assert_eq!(second_result.event, first_result.event);
+        let loaded = journal.load_all().unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[1], first_result.event);
+        LoopTaskProjection::from_events(&loaded).unwrap();
+    }
+
+    #[test]
+    fn headless_resume_approval_conflicting_payload_with_different_key_errors_before_append() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                LoopEventEnvelope::task_created_for_test("loop-1", "ship runtime")
+                    .with_idempotency_key("create:loop-1"),
+            )
+            .unwrap();
+        journal
+            .append_idempotent(
+                headless_resume_approval_event_for_test("loop-1", "human-reviewer", 42)
+                    .with_idempotency_key("headless:approval:one"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                headless_resume_approval_event_for_test("loop-1", "different-reviewer", 43)
+                    .with_idempotency_key("headless:approval:two"),
+            )
+            .unwrap_err();
+
+        assert!(error.contains("duplicate headless resume approval recorded: loop-1"));
+        let loaded = journal.load_all().unwrap();
+        assert_eq!(loaded.len(), 2);
+        LoopTaskProjection::from_events(&loaded).unwrap();
+    }
+
+    #[test]
+    fn headless_resume_approval_same_key_with_conflicting_payload_keeps_idempotency_conflict() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                LoopEventEnvelope::task_created_for_test("loop-1", "ship runtime")
+                    .with_idempotency_key("create:loop-1"),
+            )
+            .unwrap();
+        journal
+            .append_idempotent(
+                headless_resume_approval_event_for_test("loop-1", "human-reviewer", 42)
+                    .with_idempotency_key("headless:approval:same"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                headless_resume_approval_event_for_test("loop-1", "different-reviewer", 43)
+                    .with_idempotency_key("headless:approval:same"),
+            )
+            .unwrap_err();
+
+        assert!(error.contains("idempotency conflict for key: headless:approval:same"));
+        assert_eq!(journal.load_all().unwrap().len(), 2);
+    }
+
+    #[test]
     fn concurrent_duplicate_idempotency_key_appends_once() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("loop-events.jsonl");
@@ -735,6 +855,36 @@ mod tests {
                     reason: reason.to_string(),
                     actor: LoopActor::Gateway,
                     created_at_ms: timestamp,
+                },
+            },
+            actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: timestamp,
+        }
+    }
+
+    fn headless_resume_approval_event_for_test(
+        task_id: &str,
+        approved_by: &str,
+        timestamp: u64,
+    ) -> LoopEventEnvelope {
+        LoopEventEnvelope {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-headless-approval-{timestamp}"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: LoopRuntimeEvent::HeadlessResumeApprovalRecorded {
+                task_id: task_id.to_string(),
+                approval: HeadlessResumeApproval {
+                    task_id: task_id.to_string(),
+                    approved_by: approved_by.to_string(),
+                    approved_at_ms: timestamp,
+                    scope: "task".to_string(),
+                    expires_at_ms: timestamp + 60_000,
                 },
             },
             actor: LoopActor::Gateway,

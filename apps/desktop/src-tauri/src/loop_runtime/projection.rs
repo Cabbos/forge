@@ -1,3 +1,4 @@
+use crate::loop_runtime::headless::HeadlessResumeMode;
 use crate::loop_runtime::journal::LoopEventJournal;
 use crate::loop_runtime::types::{
     LoopEventEnvelope, LoopRuntimeEvent, LoopTaskOutcome, LoopTaskRecord, LoopTaskStatus,
@@ -240,6 +241,34 @@ impl LoopTaskProjection {
                     task.latest_event_id = Some(event.event_id.clone());
                     task.evidence.push(evidence.clone());
                 }
+                LoopRuntimeEvent::HeadlessResumeApprovalRecorded { task_id, approval } => {
+                    if task_id != &event.task_id || approval.task_id != *task_id {
+                        return Err(format!(
+                            "headless resume approval task id mismatch: envelope {}, payload {}, approval {}",
+                            event.task_id, task_id, approval.task_id
+                        ));
+                    }
+                    let Some(task) = tasks.get_mut(task_id) else {
+                        return Err(format!(
+                            "headless resume approval recorded before task creation: {task_id}"
+                        ));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    if let Some(existing) = task.headless_resume_approval.as_ref() {
+                        if existing == approval {
+                            continue;
+                        }
+                        return Err(format!(
+                            "duplicate headless resume approval recorded: {task_id}"
+                        ));
+                    }
+                    task.headless_resume_mode = HeadlessResumeMode::ApprovedForTask;
+                    task.headless_resume_approval = Some(approval.clone());
+                    task.updated_at_ms = approval.approved_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
+                }
                 LoopRuntimeEvent::PolicyDecisionRecorded { task_id, decision } => {
                     if task_id != &event.task_id {
                         return Err(format!(
@@ -472,9 +501,10 @@ impl LoopTaskProjectionStore {
 mod tests {
     use crate::loop_runtime::projection::LoopTaskProjectionFile;
     use crate::loop_runtime::{
-        BudgetSnapshot, LoopActionIntent, LoopActor, LoopCompletionResult, LoopCompletionStatus,
-        LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection,
-        LoopTaskProjectionStore, LoopTaskStatus, PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
+        BudgetSnapshot, HeadlessResumeApproval, HeadlessResumeMode, LoopActionIntent, LoopActor,
+        LoopCompletionResult, LoopCompletionStatus, LoopEventEnvelope, LoopEventJournal,
+        LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection, LoopTaskProjectionStore,
+        LoopTaskStatus, PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
     };
 
     #[test]
@@ -716,6 +746,54 @@ mod tests {
     }
 
     #[test]
+    fn headless_resume_approval_replays_and_deduplicates_by_task() {
+        let created = LoopEventEnvelope::task_created_for_test("loop-1", "first");
+        let approval = headless_approval_for_test("loop-1", "human-reviewer", 7);
+        let recorded = event_for_test(
+            "loop-1",
+            2,
+            LoopRuntimeEvent::HeadlessResumeApprovalRecorded {
+                task_id: "loop-1".to_string(),
+                approval: approval.clone(),
+            },
+        );
+        let mut duplicate = recorded.clone();
+        duplicate.sequence = 3;
+        duplicate.event_id = "event-loop-1-headless-approval-duplicate".to_string();
+
+        let projection =
+            LoopTaskProjection::from_events(&[created.clone(), recorded.clone(), duplicate])
+                .unwrap();
+
+        let task = &projection.tasks[0];
+        assert_eq!(
+            task.headless_resume_mode,
+            HeadlessResumeMode::ApprovedForTask
+        );
+        assert_eq!(task.headless_resume_approval.as_ref(), Some(&approval));
+        assert_eq!(task.updated_at_ms, approval.approved_at_ms);
+        assert_eq!(task.latest_event_id, Some(recorded.event_id.clone()));
+        let serialized = serde_json::to_value(&recorded.event).unwrap();
+        assert_eq!(
+            serialized["type"],
+            serde_json::Value::String("headless_resume_approval_recorded".to_string())
+        );
+        assert_eq!(recorded.event.kind(), "headless_resume_approval_recorded");
+
+        let conflicting = event_for_test(
+            "loop-1",
+            3,
+            LoopRuntimeEvent::HeadlessResumeApprovalRecorded {
+                task_id: "loop-1".to_string(),
+                approval: headless_approval_for_test("loop-1", "different-reviewer", 8),
+            },
+        );
+        let error = LoopTaskProjection::from_events(&[created, recorded, conflicting]).unwrap_err();
+
+        assert!(error.contains("duplicate headless resume approval recorded"));
+    }
+
+    #[test]
     fn budget_snapshot_recorded_updates_latest_budget_snapshot() {
         let created = LoopEventEnvelope::task_created_for_test("loop-1", "first");
         let snapshot = BudgetSnapshot {
@@ -898,6 +976,20 @@ mod tests {
             reason: reason.to_string(),
             actor: LoopActor::Gateway,
             created_at_ms: 4,
+        }
+    }
+
+    fn headless_approval_for_test(
+        task_id: &str,
+        approved_by: &str,
+        approved_at_ms: u64,
+    ) -> HeadlessResumeApproval {
+        HeadlessResumeApproval {
+            task_id: task_id.to_string(),
+            approved_by: approved_by.to_string(),
+            approved_at_ms,
+            scope: "task".to_string(),
+            expires_at_ms: approved_at_ms + 60_000,
         }
     }
 }

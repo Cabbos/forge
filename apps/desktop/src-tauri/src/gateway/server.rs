@@ -10,10 +10,11 @@ use crate::gateway::protocol::{
     GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
     GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
     GatewaySessionSnapshotSummary, GetLoopTaskParams, GetSessionSnapshotParams,
-    GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, HealthResult,
-    ListLoopTasksParams, ListLoopTasksResult, ListSessionInputsParams, ListSessionInputsResult,
-    LoopTaskResponse, PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult,
-    TailSessionEventsParams, TailSessionEventsResult, GATEWAY_VERSION,
+    GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult,
+    HeadlessResumeControlParams, HeadlessResumeControlResult, HealthResult, ListLoopTasksParams,
+    ListLoopTasksResult, ListSessionInputsParams, ListSessionInputsResult, LoopTaskResponse,
+    PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult, TailSessionEventsParams,
+    TailSessionEventsResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::session_input::{
@@ -22,8 +23,8 @@ use crate::gateway::session_input::{
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use crate::loop_runtime::runner::{LoopRunnerQueueStats, LoopTaskRunner};
 use crate::loop_runtime::{
-    evaluate_completion, LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent,
-    LoopTaskProjectionStore, LoopTaskRecord,
+    evaluate_completion, HeadlessResumeApproval, HeadlessResumeMode, LoopEventEnvelope,
+    LoopEventJournal, LoopRuntimeEvent, LoopTaskProjectionStore, LoopTaskRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -370,6 +371,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "create_loop_task" => handle_create_loop_task(state, request),
         "list_loop_tasks" => handle_list_loop_tasks(state, request),
         "get_loop_task" => handle_get_loop_task(state, request),
+        "request_headless_resume" => handle_request_headless_resume(state, request),
         "evaluate_loop_task_completion" => handle_evaluate_loop_task_completion(state, request),
         "cancel_loop_task" => handle_cancel_loop_task(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
@@ -955,6 +957,152 @@ fn handle_get_loop_task(state: &GatewayState, request: GatewayRequest) -> Gatewa
     loop_task_response(request.id, task)
 }
 
+fn handle_request_headless_resume(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<HeadlessResumeControlParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let task_id = params.task_id.trim().to_string();
+    if task_id.is_empty() {
+        return invalid_params(request.id, "task_id must not be empty");
+    }
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    if task.status.is_terminal() {
+        return headless_resume_control_response(
+            request.id,
+            task,
+            params.mode,
+            false,
+            false,
+            "Loop task is terminal, and no headless AgentSession was created.",
+            None,
+        );
+    }
+
+    match params.mode {
+        HeadlessResumeMode::Disabled => headless_resume_control_response(
+            request.id,
+            task,
+            HeadlessResumeMode::Disabled,
+            false,
+            false,
+            "Headless autonomous resume is disabled by default and requires durable human approval; no headless AgentSession was created.",
+            None,
+        ),
+        HeadlessResumeMode::RequireHumanApproval => headless_resume_control_response(
+            request.id,
+            task,
+            HeadlessResumeMode::RequireHumanApproval,
+            false,
+            false,
+            "Headless resume requires durable human approval before any future autonomous owner may run; no headless AgentSession was created.",
+            None,
+        ),
+        HeadlessResumeMode::ApprovedForTask => {
+            let Some(approved_by) = clean_optional_string(params.approved_by) else {
+                return invalid_params(request.id, "approved_by is required for approved_for_task");
+            };
+            let Some(approved_at_ms) = params.approved_at_ms else {
+                return invalid_params(
+                    request.id,
+                    "approved_at_ms is required for approved_for_task",
+                );
+            };
+            let Some(expires_at_ms) = params.expires_at_ms else {
+                return invalid_params(
+                    request.id,
+                    "expires_at_ms is required for approved_for_task",
+                );
+            };
+            if expires_at_ms <= approved_at_ms {
+                return invalid_params(
+                    request.id,
+                    "expires_at_ms must be greater than approved_at_ms",
+                );
+            }
+            let scope = clean_optional_string(params.scope).unwrap_or_else(|| "task".to_string());
+            let approval = HeadlessResumeApproval {
+                task_id: task_id.clone(),
+                approved_by,
+                approved_at_ms,
+                scope,
+                expires_at_ms,
+            };
+            if let Some(existing) = task.headless_resume_approval.as_ref() {
+                if existing == &approval {
+                    return headless_resume_control_response(
+                        request.id,
+                        task,
+                        HeadlessResumeMode::ApprovedForTask,
+                        false,
+                        true,
+                        "Headless resume approval was already recorded for this task, and no headless AgentSession was created; autonomous resume remains disabled in Task 4A.",
+                        Some(approval),
+                    );
+                }
+                return invalid_params(
+                    request.id,
+                    format!("duplicate headless resume approval recorded: {task_id}"),
+                );
+            }
+            let idempotency_key =
+                clean_optional_string(params.idempotency_key).unwrap_or_else(|| {
+                    format!(
+                        "headless_resume_approval:{task_id}:{}",
+                        stable_text_fingerprint(&format!(
+                            "{}:{}:{}:{}",
+                            approval.approved_by,
+                            approval.approved_at_ms,
+                            approval.scope,
+                            approval.expires_at_ms
+                        ))
+                    )
+                });
+            let event = LoopEventEnvelope::headless_resume_approval_recorded(
+                task_id.clone(),
+                approval.clone(),
+                Some(request.id.clone()),
+                Some(idempotency_key),
+            );
+            let append = match state.loop_event_journal.append_idempotent(event) {
+                Ok(append) => append,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let projection = match state
+                .loop_task_projection_store
+                .rebuild_from_journal(&state.loop_event_journal)
+            {
+                Ok(projection) => projection,
+                Err(error) => return invalid_params(request.id, error),
+            };
+            let Some(task) = projection.find(&task_id).cloned() else {
+                return invalid_params(request.id, format!("loop task not found: {task_id}"));
+            };
+            headless_resume_control_response(
+                request.id,
+                task,
+                HeadlessResumeMode::ApprovedForTask,
+                append.appended,
+                true,
+                "Headless resume approval was recorded for this task, and no headless AgentSession was created; autonomous resume remains disabled in Task 4A.",
+                Some(approval),
+            )
+        }
+    }
+}
+
 fn handle_evaluate_loop_task_completion(
     state: &GatewayState,
     request: GatewayRequest,
@@ -1056,6 +1204,30 @@ fn cancel_loop_task_response(id: String, changed: bool, task: LoopTaskRecord) ->
             ok: true,
             changed,
             task,
+        })
+        .unwrap(),
+    })
+}
+
+fn headless_resume_control_response(
+    id: String,
+    task: LoopTaskRecord,
+    mode: HeadlessResumeMode,
+    approval_recorded: bool,
+    ok: bool,
+    message: impl Into<String>,
+    approval: Option<HeadlessResumeApproval>,
+) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(HeadlessResumeControlResult {
+            ok,
+            task,
+            mode,
+            approval_recorded,
+            gateway_can_resume: false,
+            message: message.into(),
+            approval,
         })
         .unwrap(),
     })
@@ -2077,6 +2249,266 @@ mod tests {
             }
             _ => panic!("expected Err reply"),
         }
+    }
+
+    #[test]
+    fn request_headless_resume_rejects_missing_task() {
+        let state = test_gateway_state();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "headless-missing".into(),
+                method: "request_headless_resume".into(),
+                params: Some(serde_json::json!({ "task_id": "missing-loop" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err
+                    .error
+                    .message
+                    .contains("loop task not found: missing-loop"));
+            }
+            _ => panic!("expected Err reply"),
+        }
+    }
+
+    #[test]
+    fn request_headless_resume_default_returns_disabled_without_appending() {
+        let state = test_gateway_state();
+        state
+            .loop_event_journal
+            .append(LoopEventEnvelope::task_created_for_test(
+                "loop-disabled",
+                "stay bounded",
+            ))
+            .unwrap();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "headless-default".into(),
+                method: "request_headless_resume".into(),
+                params: Some(serde_json::json!({ "task_id": "loop-disabled" })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::HeadlessResumeControlResult =
+                    serde_json::from_value(resp.result).expect("parse headless result");
+                assert!(!result.ok);
+                assert_eq!(
+                    result.mode,
+                    crate::loop_runtime::HeadlessResumeMode::Disabled
+                );
+                assert!(!result.gateway_can_resume);
+                assert!(!result.approval_recorded);
+                assert!(result.approval.is_none());
+                assert!(result.message.contains("disabled by default"));
+                assert!(result
+                    .message
+                    .contains("no headless AgentSession was created"));
+                assert!(result.task.headless_resume_approval.is_none());
+            }
+            _ => panic!("expected Ok status reply"),
+        }
+        assert_eq!(state.loop_event_journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn request_headless_resume_records_durable_approval_and_replays_idempotently() {
+        let state = test_gateway_state();
+        state
+            .loop_event_journal
+            .append(LoopEventEnvelope::task_created_for_test(
+                "loop-approved",
+                "record approval",
+            ))
+            .unwrap();
+
+        let request = |id: &str, idempotency_key: &str| GatewayRequest {
+            id: id.to_string(),
+            method: "request_headless_resume".into(),
+            params: Some(serde_json::json!({
+                "task_id": "loop-approved",
+                "mode": "approved_for_task",
+                "approved_by": "human-reviewer",
+                "approved_at_ms": 42,
+                "scope": "task",
+                "expires_at_ms": 60_042,
+                "idempotency_key": idempotency_key
+            })),
+        };
+
+        let first = dispatch(
+            &state,
+            request("headless-approve-1", "headless:loop-approved"),
+        );
+        let second = dispatch(
+            &state,
+            request("headless-approve-2", "headless:loop-approved"),
+        );
+        let duplicate_key_changed = dispatch(
+            &state,
+            request("headless-approve-3", "headless:loop-approved:duplicate-key"),
+        );
+
+        match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::HeadlessResumeControlResult =
+                    serde_json::from_value(resp.result).expect("parse first headless result");
+                assert!(result.ok);
+                assert_eq!(
+                    result.mode,
+                    crate::loop_runtime::HeadlessResumeMode::ApprovedForTask
+                );
+                assert!(result.approval_recorded);
+                assert!(!result.gateway_can_resume);
+                assert!(result
+                    .message
+                    .contains("no headless AgentSession was created"));
+                assert_eq!(
+                    result.approval.as_ref().unwrap().approved_by,
+                    "human-reviewer"
+                );
+                assert_eq!(
+                    result.task.headless_resume_mode,
+                    crate::loop_runtime::HeadlessResumeMode::ApprovedForTask
+                );
+            }
+            _ => panic!("expected first Ok reply"),
+        }
+        match second {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::HeadlessResumeControlResult =
+                    serde_json::from_value(resp.result).expect("parse second headless result");
+                assert!(result.ok);
+                assert!(!result.approval_recorded);
+                assert!(result.task.headless_resume_approval.is_some());
+            }
+            _ => panic!("expected second Ok reply"),
+        }
+        match duplicate_key_changed {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::HeadlessResumeControlResult =
+                    serde_json::from_value(resp.result)
+                        .expect("parse duplicate-key headless result");
+                assert!(result.ok);
+                assert!(!result.approval_recorded);
+                assert_eq!(
+                    result.mode,
+                    crate::loop_runtime::HeadlessResumeMode::ApprovedForTask
+                );
+            }
+            _ => panic!("expected duplicate-key Ok reply"),
+        }
+        assert_eq!(state.loop_event_journal.load_all().unwrap().len(), 2);
+
+        let replayed = state
+            .loop_task_projection_store
+            .load_or_rebuild(&state.loop_event_journal)
+            .unwrap()
+            .find("loop-approved")
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            replayed.headless_resume_mode,
+            crate::loop_runtime::HeadlessResumeMode::ApprovedForTask
+        );
+        assert_eq!(
+            replayed.headless_resume_approval.unwrap().approved_at_ms,
+            42
+        );
+    }
+
+    #[test]
+    fn request_headless_resume_conflicting_approval_does_not_append_second_event() {
+        let state = test_gateway_state();
+        state
+            .loop_event_journal
+            .append(LoopEventEnvelope::task_created_for_test(
+                "loop-conflicting-approval",
+                "record one approval",
+            ))
+            .unwrap();
+
+        let request = |id: &str, approved_by: &str, idempotency_key: &str| GatewayRequest {
+            id: id.to_string(),
+            method: "request_headless_resume".into(),
+            params: Some(serde_json::json!({
+                "task_id": "loop-conflicting-approval",
+                "mode": "approved_for_task",
+                "approved_by": approved_by,
+                "approved_at_ms": 42,
+                "scope": "task",
+                "expires_at_ms": 60_042,
+                "idempotency_key": idempotency_key
+            })),
+        };
+
+        let first = dispatch(
+            &state,
+            request(
+                "headless-conflicting-approval-1",
+                "human-reviewer",
+                "headless:conflicting-approval:one",
+            ),
+        );
+        let second = dispatch(
+            &state,
+            request(
+                "headless-conflicting-approval-2",
+                "different-reviewer",
+                "headless:conflicting-approval:two",
+            ),
+        );
+
+        match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::HeadlessResumeControlResult =
+                    serde_json::from_value(resp.result).expect("parse first headless result");
+                assert!(result.ok);
+                assert!(result.approval_recorded);
+            }
+            _ => panic!("expected first Ok reply"),
+        }
+        match second {
+            GatewayReply::Err(err) => {
+                assert_eq!(err.error.code, -32602);
+                assert!(err.error.message.contains(
+                    "duplicate headless resume approval recorded: loop-conflicting-approval"
+                ));
+            }
+            _ => panic!("expected conflicting approval Err reply"),
+        }
+
+        let loaded = state.loop_event_journal.load_all().unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(
+            loaded
+                .iter()
+                .filter(|event| matches!(
+                    event.event,
+                    crate::loop_runtime::LoopRuntimeEvent::HeadlessResumeApprovalRecorded { .. }
+                ))
+                .count(),
+            1
+        );
+        let replayed = state
+            .loop_task_projection_store
+            .load_or_rebuild(&state.loop_event_journal)
+            .unwrap()
+            .find("loop-conflicting-approval")
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            replayed.headless_resume_approval.unwrap().approved_by,
+            "human-reviewer"
+        );
     }
 
     #[test]

@@ -329,12 +329,16 @@ fn current_attempt_for_task(events: &[LoopEventEnvelope], task_id: &str) -> Opti
 }
 
 fn waiting_reason(task: &LoopTaskRecord) -> String {
+    if task.headless_resume_approval.is_some() {
+        return "Gateway loop runner sees headless resume approval is recorded for this task, but Task 4A only records policy intent; no headless AgentSession was created and autonomous resume remains disabled."
+            .to_string();
+    }
     if let Some(session_id) = task.session_id.as_deref() {
         format!(
-            "Gateway loop runner is waiting for existing desktop session {session_id} to accept the next step; autonomous agent resume is disabled."
+            "Gateway loop runner is waiting for existing desktop session {session_id} to accept the next step; headless autonomous resume is disabled by default, requires durable human approval, and no headless AgentSession was created."
         )
     } else {
-        "Gateway loop runner requires an existing desktop session owner before execution; no headless agent session was created."
+        "Gateway loop runner requires an existing desktop session owner before execution; headless autonomous resume is disabled by default, requires durable human approval, and no headless AgentSession was created."
             .to_string()
     }
 }
@@ -399,10 +403,70 @@ mod tests {
             events[2].event,
             LoopRuntimeEvent::TaskWaitingForInput { .. }
         ));
+        let LoopRuntimeEvent::TaskWaitingForInput { reason, .. } = &events[2].event else {
+            unreachable!("expected waiting event");
+        };
+        assert!(reason.contains("headless autonomous resume is disabled by default"));
+        assert!(reason.contains("durable human approval"));
+        assert!(reason.contains("no headless AgentSession was created"));
         assert!(matches!(
             events[3].event,
             LoopRuntimeEvent::CompletionEvaluated { .. }
         ));
+    }
+
+    #[test]
+    fn runner_still_waits_without_headless_agent_session_after_approval_recorded() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+        let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+        journal
+            .append(LoopEventEnvelope::task_created_for_test(
+                "task-approved",
+                "approved but bounded",
+            ))
+            .unwrap();
+        journal
+            .append(LoopEventEnvelope::headless_resume_approval_recorded(
+                "task-approved".to_string(),
+                crate::loop_runtime::HeadlessResumeApproval {
+                    task_id: "task-approved".to_string(),
+                    approved_by: "human-reviewer".to_string(),
+                    approved_at_ms: 10,
+                    scope: "task".to_string(),
+                    expires_at_ms: 60_010,
+                },
+                Some("test".to_string()),
+                Some("headless:task-approved".to_string()),
+            ))
+            .unwrap();
+        let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000);
+
+        let summary = runner.run_once(&journal, &projection).unwrap();
+
+        assert_eq!(summary.claimed_tasks, 1);
+        assert_eq!(summary.waiting_for_input_tasks, 1);
+        assert_eq!(summary.completion_evaluations, 1);
+        let task = projection
+            .load_or_rebuild(&journal)
+            .unwrap()
+            .find("task-approved")
+            .cloned()
+            .unwrap();
+        assert_eq!(task.status, LoopTaskStatus::WaitingForInput);
+        assert!(task.lease.is_none());
+        assert!(task.headless_resume_approval.is_some());
+
+        let events = journal.load_all().unwrap();
+        let waiting = events
+            .iter()
+            .find_map(|event| match &event.event {
+                LoopRuntimeEvent::TaskWaitingForInput { reason, .. } => Some(reason),
+                _ => None,
+            })
+            .expect("waiting event");
+        assert!(waiting.contains("headless resume approval is recorded"));
+        assert!(waiting.contains("no headless AgentSession was created"));
     }
 
     #[test]

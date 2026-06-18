@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::gateway::runner::TriggerRunRecord;
 use crate::gateway::session_input::SessionInputRecord;
 use crate::loop_runtime::{
-    LoopBudget, LoopCompletionContract, LoopCompletionResult, LoopPolicy, LoopTaskRecord,
-    LoopTaskStatus,
+    HeadlessResumeApproval, HeadlessResumeMode, LoopBudget, LoopCompletionContract,
+    LoopCompletionResult, LoopPolicy, LoopTaskRecord, LoopTaskStatus,
 };
 
 /// An incoming request from a gateway client.
@@ -346,6 +346,35 @@ pub struct ListLoopTasksResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetLoopTaskParams {
     pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessResumeControlParams {
+    pub task_id: String,
+    #[serde(default)]
+    pub mode: HeadlessResumeMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessResumeControlResult {
+    pub ok: bool,
+    pub task: LoopTaskRecord,
+    pub mode: HeadlessResumeMode,
+    pub approval_recorded: bool,
+    pub gateway_can_resume: bool,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<HeadlessResumeApproval>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

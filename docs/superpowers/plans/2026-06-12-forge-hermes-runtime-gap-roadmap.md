@@ -794,17 +794,20 @@ agent work:
 - Typed completion evidence for command, risk, review, docs, and commit facts.
 - Crash/replay regression coverage.
 - Gateway runner leases and stale-lease interruption.
+- Disabled-by-default headless resume policy/approval contract in the loop
+  ledger and gateway JSON-RPC, without autonomous execution.
 - Subagent runtime projection smoke and mocked desktop completion-contract smoke.
 - A2A child runtime live file-ish tool facts for delegated read-only,
   patch-proposal, and worktree-worker children.
 - Bounded post-shell worktree delta facts for successful `run_shell` commands.
 
 This does not claim automatic gateway continuation after a crash, default
-headless `AgentSession` ownership, shell-internal file effect tracing,
-syscall/file-descriptor tracing, full non-git workspace enumeration, precise
-cost when usage is unknown, or automatic commits. Direct ToolExecutor file-ish
-live IO stream facts are covered by Phase 4-K, and bounded post-shell delta
-evidence is covered by Phase 4-M; the remaining gaps stay future runtime
+headless `AgentSession` ownership or execution, shell-internal file effect
+tracing, syscall/file-descriptor tracing, full non-git workspace enumeration,
+precise cost when usage is unknown, or automatic commits. Direct ToolExecutor
+file-ish live IO stream facts are covered by Phase 4-K, bounded post-shell
+delta evidence is covered by Phase 4-M, and Task 4A only records durable
+headless approval intent/status; the remaining gaps stay future runtime
 hardening work.
 
 **Verification plan:**
@@ -1014,6 +1017,35 @@ full non-git workspace enumeration, billing-grade usage accounting, exact cost
 when provider usage/pricing is unknown, gateway autonomous resume, automatic
 parent selection, parent-session structs, auto commit/merge/push, or the
 Tauri/WebDriver force-quit harness.
+
+### 2026-06-18 Task 4A Headless Ownership Policy/Approval Contract
+
+Task 4 is partially implemented as a bounded first slice. Forge now has
+serializable headless ownership contract types, a durable
+`headless_resume_approval_recorded` loop event, replay-visible task projection
+state, and a conservative gateway JSON-RPC method,
+`request_headless_resume`.
+
+Default behavior remains disabled. Calling the gateway method without explicit
+`approved_for_task` approval returns disabled/approval-required status and
+appends no loop event. Explicit approval records a durable, idempotent approval
+for the task, but `gateway_can_resume` remains false and the runner still stops
+at `waiting_for_input`. Runner messages now say whether approval is missing or
+recorded, and in both cases state that no headless `AgentSession` was created.
+
+Evidence:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::projection --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::types --lib
+```
+
+Still not claimed: default autonomous gateway continuation, unattended
+production coding, real headless `AgentSession` creation or execution,
+snapshot-backed headless resume, broad provider/session headless support,
+auto commit/merge/push, or any change to commit/merge/push behavior.
 
 ## Appendix — Likely Files/Modules by Domain
 

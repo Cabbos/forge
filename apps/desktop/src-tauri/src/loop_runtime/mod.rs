@@ -1,6 +1,7 @@
 pub mod budget;
 pub mod completion;
 pub mod gates;
+pub mod headless;
 pub mod journal;
 pub mod policy;
 pub mod projection;
@@ -16,6 +17,7 @@ pub use completion::evaluate_completion;
 pub use gates::{
     HumanGateDecision, HumanGateDecisionKind, HumanGateRecord, HumanGateStatus, HumanGateType,
 };
+pub use headless::{HeadlessAgentLease, HeadlessResumeApproval, HeadlessResumeMode};
 pub use journal::LoopEventJournal;
 pub use policy::{LoopActionIntent, LoopPolicyDecision};
 pub use projection::{LoopTaskProjection, LoopTaskProjectionStore};
