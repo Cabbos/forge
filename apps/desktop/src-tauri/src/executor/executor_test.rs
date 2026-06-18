@@ -46,6 +46,66 @@ mod tests {
         )
     }
 
+    fn has_file_io_event(
+        events: &[StreamEvent],
+        block_id: &str,
+        path_suffix: &str,
+        operation: &str,
+    ) -> bool {
+        events.iter().any(|event| {
+            matches!(
+                event,
+                StreamEvent::FileIo {
+                    session_id,
+                    block_id: event_block_id,
+                    path,
+                    operation: event_operation,
+                    source,
+                } if session_id == "session-1"
+                    && event_block_id == block_id
+                    && path.ends_with(path_suffix)
+                    && event_operation == operation
+                    && source.as_deref() == Some("executor")
+            )
+        })
+    }
+
+    fn assert_file_io_event(
+        events: &[StreamEvent],
+        block_id: &str,
+        path_suffix: &str,
+        operation: &str,
+    ) {
+        assert!(
+            has_file_io_event(events, block_id, path_suffix, operation),
+            "expected FileIo {operation} event for {path_suffix}, got {events:?}"
+        );
+    }
+
+    fn assert_no_file_io(events: &[StreamEvent], context: &str) {
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, StreamEvent::FileIo { .. })),
+            "{context} must not emit FileIo: {events:?}"
+        );
+    }
+
+    fn run_git(workspace: &std::path::Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(workspace)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     // ── Helper: get_str ──
 
     #[test]
@@ -290,6 +350,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn executor_file_io_stream_read_success_emits_file_io() {
+        let workspace = temp_workspace("file-io-read-success");
+        std::fs::write(workspace.join("test.txt"), "hello world").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "read_file",
+                &serde_json::json!({"path": "test.txt"}),
+                emitter.clone(),
+                Some("block-read"),
+                None,
+            )
+            .await;
+
+        assert_eq!(result, "hello world");
+        let events = emitter.drain();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                StreamEvent::FileIo {
+                    session_id,
+                    block_id,
+                    path,
+                    operation,
+                    source,
+                } if session_id == "session-1"
+                    && block_id == "block-read"
+                    && path.ends_with("test.txt")
+                    && operation == "read"
+                    && source.as_deref() == Some("executor")
+            )),
+            "expected FileIo read event, got {events:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
     async fn read_file_error_missing() {
         let workspace = temp_workspace("read-missing");
         let pending = Arc::new(RwLock::new(HashMap::new()));
@@ -313,6 +415,12 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, StreamEvent::ToolCallResult { is_error: true, .. })));
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, StreamEvent::FileIo { .. })),
+            "missing read must not emit FileIo: {events:?}"
+        );
         let _ = std::fs::remove_dir_all(&workspace);
     }
 
@@ -349,6 +457,56 @@ mod tests {
             events.iter().any(|e| matches!(e, StreamEvent::DiffView { file_path, .. } if file_path.ends_with("new.txt"))),
             "expected DiffView event"
         );
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_write_success_emits_file_io() {
+        let workspace = temp_workspace("file-io-write-success");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "write_file",
+                &serde_json::json!({"path": "new.txt", "content": "fresh content"}),
+                emitter.clone(),
+                Some("block-write"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("File written:"),
+            "expected success, got: {result}"
+        );
+        let events = emitter.drain();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                StreamEvent::FileIo {
+                    session_id,
+                    block_id,
+                    path,
+                    operation,
+                    source,
+                } if session_id == "session-1"
+                    && block_id == "block-write"
+                    && path.ends_with("new.txt")
+                    && operation == "write"
+                    && source.as_deref() == Some("executor")
+            )),
+            "expected FileIo write event, got {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, StreamEvent::DiffView { .. })),
+            "write should keep existing DiffView event"
+        );
+
         let _ = std::fs::remove_dir_all(&workspace);
     }
 
@@ -410,6 +568,64 @@ mod tests {
         let _ = std::fs::remove_dir_all(&workspace);
     }
 
+    #[tokio::test]
+    async fn executor_file_io_stream_edit_success_emits_edit_file_io() {
+        let workspace = temp_workspace("file-io-edit-success");
+        std::fs::write(workspace.join("file.txt"), "hello world").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "edit_file",
+                &serde_json::json!({"path": "file.txt", "old_string": "world", "new_string": "universe"}),
+                emitter.clone(),
+                Some("block-edit"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("edited"),
+            "expected edit success, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_file_io_event(&events, "block-edit", "file.txt", "edit");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_edit_error_emits_no_file_io() {
+        let workspace = temp_workspace("file-io-edit-error");
+        std::fs::write(workspace.join("file.txt"), "hello world").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "edit_file",
+                &serde_json::json!({"path": "file.txt", "old_string": "missing", "new_string": "replacement"}),
+                emitter.clone(),
+                Some("block-edit-error"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.starts_with("Error:"),
+            "expected edit error, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_no_file_io(&events, "edit error");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
     // ── execute_with_emitter: list_directory ──
 
     #[tokio::test]
@@ -432,6 +648,241 @@ mod tests {
             !result.starts_with("Error:"),
             "expected success, got: {result}"
         );
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_list_directory_success_emits_list_file_io() {
+        let workspace = temp_workspace("file-io-list-success");
+        std::fs::write(workspace.join("file.txt"), "hello world").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "list_directory",
+                &serde_json::json!({"path": "."}),
+                emitter.clone(),
+                Some("block-list"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("file.txt"),
+            "expected directory listing, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_file_io_event(&events, "block-list", ".", "list");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_search_files_success_emits_search_file_io() {
+        let workspace = temp_workspace("file-io-search-files-success");
+        std::fs::create_dir_all(workspace.join("src")).expect("mkdir");
+        std::fs::write(workspace.join("src/main.rs"), "fn main() {}\n").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "search_files",
+                &serde_json::json!({"path": "src", "pattern": "*.rs"}),
+                emitter.clone(),
+                Some("block-search-files"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("main.rs"),
+            "expected file search result, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_file_io_event(&events, "block-search-files", "src", "search");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_search_content_no_match_emits_search_file_io() {
+        let workspace = temp_workspace("file-io-search-content-no-match");
+        std::fs::write(workspace.join("file.txt"), "hello world").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "search_content",
+                &serde_json::json!({"path": ".", "pattern": ""}),
+                emitter.clone(),
+                Some("block-search-content"),
+                None,
+            )
+            .await;
+
+        assert_eq!(result, "No matches found");
+        let events = emitter.drain();
+        assert_file_io_event(&events, "block-search-content", ".", "search");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_failed_search_emits_no_file_io() {
+        let workspace = temp_workspace("file-io-search-failed");
+        std::fs::write(workspace.join("file.txt"), "hello world").expect("write");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "search_content",
+                &serde_json::json!({"path": ".", "pattern": "["}),
+                emitter.clone(),
+                Some("block-search-failed"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.starts_with("Search failed"),
+            "expected failed search, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_no_file_io(&events, "failed search");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_blocked_search_emits_no_file_io() {
+        let workspace = temp_workspace("file-io-search-blocked");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+        let outside_workspace = std::env::temp_dir();
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "search_content",
+                &serde_json::json!({"path": outside_workspace, "pattern": "needle"}),
+                emitter.clone(),
+                Some("block-search-blocked"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.starts_with("Search blocked:"),
+            "expected blocked search, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_no_file_io(&events, "blocked search");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_git_diff_success_emits_diff_file_io() {
+        let workspace = temp_workspace("file-io-git-diff-success");
+        run_git(&workspace, &["init", "--quiet"]);
+        std::fs::write(workspace.join("tracked.txt"), "old\n").expect("write old");
+        run_git(&workspace, &["add", "tracked.txt"]);
+        std::fs::write(workspace.join("tracked.txt"), "new\n").expect("write new");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "git_diff",
+                &serde_json::json!({"path": "tracked.txt"}),
+                emitter.clone(),
+                Some("block-diff"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("-old") && result.contains("+new"),
+            "expected git diff output, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_file_io_event(&events, "block-diff", "tracked.txt", "diff");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_git_diff_failure_emits_no_file_io() {
+        let workspace = temp_workspace("file-io-git-diff-failure");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "git_diff",
+                &serde_json::json!({"path": "tracked.txt"}),
+                emitter.clone(),
+                Some("block-diff-failure"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.starts_with("git diff failed"),
+            "expected git diff failure, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_no_file_io(&events, "git diff failure");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn executor_file_io_stream_run_shell_file_writes_emit_no_file_io() {
+        let workspace = temp_workspace("file-io-run-shell-no-file-io");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "printf 'hello' > shell.txt && ls shell.txt"}),
+                emitter.clone(),
+                Some("block-shell"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("shell.txt"),
+            "expected shell listing output, got: {result}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("shell.txt")).unwrap(),
+            "hello"
+        );
+        let events = emitter.drain();
+        assert_no_file_io(&events, "run_shell file write/list");
+
         let _ = std::fs::remove_dir_all(&workspace);
     }
 

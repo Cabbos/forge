@@ -322,6 +322,7 @@ export type StreamEvent =
   | { event_type: "tool_call_end"; session_id: string; block_id: string }
   // ── File Diff ──
   | { event_type: "diff_view"; session_id: string; block_id: string; file_path: string; old_content: string; new_content: string }
+  | { event_type: "file_io"; session_id: string; block_id: string; path: string; operation: string; source?: string | null }
   // ── Shell Commands ──
   | { event_type: "shell_start"; session_id: string; block_id: string; command: string }
   | { event_type: "shell_output"; session_id: string; block_id: string; content: string }

@@ -60,6 +60,10 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     return applyShellStartToBlocks(blocks, event);
   }
 
+  if (event_type === "file_io") {
+    return applyFileIoToBlocks(blocks, event);
+  }
+
   if (event_type === "context_compacted" || event_type === "context_compact_skipped") {
     return applyCompactResultToBlocks(blocks, event);
   }
@@ -269,6 +273,39 @@ export function applyShellStartToBlocks(
 
   const block = eventToBlock(event);
   return block ? [...next, block] : next;
+}
+
+export function applyFileIoToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "file_io" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingIdx = next.findIndex((block) =>
+    block.block_id === event.block_id &&
+    (block.event_type === "tool_call" ||
+      block.event_type === "tool_call_result" ||
+      block.event_type === "shell")
+  );
+  if (existingIdx < 0) return blocks;
+
+  const existingEvents = Array.isArray(next[existingIdx].metadata.file_io_events)
+    ? next[existingIdx].metadata.file_io_events
+    : [];
+  next[existingIdx] = {
+    ...next[existingIdx],
+    metadata: {
+      ...next[existingIdx].metadata,
+      file_io_events: [
+        ...existingEvents,
+        {
+          path: event.path,
+          operation: event.operation,
+          ...(event.source ? { source: event.source } : {}),
+        },
+      ],
+    },
+  };
+  return next;
 }
 
 export function findShellTargetBlockIndex(blocks: BlockState[], blockId: string) {

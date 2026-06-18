@@ -148,7 +148,16 @@ impl ToolExecutor {
             "read_file" | "read" => {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match self.file.read_file(path) {
-                    Ok(r) => r.content.to_string(),
+                    Ok(r) => {
+                        emit_file_io(
+                            emitter.as_ref(),
+                            session_id,
+                            &block_id,
+                            r.path.as_str(),
+                            "read",
+                        );
+                        r.content.to_string()
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
@@ -166,6 +175,13 @@ impl ToolExecutor {
                             old_content: wr.old_content,
                             new_content: wr.new_content,
                         });
+                        emit_file_io(
+                            emitter.as_ref(),
+                            session_id,
+                            &block_id,
+                            wr.path.as_str(),
+                            "write",
+                        );
                         format!("File written: {}", wr.path)
                     }
                     Err(e) => format!("Error: {}", e),
@@ -189,16 +205,23 @@ impl ToolExecutor {
                 cmd.current_dir(self.file.working_dir());
                 match cmd.output().await {
                     Ok(output) if output.status.success() => {
+                        let file = if file_path.is_empty() {
+                            "all files".to_string()
+                        } else {
+                            file_path.to_string()
+                        };
+                        emit_file_io(
+                            emitter.as_ref(),
+                            session_id,
+                            &block_id,
+                            file.as_str(),
+                            "diff",
+                        );
                         let diff = String::from_utf8_lossy(&output.stdout).to_string();
                         if diff.trim().is_empty() {
                             "No changes (working tree clean)".to_string()
                         } else {
                             let diff = truncate_text(&diff, GIT_DIFF_TEXT_LIMIT);
-                            let file = if file_path.is_empty() {
-                                "all files".to_string()
-                            } else {
-                                file_path.to_string()
-                            };
                             emitter.emit(StreamEvent::DiffView {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
@@ -373,14 +396,21 @@ impl ToolExecutor {
                 // Permission handled by Harness
 
                 match self.file.edit_file(path, old_str, new_str) {
-                    Ok(msg) => msg,
+                    Ok(msg) => {
+                        emit_file_io(emitter.as_ref(), session_id, &block_id, path, "edit");
+                        msg
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
             "list_directory" | "ls" | "list" => {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match self.file.list_directory(path) {
-                    Ok(listing) => listing,
+                    Ok(listing) => {
+                        let event_path = if path.trim().is_empty() { "." } else { path };
+                        emit_file_io(emitter.as_ref(), session_id, &block_id, event_path, "list");
+                        listing
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
@@ -392,7 +422,7 @@ impl ToolExecutor {
                         let results = search_files_with_rg(&dir, pattern)
                             .await
                             .unwrap_or_else(|| simple_glob(&dir, pattern));
-                        if !results.is_empty() {
+                        let result = if !results.is_empty() {
                             results.join("\n")
                         } else if looks_like_plain_search(pattern) {
                             search_content_with_rg(&dir, pattern)
@@ -402,7 +432,18 @@ impl ToolExecutor {
                                 })
                         } else {
                             "No files matched".to_string()
+                        };
+                        if is_successful_file_io_result(&result) {
+                            let event_path = if path.trim().is_empty() { "." } else { path };
+                            emit_file_io(
+                                emitter.as_ref(),
+                                session_id,
+                                &block_id,
+                                event_path,
+                                "search",
+                            );
                         }
+                        result
                     }
                     Err(e) => e,
                 }
@@ -411,11 +452,25 @@ impl ToolExecutor {
                 let pattern = get_str(tool_input, "pattern").unwrap_or("");
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match resolve_search_path(self.file.working_dir(), path) {
-                    Ok(dir) => search_content_with_rg(&dir, pattern)
-                        .await
-                        .unwrap_or_else(|| {
-                            "Search failed: ripgrep (rg) is unavailable".to_string()
-                        }),
+                    Ok(dir) => {
+                        let result =
+                            search_content_with_rg(&dir, pattern)
+                                .await
+                                .unwrap_or_else(|| {
+                                    "Search failed: ripgrep (rg) is unavailable".to_string()
+                                });
+                        if is_successful_file_io_result(&result) {
+                            let event_path = if path.trim().is_empty() { "." } else { path };
+                            emit_file_io(
+                                emitter.as_ref(),
+                                session_id,
+                                &block_id,
+                                event_path,
+                                "search",
+                            );
+                        }
+                        result
+                    }
                     Err(e) => e,
                 }
             }
@@ -558,6 +613,30 @@ fn preview_for_log(value: &str) -> String {
     } else {
         format!("\"{}\"", preview)
     }
+}
+
+fn emit_file_io(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    block_id: &str,
+    path: &str,
+    operation: &str,
+) {
+    emitter.emit(StreamEvent::FileIo {
+        session_id: session_id.to_string(),
+        block_id: block_id.to_string(),
+        path: path.to_string(),
+        operation: operation.to_string(),
+        source: Some("executor".to_string()),
+    });
+}
+
+fn is_successful_file_io_result(result: &str) -> bool {
+    !(result.starts_with("Error:")
+        || result.starts_with("Denied:")
+        || result.starts_with("Search blocked:")
+        || result.starts_with("Search failed")
+        || result.starts_with("Search timed out"))
 }
 
 fn truncate_text(text: &str, max_bytes: usize) -> String {

@@ -3,6 +3,7 @@ import { queryClient } from "../lib/query-client";
 import { getModelContextWindow } from "../lib/providers";
 import {
   applyCompactResultToBlocks,
+  applyFileIoToBlocks,
   applyShellStartToBlocks,
   closeInterruptedConfirmBlocks,
   eventToBlock,
@@ -334,6 +335,17 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       blocks = applyShellStartToBlocks(
         blocks,
         event as Extract<StreamEvent, { event_type: "shell_start" }>,
+      );
+      sessions.set(session_id, touchSession(session, { blocks }));
+      set({ sessions });
+      persistBlocks(session_id, blocks);
+      return;
+    }
+
+    if (event_type === "file_io") {
+      blocks = applyFileIoToBlocks(
+        blocks,
+        event as Extract<StreamEvent, { event_type: "file_io" }>,
       );
       sessions.set(session_id, touchSession(session, { blocks }));
       set({ sessions });

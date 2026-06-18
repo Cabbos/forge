@@ -361,6 +361,50 @@ describe("tool_call_start deduplication (Phase 1.6)", () => {
   });
 });
 
+describe("file_io transcript projection", () => {
+  it("attaches file IO metadata to an existing tool block", () => {
+    let blocks = applyTranscriptEventToBlocks([], {
+      event_type: "tool_call_start",
+      session_id: "s1",
+      block_id: "tool-file-1",
+      tool_name: "read_file",
+      tool_input: { path: "src/main.rs" },
+    });
+
+    blocks = applyTranscriptEventToBlocks(blocks, {
+      event_type: "file_io",
+      session_id: "s1",
+      block_id: "tool-file-1",
+      path: "/workspace/src/main.rs",
+      operation: "read",
+      source: "executor",
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.deepStrictEqual(blocks[0].metadata.file_io_events, [
+      {
+        path: "/workspace/src/main.rs",
+        operation: "read",
+        source: "executor",
+      },
+    ]);
+  });
+
+  it("ignores file IO events without creating standalone blocks", () => {
+    const blocks = applyTranscriptEventToBlocks([], {
+      event_type: "file_io",
+      session_id: "s1",
+      block_id: "missing-tool",
+      path: "/workspace/src/main.rs",
+      operation: "read",
+      source: "executor",
+    });
+
+    assert.deepStrictEqual(blocks, []);
+  });
+});
+
 describe("subagent runtime projections", () => {
   it("stores subagent runtime events outside transcript blocks", () => {
     const blocks = applyTranscriptEventToBlocks([], {

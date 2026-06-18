@@ -51,7 +51,7 @@ The Level 3 MVP claim is deliberately narrow:
 - **MVP does not include:** gateway automatically recovering and continuing a complete agent coding loop after a crash.
 - `resume_loop_task` first-version semantics: mark the task `interrupted` or `waiting_for_input` and require an explicit user/runtime decision before execution continues. It must not silently resume side effects.
 - Gateway-created loop tasks first bind to an existing desktop session/session owner. They must not default to spawning a headless `AgentSession`.
-- File IO facts first record reliable worktree/diff boundaries. They must not claim executor-level live read/write tracing until the executor emits those events directly.
+- File IO facts now include reliable worktree/diff boundaries, A2A child file-ish facts, and direct ToolExecutor file-ish `file_io` events. They still must not infer Shell-internal file effects.
 - Token/cost fields are required in the contract, but unknown values are valid as `null` plus explicit unknown flags. Do not infer precise cost when an adapter did not provide it.
 - Commit is always a human gate. A satisfied completion contract can make a task eligible for review, but it must not auto-commit.
 
@@ -78,7 +78,7 @@ Each Obsidian milestone note must be interview/backing ready:
 - **What changed:** the runtime contract or product boundary that moved.
 - **Why it matters:** the Level 3 engineering claim it supports.
 - **Evidence/tests:** exact tests, acceptance gates, or commits that back the claim.
-- **Not claimed:** explicit limits, especially around autonomous resume, headless agents, live file IO, precise cost, and commit automation.
+- **Not claimed:** explicit limits, especially around autonomous resume, headless agents, shell-internal file IO, precise cost, and commit automation.
 - **Interview-ready explanation:** a short explanation a human can use to describe the architecture without overstating it.
 
 ## Non-Goals
@@ -558,8 +558,9 @@ Known Level 3 MVP boundaries after Task 8:
 
 - Gateway automatic recovery and continuation of a full agent coding loop remains future work.
 - Gateway-created loop tasks still bind to existing desktop session/session owner; no default headless `AgentSession` is claimed.
-- File IO now includes worktree/diff boundary telemetry and A2A child runtime facts for successful file-ish tool calls; executor-wide live read/write tracing and shell-internal file effects remain deferred.
-- The worktree worker lifecycle has a real Rust harness acceptance gate, but no Tauri/WebDriver force-quit harness or executor-level live IO trace is claimed.
+- File IO now includes worktree/diff boundary telemetry, A2A child runtime facts for successful file-ish tool calls, and direct ToolExecutor file-ish `file_io` stream facts after successful read/write/edit/git diff/list/search operations.
+- Shell-internal file effects and deeper executor instrumentation beyond those direct ToolExecutor file-ish operations remain unclaimed.
+- The worktree worker lifecycle has a real Rust harness acceptance gate, but no Tauri/WebDriver force-quit harness is claimed.
 - Token/cost can be unknown/null with explicit unknown flags.
 - Commit remains human-gated and is never automatic after contract satisfaction.
 
@@ -1680,7 +1681,7 @@ current state: Tasks 1-3 implemented at 3a1f3bf, 2b8e2c6, f9c67d4
 what changed: Task 3.5 inserted before protocol/UI work to reconcile durable contract drift
 why it matters: later runner/A2A/UI work can rely on lease/attempt/causation/status/event/projection facts
 evidence/tests: list the Task 3.5 tests and commands run
-not claimed: no autonomous gateway resume, no default headless AgentSession, no executor-level file IO tracing, no precise token/cost claim, no auto-commit
+not claimed: no autonomous gateway resume, no default headless AgentSession, no Shell-internal file effect tracing, no precise token/cost claim, no auto-commit
 interview-ready explanation: concise architecture narrative for Level 3 runtime ownership
 remaining gaps: runner ownership, A2A correlation, policy enforcement, acceptance gates
 ```
@@ -2150,9 +2151,10 @@ git commit -m "feat(desktop): surface loop runtime tasks"
 
 **2026-06-17 Task 7 implementation evidence:** Task 7 is implemented and committed in `47bf27a feat(desktop): surface loop runtime tasks`. The desktop now has `loopRuntime.ts` projection helpers/tests, a compact `LoopTaskPanel`, StatusBar/TaskManager consumption of active-session loop tasks, A2A file IO / usage fact rows backed by `subagent_runtime_event`, and a static gateway dashboard table backed by `loop_tasks` in the dashboard snapshot. The UI keeps the MVP boundary explicit: loop tasks can wait for input/review, completion blockers stay visible, token/cost can be unknown, and commit remains human-gated. Evidence to preserve for the gate: `node --test apps/desktop/src/lib/loopRuntime.test.ts` first failed because `runtimeFactsForSubagentTask` was missing and then passed after the helper was added. Review fixes then made the dashboard reuse one loaded loop projection for both runtime status stats and loop task rows, made compact A2A runtime facts session-scoped, and replaced localized-label background filtering with raw loop task status filtering. Verification passed: `node --test apps/desktop/src/lib/loopRuntime.test.ts`, `node --test apps/desktop/src/lib/backgroundTaskStatus.test.ts`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib`, `npm --prefix apps/desktop run build`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts`, `git diff --check`, and staged GitNexus change detection.
 
-Task 7 still does not claim gateway automatic recovery/continuation, default
-headless `AgentSession`, executor-level live read/write tracing, precise cost
-when unknown, or auto-commit.
+At Task 7 time, the UI slice did not claim gateway automatic
+recovery/continuation, default headless `AgentSession`, executor-level live
+read/write tracing, precise cost when unknown, or auto-commit. Phase 4-K later
+adds direct ToolExecutor file-ish `file_io` stream facts only.
 
 ---
 
@@ -2307,7 +2309,7 @@ subagent runtime projection, and completion-contract desktop smoke. The docs
 packet in root README, desktop README, CHANGELOG, Hermes roadmap, and the
 Obsidian Level 3 plan backs the product claim with explicit evidence and keeps
 the MVP boundary honest: no automatic gateway continuation after crash, no
-default headless `AgentSession`, no executor-level live file IO tracing, no
+default headless `AgentSession`, no Shell-internal file effect tracing, no
 precise unknown cost metering, and no automatic commits.
 
 **2026-06-18 Phase 4-I acceptance evidence:** The acceptance script now gates
@@ -2317,9 +2319,11 @@ agent::a2a::child::tests::run_worktree_worker --lib`. That focused Rust gate cov
 `ChildAgentRuntime::run_worktree_worker` creating a real temporary git
 repo/worktree, collecting diff/usage/summary behavior through the mock
 adapter/harness, and the already-in-use path that requires human review. This is
-evidence for the child runtime harness only; it does not add a Tauri/WebDriver
-force-quit harness, executor-level live IO tracing, provider token/cost streams,
-new `StreamEvent` variants, or auto commit/merge/push behavior.
+evidence for the child runtime harness only; at Phase 4-I time it did not add a
+Tauri/WebDriver force-quit harness, executor-level live IO tracing, provider
+token/cost streams, new `StreamEvent` variants, or auto commit/merge/push
+behavior. Phase 4-K later adds direct ToolExecutor file-ish `file_io` stream
+facts only.
 
 **2026-06-18 Phase 4-J A2A child runtime file-IO bridge:** A narrow runtime
 bridge now carries parent-session/A2A-task context from
@@ -2333,6 +2337,33 @@ read-only or patch-proposal permissions. It also does not claim shell-internal
 file effects from `run_shell`, provider token/cost streaming, gateway
 autonomous resume, parent-session structs, automatic parent selection, or auto
 commit/merge/push behavior.
+
+**2026-06-18 Phase 4-K executor-level live file-IO stream:** Direct
+ToolExecutor file-ish calls now emit a general `file_io` stream event after
+successful operations only. The event carries `session_id`, `block_id`, `path`,
+`operation`, and `source: "executor"`. Covered direct operations are read,
+write, edit, git diff, list, glob/search-files, and grep/search-content. Write
+keeps the existing `diff_view` emission. The TypeScript protocol mirrors the
+event, and `applyTranscriptEventToBlocks` attaches file IO facts to existing
+matching tool/shell blocks as `metadata.file_io_events` without editing
+`eventToBlock` or creating standalone transcript blocks. Acceptance now includes
+`executor file IO stream smoke`, running `cargo test --manifest-path
+apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib`.
+
+Evidence/tests:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml file_io_event_serializes_executor_source --lib
+node --test apps/desktop/src/store/blocks.test.ts
+node --test scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+```
+
+Not claimed: shell-internal file effects from `run_shell`, provider token/cost
+streaming, gateway autonomous resume, automatic parent selection,
+parent-session structs, auto commit/merge/push, or Tauri/WebDriver force-quit
+coverage.
 
 **2026-06-17 full signoff evidence:** A sandboxed `scripts/acceptance.sh` run
 first passed desktop and website builds, then stopped at `npm run test:eval`

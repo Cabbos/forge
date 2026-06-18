@@ -143,6 +143,15 @@ pub enum StreamEvent {
         old_content: String,
         new_content: String,
     },
+    #[serde(rename = "file_io")]
+    FileIo {
+        session_id: String,
+        block_id: String,
+        path: String,
+        operation: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
 
     // ── Shell Commands ──
     #[serde(rename = "shell_start")]
@@ -390,6 +399,7 @@ impl StreamEvent {
             | ToolCallResult { session_id, .. }
             | ToolCallEnd { session_id, .. }
             | DiffView { session_id, .. }
+            | FileIo { session_id, .. }
             | ShellStart { session_id, .. }
             | ShellOutput { session_id, .. }
             | ShellEnd { session_id, .. }
@@ -438,6 +448,7 @@ impl StreamEvent {
             ToolCallResult { .. } => "tool_call_result",
             ToolCallEnd { .. } => "tool_call_end",
             DiffView { .. } => "diff_view",
+            FileIo { .. } => "file_io",
             ShellStart { .. } => "shell_start",
             ShellOutput { .. } => "shell_output",
             ShellEnd { .. } => "shell_end",
@@ -493,6 +504,26 @@ mod tests {
         let json = serde_json::to_value(event).unwrap();
         assert_eq!(json["event_type"], "subagent_runtime_event");
         assert_eq!(json["event"]["type"], "started");
+    }
+
+    #[test]
+    fn file_io_event_serializes_executor_source() {
+        let event = StreamEvent::FileIo {
+            session_id: "s1".to_string(),
+            block_id: "b1".to_string(),
+            path: "src/main.rs".to_string(),
+            operation: "read".to_string(),
+            source: Some("executor".to_string()),
+        };
+
+        assert_eq!(event.event_type(), "file_io");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "file_io");
+        assert_eq!(json["session_id"], "s1");
+        assert_eq!(json["block_id"], "b1");
+        assert_eq!(json["path"], "src/main.rs");
+        assert_eq!(json["operation"], "read");
+        assert_eq!(json["source"], "executor");
     }
 
     /// Guardrail: every StreamEvent variant must have an `event_type` that
@@ -588,6 +619,16 @@ mod tests {
                     new_content: "n".into(),
                 },
                 "diff_view",
+            ),
+            (
+                StreamEvent::FileIo {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    path: "f".into(),
+                    operation: "read".into(),
+                    source: Some("executor".into()),
+                },
+                "file_io",
             ),
             (
                 StreamEvent::ShellStart {

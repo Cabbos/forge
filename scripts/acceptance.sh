@@ -27,10 +27,11 @@ Runs the Forge Level 3 runtime acceptance gates:
   11. Subagent runtime event projection smoke
   12. Live worktree worker lifecycle harness
   13. A2A child runtime file IO bridge
-  14. Completion contract desktop helper smoke
-  15. Completion contract mocked desktop smoke
-  16. Desktop Phase 7 and A2A worker lifecycle smoke specs
-  17. Rich preview e2e smoke specs
+  14. Executor file IO stream smoke
+  15. Completion contract desktop helper smoke
+  16. Completion contract mocked desktop smoke
+  17. Desktop Phase 7 and A2A worker lifecycle smoke specs
+  18. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -57,6 +58,7 @@ COMMAND_LABELS=(
   "subagent runtime event projection smoke"
   "live worktree worker lifecycle harness"
   "A2A child runtime file IO bridge"
+  "executor file IO stream smoke"
   "completion contract desktop helper smoke"
   "completion contract mocked desktop smoke"
   "desktop Phase 7 and A2A worker lifecycle smoke specs"
@@ -77,6 +79,7 @@ COMMANDS=(
   "node --test apps/desktop/src/store/blocks.test.ts"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib"
   "node --test apps/desktop/src/lib/loopRuntime.test.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"

@@ -433,6 +433,13 @@ mod tests {
                 old_content: "o".into(),
                 new_content: "n".into(),
             },
+            StreamEvent::FileIo {
+                session_id: "s".into(),
+                block_id: "b".into(),
+                path: "p".into(),
+                operation: "read".into(),
+                source: Some("executor".into()),
+            },
             StreamEvent::ShellStart {
                 session_id: "s".into(),
                 block_id: "b".into(),

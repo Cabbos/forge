@@ -302,7 +302,8 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
   - **Phase 4-G (2026-06-17):** Parent-side lineage is now also visible as derived `child_task_ids` on each task projection, while the event remains the existing `agent_a2a_updated` stream.
   - Files: `agent/a2a/bus.rs`, `components/messages/AgentA2ATimeline.tsx`.
 - [ ] 4.4 Implement file IO stream: files read/written by a worker.
-  - **Phase 4-B partial (2026-06-12):** Diff-derived changed-file summary is visible — the workbench now parses existing `DiffSummary` artifacts in `AgentA2ABus.projection()` to extract changed file paths (first 8 unique, deduped from git diff text). `changed_file_count`, `changed_files`, and `diff_available` fields are projected to the frontend. The `WorktreeReviewPanel` renders file path chips and counts. The `deriveWorkbenchSummary` helper computes `tasksWithDiff` and visible/projected `changedFiles` counts; full totals remain on each task via `changed_file_count`. **True live file IO stream remains DEFERRED** — it would need hooks in `executor/` and `ToolExecutor`, propagating through `ChildAgentRuntime` (CRITICAL risk per GitNexus impact). No new `StreamEvent` variants were added.
+  - **Phase 4-B partial (2026-06-12):** Diff-derived changed-file summary is visible — the workbench now parses existing `DiffSummary` artifacts in `AgentA2ABus.projection()` to extract changed file paths (first 8 unique, deduped from git diff text). `changed_file_count`, `changed_files`, and `diff_available` fields are projected to the frontend. The `WorktreeReviewPanel` renders file path chips and counts. The `deriveWorkbenchSummary` helper computes `tasksWithDiff` and visible/projected `changedFiles` counts; full totals remain on each task via `changed_file_count`. At Phase 4-B time there were no live executor events and no new `StreamEvent` variants.
+  - **Phase 4-K executor file-IO follow-up (2026-06-18):** Direct `ToolExecutor` file-ish tools now emit live `file_io` stream facts after successful `read`, `write`, `edit`, `git diff`, `list`, glob/search-files, and grep/search-content operations. The facts carry `session_id`, `block_id`, `path`, `operation`, and `source: "executor"`, and the frontend stores them as metadata on matching existing tool/shell blocks. This still does not trace shell-internal file effects from `run_shell` or infer provider token/cost data.
   - Files: `agent/a2a/projection.rs`, `agent/a2a/bus.rs`, `lib/protocol.ts`, `lib/workbenchSummary.ts`, `components/messages/AgentA2ATimeline.tsx`, `styles/process.css`.
 - [ ] 4.5 Implement cost stream: tokens in/out, tool call count, model, estimated cost.
   - **DEFERRED (Phase 4-B):** Requires adapter-level hooks in the AI adapters trait. The existing `agent_turn_updated` event carries `AgentTurnProjection.tool_call_count` and `failed_tool_count` which Phase 3-B already surfaces. Token/cost streaming needs adapter changes that ripple across all providers.
@@ -336,9 +337,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 4.1 Parent/child lineage projection | 🟨 Partial | `parent_task_id` field visible and bus/supervisor parent-aware assignment populates child pointers when given a real A2A parent; projection derives ordered `child_task_ids`; automatic delegate parent selection, persisted parent-side child arrays, and parent-session structs deferred |
 | 4.2 New StreamEvent variants | ⏸️ Deferred | Enriched existing `agent_a2a_updated` path instead |
 | 4.3 Status stream | ✅ Done | Timing, progress, resume_note on existing projection |
-| 4.4 File IO stream | ⏸️ Deferred | Requires executor hooks (CRITICAL risk path) |
+| 4.4 File IO stream | 🟨 Partial | Phase 4-B diff summaries, Phase 4-J A2A child file-ish facts, and Phase 4-K direct ToolExecutor `file_io` stream facts are implemented; shell-internal effects and deeper provider/runtime accounting remain deferred |
 | 4.5 Cost/token stream | ⏸️ Deferred | Requires adapter trait changes |
-| 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; true live IO and cost tabs deferred |
+| 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; direct file-ish `file_io` facts now attach to transcript blocks, while dedicated cost UI and shell-internal/deeper IO tracing remain deferred |
 | 4.7 Failure reasons | ✅ Done | failure_kind + retryable badge + localized labels |
 | 4.8 Lineage persistence | 🟨 Partial | Existing bus/session snapshot preserves populated child pointers; projection derives parent-side child ids from those pointers; legacy records without `parent_task_id` still deserialize; full parent-session lineage and persisted parent-side child arrays deferred |
 | 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view, lineage, mocked lifecycle product smoke, and real `run_worktree_worker` harness coverage; provider cost tests and Tauri/WebDriver live UI harness deferred |
@@ -349,7 +350,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 4.4 File IO stream | 🟨 Partial | Diff-derived changed-file summary visible; true live file IO stream DEFERRED |
+| 4.4 File IO stream | 🟨 Partial | Diff-derived changed-file summary plus Phase 4-K direct ToolExecutor file-ish `file_io` stream facts; shell-internal file effects remain untraced |
 | 4.6 Workbench view (diff chips) | ✅ Done | File path chips, changed_file_count, test_report_excerpt in WorktreeReviewPanel |
 | 4.9 Tests (diff extraction) | ✅ Done | Rust tests for diff parsing, test report excerpt, projection fields; node tests for summary |
 | diff_available (metadata) | ✅ Done | Extracted from Worktree metadata artifact, projected to frontend |
@@ -404,7 +405,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | Projection lineage | ✅ Done | Child projections expose populated `parent_task_id`; current model is child pointer only |
 | Snapshot/restore | ✅ Done | Session snapshot/restore and bus serialization roundtrip retain populated lineage; legacy `parent_task_id` absence remains serde-compatible |
 | Tests | ✅ Done | `agent::a2a`, `agent::session::tools_test`, `execute_tools_delegate`, `agent::session::a2a`, and fmt checks pass |
-| Not claimed | 🚫 Deferred | No normal delegate auto-lineage without a real parent id, no persisted parent-side child-id array, no recursive delegate_task, no live file IO stream, no token/cost stream, no executor/provider changes |
+| Not claimed | 🚫 Deferred | No normal delegate auto-lineage without a real parent id, no persisted parent-side child-id array, no recursive delegate_task, no token/cost stream, and no shell-internal file-effect tracing; Phase 4-K later adds direct ToolExecutor file-ish `file_io` events only |
 
 Phase 4-F evidence:
 
@@ -460,7 +461,7 @@ node --test scripts/acceptance.test.mjs # pass, 1 passed
 | Real Rust harness | ✅ Done | Gate runs `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib` |
 | Success path evidence | ✅ Done | Existing `agent::a2a::child::tests::run_worktree_worker_creates_worktree_collects_diff_and_returns_summary` creates a real temporary git repo/worktree through `ChildAgentRuntime::run_worktree_worker`, uses the mock adapter/harness, and verifies diff, usage, and summary behavior |
 | Human-review path evidence | ✅ Done | Existing `agent::a2a::child::tests::run_worktree_worker_already_in_use_requires_human_review` covers the already-in-use worktree lifecycle path and its human-review requirement |
-| Not claimed | 🚫 Deferred | No Tauri/WebDriver force-quit harness, no executor-level live IO tracing, no provider token/cost stream, no new `StreamEvent` variants, and no auto commit/merge/push behavior |
+| Not claimed | 🚫 Deferred | Phase 4-I did not add a Tauri/WebDriver force-quit harness, executor-level live IO tracing, provider token/cost stream, new `StreamEvent` variants, or auto commit/merge/push behavior; Phase 4-K later adds direct ToolExecutor file-ish `file_io` events only |
 
 Phase 4-I evidence:
 
@@ -471,17 +472,17 @@ scripts/acceptance.sh --dry-run
 ```
 
 **Known deferred items (Phase 4):**
-- True live file IO stream — requires executor/ToolExecutor hooks (CRITICAL risk path)
+- Shell-internal file-effect tracing from `run_shell` and deeper executor instrumentation beyond direct ToolExecutor file-ish `file_io` facts
 - Token/cost per-task streaming — requires adapter trait changes
 - New `StreamEvent` variants for subagent-specific events
 - Parent-session structs and persisted parent-side child-id arrays — current durable contract stores the child-to-parent pointer only; Phase 4-G derives projection-only `child_task_ids`
 - Automatic parent selection for ordinary `delegate_task` calls — current guarded path requires a supplied existing A2A parent id, rejects missing/unknown parent ids, and never silently creates a root fallback
 - Tauri/WebDriver force-quit or live desktop worker harness — Phase 4-I gates the real Rust `run_worktree_worker` harness only
-- Executor-level IO tracing and provider token/cost streaming remain deferred
+- Provider token/cost streaming remains deferred when adapter usage/cost is still unknown
 
 **Acceptance gate:**
 
-- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; executor-level live IO and provider cost streaming remain deferred)**
+- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; Phase 4-J adds A2A child file-ish facts; Phase 4-K adds direct ToolExecutor file-ish `file_io` stream facts; shell-internal IO effects and provider cost streaming remain deferred)**
 - Parent-child relationship is visible and survives restart. **(Phase 4-G: child projections expose `parent_task_id`; parent projections derive ordered `child_task_ids` from persisted child pointers; normal delegate auto-parent selection, parent-session structs, and persisted parent-side child arrays deferred)**
 - Each failure type has a distinct message and recovery hint. **(Phase 4-A: failure_kind + retryable + resume_note)**
 
@@ -797,9 +798,10 @@ agent work:
   patch-proposal, and worktree-worker children.
 
 This does not claim automatic gateway continuation after a crash, default
-headless `AgentSession` ownership, executor-level live file IO tracing,
-shell-internal file effect tracing, precise cost when usage is unknown, or
-automatic commits. Those remain future runtime hardening work.
+headless `AgentSession` ownership, shell-internal file effect tracing, precise
+cost when usage is unknown, or automatic commits. Direct ToolExecutor file-ish
+live IO stream facts are now covered by Phase 4-K; the remaining gaps stay
+future runtime hardening work.
 
 **Verification plan:**
 
@@ -954,11 +956,32 @@ Codex must stop and ask the user if any of the following occur:
 
 **Deferred for future:**
 - True Tauri force-quit/reopen smoke harness (needs WebDriver / `tauri-driver` investment)
-- Executor-level live file IO tracing beyond the narrow A2A child file-ish tool bridge
 - Shell-internal file effect tracing for `run_shell`
 - Token/cost telemetry stream (requires adapter-level usage hooks)
 - Memory embeddings and single-store migration for `WikiMemoryStore` + user-managed facts
 - Extension inventory once a real extension source exists
+
+### 2026-06-18 Phase 4-K Executor-Level Live File IO Stream
+
+Forge now emits a general `StreamEvent::FileIo` / `file_io` event for successful
+direct ToolExecutor file-ish calls. Covered direct operations are `read`,
+`write`, `edit`, `diff`, `list`, and `search`; `write` still emits its existing
+`diff_view` event. The desktop protocol mirrors the event in TypeScript, and the
+transcript projection attaches `{ path, operation, source }` facts to existing
+tool/shell blocks without creating standalone transcript blocks.
+
+Evidence:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml file_io_event_serializes_executor_source --lib
+node --test apps/desktop/src/store/blocks.test.ts
+```
+
+Still not claimed: Shell-internal file effects from `run_shell`, provider
+token/cost streaming, gateway autonomous resume, automatic parent selection,
+parent-session structs, auto commit/merge/push, and the Tauri/WebDriver
+force-quit harness.
 
 ## Appendix — Likely Files/Modules by Domain
 
