@@ -6,7 +6,7 @@
 
 **Architecture:** Build on the committed Level 3 MVP instead of replacing it. The gateway-owned loop ledger, runner lease state, runtime event protocol, A2A bus, ToolExecutor `file_io` stream, desktop runtime projections, and acceptance script remain the substrate; this stage adds restart harness evidence, normalized usage telemetry, bounded shell delta evidence, gated headless ownership policy, durable parent-side lineage, and review-to-commit eligibility. Autonomous resume is only enabled behind explicit policy and human approval, and the default path continues to stop at review.
 
-**Tech Stack:** Rust/Tauri backend, gateway JSON-RPC and loop runner, `AgentSession`, `ToolExecutor`, `StreamEvent`, existing A2A bus/worktree worker, React/TypeScript protocol/store/UI, Playwright/WebDriver acceptance, `scripts/acceptance.sh`, GitNexus impact analysis.
+**Tech Stack:** Rust/Tauri backend, gateway JSON-RPC and loop runner, `AgentSession`, `ToolExecutor`, `StreamEvent`, existing A2A bus/worktree worker, React/TypeScript protocol/store/UI, Playwright mocked acceptance, future platform-gated Tauri/WebDriver acceptance on Windows/Linux, `scripts/acceptance.sh`, GitNexus impact analysis.
 
 ---
 
@@ -82,7 +82,7 @@ gitnexus_impact(repo: "forge", target: "classify_tool_category", file_path: "app
 
 ## Suggested Execution Order
 
-1. Task 1 restart harness first, because it defines the external proof for runtime ownership.
+1. Current macOS next step: Task 2 provider usage telemetry. Task 1 official Tauri/WebDriver binary force-quit/reopen proof is `BLOCKED_OFFICIAL_MACOS` and deferred to a future Windows/Linux platform gate; keep `18f6ce9a` as partial mocked evidence only.
 2. Task 2 provider usage telemetry, because it is additive and already has partial Anthropic support plus unknown handling.
 3. Task 3 post-shell file-effect evidence, because it strengthens observability without claiming shell-internal tracing.
 4. Task 4 gateway autonomous resume/headless ownership, because it is the highest-risk behavioral step and must stay disabled by default behind policy and human approval.
@@ -107,7 +107,11 @@ gitnexus_impact(repo: "forge", target: "classify_tool_category", file_path: "app
 
 **Goal:** Add a product-level harness that proves durable loop/session/A2A runtime state survives a real desktop app quit/reopen sequence without claiming autonomous continuation.
 
-**Current state (2026-06-18):** partial mocked product evidence exists in `apps/desktop/e2e/level3-runtime-restart.spec.ts` and is advertised as `mocked desktop restart runtime smoke`. It closes and reopens a Playwright page through the existing Vite + mocked Tauri IPC harness, replays durable runtime facts from IndexedDB, and verifies no autonomous continuation. This is not full Task 1 completion: true Tauri/WebDriver binary force-quit/reopen remains open because the current e2e contract is Playwright + Vite + mocked Tauri IPC and no `tauri-driver`/WebDriver launcher is present.
+**Current state (2026-06-18):** commit `18f6ce9a test(runtime): add mocked restart runtime smoke` added honest partial product evidence in `apps/desktop/e2e/level3-runtime-restart.spec.ts` and advertises it as `mocked desktop restart runtime smoke`. It closes and reopens a Playwright page through the existing Vite + mocked Tauri IPC harness, replays durable runtime facts from IndexedDB, and verifies no autonomous continuation. This is not full Task 1 completion: true Tauri/WebDriver binary force-quit/reopen remains open because the current e2e contract is Playwright + Vite + mocked Tauri IPC and no `tauri-driver`/WebDriver launcher is present.
+
+**Official blocker:** fresh environment discovery on macOS/Darwin found no `tauri-driver`, `WebKitWebDriver`, `msedgedriver`, WebdriverIO, or Selenium harness dependencies. Official Tauri v2 desktop WebDriver docs describe desktop WebDriver support for Windows/Linux only because macOS lacks a WKWebView driver tool: https://v2.tauri.app/develop/tests/webdriver/. The official WebdriverIO path also expects a separate WDIO harness, a debug Tauri binary, and `~/.cargo/bin/tauri-driver`: https://v2.tauri.app/develop/tests/webdriver/example/webdriverio/.
+
+**Next path:** keep the mocked smoke as partial evidence on macOS. A future official proof should be a Windows/Linux CI or platform-gated slice that installs `tauri-driver` with `cargo install tauri-driver --locked`, uses the native driver available on that platform (`WebKitWebDriver` or `msedgedriver`), launches the debug Tauri binary through the official WebDriver harness, then force-quits and reopens the desktop app. Do not introduce a third-party `tauri-plugin-webdriver` path without an explicit architecture decision.
 
 **Files:**
 - Create: `apps/desktop/e2e/level3-runtime-restart.spec.ts`
@@ -136,7 +140,7 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
   rg -n "resume|restart|close|reload|launch|tauri|electron|webkit|mockIpc|setup" apps/desktop/e2e apps/desktop/package.json
   ```
 
-  Expected: identify whether the existing Playwright suite can force a Tauri/WebDriver app restart directly or whether the first committed slice must wrap the existing launcher with an app-process restart helper. Record the chosen path in the task handoff.
+  Expected: on current macOS, record `BLOCKED_OFFICIAL_MACOS` for true Tauri/WebDriver desktop force-quit/reopen and keep the mocked Playwright/Vite smoke as partial evidence. On a Windows/Linux runner, identify the official `tauri-driver` plus native-driver launch path and record the platform-gated command in the task handoff.
 
 - [ ] **Step 1.2: Write the failing restart smoke**
 
@@ -145,7 +149,7 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
   - starts a session with persisted session snapshot state,
   - injects or creates a loop task in `waiting_for_input` with a runner lease history,
   - injects A2A projection state with a retained worktree worker, runtime file facts, and usage facts with unknown cost,
-  - force-quits the app process through the available Tauri/WebDriver harness,
+  - force-quits the app process through the official Tauri/WebDriver harness on a supported Windows/Linux platform,
   - reopens the app,
   - asserts History/session restore, TaskManager/LoopTaskPanel, A2A workbench, and gateway runtime status still show the durable facts,
   - asserts the loop is waiting for human input and did not continue side effects.
@@ -180,7 +184,7 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
 
 - [ ] **Step 1.5: Add acceptance script coverage**
 
-  Add a label such as `mocked desktop restart runtime smoke` to `scripts/acceptance.sh` until a true Tauri/WebDriver harness exists, and add the exact command:
+  Add a label such as `mocked desktop restart runtime smoke` to `scripts/acceptance.sh` until a true Tauri/WebDriver harness exists on Windows/Linux, and add the exact command:
 
   ```bash
   npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts
@@ -201,7 +205,7 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
 
   Expected: all pass.
 
-**Acceptance command:** `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts`
+**Acceptance command:** `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` currently proves the mocked desktop restart runtime smoke only. The future official Tauri/WebDriver force-quit/reopen command must be platform-gated to Windows/Linux.
 
 **Expected commit message:** `test(runtime): add level 3 restart harness`
 
@@ -211,6 +215,8 @@ gitnexus_impact(repo: "forge", target: "AgentSessionSnapshot", file_path: "apps/
 - No default headless `AgentSession`.
 - No shell-internal tracing.
 - No auto commit/merge/push.
+- No official macOS Tauri/WebDriver desktop proof while macOS lacks a WKWebView driver tool.
+- No third-party WebDriver plugin path without an explicit architecture decision.
 
 ---
 
@@ -807,7 +813,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
   Update `scripts/acceptance.sh` so the dry-run matrix includes, in order:
 
   - existing Level 3 MVP gates,
-  - mocked desktop restart runtime smoke as partial evidence until true Tauri/WebDriver restart exists,
+  - mocked desktop restart runtime smoke as partial evidence on macOS until true Tauri/WebDriver restart exists in Windows/Linux CI or another supported platform gate,
   - provider usage known/unknown telemetry,
   - post-shell file-effect evidence,
   - persisted A2A lineage,
@@ -877,7 +883,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
 | --- | --- | --- |
 | Durable ledger/replay remains intact | Existing journal and projection tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib` and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib` |
 | Runner lease/waiting boundary remains intact | Runner/gateway tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib` |
-| Restart runtime ownership | Partial mocked desktop restart smoke; true Tauri/WebDriver force-quit/reopen remains open | `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` |
+| Restart runtime ownership | Partial mocked desktop restart smoke on macOS; official Tauri/WebDriver force-quit/reopen is `BLOCKED_OFFICIAL_MACOS` and moves to future Windows/Linux platform-gated proof | `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` |
 | Known/unknown provider usage | Adapter and budget tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib` |
 | Direct ToolExecutor file IO | Existing Phase 4-K executor stream tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib` |
 | Post-shell delta evidence | Shell file-effect tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib` |
