@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Expanded the Eval Runner case library with Python CLI, continuity, desktop runtime proxy, failure-recovery, red-team, and promoted-trace regression lanes plus a documented case matrix.
 - Added Forge Eval Runner Phase 2 operator workflows for trusted baselines, baseline comparison gates, Markdown/HTML reports, case lifecycle diagnostics, repeated-trial flake triage, hardened trace promotion, and CI Markdown summaries.
 - Added Level 3 loop runtime acceptance coverage for the append-only event journal, rebuildable projections, durable human gates, policy/budget preflight, typed completion evidence, crash/replay regressions, gateway runner leases, subagent runtime projection, and mocked desktop completion-contract smoke.
 - Expanded Forge Eval Runner into a trusted backtest workflow with trust gates, dataset fingerprints, experiment snapshots, layered scorers, red-team lanes, sandbox leakage checks, report comparison, trace promotion, queue status, worker cancellation diagnostics, trajectory artifacts, cost budgets, and PASS_TO_PASS / FAIL_TO_PASS validation.

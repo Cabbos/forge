@@ -199,6 +199,8 @@ expected/forbidden file assertions, tags, and metadata. Task order is ignored,
 so the same dataset produces the same fingerprint even when cases are loaded in
 a different order.
 
+Case coverage is lane-based. The eval runner treats the JSON task contract as the stable interface, while fixtures remain local to `apps/eval-runner/eval_cases`. Desktop runtime cases are proxy fixtures rather than imports from `apps/desktop`, preserving independent app execution during the current migration.
+
 CLI artifacts can include an `experiment` block when `--experiment-name` and
 `--output` are provided. That block records the experiment name, dataset
 fingerprint, provider, and model beside the report and traces. SQLite also
