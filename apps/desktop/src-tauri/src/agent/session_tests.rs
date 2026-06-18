@@ -2031,6 +2031,129 @@ async fn execute_tools_delegate_uses_existing_parent_task_id_for_child_projectio
 }
 
 #[tokio::test]
+async fn execute_tools_delegate_emits_child_runtime_events_with_parent_session_and_a2a_task_ids() {
+    let workspace = std::env::temp_dir().join(format!(
+        "forge-session-delegate-runtime-file-io-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    std::fs::write(workspace.join("notes.md"), "runtime context").expect("notes");
+    let adapter = Arc::new(FakeAdapter::new(vec![
+        StreamResult {
+            assistant_content: vec![serde_json::json!({
+                "type": "text",
+                "text": "Reading notes.md",
+            })],
+            tool_calls: vec![ToolCall {
+                id: "call-child-read".to_string(),
+                name: "read_file".to_string(),
+                input: serde_json::json!({ "path": "notes.md" }),
+            }],
+            stop_reason: Some("tool_use".to_string()),
+        },
+        StreamResult {
+            assistant_content: vec![serde_json::json!({
+                "type": "text",
+                "text": "Read notes.md",
+            })],
+            tool_calls: vec![],
+            stop_reason: Some("end_turn".to_string()),
+        },
+    ]));
+    let session = AgentSession::new(
+        "session-delegate-runtime-file-io".to_string(),
+        "deepseek".to_string(),
+        adapter,
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    let tool_calls = vec![ToolCall {
+        id: "call-delegate-runtime".to_string(),
+        name: "delegate_task".to_string(),
+        input: serde_json::json!({
+            "task": "Inspect notes",
+            "mode": "research",
+        }),
+    }];
+    let emitter = crate::agent::event_sink::NoopEventEmitter;
+    let child_emitter = Arc::new(crate::agent::event_sink::CollectingEventEmitter::new());
+
+    session
+        .execute_tools(
+            &tool_calls,
+            &emitter,
+            None,
+            Some(child_emitter.clone()),
+            Arc::new(Notify::new()),
+        )
+        .await;
+
+    let projection = session.a2a_projection();
+    assert_eq!(projection.tasks.len(), 1);
+    let a2a_task_id = projection.tasks[0].task_id.clone();
+    let events = child_emitter.drain();
+    let runtime_events = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                session_id,
+                loop_task_id,
+                task_id,
+                event,
+            } => Some((session_id, loop_task_id, task_id, event)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        runtime_events
+            .iter()
+            .any(|(session_id, loop_task_id, task_id, event)| {
+                *session_id == "session-delegate-runtime-file-io"
+                    && loop_task_id.is_none()
+                    && *task_id == &a2a_task_id
+                    && matches!(
+                        event,
+                        crate::protocol::events::SubagentRuntimePayload::Started { role }
+                            if role == "research"
+                    )
+            }),
+        "expected started event with parent session and A2A task ids, got: {runtime_events:#?}"
+    );
+    assert!(
+        runtime_events.iter().any(|(session_id, loop_task_id, task_id, event)| {
+            *session_id == "session-delegate-runtime-file-io"
+                && loop_task_id.is_none()
+                && *task_id == &a2a_task_id
+                && matches!(
+                    event,
+                    crate::protocol::events::SubagentRuntimePayload::FileIo { path, operation }
+                        if path == "notes.md" && operation == "read"
+                )
+        }),
+        "expected file_io read event with parent session and A2A task ids, got: {runtime_events:#?}"
+    );
+    assert!(
+        runtime_events
+            .iter()
+            .any(|(session_id, loop_task_id, task_id, event)| {
+                *session_id == "session-delegate-runtime-file-io"
+                    && loop_task_id.is_none()
+                    && *task_id == &a2a_task_id
+                    && matches!(
+                        event,
+                        crate::protocol::events::SubagentRuntimePayload::Ended { status }
+                            if status == "completed"
+                    )
+            }),
+        "expected ended event with parent session and A2A task ids, got: {runtime_events:#?}"
+    );
+
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
 async fn execute_tools_delegate_without_parent_task_id_creates_root_projection() {
     let workspace = std::env::temp_dir().join(format!(
         "forge-session-delegate-root-{}",

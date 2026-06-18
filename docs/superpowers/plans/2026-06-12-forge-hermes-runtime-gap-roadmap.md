@@ -793,11 +793,13 @@ agent work:
 - Crash/replay regression coverage.
 - Gateway runner leases and stale-lease interruption.
 - Subagent runtime projection smoke and mocked desktop completion-contract smoke.
+- A2A child runtime live file-ish tool facts for delegated read-only,
+  patch-proposal, and worktree-worker children.
 
 This does not claim automatic gateway continuation after a crash, default
-headless `AgentSession` ownership, executor-level live file IO tracing, precise
-cost when usage is unknown, or automatic commits. Those remain future runtime
-hardening work.
+headless `AgentSession` ownership, executor-level live file IO tracing,
+shell-internal file effect tracing, precise cost when usage is unknown, or
+automatic commits. Those remain future runtime hardening work.
 
 **Verification plan:**
 
@@ -952,7 +954,8 @@ Codex must stop and ask the user if any of the following occur:
 
 **Deferred for future:**
 - True Tauri force-quit/reopen smoke harness (needs WebDriver / `tauri-driver` investment)
-- True live subagent file IO stream (requires executor hooks)
+- Executor-level live file IO tracing beyond the narrow A2A child file-ish tool bridge
+- Shell-internal file effect tracing for `run_shell`
 - Token/cost telemetry stream (requires adapter-level usage hooks)
 - Memory embeddings and single-store migration for `WikiMemoryStore` + user-managed facts
 - Extension inventory once a real extension source exists

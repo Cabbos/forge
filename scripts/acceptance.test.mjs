@@ -28,6 +28,8 @@ test("acceptance script dry-run lists the final product gates", () => {
   assert.match(output, /subagent runtime event projection smoke/);
   assert.match(output, /live worktree worker lifecycle harness/);
   assert.match(output, /agent::a2a::child::tests::run_worktree_worker --lib/);
+  assert.match(output, /A2A child runtime file IO bridge/);
+  assert.match(output, /agent::a2a::child --lib/);
   assert.match(output, /completion contract mocked desktop smoke/);
   assert.match(output, /desktop Phase 7 .*A2A worker lifecycle smoke/);
   assert.match(output, /resume\.spec\.ts/);

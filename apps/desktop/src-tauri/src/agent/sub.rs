@@ -7,7 +7,7 @@ use crate::adapters::base::{AiAdapter, ChatMessage};
 use crate::agent::event_sink::EventEmitter;
 use crate::harness::Harness;
 use crate::loop_runtime::{LoopUsageLedger, UsageEvent};
-use crate::protocol::events::StreamEvent;
+use crate::protocol::events::{StreamEvent, SubagentRuntimePayload};
 
 const MAX_ROUNDS: usize = 20;
 const MAX_RESULT_CHARS: usize = 8000;
@@ -141,6 +141,23 @@ pub(crate) enum SubAgentMode {
     Research,
     PatchProposal,
     WorktreeWorker,
+}
+
+impl SubAgentMode {
+    fn runtime_role(self) -> &'static str {
+        match self {
+            SubAgentMode::Research => "research",
+            SubAgentMode::PatchProposal => "patch_proposal",
+            SubAgentMode::WorktreeWorker => "worktree_worker",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SubagentRuntimeContext {
+    pub session_id: String,
+    pub task_id: String,
+    pub loop_task_id: Option<String>,
 }
 
 /// A lightweight ephemeral agent for read-only subtasks.
@@ -351,6 +368,7 @@ impl SubAgent {
         emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
+        runtime_context: Option<SubagentRuntimeContext>,
     ) -> String {
         Self::run_with_mode(
             task,
@@ -360,6 +378,7 @@ impl SubAgent {
             cancel,
             working_dir,
             SubAgentMode::Research,
+            runtime_context,
         )
         .await
     }
@@ -371,6 +390,7 @@ impl SubAgent {
         emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
+        runtime_context: Option<SubagentRuntimeContext>,
     ) -> String {
         Self::run_with_mode(
             task,
@@ -380,6 +400,7 @@ impl SubAgent {
             cancel,
             working_dir,
             SubAgentMode::PatchProposal,
+            runtime_context,
         )
         .await
     }
@@ -391,6 +412,7 @@ impl SubAgent {
         emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
+        runtime_context: Option<SubagentRuntimeContext>,
     ) -> String {
         Self::run_with_mode(
             task,
@@ -400,6 +422,7 @@ impl SubAgent {
             cancel,
             working_dir,
             SubAgentMode::WorktreeWorker,
+            runtime_context,
         )
         .await
     }
@@ -412,7 +435,18 @@ impl SubAgent {
         cancel: Arc<Notify>,
         working_dir: &std::path::Path,
         mode: SubAgentMode,
+        runtime_context: Option<SubagentRuntimeContext>,
     ) -> String {
+        if let Some(context) = runtime_context.as_ref() {
+            emit_subagent_runtime_event(
+                emitter.as_ref(),
+                context,
+                SubagentRuntimePayload::Started {
+                    role: mode.runtime_role().to_string(),
+                },
+            );
+        }
+
         let project_ctx = crate::harness::read_project_context(working_dir).unwrap_or_default();
         let context_section = if project_ctx.is_empty() {
             format!("Working directory: {}\n", working_dir.display())
@@ -438,6 +472,15 @@ impl SubAgent {
             {
                 Ok(r) => r,
                 Err(e) => {
+                    if let Some(context) = runtime_context.as_ref() {
+                        emit_subagent_runtime_event(
+                            emitter.as_ref(),
+                            context,
+                            SubagentRuntimePayload::Failed {
+                                reason: format!("API error: {e}"),
+                            },
+                        );
+                    }
                     return build_error_json(&format!("API error: {e}"), &[], usage.ledger());
                 }
             };
@@ -451,6 +494,15 @@ impl SubAgent {
 
             if stream_result.tool_calls.is_empty() {
                 let text = extract_by_type(&stream_result.assistant_content, "text");
+                if let Some(context) = runtime_context.as_ref() {
+                    emit_subagent_runtime_event(
+                        emitter.as_ref(),
+                        context,
+                        SubagentRuntimePayload::Ended {
+                            status: "completed".to_string(),
+                        },
+                    );
+                }
                 return build_result_json(&text, &[], usage.ledger());
             }
 
@@ -486,6 +538,18 @@ impl SubAgent {
                         )
                         .await
                 };
+                if !is_blocked && is_successful_runtime_file_io_result(&tc.name, &result) {
+                    if let (Some(context), Some((path, operation))) = (
+                        runtime_context.as_ref(),
+                        runtime_file_io_fact(&tc.name, &tc.input),
+                    ) {
+                        emit_subagent_runtime_event(
+                            emitter.as_ref(),
+                            context,
+                            SubagentRuntimePayload::FileIo { path, operation },
+                        );
+                    }
+                }
                 result_map.insert(tc.id.clone(), result);
             }
 
@@ -497,8 +561,94 @@ impl SubAgent {
             messages.push(model_tool_results.message);
         }
 
+        if let Some(context) = runtime_context.as_ref() {
+            emit_subagent_runtime_event(
+                emitter.as_ref(),
+                context,
+                SubagentRuntimePayload::Failed {
+                    reason: "Max rounds reached".to_string(),
+                },
+            );
+        }
         build_error_json("Max rounds reached", &[], usage.ledger())
     }
+}
+
+fn emit_subagent_runtime_event(
+    emitter: &dyn EventEmitter,
+    context: &SubagentRuntimeContext,
+    event: SubagentRuntimePayload,
+) {
+    emitter.emit(StreamEvent::SubagentRuntimeEvent {
+        session_id: context.session_id.clone(),
+        loop_task_id: context.loop_task_id.clone(),
+        task_id: context.task_id.clone(),
+        event,
+    });
+}
+
+fn runtime_file_io_fact(tool_name: &str, input: &serde_json::Value) -> Option<(String, String)> {
+    let explicit_path = || {
+        input
+            .get("path")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    match tool_name {
+        "read_file" | "read" => explicit_path().map(|path| (path, "read".to_string())),
+        "write_file" | "write_to_file" | "write" => {
+            explicit_path().map(|path| (path, "write".to_string()))
+        }
+        "edit_file" | "edit" => explicit_path().map(|path| (path, "edit".to_string())),
+        "git_diff" => Some((
+            explicit_path().unwrap_or_else(|| "all files".to_string()),
+            "diff".to_string(),
+        )),
+        "list_directory" | "ls" | "list" => Some((
+            explicit_path().unwrap_or_else(|| ".".to_string()),
+            "list".to_string(),
+        )),
+        "search_files" | "glob" | "search_content" | "grep" => Some((
+            explicit_path().unwrap_or_else(|| ".".to_string()),
+            "search".to_string(),
+        )),
+        _ => None,
+    }
+}
+
+fn is_successful_runtime_file_io_result(tool_name: &str, result: &str) -> bool {
+    let is_file_io_tool = matches!(
+        tool_name,
+        "read_file"
+            | "read"
+            | "write_file"
+            | "write_to_file"
+            | "write"
+            | "edit_file"
+            | "edit"
+            | "git_diff"
+            | "list_directory"
+            | "ls"
+            | "list"
+            | "search_files"
+            | "glob"
+            | "search_content"
+            | "grep"
+    );
+    if !is_file_io_tool || crate::agent::turn_state::is_errorish_tool_result(result) {
+        return false;
+    }
+
+    let normalized = result.trim_start().to_ascii_lowercase();
+    ![
+        "git diff failed",
+        "search path is not available",
+        "search path is not a directory",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix))
 }
 
 fn build_system_prompt(mode: SubAgentMode, context_section: &str) -> String {

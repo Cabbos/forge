@@ -154,6 +154,11 @@ impl AgentSession {
                 self.emit_a2a_projection(emitter);
                 let execution_mode_clone = execution_mode.clone();
                 let worktree_id = a2a_task_id.as_str().to_string();
+                let runtime_context = Some(crate::agent::sub::SubagentRuntimeContext {
+                    session_id: self.id.clone(),
+                    task_id: a2a_task_id.as_str().to_string(),
+                    loop_task_id: None,
+                });
                 handles.push((
                     idx,
                     tc.id.clone(),
@@ -172,6 +177,7 @@ impl AgentSession {
                                     sub_emitter,
                                     cancel,
                                     &wd,
+                                    runtime_context,
                                 )
                                 .await
                             }
@@ -184,6 +190,7 @@ impl AgentSession {
                                     sub_emitter,
                                     cancel,
                                     &wd,
+                                    runtime_context,
                                 )
                                 .await
                             }
@@ -195,6 +202,7 @@ impl AgentSession {
                                     sub_emitter,
                                     cancel,
                                     &wd,
+                                    runtime_context,
                                 )
                                 .await
                             }

@@ -16,6 +16,7 @@ impl ChildAgentRuntime {
         emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &Path,
+        runtime_context: Option<crate::agent::sub::SubagentRuntimeContext>,
     ) -> String {
         crate::agent::sub::SubAgent::run_with_emitter(
             task,
@@ -24,6 +25,7 @@ impl ChildAgentRuntime {
             emitter,
             cancel,
             working_dir,
+            runtime_context,
         )
         .await
     }
@@ -35,6 +37,7 @@ impl ChildAgentRuntime {
         emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &Path,
+        runtime_context: Option<crate::agent::sub::SubagentRuntimeContext>,
     ) -> String {
         crate::agent::sub::SubAgent::run_patch_proposal(
             task,
@@ -43,6 +46,7 @@ impl ChildAgentRuntime {
             emitter,
             cancel,
             working_dir,
+            runtime_context,
         )
         .await
     }
@@ -61,18 +65,25 @@ impl ChildAgentRuntime {
         emitter: Arc<dyn EventEmitter>,
         cancel: Arc<Notify>,
         working_dir: &Path,
+        runtime_context: Option<crate::agent::sub::SubagentRuntimeContext>,
     ) -> String {
         use crate::agent::a2a::worktree::{LeaseResult, WorktreeLease, WorktreeWorkerSummary};
 
         let mut lease = match WorktreeLease::create(working_dir, worktree_id) {
             LeaseResult::Ok(l) => l,
             LeaseResult::NotAGitRepo { path } => {
+                let reason = format!(
+                    "Cannot create worktree: {} is not inside a git repository. \
+                     Falling back to patch_proposal mode is recommended.",
+                    path.display()
+                );
+                emit_early_worktree_runtime_failure(
+                    emitter.as_ref(),
+                    runtime_context.as_ref(),
+                    &reason,
+                );
                 return serde_json::to_string(&WorktreeWorkerSummary {
-                    result: format!(
-                        "Cannot create worktree: {} is not inside a git repository. \
-                         Falling back to patch_proposal mode is recommended.",
-                        path.display()
-                    ),
+                    result: reason,
                     diff: None,
                     diff_available: false,
                     diff_truncated: false,
@@ -88,8 +99,14 @@ impl ChildAgentRuntime {
                 .unwrap_or_else(|_| "Worktree creation failed".to_string());
             }
             LeaseResult::GitError { message } => {
+                let reason = format!("Worktree creation failed: {message}");
+                emit_early_worktree_runtime_failure(
+                    emitter.as_ref(),
+                    runtime_context.as_ref(),
+                    &reason,
+                );
                 return serde_json::to_string(&WorktreeWorkerSummary {
-                    result: format!("Worktree creation failed: {message}"),
+                    result: reason,
                     diff: None,
                     diff_available: false,
                     diff_truncated: false,
@@ -104,11 +121,17 @@ impl ChildAgentRuntime {
                 .unwrap_or_else(|_| "Worktree creation failed".to_string());
             }
             LeaseResult::AlreadyInUse { branch_name } => {
+                let reason = format!(
+                    "Worktree creation failed: branch {branch_name} is already in use. \
+                     Another worktree worker may be running for the same task."
+                );
+                emit_early_worktree_runtime_failure(
+                    emitter.as_ref(),
+                    runtime_context.as_ref(),
+                    &reason,
+                );
                 return serde_json::to_string(&WorktreeWorkerSummary {
-                    result: format!(
-                        "Worktree creation failed: branch {branch_name} is already in use. \
-                         Another worktree worker may be running for the same task."
-                    ),
+                    result: reason,
                     diff: None,
                     diff_available: false,
                     diff_truncated: false,
@@ -141,6 +164,7 @@ impl ChildAgentRuntime {
             emitter,
             cancel,
             &worktree_path,
+            runtime_context,
         )
         .await;
 
@@ -221,6 +245,31 @@ impl ChildAgentRuntime {
                 cleaned_up
             )
         })
+    }
+}
+
+fn emit_early_worktree_runtime_failure(
+    emitter: &dyn EventEmitter,
+    runtime_context: Option<&crate::agent::sub::SubagentRuntimeContext>,
+    reason: &str,
+) {
+    if let Some(context) = runtime_context {
+        emitter.emit(crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+            session_id: context.session_id.clone(),
+            loop_task_id: context.loop_task_id.clone(),
+            task_id: context.task_id.clone(),
+            event: crate::protocol::events::SubagentRuntimePayload::Started {
+                role: "worktree_worker".to_string(),
+            },
+        });
+        emitter.emit(crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+            session_id: context.session_id.clone(),
+            loop_task_id: context.loop_task_id.clone(),
+            task_id: context.task_id.clone(),
+            event: crate::protocol::events::SubagentRuntimePayload::Failed {
+                reason: reason.to_string(),
+            },
+        });
     }
 }
 
@@ -436,6 +485,13 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    struct FileIoMockAdapter {
+        calls: AtomicUsize,
+        tool_name: &'static str,
+        tool_input: serde_json::Value,
+        final_text: &'static str,
+    }
+
     fn init_test_repo(prefix: &str) -> std::path::PathBuf {
         let tmp = std::env::temp_dir().join(format!(
             "{prefix}-{}",
@@ -467,6 +523,18 @@ mod tests {
             .expect("git commit");
         assert!(commit.status.success());
 
+        tmp
+    }
+
+    fn init_test_dir(prefix: &str) -> std::path::PathBuf {
+        let tmp = std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
         tmp
     }
 
@@ -504,6 +572,53 @@ mod tests {
                     }
                 });
             }
+        }
+    }
+
+    struct CollectingAutoApproveEmitter {
+        pending_confirms: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        >,
+        events: parking_lot::Mutex<Vec<crate::protocol::events::StreamEvent>>,
+    }
+
+    impl CollectingAutoApproveEmitter {
+        fn new(
+            pending_confirms: Arc<
+                tokio::sync::RwLock<
+                    std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+                >,
+            >,
+        ) -> Self {
+            Self {
+                pending_confirms,
+                events: parking_lot::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn drain(&self) -> Vec<crate::protocol::events::StreamEvent> {
+            std::mem::take(&mut *self.events.lock())
+        }
+    }
+
+    impl EventEmitter for CollectingAutoApproveEmitter {
+        fn emit(&self, event: crate::protocol::events::StreamEvent) {
+            if let crate::protocol::events::StreamEvent::ConfirmAsk { block_id, .. } = &event {
+                let block_id = block_id.clone();
+                let pending_confirms = self.pending_confirms.clone();
+                tokio::spawn(async move {
+                    for _ in 0..100 {
+                        if let Some(sender) = pending_confirms.write().await.remove(&block_id) {
+                            let _ = sender.send(true);
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                });
+            }
+            self.events.lock().push(event);
         }
     }
 
@@ -593,6 +708,417 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl AiAdapter for FileIoMockAdapter {
+        async fn call(
+            &self,
+            _messages: &[crate::adapters::base::ChatMessage],
+            _cancel: Arc<Notify>,
+        ) -> Result<crate::adapters::base::StreamResult, crate::adapters::base::AdapterError>
+        {
+            let idx = self.calls.fetch_add(1, Ordering::SeqCst);
+            match idx {
+                0 => Ok(crate::adapters::base::StreamResult {
+                    assistant_content: vec![serde_json::json!({
+                        "type": "text",
+                        "text": "Using a file tool..."
+                    })],
+                    tool_calls: vec![crate::adapters::base::ToolCall {
+                        id: "call_file_io".to_string(),
+                        name: self.tool_name.to_string(),
+                        input: self.tool_input.clone(),
+                    }],
+                    stop_reason: Some("tool_use".to_string()),
+                }),
+                1 => Ok(crate::adapters::base::StreamResult {
+                    assistant_content: vec![serde_json::json!({
+                        "type": "text",
+                        "text": self.final_text
+                    })],
+                    tool_calls: vec![],
+                    stop_reason: Some("end_turn".to_string()),
+                }),
+                _ => Ok(crate::adapters::base::StreamResult {
+                    assistant_content: vec![],
+                    tool_calls: vec![],
+                    stop_reason: Some("end_turn".to_string()),
+                }),
+            }
+        }
+
+        async fn stream_message_with_emitter(
+            &self,
+            session_id: &str,
+            messages: &[crate::adapters::base::ChatMessage],
+            emitter: &dyn EventEmitter,
+            cancel: Arc<Notify>,
+        ) -> Result<crate::adapters::base::StreamResult, crate::adapters::base::AdapterError>
+        {
+            self.call_with_emitter(session_id, messages, emitter, cancel)
+                .await
+        }
+
+        async fn call_with_emitter(
+            &self,
+            session_id: &str,
+            messages: &[crate::adapters::base::ChatMessage],
+            emitter: &dyn EventEmitter,
+            cancel: Arc<Notify>,
+        ) -> Result<crate::adapters::base::StreamResult, crate::adapters::base::AdapterError>
+        {
+            let result = self.call(messages, cancel).await?;
+            emitter.emit(crate::protocol::events::StreamEvent::Usage {
+                session_id: session_id.to_string(),
+                input_tokens: 10,
+                output_tokens: 5,
+                estimated_cost_usd: 0.00001,
+            });
+            Ok(result)
+        }
+
+        fn model_id(&self) -> &str {
+            "mock"
+        }
+
+        fn model_name(&self) -> &str {
+            "Mock"
+        }
+    }
+
+    fn runtime_events(
+        events: &[crate::protocol::events::StreamEvent],
+    ) -> Vec<&crate::protocol::events::StreamEvent> {
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent { .. }
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn run_read_only_emits_runtime_file_io_events_when_context_present() {
+        let tmp = init_test_repo("forge-test-read-runtime-file-io");
+        std::fs::write(tmp.join("notes.md"), "child context").unwrap();
+
+        let adapter: Arc<dyn AiAdapter> = Arc::new(FileIoMockAdapter {
+            calls: AtomicUsize::new(0),
+            tool_name: "read_file",
+            tool_input: serde_json::json!({ "path": "notes.md" }),
+            final_text: "Read notes.md.",
+        });
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            tmp.clone(),
+            pending_confirms.clone(),
+        ));
+        let emitter = Arc::new(CollectingAutoApproveEmitter::new(pending_confirms));
+        let runtime_context = crate::agent::sub::SubagentRuntimeContext {
+            session_id: "parent-session-read".to_string(),
+            task_id: "a2a-task-read".to_string(),
+            loop_task_id: None,
+        };
+
+        let raw = ChildAgentRuntime::run_read_only(
+            "Read notes.md",
+            adapter,
+            harness,
+            emitter.clone(),
+            Arc::new(Notify::new()),
+            &tmp,
+            Some(runtime_context),
+        )
+        .await;
+
+        assert!(
+            raw.contains("Read notes.md"),
+            "child should still return its normal result JSON, got: {raw}"
+        );
+        let events = emitter.drain();
+        let runtime_events = runtime_events(&events);
+        assert!(
+            matches!(
+                runtime_events.as_slice(),
+                [
+                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                        session_id,
+                        loop_task_id: None,
+                        task_id,
+                        event: crate::protocol::events::SubagentRuntimePayload::Started { role },
+                    },
+                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                        session_id: file_session_id,
+                        loop_task_id: None,
+                        task_id: file_task_id,
+                        event: crate::protocol::events::SubagentRuntimePayload::FileIo { path, operation },
+                    },
+                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                        session_id: end_session_id,
+                        loop_task_id: None,
+                        task_id: end_task_id,
+                        event: crate::protocol::events::SubagentRuntimePayload::Ended { status },
+                    },
+                ] if session_id == "parent-session-read"
+                    && task_id == "a2a-task-read"
+                    && role == "research"
+                    && file_session_id == "parent-session-read"
+                    && file_task_id == "a2a-task-read"
+                    && path == "notes.md"
+                    && operation == "read"
+                    && end_session_id == "parent-session-read"
+                    && end_task_id == "a2a-task-read"
+                    && status == "completed"
+            ),
+            "expected started/read/ended runtime events, got: {runtime_events:#?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn run_worktree_worker_emits_runtime_write_file_io_when_context_present() {
+        let tmp = init_test_repo("forge-test-worktree-runtime-file-io");
+
+        let adapter: Arc<dyn AiAdapter> = Arc::new(FileIoMockAdapter {
+            calls: AtomicUsize::new(0),
+            tool_name: "write_to_file",
+            tool_input: serde_json::json!({
+                "path": "output.txt",
+                "content": "hello from worktree\n"
+            }),
+            final_text: "Wrote output.txt.",
+        });
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            tmp.clone(),
+            pending_confirms.clone(),
+        ));
+        let emitter = Arc::new(CollectingAutoApproveEmitter::new(pending_confirms));
+        let runtime_context = crate::agent::sub::SubagentRuntimeContext {
+            session_id: "parent-session-write".to_string(),
+            task_id: "a2a-task-write".to_string(),
+            loop_task_id: None,
+        };
+
+        let raw = ChildAgentRuntime::run_worktree_worker(
+            "runtime-write-task",
+            "Write output.txt",
+            adapter,
+            harness,
+            emitter.clone(),
+            Arc::new(Notify::new()),
+            &tmp,
+            Some(runtime_context),
+        )
+        .await;
+
+        let summary: crate::agent::a2a::worktree::WorktreeWorkerSummary =
+            serde_json::from_str(&raw).expect("worktree summary");
+        assert!(
+            summary.diff_available,
+            "worktree write should still produce a diff summary, got: {raw}"
+        );
+        let events = emitter.drain();
+        let runtime_events = runtime_events(&events);
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::Started { role },
+                } if session_id == "parent-session-write"
+                    && task_id == "a2a-task-write"
+                    && role == "worktree_worker"
+            )),
+            "expected worktree started runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::FileIo { path, operation },
+                } if session_id == "parent-session-write"
+                    && task_id == "a2a-task-write"
+                    && path == "output.txt"
+                    && operation == "write"
+            )),
+            "expected worktree write file_io runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    session_id,
+                    loop_task_id: None,
+                    task_id,
+                    event: crate::protocol::events::SubagentRuntimePayload::Ended { status },
+                } if session_id == "parent-session-write"
+                    && task_id == "a2a-task-write"
+                    && status == "completed"
+            )),
+            "expected worktree ended runtime event, got: {runtime_events:#?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn run_read_only_does_not_emit_file_io_for_failed_search_path() {
+        let tmp = init_test_repo("forge-test-read-runtime-file-io-search-fail");
+
+        let adapter: Arc<dyn AiAdapter> = Arc::new(FileIoMockAdapter {
+            calls: AtomicUsize::new(0),
+            tool_name: "search_content",
+            tool_input: serde_json::json!({
+                "pattern": "needle",
+                "path": "missing-directory"
+            }),
+            final_text: "Search failed; no file fact should be recorded.",
+        });
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            tmp.clone(),
+            pending_confirms.clone(),
+        ));
+        let emitter = Arc::new(CollectingAutoApproveEmitter::new(pending_confirms));
+        let runtime_context = crate::agent::sub::SubagentRuntimeContext {
+            session_id: "parent-session-search-fail".to_string(),
+            task_id: "a2a-task-search-fail".to_string(),
+            loop_task_id: None,
+        };
+
+        let raw = ChildAgentRuntime::run_read_only(
+            "Search a missing path",
+            adapter,
+            harness,
+            emitter.clone(),
+            Arc::new(Notify::new()),
+            &tmp,
+            Some(runtime_context),
+        )
+        .await;
+
+        assert!(
+            raw.contains("Search failed"),
+            "child should still return its normal final JSON, got: {raw}"
+        );
+        let events = emitter.drain();
+        let runtime_events = runtime_events(&events);
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    event: crate::protocol::events::SubagentRuntimePayload::Started { role },
+                    ..
+                } if role == "research"
+            )),
+            "expected started runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    event: crate::protocol::events::SubagentRuntimePayload::Ended { status },
+                    ..
+                } if status == "completed"
+            )),
+            "expected ended runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            !runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    event: crate::protocol::events::SubagentRuntimePayload::FileIo { .. },
+                    ..
+                }
+            )),
+            "failed search path must not emit file_io facts, got: {runtime_events:#?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn run_read_only_does_not_emit_file_io_for_failed_git_diff() {
+        let tmp = init_test_dir("forge-test-read-runtime-file-io-git-diff-fail");
+
+        let adapter: Arc<dyn AiAdapter> = Arc::new(FileIoMockAdapter {
+            calls: AtomicUsize::new(0),
+            tool_name: "git_diff",
+            tool_input: serde_json::json!({}),
+            final_text: "Diff failed; no file fact should be recorded.",
+        });
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            tmp.clone(),
+            pending_confirms.clone(),
+        ));
+        let emitter = Arc::new(CollectingAutoApproveEmitter::new(pending_confirms));
+        let runtime_context = crate::agent::sub::SubagentRuntimeContext {
+            session_id: "parent-session-diff-fail".to_string(),
+            task_id: "a2a-task-diff-fail".to_string(),
+            loop_task_id: None,
+        };
+
+        let raw = ChildAgentRuntime::run_read_only(
+            "Diff a non-git directory",
+            adapter,
+            harness,
+            emitter.clone(),
+            Arc::new(Notify::new()),
+            &tmp,
+            Some(runtime_context),
+        )
+        .await;
+
+        assert!(
+            raw.contains("Diff failed"),
+            "child should still return its normal final JSON, got: {raw}"
+        );
+        let events = emitter.drain();
+        let runtime_events = runtime_events(&events);
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    event: crate::protocol::events::SubagentRuntimePayload::Started { role },
+                    ..
+                } if role == "research"
+            )),
+            "expected started runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    event: crate::protocol::events::SubagentRuntimePayload::Ended { status },
+                    ..
+                } if status == "completed"
+            )),
+            "expected ended runtime event, got: {runtime_events:#?}"
+        );
+        assert!(
+            !runtime_events.iter().any(|event| matches!(
+                event,
+                crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                    event: crate::protocol::events::SubagentRuntimePayload::FileIo { .. },
+                    ..
+                }
+            )),
+            "failed git_diff must not emit file_io facts, got: {runtime_events:#?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[tokio::test]
     async fn run_worktree_worker_creates_worktree_collects_diff_and_returns_summary() {
         let tmp = init_test_repo("forge-test-wt-integration");
@@ -617,6 +1143,7 @@ mod tests {
             emitter,
             cancel,
             &tmp,
+            None,
         )
         .await;
 
@@ -692,18 +1219,23 @@ mod tests {
             tmp.clone(),
             pending_confirms.clone(),
         ));
-        let emitter: Arc<dyn EventEmitter> =
-            Arc::new(AutoApprovePendingEmitter::new(pending_confirms));
+        let emitter = Arc::new(CollectingAutoApproveEmitter::new(pending_confirms));
         let cancel = Arc::new(Notify::new());
+        let runtime_context = crate::agent::sub::SubagentRuntimeContext {
+            session_id: "parent-session-busy".to_string(),
+            task_id: "a2a-task-busy".to_string(),
+            loop_task_id: None,
+        };
 
         let raw = ChildAgentRuntime::run_worktree_worker(
             "busy-task",
             "Try to reuse an active worktree",
             adapter,
             harness,
-            emitter,
+            emitter.clone(),
             cancel,
             &tmp,
+            Some(runtime_context),
         )
         .await;
 
@@ -719,6 +1251,34 @@ mod tests {
             summary.suggested_action
         );
         assert_eq!(summary.reason_codes, vec!["already_in_use".to_string()]);
+
+        let events = emitter.drain();
+        let runtime_events = runtime_events(&events);
+        assert!(
+            matches!(
+                runtime_events.as_slice(),
+                [
+                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                        session_id,
+                        loop_task_id: None,
+                        task_id,
+                        event: crate::protocol::events::SubagentRuntimePayload::Started { role },
+                    },
+                    crate::protocol::events::StreamEvent::SubagentRuntimeEvent {
+                        session_id: failed_session_id,
+                        loop_task_id: None,
+                        task_id: failed_task_id,
+                        event: crate::protocol::events::SubagentRuntimePayload::Failed { reason },
+                    },
+                ] if session_id == "parent-session-busy"
+                    && task_id == "a2a-task-busy"
+                    && role == "worktree_worker"
+                    && failed_session_id == "parent-session-busy"
+                    && failed_task_id == "a2a-task-busy"
+                    && reason.contains("already in use")
+            ),
+            "expected started/failed runtime events for early worktree failure, got: {runtime_events:#?}"
+        );
 
         existing_lease.preserve();
         drop(existing_lease);

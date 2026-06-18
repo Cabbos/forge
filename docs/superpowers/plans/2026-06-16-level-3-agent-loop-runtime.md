@@ -545,11 +545,20 @@ agent::a2a::child::tests::run_worktree_worker --lib`. This promotes existing
 coverage into reproducible acceptance evidence without changing the Level 3 MVP
 boundary.
 
+2026-06-18 Phase 4-J follow-up: A2A child runtime calls now pass a task-aware
+runtime context from `AgentSession::execute_tools` into read-only,
+patch-proposal, and worktree-worker children. When that context is present,
+`SubAgent::run_with_mode` emits `subagent_runtime_event` `started`, successful
+file-ish tool `file_io`, `ended`, and failure facts using the parent
+`AgentSession.id` plus the assigned A2A task id. This is a narrow child-runtime
+bridge only; it does not trace shell-internal file effects or claim broad
+executor-level live IO.
+
 Known Level 3 MVP boundaries after Task 8:
 
 - Gateway automatic recovery and continuation of a full agent coding loop remains future work.
 - Gateway-created loop tasks still bind to existing desktop session/session owner; no default headless `AgentSession` is claimed.
-- File IO is boundary telemetry from worktree/diff events, not executor-level live read/write tracing.
+- File IO now includes worktree/diff boundary telemetry and A2A child runtime facts for successful file-ish tool calls; executor-wide live read/write tracing and shell-internal file effects remain deferred.
 - The worktree worker lifecycle has a real Rust harness acceptance gate, but no Tauri/WebDriver force-quit harness or executor-level live IO trace is claimed.
 - Token/cost can be unknown/null with explicit unknown flags.
 - Commit remains human-gated and is never automatic after contract satisfaction.
@@ -1839,7 +1848,7 @@ git diff --check
 
 Not claimed:
 
-- No actual live file IO emitters.
+- No actual live file IO emitters existed in this Task 4 protocol-only slice; the later Phase 4-J follow-up adds narrow A2A child file-ish tool facts only.
 - No usage ledger aggregation or precise cost metering.
 - No runner ownership, gateway autonomous resume, default headless `AgentSession`, UI rendering, acceptance-script updates, or auto-commit behavior.
 
@@ -2311,6 +2320,19 @@ adapter/harness, and the already-in-use path that requires human review. This is
 evidence for the child runtime harness only; it does not add a Tauri/WebDriver
 force-quit harness, executor-level live IO tracing, provider token/cost streams,
 new `StreamEvent` variants, or auto commit/merge/push behavior.
+
+**2026-06-18 Phase 4-J A2A child runtime file-IO bridge:** A narrow runtime
+bridge now carries parent-session/A2A-task context from
+`AgentSession::execute_tools` into child read-only, patch-proposal, and
+worktree-worker execution. When present, child execution emits
+`subagent_runtime_event` lifecycle facts and successful file-ish tool facts
+(`read`, `write`, `edit`, `diff`, `list`, `search`) with the parent
+`session_id`, real A2A `task_id`, and no invented `loop_task_id`. This preserves
+the existing tool transcript/diff/shell event paths and does not broaden
+read-only or patch-proposal permissions. It also does not claim shell-internal
+file effects from `run_shell`, provider token/cost streaming, gateway
+autonomous resume, parent-session structs, automatic parent selection, or auto
+commit/merge/push behavior.
 
 **2026-06-17 full signoff evidence:** A sandboxed `scripts/acceptance.sh` run
 first passed desktop and website builds, then stopped at `npm run test:eval`
