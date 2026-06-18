@@ -1,13 +1,14 @@
 #[cfg(test)]
 mod tests {
     use super::super::{
-        append_line_capped, get_str, next_stream_line, preview_for_log, summarize_tool_input,
-        truncate_text, ToolExecutor,
+        append_line_capped, get_str, git_output_z_with_timeout, next_stream_line, preview_for_log,
+        summarize_tool_input, truncate_text, GitSnapshotCommandOutput, ShellFileEffectDelta,
+        ShellFileEffectSnapshot, ToolExecutor,
     };
     use crate::agent::event_sink::CollectingEventEmitter;
     use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
     use crate::protocol::events::StreamEvent;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -68,6 +69,46 @@ mod tests {
                     && source.as_deref() == Some("executor")
             )
         })
+    }
+
+    fn post_shell_delta_events(events: &[StreamEvent]) -> Vec<&StreamEvent> {
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    StreamEvent::FileIo {
+                        source,
+                        ..
+                    } if source.as_deref() == Some("post_shell_delta")
+                )
+            })
+            .collect()
+    }
+
+    fn assert_post_shell_delta_event(
+        events: &[StreamEvent],
+        block_id: &str,
+        path: &str,
+        operation: &str,
+    ) {
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                StreamEvent::FileIo {
+                    session_id,
+                    block_id: event_block_id,
+                    path: event_path,
+                    operation: event_operation,
+                    source,
+                } if session_id == "session-1"
+                    && event_block_id == block_id
+                    && event_path == path
+                    && event_operation == operation
+                    && source.as_deref() == Some("post_shell_delta")
+            )),
+            "expected post-shell delta {operation} event for {path}, got {events:?}"
+        );
     }
 
     fn assert_file_io_event(
@@ -855,8 +896,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn executor_file_io_stream_run_shell_file_writes_emit_no_file_io() {
-        let workspace = temp_workspace("file-io-run-shell-no-file-io");
+    async fn shell_file_effect_write_emits_post_shell_delta_after_completion() {
+        let workspace = temp_workspace("shell-file-effect-write");
+        run_git(&workspace, &["init", "--quiet"]);
         let pending = Arc::new(RwLock::new(HashMap::new()));
         let executor = ToolExecutor::new(workspace.clone(), pending);
         let emitter = Arc::new(CollectingEventEmitter::new());
@@ -865,7 +907,7 @@ mod tests {
             .execute_with_emitter(
                 "session-1",
                 "run_shell",
-                &serde_json::json!({"command": "printf 'hello' > shell.txt && ls shell.txt"}),
+                &serde_json::json!({"command": "printf 'hello' > shell.txt"}),
                 emitter.clone(),
                 Some("block-shell"),
                 None,
@@ -873,15 +915,279 @@ mod tests {
             .await;
 
         assert!(
-            result.contains("shell.txt"),
-            "expected shell listing output, got: {result}"
+            !result.starts_with("Error:"),
+            "expected shell command to run, got: {result}"
         );
         assert_eq!(
             std::fs::read_to_string(workspace.join("shell.txt")).unwrap(),
             "hello"
         );
         let events = emitter.drain();
-        assert_no_file_io(&events, "run_shell file write/list");
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                StreamEvent::FileIo {
+                    source,
+                    ..
+                } if source.as_deref() == Some("executor")
+                    || source.as_deref() == Some("shell_internal")
+            )),
+            "run_shell must not emit executor or shell-internal FileIo facts: {events:?}"
+        );
+        assert_post_shell_delta_event(&events, "block-shell", "shell.txt", "created");
+        let shell_end_index = events
+            .iter()
+            .position(|event| matches!(event, StreamEvent::ShellEnd { block_id, .. } if block_id == "block-shell"))
+            .expect("shell_end event");
+        let delta_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    StreamEvent::FileIo {
+                        block_id,
+                        path,
+                        source,
+                        ..
+                    } if block_id == "block-shell"
+                        && path == "shell.txt"
+                        && source.as_deref() == Some("post_shell_delta")
+                )
+            })
+            .expect("post-shell delta event");
+        assert!(
+            delta_index > shell_end_index,
+            "post-shell delta must be emitted after shell_end: {events:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn shell_file_effect_read_only_emits_no_post_shell_delta() {
+        let workspace = temp_workspace("shell-file-effect-read-only");
+        run_git(&workspace, &["init", "--quiet"]);
+        std::fs::write(workspace.join("tracked.txt"), "hello\n").expect("write tracked");
+        run_git(&workspace, &["add", "tracked.txt"]);
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "cat tracked.txt"}),
+                emitter.clone(),
+                Some("block-shell-read"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("hello"),
+            "expected shell read output, got: {result}"
+        );
+        let events = emitter.drain();
+        assert!(
+            post_shell_delta_events(&events).is_empty(),
+            "read-only shell command must not emit post-shell deltas: {events:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn shell_file_effect_failed_command_emits_no_success_delta() {
+        let workspace = temp_workspace("shell-file-effect-failed");
+        run_git(&workspace, &["init", "--quiet"]);
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "printf 'hello' > shell.txt; exit 7"}),
+                emitter.clone(),
+                Some("block-shell-failed"),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.contains("Exit code: 7"),
+            "expected shell failure exit code, got: {result}"
+        );
+        let events = emitter.drain();
+        assert!(
+            post_shell_delta_events(&events).is_empty(),
+            "failed shell command must not emit success post-shell deltas: {events:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn shell_file_effect_non_git_workspace_emits_unknown_boundary() {
+        let workspace = temp_workspace("shell-file-effect-non-git");
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "printf 'hello' > shell.txt"}),
+                emitter.clone(),
+                Some("block-shell-non-git"),
+                None,
+            )
+            .await;
+
+        assert!(
+            !result.starts_with("Error:"),
+            "expected shell command to run, got: {result}"
+        );
+        let events = emitter.drain();
+        assert_post_shell_delta_event(
+            &events,
+            "block-shell-non-git",
+            "[non_git_workspace]",
+            "unknown_boundary",
+        );
+        assert!(
+            post_shell_delta_events(&events).len() == 1,
+            "non-git workspaces must emit one boundary fact, not enumerate files: {events:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn shell_file_effect_snapshot_falls_back_when_required_git_command_fails() {
+        let workspace = temp_workspace("shell-file-effect-git-failure");
+        run_git(&workspace, &["init", "--quiet"]);
+        let git_index = workspace.join(".git").join("index");
+        if git_index.is_file() {
+            std::fs::remove_file(&git_index).expect("remove git index file");
+        }
+        std::fs::create_dir(&git_index).expect("corrupt git index");
+
+        let snapshot = ShellFileEffectSnapshot::capture(&workspace).await;
+
+        assert_eq!(
+            snapshot,
+            ShellFileEffectSnapshot::UnknownBoundary {
+                path: "[git_snapshot_unavailable]".to_string(),
+            }
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn shell_file_effect_unavailable_before_snapshot_wins_over_later_git_success() {
+        let before = ShellFileEffectSnapshot::UnknownBoundary {
+            path: "[git_snapshot_unavailable]".to_string(),
+        };
+        let after = ShellFileEffectSnapshot::Git {
+            root: "/tmp/forge".to_string(),
+            paths: BTreeMap::new(),
+        };
+
+        let delta = before.delta(after);
+
+        assert!(matches!(
+            delta,
+            ShellFileEffectDelta::UnknownBoundary { path }
+                if path == "[git_snapshot_unavailable]"
+        ));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn git_snapshot_command_times_out_as_unavailable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let workspace = temp_workspace("shell-file-effect-git-timeout");
+        let fake_git = workspace.join("slow-git");
+        std::fs::write(&fake_git, "#!/bin/sh\nexec sleep 5\n").expect("write fake git");
+        let mut permissions = std::fs::metadata(&fake_git)
+            .expect("fake git metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, permissions).expect("chmod fake git");
+
+        let started = std::time::Instant::now();
+        let output = git_output_z_with_timeout(
+            fake_git.as_os_str(),
+            &workspace,
+            &["status", "--porcelain=v1", "-z"],
+            std::time::Duration::from_millis(50),
+        )
+        .await;
+
+        assert_eq!(output, GitSnapshotCommandOutput::Unavailable);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "git snapshot timeout did not bound the command promptly"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn shell_file_effect_delta_carries_shell_block_id_only() {
+        let workspace = temp_workspace("shell-file-effect-block-id");
+        run_git(&workspace, &["init", "--quiet"]);
+        let pending = Arc::new(RwLock::new(HashMap::new()));
+        let executor = ToolExecutor::new(workspace.clone(), pending);
+        let emitter = Arc::new(CollectingEventEmitter::new());
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "printf 'hello' > shell.txt"}),
+                emitter.clone(),
+                Some("block-shell-owner"),
+                None,
+            )
+            .await;
+
+        assert!(
+            !result.starts_with("Error:"),
+            "expected shell command to run, got: {result}"
+        );
+        let events = emitter.drain();
+        let deltas = post_shell_delta_events(&events);
+        assert!(
+            !deltas.is_empty(),
+            "expected at least one post-shell delta event: {events:?}"
+        );
+        assert!(
+            deltas.iter().all(|event| matches!(
+                event,
+                StreamEvent::FileIo {
+                    block_id,
+                    ..
+                } if block_id == "block-shell-owner"
+            )),
+            "post-shell delta events must carry the shell block id only: {events:?}"
+        );
+        assert!(
+            deltas.iter().all(|event| !matches!(
+                event,
+                StreamEvent::FileIo {
+                    block_id,
+                    ..
+                } if block_id == "other-block"
+            )),
+            "post-shell delta must not attach to another block: {events:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&workspace);
     }

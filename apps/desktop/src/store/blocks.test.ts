@@ -533,6 +533,60 @@ describe("file_io transcript projection", () => {
 
     assert.deepStrictEqual(blocks, []);
   });
+
+  it("attaches post-shell delta metadata to the matching shell block", () => {
+    let blocks = applyTranscriptEventToBlocks([], {
+      event_type: "shell_start",
+      session_id: "s1",
+      block_id: "shell-1",
+      command: "printf 'hello' > shell.txt",
+    });
+
+    blocks = applyTranscriptEventToBlocks(blocks, {
+      event_type: "file_io",
+      session_id: "s1",
+      block_id: "shell-1",
+      path: "shell.txt",
+      operation: "created",
+      source: "post_shell_delta",
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "shell");
+    assert.deepStrictEqual(blocks[0].metadata.file_io_events, [
+      {
+        path: "shell.txt",
+        operation: "created",
+        source: "post_shell_delta",
+      },
+    ]);
+  });
+
+  it("does not attach a post-shell delta to a mismatched shell block id", () => {
+    const blocks = applyTranscriptEventToBlocks([
+      {
+        block_id: "shell-1",
+        event_type: "shell",
+        content: "",
+        isComplete: true,
+        metadata: {
+          command: "printf 'hello' > shell.txt",
+          exit_code: 0,
+        },
+      },
+    ], {
+      event_type: "file_io",
+      session_id: "s1",
+      block_id: "shell-2",
+      path: "shell.txt",
+      operation: "created",
+      source: "post_shell_delta",
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].block_id, "shell-1");
+    assert.equal(blocks[0].metadata.file_io_events, undefined);
+  });
 });
 
 describe("subagent runtime projections", () => {

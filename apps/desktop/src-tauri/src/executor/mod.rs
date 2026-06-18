@@ -10,7 +10,7 @@ mod shell_test;
 pub use files::FileExecutor;
 pub use shell::ShellExecutor;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
@@ -28,6 +28,12 @@ const GIT_DIFF_TEXT_LIMIT: usize = 120_000;
 const SHELL_CAPTURE_LIMIT: usize = 120_000;
 const SHELL_STREAM_LIMIT: usize = 120_000;
 const WEB_BODY_LIMIT: usize = 1_500_000;
+const POST_SHELL_DELTA_SOURCE: &str = "post_shell_delta";
+const POST_SHELL_DELTA_LIMIT: usize = 200;
+const GIT_SNAPSHOT_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+const NON_GIT_WORKSPACE_SENTINEL: &str = "[non_git_workspace]";
+const GIT_SNAPSHOT_UNAVAILABLE_SENTINEL: &str = "[git_snapshot_unavailable]";
+const GIT_BOUNDARY_CHANGED_SENTINEL: &str = "[git_boundary_changed]";
 
 /// Unified executor that handles AI tool calls.
 pub struct ToolExecutor {
@@ -259,6 +265,8 @@ impl ToolExecutor {
                     );
                     format!("Error: {}", reason)
                 } else {
+                    let before_shell =
+                        ShellFileEffectSnapshot::capture(self.file.working_dir()).await;
                     // Emit ShellStart before execution so the frontend creates the block immediately
                     emitter.emit(StreamEvent::ShellStart {
                         session_id: session_id.to_string(),
@@ -361,6 +369,17 @@ impl ToolExecutor {
                                 block_id: block_id.clone(),
                                 exit_code,
                             });
+                            if exit_code == 0 {
+                                let after_shell =
+                                    ShellFileEffectSnapshot::capture(self.file.working_dir()).await;
+                                emit_post_shell_file_effects(
+                                    emitter.as_ref(),
+                                    session_id,
+                                    &block_id,
+                                    before_shell,
+                                    after_shell,
+                                );
+                            }
                             let stdout = stdout_captured.lock().unwrap().clone();
                             let stderr = stderr_captured.lock().unwrap().clone();
                             let trunc = |s: &str, max: usize| {
@@ -629,6 +648,235 @@ fn emit_file_io(
         operation: operation.to_string(),
         source: Some("executor".to_string()),
     });
+}
+
+fn emit_post_shell_file_effects(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    block_id: &str,
+    before: ShellFileEffectSnapshot,
+    after: ShellFileEffectSnapshot,
+) {
+    match before.delta(after) {
+        ShellFileEffectDelta::Paths(paths) => {
+            for (path, operation) in paths.into_iter().take(POST_SHELL_DELTA_LIMIT) {
+                emitter.emit(StreamEvent::FileIo {
+                    session_id: session_id.to_string(),
+                    block_id: block_id.to_string(),
+                    path,
+                    operation,
+                    source: Some(POST_SHELL_DELTA_SOURCE.to_string()),
+                });
+            }
+        }
+        ShellFileEffectDelta::UnknownBoundary { path } => {
+            emitter.emit(StreamEvent::FileIo {
+                session_id: session_id.to_string(),
+                block_id: block_id.to_string(),
+                path,
+                operation: "unknown_boundary".to_string(),
+                source: Some(POST_SHELL_DELTA_SOURCE.to_string()),
+            });
+        }
+        ShellFileEffectDelta::None => {}
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellFileEffectSnapshot {
+    Git {
+        root: String,
+        paths: BTreeMap<String, String>,
+    },
+    UnknownBoundary {
+        path: String,
+    },
+}
+
+impl ShellFileEffectSnapshot {
+    async fn capture(working_dir: &std::path::Path) -> Self {
+        let root = match git_output_z(working_dir, &["rev-parse", "--show-toplevel"]).await {
+            GitSnapshotCommandOutput::Success(output) => {
+                String::from_utf8_lossy(&output).trim().to_string()
+            }
+            GitSnapshotCommandOutput::NonZero => {
+                return Self::UnknownBoundary {
+                    path: NON_GIT_WORKSPACE_SENTINEL.to_string(),
+                };
+            }
+            GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+        if root.is_empty() {
+            return Self::UnknownBoundary {
+                path: NON_GIT_WORKSPACE_SENTINEL.to_string(),
+            };
+        }
+
+        let status = match git_output_z(working_dir, &["status", "--porcelain=v1", "-z"]).await {
+            GitSnapshotCommandOutput::Success(output) => output,
+            GitSnapshotCommandOutput::NonZero | GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+        let diff = match git_output_z(working_dir, &["diff", "--name-only", "-z"]).await {
+            GitSnapshotCommandOutput::Success(output) => output,
+            GitSnapshotCommandOutput::NonZero | GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+        let others = match git_output_z(
+            working_dir,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        )
+        .await
+        {
+            GitSnapshotCommandOutput::Success(output) => output,
+            GitSnapshotCommandOutput::NonZero | GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+
+        let mut paths = BTreeMap::new();
+        merge_status_paths(&mut paths, &status);
+        merge_z_paths(&mut paths, &diff, "modified");
+        merge_z_paths(&mut paths, &others, "created");
+        Self::Git { root, paths }
+    }
+
+    fn delta(self, after: Self) -> ShellFileEffectDelta {
+        match (self, after) {
+            (Self::UnknownBoundary { path }, _) if path == GIT_SNAPSHOT_UNAVAILABLE_SENTINEL => {
+                ShellFileEffectDelta::UnknownBoundary { path }
+            }
+            (_, Self::UnknownBoundary { path }) if path == GIT_SNAPSHOT_UNAVAILABLE_SENTINEL => {
+                ShellFileEffectDelta::UnknownBoundary { path }
+            }
+            (
+                Self::Git {
+                    root: before_root,
+                    paths: before_paths,
+                },
+                Self::Git {
+                    root: after_root,
+                    paths: after_paths,
+                },
+            ) if before_root == after_root => {
+                let paths = after_paths
+                    .into_iter()
+                    .filter(|(path, _operation)| !before_paths.contains_key(path))
+                    .collect::<BTreeMap<_, _>>();
+                if paths.is_empty() {
+                    ShellFileEffectDelta::None
+                } else {
+                    ShellFileEffectDelta::Paths(paths)
+                }
+            }
+            (_, Self::UnknownBoundary { path }) => ShellFileEffectDelta::UnknownBoundary { path },
+            (_, Self::Git { .. }) => ShellFileEffectDelta::UnknownBoundary {
+                path: GIT_BOUNDARY_CHANGED_SENTINEL.to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitSnapshotCommandOutput {
+    Success(Vec<u8>),
+    NonZero,
+    Unavailable,
+}
+
+enum ShellFileEffectDelta {
+    Paths(BTreeMap<String, String>),
+    UnknownBoundary { path: String },
+    None,
+}
+
+async fn git_output_z(working_dir: &std::path::Path, args: &[&str]) -> GitSnapshotCommandOutput {
+    git_output_z_with_timeout(
+        std::ffi::OsStr::new("git"),
+        working_dir,
+        args,
+        GIT_SNAPSHOT_COMMAND_TIMEOUT,
+    )
+    .await
+}
+
+async fn git_output_z_with_timeout(
+    program: &std::ffi::OsStr,
+    working_dir: &std::path::Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> GitSnapshotCommandOutput {
+    let output = match tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(program)
+            .args(args)
+            .current_dir(working_dir)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(_)) | Err(_) => return GitSnapshotCommandOutput::Unavailable,
+    };
+
+    if output.status.success() {
+        GitSnapshotCommandOutput::Success(output.stdout)
+    } else {
+        GitSnapshotCommandOutput::NonZero
+    }
+}
+
+fn merge_z_paths(paths: &mut BTreeMap<String, String>, output: &[u8], operation: &str) {
+    for path in split_nul(output) {
+        if !path.is_empty() {
+            paths.entry(path).or_insert_with(|| operation.to_string());
+        }
+    }
+}
+
+fn merge_status_paths(paths: &mut BTreeMap<String, String>, output: &[u8]) {
+    let entries = split_nul(output);
+    let mut index = 0;
+    while index < entries.len() {
+        let entry = &entries[index];
+        if entry.len() < 4 {
+            index += 1;
+            continue;
+        }
+        let status = &entry[..2];
+        let path = entry[3..].to_string();
+        let operation = if status == "??" || status.contains('A') {
+            "created"
+        } else {
+            "modified"
+        };
+        paths.entry(path).or_insert_with(|| operation.to_string());
+        if status.starts_with('R') || status.starts_with('C') {
+            index += 1;
+        }
+        index += 1;
+    }
+}
+
+fn split_nul(output: &[u8]) -> Vec<String> {
+    output
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).to_string())
+        .collect()
 }
 
 fn is_successful_file_io_result(result: &str) -> bool {

@@ -372,6 +372,8 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 
 **Goal:** Add bounded post-shell file-effect evidence after `run_shell` completes, while keeping the current no-claim boundary for shell-internal tracing.
 
+**Status (2026-06-18): Implemented.** Forge now records bounded post-shell file-effect evidence for shell commands after `run_shell` completes. The runtime captures git-aware before/after workspace deltas for shell execution, emits those observations as `source: "post_shell_delta"` facts attached to the originating shell block, and preserves the existing no-claim boundary that shell writes are not live shell-internal `file_io` traces. Git snapshot commands are time-bounded; if the snapshot is unavailable or times out, Forge records an `unknown_boundary` sentinel (`[git_snapshot_unavailable]`) instead of blocking or overclaiming exact paths. Non-git workspaces keep an explicit unknown-boundary behavior instead of attempting full workspace enumeration.
+
 **Files:**
 - Modify: `apps/desktop/src-tauri/src/executor/mod.rs`
 - Modify: `apps/desktop/src-tauri/src/executor/shell.rs`
@@ -384,45 +386,10 @@ gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/s
 - Modify: `scripts/acceptance.sh`
 - Modify: `scripts/acceptance.test.mjs`
 
-**GitNexus impact requirements:**
+**Implemented summary:**
 
-```text
-gitnexus_impact(repo: "forge", target: "ToolExecutor", file_path: "apps/desktop/src-tauri/src/executor/mod.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "execute_with_emitter", file_path: "apps/desktop/src-tauri/src/executor/mod.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "execute_streaming", file_path: "apps/desktop/src-tauri/src/executor/shell.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "StreamEvent", file_path: "apps/desktop/src-tauri/src/protocol/events.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "applyTranscriptEventToBlocks", file_path: "apps/desktop/src/store/blocks.ts", direction: "upstream", summaryOnly: true)
-```
-
-**Implementation steps:**
-
-- [ ] **Step 3.1: Preserve the existing shell-internal no-claim test**
-
-  The existing `executor_file_io_stream_run_shell_file_writes_emit_no_file_io` test proves `run_shell` does not emit direct live `file_io` facts. Replace it only with a stricter pair:
-
-  - shell writes do not emit `source: "shell_internal"` or `source: "executor"` direct file IO,
-  - shell writes may emit a separate `source: "post_shell_delta"` fact after the command finishes.
-
-- [ ] **Step 3.2: Write failing post-shell delta tests**
-
-  Add tests in `executor_test.rs` proving:
-
-  - `printf 'hello' > shell.txt` emits a post-shell delta fact for `shell.txt` after shell completion,
-  - a read-only shell command emits no post-shell delta facts,
-  - failed shell commands emit no success delta facts unless an explicit failed-delta record is added with `success: false`,
-  - the event carries the shell block id and cannot be attached to another block.
-
-  Run:
-
-  ```bash
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib
-  ```
-
-  Expected first result: FAIL because no post-shell delta capture exists.
-
-- [ ] **Step 3.3: Implement bounded delta capture**
-
-  Capture a before/after worktree snapshot around `run_shell` using git-aware commands when inside a git worktree:
+- Preserved the shell-internal no-claim test boundary: shell writes do not emit live `source: "shell_internal"` or executor direct file IO facts.
+- Added post-shell delta capture around shell execution using git-aware workspace evidence where available:
 
   ```bash
   git status --porcelain=v1 -z
@@ -430,30 +397,20 @@ gitnexus_impact(repo: "forge", target: "applyTranscriptEventToBlocks", file_path
   git ls-files --others --exclude-standard -z
   ```
 
-  For non-git workspaces, record a single unknown-boundary fact rather than scanning the whole tree. The event source must be `post_shell_delta`, and docs/UI must describe it as post-shell evidence, not shell-internal tracing.
+- Time-bounded the git snapshot commands so unavailable or timed-out snapshots emit an `unknown_boundary` sentinel (`[git_snapshot_unavailable]`) instead of blocking the loop or claiming exact changed paths.
+- Attached `source: "post_shell_delta"` facts to the matching shell block metadata in the frontend projection without creating standalone transcript blocks.
+- Added acceptance coverage for the post-shell file-effect evidence smoke path and kept the dry-run script aligned with the advertised checks.
 
-- [ ] **Step 3.4: Attach post-shell delta facts to shell blocks**
+**Evidence/tests:**
 
-  Update the TypeScript protocol and block projection so post-shell delta facts attach to the matching shell block metadata. Do not create standalone transcript blocks.
-
-- [ ] **Step 3.5: Add acceptance coverage**
-
-  Add an acceptance label such as `post-shell file effect evidence smoke` to `scripts/acceptance.sh` and assert it in `scripts/acceptance.test.mjs`.
-
-- [ ] **Step 3.6: Run focused verification**
-
-  Run:
-
-  ```bash
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib
-  node --test apps/desktop/src/store/blocks.test.ts
-  node scripts/acceptance.test.mjs
-  scripts/acceptance.sh --dry-run
-  git diff --check
-  ```
-
-  Expected: all pass.
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml process_runner --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib
+node --test apps/desktop/src/store/blocks.test.ts
+node scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+```
 
 **Acceptance command:** `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib`
 
@@ -464,6 +421,8 @@ gitnexus_impact(repo: "forge", target: "applyTranscriptEventToBlocks", file_path
 - No shell-internal tracing.
 - No per-process syscall/file descriptor tracing.
 - No guarantee that non-git workspace effects are fully enumerated.
+- No full non-git workspace enumeration.
+- No gateway autonomous resume.
 - No auto commit/merge/push.
 
 ---

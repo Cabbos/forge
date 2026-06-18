@@ -35,6 +35,8 @@ test("acceptance script dry-run lists the final product gates", () => {
   assert.match(output, /agent::a2a::child --lib/);
   assert.match(output, /executor file IO stream smoke/);
   assert.match(output, /executor_file_io_stream --lib/);
+  assert.match(output, /post-shell file effect evidence smoke/);
+  assert.match(output, /shell_file_effect --lib/);
   assert.match(output, /completion contract mocked desktop smoke/);
   assert.match(output, /desktop Phase 7 .*A2A worker lifecycle smoke/);
   assert.match(output, /resume\.spec\.ts/);

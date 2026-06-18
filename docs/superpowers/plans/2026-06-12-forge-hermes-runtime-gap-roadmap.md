@@ -304,6 +304,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 - [ ] 4.4 Implement file IO stream: files read/written by a worker.
   - **Phase 4-B partial (2026-06-12):** Diff-derived changed-file summary is visible — the workbench now parses existing `DiffSummary` artifacts in `AgentA2ABus.projection()` to extract changed file paths (first 8 unique, deduped from git diff text). `changed_file_count`, `changed_files`, and `diff_available` fields are projected to the frontend. The `WorktreeReviewPanel` renders file path chips and counts. The `deriveWorkbenchSummary` helper computes `tasksWithDiff` and visible/projected `changedFiles` counts; full totals remain on each task via `changed_file_count`. At Phase 4-B time there were no live executor events and no new `StreamEvent` variants.
   - **Phase 4-K executor file-IO follow-up (2026-06-18):** Direct `ToolExecutor` file-ish tools now emit live `file_io` stream facts after successful `read`, `write`, `edit`, `git diff`, `list`, glob/search-files, and grep/search-content operations. The facts carry `session_id`, `block_id`, `path`, `operation`, and `source: "executor"`, and the frontend stores them as metadata on matching existing tool/shell blocks. This still does not trace shell-internal file effects from `run_shell` or infer provider token/cost data.
+  - **Phase 4-M post-shell delta follow-up (2026-06-18):** `run_shell` now records bounded post-shell worktree delta evidence after successful shell completion. Git worktrees are compared with `git status --porcelain=v1 -z`, `git diff --name-only -z`, and `git ls-files --others --exclude-standard -z`; changed/untracked paths are emitted as `file_io` facts with `source: "post_shell_delta"` on the shell block after `shell_end`. Non-git workspaces emit a single `unknown_boundary` fact instead of enumerating files. This is post-shell evidence only, not shell-internal tracing, syscall/file-descriptor tracing, or full non-git workspace scanning.
   - Files: `agent/a2a/projection.rs`, `agent/a2a/bus.rs`, `lib/protocol.ts`, `lib/workbenchSummary.ts`, `components/messages/AgentA2ATimeline.tsx`, `styles/process.css`.
 - [x] 4.5 Implement cost stream: tokens in/out, tool call count, model, estimated cost.
   - **Phase 4-L provider usage telemetry follow-up (2026-06-18):** Added additive `provider_usage` stream events for active Anthropic and OpenAI-compatible model calls, with nullable input/output tokens, nullable estimated cost micros, model, adapter source, and reason (`provider_reported`, `provider_omitted`, `pricing_unknown`). Legacy numeric `usage` remains compatible and only emits when token usage and known pricing are both available. `UsageEvent` and `UsageCaptureEmitter` now carry source/reason metadata into `LoopUsageLedger`, and task-aware subagents emit live `usage_recorded` runtime facts from those records. Unknown provider usage and unknown pricing render as explicit `unknown` facts, not zero or default pricing. This is not billing-grade usage accounting, exact cost when usage/pricing is unknown, or autonomous gateway ownership.
@@ -337,9 +338,9 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 | 4.1 Parent/child lineage projection | 🟨 Partial | `parent_task_id` field visible and bus/supervisor parent-aware assignment populates child pointers when given a real A2A parent; projection derives ordered `child_task_ids`; automatic delegate parent selection, persisted parent-side child arrays, and parent-session structs deferred |
 | 4.2 New StreamEvent variants | ⏸️ Deferred | Enriched existing `agent_a2a_updated` path instead |
 | 4.3 Status stream | ✅ Done | Timing, progress, resume_note on existing projection |
-| 4.4 File IO stream | 🟨 Partial | Phase 4-B diff summaries, Phase 4-J A2A child file-ish facts, and Phase 4-K direct ToolExecutor `file_io` stream facts are implemented; shell-internal effects and deeper provider/runtime accounting remain deferred |
+| 4.4 File IO stream | 🟨 Partial | Phase 4-B diff summaries, Phase 4-J A2A child file-ish facts, Phase 4-K direct ToolExecutor `file_io` facts, and Phase 4-M bounded post-shell delta facts are implemented; true shell-internal tracing and deeper provider/runtime accounting remain deferred |
 | 4.5 Cost/token stream | ⏸️ Deferred | Requires adapter trait changes |
-| 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; direct file-ish `file_io` facts now attach to transcript blocks, while dedicated cost UI and shell-internal/deeper IO tracing remain deferred |
+| 4.6 Workbench view | 🟨 Partial | Enhanced existing components plus file-centric summary; direct file-ish and post-shell delta `file_io` facts now attach to transcript blocks, while dedicated cost UI and true shell-internal/deeper IO tracing remain deferred |
 | 4.7 Failure reasons | ✅ Done | failure_kind + retryable badge + localized labels |
 | 4.8 Lineage persistence | 🟨 Partial | Existing bus/session snapshot preserves populated child pointers; projection derives parent-side child ids from those pointers; legacy records without `parent_task_id` still deserialize; full parent-session lineage and persisted parent-side child arrays deferred |
 | 4.9 Tests | 🟨 Partial | Rust + node/helper + Playwright file-view, lineage, mocked lifecycle product smoke, and real `run_worktree_worker` harness coverage; provider cost tests and Tauri/WebDriver live UI harness deferred |
@@ -350,7 +351,7 @@ What Phase 0 intentionally did **not** build — the remaining Phase 1 gaps:
 
 | Item | Status | Notes |
 |------|--------|-------|
-| 4.4 File IO stream | 🟨 Partial | Diff-derived changed-file summary plus Phase 4-K direct ToolExecutor file-ish `file_io` stream facts; shell-internal file effects remain untraced |
+| 4.4 File IO stream | 🟨 Partial | Diff-derived changed-file summary plus Phase 4-K direct ToolExecutor file-ish `file_io` facts and Phase 4-M bounded post-shell delta evidence; shell-internal file effects remain untraced |
 | 4.6 Workbench view (diff chips) | ✅ Done | File path chips, changed_file_count, test_report_excerpt in WorktreeReviewPanel |
 | 4.9 Tests (diff extraction) | ✅ Done | Rust tests for diff parsing, test report excerpt, projection fields; node tests for summary |
 | diff_available (metadata) | ✅ Done | Extracted from Worktree metadata artifact, projected to frontend |
@@ -472,7 +473,7 @@ scripts/acceptance.sh --dry-run
 ```
 
 **Known deferred items (Phase 4):**
-- Shell-internal file-effect tracing from `run_shell` and deeper executor instrumentation beyond direct ToolExecutor file-ish `file_io` facts
+- Shell-internal file-effect tracing from `run_shell` and deeper executor instrumentation beyond direct ToolExecutor file-ish `file_io` facts and bounded post-shell delta evidence
 - Token/cost per-task streaming — requires adapter trait changes
 - New `StreamEvent` variants for subagent-specific events
 - Parent-session structs and persisted parent-side child-id arrays — current durable contract stores the child-to-parent pointer only; Phase 4-G derives projection-only `child_task_ids`
@@ -482,7 +483,7 @@ scripts/acceptance.sh --dry-run
 
 **Acceptance gate:**
 
-- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; Phase 4-J adds A2A child file-ish facts; Phase 4-K adds direct ToolExecutor file-ish `file_io` stream facts; Phase 4-L adds active Anthropic/OpenAI-compatible provider usage known/unknown facts; shell-internal IO effects, billing-grade accounting, and exact cost for unknown usage/pricing remain deferred)**
+- A subagent run shows live status, file IO, and cost in the workbench. **(Phase 4-H: mocked product smoke covers worker lifecycle status/progress/resume/failure/retry/cancel visibility; Phase 4-I gates real Rust `run_worktree_worker` success and already-in-use human-review harness paths; Phase 4-B shows diff-derived file visibility; Phase 4-J adds A2A child file-ish facts; Phase 4-K adds direct ToolExecutor file-ish `file_io` stream facts; Phase 4-L adds active Anthropic/OpenAI-compatible provider usage known/unknown facts; Phase 4-M adds bounded post-shell delta evidence; shell-internal IO tracing, billing-grade accounting, and exact cost for unknown usage/pricing remain deferred)**
 - Parent-child relationship is visible and survives restart. **(Phase 4-G: child projections expose `parent_task_id`; parent projections derive ordered `child_task_ids` from persisted child pointers; normal delegate auto-parent selection, parent-session structs, and persisted parent-side child arrays deferred)**
 - Each failure type has a distinct message and recovery hint. **(Phase 4-A: failure_kind + retryable + resume_note)**
 
@@ -796,12 +797,15 @@ agent work:
 - Subagent runtime projection smoke and mocked desktop completion-contract smoke.
 - A2A child runtime live file-ish tool facts for delegated read-only,
   patch-proposal, and worktree-worker children.
+- Bounded post-shell worktree delta facts for successful `run_shell` commands.
 
 This does not claim automatic gateway continuation after a crash, default
-headless `AgentSession` ownership, shell-internal file effect tracing, precise
+headless `AgentSession` ownership, shell-internal file effect tracing,
+syscall/file-descriptor tracing, full non-git workspace enumeration, precise
 cost when usage is unknown, or automatic commits. Direct ToolExecutor file-ish
-live IO stream facts are now covered by Phase 4-K; the remaining gaps stay
-future runtime hardening work.
+live IO stream facts are covered by Phase 4-K, and bounded post-shell delta
+evidence is covered by Phase 4-M; the remaining gaps stay future runtime
+hardening work.
 
 **Verification plan:**
 
@@ -956,7 +960,7 @@ Codex must stop and ask the user if any of the following occur:
 
 **Deferred for future:**
 - True Tauri force-quit/reopen smoke harness (needs WebDriver / `tauri-driver` investment)
-- Shell-internal file effect tracing for `run_shell`
+- Shell-internal file effect tracing for `run_shell`; Phase 4-M only adds bounded post-shell delta evidence
 - Token/cost telemetry stream (requires adapter-level usage hooks)
 - Memory embeddings and single-store migration for `WikiMemoryStore` + user-managed facts
 - Extension inventory once a real extension source exists
@@ -978,10 +982,38 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml file_io_event_seria
 node --test apps/desktop/src/store/blocks.test.ts
 ```
 
-Still not claimed: Shell-internal file effects from `run_shell`, billing-grade
-usage accounting or exact cost when provider usage/pricing is unknown, gateway
-autonomous resume, automatic parent selection, parent-session structs, auto
-commit/merge/push, and the Tauri/WebDriver force-quit harness.
+Still not claimed: Shell-internal tracing from `run_shell`,
+syscall/file-descriptor tracing, full non-git workspace enumeration,
+billing-grade usage accounting or exact cost when provider usage/pricing is
+unknown, gateway autonomous resume, automatic parent selection, parent-session
+structs, auto commit/merge/push, and the Tauri/WebDriver force-quit harness.
+
+### 2026-06-18 Phase 4-M Post-Shell File Effect Evidence
+
+Forge now emits bounded post-shell file-effect evidence after successful
+`run_shell` commands. The executor snapshots git-reported worktree paths before
+and after the shell command using `git status --porcelain=v1 -z`,
+`git diff --name-only -z`, and `git ls-files --others --exclude-standard -z`.
+New changed/untracked paths are emitted as `StreamEvent::FileIo` / `file_io`
+facts with `source: "post_shell_delta"` and the shell block id, after
+`shell_end`. Failed shell commands do not emit success delta facts. Non-git
+workspaces emit one `unknown_boundary` fact instead of scanning the tree.
+
+Evidence:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib
+node --test apps/desktop/src/store/blocks.test.ts
+node scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+```
+
+Still not claimed: Shell-internal tracing, syscall/file-descriptor tracing,
+full non-git workspace enumeration, billing-grade usage accounting, exact cost
+when provider usage/pricing is unknown, gateway autonomous resume, automatic
+parent selection, parent-session structs, auto commit/merge/push, or the
+Tauri/WebDriver force-quit harness.
 
 ## Appendix — Likely Files/Modules by Domain
 
