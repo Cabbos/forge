@@ -460,6 +460,20 @@ Cases are dependency-free JSON files. A directory case uses `eval_cases/<case-id
 
 For coverage expectations and lane-specific commands, see `docs/case-matrix.md`.
 
+### Case Lanes
+
+The suite is organized into concise lanes:
+
+- Core edit: small, scoped coding changes with expected file assertions.
+- Continuity pipeline: task-summary, persistence, and SQLite-backed continuity checks.
+- Desktop runtime: proxy fixtures for Forge desktop runtime contracts without importing `apps/desktop`.
+- Failure recovery: validation failures, timeouts, and repair-loop behavior.
+- Agent loop: model-round, stop-reason, and tool-loop controls.
+- Red-team: adversarial prompt injection, secret leak, unsafe tool, and scope escape probes.
+- Promoted trace: production or real-run failures converted into regression candidates.
+
+Normal release checks should exclude red-team cases unless they are run through the explicit red-team lane. Promoted trace cases must preserve `metadata.source=trace` and should gain executable validation before they are trusted as regression gates.
+
 ```json
 {
   "schema_version": 1,

@@ -187,6 +187,8 @@ Case 可以在 `metadata.lifecycle` 中声明生命周期状态：
 - `quarantined`：已隔离，默认不应通过 release gate。
 - `retired`：保留历史，不再作为主要信号。
 
+When adding cases, update `docs/case-matrix.md` and run `uv run pytest tests/test_case_expansion_matrix.py -v`. Red-team cases must run with `--red-team-only`; promoted trace cases should run once with the mock provider to validate shape before they are used with the Forge provider.
+
 检查生命周期元数据：
 
 ```bash
