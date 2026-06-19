@@ -2365,6 +2365,33 @@ streaming, gateway autonomous resume, automatic parent selection,
 parent-session structs, auto commit/merge/push, or Tauri/WebDriver force-quit
 coverage.
 
+**2026-06-19 Task 7 acceptance/docs alignment pre-commit review evidence:**
+Task 6 is now recorded as code commit `33bee230 feat(runtime): harden review to
+commit eligibility` plus docs evidence commit `4ccdf702 docs(runtime): record
+task 6 evidence`. The acceptance dry-run matrix has been reshaped so the
+ownership evidence appears after the existing MVP/runtime gates and before
+desktop smoke: mocked desktop restart runtime smoke as partial macOS evidence,
+provider usage known/unknown telemetry, bounded post-shell file-effect evidence,
+persisted A2A lineage, typed completion evidence and review-to-commit
+eligibility, and gated headless ownership policy checks.
+
+Post-commit hash: to be filled by the final controller after the Task 7 commit.
+Verification captured during Task 7 implementation:
+
+```bash
+node scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+rg -n "auto commit|shell-internal|Phase 4-K|b959091b|review-to-commit|mocked desktop restart|provider usage|post-shell|persisted A2A lineage|headless" docs/superpowers/plans/2026-06-18-level-3-agent-loop-next-stage-runtime-ownership.md "/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Next Stage Runtime Ownership Plan.md"
+git diff --check
+```
+
+Not claimed: docs do not create runtime capability; acceptance labels do not
+prove capabilities unless the listed commands exist and pass; commit remains
+human-gated; shell-internal tracing is not claimed; unknown provider token/cost
+remains unknown when adapters omit usage; gateway autonomous resume requires
+explicit policy and human approval; Task 4A still records policy/approval intent
+without creating a real headless `AgentSession`.
+
 **2026-06-17 full signoff evidence:** A sandboxed `scripts/acceptance.sh` run
 first passed desktop and website builds, then stopped at `npm run test:eval`
 because the sandbox could not write `/Users/cabbos/.forge`. The controller reran

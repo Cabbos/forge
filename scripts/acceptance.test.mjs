@@ -6,6 +6,24 @@ import test from "node:test";
 
 const root = new URL("..", import.meta.url).pathname;
 const scriptPath = join(root, "scripts", "acceptance.sh");
+const a2aLineageCommand = [
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib",
+].join(" && ");
+
+function parseDryRunEntries(output) {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("[dry-run] "))
+    .map((line) => {
+      const match = line.match(/^\[dry-run\] ([^:]+): (.+)$/);
+      assert.ok(match, `dry-run line should include label and command: ${line}`);
+      return { label: match[1], command: match[2] };
+    });
+}
 
 test("acceptance script dry-run lists the final product gates", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
@@ -15,36 +33,134 @@ test("acceptance script dry-run lists the final product gates", () => {
     encoding: "utf8",
   });
 
-  assert.match(output, /npm run build:desktop/);
-  assert.match(output, /npm run build:website/);
-  assert.match(output, /npm run test:eval/);
-  assert.match(output, /loop event journal contract tests/);
-  assert.match(output, /projection rebuild\/replay tests/);
-  assert.match(output, /policy preflight tests/);
-  assert.match(output, /budget preflight tests/);
-  assert.match(output, /provider usage known\/unknown telemetry/);
-  assert.match(output, /cargo test --manifest-path apps\/desktop\/src-tauri\/Cargo\.toml usage --lib/);
-  assert.match(output, /cargo test --manifest-path apps\/desktop\/src-tauri\/Cargo\.toml unknown_pricing --lib/);
-  assert.match(output, /durable human gate tests/);
-  assert.match(output, /typed completion evidence tests/);
-  assert.match(output, /gateway loop runner status smoke/);
-  assert.match(output, /subagent runtime event projection smoke/);
-  assert.match(output, /live worktree worker lifecycle harness/);
-  assert.match(output, /agent::a2a::child::tests::run_worktree_worker --lib/);
-  assert.match(output, /A2A child runtime file IO bridge/);
-  assert.match(output, /agent::a2a::child --lib/);
-  assert.match(output, /executor file IO stream smoke/);
-  assert.match(output, /executor_file_io_stream --lib/);
-  assert.match(output, /post-shell file effect evidence smoke/);
-  assert.match(output, /shell_file_effect --lib/);
-  assert.match(output, /completion contract mocked desktop smoke/);
-  assert.match(output, /desktop Phase 7 .*A2A worker lifecycle smoke/);
-  assert.match(output, /resume\.spec\.ts/);
-  assert.match(output, /workbench\.spec\.ts/);
-  assert.match(output, /a2a-confirm-runtime\.spec\.ts/);
-  assert.match(output, /acceptance\.spec\.ts/);
-  assert.match(output, /messages\.spec\.ts/);
-  assert.match(output, /write_file tool details show\|diff cards show\|image diff cards show/);
-  assert.match(output, /mocked desktop restart runtime smoke/);
-  assert.match(output, /npm --prefix apps\/desktop run test:e2e -- e2e\/level3-runtime-restart\.spec\.ts/);
+  const dryRunEntries = parseDryRunEntries(output);
+  const expectedEntries = [
+    { label: "desktop production build", command: "npm run build:desktop" },
+    { label: "website production build", command: "npm run build:website" },
+    { label: "eval runner test suite", command: "npm run test:eval" },
+    {
+      label: "loop event journal contract tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib",
+    },
+    {
+      label: "projection rebuild/replay tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib",
+    },
+    {
+      label: "policy preflight tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::policy --lib",
+    },
+    {
+      label: "budget preflight tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib",
+    },
+    {
+      label: "durable human gate tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib",
+    },
+    {
+      label: "gateway loop runner status smoke",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib",
+    },
+    {
+      label: "subagent runtime event projection smoke",
+      command: "node --test apps/desktop/src/store/blocks.test.ts",
+    },
+    {
+      label: "live worktree worker lifecycle harness",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib",
+    },
+    {
+      label: "A2A child runtime file IO bridge",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib",
+    },
+    {
+      label: "executor file IO stream smoke",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib",
+    },
+    {
+      label: "completion contract desktop helper smoke",
+      command: "node --test apps/desktop/src/lib/loopRuntime.test.ts",
+    },
+    {
+      label: "completion contract mocked desktop smoke",
+      command: "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts",
+    },
+    {
+      label: "mocked desktop restart runtime smoke (partial macOS evidence)",
+      command: "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts",
+    },
+    {
+      label: "provider usage known/unknown telemetry",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
+    },
+    {
+      label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib",
+    },
+    {
+      label: "persisted A2A lineage tests",
+      command: a2aLineageCommand,
+    },
+    {
+      label: "typed completion evidence and review-to-commit eligibility tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib",
+    },
+    {
+      label: "gated headless ownership policy tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib",
+    },
+    {
+      label: "desktop Phase 7 and A2A worker lifecycle smoke specs",
+      command:
+        "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts",
+    },
+    {
+      label: "rich preview e2e smoke specs",
+      command:
+        'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "write_file tool details show|diff cards show|image diff cards show"',
+    },
+  ];
+
+  assert.deepEqual(dryRunEntries, expectedEntries);
+
+  const ownershipGateOrder = [
+    "completion contract mocked desktop smoke",
+    "mocked desktop restart runtime smoke (partial macOS evidence)",
+    "provider usage known/unknown telemetry",
+    "post-shell file-effect evidence smoke (bounded, not shell-internal)",
+    "persisted A2A lineage tests",
+    "typed completion evidence and review-to-commit eligibility tests",
+    "gated headless ownership policy tests",
+  ];
+  let previousIndex = -1;
+  for (const label of ownershipGateOrder) {
+    const index = output.indexOf(`[dry-run] ${label}:`);
+    assert.notEqual(index, -1, `expected dry-run label: ${label}`);
+    assert.ok(index > previousIndex, `expected ${label} after previous ownership gate`);
+    previousIndex = index;
+  }
+
+  assert.doesNotMatch(output, /\[dry-run\] typed completion evidence tests:/);
+  const ownershipEntries = dryRunEntries.filter(({ label }) => ownershipGateOrder.includes(label));
+  const ownershipCommands = ownershipEntries.map(({ command }) => command);
+  assert.equal(new Set(ownershipCommands).size, ownershipCommands.length, "ownership gate commands must be unique");
+
+  for (const command of ownershipCommands) {
+    assert.equal(
+      dryRunEntries.filter((entry) => entry.command === command).length,
+      1,
+      `ownership command should appear once in the matrix: ${command}`,
+    );
+  }
+
+  const ownershipSubcommands = ownershipCommands.flatMap((command) => command.split(/\s+&&\s+/));
+  assert.equal(
+    new Set(ownershipSubcommands).size,
+    ownershipSubcommands.length,
+    "ownership gate subcommands must be unique",
+  );
 });

@@ -13,6 +13,7 @@
 ## Current State And Evidence
 
 This plan starts after Phase 4-K was committed as `b959091b feat(runtime): stream executor file io events`.
+Task 6 is now represented by code commit `33bee230 feat(runtime): harden review to commit eligibility` and docs evidence commit `4ccdf702 docs(runtime): record task 6 evidence`.
 
 The committed Level 3 MVP evidence is:
 
@@ -577,7 +578,11 @@ gitnexus_impact(repo: "forge", target: "LoopPolicy", file_path: "apps/desktop/sr
 **Evidence/tests (fresh during implementation):**
 
 ```bash
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml parent --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml delegate_task_schema --lib
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a --lib
@@ -629,7 +634,11 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
   Run:
 
   ```bash
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml parent --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib
   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib
   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a --lib
   ```
@@ -700,7 +709,7 @@ gitnexus_impact(repo: "forge", target: "delegate_parent_task_id_from_input", fil
 
 **Goal:** Make completion, review, and commit eligibility auditable without letting the runtime commit, merge, or push.
 
-**Status (2026-06-18): Committed in `33bee230` (`feat(runtime): harden review to commit eligibility`).** Completion evaluation now emits explicit `review_status`, `commit_eligible`, `commit_blockers`, `human_gate_id`, and `last_review_decision` facts with serde defaults for older records. A satisfied build/test/docs contract can become `ready_for_review` when review is required; no-review contracts report `not_required` instead of inventing a human-review blocker. Missing or rejected human review keeps `commit_eligible` false when review is required and records the blocker/rejection reason. Commit evidence is only accepted as contract evidence when it references an approved human gate, and runtime policy keeps commit intent human-gated even if eligibility facts are true.
+**Status (2026-06-18): Committed in `33bee230` (`feat(runtime): harden review to commit eligibility`) with docs evidence captured in `4ccdf702` (`docs(runtime): record task 6 evidence`).** Completion evaluation now emits explicit `review_status`, `commit_eligible`, `commit_blockers`, `human_gate_id`, and `last_review_decision` facts with serde defaults for older records. A satisfied build/test/docs contract can become `ready_for_review` when review is required; no-review contracts report `not_required` instead of inventing a human-review blocker. Missing or rejected human review keeps `commit_eligible` false when review is required and records the blocker/rejection reason. Commit evidence is only accepted as contract evidence when it references an approved human gate, and runtime policy keeps commit intent human-gated even if eligibility facts are true.
 
 **Quality follow-up (2026-06-18):** `LoopEventJournal::new(path)` now shares a process-wide mutex per normalized path so separate journal instances serialize load/prepare/append on the same JSONL file. A2A review bridge idempotency keys and review evidence ids now use stable semantic keys based on loop task, gate, decision, and reason instead of timestamps, so exact retries coalesce. The loop-evidence bridge is explicit best-effort: if loop journal/projection writes fail after the A2A review state is saved, Forge logs a warning and still returns the A2A review state. Completion facts now require no remaining open gates for `commit_eligible`, and `commit_blockers` includes open-gate blockers plus required-commit blockers such as `missing_commit`, `commit_missing_human_gate`, and `commit_without_approved_human_gate:*`.
 
@@ -840,6 +849,27 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 
 **Goal:** Keep acceptance, repo docs, and the Obsidian narrative aligned with the new runtime ownership claims.
 
+**Pre-commit review evidence captured during Task 7 implementation (2026-06-19):** `scripts/acceptance.sh` dry-run now groups the ownership evidence after the existing MVP/runtime gates and before desktop smoke. The new/renamed gates are `mocked desktop restart runtime smoke (partial macOS evidence)`, `provider usage known/unknown telemetry`, `post-shell file-effect evidence smoke (bounded, not shell-internal)`, `persisted A2A lineage tests`, `typed completion evidence and review-to-commit eligibility tests`, and `gated headless ownership policy tests`.
+
+**What changed:** `scripts/acceptance.test.mjs` first failed against the old matrix, then was updated to parse dry-run output into ordered `[label, command]` entries and assert exact labels, commands, order, and ownership command uniqueness. The script now advertises concrete commands for each claim: restart mocked smoke, provider usage/unknown pricing, post-shell deltas, focused A2A parent lineage filters, completion/review-to-commit, and Task 4A headless approval policy.
+
+**Why it matters:** The dry-run is the interview/backing table for runtime ownership. It prevents docs from saying "owned" when the acceptance script only proves older MVP gates, and it keeps the headless claim limited to policy/approval evidence instead of real autonomous execution.
+
+**Post-commit hash:** to be filled by the final controller after the Task 7 commit.
+
+**Verification captured during Task 7 implementation:**
+
+```bash
+node scripts/acceptance.test.mjs
+scripts/acceptance.sh --dry-run
+rg -n "auto commit|shell-internal|Phase 4-K|b959091b|review-to-commit|mocked desktop restart|provider usage|post-shell|persisted A2A lineage|headless" docs/superpowers/plans/2026-06-18-level-3-agent-loop-next-stage-runtime-ownership.md "/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Next Stage Runtime Ownership Plan.md"
+git diff --check
+```
+
+**Not claimed:** Task 7 does not create runtime behavior; docs and labels do not prove a claim unless their commands exist and pass; commit remains human-gated; shell-internal tracing is not claimed; unknown provider token/cost remains unknown when adapters omit usage; gateway autonomous resume requires explicit policy and human approval; Task 4A still records approval intent and does not create a real headless `AgentSession`.
+
+**Interview-ready explanation:** Task 7 is the evidence alignment pass. Forge's runtime ownership claim now points to the exact acceptance gates that prove each bounded fact, while the narrative stays honest about the parts that are still human-controlled or future work.
+
 **Files:**
 - Modify: `scripts/acceptance.sh`
 - Modify: `scripts/acceptance.test.mjs`
@@ -871,7 +901,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
   - provider usage known/unknown telemetry,
   - post-shell file-effect evidence,
   - persisted A2A lineage,
-  - review-to-commit eligibility,
+  - typed completion evidence and review-to-commit eligibility,
   - gated headless ownership policy if Task 4 landed.
 
 - [ ] **Step 7.2: Add acceptance script contract tests**
@@ -913,7 +943,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
   Run:
 
   ```bash
-  rg -n "auto commit|shell-internal|Phase 4-K|b959091b" docs/superpowers/plans/2026-06-18-level-3-agent-loop-next-stage-runtime-ownership.md "/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Next Stage Runtime Ownership Plan.md"
+  rg -n "auto commit|shell-internal|Phase 4-K|b959091b|review-to-commit|mocked desktop restart|provider usage|post-shell|persisted A2A lineage|headless" docs/superpowers/plans/2026-06-18-level-3-agent-loop-next-stage-runtime-ownership.md "/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Level 3 Agent Loop Next Stage Runtime Ownership Plan.md"
   git diff --check
   ```
 
@@ -937,13 +967,14 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
 | --- | --- | --- |
 | Durable ledger/replay remains intact | Existing journal and projection tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib` and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib` |
 | Runner lease/waiting boundary remains intact | Runner/gateway tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib` |
-| Restart runtime ownership | Partial mocked desktop restart smoke on macOS; official Tauri/WebDriver force-quit/reopen is `BLOCKED_OFFICIAL_MACOS` and moves to future Windows/Linux platform-gated proof | `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` |
-| Known/unknown provider usage | Adapter and budget tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib` |
+| Mocked desktop restart runtime ownership | Partial mocked desktop restart smoke on macOS; official Tauri/WebDriver force-quit/reopen is `BLOCKED_OFFICIAL_MACOS` and moves to future Windows/Linux platform-gated proof | `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` |
+| Known/unknown provider usage | Adapter and budget tests, including provider omission and unknown pricing | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib` and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib` |
 | Direct ToolExecutor file IO | Existing Phase 4-K executor stream tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib` |
 | Post-shell delta evidence | Shell file-effect tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib` |
 | A2A child file-ish facts | Existing child runtime bridge tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib` |
-| A2A persisted lineage | A2A/session lineage tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a --lib` |
+| A2A persisted lineage | A2A/session lineage tests focused by parent/child state | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib` |
 | Completion/review/commit eligibility | Completion/gate tests and e2e smoke | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib` |
+| Gated headless ownership policy | Task 4A approval/status contract only; no real headless `AgentSession` execution | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib` |
 | Product visibility | Acceptance specs | `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts e2e/a2a-confirm-runtime.spec.ts` |
 | Full advertised suite | Acceptance script | `scripts/acceptance.sh` |
 
