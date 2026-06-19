@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::loop_runtime::headless::{derive_headless_resume_readiness, HeadlessResumeReadiness};
+use crate::loop_runtime::headless::{HeadlessResumeReadiness, derive_headless_resume_readiness};
 use crate::loop_runtime::types::{new_loop_event_id, now_millis};
 use crate::loop_runtime::{
-    evaluate_completion, BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun,
-    HeadlessOwnerRunState, HeadlessOwnerSnapshotSource, LoopActionIntent, LoopActor,
+    BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
+    HeadlessOwnerSnapshotSource, LOOP_RUNTIME_SCHEMA_VERSION, LoopActionIntent, LoopActor,
     LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection,
     LoopTaskProjectionStore, LoopTaskRecord, LoopTaskStatus, PolicyDecisionRecord,
-    LOOP_RUNTIME_SCHEMA_VERSION,
+    evaluate_completion,
 };
 
 pub const LOOP_RUNNER_POLL_INTERVAL_SECS: u64 = 5;
@@ -20,6 +20,8 @@ pub struct LoopTaskRunner {
     runner_id: String,
     owner_pid: u32,
     lease_timeout_ms: u64,
+    #[cfg(test)]
+    fake_executor_fixture: Option<FakeOwnerExecutorFixture>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -47,6 +49,8 @@ impl LoopTaskRunner {
             runner_id: DEFAULT_LOOP_RUNNER_ID.to_string(),
             owner_pid: std::process::id(),
             lease_timeout_ms: LOOP_TASK_LEASE_TIMEOUT_MS,
+            #[cfg(test)]
+            fake_executor_fixture: None,
         }
     }
 
@@ -320,6 +324,17 @@ impl LoopTaskRunner {
                 now_ms,
             );
             let owner_request = journal.append_idempotent(owner_request)?.event;
+            let owner_run = match &owner_request.event {
+                LoopRuntimeEvent::HeadlessOwnerRunRequested { owner_run, .. } => owner_run.clone(),
+                other => {
+                    return Err(format!(
+                        "owner run idempotency returned unexpected event for task {}: {}",
+                        task.id,
+                        other.kind()
+                    ));
+                }
+            };
+            let owner_state_created_at_ms = owner_request.created_at_ms;
             let owner_evidence_refs = headless_owner_evidence_refs(&owner_run);
             if !policy_record.allowed {
                 let reason = format!(
@@ -333,11 +348,8 @@ impl LoopTaskRunner {
                     Some(reason),
                     owner_evidence_refs,
                     Some(owner_request.event_id.clone()),
-                    Some(format!(
-                        "runner:{}:owner-dry-run-state:{}:{}:denied",
-                        self.runner_id, task.id, owner_run.owner_run_id
-                    )),
-                    now_ms,
+                    Some(self.headless_owner_state_idempotency_key(&task.id, &owner_run, "denied")),
+                    owner_state_created_at_ms,
                 );
                 journal.append_idempotent(denied)?.event.event_id
             } else if !budget_decision.allowed {
@@ -352,11 +364,8 @@ impl LoopTaskRunner {
                     Some(reason),
                     owner_evidence_refs,
                     Some(owner_request.event_id.clone()),
-                    Some(format!(
-                        "runner:{}:owner-dry-run-state:{}:{}:denied",
-                        self.runner_id, task.id, owner_run.owner_run_id
-                    )),
-                    now_ms,
+                    Some(self.headless_owner_state_idempotency_key(&task.id, &owner_run, "denied")),
+                    owner_state_created_at_ms,
                 );
                 journal.append_idempotent(denied)?.event.event_id
             } else {
@@ -367,27 +376,60 @@ impl LoopTaskRunner {
                     None,
                     owner_evidence_refs.clone(),
                     Some(owner_request.event_id.clone()),
-                    Some(format!(
-                        "runner:{}:owner-dry-run-state:{}:{}:lease-acquired",
-                        self.runner_id, task.id, owner_run.owner_run_id
+                    Some(self.headless_owner_state_idempotency_key(
+                        &task.id,
+                        &owner_run,
+                        "lease-acquired",
                     )),
-                    now_ms,
+                    owner_state_created_at_ms,
                 );
                 let acquired = journal.append_idempotent(acquired)?.event;
-                let waiting = self.headless_owner_state_envelope(
-                    task.id.clone(),
-                    &owner_run,
-                    HeadlessOwnerRunState::WaitingForInput,
-                    Some(coordinator_dry_run_waiting_reason(task)),
-                    owner_evidence_refs,
-                    Some(acquired.event_id),
-                    Some(format!(
-                        "runner:{}:owner-dry-run-state:{}:{}:waiting-for-input",
-                        self.runner_id, task.id, owner_run.owner_run_id
-                    )),
-                    now_ms,
-                );
-                journal.append_idempotent(waiting)?.event.event_id
+                #[cfg(test)]
+                if let Some(fixture) = self.fake_executor_fixture.as_ref() {
+                    self.record_fake_executor_outcome(
+                        journal,
+                        task,
+                        &owner_run,
+                        fixture,
+                        owner_evidence_refs,
+                        acquired.event_id,
+                        owner_state_created_at_ms,
+                    )?
+                } else {
+                    let waiting = self.headless_owner_state_envelope(
+                        task.id.clone(),
+                        &owner_run,
+                        HeadlessOwnerRunState::WaitingForInput,
+                        Some(coordinator_dry_run_waiting_reason(task)),
+                        owner_evidence_refs,
+                        Some(acquired.event_id),
+                        Some(self.headless_owner_state_idempotency_key(
+                            &task.id,
+                            &owner_run,
+                            "waiting-for-input",
+                        )),
+                        owner_state_created_at_ms,
+                    );
+                    journal.append_idempotent(waiting)?.event.event_id
+                }
+                #[cfg(not(test))]
+                {
+                    let waiting = self.headless_owner_state_envelope(
+                        task.id.clone(),
+                        &owner_run,
+                        HeadlessOwnerRunState::WaitingForInput,
+                        Some(coordinator_dry_run_waiting_reason(task)),
+                        owner_evidence_refs,
+                        Some(acquired.event_id),
+                        Some(self.headless_owner_state_idempotency_key(
+                            &task.id,
+                            &owner_run,
+                            "waiting-for-input",
+                        )),
+                        owner_state_created_at_ms,
+                    );
+                    journal.append_idempotent(waiting)?.event.event_id
+                }
             }
         } else {
             start_event_id
@@ -455,8 +497,10 @@ impl LoopTaskRunner {
             HeadlessOwnerSnapshotSource::Unavailable
         };
         let snapshot_ref = task.session_id.clone();
+        let executor_kind = self.headless_owner_executor_kind();
+        let executor_key = headless_owner_executor_key(executor_kind);
         let idempotency_key = format!(
-            "runner:{}:owner-dry-run:{}:{attempt}",
+            "runner:{}:owner-{executor_key}:{}:{attempt}",
             self.runner_id, task.id
         );
         let correlation_id = format!(
@@ -472,7 +516,7 @@ impl LoopTaskRunner {
         ];
 
         HeadlessOwnerRun {
-            owner_run_id: format!("owner-run:{}:{attempt}:dry-run", task.id),
+            owner_run_id: format!("owner-run:{}:{attempt}:{executor_key}", task.id),
             task_id: task.id.clone(),
             session_id: task.session_id.clone(),
             lease_id: lease.lease_id.clone(),
@@ -492,9 +536,76 @@ impl LoopTaskRunner {
             expires_at_ms: lease.expires_at_ms,
             cancellation_reason: None,
             waiting_reason: None,
-            executor_kind: HeadlessOwnerExecutorKind::DryRun,
+            executor_kind,
             evidence_refs,
         }
+    }
+
+    fn headless_owner_executor_kind(&self) -> HeadlessOwnerExecutorKind {
+        #[cfg(test)]
+        {
+            if self.fake_executor_fixture.is_some() {
+                return HeadlessOwnerExecutorKind::FakeExecutor;
+            }
+        }
+        HeadlessOwnerExecutorKind::DryRun
+    }
+
+    #[cfg(test)]
+    fn record_fake_executor_outcome(
+        &self,
+        journal: &LoopEventJournal,
+        task: &LoopTaskRecord,
+        owner_run: &HeadlessOwnerRun,
+        fixture: &FakeOwnerExecutorFixture,
+        owner_evidence_refs: Vec<String>,
+        lease_acquired_event_id: String,
+        now_ms: u64,
+    ) -> Result<String, String> {
+        let running = self.headless_owner_state_envelope(
+            task.id.clone(),
+            owner_run,
+            HeadlessOwnerRunState::FakeRunning,
+            None,
+            with_fake_evidence(owner_evidence_refs.clone(), "fake-executor:running"),
+            Some(lease_acquired_event_id),
+            Some(self.headless_owner_state_idempotency_key(&task.id, owner_run, "fake-running")),
+            now_ms,
+        );
+        let running = journal.append_idempotent(running)?.event;
+        let outcome = fixture.outcome_state();
+        let outcome_evidence = fixture.evidence_refs(owner_evidence_refs);
+        let outcome_event = self.headless_owner_state_envelope(
+            task.id.clone(),
+            owner_run,
+            outcome.state,
+            outcome.reason,
+            outcome_evidence,
+            Some(running.event_id),
+            Some(self.headless_owner_state_idempotency_key(
+                &task.id,
+                owner_run,
+                headless_owner_state_key(outcome.state),
+            )),
+            now_ms,
+        );
+        Ok(journal.append_idempotent(outcome_event)?.event.event_id)
+    }
+
+    fn headless_owner_state_idempotency_key(
+        &self,
+        task_id: &str,
+        owner_run: &HeadlessOwnerRun,
+        state_key: &str,
+    ) -> String {
+        format!(
+            "runner:{}:owner-{}-state:{}:{}:{}",
+            self.runner_id,
+            headless_owner_executor_key(owner_run.executor_kind),
+            task_id,
+            owner_run.owner_run_id,
+            state_key
+        )
     }
 
     fn headless_owner_state_envelope(
@@ -597,7 +708,14 @@ impl LoopTaskRunner {
             runner_id: runner_id.to_string(),
             owner_pid,
             lease_timeout_ms,
+            fake_executor_fixture: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_fake_executor_fixture(mut self, fixture: FakeOwnerExecutorFixture) -> Self {
+        self.fake_executor_fixture = Some(fixture);
+        self
     }
 
     #[cfg(test)]
@@ -694,6 +812,177 @@ fn headless_owner_evidence_refs(owner_run: &HeadlessOwnerRun) -> Vec<String> {
     ]
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakeOwnerExecutorFixture {
+    outcome: FakeOwnerExecutorOutcome,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FakeOwnerExecutorOutcome {
+    Completed,
+    PendingConfirmation { confirmation_id: String },
+    PendingToolCall { tool_call_id: String },
+    Interrupted { reason: String },
+    Cancelled { reason: String },
+    Expired { reason: String },
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FakeOwnerExecutorOutcomeState {
+    state: HeadlessOwnerRunState,
+    reason: Option<String>,
+}
+
+#[cfg(test)]
+impl FakeOwnerExecutorFixture {
+    fn completed() -> Self {
+        Self {
+            outcome: FakeOwnerExecutorOutcome::Completed,
+        }
+    }
+
+    fn pending_confirmation(confirmation_id: &str) -> Self {
+        Self {
+            outcome: FakeOwnerExecutorOutcome::PendingConfirmation {
+                confirmation_id: confirmation_id.to_string(),
+            },
+        }
+    }
+
+    fn pending_tool_call(tool_call_id: &str) -> Self {
+        Self {
+            outcome: FakeOwnerExecutorOutcome::PendingToolCall {
+                tool_call_id: tool_call_id.to_string(),
+            },
+        }
+    }
+
+    fn interrupted(reason: &str) -> Self {
+        Self {
+            outcome: FakeOwnerExecutorOutcome::Interrupted {
+                reason: reason.to_string(),
+            },
+        }
+    }
+
+    fn cancelled(reason: &str) -> Self {
+        Self {
+            outcome: FakeOwnerExecutorOutcome::Cancelled {
+                reason: reason.to_string(),
+            },
+        }
+    }
+
+    fn expired(reason: &str) -> Self {
+        Self {
+            outcome: FakeOwnerExecutorOutcome::Expired {
+                reason: reason.to_string(),
+            },
+        }
+    }
+
+    fn outcome_state(&self) -> FakeOwnerExecutorOutcomeState {
+        match &self.outcome {
+            FakeOwnerExecutorOutcome::Completed => FakeOwnerExecutorOutcomeState {
+                state: HeadlessOwnerRunState::Completed,
+                reason: None,
+            },
+            FakeOwnerExecutorOutcome::PendingConfirmation { confirmation_id } => {
+                FakeOwnerExecutorOutcomeState {
+                    state: HeadlessOwnerRunState::WaitingForInput,
+                    reason: Some(format!(
+                        "fake executor blocked on pending confirmation {confirmation_id}; not auto-accepted and no completion recorded."
+                    )),
+                }
+            }
+            FakeOwnerExecutorOutcome::PendingToolCall { tool_call_id } => {
+                FakeOwnerExecutorOutcomeState {
+                    state: HeadlessOwnerRunState::WaitingForInput,
+                    reason: Some(format!(
+                        "fake executor blocked on pending tool call {tool_call_id}; not auto-accepted and no completion recorded."
+                    )),
+                }
+            }
+            FakeOwnerExecutorOutcome::Interrupted { reason } => FakeOwnerExecutorOutcomeState {
+                state: HeadlessOwnerRunState::Interrupted,
+                reason: Some(reason.clone()),
+            },
+            FakeOwnerExecutorOutcome::Cancelled { reason } => FakeOwnerExecutorOutcomeState {
+                state: HeadlessOwnerRunState::Cancelled,
+                reason: Some(reason.clone()),
+            },
+            FakeOwnerExecutorOutcome::Expired { reason } => FakeOwnerExecutorOutcomeState {
+                state: HeadlessOwnerRunState::Expired,
+                reason: Some(reason.clone()),
+            },
+        }
+    }
+
+    fn evidence_refs(&self, evidence_refs: Vec<String>) -> Vec<String> {
+        match &self.outcome {
+            FakeOwnerExecutorOutcome::Completed => {
+                with_fake_evidence(evidence_refs, "fake-executor:completed")
+            }
+            FakeOwnerExecutorOutcome::PendingConfirmation { confirmation_id } => {
+                with_fake_evidence(
+                    evidence_refs,
+                    &format!("fake-executor:pending-confirmation:{confirmation_id}"),
+                )
+            }
+            FakeOwnerExecutorOutcome::PendingToolCall { tool_call_id } => with_fake_evidence(
+                evidence_refs,
+                &format!("fake-executor:pending-tool-call:{tool_call_id}"),
+            ),
+            FakeOwnerExecutorOutcome::Interrupted { .. } => {
+                with_fake_evidence(evidence_refs, "fake-executor:interrupted")
+            }
+            FakeOwnerExecutorOutcome::Cancelled { .. } => {
+                with_fake_evidence(evidence_refs, "fake-executor:cancelled")
+            }
+            FakeOwnerExecutorOutcome::Expired { .. } => {
+                let refs = with_fake_evidence(evidence_refs, "fake-executor:expired");
+                with_fake_evidence(refs, "fake-executor:waiting-evidence")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn with_fake_evidence(mut evidence_refs: Vec<String>, evidence_ref: &str) -> Vec<String> {
+    evidence_refs.push(evidence_ref.to_string());
+    evidence_refs
+}
+
+fn headless_owner_executor_key(executor_kind: HeadlessOwnerExecutorKind) -> &'static str {
+    match executor_kind {
+        HeadlessOwnerExecutorKind::DryRun => "dry-run",
+        HeadlessOwnerExecutorKind::FakeExecutor => "fake-executor",
+        HeadlessOwnerExecutorKind::None => "none",
+        HeadlessOwnerExecutorKind::AgentSessionAdapter => "agent-session-adapter",
+    }
+}
+
+fn headless_owner_state_key(state: HeadlessOwnerRunState) -> &'static str {
+    match state {
+        HeadlessOwnerRunState::Requested => "requested",
+        HeadlessOwnerRunState::Denied => "denied",
+        HeadlessOwnerRunState::Ready => "ready",
+        HeadlessOwnerRunState::LeaseAcquired => "lease-acquired",
+        HeadlessOwnerRunState::DryRunWaiting => "dry-run-waiting",
+        HeadlessOwnerRunState::FakeRunning => "fake-running",
+        HeadlessOwnerRunState::Running => "running",
+        HeadlessOwnerRunState::WaitingForInput => "waiting-for-input",
+        HeadlessOwnerRunState::Interrupted => "interrupted",
+        HeadlessOwnerRunState::Cancelled => "cancelled",
+        HeadlessOwnerRunState::Expired => "expired",
+        HeadlessOwnerRunState::Completed => "completed",
+        HeadlessOwnerRunState::Failed => "failed",
+    }
+}
+
 fn coordinator_dry_run_policy_intent() -> LoopActionIntent {
     LoopActionIntent::ServiceLifecycle {
         service: "headless_owner_coordinator".to_string(),
@@ -778,12 +1067,12 @@ fn waiting_reason(task: &LoopTaskRecord, now_ms: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoopRunnerRunSummary, LoopTaskRunner};
+    use super::{FakeOwnerExecutorFixture, LoopRunnerRunSummary, LoopTaskRunner};
     use crate::loop_runtime::{
         BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
-        HeadlessOwnerSnapshotSource, LoopActionIntent, LoopActor, LoopEventEnvelope,
-        LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjectionStore, LoopTaskRecord,
-        LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
+        HeadlessOwnerSnapshotSource, LOOP_RUNTIME_SCHEMA_VERSION, LoopActionIntent, LoopActor,
+        LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease,
+        LoopTaskProjectionStore, LoopTaskRecord, LoopTaskStatus,
     };
 
     #[test]
@@ -1103,16 +1392,20 @@ mod tests {
         assert_eq!(states.len(), 2);
         assert_eq!(states[0].0, HeadlessOwnerRunState::LeaseAcquired);
         assert_eq!(states[1].0, HeadlessOwnerRunState::WaitingForInput);
-        assert!(states[1]
-            .1
-            .as_deref()
-            .unwrap()
-            .contains("coordinator dry run"));
-        assert!(states[1]
-            .1
-            .as_deref()
-            .unwrap()
-            .contains("no headless AgentSession was created"));
+        assert!(
+            states[1]
+                .1
+                .as_deref()
+                .unwrap()
+                .contains("coordinator dry run")
+        );
+        assert!(
+            states[1]
+                .1
+                .as_deref()
+                .unwrap()
+                .contains("no headless AgentSession was created")
+        );
         assert!(states[1].2.contains(&owner_run.budget_snapshot_id));
 
         let waiting = events
@@ -1225,7 +1518,9 @@ mod tests {
         );
         assert_eq!(
             task.headless_owner_runs[0].waiting_reason.as_deref(),
-            Some("coordinator dry run denied before execution: service_lifecycle_requires_human_approval")
+            Some(
+                "coordinator dry run denied before execution: service_lifecycle_requires_human_approval"
+            )
         );
 
         let events = journal.load_all().unwrap();
@@ -1312,7 +1607,9 @@ mod tests {
         assert_eq!(owner_run.state, HeadlessOwnerRunState::Denied);
         assert_eq!(
             owner_run.waiting_reason.as_deref(),
-            Some("coordinator dry run denied before execution: budget_exceeded_requires_human_approval")
+            Some(
+                "coordinator dry run denied before execution: budget_exceeded_requires_human_approval"
+            )
         );
 
         let events = journal.load_all().unwrap();
@@ -1415,12 +1712,13 @@ mod tests {
             .unwrap();
         assert_eq!(task.status, LoopTaskStatus::Interrupted);
         assert!(task.lease.is_none());
-        assert!(task
-            .outcome
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("stale lease"));
+        assert!(
+            task.outcome
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("stale lease")
+        );
     }
 
     #[test]
@@ -1464,11 +1762,13 @@ mod tests {
             task.headless_owner_runs[0].state,
             HeadlessOwnerRunState::Expired
         );
-        assert!(task.headless_owner_runs[0]
-            .cancellation_reason
-            .as_deref()
-            .unwrap()
-            .contains("stale lease"));
+        assert!(
+            task.headless_owner_runs[0]
+                .cancellation_reason
+                .as_deref()
+                .unwrap()
+                .contains("stale lease")
+        );
     }
 
     #[test]
@@ -1516,6 +1816,325 @@ mod tests {
         assert_eq!(stats.waiting_headless_owner_runs, 1);
         assert_eq!(stats.denied_headless_owner_runs, 0);
         assert_eq!(stats.expired_headless_owner_runs, 0);
+    }
+
+    #[test]
+    fn approved_policy_budget_allowed_fake_executor_records_running_and_completed_chain() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+        let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+        append_approved_policy_allowed_task(&journal, "task-fake-completed");
+        let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000)
+            .with_fake_executor_fixture(FakeOwnerExecutorFixture::completed());
+
+        let summary = runner.run_once_at(&journal, &projection, 1_000).unwrap();
+
+        assert_eq!(summary.claimed_tasks, 1);
+        assert_eq!(summary.waiting_for_input_tasks, 1);
+        assert_eq!(summary.completion_evaluations, 1);
+        let task = projection
+            .load_or_rebuild(&journal)
+            .unwrap()
+            .find("task-fake-completed")
+            .cloned()
+            .unwrap();
+        assert_eq!(task.status, LoopTaskStatus::WaitingForInput);
+        assert_eq!(
+            task.completion_result.as_ref().unwrap().reasons,
+            vec!["task_waiting_for_input"]
+        );
+        assert!(!task.completion_result.as_ref().unwrap().commit_eligible);
+        assert_eq!(
+            task.completion_result.as_ref().unwrap().commit_blockers,
+            vec!["task_waiting_for_input"]
+        );
+        assert_eq!(task.headless_owner_runs.len(), 1);
+        let owner_run = &task.headless_owner_runs[0];
+        assert_eq!(
+            owner_run.executor_kind,
+            HeadlessOwnerExecutorKind::FakeExecutor
+        );
+        assert_eq!(owner_run.state, HeadlessOwnerRunState::Completed);
+        assert!(owner_run.cancellation_reason.is_none());
+        assert!(owner_run.waiting_reason.is_none());
+        assert!(
+            owner_run
+                .evidence_refs
+                .contains(&"fake-executor:completed".to_string())
+        );
+
+        let events = journal.load_all().unwrap();
+        let started_lease = events
+            .iter()
+            .find_map(|event| match &event.event {
+                LoopRuntimeEvent::TaskStarted { lease, .. } => Some(lease.lease_id.as_str()),
+                _ => None,
+            })
+            .expect("task started");
+        let states = owner_state_events(&events);
+        assert_eq!(
+            states.iter().map(|state| state.0).collect::<Vec<_>>(),
+            vec![
+                HeadlessOwnerRunState::LeaseAcquired,
+                HeadlessOwnerRunState::FakeRunning,
+                HeadlessOwnerRunState::Completed,
+            ]
+        );
+        for (_, event) in states {
+            assert_eq!(event.lease_id.as_deref(), Some(started_lease));
+            assert_eq!(event.attempt, Some(1));
+            assert_eq!(
+                event
+                    .idempotency_key
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("runner:runner-1:owner-fake-executor-state:task-fake-completed:"),
+                true
+            );
+        }
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event.event, LoopRuntimeEvent::TaskCanceled { .. }))
+        );
+    }
+
+    #[test]
+    fn fake_executor_pending_confirmation_blocks_without_auto_accepting_or_completing() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+        let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+        append_approved_policy_allowed_task(&journal, "task-fake-confirmation");
+        let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000)
+            .with_fake_executor_fixture(FakeOwnerExecutorFixture::pending_confirmation(
+                "confirm-write-1",
+            ));
+
+        runner.run_once_at(&journal, &projection, 1_000).unwrap();
+
+        let task = projection
+            .load_or_rebuild(&journal)
+            .unwrap()
+            .find("task-fake-confirmation")
+            .cloned()
+            .unwrap();
+        let owner_run = task.headless_owner_runs.first().unwrap();
+        assert_eq!(
+            owner_run.executor_kind,
+            HeadlessOwnerExecutorKind::FakeExecutor
+        );
+        assert_eq!(owner_run.state, HeadlessOwnerRunState::WaitingForInput);
+        assert!(
+            owner_run
+                .waiting_reason
+                .as_deref()
+                .unwrap()
+                .contains("pending confirmation confirm-write-1")
+        );
+        assert!(
+            owner_run
+                .waiting_reason
+                .as_deref()
+                .unwrap()
+                .contains("not auto-accepted")
+        );
+        assert!(owner_run.cancellation_reason.is_none());
+
+        let events = journal.load_all().unwrap();
+        let states = owner_state_events(&events);
+        assert_eq!(
+            states.iter().map(|state| state.0).collect::<Vec<_>>(),
+            vec![
+                HeadlessOwnerRunState::LeaseAcquired,
+                HeadlessOwnerRunState::FakeRunning,
+                HeadlessOwnerRunState::WaitingForInput,
+            ]
+        );
+    }
+
+    #[test]
+    fn fake_executor_pending_tool_call_blocks_without_auto_accepting_or_completing() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+        let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+        append_approved_policy_allowed_task(&journal, "task-fake-tool-call");
+        let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000)
+            .with_fake_executor_fixture(FakeOwnerExecutorFixture::pending_tool_call(
+                "tool-call-shell-1",
+            ));
+
+        runner.run_once_at(&journal, &projection, 1_000).unwrap();
+
+        let task = projection
+            .load_or_rebuild(&journal)
+            .unwrap()
+            .find("task-fake-tool-call")
+            .cloned()
+            .unwrap();
+        let owner_run = task.headless_owner_runs.first().unwrap();
+        assert_eq!(
+            owner_run.executor_kind,
+            HeadlessOwnerExecutorKind::FakeExecutor
+        );
+        assert_eq!(owner_run.state, HeadlessOwnerRunState::WaitingForInput);
+        assert!(
+            owner_run
+                .waiting_reason
+                .as_deref()
+                .unwrap()
+                .contains("pending tool call tool-call-shell-1")
+        );
+        assert!(
+            owner_run
+                .waiting_reason
+                .as_deref()
+                .unwrap()
+                .contains("not auto-accepted")
+        );
+        let events = journal.load_all().unwrap();
+        assert!(
+            !owner_state_events(&events)
+                .iter()
+                .any(|state| state.0 == HeadlessOwnerRunState::Completed)
+        );
+    }
+
+    #[test]
+    fn fake_executor_records_interrupted_cancelled_and_expired_terminal_states() {
+        for (task_id, fixture, expected_state, expected_reason) in [
+            (
+                "task-fake-interrupted",
+                FakeOwnerExecutorFixture::interrupted("manual pause requested"),
+                HeadlessOwnerRunState::Interrupted,
+                "manual pause requested",
+            ),
+            (
+                "task-fake-cancelled",
+                FakeOwnerExecutorFixture::cancelled("user cancelled pending run"),
+                HeadlessOwnerRunState::Cancelled,
+                "user cancelled pending run",
+            ),
+            (
+                "task-fake-expired",
+                FakeOwnerExecutorFixture::expired("lease expired while waiting"),
+                HeadlessOwnerRunState::Expired,
+                "lease expired while waiting",
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+            let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+            append_approved_policy_allowed_task(&journal, task_id);
+            let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000)
+                .with_fake_executor_fixture(fixture);
+
+            runner.run_once_at(&journal, &projection, 1_000).unwrap();
+
+            let task = projection
+                .load_or_rebuild(&journal)
+                .unwrap()
+                .find(task_id)
+                .cloned()
+                .unwrap();
+            let owner_run = task.headless_owner_runs.first().unwrap();
+            assert_eq!(
+                owner_run.executor_kind,
+                HeadlessOwnerExecutorKind::FakeExecutor
+            );
+            assert_eq!(owner_run.state, expected_state);
+            assert_eq!(
+                owner_run.cancellation_reason.as_deref(),
+                Some(expected_reason)
+            );
+            if expected_state == HeadlessOwnerRunState::Expired {
+                assert!(
+                    owner_run
+                        .evidence_refs
+                        .contains(&"fake-executor:waiting-evidence".to_string())
+                );
+            }
+            let events = journal.load_all().unwrap();
+            assert!(
+                owner_state_events(&events)
+                    .iter()
+                    .any(|state| state.0 == HeadlessOwnerRunState::FakeRunning)
+            );
+        }
+    }
+
+    #[test]
+    fn fake_executor_retry_from_same_stale_pending_view_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+        let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+        append_approved_policy_allowed_task(&journal, "task-fake-idempotent");
+        let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000)
+            .with_fake_executor_fixture(FakeOwnerExecutorFixture::completed());
+        let stale_projection = projection.load_or_rebuild(&journal).unwrap();
+        let stale_events = journal.load_all().unwrap();
+        let stale_task = stale_projection
+            .find("task-fake-idempotent")
+            .cloned()
+            .unwrap();
+
+        let mut first_summary = LoopRunnerRunSummary::default();
+        runner
+            .process_pending_task(
+                &journal,
+                &projection,
+                &stale_task,
+                &stale_events,
+                1_000,
+                &mut first_summary,
+            )
+            .unwrap();
+        let first_events = journal.load_all().unwrap();
+        let first_owner = first_events
+            .iter()
+            .find_map(|event| match &event.event {
+                LoopRuntimeEvent::HeadlessOwnerRunRequested { owner_run, .. } => Some(owner_run),
+                _ => None,
+            })
+            .unwrap()
+            .clone();
+
+        let mut retry_summary = LoopRunnerRunSummary::default();
+        runner
+            .process_pending_task(
+                &journal,
+                &projection,
+                &stale_task,
+                &stale_events,
+                2_000,
+                &mut retry_summary,
+            )
+            .unwrap();
+
+        let events = journal.load_all().unwrap();
+        let owner_requests: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event,
+                    LoopRuntimeEvent::HeadlessOwnerRunRequested { .. }
+                )
+            })
+            .collect();
+        let owner_states = owner_state_events(&events);
+        assert_eq!(owner_requests.len(), 1);
+        assert_eq!(owner_states.len(), 3);
+        let task = projection
+            .load_or_rebuild(&journal)
+            .unwrap()
+            .find("task-fake-idempotent")
+            .cloned()
+            .unwrap();
+        let owner_run = task.headless_owner_runs.first().unwrap();
+        assert_eq!(task.headless_owner_runs.len(), 1);
+        assert_eq!(owner_run.owner_run_id, first_owner.owner_run_id);
+        assert_eq!(owner_run.lease_id, first_owner.lease_id);
+        assert_eq!(owner_run.attempt, first_owner.attempt);
+        assert_eq!(owner_run.state, HeadlessOwnerRunState::Completed);
     }
 
     fn task_created_event_for_test(task: LoopTaskRecord) -> LoopEventEnvelope {
@@ -1615,6 +2234,41 @@ mod tests {
             idempotency_key: Some(owner_run.idempotency_key.clone()),
             created_at_ms: owner_run.requested_at_ms,
         }
+    }
+
+    fn append_approved_policy_allowed_task(journal: &LoopEventJournal, task_id: &str) {
+        let mut task = LoopTaskRecord::new_for_test(task_id, "approved fake executor fixture");
+        task.session_id = Some("desktop-session-1".to_string());
+        task.policy.allow_service_lifecycle = true;
+        journal.append(task_created_event_for_test(task)).unwrap();
+        journal
+            .append(LoopEventEnvelope::headless_resume_approval_recorded(
+                task_id.to_string(),
+                crate::loop_runtime::HeadlessResumeApproval {
+                    task_id: task_id.to_string(),
+                    approved_by: "human-reviewer".to_string(),
+                    approved_at_ms: 10,
+                    scope: "task".to_string(),
+                    expires_at_ms: 60_010,
+                },
+                Some("test".to_string()),
+                Some(format!("headless:{task_id}")),
+            ))
+            .unwrap();
+    }
+
+    fn owner_state_events(
+        events: &[LoopEventEnvelope],
+    ) -> Vec<(HeadlessOwnerRunState, &LoopEventEnvelope)> {
+        events
+            .iter()
+            .filter_map(|event| match &event.event {
+                LoopRuntimeEvent::HeadlessOwnerRunStateRecorded { state, .. } => {
+                    Some((*state, event))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn stale_started_event(
