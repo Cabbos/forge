@@ -1,6 +1,28 @@
-import type { LoopTaskRecord, SubagentRuntimePayload } from "./protocol.ts";
+import type {
+  HeadlessResumeApproval,
+  HeadlessResumeMode,
+  LoopTaskRecord,
+  SubagentRuntimePayload,
+} from "./protocol.ts";
 
 export type LoopRuntimeTone = "running" | "review" | "waiting" | "success" | "failed" | "muted";
+
+export type HeadlessResumeReadinessState =
+  | "desktop_owner_required"
+  | "approval_required"
+  | "approval_recorded_lease_pending"
+  | "approval_expired";
+
+export interface HeadlessResumeReadinessSummary {
+  state: HeadlessResumeReadinessState;
+  label: string;
+  detail: string;
+  expiresAtMs: number | null;
+}
+
+export interface LoopRuntimeSummaryOptions {
+  nowMs?: number;
+}
 
 export interface LoopRuntimeSummary {
   taskId: string;
@@ -15,6 +37,7 @@ export interface LoopRuntimeSummary {
   commitBlockers: string[];
   humanGateId: string | null;
   lastReviewDecision: Record<string, unknown> | null;
+  headlessResumeReadiness: HeadlessResumeReadinessSummary | null;
   rawTask: LoopTaskRecord;
 }
 
@@ -40,7 +63,10 @@ export interface LoopRuntimeFact {
   costUnknown?: boolean;
 }
 
-export function summarizeLoopTask(task: LoopTaskRecord): LoopRuntimeSummary {
+export function summarizeLoopTask(
+  task: LoopTaskRecord,
+  options: LoopRuntimeSummaryOptions = {},
+): LoopRuntimeSummary {
   const completion = readRecord(task.completion_result);
   const completionReasons = stringArray(completion?.reasons);
   const reviewStatus = stringValue(completion?.review_status);
@@ -52,6 +78,7 @@ export function summarizeLoopTask(task: LoopTaskRecord): LoopRuntimeSummary {
   const budgetSnapshot = readRecord(task.latest_budget_snapshot);
   const budgetWarning = budgetWarningFor(budgetSnapshot);
   const usageDetail = usageDetailFor(budgetSnapshot);
+  const headlessResumeReadiness = headlessResumeReadinessForTask(task, options);
   const detail = detailFor(
     task.status,
     completionReasons,
@@ -80,7 +107,64 @@ export function summarizeLoopTask(task: LoopTaskRecord): LoopRuntimeSummary {
     commitBlockers,
     humanGateId,
     lastReviewDecision,
+    headlessResumeReadiness,
     rawTask: task,
+  };
+}
+
+export function headlessResumeReadinessForTask(
+  task: LoopTaskRecord,
+  options: LoopRuntimeSummaryOptions = {},
+): HeadlessResumeReadinessSummary | null {
+  if (task.status !== "waiting_for_input") return null;
+
+  const nowMs = finiteNumberOrNull(options.nowMs) ?? Date.now();
+  return deriveHeadlessResumeReadinessFromState(
+    task.headless_resume_mode,
+    task.headless_resume_approval,
+    nowMs,
+  );
+}
+
+export function deriveHeadlessResumeReadinessFromState(
+  mode: HeadlessResumeMode | null | undefined,
+  approval: HeadlessResumeApproval | Record<string, unknown> | null | undefined,
+  nowMs: number,
+): HeadlessResumeReadinessSummary {
+  const approvalRecord = readRecord(approval);
+  const approvalNowMs = finiteNumberOrNull(nowMs) ?? 0;
+  const expiresAtMs = numberValue(approvalRecord?.expires_at_ms);
+  if (approvalRecord) {
+    if (expiresAtMs != null && expiresAtMs <= approvalNowMs) {
+      return {
+        state: "approval_expired",
+        label: "approval expired",
+        detail: `Approval expired at ${expiresAtMs}; lease/desktop owner pending.`,
+        expiresAtMs,
+      };
+    }
+    return {
+      state: "approval_recorded_lease_pending",
+      label: "approval recorded",
+      detail: "Lease/desktop owner pending; waiting_for_input stays active.",
+      expiresAtMs,
+    };
+  }
+
+  if (mode === "require_human_approval" || mode === "approved_for_task") {
+    return {
+      state: "approval_required",
+      label: "approval required",
+      detail: "Waiting for durable approval; desktop runtime remains the owner.",
+      expiresAtMs: null,
+    };
+  }
+
+  return {
+    state: "desktop_owner_required",
+    label: "desktop owner required",
+    detail: "Waiting for desktop owner; dry-run status only.",
+    expiresAtMs: null,
   };
 }
 

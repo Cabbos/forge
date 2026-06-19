@@ -194,6 +194,15 @@
     color: var(--forge-amber-muted);
   }
 
+  .forge-loop-task-panel-review > span {
+    min-width: 0;
+  }
+
+  .forge-loop-task-panel-review > span:last-child {
+    flex: 1;
+    overflow-wrap: anywhere;
+  }
+
   .forge-loop-task-panel-row {
     color: var(--forge-text-faint);
   }

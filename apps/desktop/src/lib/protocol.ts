@@ -269,6 +269,16 @@ export interface AgentA2AProjection {
 
 export type ProviderUsageReason = "provider_reported" | "provider_omitted" | "pricing_unknown";
 
+export type HeadlessResumeMode = "disabled" | "require_human_approval" | "approved_for_task";
+
+export interface HeadlessResumeApproval {
+  task_id: string;
+  approved_by: string;
+  approved_at_ms: number;
+  scope: string;
+  expires_at_ms: number;
+}
+
 export type SubagentRuntimePayload =
   | { type: "started"; role: string }
   | { type: "status"; status: string; message?: string | null }
@@ -295,6 +305,8 @@ export interface LoopTaskRecord {
   status: string;
   owner: Record<string, unknown>;
   policy: Record<string, unknown>;
+  headless_resume_mode?: HeadlessResumeMode;
+  headless_resume_approval?: HeadlessResumeApproval | null;
   budget: Record<string, unknown>;
   completion_contract: Record<string, unknown>;
   created_at_ms: number;

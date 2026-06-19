@@ -139,6 +139,8 @@ scripts/acceptance.sh --dry-run
 
 边界语言保持明确：`commit remains human-gated`；`shell-internal tracing is not claimed`；`unknown provider token/cost remains unknown when adapters omit usage`；`gateway autonomous resume requires explicit policy and human approval`。Provider reported token 会保留为已知值，provider omitted usage 和 unknown pricing 会保留为 `unknown`/`null`；Task 4A 的 headless gate 只记录和 replay approval intent，仍不创建真实 headless `AgentSession`。当前不包含官方 Tauri/WebDriver force-quit harness、syscall/file-descriptor tracing、full non-git workspace enumeration、billing-grade usage accounting、usage/pricing unknown 时的精确 cost、automatic creation of parent-session context、fuzzy parent/root-task selection 或 auto commit/merge/push。
 
+LoopTaskPanel 中的 headless readiness/lease-pending 行只是 derived-only UI/status：不代表自动继续或自动恢复，不创建 headless `AgentSession`，commit/merge/push 仍保持 human-gated。
+
 也可以直接运行 Rust 测试：
 
 ```bash

@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  deriveHeadlessResumeReadinessFromState,
+  headlessResumeReadinessForTask,
   runtimeFactsForSubagentTask,
   runtimeFactsFromSubagents,
   summarizeLoopTask,
@@ -131,6 +133,95 @@ describe("summarizeLoopTask", () => {
     assert.equal(summary.reviewStatus, "not_required");
     assert.equal(summary.commitEligible, true);
     assert.deepEqual(summary.commitBlockers, []);
+  });
+
+  it("derives desktop-owner readiness without changing waiting-for-input status", () => {
+    const task = loopTask({
+      status: "waiting_for_input",
+      headless_resume_mode: "disabled",
+      headless_resume_approval: null,
+    });
+
+    const readiness = headlessResumeReadinessForTask(task, { nowMs: 1_000 });
+    const summary = summarizeLoopTask(task, { nowMs: 1_000 });
+
+    assert.ok(readiness);
+    assert.equal(readiness.state, "desktop_owner_required");
+    assert.equal(summary.label, "等待输入");
+    assert.equal(summary.rawTask.status, "waiting_for_input");
+    assert.equal(summary.headlessResumeReadiness?.state, "desktop_owner_required");
+    assert.match(summary.headlessResumeReadiness?.detail ?? "", /desktop owner/i);
+  });
+
+  it("derives pure headless readiness from mode and approval even for pending tasks", () => {
+    const task = loopTask({
+      status: "pending",
+      headless_resume_mode: "approved_for_task",
+      headless_resume_approval: {
+        task_id: "loop-1",
+        approved_by: "human-reviewer",
+        approved_at_ms: 500,
+        scope: "task",
+        expires_at_ms: 2_000,
+      },
+    });
+
+    const readiness = deriveHeadlessResumeReadinessFromState(
+      task.headless_resume_mode,
+      task.headless_resume_approval,
+      1_000,
+    );
+    const wrapperReadiness = headlessResumeReadinessForTask(task, { nowMs: 1_000 });
+    const summary = summarizeLoopTask(task, { nowMs: 1_000 });
+
+    assert.equal(readiness.state, "approval_recorded_lease_pending");
+    assert.equal(wrapperReadiness, null);
+    assert.equal(summary.headlessResumeReadiness, null);
+  });
+
+  it("derives approval-recorded lease-pending readiness without automatic continuation text", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "waiting_for_input",
+      headless_resume_mode: "approved_for_task",
+      headless_resume_approval: {
+        task_id: "loop-1",
+        approved_by: "human-reviewer",
+        approved_at_ms: 500,
+        scope: "task",
+        expires_at_ms: 2_000,
+      },
+    }), { nowMs: 1_000 });
+
+    assert.equal(summary.label, "等待输入");
+    assert.equal(summary.rawTask.status, "waiting_for_input");
+    assert.equal(summary.headlessResumeReadiness?.state, "approval_recorded_lease_pending");
+    assert.match(summary.headlessResumeReadiness?.detail ?? "", /lease\/desktop owner pending/i);
+    assert.doesNotMatch(
+      [
+        summary.headlessResumeReadiness?.label,
+        summary.headlessResumeReadiness?.detail,
+        summary.detail,
+      ].join(" "),
+      /will continue automatically|continue automatically|自动继续/i,
+    );
+  });
+
+  it("derives expired approval readiness from approval expiry", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "waiting_for_input",
+      headless_resume_mode: "approved_for_task",
+      headless_resume_approval: {
+        task_id: "loop-1",
+        approved_by: "human-reviewer",
+        approved_at_ms: 500,
+        scope: "task",
+        expires_at_ms: 1_000,
+      },
+    }), { nowMs: 1_000 });
+
+    assert.equal(summary.rawTask.status, "waiting_for_input");
+    assert.equal(summary.headlessResumeReadiness?.state, "approval_expired");
+    assert.match(summary.headlessResumeReadiness?.detail ?? "", /approval expired/i);
   });
 });
 
@@ -306,6 +397,8 @@ function loopTask(overrides: Partial<LoopTaskRecord>): LoopTaskRecord {
     status: overrides.status ?? "pending",
     owner: overrides.owner ?? { kind: "gateway" },
     policy: overrides.policy ?? {},
+    headless_resume_mode: overrides.headless_resume_mode ?? "disabled",
+    headless_resume_approval: overrides.headless_resume_approval ?? null,
     budget: overrides.budget ?? {},
     completion_contract: overrides.completion_contract ?? {},
     created_at_ms: overrides.created_at_ms ?? 1,

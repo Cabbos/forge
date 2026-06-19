@@ -45,6 +45,8 @@ The current acceptance suite advertises and runs those runtime gates before the 
 
 The live file-IO evidence covers successful direct executor file-ish tools (`read`, `write`, `edit`, `diff`, `list`, and `search`), A2A child file-ish tool facts, and bounded post-shell worktree deltas with `source: "post_shell_delta"`. Boundary language stays explicit: commit remains human-gated; shell-internal tracing is not claimed; unknown provider token/cost remains unknown when adapters omit usage; gateway autonomous resume requires explicit policy and human approval. The current headless gate records and replays approval intent only, and Forge still does not claim Tauri/WebDriver force-quit coverage, syscall/file-descriptor tracing, full non-git workspace enumeration, billing-grade usage accounting, exact cost when usage/pricing is unknown, automatic creation of parent-session context, fuzzy parent/root-task selection, or automatic commit/merge/push behavior.
 
+The desktop loop task panel also displays derived headless readiness and lease-pending status for waiting tasks; `gateway_can_resume` remains false, and commit/merge/push stays human-gated.
+
 ## Product Tracking
 
 Roadmap items live in the private GitHub Project:

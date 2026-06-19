@@ -58,6 +58,13 @@ export function LoopTaskPanel({
           <span>commit remains human-gated</span>
         </div>
       )}
+      {summary.headlessResumeReadiness && (
+        <div className="forge-loop-task-panel-review" data-testid="loop-headless-resume-readiness">
+          <TimerReset className="size-3" />
+          <span>{summary.headlessResumeReadiness.label}</span>
+          <span>{summary.headlessResumeReadiness.detail}</span>
+        </div>
+      )}
       {commitStatus && (
         <div className="forge-loop-task-panel-review" data-testid="loop-commit-gated">
           {summary.commitEligible ? <CheckCircle2 className="size-3" /> : <ShieldAlert className="size-3" />}

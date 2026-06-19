@@ -451,9 +451,17 @@ test.describe("Phase 7 acceptance surfaces", () => {
           session_id: sessionId,
           profile_id: null,
           workspace_path: "/Users/cabbos/project/forge",
-          status: "completed",
+          status: "waiting_for_input",
           owner: { kind: "gateway" },
           policy: {},
+          headless_resume_mode: "approved_for_task",
+          headless_resume_approval: {
+            task_id: "loop-runtime-ui",
+            approved_by: "human-reviewer",
+            approved_at_ms: Date.now() - 60_000,
+            scope: "task",
+            expires_at_ms: Date.now() + 86_400_000,
+          },
           budget: {},
           completion_contract: {},
           created_at_ms: Date.now() - 120_000,
@@ -496,6 +504,10 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(drawer).toContainText("commit eligible after human review");
     await expect(drawer).toContainText("commit remains human-gated");
     await expect(drawer.getByTestId("loop-commit-gated")).toContainText("commit remains human-gated");
+    const readiness = drawer.getByTestId("loop-headless-resume-readiness");
+    await expect(readiness).toContainText("approval recorded");
+    await expect(readiness).toContainText("Lease/desktop owner pending");
+    await expect(readiness).not.toContainText(/will continue automatically|continue automatically|自动继续/i);
     await expect(drawer).toContainText("成本未知");
     await expect(drawer.getByRole("button", { name: /commit|merge|push|提交|合并|推送/i })).toHaveCount(0);
     await expect(drawer).not.toContainText("git commit");

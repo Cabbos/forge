@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::loop_runtime::headless::{derive_headless_resume_readiness, HeadlessResumeReadiness};
 use crate::loop_runtime::types::{new_loop_event_id, now_millis};
 use crate::loop_runtime::{
     evaluate_completion, LoopActor, LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent,
@@ -168,7 +169,7 @@ impl LoopTaskRunner {
             task.id.clone(),
             LoopRuntimeEvent::TaskWaitingForInput {
                 task_id: task.id.clone(),
-                reason: waiting_reason(task),
+                reason: waiting_reason(task, now_ms),
                 waiting_at_ms: now_ms,
             },
             Some(lease.lease_id),
@@ -328,18 +329,48 @@ fn current_attempt_for_task(events: &[LoopEventEnvelope], task_id: &str) -> Opti
         })
 }
 
-fn waiting_reason(task: &LoopTaskRecord) -> String {
-    if task.headless_resume_approval.is_some() {
-        return "Gateway loop runner sees headless resume approval is recorded for this task, but Task 4A only records policy intent; no headless AgentSession was created and autonomous resume remains disabled."
-            .to_string();
-    }
-    if let Some(session_id) = task.session_id.as_deref() {
-        format!(
-            "Gateway loop runner is waiting for existing desktop session {session_id} to accept the next step; headless autonomous resume is disabled by default, requires durable human approval, and no headless AgentSession was created."
-        )
-    } else {
-        "Gateway loop runner requires an existing desktop session owner before execution; headless autonomous resume is disabled by default, requires durable human approval, and no headless AgentSession was created."
-            .to_string()
+fn waiting_reason(task: &LoopTaskRecord, now_ms: u64) -> String {
+    let readiness = derive_headless_resume_readiness(
+        task.headless_resume_mode,
+        task.headless_resume_approval.as_ref(),
+        now_ms,
+    );
+
+    match readiness {
+        HeadlessResumeReadiness::ApprovalRecordedLeasePending => {
+            "Gateway loop runner sees headless resume approval is recorded for this task, but this derived readiness dry run is still lease/desktop owner pending; no headless AgentSession was created and autonomous resume remains disabled."
+                .to_string()
+        }
+        HeadlessResumeReadiness::ApprovalExpired => {
+            let expires_at_ms = task
+                .headless_resume_approval
+                .as_ref()
+                .map(|approval| approval.expires_at_ms)
+                .unwrap_or_default();
+            format!(
+                "Gateway loop runner sees headless resume approval expired at {expires_at_ms}; lease/desktop owner pending and waiting_for_input remains active; no headless AgentSession was created and autonomous resume remains disabled."
+            )
+        }
+        HeadlessResumeReadiness::ApprovalRequired => {
+            if let Some(session_id) = task.session_id.as_deref() {
+                format!(
+                    "Gateway loop runner is waiting for durable headless resume approval before any lease dry run; existing desktop session {session_id} remains the owner and no headless AgentSession was created."
+                )
+            } else {
+                "Gateway loop runner is waiting for durable headless resume approval and a desktop owner before execution; no headless AgentSession was created."
+                    .to_string()
+            }
+        }
+        HeadlessResumeReadiness::DesktopOwnerRequired => {
+            if let Some(session_id) = task.session_id.as_deref() {
+                format!(
+                    "Gateway loop runner is waiting for existing desktop session {session_id} to accept the next step; headless autonomous resume is disabled by default, requires durable human approval, and no headless AgentSession was created."
+                )
+            } else {
+                "Gateway loop runner requires an existing desktop session owner before execution; headless autonomous resume is disabled by default, requires durable human approval, and no headless AgentSession was created."
+                    .to_string()
+            }
+        }
     }
 }
 
@@ -375,7 +406,7 @@ mod tests {
             .unwrap();
         let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000);
 
-        let summary = runner.run_once(&journal, &projection).unwrap();
+        let summary = runner.run_once_at(&journal, &projection, 1_000).unwrap();
 
         assert_eq!(summary.claimed_tasks, 1);
         assert_eq!(summary.waiting_for_input_tasks, 1);
@@ -442,7 +473,7 @@ mod tests {
             .unwrap();
         let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000);
 
-        let summary = runner.run_once(&journal, &projection).unwrap();
+        let summary = runner.run_once_at(&journal, &projection, 1_000).unwrap();
 
         assert_eq!(summary.claimed_tasks, 1);
         assert_eq!(summary.waiting_for_input_tasks, 1);
@@ -466,6 +497,60 @@ mod tests {
             })
             .expect("waiting event");
         assert!(waiting.contains("headless resume approval is recorded"));
+        assert!(waiting.contains("lease/desktop owner pending"));
+        assert!(waiting.contains("no headless AgentSession was created"));
+    }
+
+    #[test]
+    fn runner_marks_expired_headless_approval_as_waiting_for_input_without_resuming() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = LoopEventJournal::new(temp.path().join("loop-events.jsonl"));
+        let projection = LoopTaskProjectionStore::new(temp.path().join("loop-tasks.json"));
+        journal
+            .append(LoopEventEnvelope::task_created_for_test(
+                "task-expired",
+                "expired approval should not resume",
+            ))
+            .unwrap();
+        journal
+            .append(LoopEventEnvelope::headless_resume_approval_recorded(
+                "task-expired".to_string(),
+                crate::loop_runtime::HeadlessResumeApproval {
+                    task_id: "task-expired".to_string(),
+                    approved_by: "human-reviewer".to_string(),
+                    approved_at_ms: 10,
+                    scope: "task".to_string(),
+                    expires_at_ms: 500,
+                },
+                Some("test".to_string()),
+                Some("headless:task-expired".to_string()),
+            ))
+            .unwrap();
+        let runner = LoopTaskRunner::new_for_test("runner-1", 4321, 60_000);
+
+        let summary = runner.run_once_at(&journal, &projection, 1_000).unwrap();
+
+        assert_eq!(summary.claimed_tasks, 1);
+        assert_eq!(summary.waiting_for_input_tasks, 1);
+        let task = projection
+            .load_or_rebuild(&journal)
+            .unwrap()
+            .find("task-expired")
+            .cloned()
+            .unwrap();
+        assert_eq!(task.status, LoopTaskStatus::WaitingForInput);
+        assert!(task.lease.is_none());
+
+        let events = journal.load_all().unwrap();
+        let waiting = events
+            .iter()
+            .find_map(|event| match &event.event {
+                LoopRuntimeEvent::TaskWaitingForInput { reason, .. } => Some(reason),
+                _ => None,
+            })
+            .expect("waiting event");
+        assert!(waiting.contains("headless resume approval expired at 500"));
+        assert!(waiting.contains("lease/desktop owner pending"));
         assert!(waiting.contains("no headless AgentSession was created"));
     }
 
