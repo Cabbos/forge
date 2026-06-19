@@ -1,4 +1,5 @@
 use crate::loop_runtime::types::{EvidenceRecord, LoopEventEnvelope, LoopRuntimeEvent};
+use crate::loop_runtime::HeadlessOwnerRun;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -117,6 +118,35 @@ impl LoopEventJournal {
                 }
                 return Err(format!(
                     "duplicate headless resume approval recorded: {task_id}"
+                ));
+            }
+        }
+        if let LoopRuntimeEvent::HeadlessOwnerRunRequested { task_id, owner_run } = &event.event {
+            if let Some((recorded, recorded_owner_run)) =
+                existing.iter().find_map(|existing| match &existing.event {
+                    LoopRuntimeEvent::HeadlessOwnerRunRequested {
+                        task_id: recorded_task_id,
+                        owner_run: recorded_owner_run,
+                    } if existing.task_id == event.task_id
+                        && recorded_task_id == task_id
+                        && (recorded_owner_run.owner_run_id == owner_run.owner_run_id
+                            || recorded_owner_run
+                                .matches_idempotency_key(task_id, &owner_run.idempotency_key)) =>
+                    {
+                        Some((existing, recorded_owner_run))
+                    }
+                    _ => None,
+                })
+            {
+                if event_payload_fingerprint(recorded)? == event_payload_fingerprint(&event)? {
+                    return Ok(AppendResult {
+                        appended: false,
+                        event: recorded.clone(),
+                    });
+                }
+                return Err(format!(
+                    "duplicate headless owner run requested: {}",
+                    recorded_owner_run.owner_run_id
                 ));
             }
         }
@@ -274,6 +304,31 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
                 "approval": approval,
             })
         }
+        LoopRuntimeEvent::HeadlessOwnerRunRequested { task_id, owner_run } => {
+            serde_json::json!({
+                "type": "headless_owner_run_requested",
+                "task_id": task_id,
+                "owner_run": headless_owner_run_request_fingerprint(owner_run),
+            })
+        }
+        LoopRuntimeEvent::HeadlessOwnerRunStateRecorded {
+            task_id,
+            owner_run_id,
+            state,
+            heartbeat_at_ms,
+            cancellation_reason,
+            waiting_reason,
+            evidence_refs,
+        } => serde_json::json!({
+            "type": "headless_owner_run_state_recorded",
+            "task_id": task_id,
+            "owner_run_id": owner_run_id,
+            "state": state,
+            "heartbeat_at_ms": heartbeat_at_ms,
+            "cancellation_reason": cancellation_reason,
+            "waiting_reason": waiting_reason,
+            "evidence_refs": evidence_refs,
+        }),
         LoopRuntimeEvent::PolicyDecisionRecorded { task_id, decision } => serde_json::json!({
             "type": "policy_decision_recorded",
             "task_id": task_id,
@@ -315,6 +370,25 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
     };
     serde_json::to_string(&payload)
         .map_err(|error| format!("serialize loop event payload: {error}"))
+}
+
+fn headless_owner_run_request_fingerprint(owner_run: &HeadlessOwnerRun) -> serde_json::Value {
+    serde_json::json!({
+        "task_id": owner_run.task_id,
+        "session_id": owner_run.session_id,
+        "lease_id": owner_run.lease_id,
+        "attempt": owner_run.attempt,
+        "snapshot_source": owner_run.snapshot_source,
+        "snapshot_ref": owner_run.snapshot_ref,
+        "human_gate_id": owner_run.human_gate_id,
+        "policy_decision_id": owner_run.policy_decision_id,
+        "budget_snapshot_id": owner_run.budget_snapshot_id,
+        "idempotency_key": owner_run.idempotency_key,
+        "correlation_id": owner_run.correlation_id,
+        "causation_id": owner_run.causation_id,
+        "requested_by": owner_run.requested_by,
+        "executor_kind": owner_run.executor_kind,
+    })
 }
 
 fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
@@ -391,12 +465,16 @@ fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::loop_runtime::HeadlessResumeApproval;
     use crate::loop_runtime::{
         EvidenceRecord, HumanGateDecision, HumanGateDecisionKind, LoopActionIntent, LoopActor,
         LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus,
         PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
     };
+    use crate::loop_runtime::{
+        HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
+        HeadlessOwnerSnapshotSource, HeadlessResumeApproval,
+    };
+    use serde_json::json;
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -751,6 +829,116 @@ mod tests {
     }
 
     #[test]
+    fn headless_owner_run_request_retry_with_regenerated_run_id_reuses_existing_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                LoopEventEnvelope::task_created_for_test("loop-owner", "headless owner")
+                    .with_idempotency_key("create:loop-owner"),
+            )
+            .unwrap();
+        let first = headless_owner_run_requested_event_for_test(&owner_run_for_test(
+            "owner-run-1",
+            "loop-owner",
+            "owner-idem-1",
+        ));
+        let retry = headless_owner_run_requested_event_for_test(&owner_run_for_test(
+            "owner-run-regenerated",
+            "loop-owner",
+            "owner-idem-1",
+        ));
+
+        let first_result = journal.append_idempotent(first).unwrap();
+        let retry_result = journal.append_idempotent(retry).unwrap();
+
+        assert!(first_result.appended);
+        assert!(!retry_result.appended);
+        assert_eq!(retry_result.event, first_result.event);
+        let loaded = journal.load_all().unwrap();
+        assert_eq!(loaded.len(), 2);
+        let projection = LoopTaskProjection::from_events(&loaded).unwrap();
+        assert_eq!(projection.tasks[0].headless_owner_runs.len(), 1);
+        assert_eq!(
+            projection.tasks[0].headless_owner_runs[0].owner_run_id,
+            "owner-run-1"
+        );
+    }
+
+    #[test]
+    fn headless_owner_run_request_retry_with_regenerated_timestamps_keeps_original_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                LoopEventEnvelope::task_created_for_test("loop-owner", "headless owner")
+                    .with_idempotency_key("create:loop-owner"),
+            )
+            .unwrap();
+        let original_owner_run = owner_run_for_test("owner-run-1", "loop-owner", "owner-idem-1");
+        let mut retry_owner_run =
+            owner_run_for_test("owner-run-regenerated", "loop-owner", "owner-idem-1");
+        retry_owner_run.requested_at_ms = 5_000;
+        retry_owner_run.expires_at_ms = 9_000;
+
+        let first_result = journal
+            .append_idempotent(headless_owner_run_requested_event_for_test(
+                &original_owner_run,
+            ))
+            .unwrap();
+        let retry_result = journal
+            .append_idempotent(headless_owner_run_requested_event_for_test(
+                &retry_owner_run,
+            ))
+            .unwrap();
+
+        assert!(first_result.appended);
+        assert!(!retry_result.appended);
+        assert_eq!(retry_result.event, first_result.event);
+        let loaded = journal.load_all().unwrap();
+        assert_eq!(loaded.len(), 2);
+        let projection = LoopTaskProjection::from_events(&loaded).unwrap();
+        assert_eq!(projection.tasks[0].headless_owner_runs.len(), 1);
+        let projected = &projection.tasks[0].headless_owner_runs[0];
+        assert_eq!(projected.owner_run_id, "owner-run-1");
+        assert_eq!(
+            projected.requested_at_ms,
+            original_owner_run.requested_at_ms
+        );
+        assert_eq!(projected.expires_at_ms, original_owner_run.expires_at_ms);
+    }
+
+    #[test]
+    fn headless_owner_run_request_same_key_with_conflicting_fields_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                LoopEventEnvelope::task_created_for_test("loop-owner", "headless owner")
+                    .with_idempotency_key("create:loop-owner"),
+            )
+            .unwrap();
+        journal
+            .append_idempotent(headless_owner_run_requested_event_for_test(
+                &owner_run_for_test("owner-run-1", "loop-owner", "owner-idem-1"),
+            ))
+            .unwrap();
+        let mut conflicting =
+            owner_run_for_test("owner-run-regenerated", "loop-owner", "owner-idem-1");
+        conflicting.lease_id = "lease-conflict".to_string();
+
+        let error = journal
+            .append_idempotent(headless_owner_run_requested_event_for_test(&conflicting))
+            .unwrap_err();
+
+        assert!(error.contains("idempotency conflict for key: owner-idem-1"));
+        assert_eq!(journal.load_all().unwrap().len(), 2);
+    }
+
+    #[test]
     fn concurrent_duplicate_idempotency_key_appends_once() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("loop-events.jsonl");
@@ -955,5 +1143,60 @@ mod tests {
             idempotency_key: None,
             created_at_ms: timestamp,
         }
+    }
+
+    fn owner_run_for_test(
+        owner_run_id: &str,
+        task_id: &str,
+        idempotency_key: &str,
+    ) -> HeadlessOwnerRun {
+        HeadlessOwnerRun {
+            owner_run_id: owner_run_id.to_string(),
+            task_id: task_id.to_string(),
+            session_id: Some("session-owner".to_string()),
+            lease_id: "lease-owner-1".to_string(),
+            attempt: 1,
+            state: HeadlessOwnerRunState::Requested,
+            snapshot_source: HeadlessOwnerSnapshotSource::PersistedSessionSnapshot,
+            snapshot_ref: Some("snapshot-owner-1".to_string()),
+            human_gate_id: "gate-owner-1".to_string(),
+            policy_decision_id: "policy-owner-1".to_string(),
+            budget_snapshot_id: "budget-owner-1".to_string(),
+            idempotency_key: idempotency_key.to_string(),
+            correlation_id: "corr-owner-1".to_string(),
+            causation_id: Some("cause-owner-1".to_string()),
+            requested_by: "controller".to_string(),
+            requested_at_ms: 1_000,
+            heartbeat_at_ms: None,
+            expires_at_ms: 2_000,
+            cancellation_reason: None,
+            waiting_reason: None,
+            executor_kind: HeadlessOwnerExecutorKind::DryRun,
+            evidence_refs: vec!["request-evidence".to_string()],
+        }
+    }
+
+    fn headless_owner_run_requested_event_for_test(
+        owner_run: &HeadlessOwnerRun,
+    ) -> LoopEventEnvelope {
+        serde_json::from_value(json!({
+            "schema_version": LOOP_RUNTIME_SCHEMA_VERSION,
+            "event_id": format!("event-{}-{}-requested", owner_run.task_id, owner_run.owner_run_id),
+            "task_id": owner_run.task_id,
+            "sequence": 0,
+            "event": {
+                "type": "headless_owner_run_requested",
+                "task_id": owner_run.task_id,
+                "owner_run": owner_run
+            },
+            "actor": { "kind": "gateway" },
+            "lease_id": owner_run.lease_id,
+            "attempt": owner_run.attempt,
+            "correlation_id": owner_run.correlation_id,
+            "causation_id": owner_run.causation_id,
+            "idempotency_key": owner_run.idempotency_key,
+            "created_at_ms": owner_run.requested_at_ms
+        }))
+        .unwrap()
     }
 }

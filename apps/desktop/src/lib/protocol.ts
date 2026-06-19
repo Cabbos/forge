@@ -271,6 +271,59 @@ export type ProviderUsageReason = "provider_reported" | "provider_omitted" | "pr
 
 export type HeadlessResumeMode = "disabled" | "require_human_approval" | "approved_for_task";
 
+export type HeadlessOwnerRunState =
+  | "requested"
+  | "denied"
+  | "ready"
+  | "lease_acquired"
+  | "dry_run_waiting"
+  | "fake_running"
+  | "running"
+  | "waiting_for_input"
+  | "interrupted"
+  | "cancelled"
+  | "expired"
+  | "completed"
+  | "failed";
+
+export type HeadlessOwnerSnapshotSource =
+  | "unavailable"
+  | "current_desktop_session"
+  | "persisted_session_snapshot"
+  | "workspace_snapshot"
+  | "restored_headless_snapshot";
+
+export type HeadlessOwnerExecutorKind =
+  | "none"
+  | "dry_run"
+  | "fake_executor"
+  | "agent_session_adapter";
+
+export interface HeadlessOwnerRun {
+  owner_run_id: string;
+  task_id: string;
+  session_id?: string | null;
+  lease_id: string;
+  attempt: number;
+  state?: HeadlessOwnerRunState;
+  snapshot_source?: HeadlessOwnerSnapshotSource;
+  snapshot_ref?: string | null;
+  human_gate_id: string;
+  policy_decision_id: string;
+  budget_snapshot_id: string;
+  idempotency_key: string;
+  correlation_id: string;
+  causation_id?: string | null;
+  requested_by: string;
+  requested_at_ms: number;
+  heartbeat_at_ms?: number | null;
+  expires_at_ms: number;
+  cancellation_reason?: string | null;
+  waiting_reason?: string | null;
+  executor_kind?: HeadlessOwnerExecutorKind;
+  evidence_refs?: string[];
+}
+
 export interface HeadlessResumeApproval {
   task_id: string;
   approved_by: string;
@@ -307,6 +360,7 @@ export interface LoopTaskRecord {
   policy: Record<string, unknown>;
   headless_resume_mode?: HeadlessResumeMode;
   headless_resume_approval?: HeadlessResumeApproval | null;
+  headless_owner_runs?: HeadlessOwnerRun[];
   budget: Record<string, unknown>;
   completion_contract: Record<string, unknown>;
   created_at_ms: number;

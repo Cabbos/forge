@@ -1,6 +1,8 @@
 use crate::loop_runtime::budget::{BudgetSnapshot, LoopUsageLedger};
 use crate::loop_runtime::gates::{HumanGateDecision, HumanGateRecord, HumanGateType};
-use crate::loop_runtime::headless::{HeadlessResumeApproval, HeadlessResumeMode};
+use crate::loop_runtime::headless::{
+    HeadlessOwnerRun, HeadlessOwnerRunState, HeadlessResumeApproval, HeadlessResumeMode,
+};
 use crate::loop_runtime::policy::LoopActionIntent;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -172,6 +174,30 @@ impl LoopEventEnvelope {
         }
     }
 
+    pub fn headless_owner_run_requested(owner_run: HeadlessOwnerRun) -> Self {
+        let task_id = owner_run.task_id.clone();
+        let lease_id = owner_run.lease_id.clone();
+        let attempt = owner_run.attempt;
+        let correlation_id = owner_run.correlation_id.clone();
+        let causation_id = owner_run.causation_id.clone();
+        let idempotency_key = owner_run.idempotency_key.clone();
+        let requested_at_ms = owner_run.requested_at_ms;
+        Self {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: new_loop_event_id(),
+            task_id: task_id.clone(),
+            event: LoopRuntimeEvent::HeadlessOwnerRunRequested { task_id, owner_run },
+            sequence: 0,
+            actor: LoopActor::Gateway,
+            lease_id: Some(lease_id),
+            attempt: Some(attempt),
+            correlation_id: Some(correlation_id),
+            causation_id,
+            idempotency_key: Some(idempotency_key),
+            created_at_ms: requested_at_ms,
+        }
+    }
+
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
         self
@@ -293,6 +319,23 @@ pub enum LoopRuntimeEvent {
         task_id: String,
         approval: HeadlessResumeApproval,
     },
+    HeadlessOwnerRunRequested {
+        task_id: String,
+        owner_run: HeadlessOwnerRun,
+    },
+    HeadlessOwnerRunStateRecorded {
+        task_id: String,
+        owner_run_id: String,
+        state: HeadlessOwnerRunState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        heartbeat_at_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cancellation_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        evidence_refs: Vec<String>,
+    },
     PolicyDecisionRecorded {
         task_id: String,
         decision: PolicyDecisionRecord,
@@ -329,6 +372,8 @@ impl LoopRuntimeEvent {
             Self::HumanGateResolved { .. } => "human_gate_resolved",
             Self::EvidenceRecorded { .. } => "evidence_recorded",
             Self::HeadlessResumeApprovalRecorded { .. } => "headless_resume_approval_recorded",
+            Self::HeadlessOwnerRunRequested { .. } => "headless_owner_run_requested",
+            Self::HeadlessOwnerRunStateRecorded { .. } => "headless_owner_run_state_recorded",
             Self::PolicyDecisionRecorded { .. } => "policy_decision_recorded",
             Self::BudgetSnapshotRecorded { .. } => "budget_snapshot_recorded",
             Self::SubagentFileIoRecorded { .. } => "subagent_file_io_recorded",
@@ -365,6 +410,8 @@ pub struct LoopTaskRecord {
     pub headless_resume_mode: HeadlessResumeMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_resume_approval: Option<HeadlessResumeApproval>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headless_owner_runs: Vec<HeadlessOwnerRun>,
     pub budget: LoopBudget,
     pub completion_contract: LoopCompletionContract,
     pub created_at_ms: u64,
@@ -409,6 +456,7 @@ impl LoopTaskRecord {
             policy: policy.unwrap_or_else(LoopPolicy::default_for_background_task),
             headless_resume_mode: HeadlessResumeMode::Disabled,
             headless_resume_approval: None,
+            headless_owner_runs: Vec::new(),
             budget: budget.unwrap_or_else(LoopBudget::default_for_background_task),
             completion_contract: completion_contract
                 .unwrap_or_else(LoopCompletionContract::default_for_background_task),
@@ -438,6 +486,7 @@ impl LoopTaskRecord {
             policy: LoopPolicy::default_for_background_task(),
             headless_resume_mode: HeadlessResumeMode::Disabled,
             headless_resume_approval: None,
+            headless_owner_runs: Vec::new(),
             budget: LoopBudget::default_for_background_task(),
             completion_contract: LoopCompletionContract::default_for_background_task(),
             created_at_ms: 1,
