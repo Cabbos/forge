@@ -1,10 +1,10 @@
 # Level 3 Headless Owner Design Gate Implementation Plan
 
-> **Status:** DESIGN ONLY / NOT IMPLEMENTED / NO USER APPROVAL FOR HIGH-CRITICAL CODE YET.
+> **Status:** 4C.0 DESIGN GATE RECORDED. 4C.1 CONTRACT-ONLY SLICE LANDED IN `5ececb56 feat(runtime): add headless owner contract`. PROJECTION / REPLAY / GATEWAY / RUNNER / EXECUTION REMAIN FUTURE. NO USER APPROVAL FOR HIGH-CRITICAL RUNTIME CODE YET.
 >
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. This document is a 4C.0 design gate and does not authorize runtime code edits. Any later implementation touching `AgentSession`, gateway dispatch, `handle_request_headless_resume`, or `eval_headless` must rerun GitNexus impact and receive explicit user confirmation for HIGH or CRITICAL code.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. This document began as a 4C.0 design gate and now records the 4C.1 contract-only evidence. It does not authorize runtime owner execution edits. Any later implementation touching `AgentSession`, gateway dispatch, `handle_request_headless_resume`, or `eval_headless` must rerun GitNexus impact and receive explicit user confirmation for HIGH or CRITICAL code.
 
-**Goal:** Define the ownership contract, rollout slices, evidence gates, and stop lines required before Forge can consider a real headless owner for Level 3 loop tasks.
+**Goal:** Define the ownership contract, rollout slices, evidence gates, and stop lines required before Forge can consider a real headless owner for Level 3 loop tasks. As of 4C.1, only the contract type surface has landed.
 
 **Architecture:** Keep 4A/4B behavior conservative. Durable approval and derived readiness can describe whether a task could be eligible for future ownership, but they do not authorize execution. A future owner must bind one human approval, policy decision, budget snapshot, snapshot source, lease, attempt, idempotency key, and causation chain before any real `AgentSession` adapter is considered.
 
@@ -26,6 +26,8 @@ Task 4A landed a durable headless approval contract. It records approval intent,
 
 Task 4B landed in `aa9fd74e feat(runtime): surface headless resume readiness`. It added derived readiness and lease-pending UI only. It did not add automatic resume, did not create a real headless `AgentSession`, did not execute `eval_headless`, did not make a model call, did not create file side effects, and did not introduce auto commit.
 
+Task 4C.1 landed in `5ececb56 feat(runtime): add headless owner contract`. It added the contract-only Rust type surface for future owner runs: `HeadlessOwnerRun`, `HeadlessOwnerRunState`, `HeadlessOwnerSnapshotSource`, and `HeadlessOwnerExecutorKind`; re-exported the new contract types; and added contract-only tests. This did not add durable owner run events, projection, replay, gateway behavior, runner lease allocation, execution, model/tool/file side effects, a real `AgentSession` adapter, or `gateway_can_resume=true`.
+
 Current code facts to preserve:
 
 - `loop_runtime/headless.rs` has `HeadlessResumeMode`, `HeadlessResumeApproval`, `HeadlessAgentLease`, `HeadlessResumeReadiness`, and `derive_headless_resume_readiness`.
@@ -45,9 +47,49 @@ This risk scan is the required evidence baseline for 4C.0. These values must be 
 
 Risk conclusion: 4C implementation is blocked until a later user explicitly confirms the narrowed HIGH/CRITICAL runtime scope. This document is design only and does not grant that approval.
 
-## 4. Ownership Contract Proposal
+## 3.1 4C.1 Contract-Only Evidence
 
-The following is a proposed contract schema, not implemented code:
+4C.1 is implemented as a contract-only slice in `5ececb56 feat(runtime): add headless owner contract`.
+
+What changed:
+
+- Added `HeadlessOwnerRun`.
+- Added `HeadlessOwnerRunState`.
+- Added `HeadlessOwnerSnapshotSource`.
+- Added `HeadlessOwnerExecutorKind`.
+- Re-exported the new contract types from the loop runtime surface.
+- Added contract-only tests for serialization/shape/default coverage.
+
+TDD and verification evidence recorded by the controller/subagents:
+
+- RED: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_owner_contract --lib` failed first with unresolved/missing contract types.
+- RED: after adding enum coverage, the same command failed again because required enum variants were still missing. This proves the TDD gate covered lifecycle/source/executor breadth.
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_owner_contract --lib` passed 5/5.
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib` passed 12/12.
+- `git diff --check` passed.
+- GitNexus staged detect before commit reported LOW risk, changed_files 2, affected_processes 0. It noted `HeadlessResumeApproval` fields as touched due line movement; the shape guard test proves approval serde shape unchanged.
+
+Review evidence:
+
+- Spec review initially returned NEEDS_FIX because lifecycle/source/executor enums were too narrow.
+- Implementer fixed the contract by adding the full design enum values.
+- Spec re-review APPROVED.
+- Quality review APPROVED.
+
+4C.1 not claimed:
+
+- no new durable owner run event/projection/replay yet; no durable owner run event is implemented.
+- no gateway API change.
+- no runner lease allocation for owner contract.
+- no model/tool/file side effects.
+- no real AgentSession adapter.
+- no gateway_can_resume=true.
+- no auto commit/merge/push.
+- no user approval for HIGH/CRITICAL runtime code yet.
+
+## 4. Ownership Contract
+
+The contract type names are now implemented by 4C.1 as a contract-only surface. The durable event/projection/replay/gateway/runner semantics below remain the design contract for future slices, not implemented runtime behavior:
 
 ```text
 HeadlessOwnerRun {
@@ -142,7 +184,7 @@ The expected chain is approval request -> approval recorded -> policy decision -
 
 ## 6. Safe Rollout Sequence
 
-**4C.1 Contract tests:** Add only contract serialization, defaults, missing approval rejection, policy/budget binding, and idempotency behavior. No runner, gateway dispatch, model call, tool call, or file side effect.
+**4C.1 Contract tests (landed in `5ececb56`):** Added only contract types, re-exports, serialization/shape/default coverage, and enum coverage for lifecycle/source/executor values. No runner, gateway dispatch, model call, tool call, file side effect, durable owner run event, projection, replay, or `gateway_can_resume=true`.
 
 **4C.2 Projection/replay/idempotency:** Add ledger events, projection state, replay tests, duplicate request handling, expired/cancelled/interrupted states, and idempotent owner run reconstruction. Still no execution.
 
@@ -156,7 +198,7 @@ The expected chain is approval request -> approval recorded -> policy decision -
 
 ## 7. Test / Evidence Gates
 
-These commands are likely future gates. They were not run for 4C.0 because 4C.0 is documentation only:
+These commands are slice gates. 4C.1 has run the contract and headless-resume gates listed below; later projection/replay/gateway/runner/e2e gates remain future:
 
 ```bash
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_owner_contract --lib
@@ -168,9 +210,9 @@ npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
 scripts/acceptance.sh --dry-run
 ```
 
-Evidence expected by slice:
+Evidence by slice:
 
-- 4C.1: contract tests prove proposed `HeadlessOwnerRun` serialization, required field validation, denied missing approval, and idempotent duplicate request behavior.
+- 4C.1 landed in `5ececb56`: `headless_owner_contract --lib` passed 5/5, `headless_resume --lib` passed 12/12, `git diff --check` passed, and GitNexus staged detect reported LOW risk with affected_processes 0. The slice proves the contract type surface and enum coverage only.
 - 4C.2: projection and replay tests prove owner state survives restart and duplicate idempotency keys do not duplicate owner runs.
 - 4C.3: runner/coordinator tests prove default disabled, policy denied, approval missing, lease acquired, lease expired, cancelled, interrupted, and waiting states without execution.
 - 4C.4: fake executor acceptance proves orchestration states and blockers, including pending confirmations and pending tool calls.

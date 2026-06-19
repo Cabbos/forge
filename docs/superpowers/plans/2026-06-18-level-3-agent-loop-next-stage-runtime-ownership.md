@@ -477,11 +477,36 @@ scripts/acceptance.sh --dry-run
 - No durable readiness event.
 - No auto commit/merge/push.
 
-**Task 4C: Design Gate / Real Headless Owner Roadmap (next, not implemented).**
+**Task 4C: Design Gate / Real Headless Owner Roadmap (in progress, contract-only slice landed).**
 
-Task 4C is a design gate before any real headless owner work. It must not be described as implemented until a later code slice proves the contract, idempotency, orchestration, and adapter behavior with focused tests and acceptance evidence.
+Task 4C is staged so the contract can land before any real headless owner work. The 4C.1 code slice proves the contract type surface only; projection, replay, gateway, runner, and execution behavior remain future until later slices prove them with focused tests and acceptance evidence.
 
-**4C.0 status (2026-06-19): DESIGN ONLY / NOT IMPLEMENTED.** The 4C.0 design gate has been drafted in `docs/superpowers/plans/2026-06-19-level-3-headless-owner-design-gate.md`. It captures the fresh GitNexus CRITICAL/HIGH risk scan, proposes the `HeadlessOwnerRun` ownership contract, records stop lines, and still blocks runtime implementation until explicit user confirmation for HIGH/CRITICAL code. Task 4C is not implemented by this documentation update.
+**4C.0 status (2026-06-19): design gate recorded.** The 4C.0 design gate has been drafted in `docs/superpowers/plans/2026-06-19-level-3-headless-owner-design-gate.md`. It captures the fresh GitNexus CRITICAL/HIGH risk scan, proposes the `HeadlessOwnerRun` ownership contract, records stop lines, and still blocks runtime implementation until explicit user confirmation for HIGH/CRITICAL code.
+
+**4C.1 status (2026-06-19): contract-only implemented in `5ececb56 feat(runtime): add headless owner contract`.** This slice added `HeadlessOwnerRun`, `HeadlessOwnerRunState`, `HeadlessOwnerSnapshotSource`, and `HeadlessOwnerExecutorKind`; re-exported the new contract types; and added contract-only tests. It does not change gateway behavior, runner allocation, projection/replay, execution, or `gateway_can_resume`.
+
+4C.1 evidence/tests run by controller/subagents:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_owner_contract --lib # RED first: unresolved/missing contract types; RED again after enum coverage: missing variants; GREEN passed 5/5
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib # GREEN passed 12/12
+git diff --check # passed
+```
+
+4C.1 GitNexus staged detect before commit: LOW risk, changed_files 2, affected_processes 0. It reported `HeadlessResumeApproval` fields touched due line movement, but the shape guard test proves approval serde shape unchanged.
+
+4C.1 review evidence: spec review initially returned NEEDS_FIX because lifecycle/source/executor enums were too narrow; the implementer fixed the contract by adding the full design enum values; spec re-review APPROVED; quality review APPROVED.
+
+4C.1 not claimed:
+
+- no new durable owner run event/projection/replay yet; no durable owner run event is implemented.
+- no gateway API change.
+- no runner lease allocation for owner contract.
+- no model/tool/file side effects.
+- no real AgentSession adapter.
+- no gateway_can_resume=true.
+- no auto commit/merge/push.
+- no user approval for HIGH/CRITICAL runtime code yet.
 
 **Risk scan to carry into 4C design:**
 
@@ -499,9 +524,9 @@ Task 4C is a design gate before any real headless owner work. It must not be des
 
 **4C.1 Ownership Contract Before Execution**
 
-- Define the durable contract before execution logic: `HeadlessOwnerRun`, lease id, attempt id, `snapshot_source`, `human_gate_id`, `budget_snapshot_id`, `policy_decision_id`, and `idempotency_key`.
-- Add contract tests first in the eventual implementation slice. Tests must prove serialization/backcompat defaults, projection visibility, and rejected/missing approval behavior before any runner or gateway dispatch changes.
-- Approval/readiness is not execution authorization. The contract must bind a specific owner attempt to a specific human gate, policy decision, snapshot source, and budget snapshot.
+- Landed in `5ececb56` as a contract-only slice before execution logic: `HeadlessOwnerRun`, lifecycle state, snapshot source, executor kind, lease id, attempt id, `snapshot_source`, `human_gate_id`, `budget_snapshot_id`, `policy_decision_id`, and `idempotency_key`.
+- Contract tests were developed through the recorded RED/GREEN path with `headless_owner_contract --lib`, then guarded against existing approval shape drift with `headless_resume --lib`.
+- Approval/readiness is still not execution authorization. The contract binds the future shape for a specific owner attempt, human gate, policy decision, snapshot source, and budget snapshot, but no runtime owner is created yet.
 
 **4C.2 Ledger Projection And Idempotency**
 
@@ -531,7 +556,7 @@ Task 4C is a design gate before any real headless owner work. It must not be des
 
 - Every 4C milestone must update the repo plan and Obsidian mirror in the same change set, including commit hash, focused tests, acceptance command, GitNexus risk summary, and "not claimed" bullets.
 - Do not claim shell-internal tracing, billing-grade cost, automatic resume, or true runtime ownership until the relevant acceptance evidence exists.
-- Docs evidence commit `1d5df5d4` records the Task 4B evidence baseline; 4C evidence starts after that baseline and must not rewrite 4A/4B claims.
+- Docs evidence commit `1d5df5d4` records the Task 4B evidence baseline; 4C evidence starts after that baseline and must not rewrite 4A/4B claims. 4C.1 evidence is anchored to `5ececb56`.
 
 **MVP boundaries for Task 4C:**
 
@@ -542,7 +567,7 @@ Task 4C is a design gate before any real headless owner work. It must not be des
 - `eval_headless` is not treated as a directly reusable production runtime owner.
 - Shell-internal tracing is not claimed.
 - Billing-grade cost is not claimed.
-- No automatic gateway resume, model call, file side effect, or real headless `AgentSession` exists until a later implemented slice proves it.
+- No durable owner run event/projection/replay, gateway API change, runner lease allocation, model call, tool call, file side effect, real headless `AgentSession`, `gateway_can_resume=true`, or auto commit/merge/push exists until a later implemented slice proves it.
 
 **Chinese product explanation:**
 
