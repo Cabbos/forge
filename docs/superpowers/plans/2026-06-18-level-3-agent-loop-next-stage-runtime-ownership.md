@@ -447,99 +447,41 @@ scripts/acceptance.sh --dry-run
   cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::types --lib
   ```
 
-**Task 4B: Headless Resume Eligibility And Lease-Pending Dry Run (next).**
+**Task 4B: Headless Resume Eligibility And Lease-Pending Dry Run (landed 2026-06-19).**
 
-- **Scope:** add a derived-only readiness/status layer. States such as `waiting_for_headless_approval`, `headless_approved_waiting_for_owner`, `approval_expired`, and `blocked_by_policy_or_budget` may be derived and displayed, but they are not new durable task states.
-- **Runner boundary:** the runner still records and serves `waiting_for_input`. 4B must not append a new durable event solely for readiness, must not create or resume an `AgentSession`, must not run a model call, must not perform file side effects, and must not commit.
-- **Gateway boundary:** keep `gateway_can_resume: false`. Do not change the existing `HeadlessResumeApproval` struct.
-- **Execution boundary:** 4B must avoid CRITICAL/HIGH execution surfaces. Do not touch `AgentSession`, gateway `dispatch`, `handle_request_headless_resume`, or eval-headless execution unless the user explicitly approves continuing after a fresh CRITICAL/HIGH warning.
-- **Allowed implementation surface:** additive readiness enum/helper in `apps/desktop/src-tauri/src/loop_runtime/headless.rs`, waiting reason/readiness derivation in `apps/desktop/src-tauri/src/loop_runtime/runner.rs`, frontend protocol/summary/UI surfacing in `apps/desktop/src/lib/protocol.ts`, `apps/desktop/src/lib/loopRuntime.ts`, and `apps/desktop/src/components/loop/LoopTaskPanel.tsx`, plus focused tests.
+- **Status:** implemented and committed in `aa9fd74e feat(runtime): surface headless resume readiness`.
+- **What changed:** added a derived `HeadlessResumeReadiness` helper, made runner waiting reasons distinguish desktop owner required, approval required, approval recorded lease pending, and expired approval, surfaced a frontend derived readiness row, and added e2e coverage.
+- **Runner boundary:** the runner still records and serves `waiting_for_input`; readiness is display/preflight context only.
+- **Gateway boundary:** `gateway_can_resume` remains false and no automatic gateway resume was introduced.
+- **Evidence/tests run by controller:**
+
+  ```bash
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib # passed 6/6
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib # passed 12/12
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib # passed 146/146
+  node --test apps/desktop/src/lib/loopRuntime.test.ts # passed 16/16
+  node --test apps/desktop/src/lib/backgroundTaskStatus.test.ts # passed 6/6
+  npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts # passed 8/8
+  scripts/acceptance.sh --dry-run # passed
+  git diff --check # passed
+  ```
+
+- **GitNexus staged detect:** LOW risk, affected_processes 0.
+
+**Not claimed by Task 4B:**
+
+- No automatic gateway resume.
+- No `gateway_can_resume: true`.
+- No real headless `AgentSession`.
+- No eval_headless execution, model call, or file side effect.
+- No durable readiness event.
+- No auto commit/merge/push.
 
 **Task 4C: Real Headless Owner (future work).**
 
 - **Scope:** only 4C may consider creating or resuming a real headless `AgentSession`.
 - **Required before code edits:** independent design plus HIGH/CRITICAL GitNexus impact for `AgentSession`, gateway `dispatch`, eval-headless execution, snapshot source/replay, provider/model/profile resolution, budget/policy preflight, lease heartbeat/expiry, human gate id, idempotency, cancellation, telemetry, and pending confirmations/tool calls.
 - **Safety rule:** 4C must not inherit 4B's derived readiness as authorization to execute. A readiness value is display/preflight context, not ownership.
-
-**Task 4B files:**
-- Modify: `apps/desktop/src-tauri/src/loop_runtime/headless.rs`
-- Modify: `apps/desktop/src-tauri/src/loop_runtime/runner.rs`
-- Modify: `apps/desktop/src/lib/protocol.ts`
-- Modify: `apps/desktop/src/lib/loopRuntime.ts`
-- Modify: `apps/desktop/src/components/loop/LoopTaskPanel.tsx`
-- Modify: `apps/desktop/e2e/acceptance.spec.ts`
-
-**Task 4B GitNexus impact requirements:**
-
-Before implementing 4B, run impact analysis for `waiting_reason`, `process_pending_task`, `LoopTaskRunner`, `summarizeLoopTask`, and `LoopTaskPanel`.
-
-```text
-gitnexus_impact(repo: "forge", target: "waiting_reason", file_path: "apps/desktop/src-tauri/src/loop_runtime/runner.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "process_pending_task", file_path: "apps/desktop/src-tauri/src/loop_runtime/runner.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "LoopTaskRunner", file_path: "apps/desktop/src-tauri/src/loop_runtime/runner.rs", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/desktop/src/lib/loopRuntime.ts", direction: "upstream", summaryOnly: true)
-gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop/src/components/loop/LoopTaskPanel.tsx", direction: "upstream", summaryOnly: true)
-```
-
-Do not proceed into `AgentSession`, `dispatch`, or `handle_request_headless_resume` without explicit approval after reporting the CRITICAL/HIGH warning.
-
-**Task 4B implementation steps:**
-
-- [ ] **Step 4B.1: Run impact analysis and confirm the boundary**
-
-  Run the five Task 4B impact checks above. If any result requires touching `AgentSession`, `dispatch`, `handle_request_headless_resume`, or eval-headless execution, stop and ask for explicit approval before continuing.
-
-- [ ] **Step 4B.2: Write derived-readiness tests first**
-
-  Add focused Rust and TypeScript tests proving readiness is derived from existing approval/policy/waiting facts, does not append a durable event, and leaves the persisted runner status as `waiting_for_input`.
-
-- [ ] **Step 4B.3: Add an additive readiness enum/helper**
-
-  In `loop_runtime/headless.rs`, add a derived readiness helper for display/preflight states such as `waiting_for_headless_approval`, `headless_approved_waiting_for_owner`, `approval_expired`, and `blocked_by_policy_or_budget`. Do not change `HeadlessResumeApproval`.
-
-- [ ] **Step 4B.4: Derive runner readiness without ownership**
-
-  In `loop_runtime/runner.rs`, derive waiting reason/readiness for pending tasks while preserving `waiting_for_input` as the served and recorded task state. No model call, file side effect, commit, or `AgentSession` creation is allowed.
-
-- [ ] **Step 4B.5: Surface readiness in protocol and UI**
-
-  Update frontend protocol/summary/UI so `summarizeLoopTask` and `LoopTaskPanel` can display derived readiness. The UI must not offer "continue automatically" as a default action and must not imply that `gateway_can_resume` is true.
-
-- [ ] **Step 4B.6: Run focused verification**
-
-  Run:
-
-  ```bash
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib
-  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
-  node --test apps/desktop/src/lib/loopRuntime.test.ts
-  npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
-  scripts/acceptance.sh --dry-run
-  git diff --check
-  ```
-
-  Expected: all pass.
-
-**Task 4B acceptance commands:**
-
-```bash
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib
-node --test apps/desktop/src/lib/loopRuntime.test.ts
-npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
-scripts/acceptance.sh --dry-run
-git diff --check
-```
-
-**Not claimed by Task 4B:**
-
-- No default autonomous gateway continuation.
-- No real headless `AgentSession` creation or execution.
-- No snapshot-backed headless resume.
-- No model call, file side effect, auto commit/merge/push, or any change to commit/merge/push behavior.
-- No claim that approval readiness is sufficient to own or execute a task.
 
 ---
 
@@ -952,7 +894,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
 | A2A child file-ish facts | Existing child runtime bridge tests | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib` |
 | A2A persisted lineage | A2A/session lineage tests focused by parent/child state | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib` |
 | Completion/review/commit eligibility | Completion/gate tests and e2e smoke | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib` |
-| Gated headless ownership policy | Task 4A approval/status contract only; no real headless `AgentSession` execution | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib` |
+| Gated headless ownership policy | Task 4A approval/status contract plus Task 4B derived readiness display; no real headless `AgentSession` execution | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib` |
 | Product visibility | Acceptance specs | `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts e2e/a2a-confirm-runtime.spec.ts` |
 | Full advertised suite | Acceptance script | `scripts/acceptance.sh` |
 
