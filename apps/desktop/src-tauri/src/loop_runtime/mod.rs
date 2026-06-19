@@ -17,7 +17,10 @@ pub use completion::evaluate_completion;
 pub use gates::{
     HumanGateDecision, HumanGateDecisionKind, HumanGateRecord, HumanGateStatus, HumanGateType,
 };
-pub use headless::{HeadlessAgentLease, HeadlessResumeApproval, HeadlessResumeMode};
+pub use headless::{
+    HeadlessAgentLease, HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
+    HeadlessOwnerSnapshotSource, HeadlessResumeApproval, HeadlessResumeMode,
+};
 pub use journal::LoopEventJournal;
 pub use policy::{LoopActionIntent, LoopPolicyDecision};
 pub use projection::{LoopTaskProjection, LoopTaskProjectionStore};
