@@ -2375,7 +2375,7 @@ provider usage known/unknown telemetry, bounded post-shell file-effect evidence,
 persisted A2A lineage, typed completion evidence and review-to-commit
 eligibility, and gated headless ownership policy checks.
 
-Post-commit hash: to be filled by the final controller after the Task 7 commit.
+Task 7 commit: `0d9f5670 test(runtime): extend level 3 ownership acceptance gates`.
 Verification captured during Task 7 implementation:
 
 ```bash

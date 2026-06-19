@@ -855,7 +855,7 @@ gitnexus_impact(repo: "forge", target: "LoopTaskPanel", file_path: "apps/desktop
 
 **Why it matters:** The dry-run is the interview/backing table for runtime ownership. It prevents docs from saying "owned" when the acceptance script only proves older MVP gates, and it keeps the headless claim limited to policy/approval evidence instead of real autonomous execution.
 
-**Post-commit hash:** to be filled by the final controller after the Task 7 commit.
+**Task 7 commit:** `0d9f5670 test(runtime): extend level 3 ownership acceptance gates`.
 
 **Verification captured during Task 7 implementation:**
 
