@@ -418,6 +418,10 @@ fn render_runtime_status_lines(status: &GatewayRuntimeStatus) -> Vec<String> {
         format!("Pending loop tasks: {}", status.pending_loop_tasks),
         format!("Running loop tasks: {}", status.running_loop_tasks),
         format!("Stale loop task leases: {}", status.stale_loop_task_leases),
+        format!("Dry-run owner runs: {}", status.dry_run_headless_owner_runs),
+        format!("Waiting owner runs: {}", status.waiting_headless_owner_runs),
+        format!("Denied owner runs: {}", status.denied_headless_owner_runs),
+        format!("Expired owner runs: {}", status.expired_headless_owner_runs),
         format!("Claimed triggers: {}", status.claimed_triggers),
         format!("Dead-letter runs: {}", status.dead_letter_runs),
     ];
@@ -708,6 +712,10 @@ mod tests {
             pending_loop_tasks: 2,
             running_loop_tasks: 1,
             stale_loop_task_leases: 0,
+            dry_run_headless_owner_runs: 3,
+            waiting_headless_owner_runs: 2,
+            denied_headless_owner_runs: 1,
+            expired_headless_owner_runs: 0,
             claimed_triggers: 0,
             dead_letter_runs: 0,
             recent_runs: Vec::new(),
@@ -728,6 +736,10 @@ mod tests {
         assert!(lines.contains(&"Loop runner: started".to_string()));
         assert!(lines.contains(&"Pending loop tasks: 2".to_string()));
         assert!(lines.contains(&"Running loop tasks: 1".to_string()));
+        assert!(lines.contains(&"Dry-run owner runs: 3".to_string()));
+        assert!(lines.contains(&"Waiting owner runs: 2".to_string()));
+        assert!(lines.contains(&"Denied owner runs: 1".to_string()));
+        assert!(lines.contains(&"Expired owner runs: 0".to_string()));
         assert!(lines.contains(&"Recent session inputs:".to_string()));
         assert!(lines.contains(&"  input-1  session=session-1  completed=20  continue".to_string()));
     }
@@ -748,12 +760,17 @@ mod tests {
                 pending_loop_tasks: 0,
                 running_loop_tasks: 0,
                 stale_loop_task_leases: 0,
+                dry_run_headless_owner_runs: 0,
+                waiting_headless_owner_runs: 0,
+                denied_headless_owner_runs: 0,
+                expired_headless_owner_runs: 0,
                 claimed_triggers: 1,
                 dead_letter_runs: 0,
                 recent_runs: Vec::new(),
                 recent_session_inputs: Vec::new(),
                 runtime_tasks: Vec::new(),
             },
+            loop_tasks: Vec::new(),
             sessions: vec![forge::gateway::protocol::GatewaySessionInfo {
                 session_id: "session-1".into(),
                 provider: "claude".into(),

@@ -418,6 +418,14 @@ export interface GatewayRuntimeStatus {
   active_sessions: number;
   pending_triggers: number;
   pending_session_inputs: number;
+  loop_runner?: string;
+  pending_loop_tasks?: number;
+  running_loop_tasks?: number;
+  stale_loop_task_leases?: number;
+  dry_run_headless_owner_runs?: number;
+  waiting_headless_owner_runs?: number;
+  denied_headless_owner_runs?: number;
+  expired_headless_owner_runs?: number;
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: GatewayTriggerRunRecord[];

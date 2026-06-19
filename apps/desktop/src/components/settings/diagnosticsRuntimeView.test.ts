@@ -94,6 +94,35 @@ describe("buildGatewayRuntimeSummary", () => {
     assert.equal(summary.statusText, "有积压");
     assert.equal(summary.counts, "0 pending · 2 inputs · 0 claimed · 0 dead-letter");
   });
+
+  it("includes nonzero loop task and headless owner counters", () => {
+    const summary = buildGatewayRuntimeSummary({
+      ok: true,
+      message: "Gateway runtime is reachable.",
+      uptime_seconds: 42,
+      active_sessions: 1,
+      pending_triggers: 0,
+      pending_session_inputs: 0,
+      claimed_triggers: 0,
+      dead_letter_runs: 0,
+      pending_loop_tasks: 2,
+      running_loop_tasks: 1,
+      stale_loop_task_leases: 1,
+      dry_run_headless_owner_runs: 3,
+      waiting_headless_owner_runs: 2,
+      denied_headless_owner_runs: 1,
+      expired_headless_owner_runs: 1,
+      recent_runs: [],
+      runtime_tasks: [],
+    });
+
+    assert.equal(summary.tone, "warn");
+    assert.equal(summary.statusText, "有积压");
+    assert.equal(
+      summary.counts,
+      "0 pending · 0 inputs · 0 claimed · 0 dead-letter · 2 loop pending · 1 loop running · 1 stale lease · 3 owner dry-runs · 2 owners waiting · 1 owner denied · 1 owner expired",
+    );
+  });
 });
 
 describe("buildGatewaySessionRows", () => {

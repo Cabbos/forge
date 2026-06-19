@@ -52,6 +52,14 @@ pub struct GatewayRuntimeStatus {
     pub running_loop_tasks: usize,
     #[serde(default)]
     pub stale_loop_task_leases: usize,
+    #[serde(default)]
+    pub dry_run_headless_owner_runs: usize,
+    #[serde(default)]
+    pub waiting_headless_owner_runs: usize,
+    #[serde(default)]
+    pub denied_headless_owner_runs: usize,
+    #[serde(default)]
+    pub expired_headless_owner_runs: usize,
     pub claimed_triggers: usize,
     pub dead_letter_runs: usize,
     pub recent_runs: Vec<TriggerRunRecord>,
@@ -1392,6 +1400,10 @@ fn build_runtime_status_with_loop_stats(
         pending_loop_tasks: loop_stats.pending_loop_tasks,
         running_loop_tasks: loop_stats.running_loop_tasks,
         stale_loop_task_leases: loop_stats.stale_loop_task_leases,
+        dry_run_headless_owner_runs: loop_stats.dry_run_headless_owner_runs,
+        waiting_headless_owner_runs: loop_stats.waiting_headless_owner_runs,
+        denied_headless_owner_runs: loop_stats.denied_headless_owner_runs,
+        expired_headless_owner_runs: loop_stats.expired_headless_owner_runs,
         claimed_triggers,
         dead_letter_runs,
         recent_runs: runs.into_iter().take(20).collect(),
@@ -2802,6 +2814,25 @@ mod tests {
             .append(loop_task_started_event("loop-running", "lease-stale", 1, 2))
             .unwrap();
         state
+            .loop_event_journal
+            .append(headless_owner_run_requested_event(
+                "loop-running",
+                "lease-stale",
+                1,
+                "owner-waiting",
+            ))
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(headless_owner_run_state_event(
+                "loop-running",
+                "owner-run:loop-running:1:owner-waiting",
+                "lease-stale",
+                1,
+                crate::loop_runtime::HeadlessOwnerRunState::WaitingForInput,
+            ))
+            .unwrap();
+        state
             .trigger_run_store
             .push(crate::gateway::runner::TriggerRunRecord {
                 id: "run-dead".into(),
@@ -2857,6 +2888,10 @@ mod tests {
 
         match reply {
             GatewayReply::Ok(resp) => {
+                assert_eq!(resp.result["dry_run_headless_owner_runs"], 1);
+                assert_eq!(resp.result["waiting_headless_owner_runs"], 1);
+                assert_eq!(resp.result["denied_headless_owner_runs"], 0);
+                assert_eq!(resp.result["expired_headless_owner_runs"], 0);
                 let status: GatewayRuntimeStatus =
                     serde_json::from_value(resp.result).expect("parse runtime status");
                 assert_eq!(status.pending_triggers, 1);
@@ -2867,6 +2902,10 @@ mod tests {
                 assert_eq!(status.pending_loop_tasks, 1);
                 assert_eq!(status.running_loop_tasks, 1);
                 assert_eq!(status.stale_loop_task_leases, 1);
+                assert_eq!(status.dry_run_headless_owner_runs, 1);
+                assert_eq!(status.waiting_headless_owner_runs, 1);
+                assert_eq!(status.denied_headless_owner_runs, 0);
+                assert_eq!(status.expired_headless_owner_runs, 0);
                 assert_eq!(status.recent_runs.len(), 2);
                 assert_eq!(status.recent_runs[0].id, "run-ok");
                 assert_eq!(status.recent_session_inputs.len(), 1);
@@ -2935,6 +2974,25 @@ mod tests {
                 "review runtime UI",
             ))
             .expect("append loop task");
+        state
+            .loop_event_journal
+            .append(headless_owner_run_requested_event(
+                "loop-dashboard",
+                "lease-dashboard",
+                1,
+                "owner-denied",
+            ))
+            .expect("append owner request");
+        state
+            .loop_event_journal
+            .append(headless_owner_run_state_event(
+                "loop-dashboard",
+                "owner-run:loop-dashboard:1:owner-denied",
+                "lease-dashboard",
+                1,
+                crate::loop_runtime::HeadlessOwnerRunState::Denied,
+            ))
+            .expect("append owner state");
         state.mark_runtime_task_failed(WEBHOOK_LISTENER_TASK, "address already in use");
 
         let reply = dispatch(
@@ -2956,6 +3014,10 @@ mod tests {
                 assert_eq!(snapshot.status.pending_triggers, 1);
                 assert_eq!(snapshot.status.claimed_triggers, 1);
                 assert_eq!(snapshot.status.pending_loop_tasks, 1);
+                assert_eq!(snapshot.status.dry_run_headless_owner_runs, 1);
+                assert_eq!(snapshot.status.waiting_headless_owner_runs, 0);
+                assert_eq!(snapshot.status.denied_headless_owner_runs, 1);
+                assert_eq!(snapshot.status.expired_headless_owner_runs, 0);
                 assert_eq!(snapshot.loop_tasks.len(), 1);
                 assert_eq!(snapshot.loop_tasks[0].id, "loop-dashboard");
                 assert_eq!(snapshot.sessions.len(), 1);
@@ -3879,6 +3941,80 @@ mod tests {
             causation_id: None,
             idempotency_key: None,
             created_at_ms: acquired_at_ms,
+        }
+    }
+
+    fn headless_owner_run_requested_event(
+        task_id: &str,
+        lease_id: &str,
+        attempt: u32,
+        suffix: &str,
+    ) -> crate::loop_runtime::LoopEventEnvelope {
+        let owner_run_id = format!("owner-run:{task_id}:{attempt}:{suffix}");
+        let idempotency_key = format!("owner-idempotency:{task_id}:{attempt}:{suffix}");
+        let correlation_id = format!("owner-correlation:{task_id}:{attempt}:{suffix}");
+        let owner_run = crate::loop_runtime::HeadlessOwnerRun {
+            owner_run_id,
+            task_id: task_id.to_string(),
+            session_id: Some("desktop-session-1".to_string()),
+            lease_id: lease_id.to_string(),
+            attempt,
+            state: crate::loop_runtime::HeadlessOwnerRunState::Requested,
+            snapshot_source:
+                crate::loop_runtime::HeadlessOwnerSnapshotSource::CurrentDesktopSession,
+            snapshot_ref: Some("desktop-session-1".to_string()),
+            human_gate_id: format!("event-{task_id}-approval"),
+            policy_decision_id: format!("policy-{task_id}-{attempt}"),
+            budget_snapshot_id: format!("event-{task_id}-budget"),
+            idempotency_key,
+            correlation_id,
+            causation_id: Some(format!("event-{task_id}-budget")),
+            requested_by: "runner:test-loop-runner".to_string(),
+            requested_at_ms: 3,
+            heartbeat_at_ms: None,
+            expires_at_ms: 60_003,
+            cancellation_reason: None,
+            waiting_reason: None,
+            executor_kind: crate::loop_runtime::HeadlessOwnerExecutorKind::DryRun,
+            evidence_refs: vec![
+                format!("event-{task_id}-approval"),
+                format!("policy-{task_id}-{attempt}"),
+                format!("event-{task_id}-budget"),
+            ],
+        };
+        crate::loop_runtime::LoopEventEnvelope::headless_owner_run_requested(owner_run)
+    }
+
+    fn headless_owner_run_state_event(
+        task_id: &str,
+        owner_run_id: &str,
+        lease_id: &str,
+        attempt: u32,
+        state: crate::loop_runtime::HeadlessOwnerRunState,
+    ) -> crate::loop_runtime::LoopEventEnvelope {
+        crate::loop_runtime::LoopEventEnvelope {
+            schema_version: crate::loop_runtime::LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-{owner_run_id}-{state:?}"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: crate::loop_runtime::LoopRuntimeEvent::HeadlessOwnerRunStateRecorded {
+                task_id: task_id.to_string(),
+                owner_run_id: owner_run_id.to_string(),
+                state,
+                heartbeat_at_ms: Some(4),
+                cancellation_reason: None,
+                waiting_reason: Some("test state".to_string()),
+                evidence_refs: vec![format!("event-{task_id}-budget")],
+            },
+            actor: crate::loop_runtime::LoopActor::Runner {
+                runner_id: "test-loop-runner".to_string(),
+            },
+            lease_id: Some(lease_id.to_string()),
+            attempt: Some(attempt),
+            correlation_id: Some(format!("owner-correlation:{task_id}:{attempt}")),
+            causation_id: Some(format!("event-{task_id}-owner-requested")),
+            idempotency_key: Some(format!("owner-state:{task_id}:{attempt}:{state:?}")),
+            created_at_ms: 4,
         }
     }
 }

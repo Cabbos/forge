@@ -245,10 +245,10 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "budget": task.budget,
             "completion_contract": task.completion_contract,
         }),
-        LoopRuntimeEvent::TaskStarted { task_id, lease } => serde_json::json!({
+        LoopRuntimeEvent::TaskStarted { task_id, lease: _ } => serde_json::json!({
             "type": "task_started",
             "task_id": task_id,
-            "lease": lease,
+            "attempt": event.attempt,
         }),
         LoopRuntimeEvent::TaskWaitingForInput {
             task_id,
@@ -467,8 +467,8 @@ fn evidence_fingerprint(evidence: &EvidenceRecord) -> serde_json::Value {
 mod tests {
     use crate::loop_runtime::{
         EvidenceRecord, HumanGateDecision, HumanGateDecisionKind, LoopActionIntent, LoopActor,
-        LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskProjection, LoopTaskStatus,
-        PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
+        LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection,
+        LoopTaskStatus, PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
     };
     use crate::loop_runtime::{
         HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
@@ -509,6 +509,75 @@ mod tests {
 
         assert!(first.appended);
         assert!(!second.appended);
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn task_started_same_key_task_and_attempt_reuses_original_lease() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        let first = task_started_event_for_test("loop-1", "lease-original", 1)
+            .with_idempotency_key("runner:runner-1:start:loop-1:1");
+        let retry = task_started_event_for_test("loop-1", "lease-regenerated", 1)
+            .with_idempotency_key("runner:runner-1:start:loop-1:1");
+
+        let first_result = journal.append_idempotent(first).unwrap();
+        let retry_result = journal.append_idempotent(retry).unwrap();
+
+        assert!(first_result.appended);
+        assert!(!retry_result.appended);
+        assert_eq!(retry_result.event, first_result.event);
+        let LoopRuntimeEvent::TaskStarted { lease, .. } = &retry_result.event.event else {
+            unreachable!("expected task started event");
+        };
+        assert_eq!(lease.lease_id, "lease-original");
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn task_started_same_key_with_different_task_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                task_started_event_for_test("loop-1", "lease-original", 1)
+                    .with_idempotency_key("runner:runner-1:start:loop-1:1"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                task_started_event_for_test("loop-2", "lease-regenerated", 1)
+                    .with_idempotency_key("runner:runner-1:start:loop-1:1"),
+            )
+            .unwrap_err();
+
+        assert!(error.contains("idempotency conflict"));
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn task_started_same_key_and_task_with_different_attempt_conflicts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("loop-events.jsonl");
+        let journal = LoopEventJournal::new(path);
+        journal
+            .append_idempotent(
+                task_started_event_for_test("loop-1", "lease-original", 1)
+                    .with_idempotency_key("runner:runner-1:start:loop-1:1"),
+            )
+            .unwrap();
+
+        let error = journal
+            .append_idempotent(
+                task_started_event_for_test("loop-1", "lease-regenerated", 2)
+                    .with_idempotency_key("runner:runner-1:start:loop-1:1"),
+            )
+            .unwrap_err();
+
+        assert!(error.contains("idempotency conflict"));
         assert_eq!(journal.load_all().unwrap().len(), 1);
     }
 
@@ -1142,6 +1211,38 @@ mod tests {
             causation_id: None,
             idempotency_key: None,
             created_at_ms: timestamp,
+        }
+    }
+
+    fn task_started_event_for_test(
+        task_id: &str,
+        lease_id: &str,
+        attempt: u32,
+    ) -> LoopEventEnvelope {
+        LoopEventEnvelope {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-{lease_id}-started"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: LoopRuntimeEvent::TaskStarted {
+                task_id: task_id.to_string(),
+                lease: LoopTaskLease {
+                    lease_id: lease_id.to_string(),
+                    owner_pid: 42,
+                    acquired_at_ms: 1_000,
+                    expires_at_ms: 61_000,
+                    heartbeat_at_ms: 1_000,
+                },
+            },
+            actor: LoopActor::Runner {
+                runner_id: "runner-1".to_string(),
+            },
+            lease_id: Some(lease_id.to_string()),
+            attempt: Some(attempt),
+            correlation_id: Some("runner:runner-1".to_string()),
+            causation_id: Some(format!("event-{task_id}-created")),
+            idempotency_key: None,
+            created_at_ms: 1_000,
         }
     }
 

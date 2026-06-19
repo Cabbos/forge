@@ -7,6 +7,14 @@ export interface GatewayRuntimeSnapshotLike {
   active_sessions: number;
   pending_triggers: number;
   pending_session_inputs?: number;
+  loop_runner?: string;
+  pending_loop_tasks?: number;
+  running_loop_tasks?: number;
+  stale_loop_task_leases?: number;
+  dry_run_headless_owner_runs?: number;
+  waiting_headless_owner_runs?: number;
+  denied_headless_owner_runs?: number;
+  expired_headless_owner_runs?: number;
   claimed_triggers: number;
   dead_letter_runs: number;
   recent_runs: unknown[];
@@ -169,7 +177,29 @@ export function buildGatewayRuntimeSummary(
   const taskCounts =
     runtimeTasks.length > 0 ? ` · ${runningTasks}/${runtimeTasks.length} loops` : "";
   const pendingSessionInputs = status.pending_session_inputs ?? 0;
-  const counts = `${status.pending_triggers} pending · ${pendingSessionInputs} inputs · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter${taskCounts}`;
+  const pendingLoopTasks = status.pending_loop_tasks ?? 0;
+  const runningLoopTasks = status.running_loop_tasks ?? 0;
+  const staleLoopTaskLeases = status.stale_loop_task_leases ?? 0;
+  const dryRunOwnerRuns = status.dry_run_headless_owner_runs ?? 0;
+  const waitingOwnerRuns = status.waiting_headless_owner_runs ?? 0;
+  const deniedOwnerRuns = status.denied_headless_owner_runs ?? 0;
+  const expiredOwnerRuns = status.expired_headless_owner_runs ?? 0;
+  const ownerCounter = (count: number, label: string) =>
+    `${count} owner${count === 1 ? "" : "s"} ${label}`;
+  const loopCounterParts = [
+    pendingLoopTasks > 0 ? `${pendingLoopTasks} loop pending` : null,
+    runningLoopTasks > 0 ? `${runningLoopTasks} loop running` : null,
+    staleLoopTaskLeases > 0 ? `${staleLoopTaskLeases} stale lease` : null,
+    dryRunOwnerRuns > 0
+      ? `${dryRunOwnerRuns} owner dry-run${dryRunOwnerRuns === 1 ? "" : "s"}`
+      : null,
+    waitingOwnerRuns > 0 ? ownerCounter(waitingOwnerRuns, "waiting") : null,
+    deniedOwnerRuns > 0 ? ownerCounter(deniedOwnerRuns, "denied") : null,
+    expiredOwnerRuns > 0 ? ownerCounter(expiredOwnerRuns, "expired") : null,
+  ].filter(Boolean);
+  const loopCounters =
+    loopCounterParts.length > 0 ? ` · ${loopCounterParts.join(" · ")}` : "";
+  const counts = `${status.pending_triggers} pending · ${pendingSessionInputs} inputs · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter${taskCounts}${loopCounters}`;
 
   if (!status.ok) {
     return {
@@ -182,6 +212,13 @@ export function buildGatewayRuntimeSummary(
   if (
     status.pending_triggers > 0 ||
     pendingSessionInputs > 0 ||
+    pendingLoopTasks > 0 ||
+    runningLoopTasks > 0 ||
+    staleLoopTaskLeases > 0 ||
+    dryRunOwnerRuns > 0 ||
+    waitingOwnerRuns > 0 ||
+    deniedOwnerRuns > 0 ||
+    expiredOwnerRuns > 0 ||
     status.claimed_triggers > 0 ||
     status.dead_letter_runs > 0 ||
     runtimeTasks.some((task) => !task.running || task.last_error)
