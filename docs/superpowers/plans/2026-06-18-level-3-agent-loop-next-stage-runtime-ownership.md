@@ -477,11 +477,74 @@ scripts/acceptance.sh --dry-run
 - No durable readiness event.
 - No auto commit/merge/push.
 
-**Task 4C: Real Headless Owner (future work).**
+**Task 4C: Design Gate / Real Headless Owner Roadmap (next, not implemented).**
 
-- **Scope:** only 4C may consider creating or resuming a real headless `AgentSession`.
-- **Required before code edits:** independent design plus HIGH/CRITICAL GitNexus impact for `AgentSession`, gateway `dispatch`, eval-headless execution, snapshot source/replay, provider/model/profile resolution, budget/policy preflight, lease heartbeat/expiry, human gate id, idempotency, cancellation, telemetry, and pending confirmations/tool calls.
-- **Safety rule:** 4C must not inherit 4B's derived readiness as authorization to execute. A readiness value is display/preflight context, not ownership.
+Task 4C is a design gate before any real headless owner work. It must not be described as implemented until a later code slice proves the contract, idempotency, orchestration, and adapter behavior with focused tests and acceptance evidence.
+
+**Risk scan to carry into 4C design:**
+
+- GitNexus impact for `AgentSession` in `apps/desktop/src-tauri/src/agent/session/mod.rs` is **CRITICAL**: impactedCount 48. Affected processes include `send_input`, `create_session`, and `run_request`; affected modules include IPC, Agent, Eval_headless, A2A, and Session.
+- GitNexus impact for gateway `dispatch` in `apps/desktop/src-tauri/src/gateway/server.rs` is **CRITICAL**: impactedCount 45, direct 39. Affected processes include `dispatch_dashboard_snapshot_returns_dashboard_operational_summary`, `evaluate_loop_task_completion_uses_projected_evidence`, and `evaluate_loop_task_completion_returns_typed_result`.
+- GitNexus impact for `handle_request_headless_resume` in `apps/desktop/src-tauri/src/gateway/server.rs` is **HIGH**: impactedCount 42, direct 1. Affected processes include the same gateway completion/dashboard flows.
+- GitNexus impact for `eval_headless::run_request` in `apps/desktop/src-tauri/src/eval_headless/mod.rs` is LOW direct 2, but that path creates a new `AgentSession`, snapshots the workspace, sends model turns, and validates/repairs output. Using it for 4C still requires an explicit production policy and side-effect boundary.
+
+**4C.0 Design Gate And Stop Lines**
+
+- Before any code edit, rerun GitNexus impact on the exact target symbols and report direct callers, affected processes, and risk level to the user.
+- Any **CRITICAL** or **HIGH** result blocks implementation until the user explicitly confirms the narrowed scope.
+- The first 4C artifact is a written ownership design, not runtime code. The design must state which ledgers, snapshots, leases, policy gates, cancellation paths, and UI surfaces are allowed to observe or mutate ownership state.
+- Stop if the proposal depends on making `gateway_can_resume: true` by default, bypassing human approval, or treating Task 4B readiness as execution authorization.
+
+**4C.1 Ownership Contract Before Execution**
+
+- Define the durable contract before execution logic: `HeadlessOwnerRun`, lease id, attempt id, `snapshot_source`, `human_gate_id`, `budget_snapshot_id`, `policy_decision_id`, and `idempotency_key`.
+- Add contract tests first in the eventual implementation slice. Tests must prove serialization/backcompat defaults, projection visibility, and rejected/missing approval behavior before any runner or gateway dispatch changes.
+- Approval/readiness is not execution authorization. The contract must bind a specific owner attempt to a specific human gate, policy decision, snapshot source, and budget snapshot.
+
+**4C.2 Ledger Projection And Idempotency**
+
+- Add events, projection, and replay tests before orchestration. Duplicate `request_headless_resume` calls with the same `idempotency_key` must not create duplicate owner runs, leases, model calls, tool calls, or file side effects.
+- Replayed ledgers must reconstruct the same owner state after restart, including waiting, interrupted, cancelled, expired lease, and denied policy states.
+- Commit remains a human gate and must not be satisfied or attempted by headless ownership events.
+
+**4C.3 Coordinator Dry Run**
+
+- Implement only acquisition plus immediate `waiting_for_input` or `interrupted` states. This slice must not call a model provider, mutate files, invoke tools, auto-accept confirmations, or create a production `AgentSession`.
+- The dry run should prove lease acquisition/release, heartbeat/expiry projection, cancellation, budget preflight denial, and dashboard/status visibility.
+- The default remains disabled. A disabled or denied policy path must be the ordinary outcome until explicit test fixtures opt in.
+
+**4C.4 Fake Executor Acceptance**
+
+- Use a fake executor to verify resume orchestration without connecting to a real provider or `eval_headless`.
+- Acceptance should prove the coordinator can move through acquired, running, waiting, interrupted, cancelled, expired, and completed fake states while preserving idempotency and lease ownership.
+- The fake executor must surface pending confirmations/tool calls as blockers; it must not auto-accept them.
+
+**4C.5 Real AgentSession Adapter Behind Policy**
+
+- Only after the contract, projection, dry run, and fake executor are proven may 4C consider a real `AgentSession` adapter behind explicit policy.
+- Required adapter gates: pending confirmations/tool calls, cancellation, snapshot restore, lease heartbeat/expiry, budget preflight, provider/model/profile resolution, failure evidence, and no auto commit.
+- `eval_headless` is not a drop-in production runtime owner. It may inform implementation, but direct reuse must first pass the explicit policy and side-effect boundary described above.
+
+**4C.6 Product Evidence And Obsidian Narrative**
+
+- Every 4C milestone must update the repo plan and Obsidian mirror in the same change set, including commit hash, focused tests, acceptance command, GitNexus risk summary, and "not claimed" bullets.
+- Do not claim shell-internal tracing, billing-grade cost, automatic resume, or true runtime ownership until the relevant acceptance evidence exists.
+- Docs evidence commit `1d5df5d4` records the Task 4B evidence baseline; 4C evidence starts after that baseline and must not rewrite 4A/4B claims.
+
+**MVP boundaries for Task 4C:**
+
+- Default remains disabled.
+- Approval/readiness is not execution authorization.
+- Commit is always a human gate.
+- Pending confirmations/tool calls are never auto-accepted.
+- `eval_headless` is not treated as a directly reusable production runtime owner.
+- Shell-internal tracing is not claimed.
+- Billing-grade cost is not claimed.
+- No automatic gateway resume, model call, file side effect, or real headless `AgentSession` exists until a later implemented slice proves it.
+
+**Chinese product explanation:**
+
+下一阶段不是让 agent 自动乱跑，而是先做一个可审计的接管协议。Forge 要先证明它知道谁授权、从哪个快照恢复、拿了哪个租约、预算是否允许、失败/取消怎么记录；这些都可回放、可去重、可被人审计之后，才考虑让真正的 `AgentSession` 在明确策略后接管执行。
 
 ---
 
