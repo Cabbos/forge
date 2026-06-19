@@ -481,6 +481,8 @@ scripts/acceptance.sh --dry-run
 
 Task 4C is a design gate before any real headless owner work. It must not be described as implemented until a later code slice proves the contract, idempotency, orchestration, and adapter behavior with focused tests and acceptance evidence.
 
+**4C.0 status (2026-06-19): DESIGN ONLY / NOT IMPLEMENTED.** The 4C.0 design gate has been drafted in `docs/superpowers/plans/2026-06-19-level-3-headless-owner-design-gate.md`. It captures the fresh GitNexus CRITICAL/HIGH risk scan, proposes the `HeadlessOwnerRun` ownership contract, records stop lines, and still blocks runtime implementation until explicit user confirmation for HIGH/CRITICAL code. Task 4C is not implemented by this documentation update.
+
 **Risk scan to carry into 4C design:**
 
 - GitNexus impact for `AgentSession` in `apps/desktop/src-tauri/src/agent/session/mod.rs` is **CRITICAL**: impactedCount 48. Affected processes include `send_input`, `create_session`, and `run_request`; affected modules include IPC, Agent, Eval_headless, A2A, and Session.
