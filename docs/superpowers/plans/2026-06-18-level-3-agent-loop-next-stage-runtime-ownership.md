@@ -477,9 +477,9 @@ scripts/acceptance.sh --dry-run
 - No durable readiness event.
 - No auto commit/merge/push.
 
-**Task 4C: Design Gate / Real Headless Owner Roadmap (in progress, ledger/projection slice landed).**
+**Task 4C: Design Gate / Real Headless Owner Roadmap (in progress, coordinator dry run landed).**
 
-Task 4C is staged so durable ownership facts land before any real headless owner execution. The 4C.1 code slice proves the contract type surface; the 4C.2 code slice proves ledger/projection/replay/idempotency facts for owner-run intent/state. Gateway API changes, runner lease allocation, coordinator dry run, fake executor, real `AgentSession` adapter behavior, model/tool/file side effects, and `gateway_can_resume=true` remain future until later slices prove them with focused tests and acceptance evidence.
+Task 4C is staged so durable ownership facts land before any real headless owner execution. The 4C.1 code slice proves the contract type surface; the 4C.2 code slice proves ledger/projection/replay/idempotency facts for owner-run intent/state; the 4C.3 code slice proves a safe coordinator dry run after explicit, unexpired headless resume approval. Fake executor, real `AgentSession` adapter behavior, model/tool/file side effects, and `gateway_can_resume=true` remain future until later slices prove them with focused tests and acceptance evidence.
 
 **4C.0 status (2026-06-19): design gate recorded.** The 4C.0 design gate has been drafted in `docs/superpowers/plans/2026-06-19-level-3-headless-owner-design-gate.md`. It captures the fresh GitNexus CRITICAL/HIGH risk scan, proposes the `HeadlessOwnerRun` ownership contract, records stop lines, and still blocks runtime implementation until explicit user confirmation for HIGH/CRITICAL code.
 
@@ -540,6 +540,47 @@ git diff --check # passed
 - no user approval for HIGH/CRITICAL runtime execution code.
 - 4C.2 proves ledger/projection/replay/idempotency facts only.
 
+**4C.3 status (2026-06-19): Coordinator Dry Run landed in `932dffcb feat(runtime): add headless owner dry run`.** This slice records coordinator dry-run facts only after an unexpired headless resume approval. The durable chain is `PolicyDecisionRecorded` -> `BudgetSnapshotRecorded` -> `HeadlessOwnerRunRequested` -> `Denied` OR `LeaseAcquired` -> `WaitingForInput`.
+
+What changed:
+
+- Default policy denial is observable and safe: the owner run is `Denied` and no `LeaseAcquired` is recorded.
+- Policy allowed plus budget allowed acquires a lease and then stops at `WaitingForInput` with the `DryRun` executor.
+- Budget denial records `Denied` with the budget reason.
+- No owner run is recorded without approval.
+- A stale running lease expires its associated nonterminal owner run.
+- `TaskStarted` idempotency uses stable task/attempt identity so regenerated leases reuse the original persisted event, while different task/attempt identities remain conflicts.
+- Status visibility now flows through runner stats, gateway runtime status/dashboard snapshots, CLI runtime lines, the TypeScript IPC type, and the diagnostics summary.
+
+4C.3 evidence/tests run by controller/subagents:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib # passed 12/12
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib # passed 23/23
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib # passed 146/146
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml diagnostics_handlers --lib # passed 18/18
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner # passed across lib/bin/integration filtered targets
+node --test apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts # passed 17/17
+git diff --check # passed
+```
+
+`cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check` was not used as a pass gate because it reports pre-existing formatting diffs in `apps/desktop/src-tauri/src/loop_runtime/headless.rs`.
+
+4C.3 GitNexus evidence: targeted impacts were mostly LOW for runner/status symbols. HIGH warnings were surfaced for `event_payload_fingerprint` and shared TypeScript `GatewayRuntimeStatus`; those changes were kept narrow and reviewed. `detect_changes({scope: staged})` reported HIGH, expected because shared runtime/status/journal contracts changed; affected flows centered on dashboard snapshot and runner wait/idempotency flows.
+
+4C.3 not claimed:
+
+- no real headless `AgentSession`.
+- no `eval_headless` production shortcut.
+- no model/provider call.
+- no tool call.
+- no project file IO or executor-level live file tracing claim.
+- no gateway API automatic resume and no `gateway_can_resume=true`.
+- no fake executor yet.
+- no pending confirmation/tool auto-acceptance.
+- no auto commit/merge/push; commit remains human-gated.
+- no user approval for HIGH/CRITICAL real runtime execution code yet.
+
 **Risk scan to carry into 4C design:**
 
 - GitNexus impact for `AgentSession` in `apps/desktop/src-tauri/src/agent/session/mod.rs` is **CRITICAL**: impactedCount 48. Affected processes include `send_input`, `create_session`, and `run_request`; affected modules include IPC, Agent, Eval_headless, A2A, and Session.
@@ -568,13 +609,13 @@ git diff --check # passed
 
 **4C.3 Coordinator Dry Run**
 
-- Implement only acquisition plus immediate `waiting_for_input` or `interrupted` states. This slice must not call a model provider, mutate files, invoke tools, auto-accept confirmations, or create a production `AgentSession`.
-- The dry run should prove lease acquisition/release, heartbeat/expiry projection, cancellation, budget preflight denial, and dashboard/status visibility.
-- The default remains disabled. A disabled or denied policy path must be the ordinary outcome until explicit test fixtures opt in.
+- Landed in `932dffcb`. It records coordinator dry-run facts after unexpired approval, policy, and budget facts, then either denies safely or acquires a lease and stops at waiting for input with the `DryRun` executor.
+- It proves default denial, policy allowed plus budget allowed, budget denial, no-owner-run-without-approval, stale lease expiry for nonterminal owner runs, regenerated-lease idempotency, and runner/gateway/CLI/TS/diagnostics status visibility.
+- It still does not call a model provider, mutate files, invoke tools, auto-accept confirmations, create a fake executor, create a production `AgentSession`, set `gateway_can_resume=true`, or automate commit/merge/push.
 
 **4C.4 Fake Executor Acceptance**
 
-- Use a fake executor to verify resume orchestration without connecting to a real provider or `eval_headless`.
+- This is the next implementation step. Use a fake executor to verify resume orchestration without connecting to a real provider or `eval_headless`.
 - Acceptance should prove the coordinator can move through acquired, running, waiting, interrupted, cancelled, expired, and completed fake states while preserving idempotency and lease ownership.
 - The fake executor must surface pending confirmations/tool calls as blockers; it must not auto-accept them.
 
@@ -586,11 +627,11 @@ git diff --check # passed
 
 **4C.6 Product Evidence And Obsidian Narrative**
 
-- Every 4C milestone must update the repo plan and Obsidian mirror in the same change set, including commit hash, focused tests, acceptance command, GitNexus risk summary, and "not claimed" bullets.
+- Every 4C milestone must update the repo plan and Obsidian mirror in the same change set, including commit hash, focused tests, GitNexus risk summary, and "not claimed" bullets. Include an acceptance command only when that milestone actually changes or is covered by the acceptance matrix; for 4C.3, the evidence is focused tests plus status visibility.
 - Do not claim shell-internal tracing, billing-grade cost, automatic resume, or true runtime ownership until the relevant acceptance evidence exists.
 - Docs evidence commit `1d5df5d4` records the Task 4B evidence baseline; 4C evidence starts after that baseline and must not rewrite 4A/4B claims. 4C.1 evidence is anchored to `5ececb56`; 4C.2 evidence is anchored to `28da5966`.
 
-**MVP boundaries for Task 4C:**
+**MVP boundaries for Task 4C after 4C.3:**
 
 - Default remains disabled.
 - Approval/readiness is not execution authorization.
@@ -599,11 +640,11 @@ git diff --check # passed
 - `eval_headless` is not treated as a directly reusable production runtime owner.
 - Shell-internal tracing is not claimed.
 - Billing-grade cost is not claimed.
-- 4C.2 has durable owner run event/projection/replay facts only; no gateway API change, runner lease allocation, coordinator dry run, fake executor, model call, tool call, file side effect, real headless `AgentSession`, `gateway_can_resume=true`, or auto commit/merge/push exists until a later implemented slice proves it.
+- 4C.3 has coordinator dry-run facts after approval/policy/budget only; no fake executor, model call, tool call, file side effect, real headless `AgentSession`, `gateway_can_resume=true`, pending confirmation/tool auto-acceptance, or auto commit/merge/push exists until a later implemented slice proves it.
 
 **Chinese product explanation:**
 
-下一阶段不是让 agent 自动乱跑，而是先做一个可审计的接管协议。Forge 要先证明它知道谁授权、从哪个快照恢复、拿了哪个租约、预算是否允许、失败/取消怎么记录；这些都可回放、可去重、可被人审计之后，才考虑让真正的 `AgentSession` 在明确策略后接管执行。
+这一步证明 Forge 已经有可审计的接管演练：有授权、有策略/预算事实、有租约、有等待/拒绝/过期状态，但仍不执行模型、工具或文件写入。下一步是 4C.4 Fake Executor Acceptance，不是真实 `AgentSession` adapter。
 
 ---
 
@@ -978,7 +1019,7 @@ gitnexus_impact(repo: "forge", target: "summarizeLoopTask", file_path: "apps/des
   git rev-parse --short HEAD
   ```
 
-  Add the resulting commit hash, focused tests, acceptance command, and not-claimed bullets to both the repo plan and Obsidian mirror. If a task is not implemented, describe it as pending future work with the exact acceptance command that will prove it; do not present it as current capability.
+  Add the resulting commit hash, focused tests, applicable acceptance command, and not-claimed bullets to both the repo plan and Obsidian mirror. If a task is not implemented, describe it as pending future work with the exact acceptance command or focused test gate that will prove it; do not present it as current capability.
 
 - [ ] **Step 7.5: Run final docs verification**
 
@@ -1027,7 +1068,7 @@ The Obsidian mirror must stay narrative, but every implemented slice needs these
 - current state before the slice,
 - commit hash from `git rev-parse --short HEAD`,
 - focused tests run,
-- acceptance command added or preserved,
+- acceptance command added/preserved when the acceptance matrix changes, or focused test/status evidence when it does not,
 - what the slice proves,
 - what the slice does not claim,
 - one interview-ready paragraph explaining why the boundary matters.

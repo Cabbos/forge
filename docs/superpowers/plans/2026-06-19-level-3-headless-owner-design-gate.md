@@ -1,10 +1,10 @@
 # Level 3 Headless Owner Design Gate Implementation Plan
 
-> **Status:** 4C.0 DESIGN GATE RECORDED. 4C.1 CONTRACT-ONLY SLICE LANDED IN `5ececb56 feat(runtime): add headless owner contract`. 4C.2 LEDGER / PROJECTION / REPLAY / IDEMPOTENCY SLICE LANDED IN `28da5966 feat(runtime): project headless owner runs`. GATEWAY / RUNNER / EXECUTION REMAIN FUTURE. NO USER APPROVAL FOR HIGH-CRITICAL RUNTIME EXECUTION CODE YET.
+> **Status:** 4C.0 DESIGN GATE RECORDED. 4C.1 CONTRACT-ONLY SLICE LANDED IN `5ececb56 feat(runtime): add headless owner contract`. 4C.2 LEDGER / PROJECTION / REPLAY / IDEMPOTENCY SLICE LANDED IN `28da5966 feat(runtime): project headless owner runs`. 4C.3 COORDINATOR DRY RUN LANDED IN `932dffcb feat(runtime): add headless owner dry run`. FAKE EXECUTOR AND REAL RUNTIME EXECUTION REMAIN FUTURE. NO USER APPROVAL FOR HIGH-CRITICAL REAL RUNTIME EXECUTION CODE YET.
 >
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. This document began as a 4C.0 design gate and now records the 4C.1 contract-only evidence plus 4C.2 additive ledger/projection evidence. It does not authorize runtime owner execution edits. Any later implementation touching `AgentSession`, gateway dispatch, `handle_request_headless_resume`, `eval_headless`, runner lease allocation, or model/tool/file execution must rerun GitNexus impact and receive explicit user confirmation for HIGH or CRITICAL code.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. This document began as a 4C.0 design gate and now records the 4C.1 contract-only evidence, 4C.2 additive ledger/projection evidence, and 4C.3 coordinator dry-run evidence. It does not authorize real runtime owner execution edits. Any later implementation touching `AgentSession`, gateway dispatch, `handle_request_headless_resume`, `eval_headless`, model/tool/file execution, or executor acceptance must rerun GitNexus impact and receive explicit user confirmation for HIGH or CRITICAL code.
 
-**Goal:** Define the ownership contract, rollout slices, evidence gates, and stop lines required before Forge can consider a real headless owner for Level 3 loop tasks. As of 4C.2, Forge can persist and replay owner-run intent/state, but still cannot allocate runner leases or execute a headless owner.
+**Goal:** Define the ownership contract, rollout slices, evidence gates, and stop lines required before Forge can consider a real headless owner for Level 3 loop tasks. As of 4C.3, Forge can persist and replay owner-run intent/state and perform a coordinator dry run after approval/policy/budget facts, but still cannot run a fake executor or execute a real headless owner.
 
 **Architecture:** Keep 4A/4B behavior conservative. Durable approval and derived readiness can describe whether a task could be eligible for future ownership, but they do not authorize execution. A future owner must bind one human approval, policy decision, budget snapshot, snapshot source, lease, attempt, idempotency key, and causation chain before any real `AgentSession` adapter is considered.
 
@@ -30,13 +30,15 @@ Task 4C.1 landed in `5ececb56 feat(runtime): add headless owner contract`. It ad
 
 Task 4C.2 landed in `28da5966 feat(runtime): project headless owner runs`. It added durable owner-run request/state events, projection state, replay/idempotency semantics, journal retry fingerprinting, and the TypeScript protocol mirror. It did not add a gateway API change, did not allocate a runner lease, did not run a coordinator dry run, did not add a fake executor, did not create a real `AgentSession` adapter, did not call a model, did not run tools, did not mutate files, did not set `gateway_can_resume=true`, and did not add auto commit, merge, or push behavior.
 
+Task 4C.3 landed in `932dffcb feat(runtime): add headless owner dry run`. It records coordinator dry-run facts only after unexpired headless resume approval, records the chain `PolicyDecisionRecorded` -> `BudgetSnapshotRecorded` -> `HeadlessOwnerRunRequested` -> `Denied` OR `LeaseAcquired` -> `WaitingForInput`, and surfaces status through runner stats, gateway runtime status/dashboard snapshots, CLI runtime lines, the TypeScript IPC type, and diagnostics summary. It did not add a fake executor, real `AgentSession`, `eval_headless` production shortcut, model/provider call, tool call, file IO, pending confirmation/tool auto-acceptance, `gateway_can_resume=true`, or auto commit/merge/push.
+
 Current code facts to preserve:
 
 - `loop_runtime/headless.rs` has `HeadlessResumeMode`, `HeadlessResumeApproval`, `HeadlessAgentLease`, `HeadlessResumeReadiness`, and `derive_headless_resume_readiness`.
 - `LoopEventEnvelope` already has `lease_id`, `attempt`, `correlation_id`, `causation_id`, and `idempotency_key`.
 - `LoopRuntimeEvent` already has `TaskStarted`, `TaskWaitingForInput`, `TaskInterrupted`, `HeadlessResumeApprovalRecorded`, `PolicyDecisionRecorded`, `BudgetSnapshotRecorded`, and `CompletionEvaluated`.
 - 4C.2 adds `HeadlessOwnerRunRequested`, `HeadlessOwnerRunStateRecorded`, and `LoopTaskRecord.headless_owner_runs` for durable owner-run projection/replay.
-- `LoopTaskRunner` currently claims pending tasks, writes `TaskStarted`, immediately writes `TaskWaitingForInput`, evaluates completion, and does not create `AgentSession`.
+- `LoopTaskRunner` can now record a headless owner dry run after approval/policy/budget facts, but the allowed path still stops at `WaitingForInput` with `DryRun` executor and does not create `AgentSession`.
 - Gateway `request_headless_resume` currently records approval only, and responses keep `gateway_can_resume=false`.
 
 ## 3. Fresh GitNexus Risk Scan
@@ -149,11 +151,57 @@ GitNexus evidence:
 
 Next slice:
 
-- 4C.3 coordinator dry run: lease acquisition plus immediate waiting/interrupted outcomes, still no real AgentSession/model/tool/file execution.
+- 4C.3 coordinator dry run landed in `932dffcb`; next is 4C.4 Fake Executor Acceptance, still before any real AgentSession/model/tool/file execution.
+
+## 3.3 4C.3 Coordinator Dry Run Evidence
+
+4C.3 is implemented as a safe coordinator dry-run slice in `932dffcb feat(runtime): add headless owner dry run`.
+
+What changed:
+
+- Runner records coordinator dry-run facts only after unexpired headless resume approval.
+- The durable chain is `PolicyDecisionRecorded` -> `BudgetSnapshotRecorded` -> `HeadlessOwnerRunRequested` -> `Denied` OR `LeaseAcquired` -> `WaitingForInput`.
+- Default policy denial is observable and safe: `Denied`, with no `LeaseAcquired`.
+- Policy allowed plus budget allowed stops at `WaitingForInput` with the `DryRun` executor.
+- Budget denial records `Denied` with the budget reason.
+- No owner run is recorded without approval.
+- Stale running lease expiry expires the associated nonterminal owner run.
+- `TaskStarted` idempotency uses stable task/attempt identity so regenerated leases reuse the original persisted event while different task/attempt conflicts remain conflicts.
+- Status visibility appears through runner stats, gateway runtime status/dashboard snapshot, CLI runtime lines, TypeScript IPC type, and diagnostics summary.
+
+Verification evidence recorded by the controller/subagents:
+
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner --lib` passed 12/12.
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib` passed 23/23.
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway --lib` passed 146/146.
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml diagnostics_handlers --lib` passed 18/18.
+- GREEN: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::runner` passed across lib/bin/integration filtered targets.
+- GREEN: `node --test apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts` passed 17/17.
+- `git diff --check` passed.
+- `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check` was not used as a pass gate because it reports pre-existing formatting diffs in `apps/desktop/src-tauri/src/loop_runtime/headless.rs`.
+
+GitNexus evidence:
+
+- Targeted impacts were mostly LOW for runner/status symbols.
+- HIGH warnings were surfaced for `event_payload_fingerprint` and shared TypeScript `GatewayRuntimeStatus`; changes were kept narrow and reviewed.
+- `detect_changes({scope: staged})` reported HIGH, expected because shared runtime/status/journal contracts changed; affected flows centered on dashboard snapshot and runner wait/idempotency flows.
+
+4C.3 not claimed:
+
+- no real headless `AgentSession`.
+- no `eval_headless` production shortcut.
+- no model/provider call.
+- no tool call.
+- no project file IO or executor-level live file tracing claim.
+- no gateway API automatic resume and no `gateway_can_resume=true`.
+- no fake executor yet.
+- no pending confirmation/tool auto-acceptance.
+- no auto commit/merge/push; commit remains human-gated.
+- no user approval for HIGH/CRITICAL real runtime execution code yet.
 
 ## 4. Ownership Contract
 
-The contract type names are implemented by 4C.1, and the durable request/state event plus projection/replay/idempotency semantics are implemented by 4C.2. Gateway dispatch, runner lease allocation, coordinator dry run, fake executor, real adapter behavior, model/tool/file execution, and `gateway_can_resume=true` remain future and not claimed:
+The contract type names are implemented by 4C.1, durable request/state event plus projection/replay/idempotency semantics are implemented by 4C.2, and the coordinator dry run is implemented by 4C.3. Fake executor, real adapter behavior, model/tool/file execution, and `gateway_can_resume=true` remain future and not claimed:
 
 ```text
 HeadlessOwnerRun {
@@ -252,17 +300,17 @@ The expected chain is approval request -> approval recorded -> policy decision -
 
 **4C.2 Projection/replay/idempotency (landed in `28da5966`):** Added ledger events, projection state, replay tests, duplicate request handling, regenerated retry handling, state-update semantics, journal idempotency fingerprinting, and TypeScript protocol mirror types. Still no gateway API change, runner lease allocation, coordinator dry run, fake executor, real `AgentSession` adapter, model/tool/file side effect, `gateway_can_resume=true`, or auto commit/merge/push.
 
-**4C.3 Coordinator dry run:** Add lease acquisition plus immediate waiting/interrupted outcomes. It may update durable owner state but must not create `AgentSession`, call `eval_headless`, call a model, run a tool, or touch files.
+**4C.3 Coordinator dry run (landed in `932dffcb`):** Records coordinator dry-run facts after unexpired approval, policy, and budget facts. Default/policy/budget denial is safe and observable; the allowed path acquires a lease and then stops at `WaitingForInput` with `DryRun`. It does not create `AgentSession`, call `eval_headless`, call a model, run a tool, touch files, set `gateway_can_resume=true`, or auto commit/merge/push.
 
-**4C.4 Fake executor:** Add a fake executor behind explicit test fixtures to prove orchestration and state transitions without provider access or file side effects. Pending confirmations and pending tool calls must be blockers.
+**4C.4 Fake executor:** Next step. Add a fake executor behind explicit test fixtures to prove orchestration and state transitions without provider access or file side effects. Pending confirmations and pending tool calls must be blockers.
 
 **4C.5 Real `AgentSession` adapter:** Only after explicit user approval for HIGH/CRITICAL symbols, consider a real adapter. It must handle snapshot restore, provider/profile resolution, pending confirmations, cancellation, lease heartbeat/expiry, budget preflight, policy denial, and no auto commit.
 
-**4C.6 Evidence sync:** Update repo docs and Obsidian mirror with commit hash, tests, acceptance command, GitNexus risk summary, and not-claimed bullets for each implemented slice.
+**4C.6 Evidence sync:** Update repo docs and Obsidian mirror with commit hash, focused tests, GitNexus risk summary, and not-claimed bullets for each implemented slice. Include an acceptance command only when that slice actually changes or is covered by the acceptance matrix; for 4C.3, the evidence is focused tests plus status visibility.
 
 ## 7. Test / Evidence Gates
 
-These commands are slice gates. 4C.1 has run the contract and headless-resume gates listed below; 4C.2 has run the journal/projection/replay/protocol mirror gates listed below. Gateway/runner/e2e execution gates remain future:
+These commands are slice gates. 4C.1 has run the contract and headless-resume gates listed below; 4C.2 has run the journal/projection/replay/protocol mirror gates listed below; 4C.3 has run the runner/journal/gateway/diagnostics/status gates listed below. Fake executor/e2e execution gates remain future:
 
 ```bash
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_owner_contract --lib
@@ -278,8 +326,8 @@ Evidence by slice:
 
 - 4C.1 landed in `5ececb56`: `headless_owner_contract --lib` passed 5/5, `headless_resume --lib` passed 12/12, `git diff --check` passed, and GitNexus staged detect reported LOW risk with affected_processes 0. The slice proves the contract type surface and enum coverage only.
 - 4C.2 landed in `28da5966`: `loop_runtime::journal --lib` passed 20/20, recorded as 20 passed; `loop_runtime::projection --lib` passed 23/23, recorded as 23 passed; `loop_runtime::replay_tests --lib` passed 3/3; `headless_owner_contract --lib` passed 5/5; `node --test apps/desktop/src/lib/loopRuntime.test.ts` passed 16/16; `git diff --check` passed. The slice proves owner-run request/state events, `headless_owner_runs` projection/replay, regenerated idempotency retry behavior, and TypeScript protocol shape only.
-- 4C.3: runner/coordinator tests prove default disabled, policy denied, approval missing, lease acquired, lease expired, cancelled, interrupted, and waiting states without execution.
-- 4C.4: fake executor acceptance proves orchestration states and blockers, including pending confirmations and pending tool calls.
+- 4C.3 landed in `932dffcb`: `loop_runtime::runner --lib` passed 12/12; `loop_runtime::journal --lib` passed 23/23; `gateway --lib` passed 146/146; `diagnostics_handlers --lib` passed 18/18; `loop_runtime::runner` passed across lib/bin/integration filtered targets; `node --test apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts` passed 17/17; `git diff --check` passed. The slice proves approval-gated coordinator dry-run facts, default/policy/budget denial, lease-acquired-to-waiting behavior, stale lease expiry, regenerated lease idempotency, and status visibility without execution.
+- 4C.4: fake executor acceptance is next and proves orchestration states and blockers, including pending confirmations and pending tool calls.
 - 4C.5: real adapter tests prove snapshot selection, profile/provider resolution, cancellation, heartbeat, budget, policy, pending confirmations, no auto commit, and no file side effect without explicit tool evidence.
 - 4C.6: evidence sync proves repo plan, Obsidian mirror, acceptance dry-run labels, and not-claimed bullets match the implemented behavior.
 
@@ -297,8 +345,8 @@ Evidence by slice:
 
 ## 9. 中文产品说明
 
-这不是让 agent 自动乱跑，而是先证明一套可审计的接管协议：谁授权、从哪个快照恢复、拿哪个租约、预算和策略是否允许、失败和取消怎么记录、重放时会不会重复执行。4C.0 只写设计和停止线；在用户明确批准 HIGH/CRITICAL 代码之前，Forge 仍然不会默认自动恢复、不会创建真正的 headless `AgentSession`、不会自动接受确认或工具调用、不会自动提交代码。
+这一步证明 Forge 已经有可审计的接管演练：有授权、有策略/预算事实、有租约、有等待/拒绝/过期状态，但仍不执行模型、工具或文件写入。下一步是 4C.4 Fake Executor Acceptance，不是真实 `AgentSession` adapter；在用户明确批准 HIGH/CRITICAL 真实执行代码之前，Forge 仍然不会默认自动恢复、不会创建真正的 headless `AgentSession`、不会自动接受确认或工具调用、不会自动提交代码。
 
 ## 10. Interview-ready Explanation
 
-Forge is not jumping from "approval recorded" to "agent runs by itself." The next step is an auditable ownership protocol. A headless owner must prove who authorized it, which snapshot it resumed from, which lease and attempt it owns, which policy and budget facts allowed it, how idempotency prevents duplicate side effects, and how cancellation, expiry, waiting, and failure replay. Only after that evidence exists, and only after explicit approval for the HIGH/CRITICAL runtime symbols, can a real `AgentSession` adapter be considered.
+Forge is not jumping from "approval recorded" to "agent runs by itself." 4C.3 proves an auditable dry-run ownership path: approval, policy, budget, owner-run request, denial or lease acquisition, and waiting/expiry are durable and visible, but there is still no model, tool, file write, fake executor, or real `AgentSession`. The next step is 4C.4 Fake Executor Acceptance, not a real adapter.
