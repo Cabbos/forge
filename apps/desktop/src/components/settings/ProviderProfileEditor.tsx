@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Plus } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
+import type { ProviderDefinition } from "@/lib/providers";
 import type { ProviderProfileInput, ProviderTransportName } from "@/lib/tauri";
 
 export interface ProviderProfileDraft {
@@ -20,6 +21,7 @@ export interface ProviderProfileDraft {
 
 interface ProviderProfileEditorProps {
   open: boolean;
+  mode: "create" | "edit";
   draft: ProviderProfileDraft;
   saving: boolean;
   onOpenChange: (open: boolean) => void;
@@ -58,8 +60,26 @@ export function providerProfileInputFromDraft(draft: ProviderProfileDraft): Prov
   };
 }
 
+export function providerProfileDraftFromProvider(provider: ProviderDefinition): ProviderProfileDraft {
+  const apiKeyEnv = provider.apiKeyEnv ?? [];
+  return {
+    id: String(provider.id),
+    label: provider.label,
+    transport: provider.transport ?? "openai_chat_completions",
+    baseUrl: provider.baseUrl ?? "",
+    apiKeyEnv: apiKeyEnv.join(", "),
+    baseUrlEnv: (provider.baseUrlEnv ?? []).join(", "),
+    defaultModel: provider.defaultModel,
+    aliases: (provider.aliases ?? []).join(", "),
+    noApiKey: provider.requiresApiKey === false || apiKeyEnv.length === 0,
+    supportsTools: provider.supportsTools ?? true,
+    supportsStreaming: provider.supportsStreaming ?? true,
+  };
+}
+
 export function ProviderProfileEditor({
   open,
+  mode,
   draft,
   saving,
   onOpenChange,
@@ -97,6 +117,7 @@ export function ProviderProfileEditor({
                 onChange={(event) => update("id", event.target.value)}
                 placeholder="local-openai"
                 className="h-8 text-xs"
+                readOnly={mode === "edit"}
               />
             </label>
             <label className="grid gap-1 text-[11px] text-muted-foreground">
@@ -197,7 +218,7 @@ export function ProviderProfileEditor({
               取消
             </ForgeButton>
             <ForgeButton size="xs" onClick={onSave} disabled={!canSave || saving}>
-              保存 Provider
+              {mode === "edit" ? "更新 Provider" : "保存 Provider"}
             </ForgeButton>
           </div>
         </div>

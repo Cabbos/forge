@@ -1,5 +1,5 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { Check, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { Check, Eye, EyeOff, Pencil, RefreshCw } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
 import { formatContextWindow, PROVIDERS, type ProviderDefinition } from "@/lib/providers";
@@ -25,6 +25,7 @@ interface SettingsProviderRowsProps {
   onRemove: (provider: string) => void;
   onProbe: (provider: string) => void;
   onRefreshModels: (provider: string) => void;
+  onEditProviderProfile: (provider: string) => void;
   onDeleteProviderProfile: (provider: string) => void;
 }
 
@@ -47,6 +48,7 @@ export function SettingsProviderRows({
   onRemove,
   onProbe,
   onRefreshModels,
+  onEditProviderProfile,
   onDeleteProviderProfile,
 }: SettingsProviderRowsProps) {
   const probeBusy = probingProvider !== null;
@@ -149,15 +151,26 @@ export function SettingsProviderRows({
                     </ForgeButton>
                   )}
                   {editableProviderProfile && (
-                    <ForgeButton
-                      size="xs"
-                      variant="ghost"
-                      onClick={() => onDeleteProviderProfile(key.provider)}
-                      className="text-destructive hover:text-destructive"
-                      aria-label={`删除 Provider ${providerLabel}`}
-                    >
-                      删除 Provider
-                    </ForgeButton>
+                    <>
+                      <ForgeButton
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => onEditProviderProfile(key.provider)}
+                        aria-label={`编辑 Provider ${providerLabel}`}
+                      >
+                        <Pencil className="size-3" />
+                        编辑 Provider
+                      </ForgeButton>
+                      <ForgeButton
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => onDeleteProviderProfile(key.provider)}
+                        className="text-destructive hover:text-destructive"
+                        aria-label={`删除 Provider ${providerLabel}`}
+                      >
+                        删除 Provider
+                      </ForgeButton>
+                    </>
                   )}
                 </div>
               )}

@@ -5,6 +5,7 @@ import type { SettingsSectionId } from "@/components/settings/SettingsCenterShel
 import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
 import {
   EMPTY_PROVIDER_PROFILE_DRAFT,
+  providerProfileDraftFromProvider,
   providerProfileInputFromDraft,
   ProviderProfileEditor,
   type ProviderProfileDraft,
@@ -48,6 +49,7 @@ export function useSettingsDialogController({
   const [refreshingModelsProvider, setRefreshingModelsProvider] = useState<string | null>(null);
   const [modelCatalogResults, setModelCatalogResults] = useState<Record<string, ProviderModelCatalogResult>>({});
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [profileEditorMode, setProfileEditorMode] = useState<"create" | "edit">("create");
   const [profileDraft, setProfileDraft] = useState<ProviderProfileDraft>(EMPTY_PROVIDER_PROFILE_DRAFT);
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
@@ -201,12 +203,30 @@ export function useSettingsDialogController({
     }
   }, [providers, queryClient]);
 
+  const handleProfileEditorOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      setProfileEditorMode("create");
+      setProfileDraft(EMPTY_PROVIDER_PROFILE_DRAFT);
+    }
+    setProfileEditorOpen(nextOpen);
+  }, []);
+
+  const handleEditProviderProfile = useCallback((providerId: string) => {
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider) return;
+    setProfileDraft(providerProfileDraftFromProvider(provider));
+    setProfileEditorMode("edit");
+    setProfileEditorOpen(true);
+    setError(null);
+  }, [providers]);
+
   const handleSaveProviderProfile = useCallback(async () => {
     setSaving(true);
     setError(null);
     try {
       await upsertProviderProfile(providerProfileInputFromDraft(profileDraft));
       setProfileDraft(EMPTY_PROVIDER_PROFILE_DRAFT);
+      setProfileEditorMode("create");
       setProfileEditorOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
@@ -269,14 +289,16 @@ export function useSettingsDialogController({
     onRemove: handleRemove,
     onProbe: handleProbe,
     onRefreshModels: handleRefreshModels,
+    onEditProviderProfile: handleEditProviderProfile,
     onDeleteProviderProfile: handleDeleteProviderProfile,
   };
 
   const profileEditorProps: ComponentProps<typeof ProviderProfileEditor> = {
     open: profileEditorOpen,
+    mode: profileEditorMode,
     draft: profileDraft,
     saving,
-    onOpenChange: setProfileEditorOpen,
+    onOpenChange: handleProfileEditorOpenChange,
     onDraftChange: setProfileDraft,
     onSave: handleSaveProviderProfile,
   };

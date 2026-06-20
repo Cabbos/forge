@@ -179,6 +179,50 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI" })).toHaveCount(0);
   });
 
+  test("settings models edits a custom provider profile", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+
+    await dialog.getByRole("button", { name: "新增自定义 Provider" }).click();
+    await dialog.getByLabel("Provider ID").fill("local-openai");
+    await dialog.getByLabel("显示名称").fill("Local OpenAI");
+    await dialog.getByLabel("Base URL", { exact: true }).fill("http://127.0.0.1:1234/v1");
+    await dialog.getByLabel("默认模型").fill("local-model");
+    await dialog.getByLabel("不需要 API Key").check();
+    await dialog.getByLabel("Aliases").fill("local-lab");
+    await dialog.getByRole("button", { name: "保存 Provider" }).click();
+
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI" });
+    await providerRow.getByRole("button", { name: "编辑 Provider Local OpenAI" }).click();
+
+    await expect(dialog.getByLabel("Provider ID")).toHaveValue("local-openai");
+    await expect(dialog.getByLabel("显示名称")).toHaveValue("Local OpenAI");
+    await expect(dialog.getByLabel("Base URL", { exact: true })).toHaveValue("http://127.0.0.1:1234/v1");
+    await expect(dialog.getByLabel("默认模型")).toHaveValue("local-model");
+    await expect(dialog.getByLabel("不需要 API Key")).toBeChecked();
+    await expect(dialog.getByLabel("Aliases")).toHaveValue("local-lab");
+
+    await dialog.getByLabel("显示名称").fill("Local OpenAI Lab");
+    await dialog.getByLabel("默认模型").fill("local-model-v2");
+    await dialog.getByLabel("Aliases").fill("local-lab, local-v2");
+    await dialog.getByRole("button", { name: "更新 Provider" }).click();
+
+    const upsertArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertProviderProfileArgs;
+    });
+    expect(upsertArgs.input).toMatchObject({
+      id: "local-openai",
+      label: "Local OpenAI Lab",
+      base_url: "http://127.0.0.1:1234/v1",
+      api_key_env: [],
+      default_model: "local-model-v2",
+      aliases: ["local-lab", "local-v2"],
+    });
+    await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI Lab" })).toBeVisible();
+    await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI等待密钥" })).toHaveCount(0);
+  });
+
   test("settings models disables provider probe buttons while a probe is running", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock
