@@ -53,7 +53,8 @@ pub(crate) async fn build_agent_session(
     let adapter: Arc<dyn AiAdapter> = if missing_api_key {
         Arc::new(MissingKeyAdapter::new(provider_label(&provider), &model))
     } else {
-        build_adapter(&provider, api_key, &model, api_base, external_tools)?
+        build_adapter(&provider, api_key, &model, api_base, external_tools)
+            .map_err(|error| error.to_string())?
     };
     let system_prompt = harness.build_system_prompt(&provider, working_dir).await;
     let session = AgentSession::new(

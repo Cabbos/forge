@@ -68,6 +68,16 @@ impl OpenAiCompatibleAdapter {
         self
     }
 
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn max_tokens_for_test(&self) -> u32 {
+        self.max_tokens
+    }
+
     pub fn with_external_tools(self, tools: Vec<ToolDef>) -> Self {
         self.set_external_tools(tools);
         self
@@ -962,6 +972,18 @@ mod tests {
 
         assert!(names.contains(&"read_file".to_string()));
         assert!(names.contains(&"mcp__fixture__echo".to_string()));
+    }
+
+    #[test]
+    fn openai_adapter_uses_configured_max_tokens_in_requests() {
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_max_tokens(65_536);
+        let request = adapter.request_for_messages(&[ChatMessage::user("hello")], false);
+        let serialized = serde_json::to_value(&request).expect("serialize OpenAI request");
+
+        assert_eq!(request.max_tokens, Some(65_536));
+        assert_eq!(serialized["max_tokens"], 65_536);
     }
 
     #[test]

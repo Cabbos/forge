@@ -401,7 +401,8 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
         &model_str,
         credentials.api_base.as_deref(),
         external_tools,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let system_prompt = harness.build_system_prompt(&provider, &working_dir).await;
     let upgraded = AgentSession::new(
         snapshot.session_id.clone(),

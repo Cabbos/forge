@@ -194,8 +194,12 @@ proves Forge can grow provider coverage through data/config before code.
 
 ## Task 2: Adapter Routing by Capability
 
-- [ ] Refactor `apps/desktop/src-tauri/src/adapters/mod.rs::build_adapter(...)` to resolve a `ProviderDefinition` first.
-- [ ] Keep current behavior for existing providers:
+**Status (2026-06-20): Completed for registry-backed adapter routing.** `build_adapter(...)` now resolves provider metadata from `provider_registry` before choosing an adapter family, preserves existing DeepSeek/Anthropic/OpenAI/OpenRouter behavior, routes the new registry providers by capability, and returns a typed unsupported-provider error with valid provider IDs. This still does not implement settings/env detection, frontend catalogs, probes, native Gemini, OpenAI Responses, runtime profile file loading, or real provider-call fixture coverage.
+
+**Evidence:** TDD red pass failed on missing `AdapterFamily`, `resolve_adapter_route`, and `BuildAdapterError`. Green pass succeeded with `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml build_adapter --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_registry --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, and scoped `rustfmt --edition 2021 --check` on the touched Rust files.
+
+- [x] Refactor `apps/desktop/src-tauri/src/adapters/mod.rs::build_adapter(...)` to resolve a `ProviderDefinition` first.
+- [x] Keep current behavior for existing providers:
   - `deepseek` still uses `AnthropicAdapter` with DeepSeek Anthropic base URL.
   - `anthropic` still uses `AnthropicAdapter`.
   - `kimi` uses Anthropic-compatible transport for coding-agent behavior first, with an OpenAI-compatible fallback if a user selects that route.
@@ -204,15 +208,15 @@ proves Forge can grow provider coverage through data/config before code.
   - `minimax` uses Anthropic-compatible transport by default, with explicit OpenAI-compatible profile only when the selected endpoint/model requires it.
   - `openai` still uses `OpenAiCompatibleAdapter` until an OpenAI Responses adapter is intentionally added.
   - `openrouter` still uses `OpenAiCompatibleAdapter`.
-- [ ] Add provider routes for:
+- [x] Add provider routes for:
   - `gemini` through OpenAI-compatible transport.
   - `xai` through OpenAI-compatible transport.
   - `groq` through OpenAI-compatible transport.
   - `mistral` through OpenAI-compatible transport.
-  - `ollama` through configurable Anthropic-compatible or OpenAI-compatible transport.
+  - `ollama` through the registry default Anthropic-compatible transport for now.
   - `custom_openai` and `custom_anthropic`.
-- [ ] Return a typed unsupported-provider error that includes the valid provider IDs.
-- [ ] Add golden request tests for each transport route.
+- [x] Return a typed unsupported-provider error that includes the valid provider IDs.
+- [x] Add golden request tests for each transport route.
 
 Expected result:
 
