@@ -46,7 +46,7 @@ export function deriveBackgroundTaskStatus({
     (task) => normalizeA2ATaskProjection(task).needs_human_review === true,
   ).length;
   const activeLoopTasks = loopTasks
-    .map(summarizeLoopTask)
+    .map((task) => summarizeLoopTask(task))
     .filter(isVisibleLoopTaskSummary);
   const enabledScheduledTasks = (scheduler?.tasks ?? []).filter((task) => task.enabled).length;
   const alertCount = healthAlerts.length;
