@@ -462,3 +462,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod provider_conformance;

@@ -1310,6 +1310,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn provider_conformance_openai_streaming_fixture_captures_text_tool_usage_and_reasoning() {
+        let text_delta = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "先看文件。",
+                    "reasoning_content": "Need the file before editing."
+                }
+            }]
+        });
+        let tool_start_delta = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\""
+                        }
+                    }]
+                }
+            }]
+        });
+        let tool_argument_delta = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "arguments": ":\"src/App.tsx\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let usage_delta = serde_json::json!({
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33
+            }
+        });
+
+        let mut parser = OpenAiStreamParser::default();
+        let text_update = parser.apply_event(&text_delta);
+        let tool_start_update = parser.apply_event(&tool_start_delta);
+        let tool_argument_update = parser.apply_event(&tool_argument_delta);
+        let usage_update = parser.apply_event(&usage_delta);
+        let result = parser.finish();
+
+        assert_eq!(text_update.text_chunks, vec!["先看文件。".to_string()]);
+        assert!(tool_start_update.text_chunks.is_empty());
+        assert!(tool_argument_update.text_chunks.is_empty());
+        assert_eq!(usage_update.usage, Some((77, 33)));
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({"type": "text", "text": "先看文件。"}),
+                serde_json::json!({
+                    "type": "reasoning",
+                    "reasoning_content": "Need the file before editing."
+                }),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
     #[tokio::test]
     async fn call_repairs_tool_history_before_serializing_request() {
         let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({

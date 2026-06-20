@@ -311,18 +311,22 @@ cd apps/desktop && node --test src/lib/providers.test.ts
 
 ## Task 5: Streaming, Tools, and Reasoning Fixtures
 
-- [ ] Add fixture tests for OpenAI-compatible streaming deltas:
+**Status (2026-06-20): Completed for fixture/conformance coverage.** Existing OpenAI-compatible and Anthropic-compatible parsers already satisfied the mainstream streaming contract, so this slice added fixture and conformance tests without production parser changes. The tests now pin text deltas, tool-call starts, split tool argument deltas, usage payloads, OpenAI-style reasoning payloads, Anthropic thinking blocks, explicit unknown usage/null fields, and compact-summary tool-free behavior across representative provider families. This does not add live provider calls or Task 6 cost/usage schema expansion.
+
+**Evidence:** Verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::anthropic --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_conformance --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml compact_summary --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, and scoped `rustfmt --edition 2021 --check` on touched Rust files.
+
+- [x] Add fixture tests for OpenAI-compatible streaming deltas:
   - text delta
   - tool call start
   - tool call argument delta
   - usage payload
   - reasoning or reasoning-like payload when present
-- [ ] Add fixture tests for Anthropic-compatible streaming deltas:
+- [x] Add fixture tests for Anthropic-compatible streaming deltas:
   - text block
   - thinking block
   - tool_use block
   - usage payload
-- [ ] Add a provider conformance test table:
+- [x] Add a provider conformance test table:
 
 ```rust
 struct ProviderConformance {
@@ -334,8 +338,8 @@ struct ProviderConformance {
 }
 ```
 
-- [ ] Mark unknown fields as unknown/null rather than dropping them silently.
-- [ ] Ensure `compact_summary(...)` remains tool-free for every provider.
+- [x] Mark unknown fields as unknown/null rather than dropping them silently.
+- [x] Ensure `compact_summary(...)` remains tool-free for every provider.
 
 Expected result:
 

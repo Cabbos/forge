@@ -1316,6 +1316,102 @@ mod tests {
         );
     }
 
+    #[test]
+    fn provider_conformance_anthropic_streaming_fixture_captures_text_thinking_tool_and_usage() {
+        let events = [
+            serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "usage": { "input_tokens": 123 }
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "content_block": { "type": "thinking", "thinking": "" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "thinking_delta", "thinking": "Need the file before editing." }
+            }),
+            serde_json::json!({ "type": "content_block_stop" }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "content_block": { "type": "text", "text": "" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "text_delta", "text": "先看文件。" }
+            }),
+            serde_json::json!({ "type": "content_block_stop" }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": {}
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "input_json_delta", "partial_json": "{\"path\"" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "input_json_delta", "partial_json": ":\"src/App.tsx\"}" }
+            }),
+            serde_json::json!({ "type": "content_block_stop" }),
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "tool_use" },
+                "usage": { "output_tokens": 45 }
+            }),
+        ];
+
+        let mut parser = AnthropicStreamParser::default();
+        let mut thinking_chunk = None;
+        let mut text_chunk = None;
+        let mut usage = None;
+        for event in events {
+            let update = parser.apply_event(&event);
+            thinking_chunk = thinking_chunk.or(update.thinking_chunk);
+            text_chunk = text_chunk.or(update.text_chunk);
+            usage = usage.or(update.usage);
+        }
+        let result = parser.finish();
+
+        assert_eq!(
+            thinking_chunk.as_deref(),
+            Some("Need the file before editing.")
+        );
+        assert_eq!(text_chunk.as_deref(), Some("先看文件。"));
+        assert_eq!(usage, Some((123, 45)));
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({
+                    "type": "thinking",
+                    "thinking": "Need the file before editing."
+                }),
+                serde_json::json!({"type": "text", "text": "先看文件。"}),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_use"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "toolu_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
     fn assert_anthropic_tool_result_contract(messages: &[serde_json::Value]) {
         for (index, message) in messages.iter().enumerate() {
             let Some(content) = message.get("content").and_then(|value| value.as_array()) else {
