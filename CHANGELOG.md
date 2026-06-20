@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added compact Settings provider-row rendering coverage for the full mainstream provider catalog. Provider labels, default model names, and context-window metadata now wrap instead of clipping in narrow Settings layouts, with browser geometry checks guarding against hidden truncation and row overflow.
 - Added a Settings model-catalog use action. After a manual `/models` refresh, users can select one of the returned model ids directly from the provider row; the selection updates the current Composer provider/model and app metadata while leaving profile defaults untouched unless the user edits the profile separately.
 - Added an explicit Settings action to save a refreshed model as the default for editable custom provider profiles. This preserves the user's other profile fields and only changes the provider profile's default model when the user clicks the default action.
 - Added provider-aware start readiness. The empty-session readiness panel now uses the merged provider catalog, so no-auth custom/local provider profiles are not blocked on missing API keys, and selected-model/catalog mismatches are surfaced before the first prompt. This is a readiness/UX contract only: Forge still does not auto-probe paid APIs, certify every live provider, or auto-mutate default models from refreshed catalogs.

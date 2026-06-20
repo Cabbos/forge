@@ -101,6 +101,74 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(probeArgs).toEqual({ provider: "deepseek" });
   });
 
+  test("settings models renders mainstream provider metadata without clipping", async ({ page }) => {
+    const providerStatuses = [
+      "deepseek",
+      "anthropic",
+      "kimi",
+      "glm",
+      "alibaba",
+      "minimax",
+      "openai",
+      "openrouter",
+      "gemini",
+      "xai",
+      "groq",
+      "mistral",
+      "ollama",
+      "custom_openai",
+      "custom_anthropic",
+    ].map((provider) => ({
+      provider,
+      set: provider === "deepseek" || provider === "ollama",
+      preview: provider === "deepseek" ? "sk-e0...23ef" : provider === "ollama" ? "not required" : "",
+    }));
+    await page.evaluate((statuses) => {
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = statuses;
+    }, providerStatuses);
+
+    await page.getByRole("button", { name: "设置" }).click();
+    await page.setViewportSize({ width: 720, height: 900 });
+    const dialog = page.getByRole("dialog");
+    const rows = dialog.getByTestId("settings-provider-row");
+    await expect(rows).toHaveCount(providerStatuses.length);
+
+    const requiredMetadata = [
+      { label: "Kimi / Moonshot", model: "Kimi K2.5", meta: "上下文 128K" },
+      { label: "Alibaba / Qwen", model: "Qwen3 Coder Plus", meta: "上下文 128K" },
+      { label: "Custom Anthropic-Compatible", model: "Custom Model", meta: "默认模型" },
+      { label: "Groq", model: "Llama 3.3 70B Versatile", meta: "上下文 128K" },
+      { label: "Gemini", model: "Gemini 2.5 Pro", meta: "上下文 1M" },
+    ];
+    for (const expected of requiredMetadata) {
+      const row = rows.filter({ hasText: expected.label });
+      await expect(row.locator("[data-provider-readable='label']")).toHaveText(expected.label);
+      await expect(row.locator("[data-provider-readable='model']")).toHaveText(expected.model);
+      await expect(row.locator("[data-provider-readable='meta']")).toContainText(expected.meta);
+    }
+
+    const clippedTexts = await dialog.getByTestId("settings-provider-readable-text").evaluateAll((nodes) =>
+      nodes
+        .filter((node) => {
+          const element = node as HTMLElement;
+          return element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+        })
+        .map((node) => node.textContent?.trim() ?? ""),
+    );
+    expect(clippedTexts).toEqual([]);
+
+    const overflowingRows = await rows.evaluateAll((nodes) =>
+      nodes
+        .filter((node) => {
+          const element = node as HTMLElement;
+          return element.scrollWidth > element.clientWidth + 1;
+        })
+        .map((node) => node.textContent?.replace(/\s+/g, " ").trim().slice(0, 80) ?? ""),
+    );
+    expect(overflowingRows).toEqual([]);
+  });
+
   test("settings models refreshes a mocked provider model catalog", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog");

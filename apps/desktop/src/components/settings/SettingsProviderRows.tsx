@@ -91,18 +91,32 @@ export function SettingsProviderRows({
               {providerLabel.slice(0, 1)}
             </div>
             <div className="forge-settings-provider-copy min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <div className="truncate text-xs font-medium text-foreground">{providerLabel}</div>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <div
+                  data-testid="settings-provider-readable-text"
+                  data-provider-readable="label"
+                  className="forge-settings-provider-readable-text text-xs font-medium text-foreground"
+                >
+                  {providerLabel}
+                </div>
                 <div className="truncate text-[11px] text-muted-foreground">
                   {key.set ? "已连接" : "等待密钥"}
                 </div>
               </div>
               {defaultModel && (
                 <>
-                  <div className="mt-1 truncate text-[11px] text-muted-foreground/85">
+                  <div
+                    data-testid="settings-provider-readable-text"
+                    data-provider-readable="model"
+                    className="forge-settings-provider-readable-text mt-1 text-[11px] text-muted-foreground/85"
+                  >
                     {defaultModel.name}
                   </div>
-                  <div className="mt-0.5 text-[10px] text-muted-foreground">
+                  <div
+                    data-testid="settings-provider-readable-text"
+                    data-provider-readable="meta"
+                    className="forge-settings-provider-readable-text mt-0.5 text-[10px] text-muted-foreground"
+                  >
                     {[
                       "默认模型",
                       defaultContext && `上下文 ${defaultContext}`,
@@ -123,7 +137,7 @@ export function SettingsProviderRows({
                 {key.set ? "已配置" : "未配置"}
               </span>
               {editing !== key.provider && (
-                <div className="flex items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <ForgeButton
                     size="xs"
                     variant="outline"

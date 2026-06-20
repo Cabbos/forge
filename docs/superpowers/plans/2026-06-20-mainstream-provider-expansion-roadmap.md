@@ -292,7 +292,7 @@ proves each new provider can be discovered without breaking existing DeepSeek/An
   - `apps/desktop/src/components/settings/SettingsDialogModel.ts`
   - `apps/desktop/src/components/session/ComposerModelMenu.tsx`
   - `apps/desktop/src/components/session/useComposerModelMenu.ts`
-- [ ] Add UI tests or component tests that provider labels, default models, and context windows render without truncation.
+- [x] Add UI tests or component tests that provider labels, default models, and context windows render without truncation.
 - [x] Keep the default provider as `deepseek` unless the user explicitly changes it.
 
 Note: no React component edits were required in this slice because Settings and Composer already derive provider rows and menu options from `PROVIDERS`; updating the catalog and helper semantics updates those surfaces.
@@ -563,6 +563,16 @@ This closes the long-term configuration step after selectable catalog results. T
 **Evidence:** TDD red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models creates and deletes a custom provider profile"` because there was no `设为 Provider 默认` action for refreshed model results. Green verification covers creating a no-auth custom provider, refreshing a mocked model catalog, saving `local-model-v2` as the provider default, preserving base URL/env/alias/capability fields in the upsert payload, and deleting the profile. The broader provider smoke pass also succeeded for model refresh/use, custom profile create/edit/template flows, and no-auth start readiness, followed by `npm --prefix apps/desktop run build`, `scripts/acceptance.sh --dry-run`, and `git diff --check`.
 
 **Still not claimed:** automatic startup probing, live provider certification, native Anthropic/Gemini/Bedrock model catalog endpoints, executable provider plugins, billing-grade provider pricing metadata, or automatic changes to non-editable built-in provider defaults.
+
+## 2026-06-20 Post-MVP Usability Slice: Provider Metadata Rendering Guard
+
+**Status (2026-06-20): Implemented as the ninth "fully usable provider" hardening slice after MVP closure.** Settings provider rows now have browser-level coverage that renders the complete mainstream provider catalog in a compact Settings layout and verifies that provider labels, default model names, and context-window metadata are visible without DOM clipping or row overflow. The UI now treats those primary provider facts as wrapping metadata, not single-line text that can silently truncate.
+
+This closes the remaining Task 4 UI verification gap. As provider support expands, labels such as `Kimi / Moonshot`, `Alibaba / Qwen`, and `Custom Anthropic-Compatible`, plus long model names such as `Llama 3.3 70B Versatile`, must stay inspectable. A provider surface is not fully usable if the exact model/default/context facts are hidden behind visual truncation.
+
+**Evidence:** TDD red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models renders mainstream provider metadata without clipping"` because Settings provider rows did not expose readable metadata nodes for geometry assertions and still used hard truncation for primary provider facts. Green verification for that focused browser test now covers all built-in mainstream provider rows at a compact 720px Settings width, checks representative long labels/models/context metadata, asserts no readable metadata node is clipped, and asserts no provider row has horizontal overflow.
+
+**Still not claimed:** full visual screenshot certification for every theme/window size, live provider endpoint certification, native Anthropic/Gemini/Bedrock model catalog endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
 ## MVP Definition
 

@@ -761,6 +761,14 @@
     padding-top: 0.0625rem;
   }
 
+  .forge-settings-provider-readable-text {
+    min-width: 0;
+    max-width: 100%;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .forge-settings-row-side {
     display: flex;
     min-width: 6.75rem;
