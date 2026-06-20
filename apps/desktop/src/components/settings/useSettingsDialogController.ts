@@ -183,10 +183,10 @@ export function useSettingsDialogController({
     setError(null);
     try {
       const result = await listProviderModels(provider);
-      setModelCatalogResults((previous) => ({ ...previous, [provider]: result }));
       if (result.status === "available") {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog });
       }
+      setModelCatalogResults((previous) => ({ ...previous, [provider]: result }));
     } catch (e) {
       setModelCatalogResults((previous) => ({
         ...previous,
@@ -272,6 +272,31 @@ export function useSettingsDialogController({
     setSelectedModel(model);
   }, [setSelectedModel, setSelectedProvider]);
 
+  const handleSetProviderDefaultModel = useCallback(async (providerId: string, model: string) => {
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider || (provider.source !== "user_defined" && provider.source !== "user_override")) {
+      setError("只有可编辑的自定义 Provider 可以更新默认模型。");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const draft = providerProfileDraftFromProvider(provider);
+      await upsertProviderProfile(providerProfileInputFromDraft({ ...draft, defaultModel: model }));
+      setSelectedProvider(providerId);
+      setSelectedModel(model);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus }),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [providers, queryClient, setSelectedModel, setSelectedProvider]);
+
   const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys, providers);
   const sessionCount = sessions.size;
   const workspaceName = activeWorkspace?.name ?? "未选择项目";
@@ -299,6 +324,7 @@ export function useSettingsDialogController({
     onProbe: handleProbe,
     onRefreshModels: handleRefreshModels,
     onUseModel: handleUseProviderModel,
+    onSetDefaultModel: handleSetProviderDefaultModel,
     onEditProviderProfile: handleEditProviderProfile,
     onDeleteProviderProfile: handleDeleteProviderProfile,
   };

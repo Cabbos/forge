@@ -28,6 +28,7 @@ interface SettingsProviderRowsProps {
   onProbe: (provider: string) => void;
   onRefreshModels: (provider: string) => void;
   onUseModel: (provider: string, model: string) => void;
+  onSetDefaultModel: (provider: string, model: string) => void;
   onEditProviderProfile: (provider: string) => void;
   onDeleteProviderProfile: (provider: string) => void;
 }
@@ -54,6 +55,7 @@ export function SettingsProviderRows({
   onProbe,
   onRefreshModels,
   onUseModel,
+  onSetDefaultModel,
   onEditProviderProfile,
   onDeleteProviderProfile,
 }: SettingsProviderRowsProps) {
@@ -282,19 +284,36 @@ export function SettingsProviderRows({
                 </div>
                 {modelCatalogResult.models.length > 0 && (
                   <div className="forge-settings-provider-probe-checks">
-                    {modelCatalogResult.models.slice(0, 6).map((model) => (
-                      <ButtonPrimitive
-                        key={model.id}
-                        type="button"
-                        className="forge-settings-provider-probe-check"
-                        data-state={key.provider === selectedProvider && model.id === selectedModel ? "configured" : "passed"}
-                        title={model.id}
-                        aria-label={`使用模型 ${model.id}`}
-                        onClick={() => onUseModel(key.provider, model.id)}
-                      >
-                        {model.name || model.id}
-                      </ButtonPrimitive>
-                    ))}
+                    {modelCatalogResult.models.slice(0, 6).map((model) => {
+                      const currentSelection = key.provider === selectedProvider && model.id === selectedModel;
+                      const defaultSelection = provider?.defaultModel === model.id;
+                      return (
+                        <span key={model.id} className="inline-flex items-center gap-1">
+                          <ButtonPrimitive
+                            type="button"
+                            className="forge-settings-provider-probe-check"
+                            data-state={currentSelection ? "configured" : "passed"}
+                            title={model.id}
+                            aria-label={`使用模型 ${model.id}`}
+                            onClick={() => onUseModel(key.provider, model.id)}
+                          >
+                            {model.name || model.id}
+                          </ButtonPrimitive>
+                          {editableProviderProfile && !defaultSelection && (
+                            <ButtonPrimitive
+                              type="button"
+                              className="forge-settings-provider-probe-check"
+                              data-state="passed"
+                              title={`设为 Provider 默认：${model.id}`}
+                              aria-label={`设为 Provider 默认 ${model.id}`}
+                              onClick={() => onSetDefaultModel(key.provider, model.id)}
+                            >
+                              默认
+                            </ButtonPrimitive>
+                          )}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
                 {modelCatalogResult.base_url && (

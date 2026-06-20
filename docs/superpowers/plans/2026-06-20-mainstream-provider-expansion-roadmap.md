@@ -554,6 +554,16 @@ This closes the small but important product gap after model catalog caching: a u
 
 **Still not claimed:** automatic profile-default mutation, automatic startup probing, live provider certification, native Anthropic/Gemini/Bedrock model catalog endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-20 Post-MVP Usability Slice: Explicit Provider Default from Catalog
+
+**Status (2026-06-20): Implemented as the eighth "fully usable provider" hardening slice after MVP closure.** Editable custom/user-override provider rows can now save a refreshed model id as that provider profile's default model through an explicit Settings action. The action preserves the existing provider profile fields, updates only `default_model`, updates the current Composer selection to the same provider/model, and refreshes provider/key projections.
+
+This closes the long-term configuration step after selectable catalog results. The previous slice intentionally did not mutate provider defaults when users selected a model for the current Composer. This slice adds the separate human-controlled path for users who decide a refreshed model should become the provider default for future profile resolution. Built-in providers without an editable profile are not silently mutated.
+
+**Evidence:** TDD red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models creates and deletes a custom provider profile"` because there was no `设为 Provider 默认` action for refreshed model results. Green verification covers creating a no-auth custom provider, refreshing a mocked model catalog, saving `local-model-v2` as the provider default, preserving base URL/env/alias/capability fields in the upsert payload, and deleting the profile. The broader provider smoke pass also succeeded for model refresh/use, custom profile create/edit/template flows, and no-auth start readiness, followed by `npm --prefix apps/desktop run build`, `scripts/acceptance.sh --dry-run`, and `git diff --check`.
+
+**Still not claimed:** automatic startup probing, live provider certification, native Anthropic/Gemini/Bedrock model catalog endpoints, executable provider plugins, billing-grade provider pricing metadata, or automatic changes to non-editable built-in provider defaults.
+
 ## MVP Definition
 
 The MVP is complete when:

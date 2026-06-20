@@ -262,23 +262,24 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       if (!provider || models.length === 0) return;
       // @ts-expect-error acceptance mock
       const catalog = Array.isArray(window.__mockProviderCatalogCache) ? window.__mockProviderCatalogCache : [];
+      const existingIndex = catalog.findIndex((entry: Record<string, unknown>) => entry.id === provider);
+      const existingEntry = existingIndex >= 0 ? catalog[existingIndex] as Record<string, unknown> : null;
       const nextEntry = {
         id: provider,
-        label: String(result.provider_label ?? provider),
-        default_model: provider === "deepseek" ? "deepseek-v4-flash[1m]" : String(models[0]?.id ?? "custom-model"),
-        context_window_tokens: provider === "deepseek" ? 1_000_000 : null,
-        aliases: [],
-        requires_api_key: true,
+        label: String(existingEntry?.label ?? result.provider_label ?? provider),
+        default_model: String(existingEntry?.default_model ?? (provider === "deepseek" ? "deepseek-v4-flash[1m]" : models[0]?.id ?? "custom-model")),
+        context_window_tokens: provider === "deepseek" ? 1_000_000 : existingEntry?.context_window_tokens ?? null,
+        aliases: Array.isArray(existingEntry?.aliases) ? existingEntry.aliases : [],
+        requires_api_key: typeof existingEntry?.requires_api_key === "boolean" ? existingEntry.requires_api_key : true,
         supports_streaming: true,
         supports_tools: true,
-        source: "user_defined",
+        source: existingEntry?.source ?? "user_defined",
         base_url: result.base_url ?? null,
-        transport: "openai_chat_completions",
-        api_key_env: [],
-        base_url_env: [],
+        transport: existingEntry?.transport ?? "openai_chat_completions",
+        api_key_env: Array.isArray(existingEntry?.api_key_env) ? existingEntry.api_key_env : [],
+        base_url_env: Array.isArray(existingEntry?.base_url_env) ? existingEntry.base_url_env : [],
         models,
       };
-      const existingIndex = catalog.findIndex((entry: Record<string, unknown>) => entry.id === provider);
       if (existingIndex >= 0) catalog[existingIndex] = nextEntry;
       else catalog.push(nextEntry);
       // @ts-expect-error acceptance mock

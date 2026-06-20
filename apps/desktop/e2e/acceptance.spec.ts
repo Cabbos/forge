@@ -177,6 +177,42 @@ test.describe("Phase 7 acceptance surfaces", () => {
     const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI" });
     await expect(providerRow).toContainText("Local OpenAI");
     await expect(providerRow).toContainText("not required");
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockProviderModelCatalogResult = {
+        provider: "local-openai",
+        provider_label: "Local OpenAI",
+        base_url: "http://127.0.0.1:1234/v1",
+        status: "available",
+        models: [
+          { id: "local-model-v2", name: "local-model-v2" },
+          { id: "local-model", name: "local-model" },
+        ],
+        message: "Local OpenAI returned 2 models.",
+        remediation: null,
+      };
+    });
+    await providerRow.getByRole("button", { name: "刷新模型 Local OpenAI" }).click();
+    const defaultModelButton = providerRow.getByRole("button", { name: "设为 Provider 默认 local-model-v2" });
+    await expect(defaultModelButton).toBeVisible();
+    await expect(providerRow.getByRole("button", { name: "刷新模型 Local OpenAI" })).toBeEnabled();
+    await defaultModelButton.click();
+    const defaultArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertProviderProfileArgs;
+    });
+    expect(defaultArgs.input).toMatchObject({
+      id: "local-openai",
+      label: "Local OpenAI",
+      base_url: "http://127.0.0.1:1234/v1",
+      api_key_env: [],
+      base_url_env: ["LOCAL_OPENAI_BASE_URL"],
+      default_model: "local-model-v2",
+      aliases: ["local-lab", "lmstudio"],
+      supports_tools: true,
+      supports_streaming: true,
+    });
+    await expect(providerRow).toContainText("local-model-v2");
 
     await providerRow.getByRole("button", { name: "删除 Provider Local OpenAI" }).click();
     const deleteArgs = await page.evaluate(() => {
