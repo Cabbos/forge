@@ -228,8 +228,12 @@ shows existing providers unchanged and new providers routed by registry.
 
 ## Task 3: Credentials, Base URLs, and Model Defaults
 
-- [ ] Update `apps/desktop/src-tauri/src/settings.rs` so `KNOWN_PROVIDERS` is registry-driven or generated from one authoritative list.
-- [ ] Add provider-specific env detection:
+**Status (2026-06-20): Completed for registry-backed credentials and provider metadata.** Settings now uses the provider registry as the authoritative known-provider list and reads API key/base URL env vars from registry metadata. Provider model env detection is provider-specific, so `ANTHROPIC_MODEL` no longer leaks into OpenAI/Kimi/GLM/etc. Anthropic/Claude config behavior is preserved for Anthropic only. Provider normalization, default models, labels, and context windows now resolve through the registry while preserving DeepSeek v4-pro and `[1m]` one-million-token behavior.
+
+**Evidence:** TDD red pass failed on mainstream env fallback, provider-specific model detection, key-status provider coverage, and registry-backed provider-capability metadata. Green pass succeeded with `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests::detect_credentials --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_capabilities --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_registry --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, and scoped `rustfmt --edition 2021 --check` on the touched Rust files.
+
+- [x] Update `apps/desktop/src-tauri/src/settings.rs` so `KNOWN_PROVIDERS` is registry-driven or generated from one authoritative list.
+- [x] Add provider-specific env detection:
 
 ```text
 GEMINI_API_KEY
@@ -264,8 +268,8 @@ FORGE_CUSTOM_ANTHROPIC_API_KEY
 FORGE_CUSTOM_ANTHROPIC_BASE_URL
 ```
 
-- [ ] Stop treating `ANTHROPIC_MODEL` as a universal model override. Add provider-specific model envs such as `OPENAI_MODEL`, `KIMI_MODEL`, `MOONSHOT_MODEL`, `GLM_MODEL`, `ZHIPU_MODEL`, `ALIBABA_MODEL`, `QWEN_MODEL`, `MINIMAX_MODEL`, `GEMINI_MODEL`, `XAI_MODEL`, `GROQ_MODEL`, `MISTRAL_MODEL`, and `NVIDIA_MODEL`.
-- [ ] Add tests for stored key priority, env fallback, base URL fallback, and provider-specific model detection.
+- [x] Stop treating `ANTHROPIC_MODEL` as a universal model override. Add provider-specific model envs for built-in providers, including `OPENAI_MODEL`, `KIMI_MODEL`, `MOONSHOT_MODEL`, `GLM_MODEL`, `ZHIPU_MODEL`, `ALIBABA_MODEL`, `QWEN_MODEL`, `MINIMAX_MODEL`, `GEMINI_MODEL`, `XAI_MODEL`, `GROQ_MODEL`, `MISTRAL_MODEL`, `DEEPSEEK_MODEL`, `OPENROUTER_MODEL`, `OLLAMA_MODEL`, `FORGE_CUSTOM_OPENAI_MODEL`, and `FORGE_CUSTOM_ANTHROPIC_MODEL`. `NVIDIA_MODEL` remains future profile-driven coverage because NVIDIA is not a built-in provider.
+- [x] Add tests for stored key priority, env fallback, base URL fallback, and provider-specific model detection.
 
 Expected result:
 
