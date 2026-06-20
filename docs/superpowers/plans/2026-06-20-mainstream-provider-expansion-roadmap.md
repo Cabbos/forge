@@ -497,6 +497,16 @@ This closes the practical drift where the backend could route/probe a config pro
 
 **Still not claimed:** live provider certification, dynamic model fetching, in-app provider-profile editing, executable provider plugins, native OpenAI Responses/Gemini/Bedrock transports, or browser-level truncation/render validation for every provider row.
 
+## 2026-06-20 Post-MVP Usability Slice: Profile Defaults Use Dynamic Catalog
+
+**Status (2026-06-20): Implemented as the third "fully usable provider" hardening slice after MVP closure.** Active profile defaults now use the dynamic provider catalog when they update the visible Composer selection or create a new desktop session. A profile that sets `default_provider: "nim"` resolves through the configured alias to `nvidia` and uses the configured default model, and a profile that only sets `default_model: "local-model"` can infer the matching configured provider from the catalog.
+
+This closes the follow-on drift after the dynamic catalog UI slice: config providers were visible, but profile application still used static helper defaults and could pair a configured provider with `custom-model` or with the previous provider's model. The fix keeps profile defaults aligned with the same catalog that backs Settings rows and the Composer model menu.
+
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts` on configured provider alias/default-model resolution for both Composer and new-session defaults. Green pass succeeded for that test file plus `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`. `npm --prefix apps/desktop run build` remains blocked only by the pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
+
+**Still not claimed:** visual provider-profile editing, live provider certification, dynamic model fetching, or browser-level validation of profile form/provider dropdown ergonomics.
+
 ## MVP Definition
 
 The MVP is complete when:

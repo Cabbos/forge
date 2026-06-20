@@ -12,6 +12,7 @@ import {
 import type { ComposerCapabilitySelection, McpContextSelection } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
 import { queryKeys } from "@/hooks/queries/queryKeys";
+import { useProviderCatalog } from "@/hooks/queries/useProviderCatalogQuery";
 import { useProfilesQuery } from "@/hooks/queries/useProfilesQuery";
 import { resolveProfileSessionDefaults } from "./sessionProfileDefaults";
 
@@ -23,6 +24,7 @@ export function useSession() {
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
   const { data: profiles } = useProfilesQuery();
+  const providers = useProviderCatalog();
   const queryClient = useQueryClient();
 
   const create = useCallback(
@@ -33,6 +35,7 @@ export function useSession() {
           provider,
           model,
           profiles,
+          providers,
         });
         const result = await createSession(
           sessionDefaults.workingDir,
@@ -49,7 +52,7 @@ export function useSession() {
         );
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
         if (result.missing_api_key) {
-          const providerLabel = getProviderLabel(result.provider ?? sessionDefaults.provider);
+          const providerLabel = getProviderLabel(result.provider ?? sessionDefaults.provider, providers);
           dispatchOutputEvent({
             event_type: "error",
             session_id: result.session_id,
@@ -64,7 +67,7 @@ export function useSession() {
         throw e;
       }
     },
-    [addSession, dispatchOutputEvent, profiles, queryClient, selectedModel, selectedProvider]
+    [addSession, dispatchOutputEvent, profiles, providers, queryClient, selectedModel, selectedProvider]
   );
 
   const resume = useCallback(
@@ -74,7 +77,7 @@ export function useSession() {
         updateSessionStatus(result.session_id, "running");
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
         if (result.missing_api_key) {
-          const providerLabel = getProviderLabel(result.provider);
+          const providerLabel = getProviderLabel(result.provider, providers);
           dispatchOutputEvent({
             event_type: "error",
             session_id: result.session_id,
@@ -89,7 +92,7 @@ export function useSession() {
         throw e;
       }
     },
-    [dispatchOutputEvent, queryClient, updateSessionStatus]
+    [dispatchOutputEvent, providers, queryClient, updateSessionStatus]
   );
 
   const send = useCallback(async (

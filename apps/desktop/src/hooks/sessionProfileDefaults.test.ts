@@ -5,6 +5,7 @@ import {
   resolveProfileComposerDefaults,
   resolveProfileSessionDefaults,
 } from "./sessionProfileDefaults.ts";
+import { mergeProviderCatalog } from "../lib/providers.ts";
 import type { ForgeProfile, ProfileListPayload } from "../lib/ipc/types.ts";
 
 const payload: ProfileListPayload = {
@@ -95,6 +96,78 @@ describe("resolveProfileSessionDefaults", () => {
       profileId: "blank",
     });
   });
+
+  it("uses configured provider catalog defaults for new sessions when profile only sets provider", () => {
+    const providers = mergeProviderCatalog([
+      {
+        id: "nvidia",
+        label: "NVIDIA NIM",
+        default_model: "nvidia/llama-3.1-nemotron",
+        context_window_tokens: 128_000,
+        aliases: ["nim"],
+        requires_api_key: true,
+        supports_streaming: true,
+        supports_tools: true,
+      },
+    ]);
+
+    const result = resolveProfileSessionDefaults({
+      workingDir: "/workspace",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profiles: {
+        active_profile_id: "gpu",
+        profiles: [
+          forgeProfile({
+            id: "gpu",
+            default_provider: "nim",
+            default_workspace: "/gpu-workspace",
+          }),
+        ],
+      },
+      providers,
+    });
+
+    assert.deepEqual(result, {
+      workingDir: "/gpu-workspace",
+      provider: "nvidia",
+      model: "nvidia/llama-3.1-nemotron",
+      profileId: "gpu",
+    });
+  });
+
+  it("infers configured provider catalog defaults for new sessions when profile only sets model", () => {
+    const providers = mergeProviderCatalog([
+      {
+        id: "local-openai",
+        label: "Local OpenAI-Compatible",
+        default_model: "local-model",
+        context_window_tokens: null,
+        aliases: ["local-lab"],
+        requires_api_key: false,
+        supports_streaming: true,
+        supports_tools: true,
+      },
+    ]);
+
+    const result = resolveProfileSessionDefaults({
+      workingDir: "/workspace",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      profiles: {
+        active_profile_id: "local",
+        profiles: [forgeProfile({ id: "local", default_model: "local-model" })],
+      },
+      providers,
+    });
+
+    assert.deepEqual(result, {
+      workingDir: "/workspace",
+      provider: "local-openai",
+      model: "local-model",
+      profileId: "local",
+    });
+  });
 });
 
 function forgeProfile(overrides: Partial<ForgeProfile>): ForgeProfile {
@@ -138,6 +211,62 @@ describe("resolveProfileComposerDefaults", () => {
     assert.deepEqual(result, {
       provider: "openai",
       model: "gpt-4o",
+      changed: true,
+    });
+  });
+
+  it("uses configured provider catalog defaults when profile only sets a custom provider", () => {
+    const providers = mergeProviderCatalog([
+      {
+        id: "nvidia",
+        label: "NVIDIA NIM",
+        default_model: "nvidia/llama-3.1-nemotron",
+        context_window_tokens: 128_000,
+        aliases: ["nim"],
+        requires_api_key: true,
+        supports_streaming: true,
+        supports_tools: true,
+      },
+    ]);
+
+    const result = resolveProfileComposerDefaults({
+      currentProvider: "deepseek",
+      currentModel: "deepseek-v4-flash[1m]",
+      profile: forgeProfile({ default_provider: "nim" }),
+      providers,
+    });
+
+    assert.deepEqual(result, {
+      provider: "nvidia",
+      model: "nvidia/llama-3.1-nemotron",
+      changed: true,
+    });
+  });
+
+  it("infers configured providers from dynamic catalog models", () => {
+    const providers = mergeProviderCatalog([
+      {
+        id: "local-openai",
+        label: "Local OpenAI-Compatible",
+        default_model: "local-model",
+        context_window_tokens: null,
+        aliases: ["local-lab"],
+        requires_api_key: false,
+        supports_streaming: true,
+        supports_tools: true,
+      },
+    ]);
+
+    const result = resolveProfileComposerDefaults({
+      currentProvider: "deepseek",
+      currentModel: "deepseek-v4-flash[1m]",
+      profile: forgeProfile({ default_model: "local-model" }),
+      providers,
+    });
+
+    assert.deepEqual(result, {
+      provider: "local-openai",
+      model: "local-model",
       changed: true,
     });
   });

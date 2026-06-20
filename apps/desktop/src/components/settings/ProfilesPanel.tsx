@@ -9,6 +9,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useProfilesQuery } from "@/hooks/queries/useProfilesQuery";
 import { queryKeys } from "@/hooks/queries/queryKeys";
+import { useProviderCatalog } from "@/hooks/queries/useProviderCatalogQuery";
 import {
   upsertProfile,
   deleteProfile,
@@ -29,6 +30,7 @@ export function ProfilesPanel() {
   const selectedModel = useStore((state) => state.selectedModel);
   const setSelectedProvider = useStore((state) => state.setSelectedProvider);
   const setSelectedModel = useStore((state) => state.setSelectedModel);
+  const providers = useProviderCatalog();
 
   const {
     data: payload,
@@ -83,6 +85,7 @@ export function ProfilesPanel() {
         currentProvider: selectedProvider,
         currentModel: selectedModel,
         profile: activeProfile,
+        providers,
       });
       if (composerDefaults.changed) {
         setSelectedProvider(composerDefaults.provider);
@@ -90,7 +93,7 @@ export function ProfilesPanel() {
       }
       await invalidate();
     },
-    [invalidate, selectedModel, selectedProvider, setSelectedModel, setSelectedProvider],
+    [invalidate, providers, selectedModel, selectedProvider, setSelectedModel, setSelectedProvider],
   );
 
   return (

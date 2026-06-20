@@ -3,6 +3,7 @@ import {
   getProviderForModel,
   normalizeProviderId,
 } from "../lib/providers.ts";
+import type { ProviderDefinition } from "../lib/providers.ts";
 import type { ForgeProfile, ProfileListPayload } from "../lib/ipc/types";
 
 export interface ResolveProfileSessionDefaultsInput {
@@ -10,6 +11,7 @@ export interface ResolveProfileSessionDefaultsInput {
   provider: string;
   model: string;
   profiles?: ProfileListPayload | null;
+  providers?: ProviderDefinition[];
 }
 
 export interface ResolvedProfileSessionDefaults {
@@ -23,6 +25,7 @@ export interface ResolveProfileComposerDefaultsInput {
   currentProvider: string;
   currentModel: string;
   profile?: ForgeProfile | null;
+  providers?: ProviderDefinition[];
 }
 
 export interface ResolvedProfileComposerDefaults {
@@ -47,10 +50,19 @@ export function resolveProfileSessionDefaults(
     };
   }
 
+  const profileProvider = cleanProfileDefault(activeProfile.default_provider);
+  const profileModel = cleanProfileDefault(activeProfile.default_model);
+  const provider = profileProvider
+    ? normalizeProviderId(profileProvider, input.providers)
+    : profileModel
+      ? getProviderForModel(profileModel, input.providers) ?? input.provider
+      : input.provider;
+  const model = profileModel ?? (profileProvider ? getDefaultModel(provider, input.providers) : input.model);
+
   return {
     workingDir: cleanProfileDefault(activeProfile.default_workspace) ?? input.workingDir,
-    provider: cleanProfileDefault(activeProfile.default_provider) ?? input.provider,
-    model: cleanProfileDefault(activeProfile.default_model) ?? input.model,
+    provider,
+    model,
     profileId: activeProfile.id,
   };
 }
@@ -60,6 +72,7 @@ export function resolveProfileComposerDefaults(
 ): ResolvedProfileComposerDefaults {
   const profileProvider = cleanProfileDefault(input.profile?.default_provider);
   const profileModel = cleanProfileDefault(input.profile?.default_model);
+  const providers = input.providers;
 
   if (!profileProvider && !profileModel) {
     return {
@@ -70,9 +83,9 @@ export function resolveProfileComposerDefaults(
   }
 
   const provider = profileProvider
-    ? normalizeProviderId(profileProvider)
-    : getProviderForModel(profileModel) ?? normalizeProviderId(input.currentProvider);
-  const model = profileModel ?? getDefaultModel(provider);
+    ? normalizeProviderId(profileProvider, providers)
+    : getProviderForModel(profileModel, providers) ?? normalizeProviderId(input.currentProvider, providers);
+  const model = profileModel ?? getDefaultModel(provider, providers);
 
   return {
     provider,
