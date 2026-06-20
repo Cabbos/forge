@@ -281,15 +281,21 @@ proves each new provider can be discovered without breaking existing DeepSeek/An
 
 ## Task 4: Frontend Provider Catalog
 
-- [ ] Update `apps/desktop/src/lib/providers.ts` to include the same provider IDs and default model names as the Rust registry.
-- [ ] Add custom provider support without requiring hardcoded model lists.
-- [ ] Update settings/model picker UI surfaces that read `PROVIDERS`:
-  - `apps/desktop/src/lib/components/settings/SettingsProviderRows.tsx`
-  - `apps/desktop/src/lib/components/settings/SettingsDialogModel.ts`
-  - `apps/desktop/src/lib/components/composer/ComposerModelMenu.tsx`
-  - `apps/desktop/src/lib/components/composer/useComposerModelMenu.ts`
+**Status (2026-06-20): Completed for the frontend catalog slice.** `apps/desktop/src/lib/providers.ts` now mirrors the Rust built-in provider ID set and default models for DeepSeek, Anthropic, Kimi/Moonshot, GLM/Zhipu, Alibaba/Qwen, MiniMax, OpenAI, OpenRouter, Gemini, xAI, Groq, Mistral, Ollama, `custom_openai`, and `custom_anthropic`. NVIDIA remains excluded from built-ins. Provider aliases, model ownership, context-window helpers, and custom-provider model display are covered by node tests. Browser-level truncation/render validation remains future UI polish.
+
+**Evidence:** TDD red pass failed while the frontend catalog still had only four providers. Green pass succeeded with `node --test src/lib/providers.test.ts` and the adjacent profile-default regression `node --test src/hooks/sessionProfileDefaults.test.ts` from `apps/desktop`. `npm run build` currently reaches `tsc` but is blocked by an unrelated pre-existing error in `src/lib/backgroundTaskStatus.ts` where `tasks.map(summarizeLoopTaskRecord)` passes the array index into an options parameter.
+
+- [x] Update `apps/desktop/src/lib/providers.ts` to include the same provider IDs and default model names as the Rust registry.
+- [x] Add custom provider support without requiring hardcoded model lists.
+- [x] Update settings/model picker UI surfaces that read `PROVIDERS`:
+  - `apps/desktop/src/components/settings/SettingsProviderRows.tsx`
+  - `apps/desktop/src/components/settings/SettingsDialogModel.ts`
+  - `apps/desktop/src/components/session/ComposerModelMenu.tsx`
+  - `apps/desktop/src/components/session/useComposerModelMenu.ts`
 - [ ] Add UI tests or component tests that provider labels, default models, and context windows render without truncation.
-- [ ] Keep the default provider as `deepseek` unless the user explicitly changes it.
+- [x] Keep the default provider as `deepseek` unless the user explicitly changes it.
+
+Note: no React component edits were required in this slice because Settings and Composer already derive provider rows and menu options from `PROVIDERS`; updating the catalog and helper semantics updates those surfaces.
 
 Expected result:
 
@@ -297,7 +303,11 @@ Expected result:
 npm --workspace apps/desktop test -- providers
 ```
 
-or the repo-equivalent frontend test command passes.
+or the repo-equivalent frontend test command passes. The repo-equivalent command for this slice is:
+
+```text
+cd apps/desktop && node --test src/lib/providers.test.ts
+```
 
 ## Task 5: Streaming, Tools, and Reasoning Fixtures
 
