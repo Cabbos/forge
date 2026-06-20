@@ -231,6 +231,30 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       // @ts-expect-error acceptance mock
       return window.__mockProviderCatalogCache ?? [];
     };
+    const providerCatalogEntryFromInput = (input: Record<string, unknown>) => {
+      const id = String(input.id ?? "").trim().toLowerCase();
+      const label = String(input.label ?? id).trim() || id;
+      const defaultModel = String(input.default_model ?? "custom-model").trim() || "custom-model";
+      const apiKeyEnv = Array.isArray(input.api_key_env) ? input.api_key_env.map(String) : [];
+      const baseUrlEnv = Array.isArray(input.base_url_env) ? input.base_url_env.map(String) : [];
+      const aliases = Array.isArray(input.aliases) ? input.aliases.map(String) : [];
+      return {
+        id,
+        label,
+        default_model: defaultModel,
+        context_window_tokens: null,
+        aliases,
+        requires_api_key: apiKeyEnv.length > 0,
+        supports_streaming: input.supports_streaming !== false,
+        supports_tools: input.supports_tools !== false,
+        source: "user_defined",
+        base_url: typeof input.base_url === "string" && input.base_url.trim() ? input.base_url.trim() : null,
+        transport: String(input.transport ?? "openai_chat_completions"),
+        api_key_env: apiKeyEnv,
+        base_url_env: baseUrlEnv,
+        models: [{ id: defaultModel, name: defaultModel, context_window_tokens: null }],
+      };
+    };
     const rememberProviderModelCatalog = (result: Record<string, unknown>) => {
       if (result.status !== "available") return;
       const provider = String(result.provider ?? "");
@@ -247,6 +271,11 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         requires_api_key: true,
         supports_streaming: true,
         supports_tools: true,
+        source: "user_defined",
+        base_url: result.base_url ?? null,
+        transport: "openai_chat_completions",
+        api_key_env: [],
+        base_url_env: [],
         models,
       };
       const existingIndex = catalog.findIndex((entry: Record<string, unknown>) => entry.id === provider);
@@ -1023,6 +1052,28 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
         case "get_provider_catalog":
           return providerCatalogEntries();
+        case "upsert_provider_profile": {
+          const input = (args.input ?? {}) as Record<string, unknown>;
+          const entry = providerCatalogEntryFromInput(input);
+          const catalog = providerCatalogEntries().slice();
+          const existingIndex = catalog.findIndex((item: Record<string, unknown>) => item.id === entry.id);
+          if (existingIndex >= 0) catalog[existingIndex] = entry;
+          else catalog.push(entry);
+          // @ts-expect-error acceptance mock
+          window.__mockProviderCatalogCache = catalog;
+          // @ts-expect-error acceptance mock
+          window.__lastUpsertProviderProfileArgs = args;
+          return entry;
+        }
+        case "delete_provider_profile": {
+          const provider = String(args.provider ?? "").trim().toLowerCase();
+          const catalog = providerCatalogEntries().filter((item: Record<string, unknown>) => item.id !== provider);
+          // @ts-expect-error acceptance mock
+          window.__mockProviderCatalogCache = catalog;
+          // @ts-expect-error acceptance mock
+          window.__lastDeleteProviderProfileArgs = args;
+          return undefined;
+        }
         case "probe_provider":
           // @ts-expect-error acceptance mock
           window.__providerProbeRequestCount = Number(window.__providerProbeRequestCount ?? 0) + 1;

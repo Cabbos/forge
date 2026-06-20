@@ -29,6 +29,11 @@ export interface ProviderCatalogEntry {
   requires_api_key?: boolean;
   supports_streaming?: boolean;
   supports_tools?: boolean;
+  source?: ProviderProfileSource;
+  base_url?: string | null;
+  transport?: ProviderTransportName;
+  api_key_env?: string[];
+  base_url_env?: string[];
 }
 
 export interface ProviderCatalogModelEntry {
@@ -36,6 +41,16 @@ export interface ProviderCatalogModelEntry {
   name: string;
   context_window_tokens?: number | null;
 }
+
+export type ProviderProfileSource = "built_in" | "user_override" | "user_defined";
+export type ProviderTransportName =
+  | "anthropic_messages"
+  | "openai_chat_completions"
+  | "openai_responses"
+  | "native_gemini"
+  | "bedrock_converse"
+  | "custom_openai_compatible"
+  | "custom_anthropic_compatible";
 
 export interface ModelOption {
   id: string;
@@ -54,6 +69,13 @@ export interface ProviderDefinition {
   aliases?: string[];
   requiresApiKey?: boolean;
   customModels?: boolean;
+  source?: ProviderProfileSource;
+  baseUrl?: string | null;
+  transport?: ProviderTransportName;
+  apiKeyEnv?: string[];
+  baseUrlEnv?: string[];
+  supportsStreaming?: boolean;
+  supportsTools?: boolean;
 }
 
 export const PROVIDERS: ProviderDefinition[] = [
@@ -311,6 +333,13 @@ export function mergeProviderCatalog(
         aliases: [...new Set([...(existing.aliases ?? []), ...(entry.aliases ?? [])])],
         requiresApiKey: entry.requires_api_key ?? existing.requiresApiKey,
         customModels: existing.customModels,
+        source: entry.source ?? existing.source,
+        baseUrl: entry.base_url ?? existing.baseUrl,
+        transport: entry.transport ?? existing.transport,
+        apiKeyEnv: entry.api_key_env ?? existing.apiKeyEnv,
+        baseUrlEnv: entry.base_url_env ?? existing.baseUrlEnv,
+        supportsStreaming: entry.supports_streaming ?? existing.supportsStreaming,
+        supportsTools: entry.supports_tools ?? existing.supportsTools,
         models: mergeModelOptions(existing.models, modelOption, catalogModels),
       };
       continue;
@@ -327,6 +356,13 @@ export function mergeProviderCatalog(
       aliases: entry.aliases ?? [],
       requiresApiKey: entry.requires_api_key ?? true,
       customModels: true,
+      source: entry.source,
+      baseUrl: entry.base_url,
+      transport: entry.transport,
+      apiKeyEnv: entry.api_key_env,
+      baseUrlEnv: entry.base_url_env,
+      supportsStreaming: entry.supports_streaming,
+      supportsTools: entry.supports_tools,
     });
   }
 

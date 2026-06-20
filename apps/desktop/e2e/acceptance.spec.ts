@@ -135,6 +135,50 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(modelButton).toContainText("deepseek-reasoner");
   });
 
+  test("settings models creates and deletes a custom provider profile", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+
+    await dialog.getByRole("button", { name: "新增自定义 Provider" }).click();
+    await dialog.getByLabel("Provider ID").fill("local-openai");
+    await dialog.getByLabel("显示名称").fill("Local OpenAI");
+    await dialog.getByLabel("Base URL", { exact: true }).fill("http://127.0.0.1:1234/v1");
+    await dialog.getByLabel("默认模型").fill("local-model");
+    await dialog.getByLabel("不需要 API Key").check();
+    await dialog.getByLabel("Base URL env", { exact: true }).fill("LOCAL_OPENAI_BASE_URL");
+    await dialog.getByLabel("Aliases").fill("local-lab, lmstudio");
+    await dialog.getByRole("button", { name: "保存 Provider" }).click();
+
+    const upsertArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertProviderProfileArgs;
+    });
+    expect(upsertArgs.input).toMatchObject({
+      id: "local-openai",
+      label: "Local OpenAI",
+      transport: "openai_chat_completions",
+      base_url: "http://127.0.0.1:1234/v1",
+      api_key_env: [],
+      base_url_env: ["LOCAL_OPENAI_BASE_URL"],
+      default_model: "local-model",
+      aliases: ["local-lab", "lmstudio"],
+      supports_tools: true,
+      supports_streaming: true,
+    });
+
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI" });
+    await expect(providerRow).toContainText("Local OpenAI");
+    await expect(providerRow).toContainText("not required");
+
+    await providerRow.getByRole("button", { name: "删除 Provider Local OpenAI" }).click();
+    const deleteArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastDeleteProviderProfileArgs;
+    });
+    expect(deleteArgs).toEqual({ provider: "local-openai" });
+    await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI" })).toHaveCount(0);
+  });
+
   test("settings models disables provider probe buttons while a probe is running", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock

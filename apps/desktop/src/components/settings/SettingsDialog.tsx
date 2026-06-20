@@ -40,6 +40,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
     providerLabel,
     modelLabel,
     providerRowsProps,
+    profileEditorProps,
     localDataProps,
     error,
   } = useSettingsDialogController({ open, onOpenChange });
@@ -83,7 +84,11 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
             />
           }
           providerSection={
-            <SettingsProviderSection providerRowsProps={providerRowsProps} showHeading={false} />
+            <SettingsProviderSection
+              providerRowsProps={providerRowsProps}
+              profileEditorProps={profileEditorProps}
+              showHeading={false}
+            />
           }
           localDataSection={
             <SettingsLocalDataSection {...localDataProps} showHeading={false} />

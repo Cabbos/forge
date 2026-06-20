@@ -25,6 +25,20 @@ pub async fn set_api_key(provider: String, key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn upsert_provider_profile(
+    input: settings::ProviderProfileInput,
+) -> Result<settings::ProviderCatalogEntry, String> {
+    let mut settings = settings::Settings::load();
+    settings.upsert_provider_profile(input)
+}
+
+#[tauri::command]
+pub async fn delete_provider_profile(provider: String) -> Result<(), String> {
+    let mut settings = settings::Settings::load();
+    settings.delete_provider_profile(&provider)
+}
+
+#[tauri::command]
 pub async fn probe_provider(
     provider: String,
 ) -> Result<crate::provider_probe::ProviderProbeResult, String> {

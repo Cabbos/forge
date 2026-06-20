@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use crate::adapters::provider_registry::{
     find_loaded_provider_profile, get_provider_definition, load_provider_profiles,
-    normalize_provider_id, LoadedProviderProfile, ProviderProfileConfig, ProviderProfileLoadError,
-    ProviderProfileSource,
+    normalize_provider_id, EnvVarList, LoadedProviderProfile, ProviderProfileConfig,
+    ProviderProfileLoadError, ProviderProfileSource, ProviderTransport,
 };
 
 /// Persisted user settings stored in ~/.forge/config.json
@@ -274,6 +274,56 @@ fn provider_model_env_vars(provider_id: &str) -> &'static [&'static str] {
     }
 }
 
+fn provider_profile_source_name(source: ProviderProfileSource) -> &'static str {
+    match source {
+        ProviderProfileSource::BuiltIn => "built_in",
+        ProviderProfileSource::UserOverride => "user_override",
+        ProviderProfileSource::UserDefined => "user_defined",
+    }
+}
+
+fn provider_transport_name(transport: ProviderTransport) -> &'static str {
+    match transport {
+        ProviderTransport::AnthropicMessages => "anthropic_messages",
+        ProviderTransport::OpenAiChatCompletions => "openai_chat_completions",
+        ProviderTransport::OpenAiResponses => "openai_responses",
+        ProviderTransport::NativeGemini => "native_gemini",
+        ProviderTransport::BedrockConverse => "bedrock_converse",
+        ProviderTransport::CustomOpenAiCompatible => "custom_openai_compatible",
+        ProviderTransport::CustomAnthropicCompatible => "custom_anthropic_compatible",
+    }
+}
+
+fn normalize_profile_key(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace(' ', "_")
+}
+
+fn normalize_profile_input_id(value: &str) -> Result<String, String> {
+    let key = normalize_profile_key(value);
+    if key.is_empty() {
+        return Err("Provider id is required.".to_string());
+    }
+    Ok(normalize_provider_id(Some(&key))
+        .map(str::to_string)
+        .unwrap_or(key))
+}
+
+fn clean_string_list(values: Vec<String>) -> Vec<String> {
+    let mut cleaned = Vec::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() || cleaned.iter().any(|item: &String| item == value) {
+            continue;
+        }
+        cleaned.push(value.to_string());
+    }
+    cleaned
+}
+
+fn default_true() -> bool {
+    true
+}
+
 fn read_claude_settings() -> ClaudeSettings {
     let path = home_dir().join(".claude").join("settings.json");
     if path.exists() {
@@ -374,6 +424,11 @@ impl Settings {
                     requires_api_key: !profile.api_key_env.is_empty(),
                     supports_streaming: profile.supports_streaming,
                     supports_tools: profile.supports_tools,
+                    source: provider_profile_source_name(profile.source).to_string(),
+                    base_url: profile.default_base_url,
+                    transport: provider_transport_name(profile.transport).to_string(),
+                    api_key_env: profile.api_key_env,
+                    base_url_env: profile.base_url_env,
                     models: self
                         .provider_model_catalogs
                         .get(&provider_id)
@@ -382,6 +437,68 @@ impl Settings {
                 }
             })
             .collect())
+    }
+
+    pub fn upsert_provider_profile(
+        &mut self,
+        input: ProviderProfileInput,
+    ) -> Result<ProviderCatalogEntry, String> {
+        let id = normalize_profile_input_id(&input.id)?;
+        self.apply_provider_profile_input(input)?;
+        self.save()?;
+        self.provider_catalog()
+            .map_err(|error| format!("{error:?}"))?
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| "Provider profile was saved but could not be read back.".to_string())
+    }
+
+    pub fn delete_provider_profile(&mut self, provider: &str) -> Result<(), String> {
+        self.apply_delete_provider_profile(provider)?;
+        self.save()
+    }
+
+    fn apply_provider_profile_input(&mut self, input: ProviderProfileInput) -> Result<(), String> {
+        let id = normalize_profile_input_id(&input.id)?;
+        let default_model = input.default_model.trim();
+        if default_model.is_empty() {
+            return Err("Default model is required.".to_string());
+        }
+
+        let config = ProviderProfileConfig {
+            id: id.clone(),
+            label: Some(input.label.trim().to_string()).filter(|value| !value.is_empty()),
+            base_url: input
+                .base_url
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            api_key_env: Some(EnvVarList::Many(clean_string_list(input.api_key_env))),
+            base_url_env: Some(EnvVarList::Many(clean_string_list(input.base_url_env))),
+            default_model: Some(default_model.to_string()),
+            transport: Some(input.transport.trim().to_string()),
+            supports_tools: Some(input.supports_tools),
+            supports_streaming: Some(input.supports_streaming),
+            max_output_tokens_default: None,
+            aliases: clean_string_list(input.aliases),
+        };
+
+        load_provider_profiles(&[config.clone()]).map_err(|error| format!("{error:?}"))?;
+        self.providers
+            .retain(|profile| normalize_profile_key(&profile.id) != id);
+        self.providers.push(config);
+        Ok(())
+    }
+
+    fn apply_delete_provider_profile(&mut self, provider: &str) -> Result<(), String> {
+        let id = normalize_profile_input_id(provider)?;
+        let before = self.providers.len();
+        self.providers
+            .retain(|profile| normalize_profile_key(&profile.id) != id);
+        self.provider_model_catalogs.remove(&id);
+        if self.providers.len() == before {
+            return Err("No editable provider profile exists for that provider.".to_string());
+        }
+        Ok(())
     }
 
     pub(crate) fn record_provider_model_catalog(
@@ -466,7 +583,32 @@ pub struct ProviderCatalogEntry {
     pub requires_api_key: bool,
     pub supports_streaming: bool,
     pub supports_tools: bool,
+    pub source: String,
+    pub base_url: Option<String>,
+    pub transport: String,
+    pub api_key_env: Vec<String>,
+    pub base_url_env: Vec<String>,
     pub models: Vec<ProviderCatalogModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderProfileInput {
+    pub id: String,
+    pub label: String,
+    pub transport: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Vec<String>,
+    #[serde(default)]
+    pub base_url_env: Vec<String>,
+    pub default_model: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default = "default_true")]
+    pub supports_tools: bool,
+    #[serde(default = "default_true")]
+    pub supports_streaming: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -515,6 +657,7 @@ mod tests {
     use crate::adapters::provider_registry::{
         valid_provider_ids, EnvVarList, ProviderProfileConfig,
     };
+    use crate::settings::ProviderProfileInput;
 
     use super::{
         detect_credentials_from_sources, mask_key, ClaudeSettings, ProviderCatalogModel, Settings,
@@ -1056,6 +1199,51 @@ mod tests {
         assert_eq!(nvidia.models[0].id, "nvidia/llama-3.1-nemotron");
         assert_eq!(nvidia.models[0].name, "NVIDIA Nemotron");
         assert_eq!(nvidia.models[1].context_window_tokens, Some(128_000));
+    }
+
+    #[test]
+    fn provider_profile_input_can_be_upserted_and_deleted() {
+        let mut settings = Settings::default();
+        settings
+            .apply_provider_profile_input(ProviderProfileInput {
+                id: "local-openai".to_string(),
+                label: "Local OpenAI".to_string(),
+                transport: "openai_chat_completions".to_string(),
+                base_url: Some("http://127.0.0.1:1234/v1".to_string()),
+                api_key_env: vec![],
+                base_url_env: vec!["LOCAL_OPENAI_BASE_URL".to_string()],
+                default_model: "local-model".to_string(),
+                aliases: vec!["local-lab".to_string()],
+                supports_tools: true,
+                supports_streaming: true,
+            })
+            .expect("profile input applies");
+
+        let catalog = settings.provider_catalog().expect("provider catalog");
+        let local = catalog
+            .iter()
+            .find(|entry| entry.id == "local-openai")
+            .expect("local provider catalog entry");
+        assert_eq!(local.label, "Local OpenAI");
+        assert_eq!(local.source, "user_defined");
+        assert_eq!(local.transport, "openai_chat_completions");
+        assert_eq!(local.base_url.as_deref(), Some("http://127.0.0.1:1234/v1"));
+        assert!(!local.requires_api_key);
+        assert_eq!(local.default_model, "local-model");
+        assert_eq!(
+            local.base_url_env,
+            vec!["LOCAL_OPENAI_BASE_URL".to_string()]
+        );
+        assert!(settings
+            .key_status()
+            .iter()
+            .any(|status| status.provider == "local-openai"));
+
+        settings
+            .apply_delete_provider_profile("local-openai")
+            .expect("profile deletes");
+        let catalog = settings.provider_catalog().expect("provider catalog");
+        assert!(!catalog.iter().any(|entry| entry.id == "local-openai"));
     }
 
     #[test]

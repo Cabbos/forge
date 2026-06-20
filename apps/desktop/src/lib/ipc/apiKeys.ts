@@ -17,12 +17,40 @@ export interface ProviderCatalogEntry {
   requires_api_key: boolean;
   supports_streaming: boolean;
   supports_tools: boolean;
+  source: ProviderProfileSource;
+  base_url: string | null;
+  transport: ProviderTransportName;
+  api_key_env: string[];
+  base_url_env: string[];
 }
 
 export interface ProviderCatalogModelEntry {
   id: string;
   name: string;
   context_window_tokens?: number | null;
+}
+
+export type ProviderProfileSource = "built_in" | "user_override" | "user_defined";
+export type ProviderTransportName =
+  | "anthropic_messages"
+  | "openai_chat_completions"
+  | "openai_responses"
+  | "native_gemini"
+  | "bedrock_converse"
+  | "custom_openai_compatible"
+  | "custom_anthropic_compatible";
+
+export interface ProviderProfileInput {
+  id: string;
+  label: string;
+  transport: ProviderTransportName;
+  base_url: string | null;
+  api_key_env: string[];
+  base_url_env: string[];
+  default_model: string;
+  aliases: string[];
+  supports_tools: boolean;
+  supports_streaming: boolean;
 }
 
 export type ProviderProbeStatus = "passed" | "failed";
@@ -74,6 +102,20 @@ export async function getProviderCatalog(): Promise<ProviderCatalogEntry[]> {
 
 export async function setApiKey(provider: string, key: string): Promise<void> {
   return invoke("set_api_key", { provider, key });
+}
+
+export async function upsertProviderProfile(input: ProviderProfileInput): Promise<ProviderCatalogEntry> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Provider profile editing is not available outside Tauri runtime");
+  }
+  return invoke("upsert_provider_profile", { input });
+}
+
+export async function deleteProviderProfile(provider: string): Promise<void> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Provider profile editing is not available outside Tauri runtime");
+  }
+  return invoke("delete_provider_profile", { provider });
 }
 
 export async function probeProvider(provider: string): Promise<ProviderProbeResult> {

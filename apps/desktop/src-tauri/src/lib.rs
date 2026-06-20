@@ -129,6 +129,8 @@ pub fn run() {
             ipc::settings_handlers::get_provider_catalog,
             ipc::settings_handlers::list_provider_models,
             ipc::settings_handlers::set_api_key,
+            ipc::settings_handlers::upsert_provider_profile,
+            ipc::settings_handlers::delete_provider_profile,
             ipc::settings_handlers::probe_provider,
             ipc::capability_handlers::list_capabilities,
             ipc::capability_handlers::toggle_capability,

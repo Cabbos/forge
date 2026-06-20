@@ -3,10 +3,23 @@ import type { ComponentProps } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SettingsSectionId } from "@/components/settings/SettingsCenterShell";
 import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
+import {
+  EMPTY_PROVIDER_PROFILE_DRAFT,
+  providerProfileInputFromDraft,
+  ProviderProfileEditor,
+  type ProviderProfileDraft,
+} from "@/components/settings/ProviderProfileEditor";
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
-import { deleteSession, listProviderModels, probeProvider, setApiKey } from "@/lib/tauri";
+import {
+  deleteProviderProfile,
+  deleteSession,
+  listProviderModels,
+  probeProvider,
+  setApiKey,
+  upsertProviderProfile,
+} from "@/lib/tauri";
 import type { ProviderModelCatalogResult, ProviderProbeResult } from "@/lib/tauri";
 import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { queryKeys } from "@/hooks/queries/queryKeys";
@@ -34,6 +47,8 @@ export function useSettingsDialogController({
   const [probeResults, setProbeResults] = useState<Record<string, ProviderProbeResult>>({});
   const [refreshingModelsProvider, setRefreshingModelsProvider] = useState<string | null>(null);
   const [modelCatalogResults, setModelCatalogResults] = useState<Record<string, ProviderModelCatalogResult>>({});
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState<ProviderProfileDraft>(EMPTY_PROVIDER_PROFILE_DRAFT);
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
   const queryClient = useQueryClient();
@@ -184,7 +199,51 @@ export function useSettingsDialogController({
     } finally {
       setRefreshingModelsProvider(null);
     }
-  }, [providers]);
+  }, [providers, queryClient]);
+
+  const handleSaveProviderProfile = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await upsertProviderProfile(providerProfileInputFromDraft(profileDraft));
+      setProfileDraft(EMPTY_PROVIDER_PROFILE_DRAFT);
+      setProfileEditorOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus }),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [profileDraft, queryClient]);
+
+  const handleDeleteProviderProfile = useCallback(async (provider: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteProviderProfile(provider);
+      setProbeResults((previous) => {
+        const next = { ...previous };
+        delete next[provider];
+        return next;
+      });
+      setModelCatalogResults((previous) => {
+        const next = { ...previous };
+        delete next[provider];
+        return next;
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus }),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [queryClient]);
 
   const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys, providers);
   const sessionCount = sessions.size;
@@ -210,6 +269,16 @@ export function useSettingsDialogController({
     onRemove: handleRemove,
     onProbe: handleProbe,
     onRefreshModels: handleRefreshModels,
+    onDeleteProviderProfile: handleDeleteProviderProfile,
+  };
+
+  const profileEditorProps: ComponentProps<typeof ProviderProfileEditor> = {
+    open: profileEditorOpen,
+    draft: profileDraft,
+    saving,
+    onOpenChange: setProfileEditorOpen,
+    onDraftChange: setProfileDraft,
+    onSave: handleSaveProviderProfile,
   };
 
   const localDataProps: ComponentProps<typeof SettingsLocalDataSection> = {
@@ -234,6 +303,7 @@ export function useSettingsDialogController({
     modelLabel: getModelLabel(selectedModel, providers),
     error: error ?? (queryError ? `密钥状态读取失败：${queryError}` : null),
     providerRowsProps,
+    profileEditorProps,
     localDataProps,
   };
 }

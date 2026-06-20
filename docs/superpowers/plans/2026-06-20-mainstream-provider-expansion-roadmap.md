@@ -492,17 +492,17 @@ No-auth local providers are also unblocked. Profiles with an empty `api_key_env`
 
 **Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::tests::build_adapter --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_probe --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_profile_loading --lib`, and `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`.
 
-**Still not claimed:** live endpoint certification, executable provider plugins, in-app provider-profile editing, native OpenAI Responses/Gemini/Bedrock transports, or billing-grade pricing.
+**At that point not claimed:** live endpoint certification, executable provider plugins, in-app provider-profile editing, native OpenAI Responses/Gemini/Bedrock transports, or billing-grade pricing.
 
 ## 2026-06-20 Post-MVP Usability Slice: Dynamic Frontend Provider Catalog
 
 **Status (2026-06-20): Implemented as the second "fully usable provider" hardening slice after MVP closure.** Config-defined provider profiles now flow through a backend `get_provider_catalog` command and merge into the frontend provider catalog. Settings provider rows and the Composer model menu can display profiles such as `nvidia` or `local-openai` from `~/.forge/config.json`, including their label, aliases, default model, context window when known, and no-auth key placeholder behavior.
 
-This closes the practical drift where the backend could route/probe a config provider, but the desktop UI still only displayed the static built-in list. The UI still keeps built-in provider metadata as a fallback for non-Tauri/test contexts, and configured profiles remain data-only: no executable provider plugins and no in-app profile editor are claimed.
+This closes the practical drift where the backend could route/probe a config provider, but the desktop UI still only displayed the static built-in list. The UI still keeps built-in provider metadata as a fallback for non-Tauri/test contexts, and configured profiles remain data-only: no executable provider plugins were claimed in this slice.
 
 **Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, `rustfmt --edition 2021 --check` on the touched Rust catalog files, and `git diff --check` on touched provider/catalog files. The earlier production-build blocker in `apps/desktop/src/lib/backgroundTaskStatus.ts` was fixed in `f5ec87cf`, and `npm --prefix apps/desktop run build` now passes.
 
-**Still not claimed:** live provider certification, automatic default-model mutation from refreshed catalogs, in-app provider-profile editing, executable provider plugins, native OpenAI Responses/Gemini/Bedrock transports, or browser-level truncation/render validation for every provider row.
+**At that point not claimed:** live provider certification, automatic default-model mutation from refreshed catalogs, in-app provider-profile editing, executable provider plugins, native OpenAI Responses/Gemini/Bedrock transports, or browser-level truncation/render validation for every provider row.
 
 ## 2026-06-20 Post-MVP Usability Slice: Profile Defaults Use Dynamic Catalog
 
@@ -512,7 +512,7 @@ This closes the follow-on drift after the dynamic catalog UI slice: config provi
 
 **Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts` on configured provider alias/default-model resolution for both Composer and new-session defaults. Green pass succeeded for that test file plus `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, and the desktop production build now passes after `f5ec87cf`.
 
-**Still not claimed:** visual provider-profile editing, live provider certification, automatic default-model mutation from refreshed catalogs, native model catalog endpoints, or browser-level validation of profile form/provider dropdown ergonomics.
+**At that point not claimed:** visual provider-profile editing, live provider certification, automatic default-model mutation from refreshed catalogs, native model catalog endpoints, or browser-level validation of profile form/provider dropdown ergonomics.
 
 ## 2026-06-20 Post-MVP Usability Slice: Manual Model Catalog Refresh
 
@@ -523,6 +523,16 @@ This closes another practical usability gap: a custom provider profile can be vi
 **Evidence:** TDD red pass first failed on the missing Rust model catalog API, then failed again on missing cached catalog fields and frontend merge semantics. Green verification covered `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests::provider_catalog --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/lib/ipc/apiKeys.test.ts src/lib/providers.test.ts src/hooks/sessionProfileDefaults.test.ts`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "refreshes a mocked provider model catalog"`, `npm --prefix apps/desktop run build`, and scoped `rustfmt --edition 2021 --check` on the touched Rust files.
 
 **Still not claimed:** automatic Composer/default-model mutation, startup auto-probing, native Anthropic/Gemini/Bedrock model catalog endpoints, live certification of every provider, or billing-grade provider catalog/pricing metadata.
+
+## 2026-06-20 Post-MVP Usability Slice: Settings Custom Provider Profile Editor
+
+**Status (2026-06-20): Implemented as the fifth "fully usable provider" hardening slice after MVP closure.** Settings now includes a visual custom Provider profile editor for data-only OpenAI-compatible and Anthropic-compatible endpoints. Users can create profiles with id, label, transport, base URL, API-key/base-URL env vars, default model, aliases, and streaming/tool capability flags; they can also delete editable user-defined profiles from provider rows. Saved profiles are persisted through the same Forge config path as hand-written `providers`, then flow into key-status rows, the backend provider catalog, frontend provider merge logic, manual probes, cached model selection, and Composer.
+
+This closes the usability gap where custom providers were technically supported but still required editing `~/.forge/config.json` by hand. The first editor slice intentionally stays data-only and conservative: it does not load executable plugins, does not certify live provider endpoints, does not auto-select refreshed models as defaults, and does not add native OpenAI Responses/Gemini/Bedrock transports.
+
+**Evidence:** TDD red pass failed on missing `ProviderProfileInput`, settings upsert/delete application, IPC wrappers, Settings form controls, and e2e mock commands. Green verification covered `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_profile_input_can_be_upserted_and_deleted --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/lib/ipc/apiKeys.test.ts src/lib/providers.test.ts src/hooks/sessionProfileDefaults.test.ts`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models (creates and deletes a custom provider profile|refreshes a mocked provider model catalog)"`, `npm --prefix apps/desktop run build`, `scripts/acceptance.sh --dry-run`, and scoped `rustfmt --edition 2021` on touched Rust settings files.
+
+**Still not claimed:** full arbitrary provider-plugin editing, live endpoint certification for every vendor, automatic default-model mutation after `/models`, native model catalog endpoints for Anthropic/Gemini/Bedrock, advanced provider-specific quirk hooks in the UI, or executable Hermes-style provider plugins.
 
 ## MVP Definition
 

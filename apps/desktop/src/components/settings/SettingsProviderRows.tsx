@@ -25,6 +25,7 @@ interface SettingsProviderRowsProps {
   onRemove: (provider: string) => void;
   onProbe: (provider: string) => void;
   onRefreshModels: (provider: string) => void;
+  onDeleteProviderProfile: (provider: string) => void;
 }
 
 export function SettingsProviderRows({
@@ -46,6 +47,7 @@ export function SettingsProviderRows({
   onRemove,
   onProbe,
   onRefreshModels,
+  onDeleteProviderProfile,
 }: SettingsProviderRowsProps) {
   const probeBusy = probingProvider !== null;
   const modelRefreshBusy = refreshingModelsProvider !== null;
@@ -61,6 +63,7 @@ export function SettingsProviderRows({
         const probing = probingProvider === key.provider;
         const modelCatalogResult = modelCatalogResults[key.provider];
         const refreshingModels = refreshingModelsProvider === key.provider;
+        const editableProviderProfile = provider?.source === "user_defined" || provider?.source === "user_override";
 
         return (
           <div
@@ -90,7 +93,11 @@ export function SettingsProviderRows({
                     {defaultModel.name}
                   </div>
                   <div className="mt-0.5 text-[10px] text-muted-foreground">
-                    {["默认模型", defaultContext && `上下文 ${defaultContext}`].filter(Boolean).join(" · ")}
+                    {[
+                      "默认模型",
+                      defaultContext && `上下文 ${defaultContext}`,
+                      provider?.requiresApiKey === false && "not required",
+                    ].filter(Boolean).join(" · ")}
                   </div>
                 </>
               )}
@@ -139,6 +146,17 @@ export function SettingsProviderRows({
                       className="text-destructive hover:text-destructive"
                     >
                       移除
+                    </ForgeButton>
+                  )}
+                  {editableProviderProfile && (
+                    <ForgeButton
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => onDeleteProviderProfile(key.provider)}
+                      className="text-destructive hover:text-destructive"
+                      aria-label={`删除 Provider ${providerLabel}`}
+                    >
+                      删除 Provider
                     </ForgeButton>
                   )}
                 </div>
