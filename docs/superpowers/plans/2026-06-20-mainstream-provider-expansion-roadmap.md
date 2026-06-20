@@ -614,6 +614,16 @@ This closes a provider freshness gap. A provider can be routed, cached, and sele
 
 **Still not claimed:** live Kimi/GLM endpoint certification, automatic paid-API startup probes, native non-compatible transports, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-20 Post-MVP Usability Slice: Persisted Manual Probe Evidence
+
+**Status (2026-06-20): Implemented as the fourteenth "fully usable provider" hardening slice after MVP closure.** User-triggered provider compatibility probes now persist a redacted evidence summary into local Settings state. `probe_provider` records `source: manual_probe`, pass/fail status, model, safe base URL label, and check ids/labels/statuses in `provider_probe_evidence`; `get_provider_catalog` projects that summary as `probe_evidence`; frontend provider definitions preserve it as `probeEvidence`; and Settings provider rows can display the last manual probe status after the immediate probe result panel is gone.
+
+This closes another evidence-chain gap. Manual probes already tested whether the current key/base URL/model accepted streaming and a no-op tool schema, but that evidence lived only in transient React state. A provider runtime that asks users to validate compatibility should keep the result inspectable after reopen/replay, while still refusing to overclaim: cached manual evidence is not an automatic startup probe, not a freshness guarantee, and not proof that every provider endpoint remains live forever.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests::provider_catalog_includes_cached_probe_evidence --lib` because Settings had no cached probe evidence contract, failed in `cd apps/desktop && node --test src/lib/providers.test.ts` because `mergeProviderCatalog` dropped `probe_evidence`, and failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models renders cached manual provider probe evidence"` because Settings did not render cached manual probe evidence. Green verification covers backend projection, frontend merge preservation, e2e mock persistence, and browser-visible cached probe evidence. Controller verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_probe --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests::provider_catalog --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `rustfmt --edition 2021 --check apps/desktop/src-tauri/src/settings.rs apps/desktop/src-tauri/src/provider_probe.rs`, `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "provider probe|cached manual provider probe evidence"`, `npm run build:desktop`, `scripts/acceptance.sh --dry-run`, and `git diff --check`.
+
+**Still not claimed:** automatic paid-API startup probes, scheduled recertification, live certification for every provider, native Anthropic/Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

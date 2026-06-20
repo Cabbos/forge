@@ -159,6 +159,7 @@ export function useSettingsDialogController({
     try {
       const result = await probeProvider(provider);
       setProbeResults((previous) => ({ ...previous, [provider]: result }));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog });
     } catch (e) {
       setProbeResults((previous) => ({
         ...previous,
@@ -176,7 +177,7 @@ export function useSettingsDialogController({
     } finally {
       setProbingProvider(null);
     }
-  }, [providers]);
+  }, [providers, queryClient]);
 
   const handleRefreshModels = useCallback(async (provider: string) => {
     setRefreshingModelsProvider(provider);

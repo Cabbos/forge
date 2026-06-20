@@ -135,6 +135,8 @@ Vite 默认运行在 `http://localhost:1420`。完整桌面端需要通过 Tauri
 
 Settings 的 Provider 行还支持手动刷新模型目录：OpenAI-compatible endpoint 会调用 `/models`，DeepSeek、Kimi/Moonshot、GLM/Zhipu、MiniMax 这类暂未声明 live model-list endpoint 的 registry provider 会返回 Forge static fallback catalog。刷新结果会明确标注来源：`Live /models` 表示来自 endpoint，`Forge static catalog · not live-certified` 表示来自 registry fallback。可用结果会连同来源证据写入本机 provider catalog cache，并出现在 Composer 模型菜单和 Settings provider 元信息里供选择；也可以在刷新结果里点某个模型，显式更新当前 Composer provider/model。对可编辑的自定义 Provider，还可以把刷新出的模型显式保存为 Provider 默认模型。Forge 不会自动改 profile 默认模型，static fallback 不代表 live endpoint certification，也不代表 native Anthropic/Gemini/Bedrock 模型端点已经认证。
 
+手动 Provider 兼容性检测也会保存一份脱敏证据摘要：`get_provider_catalog` 会带回上次用户触发的 probe 状态、模型、Base URL 和检查项，Settings 可在重新打开后显示“上次手动检测通过/失败”。这不是启动时自动探测，也不是对所有 provider 的 live certification；它只是让用户已经执行过的检测结果不随弹窗状态消失。
+
 当前内置中国 coding preset 跟随官方推荐的 coding 默认模型：Kimi/Moonshot 默认 `kimi-k2.7-code`，GLM/Zhipu 默认 `glm-5.2`。旧的 Kimi/GLM 模型仍保留在 static fallback catalog 中，便于兼容已有配置。
 
 也可以只保存 API key：

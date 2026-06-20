@@ -5,6 +5,10 @@ use crate::adapters::provider_registry::{
     find_loaded_provider_profile, LoadedProviderProfile, ProviderTransport,
 };
 use crate::settings::Credentials;
+use crate::settings::{
+    CachedProviderProbeCheck, CachedProviderProbeEvidence, ProviderProbeEvidenceCheckStatus,
+    ProviderProbeEvidenceSource, ProviderProbeEvidenceStatus, Settings,
+};
 
 const PROBE_TIMEOUT_SECS: u64 = 20;
 const PROBE_TOOL_NAME: &str = "forge_probe";
@@ -284,7 +288,40 @@ pub(crate) async fn probe_provider(provider: &str) -> ProviderProbeResult {
         .timeout(std::time::Duration::from_secs(PROBE_TIMEOUT_SECS))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    probe_provider_with_credentials(provider, credentials, client).await
+    let mut result = probe_provider_with_credentials(provider, credentials, client).await;
+    let mut settings = Settings::load();
+    if let Err(error) =
+        settings.record_provider_probe_evidence(&result.provider, cached_probe_evidence(&result))
+    {
+        result.remediation = Some(format!(
+            "Probe ran, but Forge could not save the probe evidence: {error}"
+        ));
+    }
+    result
+}
+
+fn cached_probe_evidence(result: &ProviderProbeResult) -> CachedProviderProbeEvidence {
+    CachedProviderProbeEvidence {
+        source: ProviderProbeEvidenceSource::ManualProbe,
+        status: match result.status {
+            ProviderProbeStatus::Passed => ProviderProbeEvidenceStatus::Passed,
+            ProviderProbeStatus::Failed => ProviderProbeEvidenceStatus::Failed,
+        },
+        model: result.model.clone(),
+        base_url: result.base_url.clone(),
+        checks: result
+            .checks
+            .iter()
+            .map(|check| CachedProviderProbeCheck {
+                id: check.id.clone(),
+                label: check.label.clone(),
+                status: match check.status {
+                    ProviderProbeCheckStatus::Passed => ProviderProbeEvidenceCheckStatus::Passed,
+                    ProviderProbeCheckStatus::Failed => ProviderProbeEvidenceCheckStatus::Failed,
+                },
+            })
+            .collect(),
+    }
 }
 
 fn probe_request(

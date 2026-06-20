@@ -11,6 +11,14 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => {
+          // @ts-expect-error acceptance mock
+          return Number(window.__providerCatalogRequestCount ?? 0);
+        });
+      })
+      .toBeGreaterThan(0);
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "诊断" }).click();
 
@@ -99,6 +107,53 @@ test.describe("Phase 7 acceptance surfaces", () => {
       return window.__lastProbeProviderArgs;
     });
     expect(probeArgs).toEqual({ provider: "deepseek" });
+  });
+
+  test("settings models renders cached manual provider probe evidence", async ({ page }) => {
+    await page.addInitScript(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+      // @ts-expect-error acceptance mock
+      window.__mockProviderCatalog = [
+        {
+          id: "deepseek",
+          label: "DeepSeek",
+          default_model: "deepseek-v4-flash[1m]",
+          context_window_tokens: 1_000_000,
+          aliases: [],
+          requires_api_key: true,
+          supports_streaming: true,
+          supports_tools: true,
+          source: "built_in",
+          base_url: "https://api.deepseek.com/anthropic",
+          transport: "anthropic_messages",
+          api_key_env: ["DEEPSEEK_API_KEY"],
+          base_url_env: ["DEEPSEEK_BASE_URL"],
+          model_catalog_source: null,
+          probe_evidence: {
+            source: "manual_probe",
+            status: "passed",
+            model: "deepseek-v4-flash[1m]",
+            base_url: "https://api.deepseek.com/anthropic",
+            checks: [
+              { id: "key_present", label: "Key present", status: "passed" },
+              { id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed" },
+            ],
+          },
+          models: [],
+        },
+      ];
+    });
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+
+    await expect(providerRow).toContainText("上次手动检测通过");
+    await expect(providerRow).toContainText("模型 deepseek-v4-flash[1m]");
+    await expect(providerRow).toContainText("Tool schema accepted");
   });
 
   test("settings models renders mainstream provider metadata without clipping", async ({ page }) => {

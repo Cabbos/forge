@@ -35,6 +35,7 @@ export interface ProviderCatalogEntry {
   api_key_env?: string[];
   base_url_env?: string[];
   model_catalog_source?: ProviderModelCatalogSource | null;
+  probe_evidence?: ProviderProbeEvidence | null;
 }
 
 export interface ProviderCatalogModelEntry {
@@ -44,6 +45,9 @@ export interface ProviderCatalogModelEntry {
 }
 
 export type ProviderProfileSource = "built_in" | "user_override" | "user_defined";
+export type ProviderProbeStatus = "passed" | "failed";
+export type ProviderProbeCheckStatus = "passed" | "failed";
+export type ProviderProbeEvidenceSource = "manual_probe";
 export type ProviderModelCatalogSource = "live_endpoint" | "static_fallback" | "unsupported";
 export type ProviderTransportName =
   | "anthropic_messages"
@@ -77,8 +81,23 @@ export interface ProviderDefinition {
   apiKeyEnv?: string[];
   baseUrlEnv?: string[];
   modelCatalogSource?: ProviderModelCatalogSource | null;
+  probeEvidence?: ProviderProbeEvidence | null;
   supportsStreaming?: boolean;
   supportsTools?: boolean;
+}
+
+export interface ProviderProbeEvidence {
+  source: ProviderProbeEvidenceSource;
+  status: ProviderProbeStatus;
+  model?: string | null;
+  base_url?: string | null;
+  checks: ProviderProbeEvidenceCheck[];
+}
+
+export interface ProviderProbeEvidenceCheck {
+  id: string;
+  label: string;
+  status: ProviderProbeCheckStatus;
 }
 
 export const PROVIDERS: ProviderDefinition[] = [
@@ -343,6 +362,7 @@ export function mergeProviderCatalog(
         apiKeyEnv: entry.api_key_env ?? existing.apiKeyEnv,
         baseUrlEnv: entry.base_url_env ?? existing.baseUrlEnv,
         modelCatalogSource: entry.model_catalog_source ?? existing.modelCatalogSource ?? null,
+        probeEvidence: entry.probe_evidence ?? existing.probeEvidence ?? null,
         supportsStreaming: entry.supports_streaming ?? existing.supportsStreaming,
         supportsTools: entry.supports_tools ?? existing.supportsTools,
         models: mergeModelOptions(existing.models, modelOption, catalogModels),
@@ -367,6 +387,7 @@ export function mergeProviderCatalog(
       apiKeyEnv: entry.api_key_env,
       baseUrlEnv: entry.base_url_env,
       modelCatalogSource: entry.model_catalog_source ?? null,
+      probeEvidence: entry.probe_evidence ?? null,
       supportsStreaming: entry.supports_streaming,
       supportsTools: entry.supports_tools,
     });

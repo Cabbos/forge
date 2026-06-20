@@ -17,6 +17,8 @@ pub struct Settings {
     pub(crate) providers: Vec<ProviderProfileConfig>,
     #[serde(default)]
     pub(crate) provider_model_catalogs: HashMap<String, CachedProviderModelCatalog>,
+    #[serde(default)]
+    pub(crate) provider_probe_evidence: HashMap<String, CachedProviderProbeEvidence>,
 }
 
 /// Auto-detected credentials from Claude Code config + env vars
@@ -364,11 +366,13 @@ impl Settings {
     }
 
     pub fn set_api_key(&mut self, provider: &str, key: &str) -> Result<(), String> {
+        let provider_id = provider.trim().to_ascii_lowercase();
         if key.trim().is_empty() {
             self.api_keys.remove(provider);
         } else {
             self.api_keys.insert(provider.to_string(), key.to_string());
         }
+        self.provider_probe_evidence.remove(&provider_id);
         self.save()
     }
 
@@ -416,6 +420,7 @@ impl Settings {
                 let context_window_tokens = get_provider_definition(&profile.id)
                     .and_then(|definition| definition.context_window_tokens);
                 let cached_model_catalog = self.provider_model_catalogs.get(&provider_id);
+                let probe_evidence = self.provider_probe_evidence.get(&provider_id).cloned();
                 ProviderCatalogEntry {
                     id: profile.id,
                     label: profile.label,
@@ -431,6 +436,7 @@ impl Settings {
                     api_key_env: profile.api_key_env,
                     base_url_env: profile.base_url_env,
                     model_catalog_source: cached_model_catalog.and_then(|catalog| catalog.source),
+                    probe_evidence,
                     models: cached_model_catalog
                         .map(|catalog| catalog.models.clone())
                         .unwrap_or_default(),
@@ -486,6 +492,7 @@ impl Settings {
         self.providers
             .retain(|profile| normalize_profile_key(&profile.id) != id);
         self.providers.push(config);
+        self.provider_probe_evidence.remove(&id);
         Ok(())
     }
 
@@ -495,9 +502,32 @@ impl Settings {
         self.providers
             .retain(|profile| normalize_profile_key(&profile.id) != id);
         self.provider_model_catalogs.remove(&id);
+        self.provider_probe_evidence.remove(&id);
         if self.providers.len() == before {
             return Err("No editable provider profile exists for that provider.".to_string());
         }
+        Ok(())
+    }
+
+    pub(crate) fn record_provider_probe_evidence(
+        &mut self,
+        provider: &str,
+        evidence: CachedProviderProbeEvidence,
+    ) -> Result<(), String> {
+        self.apply_provider_probe_evidence(provider, evidence)?;
+        self.save()
+    }
+
+    fn apply_provider_probe_evidence(
+        &mut self,
+        provider: &str,
+        evidence: CachedProviderProbeEvidence,
+    ) -> Result<(), String> {
+        let provider = provider.trim().to_ascii_lowercase();
+        if provider.is_empty() {
+            return Err("Provider is required to store probe evidence.".to_string());
+        }
+        self.provider_probe_evidence.insert(provider, evidence);
         Ok(())
     }
 
@@ -592,6 +622,7 @@ pub struct ProviderCatalogEntry {
     pub api_key_env: Vec<String>,
     pub base_url_env: Vec<String>,
     pub model_catalog_source: Option<ProviderModelCatalogSource>,
+    pub probe_evidence: Option<CachedProviderProbeEvidence>,
     pub models: Vec<ProviderCatalogModel>,
 }
 
@@ -623,6 +654,45 @@ pub struct CachedProviderModelCatalog {
     pub source: Option<ProviderModelCatalogSource>,
     #[serde(default)]
     pub models: Vec<ProviderCatalogModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CachedProviderProbeEvidence {
+    pub source: ProviderProbeEvidenceSource,
+    pub status: ProviderProbeEvidenceStatus,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub checks: Vec<CachedProviderProbeCheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CachedProviderProbeCheck {
+    pub id: String,
+    pub label: String,
+    pub status: ProviderProbeEvidenceCheckStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderProbeEvidenceSource {
+    ManualProbe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderProbeEvidenceStatus {
+    Passed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderProbeEvidenceCheckStatus {
+    Passed,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -674,8 +744,10 @@ mod tests {
     use crate::settings::ProviderProfileInput;
 
     use super::{
-        detect_credentials_from_sources, mask_key, ClaudeSettings, ProviderCatalogModel,
-        ProviderModelCatalogSource, Settings,
+        detect_credentials_from_sources, mask_key, CachedProviderProbeCheck,
+        CachedProviderProbeEvidence, ClaudeSettings, ProviderCatalogModel,
+        ProviderModelCatalogSource, ProviderProbeEvidenceCheckStatus, ProviderProbeEvidenceSource,
+        ProviderProbeEvidenceStatus, Settings,
     };
 
     #[test]
@@ -1218,6 +1290,50 @@ mod tests {
         assert_eq!(
             nvidia.model_catalog_source,
             Some(ProviderModelCatalogSource::LiveEndpoint)
+        );
+    }
+
+    #[test]
+    fn provider_catalog_includes_cached_probe_evidence() {
+        let mut settings = Settings::default();
+        settings
+            .apply_provider_probe_evidence(
+                "openai",
+                CachedProviderProbeEvidence {
+                    source: ProviderProbeEvidenceSource::ManualProbe,
+                    status: ProviderProbeEvidenceStatus::Passed,
+                    model: Some("gpt-4o".to_string()),
+                    base_url: Some("https://api.openai.com/v1".to_string()),
+                    checks: vec![CachedProviderProbeCheck {
+                        id: "tool_schema_accepted".to_string(),
+                        label: "Tool schema accepted".to_string(),
+                        status: ProviderProbeEvidenceCheckStatus::Passed,
+                    }],
+                },
+            )
+            .expect("probe evidence applies");
+
+        let catalog = settings.provider_catalog().expect("provider catalog");
+        let openai = catalog
+            .iter()
+            .find(|entry| entry.id == "openai")
+            .expect("openai catalog entry");
+        let evidence = openai
+            .probe_evidence
+            .as_ref()
+            .expect("probe evidence is projected");
+
+        assert_eq!(evidence.source, ProviderProbeEvidenceSource::ManualProbe);
+        assert_eq!(evidence.status, ProviderProbeEvidenceStatus::Passed);
+        assert_eq!(evidence.model.as_deref(), Some("gpt-4o"));
+        assert_eq!(
+            evidence.base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(evidence.checks.len(), 1);
+        assert_eq!(
+            evidence.checks[0].status,
+            ProviderProbeEvidenceCheckStatus::Passed
         );
     }
 

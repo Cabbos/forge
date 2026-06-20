@@ -7,6 +7,7 @@ import {
   PROVIDERS,
   type ProviderDefinition,
   type ProviderModelCatalogSource,
+  type ProviderProbeEvidence,
 } from "@/lib/providers";
 import type { KeyStatus } from "@/lib/tauri";
 import type { ProviderModelCatalogResult, ProviderProbeResult } from "@/lib/tauri";
@@ -78,6 +79,7 @@ export function SettingsProviderRows({
           ? cachedModelCatalogSourceLabel(provider.modelCatalogSource)
           : "";
         const probeResult = probeResults[key.provider];
+        const cachedProbeEvidence = probeResult ? null : provider?.probeEvidence ?? null;
         const probing = probingProvider === key.provider;
         const modelCatalogResult = modelCatalogResults[key.provider];
         const refreshingModels = refreshingModelsProvider === key.provider;
@@ -288,6 +290,47 @@ export function SettingsProviderRows({
               </div>
             )}
 
+            {cachedProbeEvidence && (
+              <div
+                data-testid="settings-provider-cached-probe"
+                data-state={cachedProbeEvidence.status}
+                className="forge-settings-provider-probe"
+              >
+                <div className="forge-settings-provider-probe-head">
+                  <span
+                    className="forge-settings-status-pill"
+                    data-state={cachedProbeEvidence.status === "passed" ? "configured" : "denied"}
+                  >
+                    {cachedProbeStatusLabel(cachedProbeEvidence)}
+                  </span>
+                  <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
+                    manual probe evidence
+                  </span>
+                </div>
+                <div className="forge-settings-provider-probe-meta">
+                  {[
+                    cachedProbeEvidence.model && `模型 ${cachedProbeEvidence.model}`,
+                    cachedProbeEvidence.base_url && `Base ${cachedProbeEvidence.base_url}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+                {cachedProbeEvidence.checks.length > 0 && (
+                  <div className="forge-settings-provider-probe-checks">
+                    {cachedProbeEvidence.checks.map((check) => (
+                      <span
+                        key={check.id}
+                        className="forge-settings-provider-probe-check"
+                        data-state={check.status}
+                      >
+                        {check.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {modelCatalogResult && (
               <div
                 data-testid="settings-provider-model-catalog-result"
@@ -383,4 +426,8 @@ function cachedModelCatalogSourceLabel(source: ProviderModelCatalogSource) {
     case "unsupported":
       return "目录 unsupported";
   }
+}
+
+function cachedProbeStatusLabel(evidence: ProviderProbeEvidence) {
+  return evidence.status === "passed" ? "上次手动检测通过" : "上次手动检测失败";
 }

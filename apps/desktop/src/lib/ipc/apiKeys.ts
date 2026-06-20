@@ -23,6 +23,7 @@ export interface ProviderCatalogEntry {
   api_key_env: string[];
   base_url_env: string[];
   model_catalog_source: ProviderModelCatalogSource | null;
+  probe_evidence: ProviderProbeEvidence | null;
 }
 
 export interface ProviderCatalogModelEntry {
@@ -56,6 +57,7 @@ export interface ProviderProfileInput {
 
 export type ProviderProbeStatus = "passed" | "failed";
 export type ProviderProbeCheckStatus = "passed" | "failed";
+export type ProviderProbeEvidenceSource = "manual_probe";
 export type ProviderModelCatalogStatus = "available" | "unavailable";
 export type ProviderModelCatalogSource = "live_endpoint" | "static_fallback" | "unsupported";
 
@@ -75,6 +77,20 @@ export interface ProviderProbeResult {
   checks: ProviderProbeCheck[];
   message: string;
   remediation: string | null;
+}
+
+export interface ProviderProbeEvidence {
+  source: ProviderProbeEvidenceSource;
+  status: ProviderProbeStatus;
+  model: string | null;
+  base_url: string | null;
+  checks: ProviderProbeEvidenceCheck[];
+}
+
+export interface ProviderProbeEvidenceCheck {
+  id: string;
+  label: string;
+  status: ProviderProbeCheckStatus;
 }
 
 export interface ProviderModelCatalogItem {
