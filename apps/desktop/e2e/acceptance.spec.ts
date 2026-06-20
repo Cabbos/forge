@@ -223,6 +223,42 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI等待密钥" })).toHaveCount(0);
   });
 
+  test("settings models applies a custom provider template", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+
+    await dialog.getByRole("button", { name: "新增自定义 Provider" }).click();
+    await dialog.getByLabel("模板").selectOption("nvidia-nim");
+
+    await expect(dialog.getByLabel("Provider ID")).toHaveValue("nvidia");
+    await expect(dialog.getByLabel("显示名称")).toHaveValue("NVIDIA NIM");
+    await expect(dialog.getByLabel("Base URL", { exact: true })).toHaveValue("https://integrate.api.nvidia.com/v1");
+    await expect(dialog.getByLabel("默认模型")).toHaveValue("nvidia/llama-3.1-nemotron");
+    await expect(dialog.getByLabel("API Key env")).toHaveValue("NVIDIA_API_KEY");
+    await expect(dialog.getByLabel("Base URL env", { exact: true })).toHaveValue("NVIDIA_BASE_URL");
+    await expect(dialog.getByLabel("Aliases")).toHaveValue("nim");
+    await expect(dialog.getByLabel("不需要 API Key")).not.toBeChecked();
+
+    await dialog.getByRole("button", { name: "保存 Provider" }).click();
+    const upsertArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastUpsertProviderProfileArgs;
+    });
+    expect(upsertArgs.input).toMatchObject({
+      id: "nvidia",
+      label: "NVIDIA NIM",
+      transport: "openai_chat_completions",
+      base_url: "https://integrate.api.nvidia.com/v1",
+      api_key_env: ["NVIDIA_API_KEY"],
+      base_url_env: ["NVIDIA_BASE_URL"],
+      default_model: "nvidia/llama-3.1-nemotron",
+      aliases: ["nim"],
+      supports_tools: true,
+      supports_streaming: true,
+    });
+    await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "NVIDIA NIM" })).toBeVisible();
+  });
+
   test("settings models disables provider probe buttons while a probe is running", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock

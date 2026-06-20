@@ -43,6 +43,64 @@ export const EMPTY_PROVIDER_PROFILE_DRAFT: ProviderProfileDraft = {
   supportsStreaming: true,
 };
 
+const PROVIDER_PROFILE_TEMPLATES: Array<{
+  id: string;
+  label: string;
+  draft: ProviderProfileDraft;
+}> = [
+  {
+    id: "nvidia-nim",
+    label: "NVIDIA NIM",
+    draft: {
+      id: "nvidia",
+      label: "NVIDIA NIM",
+      transport: "openai_chat_completions",
+      baseUrl: "https://integrate.api.nvidia.com/v1",
+      apiKeyEnv: "NVIDIA_API_KEY",
+      baseUrlEnv: "NVIDIA_BASE_URL",
+      defaultModel: "nvidia/llama-3.1-nemotron",
+      aliases: "nim",
+      noApiKey: false,
+      supportsTools: true,
+      supportsStreaming: true,
+    },
+  },
+  {
+    id: "local-openai",
+    label: "Local OpenAI-compatible",
+    draft: {
+      id: "local-openai",
+      label: "Local OpenAI-Compatible",
+      transport: "openai_chat_completions",
+      baseUrl: "http://127.0.0.1:1234/v1",
+      apiKeyEnv: "",
+      baseUrlEnv: "LOCAL_OPENAI_BASE_URL",
+      defaultModel: "local-model",
+      aliases: "local, lmstudio, vllm",
+      noApiKey: true,
+      supportsTools: true,
+      supportsStreaming: true,
+    },
+  },
+  {
+    id: "anthropic-compatible",
+    label: "Anthropic-compatible Gateway",
+    draft: {
+      id: "custom-anthropic-gateway",
+      label: "Custom Anthropic-Compatible Gateway",
+      transport: "anthropic_messages",
+      baseUrl: "",
+      apiKeyEnv: "ANTHROPIC_COMPATIBLE_API_KEY",
+      baseUrlEnv: "ANTHROPIC_COMPATIBLE_BASE_URL",
+      defaultModel: "custom-model",
+      aliases: "anthropic-compatible",
+      noApiKey: false,
+      supportsTools: true,
+      supportsStreaming: true,
+    },
+  },
+];
+
 export function providerProfileInputFromDraft(draft: ProviderProfileDraft): ProviderProfileInput {
   const id = draft.id.trim();
   const apiKeyEnv = draft.noApiKey ? [] : splitList(draft.apiKeyEnv || defaultEnvName(id, "API_KEY"));
@@ -95,6 +153,12 @@ export function ProviderProfileEditor({
     onDraftChange({ ...draft, [key]: value });
   };
 
+  const applyTemplate = (templateId: string) => {
+    const template = PROVIDER_PROFILE_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+    onDraftChange({ ...template.draft });
+  };
+
   return (
     <div className="space-y-2" data-testid="provider-profile-editor">
       <div className="flex items-center justify-between gap-3">
@@ -110,6 +174,23 @@ export function ProviderProfileEditor({
       {open && (
         <div className="forge-settings-row grid gap-3">
           <div className="grid gap-2 sm:grid-cols-2">
+            {mode === "create" && (
+              <label className="grid gap-1 text-[11px] text-muted-foreground sm:col-span-2">
+                模板
+                <select
+                  defaultValue=""
+                  onChange={(event) => applyTemplate(event.currentTarget.value)}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                >
+                  <option value="">空白</option>
+                  {PROVIDER_PROFILE_TEMPLATES.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="grid gap-1 text-[11px] text-muted-foreground">
               Provider ID
               <ForgeTextInput
