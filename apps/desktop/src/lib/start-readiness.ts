@@ -1,4 +1,5 @@
 import type { KeyStatus, ProjectCheckpointStatus, ProjectRuntimeStatus } from "@/lib/tauri";
+import type { ProviderDefinition } from "@/lib/providers";
 import type { Workspace } from "@/lib/workspaces";
 
 export type ReadinessTone = "ready" | "warning" | "blocked" | "muted";
@@ -23,14 +24,26 @@ export function deriveStartReadiness(input: {
   workspace: Workspace | null;
   providerId: string;
   providerLabel: string;
+  provider?: ProviderDefinition | null;
+  model?: string | null;
   keyStatuses: KeyStatus[];
   runtime: ProjectRuntimeStatus | null;
   checkpoint: ProjectCheckpointStatus | null;
 }): StartReadinessView {
   const keyStatuses = Array.isArray(input.keyStatuses) ? input.keyStatuses : [];
-  const keySet = keyStatuses.some((item) => item.provider === input.providerId && item.set);
+  const providerRequiresApiKey = input.provider?.requiresApiKey !== false;
+  const keySet = providerRequiresApiKey
+    ? keyStatuses.some((item) => item.provider === input.providerId && item.set)
+    : true;
   const workspaceBlocked = !input.workspace;
-  const keyBlocked = !keySet;
+  const keyBlocked = providerRequiresApiKey && !keySet;
+  const selectedModel = input.model?.trim() || input.provider?.defaultModel?.trim() || "";
+  const providerModels = input.provider?.models ?? [];
+  const modelKnown = Boolean(selectedModel) && (
+    Boolean(input.provider?.customModels) ||
+    providerModels.some((model) => model.id === selectedModel)
+  );
+  const modelWarning = Boolean(selectedModel) && !modelKnown;
   const hasCheckpoint = Boolean(input.checkpoint?.last_checkpoint);
   const restorableCheckpoint = Boolean(input.checkpoint?.restorable);
   const rows: StartReadinessRow[] = [
@@ -43,10 +56,25 @@ export function deriveStartReadiness(input: {
     },
     {
       label: "模型密钥",
-      value: keySet ? `${input.providerLabel} 已配置` : `还没有配置 ${input.providerLabel}`,
+      value: providerRequiresApiKey
+        ? keySet
+          ? `${input.providerLabel} 已配置`
+          : `还没有配置 ${input.providerLabel}`
+        : `${input.providerLabel} 不需要密钥`,
       tone: keySet ? "ready" : "blocked",
       action: keySet ? null : "open_settings",
       actionLabel: keySet ? null : "打开设置",
+    },
+    {
+      label: "模型",
+      value: selectedModel
+        ? modelKnown
+          ? `${selectedModel} 可用`
+          : `${selectedModel} 不在 ${input.providerLabel} 模型目录`
+        : "还没有选择模型",
+      tone: selectedModel ? modelWarning ? "warning" : "ready" : "warning",
+      action: null,
+      actionLabel: null,
     },
     {
       label: "预览",

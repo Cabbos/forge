@@ -179,6 +179,60 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "Local OpenAI" })).toHaveCount(0);
   });
 
+  test("start readiness accepts a no-auth custom provider profile", async ({ page }) => {
+    await page.evaluate(async () => {
+      const workspace = {
+        id: "/Users/cabbos/project/forge",
+        name: "forge",
+        path: "/Users/cabbos/project/forge",
+        lastOpenedAt: Date.now(),
+      };
+      // @ts-expect-error acceptance mock
+      await window.__tauriMockIPC("save_app_metadata", {
+        metadata: {
+          workspaces: [workspace],
+          activeWorkspaceId: workspace.id,
+          activeSessionId: null,
+          selectedProvider: "local-openai",
+          selectedModel: "local-model",
+        },
+      });
+    });
+    await page.addInitScript(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockProviderCatalog = [
+        {
+          id: "local-openai",
+          label: "Local OpenAI",
+          default_model: "local-model",
+          context_window_tokens: null,
+          aliases: ["local-lab"],
+          requires_api_key: false,
+          supports_streaming: true,
+          supports_tools: true,
+          source: "user_defined",
+          base_url: "http://127.0.0.1:1234/v1",
+          transport: "openai_chat_completions",
+          api_key_env: [],
+          base_url_env: ["LOCAL_OPENAI_BASE_URL"],
+          models: [{ id: "local-model", name: "local-model", context_window_tokens: null }],
+        },
+      ];
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = [{ provider: "local-openai", set: false, preview: "" }];
+    });
+
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const readiness = page.getByTestId("start-readiness-panel");
+    await expect(readiness).toBeVisible();
+    await expect(readiness.getByText("准备开始")).toBeVisible();
+    await expect(readiness.getByRole("button", { name: "打开设置" })).toHaveCount(0);
+    await expect(page.getByTestId("composer-model-chip")).toContainText("local-model");
+  });
+
   test("settings models edits a custom provider profile", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog");

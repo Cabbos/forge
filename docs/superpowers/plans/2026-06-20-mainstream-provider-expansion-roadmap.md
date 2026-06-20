@@ -534,6 +534,16 @@ This closes the usability gap where custom providers were technically supported 
 
 **Still not claimed:** full arbitrary provider-plugin editing, live endpoint certification for every vendor, automatic default-model mutation after `/models`, native model catalog endpoints for Anthropic/Gemini/Bedrock, advanced provider-specific quirk hooks in the UI, or executable Hermes-style provider plugins.
 
+## 2026-06-20 Post-MVP Usability Slice: Provider-Aware Start Readiness
+
+**Status (2026-06-20): Implemented as the sixth "fully usable provider" hardening slice after MVP closure.** The empty-session/start readiness contract now consumes the merged provider catalog instead of only looking at raw API-key status rows. This means no-auth local/custom profiles such as `local-openai` are treated as ready when the profile explicitly declares `requires_api_key: false`, and the readiness panel now includes selected-model/catalog consistency as a first-class row.
+
+This closes a practical UX drift introduced by custom provider support: Settings and Composer could already understand a no-auth provider profile, but the pre-start readiness surface could still tell the user to configure a nonexistent key. The same surface can now also warn when the selected model is outside a non-custom provider's known catalog, which gives users a clearer preflight signal before the first prompt.
+
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/lib/start-readiness.test.ts` while no-auth providers were still blocked and model mismatches were invisible. Green verification covered `cd apps/desktop && node --test src/lib/start-readiness.test.ts src/lib/providers.test.ts src/hooks/sessionProfileDefaults.test.ts` and `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "start readiness accepts a no-auth custom provider profile"`.
+
+**Still not claimed:** live provider certification, startup auto-probing, automatic default-model mutation after `/models`, native Anthropic/Gemini/Bedrock model catalog endpoints, billing-grade pricing metadata, or executable Hermes-style provider plugins.
+
 ## MVP Definition
 
 The MVP is complete when:

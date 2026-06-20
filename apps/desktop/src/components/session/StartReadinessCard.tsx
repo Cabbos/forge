@@ -10,7 +10,8 @@ import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { useProjectRuntimeStatusQuery } from "@/hooks/queries/useProjectRuntimeStatusQuery";
 import { useProjectCheckpointStatusQuery } from "@/hooks/queries/useProjectCheckpointStatusQuery";
-import { getProviderLabel } from "@/lib/providers";
+import { useProviderCatalog } from "@/hooks/queries/useProviderCatalogQuery";
+import { getProviderDefinition } from "@/lib/providers";
 import { deriveStartReadiness, type ReadinessAction } from "@/lib/start-readiness";
 import { StartReadinessView } from "./StartReadinessView";
 
@@ -24,6 +25,9 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
   const activeWorkspace = useActiveWorkspace();
   const session = useStore((s) => sessionId ? s.sessions.get(sessionId) ?? null : null);
   const selectedProvider = useStore((s) => s.selectedProvider);
+  const selectedModel = useStore((s) => s.selectedModel);
+  const providers = useProviderCatalog(true);
+  const provider = useMemo(() => getProviderDefinition(selectedProvider, providers), [providers, selectedProvider]);
   const [busyAction, setBusyAction] = useState<ReadinessAction>(null);
   const queryClient = useQueryClient();
   const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
@@ -63,11 +67,13 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
   const readiness = useMemo(() => deriveStartReadiness({
     workspace: activeWorkspace,
     providerId: selectedProvider,
-    providerLabel: getProviderLabel(selectedProvider),
+    providerLabel: provider.label,
+    provider,
+    model: selectedModel,
     keyStatuses: keys,
     runtime,
     checkpoint,
-  }), [activeWorkspace, checkpoint, keys, runtime, selectedProvider]);
+  }), [activeWorkspace, checkpoint, keys, provider, runtime, selectedModel, selectedProvider]);
 
   const primaryAction = readiness.rows.find((row) => row.action && row.actionLabel);
   const workspaceRow = readiness.rows.find((row) => row.label === "当前项目");
