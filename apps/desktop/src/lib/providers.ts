@@ -112,11 +112,11 @@ export const PROVIDERS: ProviderDefinition[] = [
     label: "Kimi / Moonshot",
     shortLabel: "Kimi",
     keyPlaceholder: "sk-...",
-    defaultModel: "kimi-k2.5",
+    defaultModel: "kimi-k2.7-code",
     models: [
-      { id: "kimi-k2.5", name: "Kimi K2.5", description: "Moonshot coding preset", contextWindowTokens: 128_000 },
-      { id: "kimi-k2", name: "Kimi K2", description: "Moonshot fallback", contextWindowTokens: 128_000 },
-      { id: "moonshot-v1-32k", name: "Moonshot V1 32K", description: "OpenAI-compatible fallback", contextWindowTokens: 128_000 },
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code", description: "Moonshot coding preset", contextWindowTokens: 262_144 },
+      { id: "kimi-k2.5", name: "Kimi K2.5", description: "Moonshot fallback", contextWindowTokens: 262_144 },
+      { id: "kimi-k2", name: "Kimi K2", description: "legacy fallback", contextWindowTokens: 128_000 },
     ],
   },
   {
@@ -124,11 +124,12 @@ export const PROVIDERS: ProviderDefinition[] = [
     label: "GLM / Zhipu",
     shortLabel: "GLM",
     keyPlaceholder: "sk-...",
-    defaultModel: "glm-4.5",
+    defaultModel: "glm-5.2",
     models: [
-      { id: "glm-4.5", name: "GLM 4.5", description: "Zhipu coding preset", contextWindowTokens: 128_000 },
-      { id: "glm-4.5-air", name: "GLM 4.5 Air", description: "轻量快速", contextWindowTokens: 128_000 },
-      { id: "glm-4-plus", name: "GLM 4 Plus", description: "历史兼容", contextWindowTokens: 128_000 },
+      { id: "glm-5.2", name: "GLM 5.2", description: "Zhipu coding preset", contextWindowTokens: 1_000_000 },
+      { id: "glm-5.1", name: "GLM 5.1", description: "long-horizon fallback", contextWindowTokens: 200_000 },
+      { id: "glm-5", name: "GLM 5", description: "agentic fallback", contextWindowTokens: 200_000 },
+      { id: "glm-4.7", name: "GLM 4.7", description: "legacy coding fallback", contextWindowTokens: 200_000 },
     ],
   },
   {

@@ -135,7 +135,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(rows).toHaveCount(providerStatuses.length);
 
     const requiredMetadata = [
-      { label: "Kimi / Moonshot", model: "Kimi K2.5", meta: "上下文 128K" },
+      { label: "Kimi / Moonshot", model: "Kimi K2.7 Code", meta: "上下文 262K" },
       { label: "Alibaba / Qwen", model: "Qwen3 Coder Plus", meta: "上下文 128K" },
       { label: "Custom Anthropic-Compatible", model: "Custom Model", meta: "默认模型" },
       { label: "Groq", model: "Llama 3.3 70B Versatile", meta: "上下文 128K" },
@@ -222,6 +222,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
         source: "static_fallback",
         status: "available",
         models: [
+          { id: "kimi-k2.7-code", name: "kimi-k2.7-code" },
           { id: "kimi-k2.5", name: "kimi-k2.5" },
           { id: "kimi-k2", name: "kimi-k2" },
         ],

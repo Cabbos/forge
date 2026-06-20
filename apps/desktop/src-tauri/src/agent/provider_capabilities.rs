@@ -135,12 +135,17 @@ mod tests {
 
     #[test]
     fn new_registry_provider_defaults_are_available() {
-        assert_eq!(default_model("kimi"), "kimi-k2.5");
-        assert_eq!(default_model("glm"), "glm-4.5");
+        assert_eq!(default_model("kimi"), "kimi-k2.7-code");
+        assert_eq!(default_model("glm"), "glm-5.2");
         assert_eq!(default_model("alibaba"), "qwen3-coder-plus");
         assert_eq!(default_model("gemini"), "gemini-2.5-pro");
         assert_eq!(provider_label("minimax"), "MiniMax");
         assert_eq!(provider_label("custom_openai"), "Custom OpenAI-Compatible");
+        assert_eq!(
+            context_window_tokens("kimi", "kimi-k2.7-code"),
+            Some(262_144)
+        );
+        assert_eq!(context_window_tokens("glm", "glm-5.2"), Some(1_000_000));
         assert_eq!(
             context_window_tokens("gemini", "gemini-2.5-pro"),
             Some(1_000_000)

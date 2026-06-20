@@ -37,8 +37,8 @@ const RUST_BUILTIN_PROVIDER_IDS = [
 const RUST_DEFAULT_MODELS = {
   deepseek: "deepseek-v4-flash[1m]",
   anthropic: "claude-sonnet-4-6",
-  kimi: "kimi-k2.5",
-  glm: "glm-4.5",
+  kimi: "kimi-k2.7-code",
+  glm: "glm-5.2",
   alibaba: "qwen3-coder-plus",
   minimax: "MiniMax-M2.7",
   openai: "gpt-4o",
@@ -92,9 +92,10 @@ describe("frontend provider catalog", () => {
   });
 
   it("resolves model ownership for defaults and registry fallback models", () => {
-    assert.equal(getProviderForModel("kimi-k2"), "kimi");
-    assert.equal(getProviderForModel("moonshot-v1-32k"), "kimi");
-    assert.equal(getProviderForModel("glm-4.5-air"), "glm");
+    assert.equal(getProviderForModel("kimi-k2.7-code"), "kimi");
+    assert.equal(getProviderForModel("kimi-k2.5"), "kimi");
+    assert.equal(getProviderForModel("glm-5.2"), "glm");
+    assert.equal(getProviderForModel("glm-4.7"), "glm");
     assert.equal(getProviderForModel("qwen-plus"), "alibaba");
     assert.equal(getProviderForModel("MiniMax-M1"), "minimax");
     assert.equal(getProviderForModel("gemini-2.5-flash"), "gemini");
@@ -106,14 +107,16 @@ describe("frontend provider catalog", () => {
   });
 
   it("reports model membership and context windows consistently", () => {
-    assert.equal(modelBelongsToProvider("moonshot", "kimi-k2.5"), true);
-    assert.equal(modelBelongsToProvider("zhipu", "glm-4.5-air"), true);
+    assert.equal(modelBelongsToProvider("moonshot", "kimi-k2.7-code"), true);
+    assert.equal(modelBelongsToProvider("zhipu", "glm-5.2"), true);
     assert.equal(modelBelongsToProvider("qwen", "qwen-max"), true);
-    assert.equal(modelBelongsToProvider("openai", "kimi-k2.5"), false);
+    assert.equal(modelBelongsToProvider("openai", "kimi-k2.7-code"), false);
 
     assert.equal(getModelContextWindow("deepseek-v4-flash[1m]"), 1_000_000);
     assert.equal(getModelContextWindow("deepseek-chat"), 128_000);
     assert.equal(getModelContextWindow("claude-sonnet-4-6"), 200_000);
+    assert.equal(getModelContextWindow("kimi-k2.7-code"), 262_144);
+    assert.equal(getModelContextWindow("glm-5.2"), 1_000_000);
     assert.equal(getModelContextWindow("gemini-2.5-pro"), 1_000_000);
     assert.equal(getModelContextWindow("llama3.1"), null);
     assert.equal(formatContextWindow(getModelContextWindow("gemini-2.5-pro")), "1M");

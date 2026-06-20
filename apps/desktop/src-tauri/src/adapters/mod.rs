@@ -306,7 +306,7 @@ mod tests {
                 "glm",
                 AdapterFamily::AnthropicCompatible,
                 Some("https://open.bigmodel.cn/api/anthropic"),
-                Some(32_768),
+                Some(131_072),
                 None,
                 false,
             ),

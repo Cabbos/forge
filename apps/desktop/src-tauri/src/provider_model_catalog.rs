@@ -589,7 +589,7 @@ mod tests {
                 .iter()
                 .map(|model| model.id.as_str())
                 .collect::<Vec<_>>(),
-            ["kimi-k2.5", "kimi-k2", "moonshot-v1-32k"]
+            ["kimi-k2.7-code", "kimi-k2.5", "kimi-k2"]
         );
     }
 
