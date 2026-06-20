@@ -13,6 +13,13 @@ pub async fn get_provider_catalog() -> Result<Vec<settings::ProviderCatalogEntry
 }
 
 #[tauri::command]
+pub async fn list_provider_models(
+    provider: String,
+) -> Result<crate::provider_model_catalog::ProviderModelCatalogResult, String> {
+    Ok(crate::provider_model_catalog::list_provider_models(&provider).await)
+}
+
+#[tauri::command]
 pub async fn set_api_key(provider: String, key: String) -> Result<(), String> {
     settings::Settings::load().set_api_key(&provider, &key)
 }

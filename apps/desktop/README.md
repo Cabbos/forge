@@ -133,6 +133,8 @@ Vite 默认运行在 `http://localhost:1420`。完整桌面端需要通过 Tauri
 
 `providers` 是 data-only profile：它可以添加或覆盖 provider 的 label、transport、base URL、key/model 环境变量、默认模型和基础能力标记，并会同步出现在 Settings provider 行和 Composer 模型菜单里，但不会加载可执行插件代码。`api_key_env: []` 表示本地兼容服务不需要鉴权；Forge 会跳过 missing-key gate，并且不会发送空 `Authorization` / `x-api-key` header。
 
+Settings 的 Provider 行还支持手动刷新 OpenAI-compatible `/models` 目录，包括 config-defined 和 no-auth local profile。刷新结果目前只作为诊断/选择参考展示，不会自动写回 Composer 默认模型，也不代表 native Anthropic/Gemini/Bedrock 模型端点已经认证。
+
 也可以只保存 API key：
 
 ```json
@@ -157,7 +159,7 @@ OPENROUTER_API_KEY=...
 
 默认 Provider 是 DeepSeek，默认模型是 `deepseek-v4-flash[1m]`。
 
-设置页的 Provider 行提供手动兼容性检测：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming 和工具 schema，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
+设置页的 Provider 行提供手动兼容性检测和手动模型目录刷新：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming、工具 schema 或 `/models` 列表，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
 
 ## 开发命令
 

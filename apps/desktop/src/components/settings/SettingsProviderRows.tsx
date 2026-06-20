@@ -1,10 +1,10 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { Check, Eye, EyeOff } from "lucide-react";
+import { Check, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
 import { formatContextWindow, PROVIDERS, type ProviderDefinition } from "@/lib/providers";
 import type { KeyStatus } from "@/lib/tauri";
-import type { ProviderProbeResult } from "@/lib/tauri";
+import type { ProviderModelCatalogResult, ProviderProbeResult } from "@/lib/tauri";
 
 interface SettingsProviderRowsProps {
   keys: KeyStatus[];
@@ -15,6 +15,8 @@ interface SettingsProviderRowsProps {
   saving: boolean;
   probingProvider: string | null;
   probeResults: Record<string, ProviderProbeResult>;
+  refreshingModelsProvider: string | null;
+  modelCatalogResults: Record<string, ProviderModelCatalogResult>;
   onEdit: (provider: string) => void;
   onValueChange: (value: string) => void;
   onVisibleChange: (visible: boolean) => void;
@@ -22,6 +24,7 @@ interface SettingsProviderRowsProps {
   onCancel: () => void;
   onRemove: (provider: string) => void;
   onProbe: (provider: string) => void;
+  onRefreshModels: (provider: string) => void;
 }
 
 export function SettingsProviderRows({
@@ -33,6 +36,8 @@ export function SettingsProviderRows({
   saving,
   probingProvider,
   probeResults,
+  refreshingModelsProvider,
+  modelCatalogResults,
   onEdit,
   onValueChange,
   onVisibleChange,
@@ -40,8 +45,10 @@ export function SettingsProviderRows({
   onCancel,
   onRemove,
   onProbe,
+  onRefreshModels,
 }: SettingsProviderRowsProps) {
   const probeBusy = probingProvider !== null;
+  const modelRefreshBusy = refreshingModelsProvider !== null;
 
   return (
     <div data-testid="settings-preferences-panel" className="forge-settings-preferences-panel">
@@ -52,6 +59,8 @@ export function SettingsProviderRows({
         const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);
         const probeResult = probeResults[key.provider];
         const probing = probingProvider === key.provider;
+        const modelCatalogResult = modelCatalogResults[key.provider];
+        const refreshingModels = refreshingModelsProvider === key.provider;
 
         return (
           <div
@@ -102,11 +111,22 @@ export function SettingsProviderRows({
                     size="xs"
                     variant="outline"
                     onClick={() => onProbe(key.provider)}
-                    disabled={probeBusy}
+                    disabled={probeBusy || modelRefreshBusy}
                     aria-label={`检测 ${providerLabel}`}
                     title={`检测 ${providerLabel}`}
                   >
                     {probing ? "检测中" : "检测"}
+                  </ForgeButton>
+                  <ForgeButton
+                    size="xs"
+                    variant="outline"
+                    onClick={() => onRefreshModels(key.provider)}
+                    disabled={probeBusy || modelRefreshBusy}
+                    aria-label={`刷新模型 ${providerLabel}`}
+                    title={`刷新模型 ${providerLabel}`}
+                  >
+                    <RefreshCw className={refreshingModels ? "size-3 animate-spin" : "size-3"} />
+                    {refreshingModels ? "刷新中" : "模型"}
                   </ForgeButton>
                   <ForgeButton size="xs" variant="outline" onClick={() => onEdit(key.provider)}>
                     {key.set ? "更新" : "添加"}
@@ -201,6 +221,50 @@ export function SettingsProviderRows({
                 {probeResult.remediation && (
                   <div className="forge-settings-provider-probe-message">
                     {probeResult.remediation}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {modelCatalogResult && (
+              <div
+                data-testid="settings-provider-model-catalog-result"
+                data-state={modelCatalogResult.status}
+                className="forge-settings-provider-probe"
+              >
+                <div className="forge-settings-provider-probe-head">
+                  <span
+                    className="forge-settings-status-pill"
+                    data-state={modelCatalogResult.status === "available" ? "configured" : "denied"}
+                  >
+                    {modelCatalogResult.status === "available" ? "模型已刷新" : "模型刷新失败"}
+                  </span>
+                  <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
+                    {modelCatalogResult.message}
+                  </span>
+                </div>
+                {modelCatalogResult.models.length > 0 && (
+                  <div className="forge-settings-provider-probe-checks">
+                    {modelCatalogResult.models.slice(0, 6).map((model) => (
+                      <span
+                        key={model.id}
+                        className="forge-settings-provider-probe-check"
+                        data-state="passed"
+                        title={model.id}
+                      >
+                        {model.name || model.id}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {modelCatalogResult.base_url && (
+                  <div className="forge-settings-provider-probe-meta">
+                    Base {modelCatalogResult.base_url}
+                  </div>
+                )}
+                {modelCatalogResult.remediation && (
+                  <div className="forge-settings-provider-probe-message">
+                    {modelCatalogResult.remediation}
                   </div>
                 )}
               </div>

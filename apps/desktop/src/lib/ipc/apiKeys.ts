@@ -20,6 +20,7 @@ export interface ProviderCatalogEntry {
 
 export type ProviderProbeStatus = "passed" | "failed";
 export type ProviderProbeCheckStatus = "passed" | "failed";
+export type ProviderModelCatalogStatus = "available" | "unavailable";
 
 export interface ProviderProbeCheck {
   id: string;
@@ -35,6 +36,21 @@ export interface ProviderProbeResult {
   base_url: string | null;
   status: ProviderProbeStatus;
   checks: ProviderProbeCheck[];
+  message: string;
+  remediation: string | null;
+}
+
+export interface ProviderModelCatalogItem {
+  id: string;
+  name: string;
+}
+
+export interface ProviderModelCatalogResult {
+  provider: string;
+  provider_label: string;
+  base_url: string | null;
+  status: ProviderModelCatalogStatus;
+  models: ProviderModelCatalogItem[];
   message: string;
   remediation: string | null;
 }
@@ -58,4 +74,11 @@ export async function probeProvider(provider: string): Promise<ProviderProbeResu
     throw new Error("Provider probe is not available outside Tauri runtime");
   }
   return invoke("probe_provider", { provider });
+}
+
+export async function listProviderModels(provider: string): Promise<ProviderModelCatalogResult> {
+  if (!hasTauriRuntime()) {
+    throw new Error("Provider model catalog is not available outside Tauri runtime");
+  }
+  return invoke("list_provider_models", { provider });
 }

@@ -283,7 +283,7 @@ proves each new provider can be discovered without breaking existing DeepSeek/An
 
 **Status (2026-06-20): Completed for the frontend catalog slice.** `apps/desktop/src/lib/providers.ts` now mirrors the Rust built-in provider ID set and default models for DeepSeek, Anthropic, Kimi/Moonshot, GLM/Zhipu, Alibaba/Qwen, MiniMax, OpenAI, OpenRouter, Gemini, xAI, Groq, Mistral, Ollama, `custom_openai`, and `custom_anthropic`. NVIDIA remains excluded from built-ins. Provider aliases, model ownership, context-window helpers, and custom-provider model display are covered by node tests. Browser-level truncation/render validation remains future UI polish.
 
-**Evidence:** TDD red pass failed while the frontend catalog still had only four providers. Green pass succeeded with `node --test src/lib/providers.test.ts` and the adjacent profile-default regression `node --test src/hooks/sessionProfileDefaults.test.ts` from `apps/desktop`. `npm run build` currently reaches `tsc` but is blocked by an unrelated pre-existing error in `src/lib/backgroundTaskStatus.ts` where `tasks.map(summarizeLoopTaskRecord)` passes the array index into an options parameter.
+**Evidence:** TDD red pass failed while the frontend catalog still had only four providers. Green pass succeeded with `node --test src/lib/providers.test.ts` and the adjacent profile-default regression `node --test src/hooks/sessionProfileDefaults.test.ts` from `apps/desktop`. At the time, `npm run build` reached `tsc` but was blocked by an unrelated pre-existing error in `src/lib/backgroundTaskStatus.ts` where `tasks.map(summarizeLoopTaskRecord)` passed the array index into an options parameter; that blocker was later fixed in `f5ec87cf`.
 
 - [x] Update `apps/desktop/src/lib/providers.ts` to include the same provider IDs and default model names as the Rust registry.
 - [x] Add custom provider support without requiring hardcoded model lists.
@@ -470,12 +470,19 @@ Completed commits:
 - `818a6890 feat(provider): record usage cost facts`
 - `03c4b727 feat(provider): add manual compatibility probe`
 
+Post-MVP usability commits:
+
+- `66410350 feat(provider): wire config profiles into runtime`
+- `8ec4ab0e feat(provider): surface config profiles in catalog`
+- `351c7804 feat(provider): honor dynamic catalog profile defaults`
+- `f5ec87cf fix(desktop): unblock production build`
+
 Known caveats:
 
 - Live provider certification is not claimed; compatibility probing is manual and user-triggered.
 - OpenAI Responses, native Gemini, Bedrock, Azure Foundry, OpenAI Codex, and executable provider plugins remain out of MVP.
 - Pricing is source-stamped and optional; missing cost remains explicit unknown/null, not zero.
-- `npm --prefix apps/desktop run build` is still blocked by a pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
+- Dynamic model fetching is now started as a manual Settings diagnostic for OpenAI-compatible `/models`, but fetched models are not yet persisted into Composer defaults and native Anthropic/Gemini/Bedrock model catalog endpoints are not claimed.
 
 ## 2026-06-20 Post-MVP Usability Slice: Config Profiles and No-Auth Local Providers
 
@@ -493,9 +500,9 @@ No-auth local providers are also unblocked. Profiles with an empty `api_key_env`
 
 This closes the practical drift where the backend could route/probe a config provider, but the desktop UI still only displayed the static built-in list. The UI still keeps built-in provider metadata as a fallback for non-Tauri/test contexts, and configured profiles remain data-only: no executable provider plugins and no in-app profile editor are claimed.
 
-**Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, `rustfmt --edition 2021 --check` on the touched Rust catalog files, and `git diff --check` on touched provider/catalog files. `npm --prefix apps/desktop run build` is still blocked by the pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
+**Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, `rustfmt --edition 2021 --check` on the touched Rust catalog files, and `git diff --check` on touched provider/catalog files. The earlier production-build blocker in `apps/desktop/src/lib/backgroundTaskStatus.ts` was fixed in `f5ec87cf`, and `npm --prefix apps/desktop run build` now passes.
 
-**Still not claimed:** live provider certification, dynamic model fetching, in-app provider-profile editing, executable provider plugins, native OpenAI Responses/Gemini/Bedrock transports, or browser-level truncation/render validation for every provider row.
+**Still not claimed:** live provider certification, persisted dynamic model fetching, in-app provider-profile editing, executable provider plugins, native OpenAI Responses/Gemini/Bedrock transports, or browser-level truncation/render validation for every provider row.
 
 ## 2026-06-20 Post-MVP Usability Slice: Profile Defaults Use Dynamic Catalog
 
@@ -503,9 +510,19 @@ This closes the practical drift where the backend could route/probe a config pro
 
 This closes the follow-on drift after the dynamic catalog UI slice: config providers were visible, but profile application still used static helper defaults and could pair a configured provider with `custom-model` or with the previous provider's model. The fix keeps profile defaults aligned with the same catalog that backs Settings rows and the Composer model menu.
 
-**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts` on configured provider alias/default-model resolution for both Composer and new-session defaults. Green pass succeeded for that test file plus `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`. `npm --prefix apps/desktop run build` remains blocked only by the pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts` on configured provider alias/default-model resolution for both Composer and new-session defaults. Green pass succeeded for that test file plus `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, and the desktop production build now passes after `f5ec87cf`.
 
-**Still not claimed:** visual provider-profile editing, live provider certification, dynamic model fetching, or browser-level validation of profile form/provider dropdown ergonomics.
+**Still not claimed:** visual provider-profile editing, live provider certification, persisted dynamic model fetching, or browser-level validation of profile form/provider dropdown ergonomics.
+
+## 2026-06-20 Post-MVP Usability Slice: Manual Model Catalog Refresh
+
+**Status (2026-06-20): Implemented as the fourth "fully usable provider" hardening slice after MVP closure.** Settings provider rows now expose a user-triggered model catalog refresh for OpenAI-compatible providers. The backend `list_provider_models` command resolves the same registry/config profile metadata used by routing, reads credential/base URL state through Settings detection, calls `{base_url}/models`, deduplicates returned model ids, and reports an explicit available/unavailable result with remediation text. Config-defined no-auth local profiles are supported by skipping the bearer header when no key is required.
+
+This closes another practical usability gap: a custom provider profile can be visible and routable, but users still need a way to inspect what the endpoint actually exposes. The first version is deliberately diagnostic/read-only. Settings displays the fetched model ids and source base URL, but Composer defaults and profile config are not automatically mutated.
+
+**Evidence:** TDD red pass first failed on the missing Rust model catalog API. Green verification covered `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/lib/ipc/apiKeys.test.ts src/lib/providers.test.ts src/hooks/sessionProfileDefaults.test.ts`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "refreshes a mocked provider model catalog"`, `npm --prefix apps/desktop run build`, and scoped `rustfmt --edition 2021 --check` on the touched Rust files.
+
+**Still not claimed:** fetched model persistence, automatic Composer/default-model mutation, startup auto-probing, native Anthropic/Gemini/Bedrock model catalog endpoints, live certification of every provider, or billing-grade provider catalog/pricing metadata.
 
 ## MVP Definition
 

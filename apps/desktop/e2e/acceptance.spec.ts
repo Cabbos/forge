@@ -101,6 +101,29 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(probeArgs).toEqual({ provider: "deepseek" });
   });
 
+  test("settings models refreshes a mocked provider model catalog", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+
+    const beforeClickCount = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return Number(window.__providerModelCatalogRequestCount ?? 0);
+    });
+    expect(beforeClickCount).toBe(0);
+
+    await providerRow.getByRole("button", { name: "刷新模型 DeepSeek" }).click();
+    await expect(providerRow).toContainText("DeepSeek returned 2 models.");
+    await expect(providerRow).toContainText("deepseek-chat");
+    await expect(providerRow).toContainText("deepseek-v4-flash[1m]");
+
+    const refreshArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastProviderModelCatalogArgs;
+    });
+    expect(refreshArgs).toEqual({ provider: "deepseek" });
+  });
+
   test("settings models disables provider probe buttons while a probe is running", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock

@@ -6,8 +6,8 @@ import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDat
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
-import { deleteSession, probeProvider, setApiKey } from "@/lib/tauri";
-import type { ProviderProbeResult } from "@/lib/tauri";
+import { deleteSession, listProviderModels, probeProvider, setApiKey } from "@/lib/tauri";
+import type { ProviderModelCatalogResult, ProviderProbeResult } from "@/lib/tauri";
 import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
@@ -32,6 +32,8 @@ export function useSettingsDialogController({
   const [saving, setSaving] = useState(false);
   const [probingProvider, setProbingProvider] = useState<string | null>(null);
   const [probeResults, setProbeResults] = useState<Record<string, ProviderProbeResult>>({});
+  const [refreshingModelsProvider, setRefreshingModelsProvider] = useState<string | null>(null);
+  const [modelCatalogResults, setModelCatalogResults] = useState<Record<string, ProviderModelCatalogResult>>({});
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
   const queryClient = useQueryClient();
@@ -155,7 +157,31 @@ export function useSettingsDialogController({
     } finally {
       setProbingProvider(null);
     }
-  }, []);
+  }, [providers]);
+
+  const handleRefreshModels = useCallback(async (provider: string) => {
+    setRefreshingModelsProvider(provider);
+    setError(null);
+    try {
+      const result = await listProviderModels(provider);
+      setModelCatalogResults((previous) => ({ ...previous, [provider]: result }));
+    } catch (e) {
+      setModelCatalogResults((previous) => ({
+        ...previous,
+        [provider]: {
+          provider,
+          provider_label: getProviderLabel(provider, providers),
+          base_url: null,
+          status: "unavailable",
+          models: [],
+          message: String(e),
+          remediation: null,
+        },
+      }));
+    } finally {
+      setRefreshingModelsProvider(null);
+    }
+  }, [providers]);
 
   const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys, providers);
   const sessionCount = sessions.size;
@@ -171,6 +197,8 @@ export function useSettingsDialogController({
     saving,
     probingProvider,
     probeResults,
+    refreshingModelsProvider,
+    modelCatalogResults,
     onEdit: handleEdit,
     onValueChange: setValue,
     onVisibleChange: setVisible,
@@ -178,6 +206,7 @@ export function useSettingsDialogController({
     onCancel: handleCancelEdit,
     onRemove: handleRemove,
     onProbe: handleProbe,
+    onRefreshModels: handleRefreshModels,
   };
 
   const localDataProps: ComponentProps<typeof SettingsLocalDataSection> = {

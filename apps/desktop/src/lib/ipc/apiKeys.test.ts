@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { getApiKeyStatus, getProviderCatalog, probeProvider } from "./apiKeys.ts";
+import { getApiKeyStatus, getProviderCatalog, listProviderModels, probeProvider } from "./apiKeys.ts";
 
 describe("getApiKeyStatus", () => {
   it("returns an empty key list outside the Tauri runtime", async () => {
@@ -20,6 +20,15 @@ describe("probeProvider", () => {
     await assert.rejects(
       probeProvider("openai"),
       /Provider probe is not available outside Tauri runtime/,
+    );
+  });
+});
+
+describe("listProviderModels", () => {
+  it("returns a clear error outside the Tauri runtime", async () => {
+    await assert.rejects(
+      listProviderModels("openai"),
+      /Provider model catalog is not available outside Tauri runtime/,
     );
   });
 });

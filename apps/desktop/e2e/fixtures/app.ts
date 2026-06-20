@@ -208,6 +208,23 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         remediation: null,
       };
     };
+    const providerModelCatalogResult = (provider: string) => {
+      // @ts-expect-error acceptance mock
+      if (window.__mockProviderModelCatalogResult) return window.__mockProviderModelCatalogResult;
+      const label = provider === "openai" ? "OpenAI" : provider === "deepseek" ? "DeepSeek" : provider;
+      return {
+        provider,
+        provider_label: label,
+        base_url: provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://api.openai.com/v1",
+        status: "available",
+        models: [
+          { id: "deepseek-chat", name: "deepseek-chat" },
+          { id: "deepseek-v4-flash[1m]", name: "deepseek-v4-flash[1m]" },
+        ],
+        message: `${label} returned 2 models.`,
+        remediation: null,
+      };
+    };
     const gatewayRuntimeStatus = () => ({
       ok: true,
       message: "Gateway runtime is healthy.",
@@ -980,6 +997,12 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error acceptance mock
           window.__lastProbeProviderArgs = args;
           return providerProbeResult(String(args.provider ?? ""));
+        case "list_provider_models":
+          // @ts-expect-error acceptance mock
+          window.__providerModelCatalogRequestCount = Number(window.__providerModelCatalogRequestCount ?? 0) + 1;
+          // @ts-expect-error acceptance mock
+          window.__lastProviderModelCatalogArgs = args;
+          return providerModelCatalogResult(String(args.provider ?? ""));
         case "list_profiles":
           return profilePayload();
         case "upsert_profile": {
