@@ -6,6 +6,13 @@ pub async fn get_api_key_status() -> Result<Vec<settings::KeyStatus>, String> {
 }
 
 #[tauri::command]
+pub async fn get_provider_catalog() -> Result<Vec<settings::ProviderCatalogEntry>, String> {
+    settings::Settings::load()
+        .provider_catalog()
+        .map_err(|error| format!("{error:?}"))
+}
+
+#[tauri::command]
 pub async fn set_api_key(provider: String, key: String) -> Result<(), String> {
     settings::Settings::load().set_api_key(&provider, &key)
 }

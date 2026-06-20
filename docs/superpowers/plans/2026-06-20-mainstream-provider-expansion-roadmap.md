@@ -485,7 +485,17 @@ No-auth local providers are also unblocked. Profiles with an empty `api_key_env`
 
 **Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::tests::build_adapter --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_probe --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_profile_loading --lib`, and `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`.
 
-**Still not claimed:** live endpoint certification, executable provider plugins, dynamic frontend UI editing for arbitrary provider profiles, native OpenAI Responses/Gemini/Bedrock transports, or billing-grade pricing.
+**Still not claimed:** live endpoint certification, executable provider plugins, in-app provider-profile editing, native OpenAI Responses/Gemini/Bedrock transports, or billing-grade pricing.
+
+## 2026-06-20 Post-MVP Usability Slice: Dynamic Frontend Provider Catalog
+
+**Status (2026-06-20): Implemented as the second "fully usable provider" hardening slice after MVP closure.** Config-defined provider profiles now flow through a backend `get_provider_catalog` command and merge into the frontend provider catalog. Settings provider rows and the Composer model menu can display profiles such as `nvidia` or `local-openai` from `~/.forge/config.json`, including their label, aliases, default model, context window when known, and no-auth key placeholder behavior.
+
+This closes the practical drift where the backend could route/probe a config provider, but the desktop UI still only displayed the static built-in list. The UI still keeps built-in provider metadata as a fallback for non-Tauri/test contexts, and configured profiles remain data-only: no executable provider plugins and no in-app profile editor are claimed.
+
+**Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `cd apps/desktop && node --test src/hooks/sessionProfileDefaults.test.ts src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, `rustfmt --edition 2021 --check` on the touched Rust catalog files, and `git diff --check` on touched provider/catalog files. `npm --prefix apps/desktop run build` is still blocked by the pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
+
+**Still not claimed:** live provider certification, dynamic model fetching, in-app provider-profile editing, executable provider plugins, native OpenAI Responses/Gemini/Bedrock transports, or browser-level truncation/render validation for every provider row.
 
 ## MVP Definition
 

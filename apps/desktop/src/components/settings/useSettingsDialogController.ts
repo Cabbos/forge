@@ -11,6 +11,7 @@ import type { ProviderProbeResult } from "@/lib/tauri";
 import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useProviderCatalog } from "@/hooks/queries/useProviderCatalogQuery";
 import { getModelLabel, getProviderLabel } from "@/lib/providers";
 import { useStore } from "@/store";
 
@@ -52,6 +53,7 @@ export function useSettingsDialogController({
     error: keysError,
   } = useApiKeyStatusQuery(dialogOpen);
   const queryError = getQueryErrorMessage(keysIsError ? keysError : null);
+  const providers = useProviderCatalog(dialogOpen);
 
   useEffect(() => {
     const openSettings = () => setDialogOpen(true);
@@ -141,7 +143,7 @@ export function useSettingsDialogController({
         ...previous,
         [provider]: {
           provider,
-          provider_label: getProviderLabel(provider),
+          provider_label: getProviderLabel(provider, providers),
           model: null,
           base_url: null,
           status: "failed",
@@ -155,13 +157,14 @@ export function useSettingsDialogController({
     }
   }, []);
 
-  const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys);
+  const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys, providers);
   const sessionCount = sessions.size;
   const workspaceName = activeWorkspace?.name ?? "未选择项目";
   const workspacePath = activeWorkspace?.path ?? "打开项目后绑定工作区设置";
 
   const providerRowsProps: ComponentProps<typeof SettingsProviderRows> = {
     keys: sortedKeys,
+    providers,
     editing,
     value,
     visible,
@@ -195,8 +198,8 @@ export function useSettingsDialogController({
     workspaceName,
     workspacePath,
     workspaceCount,
-    providerLabel: getProviderLabel(selectedProvider),
-    modelLabel: getModelLabel(selectedModel),
+    providerLabel: getProviderLabel(selectedProvider, providers),
+    modelLabel: getModelLabel(selectedModel, providers),
     error: error ?? (queryError ? `密钥状态读取失败：${queryError}` : null),
     providerRowsProps,
     localDataProps,

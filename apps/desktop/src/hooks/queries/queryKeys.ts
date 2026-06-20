@@ -1,5 +1,6 @@
 export const queryKeys = {
   apiKeyStatus: ["api-key-status"] as const,
+  providerCatalog: ["provider-catalog"] as const,
   projectRuntimeStatus: (sessionId: string | undefined | null, workingDir: string | null | undefined) =>
     ["project-runtime-status", sessionId ?? "", workingDir ?? ""] as const,
   projectCheckpointStatus: (sessionId: string | undefined | null, workingDir: string | null | undefined) =>

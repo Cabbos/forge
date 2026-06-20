@@ -7,6 +7,17 @@ export interface KeyStatus {
   preview: string;
 }
 
+export interface ProviderCatalogEntry {
+  id: string;
+  label: string;
+  default_model: string;
+  context_window_tokens: number | null;
+  aliases: string[];
+  requires_api_key: boolean;
+  supports_streaming: boolean;
+  supports_tools: boolean;
+}
+
 export type ProviderProbeStatus = "passed" | "failed";
 export type ProviderProbeCheckStatus = "passed" | "failed";
 
@@ -31,6 +42,11 @@ export interface ProviderProbeResult {
 export async function getApiKeyStatus(): Promise<KeyStatus[]> {
   if (!hasTauriRuntime()) return [];
   return invoke("get_api_key_status");
+}
+
+export async function getProviderCatalog(): Promise<ProviderCatalogEntry[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke("get_provider_catalog");
 }
 
 export async function setApiKey(provider: string, key: string): Promise<void> {

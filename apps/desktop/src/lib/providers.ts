@@ -16,7 +16,19 @@ export const PROVIDER_IDS = [
   "custom_anthropic",
 ] as const;
 
-export type ProviderId = (typeof PROVIDER_IDS)[number];
+export type BuiltInProviderId = (typeof PROVIDER_IDS)[number];
+export type ProviderId = BuiltInProviderId | (string & {});
+
+export interface ProviderCatalogEntry {
+  id: string;
+  label: string;
+  default_model: string;
+  context_window_tokens?: number | null;
+  aliases?: string[];
+  requires_api_key?: boolean;
+  supports_streaming?: boolean;
+  supports_tools?: boolean;
+}
 
 export interface ModelOption {
   id: string;
@@ -32,6 +44,9 @@ export interface ProviderDefinition {
   keyPlaceholder: string;
   defaultModel: string;
   models: ModelOption[];
+  aliases?: string[];
+  requiresApiKey?: boolean;
+  customModels?: boolean;
 }
 
 export const PROVIDERS: ProviderDefinition[] = [
@@ -256,56 +271,157 @@ const PROVIDER_ALIASES: Record<string, ProviderId> = {
   anthropic_compatible: "custom_anthropic",
 };
 
-export function normalizeProviderId(provider?: string | null): ProviderId {
+export function mergeProviderCatalog(
+  entries: ProviderCatalogEntry[] = [],
+  base: ProviderDefinition[] = PROVIDERS,
+): ProviderDefinition[] {
+  const merged = base.map((provider) => ({
+    ...provider,
+    models: provider.models.map((model) => ({ ...model })),
+    aliases: [...(provider.aliases ?? [])],
+  }));
+  const indexById = new Map(merged.map((provider, index) => [provider.id, index]));
+
+  for (const entry of entries) {
+    const id = entry.id.trim().toLowerCase();
+    const defaultModel = entry.default_model.trim();
+    if (!id || !defaultModel) continue;
+    const modelOption: ModelOption = {
+      id: defaultModel,
+      name: defaultModel,
+      description: entry.supports_tools === false ? "configured profile" : "configured provider",
+      contextWindowTokens: entry.context_window_tokens ?? undefined,
+    };
+    const existingIndex = indexById.get(id);
+    if (existingIndex !== undefined) {
+      const existing = merged[existingIndex];
+      const hasDefaultModel = existing.models.some((model) => model.id === defaultModel);
+      merged[existingIndex] = {
+        ...existing,
+        label: entry.label || existing.label,
+        shortLabel: existing.shortLabel || entry.label || id,
+        defaultModel,
+        aliases: [...new Set([...(existing.aliases ?? []), ...(entry.aliases ?? [])])],
+        requiresApiKey: entry.requires_api_key ?? existing.requiresApiKey,
+        customModels: existing.customModels,
+        models: hasDefaultModel ? existing.models : [modelOption, ...existing.models],
+      };
+      continue;
+    }
+
+    indexById.set(id, merged.length);
+    merged.push({
+      id,
+      label: entry.label || id,
+      shortLabel: entry.label || id,
+      keyPlaceholder: entry.requires_api_key === false ? "not required" : "sk-...",
+      defaultModel,
+      models: [modelOption],
+      aliases: entry.aliases ?? [],
+      requiresApiKey: entry.requires_api_key ?? true,
+      customModels: true,
+    });
+  }
+
+  return merged;
+}
+
+function providerAliasMap(catalog: ProviderDefinition[]): Record<string, ProviderId> {
+  const aliases: Record<string, ProviderId> = { ...PROVIDER_ALIASES };
+  for (const provider of catalog) {
+    aliases[String(provider.id).toLowerCase()] = provider.id;
+    for (const alias of provider.aliases ?? []) {
+      aliases[alias.trim().toLowerCase()] = provider.id;
+    }
+  }
+  return aliases;
+}
+
+export function normalizeProviderId(
+  provider?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): ProviderId {
   const normalized = provider?.trim().toLowerCase();
   if (!normalized) return DEFAULT_PROVIDER_ID;
   if (PROVIDER_ID_SET.has(normalized as ProviderId)) return normalized as ProviderId;
-  return PROVIDER_ALIASES[normalized] ?? DEFAULT_PROVIDER_ID;
+  return providerAliasMap(catalog)[normalized] ?? normalized;
 }
 
-export function getProviderDefinition(provider?: string | null): ProviderDefinition {
-  const id = normalizeProviderId(provider);
-  return PROVIDERS.find((item) => item.id === id) ?? PROVIDERS[0];
+function fallbackProviderDefinition(provider: ProviderId): ProviderDefinition {
+  const id = String(provider || DEFAULT_PROVIDER_ID);
+  return {
+    id,
+    label: id,
+    shortLabel: id,
+    keyPlaceholder: "sk-...",
+    defaultModel: "custom-model",
+    models: [{ id: "custom-model", name: "Custom Model", description: "configured provider" }],
+    customModels: true,
+  };
 }
 
-export function getProviderLabel(provider?: string | null): string {
-  return getProviderDefinition(provider).label;
+export function getProviderDefinition(
+  provider?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): ProviderDefinition {
+  const id = normalizeProviderId(provider, catalog);
+  return catalog.find((item) => item.id === id) ?? fallbackProviderDefinition(id);
 }
 
-export function getDefaultModel(provider?: string | null): string {
-  return getProviderDefinition(provider).defaultModel;
+export function getProviderLabel(
+  provider?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): string {
+  return getProviderDefinition(provider, catalog).label;
 }
 
-export function modelBelongsToProvider(provider: string | null | undefined, model?: string | null): boolean {
+export function getDefaultModel(
+  provider?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): string {
+  return getProviderDefinition(provider, catalog).defaultModel;
+}
+
+export function modelBelongsToProvider(
+  provider: string | null | undefined,
+  model?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): boolean {
   const cleanModel = model?.trim();
   if (!cleanModel) return false;
-  const providerDef = getProviderDefinition(provider);
-  if (CUSTOM_PROVIDER_IDS.has(providerDef.id)) return true;
+  const providerDef = getProviderDefinition(provider, catalog);
+  if (CUSTOM_PROVIDER_IDS.has(providerDef.id) || providerDef.customModels) return true;
   return providerDef.models.some((item) => item.id === cleanModel);
 }
 
-export function getProviderForModel(model?: string | null): ProviderId | null {
+export function getProviderForModel(
+  model?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): ProviderId | null {
   const cleanModel = model?.trim();
   if (!cleanModel) return null;
-  return PROVIDERS.find((provider) =>
+  return catalog.find((provider) =>
     provider.models.some((item) => item.id === cleanModel)
   )?.id ?? null;
 }
 
-export function getModelLabel(model?: string | null): string {
+export function getModelLabel(model?: string | null, catalog: ProviderDefinition[] = PROVIDERS): string {
   const cleanModel = model?.trim();
   if (!cleanModel) return "未选择模型";
-  for (const provider of PROVIDERS) {
+  for (const provider of catalog) {
     const found = provider.models.find((item) => item.id === cleanModel);
     if (found) return found.name;
   }
   return cleanModel;
 }
 
-export function getModelContextWindow(model?: string | null): number | null {
+export function getModelContextWindow(
+  model?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): number | null {
   const cleanModel = model?.trim();
   if (!cleanModel) return null;
-  for (const provider of PROVIDERS) {
+  for (const provider of catalog) {
     const found = provider.models.find((item) => item.id === cleanModel);
     if (found?.contextWindowTokens) return found.contextWindowTokens;
   }
@@ -319,7 +435,11 @@ export function formatContextWindow(tokens?: number | null): string {
   return String(tokens);
 }
 
-export function getProviderModelLabel(provider?: string | null, model?: string | null): string {
-  const providerDef = getProviderDefinition(provider);
-  return `${providerDef.shortLabel} · ${getModelLabel(model || providerDef.defaultModel)}`;
+export function getProviderModelLabel(
+  provider?: string | null,
+  model?: string | null,
+  catalog: ProviderDefinition[] = PROVIDERS,
+): string {
+  const providerDef = getProviderDefinition(provider, catalog);
+  return `${providerDef.shortLabel} · ${getModelLabel(model || providerDef.defaultModel, catalog)}`;
 }

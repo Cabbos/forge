@@ -125,6 +125,7 @@ pub fn run() {
             ipc::workspace_files::search_workspace_files,
             ipc::workspace_files::get_default_working_dir,
             ipc::settings_handlers::get_api_key_status,
+            ipc::settings_handlers::get_provider_catalog,
             ipc::settings_handlers::set_api_key,
             ipc::settings_handlers::probe_provider,
             ipc::capability_handlers::list_capabilities,

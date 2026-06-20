@@ -353,6 +353,29 @@ impl Settings {
         load_provider_profiles(&self.providers)
     }
 
+    pub(crate) fn provider_catalog(
+        &self,
+    ) -> Result<Vec<ProviderCatalogEntry>, ProviderProfileLoadError> {
+        Ok(self
+            .provider_profiles()?
+            .into_iter()
+            .map(|profile| {
+                let context_window_tokens = get_provider_definition(&profile.id)
+                    .and_then(|definition| definition.context_window_tokens);
+                ProviderCatalogEntry {
+                    id: profile.id,
+                    label: profile.label,
+                    default_model: profile.default_model,
+                    context_window_tokens,
+                    aliases: profile.aliases,
+                    requires_api_key: !profile.api_key_env.is_empty(),
+                    supports_streaming: profile.supports_streaming,
+                    supports_tools: profile.supports_tools,
+                }
+            })
+            .collect())
+    }
+
     fn provider_profiles_or_builtin(&self) -> Vec<LoadedProviderProfile> {
         self.provider_profiles()
             .unwrap_or_else(|_| load_provider_profiles(&[]).expect("built-in providers load"))
@@ -371,6 +394,18 @@ pub struct KeyStatus {
     pub provider: String,
     pub set: bool,
     pub preview: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderCatalogEntry {
+    pub id: String,
+    pub label: String,
+    pub default_model: String,
+    pub context_window_tokens: Option<u32>,
+    pub aliases: Vec<String>,
+    pub requires_api_key: bool,
+    pub supports_streaming: bool,
+    pub supports_tools: bool,
 }
 
 pub fn mask_key(key: &str) -> String {
@@ -858,6 +893,40 @@ mod tests {
         assert_eq!(credentials.model.as_deref(), Some("local-model"));
         assert!(!settings.provider_requires_api_key("local-openai"));
         assert!(!settings.provider_requires_api_key("ollama"));
+    }
+
+    #[test]
+    fn provider_catalog_includes_configured_profiles_for_frontend() {
+        let settings = Settings {
+            providers: vec![ProviderProfileConfig {
+                id: "nvidia".to_string(),
+                label: Some("NVIDIA NIM".to_string()),
+                base_url: Some("https://integrate.api.nvidia.com/v1".to_string()),
+                api_key_env: Some(EnvVarList::One("NVIDIA_API_KEY".to_string())),
+                base_url_env: Some(EnvVarList::One("NVIDIA_BASE_URL".to_string())),
+                default_model: Some("nvidia/llama-3.1-nemotron".to_string()),
+                transport: Some("openai_chat_completions".to_string()),
+                supports_tools: Some(true),
+                supports_streaming: Some(true),
+                max_output_tokens_default: Some(16_384),
+                aliases: vec!["nim".to_string()],
+            }],
+            ..Default::default()
+        };
+
+        let catalog = settings.provider_catalog().expect("provider catalog");
+        let nvidia = catalog
+            .iter()
+            .find(|entry| entry.id == "nvidia")
+            .expect("nvidia catalog entry");
+
+        assert_eq!(nvidia.label, "NVIDIA NIM");
+        assert_eq!(nvidia.default_model, "nvidia/llama-3.1-nemotron");
+        assert!(nvidia.requires_api_key);
+        assert!(nvidia.supports_streaming);
+        assert!(nvidia.supports_tools);
+        assert_eq!(nvidia.aliases, vec!["nim".to_string()]);
+        assert!(catalog.iter().any(|entry| entry.id == "deepseek"));
     }
 
     #[test]

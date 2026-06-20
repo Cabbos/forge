@@ -10,6 +10,7 @@ import {
   getModelLabel,
   getProviderDefinition,
   getProviderForModel,
+  mergeProviderCatalog,
   getProviderModelLabel,
   modelBelongsToProvider,
   normalizeProviderId,
@@ -87,7 +88,7 @@ describe("frontend provider catalog", () => {
     assert.equal(normalizeProviderId("custom-openai"), "custom_openai");
     assert.equal(normalizeProviderId("custom-anthropic"), "custom_anthropic");
     assert.equal(normalizeProviderId(""), "deepseek");
-    assert.equal(normalizeProviderId("unknown-provider"), "deepseek");
+    assert.equal(normalizeProviderId("unknown-provider"), "unknown-provider");
   });
 
   it("resolves model ownership for defaults and registry fallback models", () => {
@@ -127,5 +128,39 @@ describe("frontend provider catalog", () => {
       getProviderModelLabel("custom_openai", "my-private-model"),
       "Custom OpenAI · my-private-model",
     );
+  });
+
+  it("merges configured provider profiles into the frontend catalog", () => {
+    const catalog = mergeProviderCatalog([
+      {
+        id: "nvidia",
+        label: "NVIDIA NIM",
+        default_model: "nvidia/llama-3.1-nemotron",
+        context_window_tokens: null,
+        aliases: ["nim"],
+        requires_api_key: true,
+        supports_streaming: true,
+        supports_tools: true,
+      },
+      {
+        id: "local-openai",
+        label: "Local OpenAI",
+        default_model: "local-model",
+        context_window_tokens: null,
+        aliases: [],
+        requires_api_key: false,
+        supports_streaming: true,
+        supports_tools: true,
+      },
+    ]);
+
+    assert.equal(catalog.some((provider) => provider.id === "nvidia"), true);
+    assert.equal(catalog.some((provider) => provider.id === "local-openai"), true);
+    assert.equal(getProviderDefinition("nvidia", catalog).label, "NVIDIA NIM");
+    assert.equal(getDefaultModel("local-openai", catalog), "local-model");
+    assert.equal(modelBelongsToProvider("nvidia", "nvidia/llama-3.1-nemotron", catalog), true);
+    assert.equal(modelBelongsToProvider("local-openai", "anything-local", catalog), true);
+    assert.equal(normalizeProviderId("nvidia", catalog), "nvidia");
+    assert.equal(normalizeProviderId("unknown-provider"), "unknown-provider");
   });
 });

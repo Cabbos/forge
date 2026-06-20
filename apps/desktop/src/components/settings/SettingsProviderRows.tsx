@@ -2,12 +2,13 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
-import { formatContextWindow, PROVIDERS } from "@/lib/providers";
+import { formatContextWindow, PROVIDERS, type ProviderDefinition } from "@/lib/providers";
 import type { KeyStatus } from "@/lib/tauri";
 import type { ProviderProbeResult } from "@/lib/tauri";
 
 interface SettingsProviderRowsProps {
   keys: KeyStatus[];
+  providers?: ProviderDefinition[];
   editing: string | null;
   value: string;
   visible: boolean;
@@ -25,6 +26,7 @@ interface SettingsProviderRowsProps {
 
 export function SettingsProviderRows({
   keys,
+  providers = PROVIDERS,
   editing,
   value,
   visible,
@@ -44,7 +46,7 @@ export function SettingsProviderRows({
   return (
     <div data-testid="settings-preferences-panel" className="forge-settings-preferences-panel">
       {keys.map((key) => {
-        const provider = PROVIDERS.find((item) => item.id === key.provider);
+        const provider = providers.find((item) => item.id === key.provider);
         const providerLabel = provider?.label ?? key.provider;
         const defaultModel = provider?.models.find((model) => model.id === provider.defaultModel);
         const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);

@@ -1,5 +1,6 @@
 import { ComposerModelMenu } from "./ComposerModelMenu";
 import { ComposerSuggestionMenu } from "./ComposerSuggestionMenu";
+import type { ProviderDefinition } from "@/lib/providers";
 import type { ComposerChip, ComposerMenuMode } from "./composerTypes";
 
 export interface ComposerMenuLayerProps {
@@ -8,6 +9,7 @@ export interface ComposerMenuLayerProps {
   modelMenuId: string;
   selectedModel: string;
   selectedProvider: string;
+  providers: ProviderDefinition[];
   showModelMenu: boolean;
   showSuggestions: ComposerMenuMode;
   suggestionListId: string;
@@ -23,6 +25,7 @@ export function ComposerMenuLayer({
   onActiveSuggestionIndexChange,
   onAddChip,
   onSelectModel,
+  providers,
   selectedModel,
   selectedProvider,
   showModelMenu,
@@ -46,6 +49,7 @@ export function ComposerMenuLayer({
         <ComposerModelMenu
           id={modelMenuId}
           labelledBy={`${modelMenuId}-button`}
+          providers={providers}
           selectedModel={selectedModel}
           selectedProvider={selectedProvider}
           onSelect={onSelectModel}
