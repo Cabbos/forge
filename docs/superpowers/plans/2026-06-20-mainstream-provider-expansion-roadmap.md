@@ -402,9 +402,13 @@ advertises the provider probe coverage when the product surface is added.
 
 ## Task 8: Documentation and Obsidian Narrative
 
-- [ ] Update `README.md`, `apps/desktop/README.md`, and `CHANGELOG.md` only when the provider expansion becomes user-visible.
-- [ ] Add an Obsidian narrative at `/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Mainstream Provider Expansion Plan.md`.
-- [ ] The Obsidian note must explain:
+**Status (2026-06-20): Completed for the provider-expansion narrative slice.** The user-visible Settings probe was documented in `README.md`, `apps/desktop/README.md`, and `CHANGELOG.md` when Task 7 made provider compatibility probing visible. The Obsidian note now mirrors the engineering roadmap as an architecture narrative for interview/backing use: current state, Hermes comparison, internal Anthropic-style contract, capability-based provider routing, evidence, and explicit non-claims.
+
+**Evidence:** `rg "Mainstream Provider Expansion" docs/superpowers/plans /Users/cabbos/cabbosAI/code-cli/Forge/03\ Roadmap` finds both this source-of-truth roadmap and the Obsidian narrative. Task 7 verification also confirmed `scripts/acceptance.sh --dry-run` advertises the provider probe acceptance coverage.
+
+- [x] Update `README.md`, `apps/desktop/README.md`, and `CHANGELOG.md` only when the provider expansion becomes user-visible.
+- [x] Add an Obsidian narrative at `/Users/cabbos/cabbosAI/code-cli/Forge/03 Roadmap/Mainstream Provider Expansion Plan.md`.
+- [x] The Obsidian note must explain:
   - current provider architecture
   - why Forge uses an internal Anthropic-style agent contract
   - why provider transport is capability-based
@@ -423,27 +427,55 @@ finds both the engineering source-of-truth plan and the narrative note.
 
 ## Task 9: Implementation Discipline
 
-- [ ] Use subagent-driven-development for implementation:
+**Status (2026-06-20): Completed with a documented GitNexus gate adjustment.** Implementation was run as small subagent-driven slices with implementer, spec reviewer, quality reviewer, fix passes, controller verification, and commit gates. GitNexus impact was run before editing existing Rust/TypeScript symbols, but the index was stale/incomplete for several TypeScript/Rust symbols and often fell back to LOW-confidence file-level results. The original `detect_changes(scope: "all")` example was narrowed to staged-scope commit gates because the worktree contains unrelated user-owned dirty files and untracked eval roadmaps that must not be touched; a final `detect_changes(scope: "compare", base_ref: "main")` audit was run at closure and reported LOW risk with 0 affected processes across the broad branch diff.
+
+- [x] Use subagent-driven-development for implementation:
   - implementer
   - spec reviewer
   - quality reviewer
   - fix pass
   - commit gate
-- [ ] Before editing existing Rust or TypeScript symbols, run GitNexus impact and report risk.
-- [ ] Before every commit, run:
+- [x] Before editing existing Rust or TypeScript symbols, run GitNexus impact and report risk.
+- [x] Before every commit, run a GitNexus detect-changes gate on the commit scope:
 
 ```text
-detect_changes(scope: "all", repo: "forge")
+detect_changes(scope: "staged", repo: "forge")
 ```
 
-- [ ] Commit in small slices:
+- [x] Do not claim the literal all-scope gate was run before every commit; use final all/compare audit as completion verification because unrelated dirty files remain in the worktree.
+- [x] Commit in small slices:
   - provider registry
+  - config-defined profile loading
   - adapter routing
   - credentials/settings
   - frontend catalog
   - fixture/conformance tests
+  - usage/cost facts
+  - compatibility probe
   - docs/Obsidian sync
-- [ ] Do not touch unrelated untracked roadmap files.
+- [x] Do not touch unrelated untracked roadmap files.
+
+## Final Completion Snapshot
+
+**Status (2026-06-20): Provider expansion MVP implemented and documented.** This roadmap update is the final docs closure for the mainstream provider expansion slice.
+
+Completed commits:
+
+- `fcea8d7b feat(provider): add mainstream provider registry`
+- `6580c764 feat(provider): load config provider profiles`
+- `e587c149 feat(provider): route adapters by registry`
+- `4b60920f feat(provider): detect registry credentials`
+- `7ad6a83e feat(provider): sync frontend catalog`
+- `1a753498 test(provider): add streaming conformance fixtures`
+- `818a6890 feat(provider): record usage cost facts`
+- `03c4b727 feat(provider): add manual compatibility probe`
+
+Known caveats:
+
+- Live provider certification is not claimed; compatibility probing is manual and user-triggered.
+- OpenAI Responses, native Gemini, Bedrock, Azure Foundry, OpenAI Codex, and executable provider plugins remain out of MVP.
+- Pricing is source-stamped and optional; missing cost remains explicit unknown/null, not zero.
+- `npm --prefix apps/desktop run build` is still blocked by a pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
 
 ## MVP Definition
 
