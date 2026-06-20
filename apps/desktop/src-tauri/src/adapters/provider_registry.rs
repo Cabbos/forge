@@ -180,6 +180,8 @@ pub(crate) struct LoadedProviderProfile {
     pub(crate) supports_streaming: bool,
     pub(crate) supports_tools: bool,
     pub(crate) max_output_tokens_default: Option<u32>,
+    pub(crate) model_catalog: ModelCatalogPolicy,
+    pub(crate) model_fallbacks: Vec<String>,
     pub(crate) source: ProviderProfileSource,
 }
 
@@ -205,6 +207,12 @@ impl LoadedProviderProfile {
             supports_streaming: definition.supports_streaming,
             supports_tools: definition.supports_tools,
             max_output_tokens_default: definition.max_output_tokens_default,
+            model_catalog: definition.model_catalog,
+            model_fallbacks: definition
+                .model_fallbacks
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
             source: ProviderProfileSource::BuiltIn,
         }
     }
@@ -214,6 +222,12 @@ impl LoadedProviderProfile {
         source_alias: String,
         config: &ProviderProfileConfig,
     ) -> Result<Self, ProviderProfileLoadError> {
+        let transport =
+            parse_transport(config)?.unwrap_or(ProviderTransport::CustomOpenAiCompatible);
+        let default_model = config
+            .default_model
+            .clone()
+            .unwrap_or_else(|| "custom-model".to_string());
         let mut profile = Self {
             id,
             aliases: vec![],
@@ -221,10 +235,7 @@ impl LoadedProviderProfile {
                 .label
                 .clone()
                 .unwrap_or_else(|| config.id.trim().to_string()),
-            default_model: config
-                .default_model
-                .clone()
-                .unwrap_or_else(|| "custom-model".to_string()),
+            default_model: default_model.clone(),
             default_base_url: config.base_url.clone(),
             api_key_env: config
                 .api_key_env
@@ -236,11 +247,12 @@ impl LoadedProviderProfile {
                 .as_ref()
                 .map(EnvVarList::to_vec)
                 .unwrap_or_default(),
-            transport: parse_transport(config)?
-                .unwrap_or(ProviderTransport::CustomOpenAiCompatible),
+            transport,
             supports_streaming: config.supports_streaming.unwrap_or(true),
             supports_tools: config.supports_tools.unwrap_or(true),
             max_output_tokens_default: config.max_output_tokens_default,
+            model_catalog: model_catalog_policy_for_user_transport(transport),
+            model_fallbacks: fallback_models_from_default(&default_model),
             source: ProviderProfileSource::UserDefined,
         };
         profile.add_alias(source_alias);
@@ -269,9 +281,11 @@ impl LoadedProviderProfile {
         }
         if let Some(default_model) = &config.default_model {
             self.default_model = default_model.clone();
+            prepend_model_fallback(&mut self.model_fallbacks, default_model);
         }
         if let Some(transport) = parse_transport(config)? {
             self.transport = transport;
+            self.model_catalog = model_catalog_policy_for_user_transport(transport);
         }
         if let Some(supports_tools) = config.supports_tools {
             self.supports_tools = supports_tools;
@@ -297,6 +311,37 @@ impl LoadedProviderProfile {
         }
         self.aliases.push(alias);
     }
+}
+
+fn model_catalog_policy_for_user_transport(transport: ProviderTransport) -> ModelCatalogPolicy {
+    match transport {
+        ProviderTransport::OpenAiChatCompletions | ProviderTransport::CustomOpenAiCompatible => {
+            ModelCatalogPolicy::HttpModelsEndpoint
+        }
+        ProviderTransport::AnthropicMessages | ProviderTransport::CustomAnthropicCompatible => {
+            ModelCatalogPolicy::StaticFallback
+        }
+        ProviderTransport::OpenAiResponses
+        | ProviderTransport::NativeGemini
+        | ProviderTransport::BedrockConverse => ModelCatalogPolicy::None,
+    }
+}
+
+fn fallback_models_from_default(default_model: &str) -> Vec<String> {
+    let trimmed = default_model.trim();
+    if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        vec![trimmed.to_string()]
+    }
+}
+
+fn prepend_model_fallback(models: &mut Vec<String>, default_model: &str) {
+    let trimmed = default_model.trim();
+    if trimmed.is_empty() || models.iter().any(|model| model == trimmed) {
+        return;
+    }
+    models.insert(0, trimmed.to_string());
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

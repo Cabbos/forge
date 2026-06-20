@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 
 use crate::adapters::provider_registry::{
-    find_loaded_provider_profile, LoadedProviderProfile, ProviderTransport,
+    find_loaded_provider_profile, LoadedProviderProfile, ModelCatalogPolicy, ProviderTransport,
 };
 use crate::settings::{Credentials, ProviderCatalogModel, Settings};
 
@@ -88,6 +88,10 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
     };
     let provider_id = profile.id.clone();
     let provider_label = profile.label.clone();
+    if profile.model_catalog == ModelCatalogPolicy::StaticFallback {
+        return static_fallback_catalog(profile);
+    }
+
     let base_url = credentials
         .api_base
         .clone()
@@ -201,6 +205,52 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
         ),
         remediation: None,
     }
+}
+
+fn static_fallback_catalog(profile: &LoadedProviderProfile) -> ProviderModelCatalogResult {
+    let models = fallback_model_items(&profile.model_fallbacks);
+    if models.is_empty() {
+        return unavailable(
+            &profile.id,
+            &profile.label,
+            profile.default_base_url.as_deref().map(safe_base_url_label),
+            Vec::new(),
+            &format!(
+                "{} has no model catalog fallback configured.",
+                profile.label
+            ),
+            Some(
+                "Configure a default model or use a provider with a live model catalog endpoint."
+                    .to_string(),
+            ),
+        );
+    }
+
+    ProviderModelCatalogResult {
+        provider: profile.id.clone(),
+        provider_label: profile.label.clone(),
+        base_url: profile.default_base_url.as_deref().map(safe_base_url_label),
+        status: ProviderModelCatalogStatus::Available,
+        models,
+        message: format!("{} uses Forge's static model catalog.", profile.label),
+        remediation: None,
+    }
+}
+
+fn fallback_model_items(models: &[String]) -> Vec<ProviderModelCatalogItem> {
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+    for model in models {
+        let id = model.trim();
+        if id.is_empty() || !seen.insert(id.to_string()) {
+            continue;
+        }
+        result.push(ProviderModelCatalogItem {
+            id: id.to_string(),
+            name: id.to_string(),
+        });
+    }
+    result
 }
 
 fn model_catalog_request(
@@ -462,6 +512,67 @@ mod tests {
             .expect("captured local models request");
         assert_eq!(request["path"], "/models");
         assert_eq!(request["authorization"], "");
+    }
+
+    #[tokio::test]
+    async fn model_catalog_uses_static_fallbacks_without_network_or_key() {
+        let profiles = load_provider_profiles(&[]).expect("built-in profiles load");
+        let result = list_provider_models_with_credentials_and_profiles(
+            "deepseek",
+            Credentials {
+                api_key: String::new(),
+                api_base: None,
+                model: None,
+            },
+            reqwest::Client::new(),
+            &profiles,
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.provider, "deepseek");
+        assert_eq!(result.provider_label, "DeepSeek");
+        assert_eq!(
+            result
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["deepseek-v4-flash[1m]", "deepseek-v4-pro", "deepseek-chat"]
+        );
+        assert_eq!(
+            result.message,
+            "DeepSeek uses Forge's static model catalog."
+        );
+        assert_eq!(result.remediation, None);
+    }
+
+    #[tokio::test]
+    async fn model_catalog_static_fallbacks_respect_provider_aliases() {
+        let profiles = load_provider_profiles(&[]).expect("built-in profiles load");
+        let result = list_provider_models_with_credentials_and_profiles(
+            "moonshot",
+            Credentials {
+                api_key: String::new(),
+                api_base: None,
+                model: None,
+            },
+            reqwest::Client::new(),
+            &profiles,
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.provider, "kimi");
+        assert_eq!(result.provider_label, "Kimi / Moonshot");
+        assert_eq!(
+            result
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["kimi-k2.5", "kimi-k2", "moonshot-v1-32k"]
+        );
     }
 
     fn spawn_json_response_server(

@@ -71,7 +71,7 @@ COMMAND_LABELS=(
   "persisted A2A lineage tests"
   "typed completion evidence and review-to-commit eligibility tests"
   "gated headless ownership policy tests"
-  "desktop Phase 7 provider probe/model catalog selection/defaults/metadata rendering/readiness/profile editor and A2A worker lifecycle smoke specs"
+  "desktop Phase 7 provider probe/model catalog live-static refresh/selection/defaults/metadata rendering/readiness/profile editor and A2A worker lifecycle smoke specs"
   "rich preview e2e smoke specs"
 )
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added registry-backed static model catalog fallbacks for providers without a supported live model-list endpoint. DeepSeek, Kimi/Moonshot, GLM/Zhipu, and MiniMax can now return their Forge registry fallback model lists from the manual Settings model refresh path without requiring API keys, base URLs, or network calls; the result is explicitly described as a static catalog, not live provider certification.
 - Added compact Settings provider-row rendering coverage for the full mainstream provider catalog. Provider labels, default model names, and context-window metadata now wrap instead of clipping in narrow Settings layouts, with browser geometry checks guarding against hidden truncation and row overflow.
 - Added a Settings model-catalog use action. After a manual `/models` refresh, users can select one of the returned model ids directly from the provider row; the selection updates the current Composer provider/model and app metadata while leaving profile defaults untouched unless the user edits the profile separately.
 - Added an explicit Settings action to save a refreshed model as the default for editable custom provider profiles. This preserves the user's other profile fields and only changes the provider profile's default model when the user clicks the default action.
