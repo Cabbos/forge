@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use crate::adapters::provider_registry::{
     find_loaded_provider_profile, LoadedProviderProfile, ProviderTransport,
 };
-use crate::settings::Credentials;
+use crate::settings::{Credentials, ProviderCatalogModel, Settings};
 
 const MODEL_CATALOG_TIMEOUT_SECS: u64 = 12;
 
@@ -39,13 +39,35 @@ pub(crate) async fn list_provider_models(provider: &str) -> ProviderModelCatalog
         .timeout(std::time::Duration::from_secs(MODEL_CATALOG_TIMEOUT_SECS))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    list_provider_models_with_credentials_and_profiles(
+    let mut result = list_provider_models_with_credentials_and_profiles(
         provider,
         credentials,
         client,
         &crate::settings::load_configured_provider_profiles(),
     )
-    .await
+    .await;
+    if result.status == ProviderModelCatalogStatus::Available {
+        let models = result
+            .models
+            .iter()
+            .map(|model| ProviderCatalogModel {
+                id: model.id.clone(),
+                name: model.name.clone(),
+                context_window_tokens: None,
+            })
+            .collect();
+        let mut settings = Settings::load();
+        if let Err(error) = settings.record_provider_model_catalog(
+            &result.provider,
+            result.base_url.clone(),
+            models,
+        ) {
+            result.remediation = Some(format!(
+                "Models were fetched, but Forge could not save the catalog cache: {error}"
+            ));
+        }
+    }
+    result
 }
 
 pub(crate) async fn list_provider_models_with_credentials_and_profiles(

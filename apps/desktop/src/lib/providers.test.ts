@@ -163,4 +163,38 @@ describe("frontend provider catalog", () => {
     assert.equal(normalizeProviderId("nvidia", catalog), "nvidia");
     assert.equal(normalizeProviderId("unknown-provider"), "unknown-provider");
   });
+
+  it("merges cached provider model catalogs into selectable model options", () => {
+    const catalog = mergeProviderCatalog([
+      {
+        id: "nvidia",
+        label: "NVIDIA NIM",
+        default_model: "nvidia/llama-3.1-nemotron",
+        context_window_tokens: null,
+        aliases: ["nim"],
+        requires_api_key: true,
+        supports_streaming: true,
+        supports_tools: true,
+        models: [
+          {
+            id: "nvidia/llama-3.1-nemotron",
+            name: "NVIDIA Nemotron",
+            context_window_tokens: null,
+          },
+          {
+            id: "nvidia/llama-3.3-70b",
+            name: "NVIDIA Llama 3.3 70B",
+            context_window_tokens: 128_000,
+          },
+        ],
+      },
+    ]);
+
+    const nvidia = getProviderDefinition("nim", catalog);
+    assert.equal(nvidia.models.map((model) => model.id).includes("nvidia/llama-3.3-70b"), true);
+    assert.equal(getProviderForModel("nvidia/llama-3.3-70b", catalog), "nvidia");
+    assert.equal(getModelLabel("nvidia/llama-3.3-70b", catalog), "NVIDIA Llama 3.3 70B");
+    assert.equal(getModelContextWindow("nvidia/llama-3.3-70b", catalog), 128_000);
+    assert.equal(modelBelongsToProvider("nvidia", "nvidia/llama-3.3-70b", catalog), true);
+  });
 });

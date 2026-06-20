@@ -12,10 +12,17 @@ export interface ProviderCatalogEntry {
   label: string;
   default_model: string;
   context_window_tokens: number | null;
+  models: ProviderCatalogModelEntry[];
   aliases: string[];
   requires_api_key: boolean;
   supports_streaming: boolean;
   supports_tools: boolean;
+}
+
+export interface ProviderCatalogModelEntry {
+  id: string;
+  name: string;
+  context_window_tokens?: number | null;
 }
 
 export type ProviderProbeStatus = "passed" | "failed";

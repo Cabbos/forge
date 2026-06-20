@@ -165,6 +165,9 @@ export function useSettingsDialogController({
     try {
       const result = await listProviderModels(provider);
       setModelCatalogResults((previous) => ({ ...previous, [provider]: result }));
+      if (result.status === "available") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog });
+      }
     } catch (e) {
       setModelCatalogResults((previous) => ({
         ...previous,

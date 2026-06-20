@@ -218,12 +218,42 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         base_url: provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://api.openai.com/v1",
         status: "available",
         models: [
-          { id: "deepseek-chat", name: "deepseek-chat" },
+          { id: "deepseek-reasoner", name: "deepseek-reasoner" },
           { id: "deepseek-v4-flash[1m]", name: "deepseek-v4-flash[1m]" },
         ],
         message: `${label} returned 2 models.`,
         remediation: null,
       };
+    };
+    const providerCatalogEntries = () => {
+      // @ts-expect-error acceptance mock
+      if (window.__mockProviderCatalog) return window.__mockProviderCatalog;
+      // @ts-expect-error acceptance mock
+      return window.__mockProviderCatalogCache ?? [];
+    };
+    const rememberProviderModelCatalog = (result: Record<string, unknown>) => {
+      if (result.status !== "available") return;
+      const provider = String(result.provider ?? "");
+      const models = Array.isArray(result.models) ? result.models : [];
+      if (!provider || models.length === 0) return;
+      // @ts-expect-error acceptance mock
+      const catalog = Array.isArray(window.__mockProviderCatalogCache) ? window.__mockProviderCatalogCache : [];
+      const nextEntry = {
+        id: provider,
+        label: String(result.provider_label ?? provider),
+        default_model: provider === "deepseek" ? "deepseek-v4-flash[1m]" : String(models[0]?.id ?? "custom-model"),
+        context_window_tokens: provider === "deepseek" ? 1_000_000 : null,
+        aliases: [],
+        requires_api_key: true,
+        supports_streaming: true,
+        supports_tools: true,
+        models,
+      };
+      const existingIndex = catalog.findIndex((entry: Record<string, unknown>) => entry.id === provider);
+      if (existingIndex >= 0) catalog[existingIndex] = nextEntry;
+      else catalog.push(nextEntry);
+      // @ts-expect-error acceptance mock
+      window.__mockProviderCatalogCache = catalog;
     };
     const gatewayRuntimeStatus = () => ({
       ok: true,
@@ -991,6 +1021,8 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error mock
           if (window.__mockApiKeyStatus) return window.__mockApiKeyStatus;
           return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+        case "get_provider_catalog":
+          return providerCatalogEntries();
         case "probe_provider":
           // @ts-expect-error acceptance mock
           window.__providerProbeRequestCount = Number(window.__providerProbeRequestCount ?? 0) + 1;
@@ -1002,7 +1034,11 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           window.__providerModelCatalogRequestCount = Number(window.__providerModelCatalogRequestCount ?? 0) + 1;
           // @ts-expect-error acceptance mock
           window.__lastProviderModelCatalogArgs = args;
-          return providerModelCatalogResult(String(args.provider ?? ""));
+          {
+            const result = providerModelCatalogResult(String(args.provider ?? ""));
+            rememberProviderModelCatalog(result);
+            return result;
+          }
         case "list_profiles":
           return profilePayload();
         case "upsert_profile": {

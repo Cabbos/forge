@@ -114,7 +114,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await providerRow.getByRole("button", { name: "刷新模型 DeepSeek" }).click();
     await expect(providerRow).toContainText("DeepSeek returned 2 models.");
-    await expect(providerRow).toContainText("deepseek-chat");
+    await expect(providerRow).toContainText("deepseek-reasoner");
     await expect(providerRow).toContainText("deepseek-v4-flash[1m]");
 
     const refreshArgs = await page.evaluate(() => {
@@ -122,6 +122,17 @@ test.describe("Phase 7 acceptance surfaces", () => {
       return window.__lastProviderModelCatalogArgs;
     });
     expect(refreshArgs).toEqual({ provider: "deepseek" });
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    const modelButton = page.getByTestId("composer-model-chip");
+    await modelButton.click();
+    const refreshedModel = page.getByRole("menuitemradio", { name: /deepseek-reasoner/ });
+    await expect(refreshedModel).toBeVisible();
+    await refreshedModel.click();
+    await expect(modelButton).toContainText("deepseek-reasoner");
   });
 
   test("settings models disables provider probe buttons while a probe is running", async ({ page }) => {

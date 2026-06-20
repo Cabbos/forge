@@ -15,6 +15,8 @@ pub struct Settings {
     pub api_keys: HashMap<String, String>,
     #[serde(default)]
     pub(crate) providers: Vec<ProviderProfileConfig>,
+    #[serde(default)]
+    pub(crate) provider_model_catalogs: HashMap<String, CachedProviderModelCatalog>,
 }
 
 /// Auto-detected credentials from Claude Code config + env vars
@@ -360,6 +362,7 @@ impl Settings {
             .provider_profiles()?
             .into_iter()
             .map(|profile| {
+                let provider_id = profile.id.clone();
                 let context_window_tokens = get_provider_definition(&profile.id)
                     .and_then(|definition| definition.context_window_tokens);
                 ProviderCatalogEntry {
@@ -371,9 +374,66 @@ impl Settings {
                     requires_api_key: !profile.api_key_env.is_empty(),
                     supports_streaming: profile.supports_streaming,
                     supports_tools: profile.supports_tools,
+                    models: self
+                        .provider_model_catalogs
+                        .get(&provider_id)
+                        .map(|catalog| catalog.models.clone())
+                        .unwrap_or_default(),
                 }
             })
             .collect())
+    }
+
+    pub(crate) fn record_provider_model_catalog(
+        &mut self,
+        provider: &str,
+        base_url: Option<String>,
+        models: Vec<ProviderCatalogModel>,
+    ) -> Result<(), String> {
+        self.apply_provider_model_catalog(provider, base_url, models)?;
+        self.save()
+    }
+
+    fn apply_provider_model_catalog(
+        &mut self,
+        provider: &str,
+        base_url: Option<String>,
+        models: Vec<ProviderCatalogModel>,
+    ) -> Result<(), String> {
+        let provider = provider.trim().to_ascii_lowercase();
+        if provider.is_empty() {
+            return Err("Provider is required to store a model catalog.".to_string());
+        }
+
+        let mut cleaned_models = Vec::new();
+        for model in models {
+            let id = model.id.trim();
+            if id.is_empty()
+                || cleaned_models
+                    .iter()
+                    .any(|item: &ProviderCatalogModel| item.id == id)
+            {
+                continue;
+            }
+            cleaned_models.push(ProviderCatalogModel {
+                id: id.to_string(),
+                name: model.name.trim().to_string(),
+                context_window_tokens: model.context_window_tokens,
+            });
+        }
+
+        if cleaned_models.is_empty() {
+            self.provider_model_catalogs.remove(&provider);
+        } else {
+            self.provider_model_catalogs.insert(
+                provider,
+                CachedProviderModelCatalog {
+                    base_url,
+                    models: cleaned_models,
+                },
+            );
+        }
+        Ok(())
     }
 
     fn provider_profiles_or_builtin(&self) -> Vec<LoadedProviderProfile> {
@@ -406,6 +466,23 @@ pub struct ProviderCatalogEntry {
     pub requires_api_key: bool,
     pub supports_streaming: bool,
     pub supports_tools: bool,
+    pub models: Vec<ProviderCatalogModel>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CachedProviderModelCatalog {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub models: Vec<ProviderCatalogModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderCatalogModel {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub context_window_tokens: Option<u32>,
 }
 
 pub fn mask_key(key: &str) -> String {
@@ -439,7 +516,9 @@ mod tests {
         valid_provider_ids, EnvVarList, ProviderProfileConfig,
     };
 
-    use super::{detect_credentials_from_sources, mask_key, ClaudeSettings, Settings};
+    use super::{
+        detect_credentials_from_sources, mask_key, ClaudeSettings, ProviderCatalogModel, Settings,
+    };
 
     #[test]
     fn detect_credentials_prefers_stored_provider_key_over_claude_and_env() {
@@ -833,6 +912,7 @@ mod tests {
                 max_output_tokens_default: Some(16_384),
                 aliases: vec!["nim".to_string()],
             }],
+            ..Default::default()
         };
         let claude = ClaudeSettings::default();
 
@@ -927,6 +1007,55 @@ mod tests {
         assert!(nvidia.supports_tools);
         assert_eq!(nvidia.aliases, vec!["nim".to_string()]);
         assert!(catalog.iter().any(|entry| entry.id == "deepseek"));
+    }
+
+    #[test]
+    fn provider_catalog_includes_cached_model_catalogs() {
+        let mut settings = Settings {
+            providers: vec![ProviderProfileConfig {
+                id: "nvidia".to_string(),
+                label: Some("NVIDIA NIM".to_string()),
+                base_url: Some("https://integrate.api.nvidia.com/v1".to_string()),
+                api_key_env: Some(EnvVarList::One("NVIDIA_API_KEY".to_string())),
+                base_url_env: None,
+                default_model: Some("nvidia/llama-3.1-nemotron".to_string()),
+                transport: Some("openai_chat_completions".to_string()),
+                supports_tools: Some(true),
+                supports_streaming: Some(true),
+                max_output_tokens_default: None,
+                aliases: vec!["nim".to_string()],
+            }],
+            ..Default::default()
+        };
+        settings
+            .apply_provider_model_catalog(
+                "nvidia",
+                Some("https://integrate.api.nvidia.com/v1".to_string()),
+                vec![
+                    ProviderCatalogModel {
+                        id: "nvidia/llama-3.1-nemotron".to_string(),
+                        name: "NVIDIA Nemotron".to_string(),
+                        context_window_tokens: None,
+                    },
+                    ProviderCatalogModel {
+                        id: "nvidia/llama-3.3-70b".to_string(),
+                        name: "NVIDIA Llama 3.3 70B".to_string(),
+                        context_window_tokens: Some(128_000),
+                    },
+                ],
+            )
+            .expect("model catalog cache applies");
+
+        let catalog = settings.provider_catalog().expect("provider catalog");
+        let nvidia = catalog
+            .iter()
+            .find(|entry| entry.id == "nvidia")
+            .expect("nvidia catalog entry");
+
+        assert_eq!(nvidia.models.len(), 2);
+        assert_eq!(nvidia.models[0].id, "nvidia/llama-3.1-nemotron");
+        assert_eq!(nvidia.models[0].name, "NVIDIA Nemotron");
+        assert_eq!(nvidia.models[1].context_window_tokens, Some(128_000));
     }
 
     #[test]

@@ -24,10 +24,17 @@ export interface ProviderCatalogEntry {
   label: string;
   default_model: string;
   context_window_tokens?: number | null;
+  models?: ProviderCatalogModelEntry[];
   aliases?: string[];
   requires_api_key?: boolean;
   supports_streaming?: boolean;
   supports_tools?: boolean;
+}
+
+export interface ProviderCatalogModelEntry {
+  id: string;
+  name: string;
+  context_window_tokens?: number | null;
 }
 
 export interface ModelOption {
@@ -286,16 +293,16 @@ export function mergeProviderCatalog(
     const id = entry.id.trim().toLowerCase();
     const defaultModel = entry.default_model.trim();
     if (!id || !defaultModel) continue;
+    const catalogModels = providerCatalogModelOptions(entry);
     const modelOption: ModelOption = {
       id: defaultModel,
-      name: defaultModel,
+      name: catalogModels.find((model) => model.id === defaultModel)?.name || defaultModel,
       description: entry.supports_tools === false ? "configured profile" : "configured provider",
       contextWindowTokens: entry.context_window_tokens ?? undefined,
     };
     const existingIndex = indexById.get(id);
     if (existingIndex !== undefined) {
       const existing = merged[existingIndex];
-      const hasDefaultModel = existing.models.some((model) => model.id === defaultModel);
       merged[existingIndex] = {
         ...existing,
         label: entry.label || existing.label,
@@ -304,7 +311,7 @@ export function mergeProviderCatalog(
         aliases: [...new Set([...(existing.aliases ?? []), ...(entry.aliases ?? [])])],
         requiresApiKey: entry.requires_api_key ?? existing.requiresApiKey,
         customModels: existing.customModels,
-        models: hasDefaultModel ? existing.models : [modelOption, ...existing.models],
+        models: mergeModelOptions(existing.models, modelOption, catalogModels),
       };
       continue;
     }
@@ -316,13 +323,48 @@ export function mergeProviderCatalog(
       shortLabel: entry.label || id,
       keyPlaceholder: entry.requires_api_key === false ? "not required" : "sk-...",
       defaultModel,
-      models: [modelOption],
+      models: mergeModelOptions([], modelOption, catalogModels),
       aliases: entry.aliases ?? [],
       requiresApiKey: entry.requires_api_key ?? true,
       customModels: true,
     });
   }
 
+  return merged;
+}
+
+function providerCatalogModelOptions(entry: ProviderCatalogEntry): ModelOption[] {
+  const options: ModelOption[] = [];
+  for (const model of entry.models ?? []) {
+    const id = model.id.trim();
+    if (!id) continue;
+    const name = model.name.trim() || id;
+    options.push({
+      id,
+      name,
+      description: "refreshed catalog",
+      contextWindowTokens: model.context_window_tokens ?? entry.context_window_tokens ?? undefined,
+    });
+  }
+  return options;
+}
+
+function mergeModelOptions(
+  existingModels: ModelOption[],
+  defaultModel: ModelOption,
+  catalogModels: ModelOption[],
+): ModelOption[] {
+  const merged = existingModels.map((model) => ({ ...model }));
+  const seen = new Set(merged.map((model) => model.id));
+  if (!seen.has(defaultModel.id)) {
+    merged.unshift({ ...defaultModel });
+    seen.add(defaultModel.id);
+  }
+  for (const model of catalogModels) {
+    if (seen.has(model.id)) continue;
+    merged.push({ ...model });
+    seen.add(model.id);
+  }
   return merged;
 }
 
