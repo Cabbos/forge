@@ -66,12 +66,17 @@ impl SubAgentUsageTracker {
             .saturating_add(tool_call_count.try_into().unwrap_or(u32::MAX));
         let recorded = if usage_events.is_empty() {
             vec![UsageEvent {
+                provider_id: None,
                 model: self.model.clone(),
                 source: None,
                 reason: ProviderUsageReason::ProviderOmitted,
                 input_tokens: None,
                 output_tokens: None,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: None,
+                pricing_source: None,
             }]
         } else {
             usage_events
@@ -126,22 +131,32 @@ impl EventEmitter for UsageCaptureEmitter {
     fn emit(&self, event: StreamEvent) {
         match event {
             StreamEvent::ProviderUsage {
+                provider_id,
                 model,
                 source,
                 reason,
                 input_tokens,
                 output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                reasoning_tokens,
                 estimated_cost_micros,
+                pricing_source,
                 ..
             } => {
                 *self.saw_provider_usage.lock() = true;
                 self.events.lock().push(UsageEvent {
+                    provider_id,
                     model: model.or_else(|| self.model.clone()),
                     source,
                     reason,
                     input_tokens,
                     output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    reasoning_tokens,
                     estimated_cost_micros,
+                    pricing_source,
                 });
             }
             StreamEvent::Usage {
@@ -154,12 +169,17 @@ impl EventEmitter for UsageCaptureEmitter {
                     return;
                 }
                 self.events.lock().push(UsageEvent {
+                    provider_id: None,
                     model: self.model.clone(),
                     source: None,
                     reason: ProviderUsageReason::ProviderReported,
                     input_tokens: Some(input_tokens.into()),
                     output_tokens: Some(output_tokens.into()),
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
                     estimated_cost_micros: estimated_cost_micros(estimated_cost_usd),
+                    pricing_source: None,
                 });
             }
             _ => {}
@@ -640,12 +660,17 @@ fn emit_subagent_usage_events(
             emitter,
             context,
             SubagentRuntimePayload::UsageRecorded {
+                provider_id: event.provider_id.clone(),
                 model: event.model.clone(),
                 source: event.source.clone(),
                 reason: event.reason.clone(),
                 input_tokens: event.input_tokens,
                 output_tokens: event.output_tokens,
+                cache_read_tokens: event.cache_read_tokens,
+                cache_creation_tokens: event.cache_creation_tokens,
+                reasoning_tokens: event.reasoning_tokens,
                 estimated_cost_micros: event.estimated_cost_micros,
+                pricing_source: event.pricing_source.clone(),
             },
         );
     }
@@ -847,10 +872,15 @@ mod tests {
         emitter.emit(StreamEvent::ProviderUsage {
             session_id: "subagent".to_string(),
             block_id: uuid::Uuid::now_v7().to_string(),
+            provider_id: Some("anthropic".to_string()),
             model: Some("claude-sonnet".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             estimated_cost_micros: Some(1050),
+            pricing_source: Some(crate::adapters::anthropic::STATIC_PRICING_SOURCE.to_string()),
             source: Some("anthropic".to_string()),
             reason: ProviderUsageReason::ProviderReported,
         });
@@ -865,6 +895,7 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].model.as_deref(), Some("claude-sonnet"));
+        assert_eq!(events[0].provider_id.as_deref(), Some("anthropic"));
         assert_eq!(events[0].source.as_deref(), Some("anthropic"));
         assert_eq!(events[0].reason, ProviderUsageReason::ProviderReported);
         assert_eq!(events[0].input_tokens, Some(100));

@@ -94,6 +94,7 @@ pub fn build_adapter(
                 .map_err(|error| BuildAdapterError::AdapterInit {
                     message: format!("API key error: {error}"),
                 })?
+                .with_provider_id(route.provider_id)
                 .with_base_url(base_url)
                 .with_model(model)
                 .with_external_tools(external_tools);
@@ -131,6 +132,7 @@ fn build_openai_compatible_adapter(
         .map_err(|error| BuildAdapterError::AdapterInit {
             message: format!("API key error: {error}"),
         })?
+        .with_provider_id(route.provider_id)
         .with_base_url(base_url)
         .with_model(model)
         .with_external_tools(external_tools);
@@ -440,6 +442,15 @@ mod tests {
             build_openai_compatible_adapter(&route, "test-key", "test-model", Vec::new()).unwrap();
 
         assert_eq!(adapter.max_tokens_for_test(), 65_536);
+    }
+
+    #[test]
+    fn build_adapter_carries_canonical_provider_id_into_openai_compatible_runtime() {
+        let route = resolve_adapter_route("openai", None).unwrap();
+        let adapter =
+            build_openai_compatible_adapter(&route, "test-key", "test-model", Vec::new()).unwrap();
+
+        assert_eq!(adapter.provider_id_for_test(), "openai");
     }
 
     #[test]

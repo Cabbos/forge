@@ -351,7 +351,11 @@ proves mainstream providers fit the agent loop contract before any live API call
 
 ## Task 6: Cost and Usage Facts
 
-- [ ] Extend usage metadata so every provider records:
+**Status (2026-06-20): Completed for runtime usage/cost fact expansion.** Provider usage events, subagent usage facts, and loop usage ledgers now carry canonical `provider_id` separately from legacy transport `source`, model ID, input/output tokens, optional cache-read/cache-creation/reasoning tokens, optional cost estimate, and optional `pricing_source`. Unknown token/cost behavior remains explicit through existing null fields and `has_unknown_*` ledger flags. Static pricing remains optional and source-stamped; missing pricing emits known tokens with `pricing_unknown` rather than blocking execution. This does not certify live provider billing accuracy or complete provider-specific pricing tables.
+
+**Evidence:** TDD red pass failed on missing provider/cached/reasoning/pricing fields in Rust usage contracts and frontend metadata preservation. Green pass succeeded with `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml budget --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::anthropic --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib`, and `node --test src/store/blocks.test.ts src/lib/loopRuntime.test.ts` from `apps/desktop`. Final check/rustfmt evidence is tracked in the Task 6 implementer handoff.
+
+- [x] Extend usage metadata so every provider records:
   - provider ID
   - model ID
   - prompt/input tokens
@@ -359,10 +363,10 @@ proves mainstream providers fit the agent loop contract before any live API call
   - cache tokens when available
   - reasoning tokens when available
   - cost estimate when known
-  - `usage_unknown` and `cost_unknown` flags when not known
-- [ ] Keep pricing tables source-stamped and optional.
-- [ ] Do not block agent execution when pricing is missing.
-- [ ] Add tests proving unknown usage/cost is explicit in emitted runtime facts.
+  - explicit unknown token/cost facts through null fields and existing unknown flags
+- [x] Keep pricing tables source-stamped and optional.
+- [x] Do not block agent execution when pricing is missing.
+- [x] Add tests proving unknown usage/cost is explicit in emitted runtime facts.
 
 Expected result:
 

@@ -57,6 +57,8 @@ pub enum SubagentRuntimePayload {
         operation: String,
     },
     UsageRecorded {
+        #[serde(default)]
+        provider_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,7 +70,15 @@ pub enum SubagentRuntimePayload {
         #[serde(default)]
         output_tokens: Option<u64>,
         #[serde(default)]
+        cache_read_tokens: Option<u64>,
+        #[serde(default)]
+        cache_creation_tokens: Option<u64>,
+        #[serde(default)]
+        reasoning_tokens: Option<u64>,
+        #[serde(default)]
         estimated_cost_micros: Option<u64>,
+        #[serde(default)]
+        pricing_source: Option<String>,
     },
     Ended {
         status: String,
@@ -365,6 +375,8 @@ pub enum StreamEvent {
         session_id: String,
         #[serde(default = "new_provider_usage_block_id")]
         block_id: String,
+        #[serde(default)]
+        provider_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(default)]
@@ -372,7 +384,15 @@ pub enum StreamEvent {
         #[serde(default)]
         output_tokens: Option<u64>,
         #[serde(default)]
+        cache_read_tokens: Option<u64>,
+        #[serde(default)]
+        cache_creation_tokens: Option<u64>,
+        #[serde(default)]
+        reasoning_tokens: Option<u64>,
+        #[serde(default)]
         estimated_cost_micros: Option<u64>,
+        #[serde(default)]
+        pricing_source: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<String>,
         #[serde(default)]
@@ -573,10 +593,15 @@ mod tests {
         let event = StreamEvent::ProviderUsage {
             session_id: "s1".to_string(),
             block_id: "usage-1".to_string(),
+            provider_id: Some("anthropic".to_string()),
             model: Some("mystery-model".to_string()),
             input_tokens: Some(100),
             output_tokens: Some(50),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             estimated_cost_micros: None,
+            pricing_source: None,
             source: Some("anthropic".to_string()),
             reason: ProviderUsageReason::PricingUnknown,
         };
@@ -586,9 +611,14 @@ mod tests {
         assert_eq!(json["event_type"], "provider_usage");
         assert_eq!(json["block_id"], "usage-1");
         assert_eq!(json["model"], "mystery-model");
+        assert_eq!(json["provider_id"], "anthropic");
         assert_eq!(json["input_tokens"], 100);
         assert_eq!(json["output_tokens"], 50);
+        assert_eq!(json["cache_read_tokens"], serde_json::Value::Null);
+        assert_eq!(json["cache_creation_tokens"], serde_json::Value::Null);
+        assert_eq!(json["reasoning_tokens"], serde_json::Value::Null);
         assert_eq!(json["estimated_cost_micros"], serde_json::Value::Null);
+        assert_eq!(json["pricing_source"], serde_json::Value::Null);
         assert_eq!(json["source"], "anthropic");
         assert_eq!(json["reason"], "pricing_unknown");
     }
@@ -608,8 +638,21 @@ mod tests {
         .unwrap();
 
         match event {
-            StreamEvent::ProviderUsage { block_id, .. } => {
+            StreamEvent::ProviderUsage {
+                block_id,
+                provider_id,
+                cache_read_tokens,
+                cache_creation_tokens,
+                reasoning_tokens,
+                pricing_source,
+                ..
+            } => {
                 assert!(!block_id.is_empty());
+                assert_eq!(provider_id, None);
+                assert_eq!(cache_read_tokens, None);
+                assert_eq!(cache_creation_tokens, None);
+                assert_eq!(reasoning_tokens, None);
+                assert_eq!(pricing_source, None);
             }
             other => panic!("expected provider_usage, got {other:?}"),
         }
@@ -1027,10 +1070,15 @@ mod tests {
                 StreamEvent::ProviderUsage {
                     session_id: "s".into(),
                     block_id: "usage-1".into(),
+                    provider_id: Some("anthropic".into()),
                     model: Some("m".into()),
                     input_tokens: Some(1),
                     output_tokens: Some(2),
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
                     estimated_cost_micros: None,
+                    pricing_source: None,
                     source: Some("anthropic".into()),
                     reason: ProviderUsageReason::PricingUnknown,
                 },

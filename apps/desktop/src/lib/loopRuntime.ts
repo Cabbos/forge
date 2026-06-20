@@ -52,12 +52,17 @@ export interface LoopRuntimeFact {
   kind: "file_io" | "usage";
   label: string;
   detail: string;
+  providerId?: string | null;
   model?: string | null;
   source?: string | null;
   reason?: string | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheCreationTokens?: number | null;
+  reasoningTokens?: number | null;
   estimatedCostMicros?: number | null;
+  pricingSource?: string | null;
   inputTokensUnknown?: boolean;
   outputTokensUnknown?: boolean;
   costUnknown?: boolean;
@@ -207,6 +212,9 @@ function runtimeFactFromSource(source: LoopRuntimeFactSource): LoopRuntimeFact |
     const reason = usageReasonLabel(event.reason);
     const inputTokens = finiteNumberOrNull(event.input_tokens);
     const outputTokens = finiteNumberOrNull(event.output_tokens);
+    const cacheReadTokens = finiteNumberOrNull(event.cache_read_tokens);
+    const cacheCreationTokens = finiteNumberOrNull(event.cache_creation_tokens);
+    const reasoningTokens = finiteNumberOrNull(event.reasoning_tokens);
     const estimatedCostMicros = finiteNumberOrNull(event.estimated_cost_micros);
     const detail = [
       `input ${numberOrUnknown(inputTokens)}`,
@@ -219,12 +227,17 @@ function runtimeFactFromSource(source: LoopRuntimeFactSource): LoopRuntimeFact |
       kind: "usage",
       label: model,
       detail: detail.join(" / "),
+      providerId: event.provider_id?.trim() || null,
       model,
       source: event.source?.trim() || null,
       reason: event.reason ?? null,
       inputTokens,
       outputTokens,
+      cacheReadTokens,
+      cacheCreationTokens,
+      reasoningTokens,
       estimatedCostMicros,
+      pricingSource: event.pricing_source?.trim() || null,
       inputTokensUnknown: inputTokens == null,
       outputTokensUnknown: outputTokens == null,
       costUnknown: estimatedCostMicros == null,

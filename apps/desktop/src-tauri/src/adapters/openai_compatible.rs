@@ -9,6 +9,9 @@ use super::base::{
     repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
     ToolDef,
 };
+use crate::adapters::anthropic::{
+    emit_usage_events_for_provider, optional_usage_u64, ProviderTokenUsage,
+};
 use crate::agent::event_sink::EventEmitter;
 use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
 use crate::protocol::events::StreamEvent;
@@ -33,6 +36,7 @@ You are a powerful AI coding agent running in a desktop GUI application. You hav
 
 pub struct OpenAiCompatibleAdapter {
     api_key: String,
+    provider_id: String,
     model: String,
     base_url: String,
     max_tokens: u32,
@@ -47,6 +51,7 @@ impl OpenAiCompatibleAdapter {
         }
         Ok(Self {
             api_key,
+            provider_id: "custom_openai".to_string(),
             model: DEFAULT_MODEL.to_string(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             max_tokens: 8192,
@@ -63,6 +68,10 @@ impl OpenAiCompatibleAdapter {
         self.model = model.to_string();
         self
     }
+    pub fn with_provider_id(mut self, provider_id: &str) -> Self {
+        self.provider_id = provider_id.to_string();
+        self
+    }
     pub fn with_base_url(mut self, url: &str) -> Self {
         self.base_url = url.to_string();
         self
@@ -76,6 +85,11 @@ impl OpenAiCompatibleAdapter {
     #[cfg(test)]
     pub(crate) fn max_tokens_for_test(&self) -> u32 {
         self.max_tokens
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_id_for_test(&self) -> &str {
+        &self.provider_id
     }
 
     pub fn with_external_tools(self, tools: Vec<ToolDef>) -> Self {
@@ -166,9 +180,10 @@ impl OpenAiCompatibleAdapter {
         }
 
         if let Some((session_id, emitter)) = usage_emitter {
-            crate::adapters::anthropic::emit_usage_events(
+            emit_usage_events_for_provider(
                 emitter,
                 session_id,
+                &self.provider_id,
                 "openai_compatible",
                 &self.model,
                 openai_usage_from_response(&parsed),
@@ -410,14 +425,15 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     });
                 }
 
-                if let Some((input_toks, output_toks)) = update.usage {
+                if let Some(usage) = update.usage {
                     saw_usage = true;
-                    crate::adapters::anthropic::emit_usage_events(
+                    emit_usage_events_for_provider(
                         emitter,
                         &session,
+                        &self.provider_id,
                         "openai_compatible",
                         &self.model,
-                        Some((input_toks, output_toks)),
+                        Some(usage),
                     );
                 }
 
@@ -444,9 +460,10 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         }
 
         if !saw_usage {
-            crate::adapters::anthropic::emit_usage_events(
+            emit_usage_events_for_provider(
                 emitter,
                 session_id,
+                &self.provider_id,
                 "openai_compatible",
                 &self.model,
                 None,
@@ -490,7 +507,7 @@ struct OpenAiToolCallBuffer {
 struct OpenAiStreamUpdate {
     text_started: bool,
     text_chunks: Vec<String>,
-    usage: Option<(u32, u32)>,
+    usage: Option<ProviderTokenUsage>,
     error: Option<String>,
 }
 
@@ -548,12 +565,24 @@ impl OpenAiStreamParser {
             let input_tokens = usage
                 .get("prompt_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
+                .unwrap_or(0);
             let output_tokens = usage
                 .get("completion_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-            update.usage = Some((input_tokens, output_tokens));
+                .unwrap_or(0);
+            update.usage = Some(ProviderTokenUsage {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens: usage
+                    .get("prompt_tokens_details")
+                    .and_then(|value| value.as_object())
+                    .and_then(|details| optional_usage_u64(details, "cached_tokens")),
+                cache_creation_tokens: None,
+                reasoning_tokens: usage
+                    .get("completion_tokens_details")
+                    .and_then(|value| value.as_object())
+                    .and_then(|details| optional_usage_u64(details, "reasoning_tokens")),
+            });
         }
 
         if parsed["error"].is_object() {
@@ -632,11 +661,23 @@ fn drain_openai_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
     events
 }
 
-fn openai_usage_from_response(parsed: &serde_json::Value) -> Option<(u32, u32)> {
+fn openai_usage_from_response(parsed: &serde_json::Value) -> Option<ProviderTokenUsage> {
     let usage = parsed["usage"].as_object()?;
-    let input_tokens = usage.get("prompt_tokens")?.as_u64()?.try_into().ok()?;
-    let output_tokens = usage.get("completion_tokens")?.as_u64()?.try_into().ok()?;
-    Some((input_tokens, output_tokens))
+    let input_tokens = usage.get("prompt_tokens")?.as_u64()?;
+    let output_tokens = usage.get("completion_tokens")?.as_u64()?;
+    Some(ProviderTokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens: usage
+            .get("prompt_tokens_details")
+            .and_then(|value| value.as_object())
+            .and_then(|details| optional_usage_u64(details, "cached_tokens")),
+        cache_creation_tokens: None,
+        reasoning_tokens: usage
+            .get("completion_tokens_details")
+            .and_then(|value| value.as_object())
+            .and_then(|details| optional_usage_u64(details, "reasoning_tokens")),
+    })
 }
 
 fn parse_openai_chat_completion(parsed: &serde_json::Value) -> StreamResult {
@@ -1352,7 +1393,9 @@ mod tests {
             "choices": [],
             "usage": {
                 "prompt_tokens": 77,
-                "completion_tokens": 33
+                "completion_tokens": 33,
+                "prompt_tokens_details": { "cached_tokens": 8 },
+                "completion_tokens_details": { "reasoning_tokens": 5 }
             }
         });
 
@@ -1366,7 +1409,12 @@ mod tests {
         assert_eq!(text_update.text_chunks, vec!["先看文件。".to_string()]);
         assert!(tool_start_update.text_chunks.is_empty());
         assert!(tool_argument_update.text_chunks.is_empty());
-        assert_eq!(usage_update.usage, Some((77, 33)));
+        let usage = usage_update.usage.expect("usage update");
+        assert_eq!(usage.input_tokens, 77);
+        assert_eq!(usage.output_tokens, 33);
+        assert_eq!(usage.cache_read_tokens, Some(8));
+        assert_eq!(usage.cache_creation_tokens, None);
+        assert_eq!(usage.reasoning_tokens, Some(5));
         assert_eq!(
             result.assistant_content,
             vec![
@@ -1486,15 +1534,78 @@ mod tests {
             event,
             StreamEvent::ProviderUsage {
                 session_id,
+                provider_id: Some(provider_id),
                 model: Some(model),
                 input_tokens: Some(77),
                 output_tokens: Some(33),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: Some(20),
+                pricing_source: Some(pricing_source),
                 source: Some(source),
                 reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
                 ..
             } if session_id == "subagent"
+                && provider_id == "custom_openai"
                 && model == "deepseek-v4-flash"
+                && pricing_source == "forge_static_pricing_2026_06_20"
+                && source == "openai_compatible"
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_provider_id_cache_and_reasoning_usage() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33,
+                "prompt_tokens_details": {
+                    "cached_tokens": 12
+                },
+                "completion_tokens_details": {
+                    "reasoning_tokens": 9
+                }
+            }
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_provider_id("openai")
+            .with_model("gpt-4o-mini")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(77),
+                output_tokens: Some(33),
+                cache_read_tokens: Some(12),
+                cache_creation_tokens: None,
+                reasoning_tokens: Some(9),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "openai"
+                && model == "gpt-4o-mini"
                 && source == "openai_compatible"
         )));
     }
@@ -1526,14 +1637,20 @@ mod tests {
             event,
             StreamEvent::ProviderUsage {
                 session_id,
+                provider_id: Some(provider_id),
                 model: Some(model),
                 input_tokens: None,
                 output_tokens: None,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: None,
+                pricing_source: None,
                 source: Some(source),
                 reason: crate::protocol::events::ProviderUsageReason::ProviderOmitted,
                 ..
             } if session_id == "subagent"
+                && provider_id == "custom_openai"
                 && model == "deepseek-v4-flash"
                 && source == "openai_compatible"
         )));
@@ -1575,14 +1692,20 @@ mod tests {
             event,
             StreamEvent::ProviderUsage {
                 session_id,
+                provider_id: Some(provider_id),
                 model: Some(model),
                 input_tokens: Some(77),
                 output_tokens: Some(33),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: None,
+                pricing_source: None,
                 source: Some(source),
                 reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
                 ..
             } if session_id == "subagent"
+                && provider_id == "custom_openai"
                 && model == "mystery-model-v1"
                 && source == "openai_compatible"
         )));

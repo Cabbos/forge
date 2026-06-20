@@ -69,12 +69,17 @@ describe("eventToBlock", () => {
     const event: StreamEvent = {
       event_type: "provider_usage",
       session_id: "s1",
+      provider_id: "anthropic",
       model: "claude-sonnet",
       source: "anthropic",
       reason: "provider_reported",
       input_tokens: 1200,
       output_tokens: 300,
+      cache_read_tokens: null,
+      cache_creation_tokens: null,
+      reasoning_tokens: null,
       estimated_cost_micros: 4567,
+      pricing_source: "forge_static_pricing_2026_06_20",
     };
     const block = eventToBlock(event);
     assert.ok(block);
@@ -85,12 +90,17 @@ describe("eventToBlock", () => {
     assert.match(block!.content, /output 300/);
     assert.match(block!.content, /cost 4567 micros/);
     assert.deepStrictEqual(block!.metadata, {
+      provider_id: "anthropic",
       model: "claude-sonnet",
       source: "anthropic",
       reason: "provider_reported",
       input_tokens: 1200,
       output_tokens: 300,
+      cache_read_tokens: null,
+      cache_creation_tokens: null,
+      reasoning_tokens: null,
       estimated_cost_micros: 4567,
+      pricing_source: "forge_static_pricing_2026_06_20",
       input_tokens_unknown: false,
       output_tokens_unknown: false,
       cost_unknown: false,

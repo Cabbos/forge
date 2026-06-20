@@ -107,6 +107,7 @@ fn provider_conformance_unknown_usage_is_explicit_null_for_all_fixture_families(
             .expect("provider usage event");
 
         assert_eq!(provider_usage_json["event_type"], "provider_usage");
+        assert_eq!(provider_usage_json["provider_id"], source);
         assert_eq!(provider_usage_json["source"], source);
         assert_eq!(provider_usage_json["reason"], "provider_omitted");
         assert!(
@@ -130,6 +131,21 @@ fn provider_conformance_unknown_usage_is_explicit_null_for_all_fixture_families(
                 .contains_key("estimated_cost_micros"),
             "{source} estimated_cost_micros must be serialized as explicit null"
         );
+        for key in [
+            "cache_read_tokens",
+            "cache_creation_tokens",
+            "reasoning_tokens",
+            "pricing_source",
+        ] {
+            assert!(
+                provider_usage_json
+                    .as_object()
+                    .expect("provider usage object")
+                    .contains_key(key),
+                "{source} {key} must be serialized as explicit null"
+            );
+            assert_eq!(provider_usage_json[key], serde_json::Value::Null);
+        }
         assert_eq!(provider_usage_json["input_tokens"], serde_json::Value::Null);
         assert_eq!(
             provider_usage_json["output_tokens"],

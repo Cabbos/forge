@@ -338,12 +338,17 @@ export type SubagentRuntimePayload =
   | { type: "file_io"; path: string; operation: string }
   | {
       type: "usage_recorded";
+      provider_id?: string | null;
       model?: string | null;
       source?: string | null;
       reason?: ProviderUsageReason | null;
       input_tokens?: number | null;
       output_tokens?: number | null;
+      cache_read_tokens?: number | null;
+      cache_creation_tokens?: number | null;
+      reasoning_tokens?: number | null;
       estimated_cost_micros?: number | null;
+      pricing_source?: string | null;
     }
   | { type: "ended"; status: string }
   | { type: "failed"; reason: string }
@@ -481,10 +486,15 @@ export type StreamEvent =
       event_type: "provider_usage";
       session_id: string;
       block_id?: string | null;
+      provider_id?: string | null;
       model?: string | null;
       input_tokens: number | null;
       output_tokens: number | null;
+      cache_read_tokens?: number | null;
+      cache_creation_tokens?: number | null;
+      reasoning_tokens?: number | null;
       estimated_cost_micros: number | null;
+      pricing_source?: string | null;
       source?: string | null;
       reason: ProviderUsageReason;
     }

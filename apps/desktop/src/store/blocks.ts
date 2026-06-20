@@ -502,15 +502,21 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         isComplete: true,
       };
     case "provider_usage": {
+      const providerId = event.provider_id?.trim() || null;
       const model = event.model?.trim() || null;
       const source = event.source?.trim() || null;
       const metadata = {
+        provider_id: providerId,
         model,
         source,
         reason: event.reason,
         input_tokens: event.input_tokens,
         output_tokens: event.output_tokens,
+        cache_read_tokens: event.cache_read_tokens ?? null,
+        cache_creation_tokens: event.cache_creation_tokens ?? null,
+        reasoning_tokens: event.reasoning_tokens ?? null,
         estimated_cost_micros: event.estimated_cost_micros,
+        pricing_source: event.pricing_source ?? null,
         input_tokens_unknown: !isFiniteNumber(event.input_tokens),
         output_tokens_unknown: !isFiniteNumber(event.output_tokens),
         cost_unknown: !isFiniteNumber(event.estimated_cost_micros),
@@ -520,6 +526,7 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         block_id: event.block_id?.trim() || providerUsageBlockId(event),
         event_type: "provider_usage",
         content: providerUsageContent({
+          providerId,
           model,
           source,
           reason: event.reason,
@@ -562,6 +569,7 @@ function providerUsageBlockId(event: Extract<StreamEvent, { event_type: "provide
   return [
     "provider_usage",
     event.session_id,
+    event.provider_id?.trim() || "unknown-provider",
     event.model?.trim() || "unknown-model",
     event.source?.trim() || "unknown-source",
     event.reason,
@@ -573,12 +581,14 @@ function providerUsageBlockId(event: Extract<StreamEvent, { event_type: "provide
 
 function providerUsageContent({
   model,
+  providerId,
   source,
   reason,
   inputTokens,
   outputTokens,
   estimatedCostMicros,
 }: {
+  providerId: string | null;
   model: string | null;
   source: string | null;
   reason: string;
@@ -587,6 +597,7 @@ function providerUsageContent({
   estimatedCostMicros: number | null;
 }) {
   const parts = [
+    `provider ${providerId || "unknown provider"}`,
     `model ${model || "unknown model"}`,
     `input ${numberOrUnknown(inputTokens)}`,
     `output ${numberOrUnknown(outputTokens)}`,

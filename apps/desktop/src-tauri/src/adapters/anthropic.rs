@@ -16,6 +16,7 @@ use crate::protocol::BlockId;
 
 const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+pub(crate) const STATIC_PRICING_SOURCE: &str = "forge_static_pricing_2026_06_20";
 
 const SYSTEM_PROMPT: &str = "\
 You are a powerful AI coding agent running in a desktop GUI application. You have direct access to the user's filesystem and shell.
@@ -45,6 +46,7 @@ You are a powerful AI coding agent running in a desktop GUI application. You hav
 
 pub struct AnthropicAdapter {
     api_key: String,
+    provider_id: String,
     model: String,
     base_url: String,
     thinking_budget_tokens: u32,
@@ -68,6 +70,7 @@ impl AnthropicAdapter {
             .map_err(|e| AdapterError::Http(e.to_string()))?;
         Ok(Self {
             api_key,
+            provider_id: "anthropic".to_string(),
             model: DEFAULT_MODEL.to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             thinking_budget_tokens: 4000,
@@ -80,6 +83,11 @@ impl AnthropicAdapter {
 
     pub fn with_model(mut self, model: &str) -> Self {
         self.model = model.to_string();
+        self
+    }
+
+    pub fn with_provider_id(mut self, provider_id: &str) -> Self {
+        self.provider_id = provider_id.to_string();
         self
     }
 
@@ -317,9 +325,10 @@ impl AnthropicAdapter {
         };
 
         if let Some((session_id, emitter)) = usage_emitter {
-            emit_usage_events(
+            emit_usage_events_for_provider(
                 emitter,
                 session_id,
+                &self.provider_id,
                 "anthropic",
                 &self.model,
                 anthropic_usage_from_response(&parsed),
@@ -579,14 +588,15 @@ impl AiAdapter for AnthropicAdapter {
                             active_block_id = None;
                         }
 
-                        if let Some((input_tokens, output_tokens)) = update.usage {
+                        if let Some(usage) = update.usage {
                             saw_usage = true;
-                            emit_usage_events(
+                            emit_usage_events_for_provider(
                                 emitter,
                                 &session,
+                                &self.provider_id,
                                 "anthropic",
                                 &self.model,
-                                Some((input_tokens, output_tokens)),
+                                Some(usage),
                             );
                         }
 
@@ -607,7 +617,14 @@ impl AiAdapter for AnthropicAdapter {
         }
 
         if !saw_usage {
-            emit_usage_events(emitter, session_id, "anthropic", &self.model, None);
+            emit_usage_events_for_provider(
+                emitter,
+                session_id,
+                &self.provider_id,
+                "anthropic",
+                &self.model,
+                None,
+            );
         }
 
         Ok(parser.finish())
@@ -625,7 +642,9 @@ struct AnthropicStreamParser {
     stop_reason: Option<String>,
     current_text: String,
     current_thinking: String,
-    total_input_tokens: u32,
+    total_input_tokens: u64,
+    cache_read_tokens: Option<u64>,
+    cache_creation_tokens: Option<u64>,
 }
 
 #[derive(Default)]
@@ -635,7 +654,7 @@ struct AnthropicStreamUpdate {
     thinking_chunk: Option<String>,
     text_chunk: Option<String>,
     block_end: Option<AnthropicBlockEnd>,
-    usage: Option<(u32, u32)>,
+    usage: Option<ProviderTokenUsage>,
     error: Option<String>,
 }
 
@@ -662,11 +681,19 @@ impl AnthropicStreamParser {
 
         match sse_type {
             "message_start" => {
-                if let Some(usage) = parsed["message"].get("usage") {
+                if let Some(usage) = parsed["message"]
+                    .get("usage")
+                    .and_then(|value| value.as_object())
+                {
                     self.total_input_tokens = usage
                         .get("input_tokens")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
+                        .unwrap_or(0);
+                    self.cache_read_tokens = optional_usage_u64(usage, "cache_read_input_tokens")
+                        .or_else(|| optional_usage_u64(usage, "cache_read_tokens"));
+                    self.cache_creation_tokens =
+                        optional_usage_u64(usage, "cache_creation_input_tokens")
+                            .or_else(|| optional_usage_u64(usage, "cache_creation_tokens"));
                 }
                 update.session_status = Some("working".to_string());
             }
@@ -781,8 +808,14 @@ impl AnthropicStreamParser {
                     let output_tokens = usage
                         .get("output_tokens")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    update.usage = Some((self.total_input_tokens, output_tokens));
+                        .unwrap_or(0);
+                    update.usage = Some(ProviderTokenUsage {
+                        input_tokens: self.total_input_tokens,
+                        output_tokens,
+                        cache_read_tokens: self.cache_read_tokens,
+                        cache_creation_tokens: self.cache_creation_tokens,
+                        reasoning_tokens: optional_usage_u64(usage, "reasoning_tokens"),
+                    });
                 }
             }
             "message_stop" => {
@@ -840,35 +873,80 @@ pub(crate) fn emit_usage_events(
     session_id: &str,
     source: &str,
     model: &str,
-    usage: Option<(u32, u32)>,
+    usage: Option<ProviderTokenUsage>,
 ) {
-    let (input_tokens, output_tokens, estimated_cost_micros, reason) = match usage {
-        Some((input_tokens, output_tokens)) => {
-            match estimate_cost_micros(model, input_tokens, output_tokens) {
-                Some(estimated_cost_micros) => (
-                    Some(input_tokens.into()),
-                    Some(output_tokens.into()),
-                    Some(estimated_cost_micros),
+    emit_usage_events_for_provider(emitter, session_id, source, source, model, usage);
+}
+
+pub(crate) fn emit_usage_events_for_provider(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    provider_id: &str,
+    source: &str,
+    model: &str,
+    usage: Option<ProviderTokenUsage>,
+) {
+    let (
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
+        estimated_cost_micros,
+        pricing_source,
+        reason,
+    ) = match usage {
+        Some(usage) => {
+            match usage
+                .legacy_token_counts()
+                .and_then(|(input, output)| estimate_cost_details(model, input, output))
+            {
+                Some(estimate) => (
+                    Some(usage.input_tokens),
+                    Some(usage.output_tokens),
+                    usage.cache_read_tokens,
+                    usage.cache_creation_tokens,
+                    usage.reasoning_tokens,
+                    Some(estimate.micros),
+                    Some(estimate.pricing_source.to_string()),
                     ProviderUsageReason::ProviderReported,
                 ),
                 None => (
-                    Some(input_tokens.into()),
-                    Some(output_tokens.into()),
+                    Some(usage.input_tokens),
+                    Some(usage.output_tokens),
+                    usage.cache_read_tokens,
+                    usage.cache_creation_tokens,
+                    usage.reasoning_tokens,
+                    None,
                     None,
                     ProviderUsageReason::PricingUnknown,
                 ),
             }
         }
-        None => (None, None, None, ProviderUsageReason::ProviderOmitted),
+        None => (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ProviderUsageReason::ProviderOmitted,
+        ),
     };
 
     emitter.emit(StreamEvent::ProviderUsage {
         session_id: session_id.to_string(),
         block_id: uuid::Uuid::now_v7().to_string(),
+        provider_id: Some(provider_id.to_string()),
         model: Some(model.to_string()),
         input_tokens,
         output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
         estimated_cost_micros,
+        pricing_source,
         source: Some(source.to_string()),
         reason,
     });
@@ -898,27 +976,90 @@ pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> Opti
 }
 
 pub fn estimate_cost_micros(model: &str, input_tokens: u32, output_tokens: u32) -> Option<u64> {
-    let (input_price, output_price): (f64, f64) = pricing_for_model(model)?;
-    let cost = (input_tokens as f64 * input_price) + (output_tokens as f64 * output_price);
-    Some(cost.round() as u64)
+    estimate_cost_details(model, input_tokens, output_tokens).map(|estimate| estimate.micros)
 }
 
-fn pricing_for_model(model: &str) -> Option<(f64, f64)> {
+#[derive(Clone, Debug, PartialEq)]
+struct CostEstimate {
+    micros: u64,
+    pricing_source: &'static str,
+}
+
+fn estimate_cost_details(
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+) -> Option<CostEstimate> {
+    let pricing = pricing_for_model(model)?;
+    let cost = (input_tokens as f64 * pricing.input_micros_per_token)
+        + (output_tokens as f64 * pricing.output_micros_per_token);
+    Some(CostEstimate {
+        micros: cost.round() as u64,
+        pricing_source: pricing.source,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ModelPricing {
+    input_micros_per_token: f64,
+    output_micros_per_token: f64,
+    source: &'static str,
+}
+
+fn pricing_for_model(model: &str) -> Option<ModelPricing> {
     let model = model.to_ascii_lowercase();
-    match model.as_str() {
-        m if m.contains("opus") => Some((15.0, 75.0)),
-        m if m.contains("sonnet") => Some((3.0, 15.0)),
-        m if m.contains("haiku") => Some((0.8, 4.0)),
-        m if m.contains("deepseek") => Some((0.14, 0.28)),
-        _ => None,
+    let (input_micros_per_token, output_micros_per_token) = match model.as_str() {
+        m if m.contains("opus") => (15.0, 75.0),
+        m if m.contains("sonnet") => (3.0, 15.0),
+        m if m.contains("haiku") => (0.8, 4.0),
+        m if m.contains("deepseek") => (0.14, 0.28),
+        _ => return None,
+    };
+    Some(ModelPricing {
+        input_micros_per_token,
+        output_micros_per_token,
+        source: STATIC_PRICING_SOURCE,
+    })
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProviderTokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_creation_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+}
+
+impl ProviderTokenUsage {
+    fn legacy_token_counts(&self) -> Option<(u32, u32)> {
+        Some((
+            self.input_tokens.try_into().ok()?,
+            self.output_tokens.try_into().ok()?,
+        ))
     }
 }
 
-fn anthropic_usage_from_response(parsed: &serde_json::Value) -> Option<(u32, u32)> {
+fn anthropic_usage_from_response(parsed: &serde_json::Value) -> Option<ProviderTokenUsage> {
     let usage = parsed["usage"].as_object()?;
-    let input_tokens = usage.get("input_tokens")?.as_u64()?.try_into().ok()?;
-    let output_tokens = usage.get("output_tokens")?.as_u64()?.try_into().ok()?;
-    Some((input_tokens, output_tokens))
+    let input_tokens = usage.get("input_tokens")?.as_u64()?;
+    let output_tokens = usage.get("output_tokens")?.as_u64()?;
+    Some(ProviderTokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens: optional_usage_u64(usage, "cache_read_input_tokens")
+            .or_else(|| optional_usage_u64(usage, "cache_read_tokens")),
+        cache_creation_tokens: optional_usage_u64(usage, "cache_creation_input_tokens")
+            .or_else(|| optional_usage_u64(usage, "cache_creation_tokens")),
+        reasoning_tokens: optional_usage_u64(usage, "reasoning_tokens"),
+    })
+}
+
+pub(crate) fn optional_usage_u64(
+    usage: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<u64> {
+    usage.get(key)?.as_u64()
 }
 
 /// Flush accumulated text or thinking content into the assistant content list.
@@ -1125,15 +1266,22 @@ mod tests {
             event,
             StreamEvent::ProviderUsage {
                 session_id,
+                provider_id: Some(provider_id),
                 model: Some(model),
                 input_tokens: Some(123),
                 output_tokens: Some(45),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: Some(1044),
+                pricing_source: Some(pricing_source),
                 source: Some(source),
                 reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
                 ..
             } if session_id == "subagent"
+                && provider_id == "anthropic"
                 && model == "claude-sonnet-4-6"
+                && pricing_source == "forge_static_pricing_2026_06_20"
                 && source == "anthropic"
         )));
     }
@@ -1163,14 +1311,20 @@ mod tests {
             event,
             StreamEvent::ProviderUsage {
                 session_id,
+                provider_id: Some(provider_id),
                 model: Some(model),
                 input_tokens: None,
                 output_tokens: None,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: None,
+                pricing_source: None,
                 source: Some(source),
                 reason: crate::protocol::events::ProviderUsageReason::ProviderOmitted,
                 ..
             } if session_id == "subagent"
+                && provider_id == "anthropic"
                 && model == "claude-sonnet-4-6"
                 && source == "anthropic"
         )));
@@ -1210,14 +1364,20 @@ mod tests {
             event,
             StreamEvent::ProviderUsage {
                 session_id,
+                provider_id: Some(provider_id),
                 model: Some(model),
                 input_tokens: Some(123),
                 output_tokens: Some(45),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
                 estimated_cost_micros: None,
+                pricing_source: None,
                 source: Some(source),
                 reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
                 ..
             } if session_id == "subagent"
+                && provider_id == "anthropic"
                 && model == "mystery-model-v1"
                 && source == "anthropic"
         )));
@@ -1385,7 +1545,12 @@ mod tests {
             Some("Need the file before editing.")
         );
         assert_eq!(text_chunk.as_deref(), Some("先看文件。"));
-        assert_eq!(usage, Some((123, 45)));
+        let usage = usage.expect("usage update");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.cache_read_tokens, None);
+        assert_eq!(usage.cache_creation_tokens, None);
+        assert_eq!(usage.reasoning_tokens, None);
         assert_eq!(
             result.assistant_content,
             vec![

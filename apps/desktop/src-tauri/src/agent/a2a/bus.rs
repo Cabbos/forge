@@ -1347,12 +1347,17 @@ mod tests {
         );
         bus.start_task(&task_id, 20);
         let usage = LoopUsageLedger::from_events(vec![UsageEvent {
+            provider_id: Some("anthropic".to_string()),
             model: Some("claude".to_string()),
             source: Some("anthropic".to_string()),
             reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
             input_tokens: Some(100),
             output_tokens: None,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
             estimated_cost_micros: None,
+            pricing_source: None,
         }])
         .with_runtime_counts(2, 3, 4000);
         bus.add_artifact(
