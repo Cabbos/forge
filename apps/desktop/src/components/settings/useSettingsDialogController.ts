@@ -6,7 +6,8 @@ import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDat
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
-import { deleteSession, setApiKey } from "@/lib/tauri";
+import { deleteSession, probeProvider, setApiKey } from "@/lib/tauri";
+import type { ProviderProbeResult } from "@/lib/tauri";
 import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
@@ -28,6 +29,8 @@ export function useSettingsDialogController({
   const [value, setValue] = useState("");
   const [visible, setVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [probingProvider, setProbingProvider] = useState<string | null>(null);
+  const [probeResults, setProbeResults] = useState<Record<string, ProviderProbeResult>>({});
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
   const queryClient = useQueryClient();
@@ -84,6 +87,11 @@ export function useSettingsDialogController({
     setError(null);
     try {
       await setApiKey(editing, value);
+      setProbeResults((previous) => {
+        const next = { ...previous };
+        delete next[editing];
+        return next;
+      });
       setEditing(null);
       setValue("");
       await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
@@ -98,6 +106,11 @@ export function useSettingsDialogController({
     setError(null);
     try {
       await setApiKey(provider, "");
+      setProbeResults((previous) => {
+        const next = { ...previous };
+        delete next[provider];
+        return next;
+      });
       await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
     } catch (e) {
       setError(String(e));
@@ -117,6 +130,31 @@ export function useSettingsDialogController({
     setError(null);
   }, []);
 
+  const handleProbe = useCallback(async (provider: string) => {
+    setProbingProvider(provider);
+    setError(null);
+    try {
+      const result = await probeProvider(provider);
+      setProbeResults((previous) => ({ ...previous, [provider]: result }));
+    } catch (e) {
+      setProbeResults((previous) => ({
+        ...previous,
+        [provider]: {
+          provider,
+          provider_label: getProviderLabel(provider),
+          model: null,
+          base_url: null,
+          status: "failed",
+          checks: [],
+          message: String(e),
+          remediation: null,
+        },
+      }));
+    } finally {
+      setProbingProvider(null);
+    }
+  }, []);
+
   const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys);
   const sessionCount = sessions.size;
   const workspaceName = activeWorkspace?.name ?? "未选择项目";
@@ -128,12 +166,15 @@ export function useSettingsDialogController({
     value,
     visible,
     saving,
+    probingProvider,
+    probeResults,
     onEdit: handleEdit,
     onValueChange: setValue,
     onVisibleChange: setVisible,
     onSave: handleSave,
     onCancel: handleCancelEdit,
     onRemove: handleRemove,
+    onProbe: handleProbe,
   };
 
   const localDataProps: ComponentProps<typeof SettingsLocalDataSection> = {

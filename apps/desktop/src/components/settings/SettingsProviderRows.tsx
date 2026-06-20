@@ -4,6 +4,7 @@ import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
 import { formatContextWindow, PROVIDERS } from "@/lib/providers";
 import type { KeyStatus } from "@/lib/tauri";
+import type { ProviderProbeResult } from "@/lib/tauri";
 
 interface SettingsProviderRowsProps {
   keys: KeyStatus[];
@@ -11,12 +12,15 @@ interface SettingsProviderRowsProps {
   value: string;
   visible: boolean;
   saving: boolean;
+  probingProvider: string | null;
+  probeResults: Record<string, ProviderProbeResult>;
   onEdit: (provider: string) => void;
   onValueChange: (value: string) => void;
   onVisibleChange: (visible: boolean) => void;
   onSave: () => void;
   onCancel: () => void;
   onRemove: (provider: string) => void;
+  onProbe: (provider: string) => void;
 }
 
 export function SettingsProviderRows({
@@ -25,13 +29,18 @@ export function SettingsProviderRows({
   value,
   visible,
   saving,
+  probingProvider,
+  probeResults,
   onEdit,
   onValueChange,
   onVisibleChange,
   onSave,
   onCancel,
   onRemove,
+  onProbe,
 }: SettingsProviderRowsProps) {
+  const probeBusy = probingProvider !== null;
+
   return (
     <div data-testid="settings-preferences-panel" className="forge-settings-preferences-panel">
       {keys.map((key) => {
@@ -39,6 +48,8 @@ export function SettingsProviderRows({
         const providerLabel = provider?.label ?? key.provider;
         const defaultModel = provider?.models.find((model) => model.id === provider.defaultModel);
         const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);
+        const probeResult = probeResults[key.provider];
+        const probing = probingProvider === key.provider;
 
         return (
           <div
@@ -85,6 +96,16 @@ export function SettingsProviderRows({
               </span>
               {editing !== key.provider && (
                 <div className="flex items-center justify-end gap-2">
+                  <ForgeButton
+                    size="xs"
+                    variant="outline"
+                    onClick={() => onProbe(key.provider)}
+                    disabled={probeBusy}
+                    aria-label={`检测 ${providerLabel}`}
+                    title={`检测 ${providerLabel}`}
+                  >
+                    {probing ? "检测中" : "检测"}
+                  </ForgeButton>
                   <ForgeButton size="xs" variant="outline" onClick={() => onEdit(key.provider)}>
                     {key.set ? "更新" : "添加"}
                   </ForgeButton>
@@ -131,6 +152,55 @@ export function SettingsProviderRows({
                     取消
                   </ForgeButton>
                 </div>
+              </div>
+            )}
+
+            {probeResult && (
+              <div
+                data-testid="settings-provider-probe-result"
+                data-state={probeResult.status}
+                className="forge-settings-provider-probe"
+              >
+                <div className="forge-settings-provider-probe-head">
+                  <span
+                    className="forge-settings-status-pill"
+                    data-state={probeResult.status === "passed" ? "configured" : "denied"}
+                  >
+                    {probeResult.status === "passed" ? "探测通过" : "探测失败"}
+                  </span>
+                  <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
+                    {probeResult.message}
+                  </span>
+                </div>
+                <div className="forge-settings-provider-probe-meta">
+                  {[probeResult.model && `模型 ${probeResult.model}`, probeResult.base_url && `Base ${probeResult.base_url}`]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+                {probeResult.checks.length > 0 && (
+                  <div className="forge-settings-provider-probe-checks">
+                    {probeResult.checks.map((check) => (
+                      <span
+                        key={check.id}
+                        className="forge-settings-provider-probe-check"
+                        data-state={check.status}
+                        title={check.message}
+                      >
+                        {check.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {probeResult.checks.some((check) => check.status === "failed") && (
+                  <div className="forge-settings-provider-probe-message">
+                    {probeResult.checks.find((check) => check.status === "failed")?.message}
+                  </div>
+                )}
+                {probeResult.remediation && (
+                  <div className="forge-settings-provider-probe-message">
+                    {probeResult.remediation}
+                  </div>
+                )}
               </div>
             )}
           </div>

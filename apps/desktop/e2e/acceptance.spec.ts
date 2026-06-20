@@ -78,6 +78,162 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(autostartArgs).toEqual({ enabled: false });
   });
 
+  test("settings models runs a mocked successful provider probe", async ({ page }) => {
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+
+    await expect(providerRow).toContainText("已配置");
+    const beforeClickCount = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return Number(window.__providerProbeRequestCount ?? 0);
+    });
+    expect(beforeClickCount).toBe(0);
+
+    await providerRow.getByRole("button", { name: "检测 DeepSeek" }).click();
+    await expect(providerRow).toContainText("DeepSeek probe passed.");
+    await expect(providerRow).toContainText("Tool schema accepted");
+
+    const probeArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastProbeProviderArgs;
+    });
+    expect(probeArgs).toEqual({ provider: "deepseek" });
+  });
+
+  test("settings models disables provider probe buttons while a probe is running", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      const originalMockIpc = window.__tauriMockIPC;
+      let releaseProbe: (() => void) | undefined;
+      // @ts-expect-error acceptance mock
+      window.__heldProviderProbe = {
+        release: () => releaseProbe?.(),
+      };
+      // @ts-expect-error acceptance mock
+      window.__tauriMockIPC = async (command, args) => {
+        if (command === "probe_provider") {
+          // @ts-expect-error acceptance mock
+          window.__lastProbeProviderArgs = args;
+          // @ts-expect-error acceptance mock
+          window.__providerProbeRequestCount = Number(window.__providerProbeRequestCount ?? 0) + 1;
+          await new Promise<void>((resolve) => {
+            releaseProbe = resolve;
+          });
+          return {
+            provider: "deepseek",
+            provider_label: "DeepSeek",
+            model: "deepseek-v4-flash[1m]",
+            base_url: "https://api.deepseek.com/anthropic",
+            status: "passed",
+            checks: [
+              { id: "key_present", label: "Key present", status: "passed", message: "API key is present." },
+              { id: "base_url_reachable", label: "Base URL reachable", status: "passed", message: "Provider endpoint returned an HTTP response." },
+              { id: "model_accepted", label: "Model accepted", status: "passed", message: "Model accepted streaming request." },
+              { id: "streaming_accepted", label: "Streaming accepted", status: "passed", message: "Streaming SSE response confirmed." },
+              { id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed", message: "Tool schema accepted." },
+            ],
+            message: "DeepSeek probe passed.",
+            remediation: null,
+          };
+        }
+        return originalMockIpc(command, args);
+      };
+    });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const deepSeekRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+    const openAiRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "OpenAI等待密钥" });
+    const deepSeekProbe = deepSeekRow.getByRole("button", { name: "检测 DeepSeek" });
+    const openAiProbe = openAiRow.getByRole("button", { name: "检测 OpenAI" });
+
+    await expect(openAiProbe).toBeEnabled();
+    await deepSeekProbe.click();
+    await expect(deepSeekProbe).toBeDisabled();
+    await expect(openAiProbe).toBeDisabled();
+
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__heldProviderProbe.release();
+    });
+
+    await expect(deepSeekRow).toContainText("DeepSeek probe passed.");
+    await expect(openAiProbe).toBeEnabled();
+  });
+
+  test("settings models surfaces mocked unsupported-tool provider probe", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockProviderProbeResult = {
+        provider: "deepseek",
+        provider_label: "DeepSeek",
+        model: "deepseek-v4-flash[1m]",
+        base_url: "https://api.deepseek.com/anthropic",
+        status: "failed",
+        checks: [
+          { id: "key_present", label: "Key present", status: "passed", message: "API key is present." },
+          { id: "base_url_reachable", label: "Base URL reachable", status: "passed", message: "Provider endpoint returned an HTTP response." },
+          { id: "model_accepted", label: "Model accepted", status: "passed", message: "Model was accepted before tool validation." },
+          { id: "streaming_accepted", label: "Streaming accepted", status: "passed", message: "Streaming request was accepted before tool validation." },
+          {
+            id: "tool_schema_accepted",
+            label: "Tool schema accepted",
+            status: "failed",
+            message: "Provider rejected the no-op tool schema: This model does not support tools.",
+          },
+        ],
+        message: "DeepSeek tool schema unsupported.",
+        remediation: "Use a DeepSeek model or endpoint that accepts tool/function schemas.",
+      };
+    });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+
+    await providerRow.getByRole("button", { name: "检测 DeepSeek" }).click();
+    await expect(providerRow).toContainText("DeepSeek tool schema unsupported.");
+    await expect(providerRow).toContainText("Provider rejected the no-op tool schema");
+    await expect(providerRow).toContainText("Use a DeepSeek model or endpoint");
+  });
+
+  test("settings models allows probing an unconfigured provider row", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockProviderProbeResult = {
+        provider: "openai",
+        provider_label: "OpenAI",
+        model: "gpt-4o",
+        base_url: "https://api.openai.com/v1",
+        status: "failed",
+        checks: [
+          { id: "key_present", label: "Key present", status: "failed", message: "API key is missing." },
+          { id: "base_url_reachable", label: "Base URL reachable", status: "failed", message: "Not run because the API key is missing." },
+          { id: "model_accepted", label: "Model accepted", status: "failed", message: "Not run because the API key is missing." },
+          { id: "streaming_accepted", label: "Streaming accepted", status: "failed", message: "Not run because the API key is missing." },
+          { id: "tool_schema_accepted", label: "Tool schema accepted", status: "failed", message: "Not run because the API key is missing." },
+        ],
+        message: "OpenAI API key is missing.",
+        remediation: "Add an OpenAI API key, then run the probe again.",
+      };
+    });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "OpenAI等待密钥" });
+
+    await expect(providerRow).toContainText("未配置");
+    await providerRow.getByRole("button", { name: "检测 OpenAI" }).click();
+    await expect(providerRow).toContainText("OpenAI API key is missing.");
+
+    const probeArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastProbeProviderArgs;
+    });
+    expect(probeArgs).toEqual({ provider: "openai" });
+  });
+
   test("settings tools supports permission allow deny and reset round-trip", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock

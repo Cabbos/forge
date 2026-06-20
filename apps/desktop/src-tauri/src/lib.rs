@@ -21,6 +21,7 @@ mod parser;
 mod process_runner;
 mod profile;
 mod protocol;
+mod provider_probe;
 pub mod scheduler;
 pub mod service;
 pub mod session_store;
@@ -125,6 +126,7 @@ pub fn run() {
             ipc::workspace_files::get_default_working_dir,
             ipc::settings_handlers::get_api_key_status,
             ipc::settings_handlers::set_api_key,
+            ipc::settings_handlers::probe_provider,
             ipc::capability_handlers::list_capabilities,
             ipc::capability_handlers::toggle_capability,
             ipc::capability_handlers::install_skill,

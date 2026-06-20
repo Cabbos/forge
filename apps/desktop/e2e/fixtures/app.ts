@@ -185,6 +185,29 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         },
       ],
     });
+    const providerProbeResult = (provider: string) => {
+      // @ts-expect-error acceptance mock
+      if (window.__mockProviderProbeResult) return window.__mockProviderProbeResult;
+      const label = provider === "openai" ? "OpenAI" : provider === "deepseek" ? "DeepSeek" : provider;
+      const model = provider === "deepseek" ? "deepseek-v4-flash[1m]" : "gpt-4o";
+      const baseUrl = provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://api.openai.com/v1";
+      return {
+        provider,
+        provider_label: label,
+        model,
+        base_url: baseUrl,
+        status: "passed",
+        checks: [
+          { id: "key_present", label: "Key present", status: "passed", message: "API key is present." },
+          { id: "base_url_reachable", label: "Base URL reachable", status: "passed", message: "Provider endpoint accepted the probe request." },
+          { id: "model_accepted", label: "Model accepted", status: "passed", message: "Model was accepted." },
+          { id: "streaming_accepted", label: "Streaming accepted", status: "passed", message: "Streaming request was accepted." },
+          { id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed", message: "No-op tool schema was accepted." },
+        ],
+        message: `${label} probe passed.`,
+        remediation: null,
+      };
+    };
     const gatewayRuntimeStatus = () => ({
       ok: true,
       message: "Gateway runtime is healthy.",
@@ -951,6 +974,12 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           // @ts-expect-error mock
           if (window.__mockApiKeyStatus) return window.__mockApiKeyStatus;
           return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+        case "probe_provider":
+          // @ts-expect-error acceptance mock
+          window.__providerProbeRequestCount = Number(window.__providerProbeRequestCount ?? 0) + 1;
+          // @ts-expect-error acceptance mock
+          window.__lastProbeProviderArgs = args;
+          return providerProbeResult(String(args.provider ?? ""));
         case "list_profiles":
           return profilePayload();
         case "upsert_profile": {

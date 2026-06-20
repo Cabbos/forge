@@ -47,7 +47,7 @@ Forge 希望用户只需要理解三个产品层级：
 ## 能做什么
 
 - 打开一个本地项目，并围绕该项目运行多轮 agent 任务。
-- 支持 DeepSeek、Anthropic、OpenAI、OpenRouter 等 Provider 和模型选择。
+- 支持 DeepSeek、Anthropic、Kimi/Moonshot、GLM/Zhipu、Alibaba/Qwen、MiniMax、OpenAI、OpenRouter、Gemini、xAI、Groq、Mistral、Ollama/local 和自定义兼容 Provider 的配置与模型选择。
 - 在桌面 UI 中流式展示 agent 输出、工具活动、Shell 结果、Diff、确认请求和交付总结。
 - 支持 `@file` 引用当前项目文件，并把选中文件作为隐藏上下文带入本轮任务。
 - 读取项目级说明文件，例如 `AGENTS.md`、`CLAUDE.md`、`GEMINI.md`。
@@ -117,6 +117,8 @@ OPENROUTER_API_KEY=...
 
 默认 Provider 是 DeepSeek，默认模型是 `deepseek-v4-flash[1m]`。
 
+设置页的 Provider 行提供手动兼容性检测：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming 和工具 schema，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
+
 ## 开发命令
 
 ```bash
@@ -135,7 +137,7 @@ scripts/acceptance.sh          # build + eval + Level 3 runtime + desktop smoke
 scripts/acceptance.sh --dry-run
 ```
 
-当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、review-to-commit eligibility、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含 mocked desktop restart runtime smoke（macOS partial evidence，不是官方 Tauri/WebDriver force-quit proof）、provider usage known/unknown telemetry、bounded post-shell file-effect evidence、persisted A2A lineage、gated headless ownership policy/approval checks、真实 Rust `run_worktree_worker` harness（mock adapter/harness）、A2A child runtime 的 live file-ish tool facts，以及 direct ToolExecutor file-ish tools 的 `file_io` stream smoke。
+当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、review-to-commit eligibility、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Provider probe、Gateway runtime、权限规则、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含 mocked desktop restart runtime smoke（macOS partial evidence，不是官方 Tauri/WebDriver force-quit proof）、provider usage known/unknown telemetry、bounded post-shell file-effect evidence、persisted A2A lineage、gated headless ownership policy/approval checks、真实 Rust `run_worktree_worker` harness（mock adapter/harness）、A2A child runtime 的 live file-ish tool facts，以及 direct ToolExecutor file-ish tools 的 `file_io` stream smoke。
 
 4C.4 fake headless owner executor fixture 当前由 focused runner/journal/projection/replay Rust tests 证明。它只在 runner test fixture 中记录 completed、pending confirmation blocker、pending tool-call blocker、interrupted、cancelled、expired 和 stale pending-view idempotency 状态链；还不是 acceptance matrix 或 e2e autonomous resume gate。
 

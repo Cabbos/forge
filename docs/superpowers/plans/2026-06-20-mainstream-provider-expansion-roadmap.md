@@ -378,15 +378,19 @@ passes without pretending all providers have equal telemetry quality.
 
 ## Task 7: Compatibility Probe UX
 
-- [ ] Add a non-destructive provider probe command that can validate:
+**Status (2026-06-20): Completed for the manual Settings probe slice.** Forge now exposes a user-triggered `probe_provider` IPC command and a Settings provider-row action. The probe checks local key presence before network, sends one minimal streaming request with a no-op tool schema through the provider's registry transport family, returns structured check results without API key leakage, and classifies unsupported tool/schema responses into provider-specific diagnostics. It does not run on startup or automatically probe paid APIs.
+
+**Evidence:** TDD red pass failed on missing provider probe types/API, then on missing Settings probe button. Green pass succeeded with `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_probe --lib`, `node --test apps/desktop/src/lib/ipc/apiKeys.test.ts`, and `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "provider probe"`. `scripts/acceptance.sh --dry-run` now advertises Desktop Phase 7 provider probe coverage.
+
+- [x] Add a non-destructive provider probe command that can validate:
   - key present
   - base URL reachable
   - model accepted
   - streaming accepted
   - tool schema accepted
-- [ ] Keep probe execution user-triggered. Do not probe paid APIs automatically on app startup.
-- [ ] Surface probe result in Settings diagnostics with provider-specific error messages.
-- [ ] Add acceptance coverage for a mocked successful probe and a mocked unsupported-tool response.
+- [x] Keep probe execution user-triggered. Do not probe paid APIs automatically on app startup.
+- [x] Surface probe result in Settings diagnostics with provider-specific error messages.
+- [x] Add acceptance coverage for a mocked successful probe and a mocked unsupported-tool response.
 
 Expected result:
 

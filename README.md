@@ -31,11 +31,11 @@ Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it.
 The desktop app now includes the Hermes-parity runtime scaffolding that is being hardened in Phase 7:
 
 - Session History: search, provider filtering, resume, delete, rename, JSON export, and conservative pruning.
-- Settings: models, workspace, tools, memory, data, diagnostics, scheduler, and general service/autostart surfaces.
+- Settings: models with manual provider compatibility probes, workspace, tools, memory, data, diagnostics, scheduler, and general service/autostart surfaces.
 - Diagnostics: doctor checks, gateway runtime status, repair actions, trigger/session queues, and runtime loop visibility.
 - Permissions: per-tool allow, deny, reset, and default policy states for write, edit, shell, and MCP operations.
 - Review and background work: Agent Workbench review queue/history, derived A2A parent/child lineage badges, completion/review-to-commit eligibility facts, plus a global background status bar and task list.
-- Acceptance: browser smoke coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI, plus runtime ownership gates for mocked restart evidence, provider usage, post-shell file effects, persisted A2A lineage, review-to-commit eligibility, gated headless policy/approval checks, and the real Rust `run_worktree_worker` harness.
+- Acceptance: browser smoke coverage for resume, diagnostics, provider probes, permissions, scheduler, A2A review, and background task UI, plus runtime ownership gates for mocked restart evidence, provider usage, post-shell file effects, persisted A2A lineage, review-to-commit eligibility, gated headless policy/approval checks, and the real Rust `run_worktree_worker` harness.
 
 ## Level 3 Runtime Evidence
 
