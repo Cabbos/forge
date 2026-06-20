@@ -2,7 +2,12 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { Check, Eye, EyeOff, Pencil, RefreshCw } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
-import { formatContextWindow, PROVIDERS, type ProviderDefinition } from "@/lib/providers";
+import {
+  formatContextWindow,
+  PROVIDERS,
+  type ProviderDefinition,
+  type ProviderModelCatalogSource,
+} from "@/lib/providers";
 import type { KeyStatus } from "@/lib/tauri";
 import type { ProviderModelCatalogResult, ProviderProbeResult } from "@/lib/tauri";
 
@@ -69,6 +74,9 @@ export function SettingsProviderRows({
         const providerLabel = provider?.label ?? key.provider;
         const defaultModel = provider?.models.find((model) => model.id === provider.defaultModel);
         const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);
+        const cachedModelCatalogSource = provider?.modelCatalogSource
+          ? cachedModelCatalogSourceLabel(provider.modelCatalogSource)
+          : "";
         const probeResult = probeResults[key.provider];
         const probing = probingProvider === key.provider;
         const modelCatalogResult = modelCatalogResults[key.provider];
@@ -121,6 +129,7 @@ export function SettingsProviderRows({
                       "默认模型",
                       defaultContext && `上下文 ${defaultContext}`,
                       provider?.requiresApiKey === false && "not required",
+                      cachedModelCatalogSource,
                     ].filter(Boolean).join(" · ")}
                   </div>
                 </>
@@ -354,7 +363,7 @@ export function SettingsProviderRows({
   );
 }
 
-function modelCatalogSourceLabel(source: ProviderModelCatalogResult["source"]) {
+function modelCatalogSourceLabel(source: ProviderModelCatalogSource) {
   switch (source) {
     case "live_endpoint":
       return "Live /models";
@@ -362,5 +371,16 @@ function modelCatalogSourceLabel(source: ProviderModelCatalogResult["source"]) {
       return "Forge static catalog · not live-certified";
     case "unsupported":
       return "Catalog source unsupported";
+  }
+}
+
+function cachedModelCatalogSourceLabel(source: ProviderModelCatalogSource) {
+  switch (source) {
+    case "live_endpoint":
+      return "目录 Live /models";
+    case "static_fallback":
+      return "目录 Forge static catalog";
+    case "unsupported":
+      return "目录 unsupported";
   }
 }

@@ -34,6 +34,7 @@ export interface ProviderCatalogEntry {
   transport?: ProviderTransportName;
   api_key_env?: string[];
   base_url_env?: string[];
+  model_catalog_source?: ProviderModelCatalogSource | null;
 }
 
 export interface ProviderCatalogModelEntry {
@@ -43,6 +44,7 @@ export interface ProviderCatalogModelEntry {
 }
 
 export type ProviderProfileSource = "built_in" | "user_override" | "user_defined";
+export type ProviderModelCatalogSource = "live_endpoint" | "static_fallback" | "unsupported";
 export type ProviderTransportName =
   | "anthropic_messages"
   | "openai_chat_completions"
@@ -74,6 +76,7 @@ export interface ProviderDefinition {
   transport?: ProviderTransportName;
   apiKeyEnv?: string[];
   baseUrlEnv?: string[];
+  modelCatalogSource?: ProviderModelCatalogSource | null;
   supportsStreaming?: boolean;
   supportsTools?: boolean;
 }
@@ -338,6 +341,7 @@ export function mergeProviderCatalog(
         transport: entry.transport ?? existing.transport,
         apiKeyEnv: entry.api_key_env ?? existing.apiKeyEnv,
         baseUrlEnv: entry.base_url_env ?? existing.baseUrlEnv,
+        modelCatalogSource: entry.model_catalog_source ?? existing.modelCatalogSource ?? null,
         supportsStreaming: entry.supports_streaming ?? existing.supportsStreaming,
         supportsTools: entry.supports_tools ?? existing.supportsTools,
         models: mergeModelOptions(existing.models, modelOption, catalogModels),
@@ -361,6 +365,7 @@ export function mergeProviderCatalog(
       transport: entry.transport,
       apiKeyEnv: entry.api_key_env,
       baseUrlEnv: entry.base_url_env,
+      modelCatalogSource: entry.model_catalog_source ?? null,
       supportsStreaming: entry.supports_streaming,
       supportsTools: entry.supports_tools,
     });

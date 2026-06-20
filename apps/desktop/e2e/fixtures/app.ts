@@ -253,6 +253,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         transport: String(input.transport ?? "openai_chat_completions"),
         api_key_env: apiKeyEnv,
         base_url_env: baseUrlEnv,
+        model_catalog_source: null,
         models: [{ id: defaultModel, name: defaultModel, context_window_tokens: null }],
       };
     };
@@ -279,6 +280,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         transport: existingEntry?.transport ?? "openai_chat_completions",
         api_key_env: Array.isArray(existingEntry?.api_key_env) ? existingEntry.api_key_env : [],
         base_url_env: Array.isArray(existingEntry?.base_url_env) ? existingEntry.base_url_env : [],
+        model_catalog_source: typeof result.source === "string" ? result.source : existingEntry?.model_catalog_source ?? null,
         models,
       };
       if (existingIndex >= 0) catalog[existingIndex] = nextEntry;

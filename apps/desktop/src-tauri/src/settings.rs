@@ -415,6 +415,7 @@ impl Settings {
                 let provider_id = profile.id.clone();
                 let context_window_tokens = get_provider_definition(&profile.id)
                     .and_then(|definition| definition.context_window_tokens);
+                let cached_model_catalog = self.provider_model_catalogs.get(&provider_id);
                 ProviderCatalogEntry {
                     id: profile.id,
                     label: profile.label,
@@ -429,9 +430,8 @@ impl Settings {
                     transport: provider_transport_name(profile.transport).to_string(),
                     api_key_env: profile.api_key_env,
                     base_url_env: profile.base_url_env,
-                    models: self
-                        .provider_model_catalogs
-                        .get(&provider_id)
+                    model_catalog_source: cached_model_catalog.and_then(|catalog| catalog.source),
+                    models: cached_model_catalog
                         .map(|catalog| catalog.models.clone())
                         .unwrap_or_default(),
                 }
@@ -505,9 +505,10 @@ impl Settings {
         &mut self,
         provider: &str,
         base_url: Option<String>,
+        source: ProviderModelCatalogSource,
         models: Vec<ProviderCatalogModel>,
     ) -> Result<(), String> {
-        self.apply_provider_model_catalog(provider, base_url, models)?;
+        self.apply_provider_model_catalog(provider, base_url, source, models)?;
         self.save()
     }
 
@@ -515,6 +516,7 @@ impl Settings {
         &mut self,
         provider: &str,
         base_url: Option<String>,
+        source: ProviderModelCatalogSource,
         models: Vec<ProviderCatalogModel>,
     ) -> Result<(), String> {
         let provider = provider.trim().to_ascii_lowercase();
@@ -546,6 +548,7 @@ impl Settings {
                 provider,
                 CachedProviderModelCatalog {
                     base_url,
+                    source: Some(source),
                     models: cleaned_models,
                 },
             );
@@ -588,6 +591,7 @@ pub struct ProviderCatalogEntry {
     pub transport: String,
     pub api_key_env: Vec<String>,
     pub base_url_env: Vec<String>,
+    pub model_catalog_source: Option<ProviderModelCatalogSource>,
     pub models: Vec<ProviderCatalogModel>,
 }
 
@@ -616,7 +620,17 @@ pub struct CachedProviderModelCatalog {
     #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
+    pub source: Option<ProviderModelCatalogSource>,
+    #[serde(default)]
     pub models: Vec<ProviderCatalogModel>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderModelCatalogSource {
+    LiveEndpoint,
+    StaticFallback,
+    Unsupported,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -660,7 +674,8 @@ mod tests {
     use crate::settings::ProviderProfileInput;
 
     use super::{
-        detect_credentials_from_sources, mask_key, ClaudeSettings, ProviderCatalogModel, Settings,
+        detect_credentials_from_sources, mask_key, ClaudeSettings, ProviderCatalogModel,
+        ProviderModelCatalogSource, Settings,
     };
 
     #[test]
@@ -1174,6 +1189,7 @@ mod tests {
             .apply_provider_model_catalog(
                 "nvidia",
                 Some("https://integrate.api.nvidia.com/v1".to_string()),
+                ProviderModelCatalogSource::LiveEndpoint,
                 vec![
                     ProviderCatalogModel {
                         id: "nvidia/llama-3.1-nemotron".to_string(),
@@ -1199,6 +1215,10 @@ mod tests {
         assert_eq!(nvidia.models[0].id, "nvidia/llama-3.1-nemotron");
         assert_eq!(nvidia.models[0].name, "NVIDIA Nemotron");
         assert_eq!(nvidia.models[1].context_window_tokens, Some(128_000));
+        assert_eq!(
+            nvidia.model_catalog_source,
+            Some(ProviderModelCatalogSource::LiveEndpoint)
+        );
     }
 
     #[test]

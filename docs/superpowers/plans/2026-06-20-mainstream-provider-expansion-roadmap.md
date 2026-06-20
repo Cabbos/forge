@@ -594,6 +594,16 @@ This closes the evidence-boundary gap introduced by static fallback catalogs. Re
 
 **Still not claimed:** static fallback catalogs as live certification, startup auto-probing, native Anthropic/Gemini/Bedrock live model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-20 Post-MVP Usability Slice: Persisted Model Catalog Source Evidence
+
+**Status (2026-06-20): Implemented as the twelfth "fully usable provider" hardening slice after MVP closure.** The model catalog source is now part of the durable provider catalog cache contract. Successful manual refreshes persist `live_endpoint`, `static_fallback`, or `unsupported` source metadata into `provider_model_catalogs`; `get_provider_catalog` returns that source as `model_catalog_source`; frontend provider definitions preserve it as `modelCatalogSource`; and Settings provider rows include the cached source in the default-model metadata after the immediate refresh result is gone.
+
+This closes the evidence-chain drift from the previous slice. It was useful to label the live refresh result, but the source evidence could disappear once the result panel was dismissed or the catalog was consumed through Composer/settings projections. Provider usability needs the same proof level wherever cached model ids are shown: live endpoint evidence and Forge static fallback evidence must stay distinguishable after replay, reopen, and catalog merge.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests::provider_catalog_includes_cached_model_catalogs --lib` because cached catalogs had no source field, and failed in `cd apps/desktop && node --test src/lib/providers.test.ts` because `mergeProviderCatalog` dropped `model_catalog_source`. Green verification covers backend cache persistence, Rust provider catalog projection, TypeScript provider merge preservation, IPC fixture propagation, and Settings cached-source metadata. Controller verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests::provider_catalog --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog --lib`, `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`, `rustfmt --edition 2021 --check apps/desktop/src-tauri/src/settings.rs apps/desktop/src-tauri/src/provider_model_catalog.rs`, `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models (refreshes a mocked provider model catalog|labels static provider model catalog fallback|creates and deletes a custom provider profile)"`, `npm run build:desktop`, `scripts/acceptance.sh --dry-run`, and `git diff --check`.
+
+**Still not claimed:** static fallback catalogs as live endpoint certification, startup auto-probing, native Anthropic/Gemini/Bedrock live model-list endpoints, executable provider plugins, billing-grade provider pricing metadata, or live certification for every mainstream provider.
+
 ## MVP Definition
 
 The MVP is complete when:

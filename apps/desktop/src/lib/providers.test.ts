@@ -175,6 +175,7 @@ describe("frontend provider catalog", () => {
         requires_api_key: true,
         supports_streaming: true,
         supports_tools: true,
+        model_catalog_source: "static_fallback",
         models: [
           {
             id: "nvidia/llama-3.1-nemotron",
@@ -191,6 +192,7 @@ describe("frontend provider catalog", () => {
     ]);
 
     const nvidia = getProviderDefinition("nim", catalog);
+    assert.equal(nvidia.modelCatalogSource, "static_fallback");
     assert.equal(nvidia.models.map((model) => model.id).includes("nvidia/llama-3.3-70b"), true);
     assert.equal(getProviderForModel("nvidia/llama-3.3-70b", catalog), "nvidia");
     assert.equal(getModelLabel("nvidia/llama-3.3-70b", catalog), "NVIDIA Llama 3.3 70B");

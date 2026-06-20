@@ -22,6 +22,7 @@ export interface ProviderCatalogEntry {
   transport: ProviderTransportName;
   api_key_env: string[];
   base_url_env: string[];
+  model_catalog_source: ProviderModelCatalogSource | null;
 }
 
 export interface ProviderCatalogModelEntry {

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use crate::adapters::provider_registry::{
     find_loaded_provider_profile, LoadedProviderProfile, ModelCatalogPolicy, ProviderTransport,
 };
-use crate::settings::{Credentials, ProviderCatalogModel, Settings};
+use crate::settings::{Credentials, ProviderCatalogModel, ProviderModelCatalogSource, Settings};
 
 const MODEL_CATALOG_TIMEOUT_SECS: u64 = 12;
 
@@ -13,14 +13,6 @@ const MODEL_CATALOG_TIMEOUT_SECS: u64 = 12;
 pub(crate) enum ProviderModelCatalogStatus {
     Available,
     Unavailable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ProviderModelCatalogSource {
-    LiveEndpoint,
-    StaticFallback,
-    Unsupported,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -69,6 +61,7 @@ pub(crate) async fn list_provider_models(provider: &str) -> ProviderModelCatalog
         if let Err(error) = settings.record_provider_model_catalog(
             &result.provider,
             result.base_url.clone(),
+            result.source,
             models,
         ) {
             result.remediation = Some(format!(

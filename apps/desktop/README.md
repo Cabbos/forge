@@ -133,7 +133,7 @@ Vite 默认运行在 `http://localhost:1420`。完整桌面端需要通过 Tauri
 
 `providers` 是 data-only profile：它可以添加或覆盖 provider 的 label、transport、base URL、key/model 环境变量、默认模型和基础能力标记，并会同步出现在 Settings provider 行和 Composer 模型菜单里，但不会加载可执行插件代码。Settings 现在也可以直接新增、编辑、删除这类自定义 Provider profile，并提供 NVIDIA NIM、本地 OpenAI-compatible endpoint、Anthropic-compatible gateway 等预填模板。`api_key_env: []` 表示本地兼容服务不需要鉴权；Forge 会跳过 missing-key gate，并且不会发送空 `Authorization` / `x-api-key` header。开始会话前的 readiness panel 也会读取同一份 provider catalog：no-auth local profile 不会被误报为缺密钥，当前模型不在 provider 目录里时会先给出提示。
 
-Settings 的 Provider 行还支持手动刷新模型目录：OpenAI-compatible endpoint 会调用 `/models`，DeepSeek、Kimi/Moonshot、GLM/Zhipu、MiniMax 这类暂未声明 live model-list endpoint 的 registry provider 会返回 Forge static fallback catalog。刷新结果会明确标注来源：`Live /models` 表示来自 endpoint，`Forge static catalog · not live-certified` 表示来自 registry fallback。可用结果会写入本机 provider catalog cache，并出现在 Composer 模型菜单里供选择；也可以在刷新结果里点某个模型，显式更新当前 Composer provider/model。对可编辑的自定义 Provider，还可以把刷新出的模型显式保存为 Provider 默认模型。Forge 不会自动改 profile 默认模型，static fallback 不代表 live endpoint certification，也不代表 native Anthropic/Gemini/Bedrock 模型端点已经认证。
+Settings 的 Provider 行还支持手动刷新模型目录：OpenAI-compatible endpoint 会调用 `/models`，DeepSeek、Kimi/Moonshot、GLM/Zhipu、MiniMax 这类暂未声明 live model-list endpoint 的 registry provider 会返回 Forge static fallback catalog。刷新结果会明确标注来源：`Live /models` 表示来自 endpoint，`Forge static catalog · not live-certified` 表示来自 registry fallback。可用结果会连同来源证据写入本机 provider catalog cache，并出现在 Composer 模型菜单和 Settings provider 元信息里供选择；也可以在刷新结果里点某个模型，显式更新当前 Composer provider/model。对可编辑的自定义 Provider，还可以把刷新出的模型显式保存为 Provider 默认模型。Forge 不会自动改 profile 默认模型，static fallback 不代表 live endpoint certification，也不代表 native Anthropic/Gemini/Bedrock 模型端点已经认证。
 
 也可以只保存 API key：
 

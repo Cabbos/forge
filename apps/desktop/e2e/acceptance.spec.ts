@@ -242,6 +242,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(providerRow).toContainText("Kimi / Moonshot uses Forge's static model catalog.");
     await expect(providerRow).toContainText("Forge static catalog");
     await expect(providerRow).toContainText("not live-certified");
+    await expect(providerRow.locator('[data-provider-readable="meta"]')).toContainText("目录 Forge static catalog");
   });
 
   test("settings models creates and deletes a custom provider profile", async ({ page }) => {
