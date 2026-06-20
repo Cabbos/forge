@@ -161,8 +161,12 @@ passes and no provider metadata is duplicated in adapter routing.
 
 ## Task 1.5: Hermes-Style Provider Profile Loading
 
-- [ ] Add a second profile source after built-ins: user-defined provider profiles from Forge config, equivalent in spirit to Hermes' `$HERMES_HOME/plugins/model-providers/<name>/`.
-- [ ] MVP shape can be config-only, not executable plugins:
+**Status (2026-06-20): Completed for the config-only profile-loading slice.** This adds safe, data-only user profile loading on top of the static registry. It supports built-in profile overrides and user-defined profiles such as `nvidia` without reintroducing NVIDIA as a built-in provider. It intentionally does not wire adapter routing, settings persistence, frontend catalogs, credential detection, or runtime calls yet.
+
+**Evidence:** TDD red pass failed on missing `ProviderProfileConfig`, `EnvVarList`, `load_provider_profiles`, and related API. Green pass then succeeded with `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_profile_loading --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_registry --lib`, and `rustfmt --edition 2021 --check apps/desktop/src-tauri/src/adapters/provider_registry.rs`.
+
+- [x] Add a second profile source after built-ins: user-defined provider profiles from Forge config, equivalent in spirit to Hermes' `$HERMES_HOME/plugins/model-providers/<name>/`.
+- [x] MVP shape can be config-only, not executable plugins:
 
 ```toml
 [[providers]]
@@ -176,9 +180,9 @@ supports_tools = true
 supports_streaming = true
 ```
 
-- [ ] Let user-defined profiles override labels, base URLs, key env vars, default model, transport, and max token defaults, but not arbitrary Rust behavior.
-- [ ] Keep executable provider plugins out of MVP. They are powerful, but they add code-loading and security questions that Forge does not need yet.
-- [ ] Add import/migration tests for Hermes-like config names and aliases: `glm`, `zhipu`, `kimi`, `moonshot`, `qwen`, `dashscope`, `minimax`, `nvidia`, `ollama`, `lmstudio`, `vllm`.
+- [x] Let user-defined profiles override labels, base URLs, key env vars, default model, transport, and max token defaults, but not arbitrary Rust behavior.
+- [x] Keep executable provider plugins out of MVP. They are powerful, but they add code-loading and security questions that Forge does not need yet.
+- [x] Add import/migration tests for Hermes-like config names and aliases: `glm`, `zhipu`, `kimi`, `moonshot`, `qwen`, `dashscope`, `minimax`, `nvidia`, `ollama`, `lmstudio`, `vllm`.
 
 Expected result:
 

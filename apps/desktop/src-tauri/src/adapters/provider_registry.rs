@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderTransport {
     AnthropicMessages,
@@ -7,6 +9,27 @@ pub(crate) enum ProviderTransport {
     BedrockConverse,
     CustomOpenAiCompatible,
     CustomAnthropicCompatible,
+}
+
+impl ProviderTransport {
+    fn from_config_name(value: &str) -> Option<Self> {
+        match normalize_profile_key(value).as_str() {
+            "anthropic" | "anthropic_messages" | "claude" => Some(Self::AnthropicMessages),
+            "openai" | "openai_chat_completions" | "chat_completions" => {
+                Some(Self::OpenAiChatCompletions)
+            }
+            "openai_responses" | "responses" => Some(Self::OpenAiResponses),
+            "native_gemini" | "gemini" => Some(Self::NativeGemini),
+            "bedrock" | "bedrock_converse" => Some(Self::BedrockConverse),
+            "custom_openai" | "custom_openai_compatible" | "openai_compatible" => {
+                Some(Self::CustomOpenAiCompatible)
+            }
+            "custom_anthropic" | "custom_anthropic_compatible" | "anthropic_compatible" => {
+                Some(Self::CustomAnthropicCompatible)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +117,192 @@ pub(crate) struct ProviderDefinition {
     pub(crate) tool_messages: ToolMessageSupport,
     pub(crate) model_fallbacks: &'static [&'static str],
     pub(crate) max_output_tokens_default: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum EnvVarList {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl EnvVarList {
+    fn to_vec(&self) -> Vec<String> {
+        match self {
+            Self::One(value) => vec![value.clone()],
+            Self::Many(values) => values.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct ProviderProfileConfig {
+    pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) label: Option<String>,
+    #[serde(default, alias = "default_base_url")]
+    pub(crate) base_url: Option<String>,
+    #[serde(default)]
+    pub(crate) api_key_env: Option<EnvVarList>,
+    #[serde(default)]
+    pub(crate) base_url_env: Option<EnvVarList>,
+    #[serde(default)]
+    pub(crate) default_model: Option<String>,
+    #[serde(default)]
+    pub(crate) transport: Option<String>,
+    #[serde(default)]
+    pub(crate) supports_tools: Option<bool>,
+    #[serde(default)]
+    pub(crate) supports_streaming: Option<bool>,
+    #[serde(default)]
+    pub(crate) max_output_tokens_default: Option<u32>,
+    #[serde(default)]
+    pub(crate) aliases: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderProfileSource {
+    BuiltIn,
+    UserOverride,
+    UserDefined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoadedProviderProfile {
+    pub(crate) id: String,
+    pub(crate) aliases: Vec<String>,
+    pub(crate) label: String,
+    pub(crate) default_model: String,
+    pub(crate) default_base_url: Option<String>,
+    pub(crate) api_key_env: Vec<String>,
+    pub(crate) base_url_env: Vec<String>,
+    pub(crate) transport: ProviderTransport,
+    pub(crate) supports_streaming: bool,
+    pub(crate) supports_tools: bool,
+    pub(crate) max_output_tokens_default: Option<u32>,
+    pub(crate) source: ProviderProfileSource,
+}
+
+impl LoadedProviderProfile {
+    fn from_builtin(definition: &ProviderDefinition) -> Self {
+        Self {
+            id: definition.id.to_string(),
+            aliases: vec![],
+            label: definition.label.to_string(),
+            default_model: definition.default_model.to_string(),
+            default_base_url: definition.default_base_url.map(str::to_string),
+            api_key_env: definition
+                .api_key_env
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            base_url_env: definition
+                .base_url_env
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            transport: definition.transport,
+            supports_streaming: definition.supports_streaming,
+            supports_tools: definition.supports_tools,
+            max_output_tokens_default: definition.max_output_tokens_default,
+            source: ProviderProfileSource::BuiltIn,
+        }
+    }
+
+    fn from_user_config(
+        id: String,
+        source_alias: String,
+        config: &ProviderProfileConfig,
+    ) -> Result<Self, ProviderProfileLoadError> {
+        let mut profile = Self {
+            id,
+            aliases: vec![],
+            label: config
+                .label
+                .clone()
+                .unwrap_or_else(|| config.id.trim().to_string()),
+            default_model: config
+                .default_model
+                .clone()
+                .unwrap_or_else(|| "custom-model".to_string()),
+            default_base_url: config.base_url.clone(),
+            api_key_env: config
+                .api_key_env
+                .as_ref()
+                .map(EnvVarList::to_vec)
+                .unwrap_or_default(),
+            base_url_env: config
+                .base_url_env
+                .as_ref()
+                .map(EnvVarList::to_vec)
+                .unwrap_or_default(),
+            transport: parse_transport(config)?
+                .unwrap_or(ProviderTransport::CustomOpenAiCompatible),
+            supports_streaming: config.supports_streaming.unwrap_or(true),
+            supports_tools: config.supports_tools.unwrap_or(true),
+            max_output_tokens_default: config.max_output_tokens_default,
+            source: ProviderProfileSource::UserDefined,
+        };
+        profile.add_alias(source_alias);
+        for alias in &config.aliases {
+            profile.add_alias(normalize_profile_key(alias));
+        }
+        Ok(profile)
+    }
+
+    fn apply_user_override(
+        &mut self,
+        source_alias: String,
+        config: &ProviderProfileConfig,
+    ) -> Result<(), ProviderProfileLoadError> {
+        if let Some(label) = &config.label {
+            self.label = label.clone();
+        }
+        if let Some(base_url) = &config.base_url {
+            self.default_base_url = Some(base_url.clone());
+        }
+        if let Some(api_key_env) = &config.api_key_env {
+            self.api_key_env = api_key_env.to_vec();
+        }
+        if let Some(base_url_env) = &config.base_url_env {
+            self.base_url_env = base_url_env.to_vec();
+        }
+        if let Some(default_model) = &config.default_model {
+            self.default_model = default_model.clone();
+        }
+        if let Some(transport) = parse_transport(config)? {
+            self.transport = transport;
+        }
+        if let Some(supports_tools) = config.supports_tools {
+            self.supports_tools = supports_tools;
+        }
+        if let Some(supports_streaming) = config.supports_streaming {
+            self.supports_streaming = supports_streaming;
+        }
+        if let Some(max_output_tokens_default) = config.max_output_tokens_default {
+            self.max_output_tokens_default = Some(max_output_tokens_default);
+        }
+        self.source = ProviderProfileSource::UserOverride;
+        self.add_alias(source_alias);
+        for alias in &config.aliases {
+            self.add_alias(normalize_profile_key(alias));
+        }
+        Ok(())
+    }
+
+    fn add_alias(&mut self, alias: String) {
+        if alias.is_empty() || alias == self.id || self.aliases.iter().any(|value| value == &alias)
+        {
+            return;
+        }
+        self.aliases.push(alias);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProviderProfileLoadError {
+    MissingId,
+    UnsupportedTransport { id: String, transport: String },
 }
 
 const VALID_PROVIDER_IDS: &[&str] = &[
@@ -524,6 +733,75 @@ pub(crate) fn get_provider_definition(id_or_alias: &str) -> Option<&'static Prov
     PROVIDER_DEFINITIONS
         .iter()
         .find(|definition| definition.id == normalized)
+}
+
+pub(crate) fn load_provider_profiles(
+    configs: &[ProviderProfileConfig],
+) -> Result<Vec<LoadedProviderProfile>, ProviderProfileLoadError> {
+    let mut profiles = PROVIDER_DEFINITIONS
+        .iter()
+        .map(LoadedProviderProfile::from_builtin)
+        .collect::<Vec<_>>();
+
+    for config in configs {
+        let source_alias = normalize_profile_key(&config.id);
+        if source_alias.is_empty() {
+            return Err(ProviderProfileLoadError::MissingId);
+        }
+        let id = normalize_provider_id(Some(&source_alias))
+            .map(str::to_string)
+            .unwrap_or_else(|| source_alias.clone());
+
+        if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == id) {
+            existing.apply_user_override(source_alias, config)?;
+        } else {
+            profiles.push(LoadedProviderProfile::from_user_config(
+                id,
+                source_alias,
+                config,
+            )?);
+        }
+    }
+
+    Ok(profiles)
+}
+
+pub(crate) fn find_loaded_provider_profile<'a>(
+    profiles: &'a [LoadedProviderProfile],
+    id_or_alias: &str,
+) -> Option<&'a LoadedProviderProfile> {
+    let key = normalize_profile_key(id_or_alias);
+    if key.is_empty() {
+        return profiles.iter().find(|profile| profile.id == "deepseek");
+    }
+
+    if let Some(normalized) = normalize_provider_id(Some(&key)) {
+        if let Some(profile) = profiles.iter().find(|profile| profile.id == normalized) {
+            return Some(profile);
+        }
+    }
+
+    profiles
+        .iter()
+        .find(|profile| profile.id == key || profile.aliases.iter().any(|alias| alias == &key))
+}
+
+fn parse_transport(
+    config: &ProviderProfileConfig,
+) -> Result<Option<ProviderTransport>, ProviderProfileLoadError> {
+    let Some(transport) = &config.transport else {
+        return Ok(None);
+    };
+    ProviderTransport::from_config_name(transport)
+        .map(Some)
+        .ok_or_else(|| ProviderProfileLoadError::UnsupportedTransport {
+            id: config.id.trim().to_string(),
+            transport: transport.clone(),
+        })
+}
+
+fn normalize_profile_key(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace(' ', "_")
 }
 
 #[cfg(test)]
@@ -1094,5 +1372,187 @@ mod tests {
                 expected.id
             );
         }
+    }
+
+    fn profile_config(id: &str) -> ProviderProfileConfig {
+        ProviderProfileConfig {
+            id: id.to_string(),
+            label: Some(format!("Loaded {id}")),
+            base_url: Some(format!("https://{id}.example.test/v1")),
+            api_key_env: Some(EnvVarList::One(format!(
+                "{}_API_KEY",
+                id.replace(['-', '.'], "_").to_ascii_uppercase()
+            ))),
+            base_url_env: Some(EnvVarList::Many(vec![format!(
+                "{}_BASE_URL",
+                id.replace(['-', '.'], "_").to_ascii_uppercase()
+            )])),
+            default_model: Some(format!("{id}-model")),
+            transport: Some("openai_chat_completions".to_string()),
+            supports_tools: Some(false),
+            supports_streaming: Some(false),
+            max_output_tokens_default: Some(4096),
+            aliases: vec![],
+        }
+    }
+
+    #[test]
+    fn provider_profile_loading_accepts_hermes_like_config_names() {
+        let cases = [
+            ("glm", "glm"),
+            ("zhipu", "glm"),
+            ("kimi", "kimi"),
+            ("moonshot", "kimi"),
+            ("qwen", "alibaba"),
+            ("dashscope", "alibaba"),
+            ("minimax", "minimax"),
+            ("ollama", "ollama"),
+            ("lmstudio", "ollama"),
+            ("vllm", "ollama"),
+        ];
+
+        for (config_id, expected_id) in cases {
+            let profiles = load_provider_profiles(&[profile_config(config_id)]).unwrap();
+            let profile = find_loaded_provider_profile(&profiles, config_id)
+                .unwrap_or_else(|| panic!("missing loaded profile for {config_id}"));
+
+            assert_eq!(
+                profile.id, expected_id,
+                "canonical profile id for {config_id}"
+            );
+            assert_eq!(
+                profile.label,
+                format!("Loaded {config_id}"),
+                "profile label override for {config_id}"
+            );
+            assert_eq!(
+                profile.source,
+                ProviderProfileSource::UserOverride,
+                "profile source for {config_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_profile_loading_overrides_only_safe_profile_fields() {
+        let mut config = profile_config("moonshot");
+        config.label = Some("Moonshot Private Endpoint".to_string());
+        config.base_url = Some("https://moonshot.example.test/anthropic".to_string());
+        config.api_key_env = Some(EnvVarList::Many(vec![
+            "PRIVATE_KIMI_API_KEY".to_string(),
+            "MOONSHOT_API_KEY".to_string(),
+        ]));
+        config.base_url_env = Some(EnvVarList::One("PRIVATE_KIMI_BASE_URL".to_string()));
+        config.default_model = Some("kimi-private-coder".to_string());
+        config.transport = Some("anthropic_messages".to_string());
+        config.supports_tools = Some(true);
+        config.supports_streaming = Some(true);
+        config.max_output_tokens_default = Some(65_536);
+
+        let profiles = load_provider_profiles(&[config]).unwrap();
+        let profile = find_loaded_provider_profile(&profiles, "kimi").unwrap();
+
+        assert_eq!(profile.id, "kimi");
+        assert_eq!(profile.source, ProviderProfileSource::UserOverride);
+        assert_eq!(profile.label, "Moonshot Private Endpoint");
+        assert_eq!(
+            profile.default_base_url.as_deref(),
+            Some("https://moonshot.example.test/anthropic")
+        );
+        assert_eq!(
+            profile.api_key_env,
+            vec![
+                "PRIVATE_KIMI_API_KEY".to_string(),
+                "MOONSHOT_API_KEY".to_string()
+            ]
+        );
+        assert_eq!(
+            profile.base_url_env,
+            vec!["PRIVATE_KIMI_BASE_URL".to_string()]
+        );
+        assert_eq!(profile.default_model, "kimi-private-coder");
+        assert_eq!(profile.transport, ProviderTransport::AnthropicMessages);
+        assert!(profile.supports_tools);
+        assert!(profile.supports_streaming);
+        assert_eq!(profile.max_output_tokens_default, Some(65_536));
+    }
+
+    #[test]
+    fn provider_profile_loading_allows_nvidia_as_user_profile_not_builtin() {
+        let mut config = profile_config("nvidia");
+        config.label = Some("NVIDIA NIM".to_string());
+        config.base_url = Some("https://integrate.api.nvidia.com/v1".to_string());
+        config.default_model = Some("nvidia/llama-3.1-nemotron".to_string());
+        config.aliases = vec!["nim".to_string()];
+
+        let profiles = load_provider_profiles(&[config]).unwrap();
+        let profile = find_loaded_provider_profile(&profiles, "nim").unwrap();
+
+        assert_eq!(profile.id, "nvidia");
+        assert_eq!(profile.source, ProviderProfileSource::UserDefined);
+        assert_eq!(profile.label, "NVIDIA NIM");
+        assert_eq!(
+            profile.default_base_url.as_deref(),
+            Some("https://integrate.api.nvidia.com/v1")
+        );
+        assert_eq!(profile.default_model, "nvidia/llama-3.1-nemotron");
+        assert!(!valid_provider_ids().contains(&"nvidia"));
+        assert!(get_provider_definition("nvidia").is_none());
+    }
+
+    #[test]
+    fn provider_profile_loading_user_aliases_do_not_shadow_builtin_aliases() {
+        let mut config = profile_config("my-provider");
+        config.aliases = vec![
+            "moonshot".to_string(),
+            "claude".to_string(),
+            "qwen".to_string(),
+            "local".to_string(),
+        ];
+
+        let profiles = load_provider_profiles(&[config]).unwrap();
+
+        assert_eq!(
+            find_loaded_provider_profile(&profiles, "my-provider")
+                .unwrap()
+                .id,
+            "my-provider"
+        );
+        assert_eq!(
+            find_loaded_provider_profile(&profiles, "moonshot")
+                .unwrap()
+                .id,
+            "kimi"
+        );
+        assert_eq!(
+            find_loaded_provider_profile(&profiles, "claude")
+                .unwrap()
+                .id,
+            "anthropic"
+        );
+        assert_eq!(
+            find_loaded_provider_profile(&profiles, "qwen").unwrap().id,
+            "alibaba"
+        );
+        assert_eq!(
+            find_loaded_provider_profile(&profiles, "local").unwrap().id,
+            "ollama"
+        );
+    }
+
+    #[test]
+    fn provider_profile_loading_rejects_unknown_transport_names() {
+        let mut config = profile_config("my-provider");
+        config.transport = Some("run_this_rust_hook".to_string());
+
+        let error = load_provider_profiles(&[config]).unwrap_err();
+
+        assert_eq!(
+            error,
+            ProviderProfileLoadError::UnsupportedTransport {
+                id: "my-provider".to_string(),
+                transport: "run_this_rust_hook".to_string(),
+            }
+        );
     }
 }
