@@ -15,6 +15,14 @@ pub(crate) enum ProviderModelCatalogStatus {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProviderModelCatalogSource {
+    LiveEndpoint,
+    StaticFallback,
+    Unsupported,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ProviderModelCatalogItem {
     pub(crate) id: String,
@@ -26,6 +34,7 @@ pub(crate) struct ProviderModelCatalogResult {
     pub(crate) provider: String,
     pub(crate) provider_label: String,
     pub(crate) base_url: Option<String>,
+    pub(crate) source: ProviderModelCatalogSource,
     pub(crate) status: ProviderModelCatalogStatus,
     pub(crate) models: Vec<ProviderModelCatalogItem>,
     pub(crate) message: String,
@@ -81,6 +90,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
             provider,
             provider,
             None,
+            ProviderModelCatalogSource::Unsupported,
             Vec::new(),
             &format!("Unsupported provider: {provider}."),
             Some("Choose a configured provider before refreshing models.".to_string()),
@@ -106,6 +116,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
             &provider_id,
             &provider_label,
             base_url_label,
+            ProviderModelCatalogSource::LiveEndpoint,
             Vec::new(),
             &format!("{provider_label} API key is missing."),
             Some(format!(
@@ -119,6 +130,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
             &provider_id,
             &provider_label,
             None,
+            ProviderModelCatalogSource::LiveEndpoint,
             Vec::new(),
             &format!("{provider_label} base URL is missing."),
             Some(format!(
@@ -134,6 +146,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
                 &provider_id,
                 &provider_label,
                 Some(safe_base_url_label(&base_url)),
+                ProviderModelCatalogSource::LiveEndpoint,
                 Vec::new(),
                 &message,
                 Some(
@@ -151,6 +164,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
                 &provider_id,
                 &provider_label,
                 Some(safe_base_url_label(&base_url)),
+                ProviderModelCatalogSource::LiveEndpoint,
                 Vec::new(),
                 &format!("{} model catalog unreachable.", provider_label),
                 Some(sanitize_text(&error.to_string(), &credentials.api_key)),
@@ -164,6 +178,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
             &provider_id,
             &provider_label,
             Some(safe_base_url_label(&base_url)),
+            ProviderModelCatalogSource::LiveEndpoint,
             Vec::new(),
             &format!(
                 "{} model catalog returned HTTP {}.",
@@ -183,6 +198,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
             &provider_id,
             &provider_label,
             Some(safe_base_url_label(&base_url)),
+            ProviderModelCatalogSource::LiveEndpoint,
             Vec::new(),
             &format!("{provider_label} returned no model IDs."),
             Some(
@@ -196,6 +212,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
         provider: provider_id,
         provider_label: provider_label.clone(),
         base_url: Some(safe_base_url_label(&base_url)),
+        source: ProviderModelCatalogSource::LiveEndpoint,
         status: ProviderModelCatalogStatus::Available,
         models,
         message: format!(
@@ -214,6 +231,7 @@ fn static_fallback_catalog(profile: &LoadedProviderProfile) -> ProviderModelCata
             &profile.id,
             &profile.label,
             profile.default_base_url.as_deref().map(safe_base_url_label),
+            ProviderModelCatalogSource::StaticFallback,
             Vec::new(),
             &format!(
                 "{} has no model catalog fallback configured.",
@@ -230,6 +248,7 @@ fn static_fallback_catalog(profile: &LoadedProviderProfile) -> ProviderModelCata
         provider: profile.id.clone(),
         provider_label: profile.label.clone(),
         base_url: profile.default_base_url.as_deref().map(safe_base_url_label),
+        source: ProviderModelCatalogSource::StaticFallback,
         status: ProviderModelCatalogStatus::Available,
         models,
         message: format!("{} uses Forge's static model catalog.", profile.label),
@@ -324,6 +343,7 @@ fn unavailable(
     provider: &str,
     provider_label: &str,
     base_url: Option<String>,
+    source: ProviderModelCatalogSource,
     models: Vec<ProviderModelCatalogItem>,
     message: &str,
     remediation: Option<String>,
@@ -332,6 +352,7 @@ fn unavailable(
         provider: provider.to_string(),
         provider_label: provider_label.to_string(),
         base_url,
+        source,
         status: ProviderModelCatalogStatus::Unavailable,
         models,
         message: message.to_string(),
@@ -453,6 +474,7 @@ mod tests {
         .await;
 
         assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
         assert_eq!(result.provider, "openai");
         assert_eq!(
             result
@@ -504,6 +526,7 @@ mod tests {
         .await;
 
         assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
         assert_eq!(result.provider, "local-openai");
         assert_eq!(result.models[0].id, "local-model");
 
@@ -530,6 +553,7 @@ mod tests {
         .await;
 
         assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::StaticFallback);
         assert_eq!(result.provider, "deepseek");
         assert_eq!(result.provider_label, "DeepSeek");
         assert_eq!(
@@ -563,6 +587,7 @@ mod tests {
         .await;
 
         assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::StaticFallback);
         assert_eq!(result.provider, "kimi");
         assert_eq!(result.provider_label, "Kimi / Moonshot");
         assert_eq!(

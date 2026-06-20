@@ -216,6 +216,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         provider,
         provider_label: label,
         base_url: provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://api.openai.com/v1",
+        source: "live_endpoint",
         status: "available",
         models: [
           { id: "deepseek-reasoner", name: "deepseek-reasoner" },

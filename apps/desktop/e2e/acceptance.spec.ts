@@ -182,6 +182,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await providerRow.getByRole("button", { name: "刷新模型 DeepSeek" }).click();
     await expect(providerRow).toContainText("DeepSeek returned 2 models.");
+    await expect(providerRow).toContainText("Live /models");
     await expect(providerRow).toContainText("deepseek-reasoner");
     await expect(providerRow).toContainText("deepseek-v4-flash[1m]");
     await providerRow.getByRole("button", { name: "使用模型 deepseek-reasoner" }).click();
@@ -209,6 +210,38 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(refreshedModel).toBeVisible();
     await refreshedModel.click();
     await expect(modelButton).toContainText("deepseek-reasoner");
+  });
+
+  test("settings models labels static provider model catalog fallback", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockProviderModelCatalogResult = {
+        provider: "kimi",
+        provider_label: "Kimi / Moonshot",
+        base_url: "https://api.moonshot.cn/anthropic",
+        source: "static_fallback",
+        status: "available",
+        models: [
+          { id: "kimi-k2.5", name: "kimi-k2.5" },
+          { id: "kimi-k2", name: "kimi-k2" },
+        ],
+        message: "Kimi / Moonshot uses Forge's static model catalog.",
+        remediation: null,
+      };
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = [
+        { provider: "kimi", set: false, preview: "" },
+      ];
+    });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "Kimi / Moonshot" });
+
+    await providerRow.getByRole("button", { name: "刷新模型 Kimi / Moonshot" }).click();
+    await expect(providerRow).toContainText("Kimi / Moonshot uses Forge's static model catalog.");
+    await expect(providerRow).toContainText("Forge static catalog");
+    await expect(providerRow).toContainText("not live-certified");
   });
 
   test("settings models creates and deletes a custom provider profile", async ({ page }) => {
@@ -251,6 +284,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
         provider: "local-openai",
         provider_label: "Local OpenAI",
         base_url: "http://127.0.0.1:1234/v1",
+        source: "live_endpoint",
         status: "available",
         models: [
           { id: "local-model-v2", name: "local-model-v2" },

@@ -31,7 +31,7 @@ Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it.
 The desktop app now includes the Hermes-parity runtime scaffolding that is being hardened in Phase 7:
 
 - Session History: search, provider filtering, resume, delete, rename, JSON export, and conservative pruning.
-- Settings: models with config-defined provider profiles surfaced in the desktop catalog, compact provider metadata rendering, custom provider profile templates and add/edit/delete, no-auth local provider support, provider-aware start readiness, manual provider compatibility probes, live/static model catalog refresh with explicit model selection/default saving, workspace, tools, memory, data, diagnostics, scheduler, and general service/autostart surfaces.
+- Settings: models with config-defined provider profiles surfaced in the desktop catalog, compact provider metadata rendering, custom provider profile templates and add/edit/delete, no-auth local provider support, provider-aware start readiness, manual provider compatibility probes, live/static model catalog refresh with explicit source labeling and model selection/default saving, workspace, tools, memory, data, diagnostics, scheduler, and general service/autostart surfaces.
 - Diagnostics: doctor checks, gateway runtime status, repair actions, trigger/session queues, and runtime loop visibility.
 - Permissions: per-tool allow, deny, reset, and default policy states for write, edit, shell, and MCP operations.
 - Review and background work: Agent Workbench review queue/history, derived A2A parent/child lineage badges, completion/review-to-commit eligibility facts, plus a global background status bar and task list.

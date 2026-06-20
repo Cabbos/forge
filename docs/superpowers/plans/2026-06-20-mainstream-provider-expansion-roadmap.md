@@ -584,6 +584,16 @@ This closes a backend/UI mismatch: these providers already had fallback models i
 
 **Still not claimed:** live endpoint certification for those fallback models, native Anthropic/Gemini/Bedrock live model-list endpoints, startup auto-probing, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-20 Post-MVP Usability Slice: Model Catalog Source Labels
+
+**Status (2026-06-20): Implemented as the eleventh "fully usable provider" hardening slice after MVP closure.** `ProviderModelCatalogResult` now carries an explicit `source` field. Live OpenAI-compatible `/models` refreshes report `live_endpoint`, registry fallback results report `static_fallback`, and unsupported-provider results report `unsupported`. Settings displays this source next to the refresh result: `Live /models` for endpoint evidence and `Forge static catalog · not live-certified` for registry fallback evidence.
+
+This closes the evidence-boundary gap introduced by static fallback catalogs. Returning fallback models is useful, but the UI must not let users confuse static registry knowledge with a successful provider endpoint model-list call. The source label makes the proof level visible exactly where users choose or save a model.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog --lib` because result structs had no `source` field, and failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models (refreshes a mocked provider model catalog|labels static provider model catalog fallback)"` because Settings did not display live/static source labels. Green verification now covers Rust live/static source values and browser-visible `Live /models`, `Forge static catalog`, and `not live-certified` labels.
+
+**Still not claimed:** static fallback catalogs as live certification, startup auto-probing, native Anthropic/Gemini/Bedrock live model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

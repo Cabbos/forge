@@ -194,6 +194,7 @@ export function useSettingsDialogController({
           provider,
           provider_label: getProviderLabel(provider, providers),
           base_url: null,
+          source: "unsupported",
           status: "unavailable",
           models: [],
           message: String(e),

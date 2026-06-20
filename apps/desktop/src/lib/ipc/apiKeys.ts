@@ -56,6 +56,7 @@ export interface ProviderProfileInput {
 export type ProviderProbeStatus = "passed" | "failed";
 export type ProviderProbeCheckStatus = "passed" | "failed";
 export type ProviderModelCatalogStatus = "available" | "unavailable";
+export type ProviderModelCatalogSource = "live_endpoint" | "static_fallback" | "unsupported";
 
 export interface ProviderProbeCheck {
   id: string;
@@ -84,6 +85,7 @@ export interface ProviderModelCatalogResult {
   provider: string;
   provider_label: string;
   base_url: string | null;
+  source: ProviderModelCatalogSource;
   status: ProviderModelCatalogStatus;
   models: ProviderModelCatalogItem[];
   message: string;

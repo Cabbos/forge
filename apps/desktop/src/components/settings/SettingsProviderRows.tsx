@@ -335,6 +335,11 @@ export function SettingsProviderRows({
                     Base {modelCatalogResult.base_url}
                   </div>
                 )}
+                {modelCatalogResult.source && (
+                  <div className="forge-settings-provider-probe-meta">
+                    {modelCatalogSourceLabel(modelCatalogResult.source)}
+                  </div>
+                )}
                 {modelCatalogResult.remediation && (
                   <div className="forge-settings-provider-probe-message">
                     {modelCatalogResult.remediation}
@@ -347,4 +352,15 @@ export function SettingsProviderRows({
       })}
     </div>
   );
+}
+
+function modelCatalogSourceLabel(source: ProviderModelCatalogResult["source"]) {
+  switch (source) {
+    case "live_endpoint":
+      return "Live /models";
+    case "static_fallback":
+      return "Forge static catalog · not live-certified";
+    case "unsupported":
+      return "Catalog source unsupported";
+  }
 }
