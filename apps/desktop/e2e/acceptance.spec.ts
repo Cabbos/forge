@@ -152,6 +152,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
 
     await expect(providerRow).toContainText("上次手动检测通过");
+    await expect(providerRow).toContainText("证据摘要");
+    await expect(providerRow).toContainText("手动检测通过 · 目录未验证");
     await expect(providerRow).toContainText("模型 deepseek-v4-flash[1m]");
     await expect(providerRow).toContainText("Tool schema accepted");
   });

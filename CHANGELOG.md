@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a provider evidence summary in Settings. Provider rows now derive a compact readiness-style summary from manual probe evidence and model catalog source, so users can distinguish "manual probe passed", "needs manual probe", "probe failed", live `/models`, static fallback, and unverified catalogs without assembling that state from multiple panels. This is an explainability surface, not automatic provider certification.
 - Persisted manual provider probe evidence. User-triggered compatibility probes now save a redacted summary into the provider catalog projection, and Settings can show the last manual probe status, model/base URL, and check list after the immediate probe result is gone. This keeps provider certification evidence durable without adding startup auto-probes or claiming live certification for every provider.
 - Updated the Kimi/Moonshot and GLM/Zhipu coding presets to current documented defaults. Kimi now defaults to `kimi-k2.7-code` with a 262K context hint, and GLM now defaults to `glm-5.2` with a 1M context hint and 131K max-output default; older Kimi/GLM models remain static fallback entries. This is registry/catalog freshness, not live endpoint certification.
 - Persisted model catalog source evidence in the provider catalog cache. Successful model refreshes now carry live/static/unsupported source metadata into `get_provider_catalog`, frontend provider definitions, Composer-visible cached catalogs, and Settings provider metadata, so source evidence survives after the immediate refresh result disappears.

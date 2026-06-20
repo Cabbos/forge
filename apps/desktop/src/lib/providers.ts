@@ -100,6 +100,14 @@ export interface ProviderProbeEvidenceCheck {
   status: ProviderProbeCheckStatus;
 }
 
+export type ProviderEvidenceTone = "ready" | "warning" | "blocked" | "muted";
+
+export interface ProviderEvidenceSummary {
+  tone: ProviderEvidenceTone;
+  label: string;
+  detail: string;
+}
+
 export const PROVIDERS: ProviderDefinition[] = [
   {
     id: "deepseek",
@@ -410,6 +418,51 @@ function providerCatalogModelOptions(entry: ProviderCatalogEntry): ModelOption[]
     });
   }
   return options;
+}
+
+export function deriveProviderEvidenceSummary(provider: ProviderDefinition): ProviderEvidenceSummary {
+  const probeDetail = provider.probeEvidence
+    ? provider.probeEvidence.status === "passed"
+      ? "手动检测通过"
+      : "手动检测失败"
+    : "尚未手动检测";
+  const catalogDetail = provider.modelCatalogSource
+    ? provider.modelCatalogSource === "live_endpoint"
+      ? "目录 Live /models"
+      : provider.modelCatalogSource === "static_fallback"
+        ? "目录 static fallback"
+        : "目录 unsupported"
+    : "目录未验证";
+
+  if (provider.probeEvidence?.status === "passed") {
+    return {
+      tone: "ready",
+      label: provider.modelCatalogSource === "live_endpoint" ? "证据较强" : "手动检测通过",
+      detail: `${probeDetail} · ${catalogDetail}`,
+    };
+  }
+
+  if (provider.probeEvidence?.status === "failed") {
+    return {
+      tone: "blocked",
+      label: "检测失败",
+      detail: `${probeDetail} · ${catalogDetail}`,
+    };
+  }
+
+  if (provider.requiresApiKey === false && provider.modelCatalogSource === "live_endpoint") {
+    return {
+      tone: "warning",
+      label: "本地目录已知",
+      detail: `${probeDetail} · ${catalogDetail}`,
+    };
+  }
+
+  return {
+    tone: "warning",
+    label: "需要手动检测",
+    detail: `${probeDetail} · ${catalogDetail}`,
+  };
 }
 
 function mergeModelOptions(

@@ -624,6 +624,16 @@ This closes another evidence-chain gap. Manual probes already tested whether the
 
 **Still not claimed:** automatic paid-API startup probes, scheduled recertification, live certification for every provider, native Anthropic/Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-20 Post-MVP Usability Slice: Provider Evidence Summary
+
+**Status (2026-06-20): Implemented as the fifteenth "fully usable provider" hardening slice after MVP closure.** Settings provider rows now derive a compact evidence summary from the same provider facts used elsewhere: cached manual probe evidence and cached model catalog source. The summary distinguishes `证据较强` for manual probe passed plus live `/models`, `手动检测通过` for a passed manual probe without live catalog evidence, `需要手动检测` when only catalog/static facts exist, and `检测失败` when the last manual probe failed.
+
+This closes a UX/explainability gap after evidence persistence. Persisting facts is useful, but users should not have to mentally combine a cached probe panel, catalog source metadata, and provider model rows to understand whether a provider is ready for agent work. The summary makes the evidence level visible in one line while preserving the boundary language: `static_fallback` and `目录未验证` remain explicit, and no automatic live certification is implied.
+
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/lib/providers.test.ts` because there was no `deriveProviderEvidenceSummary(...)` contract, and failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models renders cached manual provider probe evidence"` because Settings did not render the summary. Green verification covers provider evidence summary derivation and browser-visible summary text alongside cached manual probe evidence. Controller verification passed `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts src/hooks/sessionProfileDefaults.test.ts`, `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models renders cached manual provider probe evidence|provider probe"`, `npm run build:desktop`, `scripts/acceptance.sh --dry-run`, and `git diff --check`.
+
+**Still not claimed:** automatic paid-API startup probes, scheduled recertification, live certification for every provider, native Anthropic/Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

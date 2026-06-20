@@ -3,9 +3,11 @@ import { Check, Eye, EyeOff, Pencil, RefreshCw } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import { ForgeTextInput } from "@/components/primitives/input";
 import {
+  deriveProviderEvidenceSummary,
   formatContextWindow,
   PROVIDERS,
   type ProviderDefinition,
+  type ProviderEvidenceSummary,
   type ProviderModelCatalogSource,
   type ProviderProbeEvidence,
 } from "@/lib/providers";
@@ -80,6 +82,7 @@ export function SettingsProviderRows({
           : "";
         const probeResult = probeResults[key.provider];
         const cachedProbeEvidence = probeResult ? null : provider?.probeEvidence ?? null;
+        const evidenceSummary = provider ? deriveProviderEvidenceSummary(provider) : null;
         const probing = probingProvider === key.provider;
         const modelCatalogResult = modelCatalogResults[key.provider];
         const refreshingModels = refreshingModelsProvider === key.provider;
@@ -237,6 +240,29 @@ export function SettingsProviderRows({
                   <ForgeButton size="xs" variant="ghost" onClick={onCancel}>
                     取消
                   </ForgeButton>
+                </div>
+              </div>
+            )}
+
+            {evidenceSummary && (
+              <div
+                data-testid="settings-provider-evidence-summary"
+                data-state={providerEvidenceBlockState(evidenceSummary)}
+                className="forge-settings-provider-probe"
+              >
+                <div className="forge-settings-provider-probe-head">
+                  <span
+                    className="forge-settings-status-pill"
+                    data-state={providerEvidencePillState(evidenceSummary)}
+                  >
+                    {evidenceSummary.label}
+                  </span>
+                  <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
+                    证据摘要
+                  </span>
+                </div>
+                <div className="forge-settings-provider-probe-meta">
+                  {evidenceSummary.detail}
                 </div>
               </div>
             )}
@@ -430,4 +456,16 @@ function cachedModelCatalogSourceLabel(source: ProviderModelCatalogSource) {
 
 function cachedProbeStatusLabel(evidence: ProviderProbeEvidence) {
   return evidence.status === "passed" ? "上次手动检测通过" : "上次手动检测失败";
+}
+
+function providerEvidenceBlockState(summary: ProviderEvidenceSummary) {
+  if (summary.tone === "ready") return "passed";
+  if (summary.tone === "blocked") return "failed";
+  return undefined;
+}
+
+function providerEvidencePillState(summary: ProviderEvidenceSummary) {
+  if (summary.tone === "blocked") return "denied";
+  if (summary.tone === "ready") return "configured";
+  return "empty";
 }

@@ -6,6 +6,7 @@ import {
   PROVIDERS,
   formatContextWindow,
   getDefaultModel,
+  deriveProviderEvidenceSummary,
   getModelContextWindow,
   getModelLabel,
   getProviderDefinition,
@@ -213,5 +214,65 @@ describe("frontend provider catalog", () => {
     assert.equal(getModelLabel("nvidia/llama-3.3-70b", catalog), "NVIDIA Llama 3.3 70B");
     assert.equal(getModelContextWindow("nvidia/llama-3.3-70b", catalog), 128_000);
     assert.equal(modelBelongsToProvider("nvidia", "nvidia/llama-3.3-70b", catalog), true);
+  });
+
+  it("derives provider evidence summaries from manual probe and catalog source", () => {
+    const liveReady = deriveProviderEvidenceSummary({
+      id: "nvidia",
+      label: "NVIDIA NIM",
+      shortLabel: "NVIDIA",
+      keyPlaceholder: "sk-...",
+      defaultModel: "nvidia/llama-3.1-nemotron",
+      models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
+      requiresApiKey: true,
+      modelCatalogSource: "live_endpoint",
+      probeEvidence: {
+        source: "manual_probe",
+        status: "passed",
+        model: "nvidia/llama-3.1-nemotron",
+        base_url: "https://integrate.api.nvidia.com/v1",
+        checks: [
+          { id: "streaming_accepted", label: "Streaming accepted", status: "passed" },
+          { id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed" },
+        ],
+      },
+    });
+    assert.equal(liveReady.tone, "ready");
+    assert.equal(liveReady.label, "证据较强");
+    assert.equal(liveReady.detail, "手动检测通过 · 目录 Live /models");
+
+    const staticFallback = deriveProviderEvidenceSummary({
+      id: "kimi",
+      label: "Kimi / Moonshot",
+      shortLabel: "Kimi",
+      keyPlaceholder: "sk-...",
+      defaultModel: "kimi-k2.7-code",
+      models: [{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }],
+      requiresApiKey: true,
+      modelCatalogSource: "static_fallback",
+    });
+    assert.equal(staticFallback.tone, "warning");
+    assert.equal(staticFallback.label, "需要手动检测");
+    assert.equal(staticFallback.detail, "尚未手动检测 · 目录 static fallback");
+
+    const failedProbe = deriveProviderEvidenceSummary({
+      id: "openai",
+      label: "OpenAI",
+      shortLabel: "GPT",
+      keyPlaceholder: "sk-...",
+      defaultModel: "gpt-4o",
+      models: [{ id: "gpt-4o", name: "GPT-4o" }],
+      requiresApiKey: true,
+      probeEvidence: {
+        source: "manual_probe",
+        status: "failed",
+        model: "gpt-4o",
+        base_url: "https://api.openai.com/v1",
+        checks: [{ id: "key_present", label: "Key present", status: "failed" }],
+      },
+    });
+    assert.equal(failedProbe.tone, "blocked");
+    assert.equal(failedProbe.label, "检测失败");
+    assert.equal(failedProbe.detail, "手动检测失败 · 目录未验证");
   });
 });
