@@ -60,8 +60,18 @@ pub struct AnthropicAdapter {
 
 impl AnthropicAdapter {
     pub fn new(api_key: String) -> Result<Self, AdapterError> {
+        Self::new_with_key_policy(api_key, true)
+    }
+
+    pub(crate) fn new_allowing_empty_api_key(api_key: String) -> Result<Self, AdapterError> {
+        Self::new_with_key_policy(api_key, false)
+    }
+
+    fn new_with_key_policy(api_key: String, api_key_required: bool) -> Result<Self, AdapterError> {
         if api_key.trim().is_empty() {
-            return Err(AdapterError::MissingApiKey);
+            if api_key_required {
+                return Err(AdapterError::MissingApiKey);
+            }
         }
         let client = reqwest::Client::builder()
             .connect_timeout(HTTP_CONNECT_TIMEOUT)
@@ -79,6 +89,14 @@ impl AnthropicAdapter {
             external_tools: RwLock::new(Vec::new()),
             disable_thinking: false,
         })
+    }
+
+    fn with_auth_header(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.header("x-api-key", &self.api_key)
+        }
     }
 
     pub fn with_model(mut self, model: &str) -> Self {
@@ -293,9 +311,7 @@ impl AnthropicAdapter {
         // Race HTTP call against cancel token
         let url = format!("{}/v1/messages", self.base_url);
         let request = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
+            .with_auth_header(self.client.post(&url))
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body);
@@ -415,9 +431,7 @@ impl AiAdapter for AnthropicAdapter {
 
         let url = format!("{}/v1/messages", self.base_url);
         let request = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
+            .with_auth_header(self.client.post(&url))
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body);
@@ -466,9 +480,7 @@ impl AiAdapter for AnthropicAdapter {
         let body = self.request_for_messages(messages, true, false);
 
         let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
+            .with_auth_header(self.client.post(format!("{}/v1/messages", self.base_url)))
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)

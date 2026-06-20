@@ -477,6 +477,16 @@ Known caveats:
 - Pricing is source-stamped and optional; missing cost remains explicit unknown/null, not zero.
 - `npm --prefix apps/desktop run build` is still blocked by a pre-existing unrelated TypeScript mismatch in `apps/desktop/src/lib/backgroundTaskStatus.ts`.
 
+## 2026-06-20 Post-MVP Usability Slice: Config Profiles and No-Auth Local Providers
+
+**Status (2026-06-20): Implemented as the first "fully usable provider" hardening slice after MVP closure.** Config-defined provider profiles now participate in the real runtime path instead of only passing registry loading tests. `~/.forge/config.json` can add data-only provider profiles with id, label, transport, base URL, API-key/base-URL env vars, default model, aliases, and streaming/tool capability flags. These profiles are used by credential detection, key-status rows, adapter routing, default model/base URL resolution, and manual Settings probes.
+
+No-auth local providers are also unblocked. Profiles with an empty `api_key_env` list, including built-in `ollama`, no longer fall into `MissingKeyAdapter` just because the API key is empty. Anthropic-compatible and OpenAI-compatible adapters can now construct no-auth clients for those profiles, and request/probe code skips empty `x-api-key` / `Authorization` headers.
+
+**Evidence:** Focused verification passed `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings::tests --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::tests::build_adapter --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_probe --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_profile_loading --lib`, and `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`.
+
+**Still not claimed:** live endpoint certification, executable provider plugins, dynamic frontend UI editing for arbitrary provider profiles, native OpenAI Responses/Gemini/Bedrock transports, or billing-grade pricing.
+
 ## MVP Definition
 
 The MVP is complete when:

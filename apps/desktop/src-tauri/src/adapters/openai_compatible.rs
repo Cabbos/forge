@@ -46,8 +46,18 @@ pub struct OpenAiCompatibleAdapter {
 
 impl OpenAiCompatibleAdapter {
     pub fn new(api_key: String) -> Result<Self, AdapterError> {
+        Self::new_with_key_policy(api_key, true)
+    }
+
+    pub(crate) fn new_allowing_empty_api_key(api_key: String) -> Result<Self, AdapterError> {
+        Self::new_with_key_policy(api_key, false)
+    }
+
+    fn new_with_key_policy(api_key: String, api_key_required: bool) -> Result<Self, AdapterError> {
         if api_key.trim().is_empty() {
-            return Err(AdapterError::MissingApiKey);
+            if api_key_required {
+                return Err(AdapterError::MissingApiKey);
+            }
         }
         Ok(Self {
             api_key,
@@ -62,6 +72,14 @@ impl OpenAiCompatibleAdapter {
                 .build()
                 .map_err(|e| AdapterError::Http(e.to_string()))?,
         })
+    }
+
+    fn with_auth_header(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.header("Authorization", format!("Bearer {}", self.api_key))
+        }
     }
 
     pub fn with_model(mut self, model: &str) -> Self {
@@ -143,9 +161,7 @@ impl OpenAiCompatibleAdapter {
 
         let response = tokio::select! {
             response = self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .header("Authorization", format!("Bearer {}", self.api_key))
+                .with_auth_header(self.client.post(format!("{}/chat/completions", self.base_url)))
                 .header("Content-Type", "application/json")
                 .json(&request)
                 .send() => response,
@@ -296,9 +312,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
         let response = tokio::select! {
             response = self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .header("Authorization", format!("Bearer {}", self.api_key))
+                .with_auth_header(self.client.post(format!("{}/chat/completions", self.base_url)))
                 .header("Content-Type", "application/json")
                 .json(&request)
                 .send() => response,
@@ -365,9 +379,10 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         );
 
         let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .with_auth_header(
+                self.client
+                    .post(format!("{}/chat/completions", self.base_url)),
+            )
             .header("Content-Type", "application/json")
             .body(body_json)
             .send()

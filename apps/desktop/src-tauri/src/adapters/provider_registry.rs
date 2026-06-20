@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderTransport {
@@ -119,7 +119,7 @@ pub(crate) struct ProviderDefinition {
     pub(crate) max_output_tokens_default: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub(crate) enum EnvVarList {
     One(String),
@@ -135,7 +135,7 @@ impl EnvVarList {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) struct ProviderProfileConfig {
     pub(crate) id: String,
     #[serde(default)]

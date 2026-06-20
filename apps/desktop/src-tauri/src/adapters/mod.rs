@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use base::{AiAdapter, ToolDef};
 use provider_registry::{
-    get_provider_definition, valid_provider_ids, ProviderTransport, RequestBodyPolicy,
+    find_loaded_provider_profile, get_provider_definition, load_provider_profiles,
+    LoadedProviderProfile, ProviderTransport, RequestBodyPolicy,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,12 +66,13 @@ enum AdapterFamily {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AdapterRoute {
-    provider_id: &'static str,
+    provider_id: String,
     family: AdapterFamily,
     base_url: Option<String>,
     max_tokens: Option<u32>,
     thinking_budget_tokens: Option<u32>,
     thinking_disabled: bool,
+    api_key_required: bool,
 }
 
 pub fn build_adapter(
@@ -80,21 +82,47 @@ pub fn build_adapter(
     api_base: Option<&str>,
     external_tools: Vec<ToolDef>,
 ) -> Result<Arc<dyn AiAdapter>, BuildAdapterError> {
-    let route = resolve_adapter_route(provider, api_base)?;
+    let profiles = load_provider_profiles(&[]).map_err(|error| BuildAdapterError::AdapterInit {
+        message: format!("Provider profile load error: {error:?}"),
+    })?;
+    build_adapter_with_profiles(
+        provider,
+        api_key,
+        model,
+        api_base,
+        &profiles,
+        external_tools,
+    )
+}
+
+pub(crate) fn build_adapter_with_profiles(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    api_base: Option<&str>,
+    profiles: &[LoadedProviderProfile],
+    external_tools: Vec<ToolDef>,
+) -> Result<Arc<dyn AiAdapter>, BuildAdapterError> {
+    let route = resolve_adapter_route_with_profiles(provider, api_base, profiles)?;
     let base_url = route
         .base_url
         .as_deref()
         .ok_or_else(|| BuildAdapterError::MissingBaseUrl {
-            provider: route.provider_id.to_string(),
+            provider: route.provider_id.clone(),
         })?;
 
     match route.family {
         AdapterFamily::AnthropicCompatible => {
-            let mut adapter = anthropic::AnthropicAdapter::new(api_key.to_string())
+            let adapter = if route.api_key_required {
+                anthropic::AnthropicAdapter::new(api_key.to_string())
+            } else {
+                anthropic::AnthropicAdapter::new_allowing_empty_api_key(api_key.to_string())
+            };
+            let mut adapter = adapter
                 .map_err(|error| BuildAdapterError::AdapterInit {
                     message: format!("API key error: {error}"),
                 })?
-                .with_provider_id(route.provider_id)
+                .with_provider_id(&route.provider_id)
                 .with_base_url(base_url)
                 .with_model(model)
                 .with_external_tools(external_tools);
@@ -126,13 +154,18 @@ fn build_openai_compatible_adapter(
         .base_url
         .as_deref()
         .ok_or_else(|| BuildAdapterError::MissingBaseUrl {
-            provider: route.provider_id.to_string(),
+            provider: route.provider_id.clone(),
         })?;
-    let mut adapter = openai_compatible::OpenAiCompatibleAdapter::new(api_key.to_string())
+    let adapter = if route.api_key_required {
+        openai_compatible::OpenAiCompatibleAdapter::new(api_key.to_string())
+    } else {
+        openai_compatible::OpenAiCompatibleAdapter::new_allowing_empty_api_key(api_key.to_string())
+    };
+    let mut adapter = adapter
         .map_err(|error| BuildAdapterError::AdapterInit {
             message: format!("API key error: {error}"),
         })?
-        .with_provider_id(route.provider_id)
+        .with_provider_id(&route.provider_id)
         .with_base_url(base_url)
         .with_model(model)
         .with_external_tools(external_tools);
@@ -146,43 +179,53 @@ fn resolve_adapter_route(
     provider: &str,
     api_base: Option<&str>,
 ) -> Result<AdapterRoute, BuildAdapterError> {
-    let definition = get_provider_definition(provider).ok_or_else(|| {
+    let profiles = load_provider_profiles(&[]).map_err(|error| BuildAdapterError::AdapterInit {
+        message: format!("Provider profile load error: {error:?}"),
+    })?;
+    resolve_adapter_route_with_profiles(provider, api_base, &profiles)
+}
+
+fn resolve_adapter_route_with_profiles(
+    provider: &str,
+    api_base: Option<&str>,
+    profiles: &[LoadedProviderProfile],
+) -> Result<AdapterRoute, BuildAdapterError> {
+    let profile = find_loaded_provider_profile(profiles, provider).ok_or_else(|| {
         BuildAdapterError::UnsupportedProvider {
             provider: provider.to_string(),
-            valid_provider_ids: valid_provider_ids()
-                .iter()
-                .map(|provider| (*provider).to_string())
-                .collect(),
+            valid_provider_ids: profiles.iter().map(|profile| profile.id.clone()).collect(),
         }
     })?;
-    let family = adapter_family(definition.transport).ok_or_else(|| {
+    let family = adapter_family(profile.transport).ok_or_else(|| {
         BuildAdapterError::UnsupportedTransport {
-            provider: definition.id.to_string(),
-            transport: transport_label(definition.transport),
+            provider: profile.id.clone(),
+            transport: transport_label(profile.transport),
         }
     })?;
     let base_url = api_base
         .map(str::to_string)
-        .or_else(|| definition.default_base_url.map(str::to_string));
+        .or_else(|| profile.default_base_url.clone());
     if base_url.is_none() {
         return Err(BuildAdapterError::MissingBaseUrl {
-            provider: definition.id.to_string(),
+            provider: profile.id.clone(),
         });
     }
+    let definition = get_provider_definition(&profile.id);
 
     Ok(AdapterRoute {
-        provider_id: definition.id,
+        provider_id: profile.id.clone(),
         family,
         base_url,
-        max_tokens: definition.max_output_tokens_default,
-        thinking_budget_tokens: match definition.request_body {
+        max_tokens: profile.max_output_tokens_default,
+        thinking_budget_tokens: definition.and_then(|definition| match definition.request_body {
             RequestBodyPolicy::DeepSeekAnthropic {
                 thinking_budget_tokens,
             } => thinking_budget_tokens,
             _ => None,
-        },
+        }),
         thinking_disabled: family == AdapterFamily::AnthropicCompatible
-            && !definition.supports_thinking,
+            && definition.is_some_and(|definition| !definition.supports_thinking),
+        api_key_required: !profile.api_key_env.is_empty(),
     })
 }
 
@@ -215,7 +258,9 @@ fn transport_label(transport: ProviderTransport) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider_registry::valid_provider_ids;
+    use provider_registry::{
+        load_provider_profiles, valid_provider_ids, EnvVarList, ProviderProfileConfig,
+    };
 
     #[test]
     fn build_adapter_routes_registry_providers_by_capability() {
@@ -433,6 +478,79 @@ mod tests {
 
             assert_eq!(adapter.model_id(), "test-model", "model for {provider}");
         }
+    }
+
+    #[test]
+    fn build_adapter_routes_user_defined_provider_profiles() {
+        let profiles = load_provider_profiles(&[ProviderProfileConfig {
+            id: "nvidia".to_string(),
+            label: Some("NVIDIA NIM".to_string()),
+            base_url: Some("https://integrate.api.nvidia.com/v1".to_string()),
+            api_key_env: Some(EnvVarList::One("NVIDIA_API_KEY".to_string())),
+            base_url_env: Some(EnvVarList::One("NVIDIA_BASE_URL".to_string())),
+            default_model: Some("nvidia/llama-3.1-nemotron".to_string()),
+            transport: Some("openai_chat_completions".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: Some(16_384),
+            aliases: vec!["nim".to_string()],
+        }])
+        .unwrap();
+
+        let route = resolve_adapter_route_with_profiles("nim", None, &profiles).unwrap();
+        assert_eq!(route.provider_id, "nvidia");
+        assert_eq!(route.family, AdapterFamily::OpenAiCompatible);
+        assert_eq!(
+            route.base_url.as_deref(),
+            Some("https://integrate.api.nvidia.com/v1")
+        );
+        assert_eq!(route.max_tokens, Some(16_384));
+        assert!(route.api_key_required);
+
+        let adapter = build_adapter_with_profiles(
+            "nim",
+            "test-key",
+            "nvidia/llama-3.1-nemotron",
+            None,
+            &profiles,
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(adapter.model_id(), "nvidia/llama-3.1-nemotron");
+    }
+
+    #[test]
+    fn build_adapter_allows_no_auth_user_defined_local_profiles() {
+        let profiles = load_provider_profiles(&[ProviderProfileConfig {
+            id: "local-openai".to_string(),
+            label: Some("Local OpenAI".to_string()),
+            base_url: Some("http://127.0.0.1:1234/v1".to_string()),
+            api_key_env: Some(EnvVarList::Many(vec![])),
+            base_url_env: None,
+            default_model: Some("local-model".to_string()),
+            transport: Some("openai_chat_completions".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec![],
+        }])
+        .unwrap();
+
+        let route = resolve_adapter_route_with_profiles("local-openai", None, &profiles).unwrap();
+        assert_eq!(route.provider_id, "local-openai");
+        assert_eq!(route.family, AdapterFamily::OpenAiCompatible);
+        assert!(!route.api_key_required);
+
+        let adapter = build_adapter_with_profiles(
+            "local-openai",
+            "",
+            "local-model",
+            None,
+            &profiles,
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(adapter.model_id(), "local-model");
     }
 
     #[test]

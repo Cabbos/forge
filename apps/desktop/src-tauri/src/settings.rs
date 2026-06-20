@@ -3,7 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::adapters::provider_registry::{
-    get_provider_definition, normalize_provider_id, valid_provider_ids,
+    find_loaded_provider_profile, get_provider_definition, load_provider_profiles,
+    normalize_provider_id, LoadedProviderProfile, ProviderProfileConfig, ProviderProfileLoadError,
+    ProviderProfileSource,
 };
 
 /// Persisted user settings stored in ~/.forge/config.json
@@ -11,6 +13,8 @@ use crate::adapters::provider_registry::{
 pub struct Settings {
     #[serde(default)]
     pub api_keys: HashMap<String, String>,
+    #[serde(default)]
+    pub(crate) providers: Vec<ProviderProfileConfig>,
 }
 
 /// Auto-detected credentials from Claude Code config + env vars
@@ -82,6 +86,14 @@ pub fn detect_credentials(provider: &str) -> Credentials {
     })
 }
 
+pub(crate) fn load_configured_provider_profiles() -> Vec<LoadedProviderProfile> {
+    Settings::load().provider_profiles_or_builtin()
+}
+
+pub(crate) fn provider_requires_api_key(provider: &str) -> bool {
+    Settings::load().provider_requires_api_key(provider)
+}
+
 fn detect_credentials_from_sources<F>(
     provider: &str,
     settings: &Settings,
@@ -92,16 +104,36 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw_provider = provider.trim();
-    let provider_id = normalize_settings_provider(raw_provider);
+    let profiles = settings.provider_profiles_or_builtin();
+    let loaded_profile = find_loaded_provider_profile(&profiles, raw_provider);
+    let provider_id = loaded_profile
+        .map(|profile| profile.id.clone())
+        .unwrap_or_else(|| normalize_settings_provider(raw_provider));
     let definition = get_provider_definition(&provider_id);
-    let stored_key = stored_api_key(settings, &provider_id, raw_provider).map(str::to_string);
+    let loaded_aliases = loaded_profile
+        .map(|profile| profile.aliases.as_slice())
+        .unwrap_or(&[]);
+    let stored_key =
+        stored_api_key(settings, &provider_id, raw_provider, loaded_aliases).map(str::to_string);
 
-    let registry_api_key = definition.and_then(|definition| {
-        first_provider_env_value(&env, &provider_id, definition.api_key_env)
-    });
-    let registry_base_url = definition.and_then(|definition| {
-        first_provider_env_value(&env, &provider_id, definition.base_url_env)
-    });
+    let registry_api_key = loaded_profile
+        .and_then(|profile| first_profile_env_value(&env, &provider_id, &profile.api_key_env))
+        .or_else(|| {
+            definition.and_then(|definition| {
+                first_provider_env_value(&env, &provider_id, definition.api_key_env)
+            })
+        });
+    let registry_base_url = loaded_profile
+        .and_then(|profile| first_profile_env_value(&env, &provider_id, &profile.base_url_env))
+        .or_else(|| {
+            definition.and_then(|definition| {
+                first_provider_env_value(&env, &provider_id, definition.base_url_env)
+            })
+        });
+    let profile_base_url = loaded_profile.and_then(|profile| profile.default_base_url.clone());
+    let configured_default_model = loaded_profile
+        .filter(|profile| profile.source != ProviderProfileSource::BuiltIn)
+        .map(|profile| profile.default_model.clone());
 
     let api_key = match provider_id.as_str() {
         "anthropic" => stored_key
@@ -112,15 +144,20 @@ where
     };
 
     let api_base = match provider_id.as_str() {
-        "anthropic" => claude_config.api_base().or(registry_base_url),
-        _ => registry_base_url,
+        "anthropic" => claude_config
+            .api_base()
+            .or(registry_base_url)
+            .or(profile_base_url),
+        _ => registry_base_url.or(profile_base_url),
     };
 
     let model = match provider_id.as_str() {
         "anthropic" => claude_config
             .model()
-            .or_else(|| first_env_value(&env, provider_model_env_vars("anthropic"))),
-        _ => first_env_value(&env, provider_model_env_vars(&provider_id)),
+            .or_else(|| first_env_value(&env, provider_model_env_vars("anthropic")))
+            .or(configured_default_model),
+        _ => first_env_value(&env, provider_model_env_vars(&provider_id))
+            .or(configured_default_model),
     };
 
     Credentials {
@@ -144,15 +181,31 @@ fn stored_api_key<'a>(
     settings: &'a Settings,
     provider_id: &str,
     raw_provider: &str,
+    loaded_aliases: &[String],
 ) -> Option<&'a str> {
     settings
         .get_api_key(provider_id)
         .or_else(|| settings.get_api_key(raw_provider))
         .or_else(|| {
+            loaded_aliases
+                .iter()
+                .find_map(|alias| settings.get_api_key(alias))
+        })
+        .or_else(|| {
             provider_alias_keys(provider_id)
                 .iter()
                 .find_map(|alias| settings.get_api_key(alias))
         })
+}
+
+fn first_profile_env_value<F>(env: &F, provider_id: &str, keys: &[String]) -> Option<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    keys.iter()
+        .map(String::as_str)
+        .filter(|key| provider_env_allowed(provider_id, key))
+        .find_map(|key| env(key).filter(|value| !value.trim().is_empty()))
 }
 
 fn provider_alias_keys(provider_id: &str) -> &'static [&'static str] {
@@ -177,15 +230,16 @@ where
 {
     keys.iter()
         .copied()
-        .filter(|key| {
-            provider_id == "anthropic"
-                || !matches!(
-                    key,
-                    &"ANTHROPIC_AUTH_TOKEN" | &"ANTHROPIC_API_KEY" | &"ANTHROPIC_BASE_URL"
-                ) && (provider_id == "openai"
-                    || !matches!(key, &"OPENAI_API_KEY" | &"OPENAI_BASE_URL"))
-        })
+        .filter(|key| provider_env_allowed(provider_id, key))
         .find_map(|key| env(key).filter(|value| !value.trim().is_empty()))
+}
+
+fn provider_env_allowed(provider_id: &str, key: &str) -> bool {
+    provider_id == "anthropic"
+        || !matches!(
+            key,
+            "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY" | "ANTHROPIC_BASE_URL"
+        ) && (provider_id == "openai" || !matches!(key, "OPENAI_API_KEY" | "OPENAI_BASE_URL"))
 }
 
 fn first_env_value<F>(env: &F, keys: &[&str]) -> Option<String>
@@ -279,11 +333,11 @@ impl Settings {
                 preview: mask_key(key),
             });
         }
-        // Always include known providers, even if not set
-        for p in valid_provider_ids() {
-            if !self.api_keys.contains_key(*p) {
+        // Always include known and configured providers, even if not set.
+        for profile in self.provider_profiles_or_builtin() {
+            if !self.api_keys.contains_key(&profile.id) {
                 status.push(KeyStatus {
-                    provider: p.to_string(),
+                    provider: profile.id,
                     set: false,
                     preview: String::new(),
                 });
@@ -291,6 +345,24 @@ impl Settings {
         }
         status.sort_by(|a, b| a.provider.cmp(&b.provider));
         status
+    }
+
+    pub(crate) fn provider_profiles(
+        &self,
+    ) -> Result<Vec<LoadedProviderProfile>, ProviderProfileLoadError> {
+        load_provider_profiles(&self.providers)
+    }
+
+    fn provider_profiles_or_builtin(&self) -> Vec<LoadedProviderProfile> {
+        self.provider_profiles()
+            .unwrap_or_else(|_| load_provider_profiles(&[]).expect("built-in providers load"))
+    }
+
+    fn provider_requires_api_key(&self, provider: &str) -> bool {
+        let profiles = self.provider_profiles_or_builtin();
+        find_loaded_provider_profile(&profiles, provider)
+            .map(|profile| !profile.api_key_env.is_empty())
+            .unwrap_or(true)
     }
 }
 
@@ -328,7 +400,9 @@ fn home_dir() -> PathBuf {
 mod tests {
     use std::collections::HashMap;
 
-    use crate::adapters::provider_registry::valid_provider_ids;
+    use crate::adapters::provider_registry::{
+        valid_provider_ids, EnvVarList, ProviderProfileConfig,
+    };
 
     use super::{detect_credentials_from_sources, mask_key, ClaudeSettings, Settings};
 
@@ -336,6 +410,7 @@ mod tests {
     fn detect_credentials_prefers_stored_provider_key_over_claude_and_env() {
         let settings = Settings {
             api_keys: HashMap::from([("anthropic".to_string(), "stored-key".to_string())]),
+            ..Default::default()
         };
         let claude = ClaudeSettings {
             api_key: Some("claude-key".to_string()),
@@ -538,6 +613,7 @@ mod tests {
     fn detect_credentials_prefers_stored_key_over_registry_env_key() {
         let settings = Settings {
             api_keys: HashMap::from([("kimi".to_string(), "stored-kimi-key".to_string())]),
+            ..Default::default()
         };
         let claude = ClaudeSettings::default();
 
@@ -563,6 +639,7 @@ mod tests {
                 ("moonshot".to_string(), "stored-moonshot-key".to_string()),
                 ("qwen".to_string(), "stored-qwen-key".to_string()),
             ]),
+            ..Default::default()
         };
         let claude = ClaudeSettings::default();
 
@@ -684,6 +761,7 @@ mod tests {
     fn detect_credentials_key_status_includes_registry_known_providers() {
         let settings = Settings {
             api_keys: HashMap::from([("kimi".to_string(), "stored-kimi-key".to_string())]),
+            ..Default::default()
         };
         let status = settings.key_status();
         let providers = status
@@ -701,6 +779,85 @@ mod tests {
         assert!(status
             .iter()
             .any(|entry| entry.provider == "kimi" && entry.set));
+    }
+
+    #[test]
+    fn detect_credentials_uses_configured_user_provider_profile() {
+        let settings = Settings {
+            api_keys: HashMap::from([("nvidia".to_string(), "stored-nvidia-key".to_string())]),
+            providers: vec![ProviderProfileConfig {
+                id: "nvidia".to_string(),
+                label: Some("NVIDIA NIM".to_string()),
+                base_url: Some("https://integrate.api.nvidia.com/v1".to_string()),
+                api_key_env: Some(EnvVarList::One("NVIDIA_API_KEY".to_string())),
+                base_url_env: Some(EnvVarList::One("NVIDIA_BASE_URL".to_string())),
+                default_model: Some("nvidia/llama-3.1-nemotron".to_string()),
+                transport: Some("openai_chat_completions".to_string()),
+                supports_tools: Some(true),
+                supports_streaming: Some(true),
+                max_output_tokens_default: Some(16_384),
+                aliases: vec!["nim".to_string()],
+            }],
+        };
+        let claude = ClaudeSettings::default();
+
+        let credentials =
+            detect_credentials_from_sources("nim", &settings, &claude, |key| match key {
+                "NVIDIA_API_KEY" => Some("env-nvidia-key".to_string()),
+                "NVIDIA_BASE_URL" => Some("https://env.nvidia.example/v1".to_string()),
+                _ => None,
+            });
+
+        assert_eq!(credentials.api_key, "stored-nvidia-key");
+        assert_eq!(
+            credentials.api_base.as_deref(),
+            Some("https://env.nvidia.example/v1")
+        );
+        assert_eq!(
+            credentials.model.as_deref(),
+            Some("nvidia/llama-3.1-nemotron")
+        );
+        assert!(settings.provider_requires_api_key("nim"));
+        assert!(settings
+            .key_status()
+            .iter()
+            .any(|status| status.provider == "nvidia" && status.set));
+    }
+
+    #[test]
+    fn provider_requires_api_key_respects_no_auth_profiles() {
+        let settings = Settings {
+            providers: vec![ProviderProfileConfig {
+                id: "local-openai".to_string(),
+                label: Some("Local OpenAI".to_string()),
+                base_url: Some("http://127.0.0.1:1234/v1".to_string()),
+                api_key_env: Some(EnvVarList::Many(vec![])),
+                base_url_env: None,
+                default_model: Some("local-model".to_string()),
+                transport: Some("openai_chat_completions".to_string()),
+                supports_tools: Some(true),
+                supports_streaming: Some(true),
+                max_output_tokens_default: None,
+                aliases: vec![],
+            }],
+            ..Default::default()
+        };
+
+        let credentials = detect_credentials_from_sources(
+            "local-openai",
+            &settings,
+            &ClaudeSettings::default(),
+            |_| None,
+        );
+
+        assert_eq!(credentials.api_key, "");
+        assert_eq!(
+            credentials.api_base.as_deref(),
+            Some("http://127.0.0.1:1234/v1")
+        );
+        assert_eq!(credentials.model.as_deref(), Some("local-model"));
+        assert!(!settings.provider_requires_api_key("local-openai"));
+        assert!(!settings.provider_requires_api_key("ollama"));
     }
 
     #[test]

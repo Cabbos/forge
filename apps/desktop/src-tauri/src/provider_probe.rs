@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::adapters::provider_registry::{
-    get_provider_definition, valid_provider_ids, ProviderDefinition, ProviderTransport,
+    find_loaded_provider_profile, LoadedProviderProfile, ProviderTransport,
 };
 use crate::settings::Credentials;
 
@@ -48,24 +48,39 @@ pub(crate) async fn probe_provider_with_credentials(
     credentials: Credentials,
     client: reqwest::Client,
 ) -> ProviderProbeResult {
-    let Some(definition) = get_provider_definition(provider) else {
-        return unsupported_provider_result(provider);
+    probe_provider_with_credentials_and_profiles(
+        provider,
+        credentials,
+        client,
+        &crate::settings::load_configured_provider_profiles(),
+    )
+    .await
+}
+
+async fn probe_provider_with_credentials_and_profiles(
+    provider: &str,
+    credentials: Credentials,
+    client: reqwest::Client,
+    profiles: &[LoadedProviderProfile],
+) -> ProviderProbeResult {
+    let Some(profile) = find_loaded_provider_profile(&profiles, provider) else {
+        return unsupported_provider_result(provider, &profiles);
     };
-    let provider_id = definition.id.to_string();
-    let provider_label = definition.label.to_string();
+    let provider_id = profile.id.clone();
+    let provider_label = profile.label.clone();
     let model = credentials
         .model
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| definition.default_model.to_string());
+        .unwrap_or_else(|| profile.default_model.clone());
     let base_url = credentials
         .api_base
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| definition.default_base_url.map(str::to_string));
+        .or_else(|| profile.default_base_url.clone());
     let redaction_values = redaction_values(&credentials.api_key, base_url.as_deref());
     let base_url_label = base_url.as_deref().map(safe_base_url_label);
-    let key_required = !definition.api_key_env.is_empty();
+    let key_required = !profile.api_key_env.is_empty();
     let key_present = !credentials.api_key.trim().is_empty() || !key_required;
 
     if !key_present {
@@ -142,8 +157,7 @@ pub(crate) async fn probe_provider_with_credentials(
         };
     };
 
-    let request = match probe_request(&client, definition, &base_url, &credentials.api_key, &model)
-    {
+    let request = match probe_request(&client, profile, &base_url, &credentials.api_key, &model) {
         Ok(request) => request,
         Err(message) => {
             let message = sanitize_text(&message, &redaction_values);
@@ -213,10 +227,10 @@ pub(crate) async fn probe_provider_with_credentials(
     let body = response.text().await.unwrap_or_default();
     if status.is_success() {
         if let Err(message) =
-            validate_streaming_response(definition.transport, content_type.as_deref(), &body)
+            validate_streaming_response(profile.transport, content_type.as_deref(), &body)
         {
             return successful_http_without_streaming_result(
-                definition,
+                profile,
                 Some(model),
                 &base_url,
                 &sanitize_text(&message, &redaction_values),
@@ -254,7 +268,7 @@ pub(crate) async fn probe_provider_with_credentials(
     }
 
     failed_http_result(
-        definition,
+        profile,
         Some(model),
         &base_url,
         status.as_u16(),
@@ -275,7 +289,7 @@ pub(crate) async fn probe_provider(provider: &str) -> ProviderProbeResult {
 
 fn probe_request(
     client: &reqwest::Client,
-    definition: &ProviderDefinition,
+    profile: &LoadedProviderProfile,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -285,71 +299,95 @@ fn probe_request(
         return Err("Base URL is empty.".to_string());
     }
 
-    match definition.transport {
+    match profile.transport {
         ProviderTransport::AnthropicMessages | ProviderTransport::CustomAnthropicCompatible => {
-            Ok(client
-                .post(format!("{base_url}/v1/messages"))
-                .header("x-api-key", api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&json!({
-                    "model": model,
-                    "max_tokens": 16,
-                    "stream": true,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": "Reply with ok."
-                        }
-                    ],
-                    "tools": [
-                        {
-                            "name": PROBE_TOOL_NAME,
-                            "description": "No-op compatibility probe.",
-                            "input_schema": noop_tool_schema()
-                        }
-                    ]
-                })))
-        }
-        ProviderTransport::OpenAiChatCompletions | ProviderTransport::CustomOpenAiCompatible => {
-            Ok(client
-                .post(format!("{base_url}/chat/completions"))
-                .header("authorization", format!("Bearer {api_key}"))
-                .header("content-type", "application/json")
-                .json(&json!({
-                    "model": model,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": "Reply with ok."
-                        }
-                    ],
-                    "stream": true,
-                    "max_tokens": 16,
-                    "tools": [
-                        {
-                            "type": "function",
-                            "function": {
+            let request =
+                with_anthropic_auth_header(client.post(format!("{base_url}/v1/messages")), api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .json(&json!({
+                        "model": model,
+                        "max_tokens": 16,
+                        "stream": true,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "Reply with ok."
+                            }
+                        ],
+                        "tools": [
+                            {
                                 "name": PROBE_TOOL_NAME,
                                 "description": "No-op compatibility probe.",
-                                "parameters": noop_tool_schema()
+                                "input_schema": noop_tool_schema()
                             }
+                        ]
+                    }));
+            Ok(request)
+        }
+        ProviderTransport::OpenAiChatCompletions | ProviderTransport::CustomOpenAiCompatible => {
+            let request = with_bearer_auth_header(
+                client.post(format!("{base_url}/chat/completions")),
+                api_key,
+            )
+            .header("content-type", "application/json")
+            .json(&json!({
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Reply with ok."
+                    }
+                ],
+                "stream": true,
+                "max_tokens": 16,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": PROBE_TOOL_NAME,
+                            "description": "No-op compatibility probe.",
+                            "parameters": noop_tool_schema()
                         }
-                    ],
-                    "tool_choice": "none"
-                })))
+                    }
+                ],
+                "tool_choice": "none"
+            }));
+            Ok(request)
         }
         ProviderTransport::OpenAiResponses
         | ProviderTransport::NativeGemini
         | ProviderTransport::BedrockConverse => Err(format!(
             "{} uses a transport Forge cannot probe yet.",
-            definition.label
+            profile.label
         )),
     }
 }
 
+fn with_anthropic_auth_header(
+    request: reqwest::RequestBuilder,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    if api_key.trim().is_empty() {
+        request
+    } else {
+        request.header("x-api-key", api_key)
+    }
+}
+
+fn with_bearer_auth_header(
+    request: reqwest::RequestBuilder,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    if api_key.trim().is_empty() {
+        request
+    } else {
+        request.header("authorization", format!("Bearer {api_key}"))
+    }
+}
+
 fn failed_http_result(
-    definition: &ProviderDefinition,
+    profile: &LoadedProviderProfile,
     model: Option<String>,
     base_url: &str,
     status: u16,
@@ -373,8 +411,8 @@ fn failed_http_result(
 
     if looks_like_tool_schema_error(&message) {
         return ProviderProbeResult {
-            provider: definition.id.to_string(),
-            provider_label: definition.label.to_string(),
+            provider: profile.id.clone(),
+            provider_label: profile.label.clone(),
             model,
             base_url: Some(safe_base_url_label(base_url)),
             status: ProviderProbeStatus::Failed,
@@ -397,18 +435,18 @@ fn failed_http_result(
                     &format!("Provider rejected the no-op tool schema: {message}"),
                 ),
             ]),
-            message: format!("{} tool schema unsupported.", definition.label),
+            message: format!("{} tool schema unsupported.", profile.label),
             remediation: Some(format!(
                 "Use a {} model or endpoint that accepts tool/function schemas.",
-                definition.label
+                profile.label
             )),
         };
     }
 
     if looks_like_streaming_error(&message) {
         return ProviderProbeResult {
-            provider: definition.id.to_string(),
-            provider_label: definition.label.to_string(),
+            provider: profile.id.clone(),
+            provider_label: profile.label.clone(),
             model,
             base_url: Some(safe_base_url_label(base_url)),
             status: ProviderProbeStatus::Failed,
@@ -427,18 +465,18 @@ fn failed_http_result(
                     "Not run because streaming was rejected.",
                 ),
             ]),
-            message: format!("{} streaming unsupported.", definition.label),
+            message: format!("{} streaming unsupported.", profile.label),
             remediation: Some(format!(
                 "Use a {} endpoint that accepts streaming chat requests.",
-                definition.label
+                profile.label
             )),
         };
     }
 
     if looks_like_model_error(&message) {
         return ProviderProbeResult {
-            provider: definition.id.to_string(),
-            provider_label: definition.label.to_string(),
+            provider: profile.id.clone(),
+            provider_label: profile.label.clone(),
             model,
             base_url: Some(safe_base_url_label(base_url)),
             status: ProviderProbeStatus::Failed,
@@ -461,22 +499,22 @@ fn failed_http_result(
                     "Not run because the model was rejected.",
                 ),
             ]),
-            message: format!("{} model rejected.", definition.label),
+            message: format!("{} model rejected.", profile.label),
             remediation: Some(format!(
                 "Select a model available to your {} account or endpoint.",
-                definition.label
+                profile.label
             )),
         };
     }
 
     let auth_message = if looks_like_auth_error(status, &message) {
-        format!("{} rejected the configured API key.", definition.label)
+        format!("{} rejected the configured API key.", profile.label)
     } else {
-        format!("{} probe failed.", definition.label)
+        format!("{} probe failed.", profile.label)
     };
     ProviderProbeResult {
-        provider: definition.id.to_string(),
-        provider_label: definition.label.to_string(),
+        provider: profile.id.clone(),
+        provider_label: profile.label.clone(),
         model,
         base_url: Some(safe_base_url_label(base_url)),
         status: ProviderProbeStatus::Failed,
@@ -505,14 +543,14 @@ fn failed_http_result(
 }
 
 fn successful_http_without_streaming_result(
-    definition: &ProviderDefinition,
+    profile: &LoadedProviderProfile,
     model: Option<String>,
     base_url: &str,
     reason: &str,
 ) -> ProviderProbeResult {
     ProviderProbeResult {
-        provider: definition.id.to_string(),
-        provider_label: definition.label.to_string(),
+        provider: profile.id.clone(),
+        provider_label: profile.label.clone(),
         model,
         base_url: Some(safe_base_url_label(base_url)),
         status: ProviderProbeStatus::Failed,
@@ -535,15 +573,18 @@ fn successful_http_without_streaming_result(
                 "Not confirmed because the streaming response shape was not confirmed.",
             ),
         ]),
-        message: format!("{} streaming response was not confirmed.", definition.label),
+        message: format!("{} streaming response was not confirmed.", profile.label),
         remediation: Some(format!(
             "Check that the {} endpoint supports streaming responses for this model.",
-            definition.label
+            profile.label
         )),
     }
 }
 
-fn unsupported_provider_result(provider: &str) -> ProviderProbeResult {
+fn unsupported_provider_result(
+    provider: &str,
+    profiles: &[LoadedProviderProfile],
+) -> ProviderProbeResult {
     ProviderProbeResult {
         provider: provider.to_string(),
         provider_label: provider.to_string(),
@@ -564,7 +605,11 @@ fn unsupported_provider_result(provider: &str) -> ProviderProbeResult {
         message: format!("Unsupported provider: {provider}."),
         remediation: Some(format!(
             "Choose one of: {}.",
-            valid_provider_ids().join(", ")
+            profiles
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
@@ -823,6 +868,7 @@ fn looks_like_auth_error(status: u16, message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::provider_registry::load_provider_profiles;
     use crate::settings::Credentials;
     use serde_json::json;
     use std::io::{Read, Write};
@@ -837,7 +883,7 @@ mod tests {
             .expect("make test listener nonblocking");
         let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: String::new(),
@@ -865,7 +911,7 @@ mod tests {
             "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n",
         );
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: "test-key".to_string(),
@@ -919,6 +965,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_probe_allows_no_auth_ollama_without_key_header() {
+        let (base_url, request_rx) = spawn_probe_response_server(
+            200,
+            "text/event-stream",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\n",
+        );
+
+        let result = probe_builtin_provider_with_credentials(
+            "ollama",
+            Credentials {
+                api_key: String::new(),
+                api_base: Some(base_url),
+                model: Some("qwen2.5-coder".to_string()),
+            },
+            reqwest::Client::new(),
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderProbeStatus::Passed);
+        assert_eq!(result.provider, "ollama");
+        assert_check(&result, "key_present", ProviderProbeCheckStatus::Passed);
+
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured probe request");
+        assert_eq!(request["path"], "/v1/messages");
+        assert_eq!(request["authorization"], "");
+        assert_eq!(request["x_api_key"], "");
+        assert_eq!(request["body"]["model"], "qwen2.5-coder");
+        assert_eq!(request["body"]["tools"][0]["name"], "forge_probe");
+    }
+
+    #[tokio::test]
     async fn provider_probe_reports_unsupported_tool_schema() {
         let (base_url, _request_rx) = spawn_probe_response_server(
             400,
@@ -931,7 +1010,7 @@ mod tests {
             .to_string(),
         );
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: "test-key".to_string(),
@@ -972,7 +1051,7 @@ mod tests {
     async fn provider_probe_rejects_200_json_without_streaming_shape() {
         let (base_url, _request_rx) = spawn_probe_response_server(200, "application/json", "{}");
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: "test-key".to_string(),
@@ -1012,7 +1091,7 @@ mod tests {
         let (base_url, _request_rx) =
             spawn_probe_response_server(200, "text/event-stream", "still warming up\n");
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: "test-key".to_string(),
@@ -1062,7 +1141,7 @@ mod tests {
         );
         let secret_url = format!("{base_url}?api_key={secret}#token={secret}");
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: secret.to_string(),
@@ -1082,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn provider_probe_sanitizes_malformed_secret_base_url() {
         let secret = "sk-secret-query-abcdef1234567890";
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "custom_openai",
             Credentials {
                 api_key: "test-key".to_string(),
@@ -1113,7 +1192,7 @@ mod tests {
         );
         let secret_url = format!("{base_url}/{secret}");
 
-        let result = probe_provider_with_credentials(
+        let result = probe_builtin_provider_with_credentials(
             "openai",
             Credentials {
                 api_key: "test-key".to_string(),
@@ -1137,6 +1216,15 @@ mod tests {
             .find(|check| check.id == id)
             .unwrap_or_else(|| panic!("missing check {id}"));
         assert_eq!(check.status, expected, "{id}: {}", check.message);
+    }
+
+    async fn probe_builtin_provider_with_credentials(
+        provider: &str,
+        credentials: Credentials,
+        client: reqwest::Client,
+    ) -> ProviderProbeResult {
+        let profiles = load_provider_profiles(&[]).expect("built-in profiles load");
+        probe_provider_with_credentials_and_profiles(provider, credentials, client, &profiles).await
     }
 
     fn spawn_probe_response_server(
@@ -1206,10 +1294,19 @@ mod tests {
                     .then(|| value.trim().to_string())
             })
             .unwrap_or_default();
+        let x_api_key = headers
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("x-api-key")
+                    .then(|| value.trim().to_string())
+            })
+            .unwrap_or_default();
 
         json!({
             "path": path,
             "authorization": authorization,
+            "x_api_key": x_api_key,
             "body": body,
         })
     }

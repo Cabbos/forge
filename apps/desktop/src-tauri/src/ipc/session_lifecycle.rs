@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::adapters::build_adapter;
+use crate::adapters::build_adapter_with_profiles;
 use crate::agent::provider_capabilities::{missing_api_key_message, normalize_provider};
 use crate::agent::session::{AgentSession, SessionStatus};
 use crate::agent::session_events;
@@ -384,7 +384,7 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
     let snapshot = session.snapshot();
     let provider = normalize_provider(Some(&snapshot.provider));
     let credentials = settings::detect_credentials(&provider);
-    if credentials.api_key.trim().is_empty() {
+    if credentials.api_key.trim().is_empty() && settings::provider_requires_api_key(&provider) {
         return Ok(session);
     }
 
@@ -395,11 +395,13 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
     ));
     let model_str = snapshot.model.clone();
     let external_tools = harness.external_mcp_tool_definitions().await;
-    let adapter = build_adapter(
+    let provider_profiles = settings::load_configured_provider_profiles();
+    let adapter = build_adapter_with_profiles(
         &provider,
         &credentials.api_key,
         &model_str,
         credentials.api_base.as_deref(),
+        &provider_profiles,
         external_tools,
     )
     .map_err(|error| error.to_string())?;

@@ -101,6 +101,46 @@ Vite 默认运行在 `http://localhost:1420`。完整桌面端需要通过 Tauri
     "deepseek": "sk-...",
     "anthropic": "sk-ant-...",
     "openai": "sk-...",
+    "openrouter": "sk-or-...",
+    "nvidia": "nvapi-..."
+  },
+  "providers": [
+    {
+      "id": "nvidia",
+      "label": "NVIDIA NIM",
+      "transport": "openai_chat_completions",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "base_url_env": "NVIDIA_BASE_URL",
+      "default_model": "nvidia/llama-3.1-nemotron",
+      "supports_tools": true,
+      "supports_streaming": true,
+      "aliases": ["nim"]
+    },
+    {
+      "id": "local-openai",
+      "label": "Local OpenAI-Compatible",
+      "transport": "openai_chat_completions",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "default_model": "local-model",
+      "api_key_env": [],
+      "supports_tools": true,
+      "supports_streaming": true
+    }
+  ]
+}
+```
+
+`providers` 是 data-only profile：它可以添加或覆盖 provider 的 label、transport、base URL、key/model 环境变量、默认模型和基础能力标记，但不会加载可执行插件代码。`api_key_env: []` 表示本地兼容服务不需要鉴权；Forge 会跳过 missing-key gate，并且不会发送空 `Authorization` / `x-api-key` header。
+
+也可以只保存 API key：
+
+```json
+{
+  "api_keys": {
+    "deepseek": "sk-...",
+    "anthropic": "sk-ant-...",
+    "openai": "sk-...",
     "openrouter": "sk-or-..."
   }
 }
