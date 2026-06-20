@@ -17,6 +17,8 @@ interface SettingsProviderRowsProps {
   probeResults: Record<string, ProviderProbeResult>;
   refreshingModelsProvider: string | null;
   modelCatalogResults: Record<string, ProviderModelCatalogResult>;
+  selectedProvider: string;
+  selectedModel: string;
   onEdit: (provider: string) => void;
   onValueChange: (value: string) => void;
   onVisibleChange: (visible: boolean) => void;
@@ -25,6 +27,7 @@ interface SettingsProviderRowsProps {
   onRemove: (provider: string) => void;
   onProbe: (provider: string) => void;
   onRefreshModels: (provider: string) => void;
+  onUseModel: (provider: string, model: string) => void;
   onEditProviderProfile: (provider: string) => void;
   onDeleteProviderProfile: (provider: string) => void;
 }
@@ -40,6 +43,8 @@ export function SettingsProviderRows({
   probeResults,
   refreshingModelsProvider,
   modelCatalogResults,
+  selectedProvider,
+  selectedModel,
   onEdit,
   onValueChange,
   onVisibleChange,
@@ -48,6 +53,7 @@ export function SettingsProviderRows({
   onRemove,
   onProbe,
   onRefreshModels,
+  onUseModel,
   onEditProviderProfile,
   onDeleteProviderProfile,
 }: SettingsProviderRowsProps) {
@@ -277,14 +283,17 @@ export function SettingsProviderRows({
                 {modelCatalogResult.models.length > 0 && (
                   <div className="forge-settings-provider-probe-checks">
                     {modelCatalogResult.models.slice(0, 6).map((model) => (
-                      <span
+                      <ButtonPrimitive
                         key={model.id}
+                        type="button"
                         className="forge-settings-provider-probe-check"
-                        data-state="passed"
+                        data-state={key.provider === selectedProvider && model.id === selectedModel ? "configured" : "passed"}
                         title={model.id}
+                        aria-label={`使用模型 ${model.id}`}
+                        onClick={() => onUseModel(key.provider, model.id)}
                       >
                         {model.name || model.id}
-                      </span>
+                      </ButtonPrimitive>
                     ))}
                   </div>
                 )}

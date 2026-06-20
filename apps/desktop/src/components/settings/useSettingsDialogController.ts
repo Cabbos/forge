@@ -60,6 +60,8 @@ export function useSettingsDialogController({
   const workspaceCount = useStore((s) => s.workspaces.size);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
+  const setSelectedProvider = useStore((s) => s.setSelectedProvider);
+  const setSelectedModel = useStore((s) => s.setSelectedModel);
   const dialogOpen = open ?? internalOpen;
   const setDialogOpen = useCallback((nextOpen: boolean) => {
     if (open === undefined) setInternalOpen(nextOpen);
@@ -265,6 +267,11 @@ export function useSettingsDialogController({
     }
   }, [queryClient]);
 
+  const handleUseProviderModel = useCallback((provider: string, model: string) => {
+    setSelectedProvider(provider);
+    setSelectedModel(model);
+  }, [setSelectedModel, setSelectedProvider]);
+
   const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys, providers);
   const sessionCount = sessions.size;
   const workspaceName = activeWorkspace?.name ?? "未选择项目";
@@ -281,6 +288,8 @@ export function useSettingsDialogController({
     probeResults,
     refreshingModelsProvider,
     modelCatalogResults,
+    selectedProvider,
+    selectedModel,
     onEdit: handleEdit,
     onValueChange: setValue,
     onVisibleChange: setVisible,
@@ -289,6 +298,7 @@ export function useSettingsDialogController({
     onRemove: handleRemove,
     onProbe: handleProbe,
     onRefreshModels: handleRefreshModels,
+    onUseModel: handleUseProviderModel,
     onEditProviderProfile: handleEditProviderProfile,
     onDeleteProviderProfile: handleDeleteProviderProfile,
   };

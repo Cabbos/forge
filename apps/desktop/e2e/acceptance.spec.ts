@@ -116,6 +116,14 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(providerRow).toContainText("DeepSeek returned 2 models.");
     await expect(providerRow).toContainText("deepseek-reasoner");
     await expect(providerRow).toContainText("deepseek-v4-flash[1m]");
+    await providerRow.getByRole("button", { name: "使用模型 deepseek-reasoner" }).click();
+    await expect(dialog.locator(".forge-settings-info-row").filter({ hasText: "默认模型" })).toContainText("deepseek-reasoner");
+    const metadata = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__tauriMockIPC("load_app_metadata", {});
+    });
+    expect(metadata.selectedProvider).toBe("deepseek");
+    expect(metadata.selectedModel).toBe("deepseek-reasoner");
 
     const refreshArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock

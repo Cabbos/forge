@@ -35,7 +35,7 @@ Runs the Forge Level 3 runtime acceptance gates:
   19. Persisted A2A lineage tests
   20. Typed completion evidence and review-to-commit eligibility tests
   21. Gated headless ownership policy tests
-  22. Desktop Phase 7 provider probe/model catalog/readiness/profile editor and A2A worker lifecycle smoke specs
+  22. Desktop Phase 7 provider probe/model catalog selection/readiness/profile editor and A2A worker lifecycle smoke specs
   23. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
@@ -71,7 +71,7 @@ COMMAND_LABELS=(
   "persisted A2A lineage tests"
   "typed completion evidence and review-to-commit eligibility tests"
   "gated headless ownership policy tests"
-  "desktop Phase 7 provider probe/model catalog/readiness/profile editor and A2A worker lifecycle smoke specs"
+  "desktop Phase 7 provider probe/model catalog selection/readiness/profile editor and A2A worker lifecycle smoke specs"
   "rich preview e2e smoke specs"
 )
 

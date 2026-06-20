@@ -544,6 +544,16 @@ This closes a practical UX drift introduced by custom provider support: Settings
 
 **Still not claimed:** live provider certification, startup auto-probing, automatic default-model mutation after `/models`, native Anthropic/Gemini/Bedrock model catalog endpoints, billing-grade pricing metadata, or executable Hermes-style provider plugins.
 
+## 2026-06-20 Post-MVP Usability Slice: Selectable Model Catalog Results
+
+**Status (2026-06-20): Implemented as the seventh "fully usable provider" hardening slice after MVP closure.** Manual `/models` refresh results in Settings are now actionable instead of read-only. Each returned model id can be selected directly from the provider row, updating the current Composer provider/model selection and persisted app metadata while keeping profile defaults unchanged.
+
+This closes the small but important product gap after model catalog caching: a user could refresh an endpoint and see the model ids, but still had to leave Settings and search the Composer model menu to use one. The new action keeps the flow explicit and human-controlled: refresh the endpoint, inspect the returned ids, choose one for the current Composer selection. It does not silently mutate saved profile defaults.
+
+**Evidence:** TDD red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models refreshes a mocked provider model catalog"` because refreshed model rows were labels, not buttons. Green verification for that focused browser test now covers the use action, Settings summary update, persisted metadata update, and Composer menu visibility for the refreshed model.
+
+**Still not claimed:** automatic profile-default mutation, automatic startup probing, live provider certification, native Anthropic/Gemini/Bedrock model catalog endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:
