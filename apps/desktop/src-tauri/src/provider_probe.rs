@@ -307,6 +307,7 @@ fn cached_probe_evidence(result: &ProviderProbeResult) -> CachedProviderProbeEvi
             ProviderProbeStatus::Passed => ProviderProbeEvidenceStatus::Passed,
             ProviderProbeStatus::Failed => ProviderProbeEvidenceStatus::Failed,
         },
+        recorded_at_ms: Some(current_epoch_millis()),
         model: result.model.clone(),
         base_url: result.base_url.clone(),
         checks: result
@@ -322,6 +323,13 @@ fn cached_probe_evidence(result: &ProviderProbeResult) -> CachedProviderProbeEvi
             })
             .collect(),
     }
+}
+
+fn current_epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 fn probe_request(
@@ -998,6 +1006,32 @@ mod tests {
         assert!(
             !serialized.contains("test-key"),
             "probe result must not leak API keys"
+        );
+    }
+
+    #[test]
+    fn cached_provider_probe_evidence_records_capture_time() {
+        let result = ProviderProbeResult {
+            provider: "openai".to_string(),
+            provider_label: "OpenAI".to_string(),
+            model: Some("gpt-4o".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            status: ProviderProbeStatus::Passed,
+            checks: vec![ProviderProbeCheck {
+                id: "streaming_accepted".to_string(),
+                label: "Streaming accepted".to_string(),
+                status: ProviderProbeCheckStatus::Passed,
+                message: "Streaming request was accepted.".to_string(),
+            }],
+            message: "OpenAI probe passed.".to_string(),
+            remediation: None,
+        };
+
+        let evidence = cached_probe_evidence(&result);
+
+        assert!(
+            evidence.recorded_at_ms.is_some_and(|value| value > 0),
+            "cached manual probe evidence must include when it was recorded"
         );
     }
 

@@ -133,6 +133,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
           probe_evidence: {
             source: "manual_probe",
             status: "passed",
+            recorded_at_ms: 1717891200000,
             model: "deepseek-v4-flash[1m]",
             base_url: "https://api.deepseek.com/anthropic",
             checks: [
@@ -153,8 +154,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await expect(providerRow).toContainText("上次手动检测通过");
     await expect(providerRow).toContainText("证据摘要");
-    await expect(providerRow).toContainText("手动检测通过 · 目录未验证");
+    await expect(providerRow).toContainText("手动检测通过 · 检测 2024-06-09 · 目录未验证");
     await expect(providerRow).toContainText("模型 deepseek-v4-flash[1m]");
+    await expect(providerRow).toContainText("检测 2024-06-09");
     await expect(providerRow).toContainText("Tool schema accepted");
   });
 

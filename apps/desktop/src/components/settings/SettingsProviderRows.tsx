@@ -335,6 +335,7 @@ export function SettingsProviderRows({
                 </div>
                 <div className="forge-settings-provider-probe-meta">
                   {[
+                    cachedProbeRecordedAtLabel(cachedProbeEvidence),
                     cachedProbeEvidence.model && `模型 ${cachedProbeEvidence.model}`,
                     cachedProbeEvidence.base_url && `Base ${cachedProbeEvidence.base_url}`,
                   ]
@@ -456,6 +457,15 @@ function cachedModelCatalogSourceLabel(source: ProviderModelCatalogSource) {
 
 function cachedProbeStatusLabel(evidence: ProviderProbeEvidence) {
   return evidence.status === "passed" ? "上次手动检测通过" : "上次手动检测失败";
+}
+
+function cachedProbeRecordedAtLabel(evidence: ProviderProbeEvidence) {
+  if (typeof evidence.recorded_at_ms !== "number" || !Number.isFinite(evidence.recorded_at_ms)) {
+    return "检测时间未知";
+  }
+  const date = new Date(evidence.recorded_at_ms);
+  if (Number.isNaN(date.getTime())) return "检测时间未知";
+  return `检测 ${date.toISOString().slice(0, 10)}`;
 }
 
 function providerEvidenceBlockState(summary: ProviderEvidenceSummary) {

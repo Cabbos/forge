@@ -98,6 +98,7 @@ describe("deriveStartReadiness", () => {
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
+        recorded_at_ms: 1_717_891_200_000,
         model: "nvidia/llama-3.1-nemotron",
         base_url: "https://integrate.api.nvidia.com/v1",
         checks: [
@@ -122,7 +123,7 @@ describe("deriveStartReadiness", () => {
     assert.equal(readiness.title, "准备开始");
     assert.equal(readiness.issueCount, 0);
     assert.equal(evidenceRow?.tone, "ready");
-    assert.equal(evidenceRow?.value, "证据较强：手动检测通过 · 目录 Live /models");
+    assert.equal(evidenceRow?.value, "证据较强：手动检测通过 · 检测 2024-06-09 · 目录 Live /models");
     assert.equal(evidenceRow?.action, null);
   });
 
@@ -138,6 +139,7 @@ describe("deriveStartReadiness", () => {
       probeEvidence: {
         source: "manual_probe",
         status: "failed",
+        recorded_at_ms: null,
         model: "gpt-4o",
         base_url: "https://api.openai.com/v1",
         checks: [
@@ -162,7 +164,7 @@ describe("deriveStartReadiness", () => {
     assert.equal(readiness.subtitle, "打开设置重新检测 provider。");
     assert.equal(readiness.issueCount, 1);
     assert.equal(evidenceRow?.tone, "blocked");
-    assert.equal(evidenceRow?.value, "检测失败：手动检测失败 · 目录未验证");
+    assert.equal(evidenceRow?.value, "检测失败：手动检测失败 · 检测时间未知 · 目录未验证");
     assert.equal(evidenceRow?.action, "open_settings");
     assert.equal(evidenceRow?.actionLabel, "打开设置");
   });

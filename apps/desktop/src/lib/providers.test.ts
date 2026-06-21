@@ -229,6 +229,7 @@ describe("frontend provider catalog", () => {
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
+        recorded_at_ms: 1_717_891_200_000,
         model: "nvidia/llama-3.1-nemotron",
         base_url: "https://integrate.api.nvidia.com/v1",
         checks: [
@@ -239,7 +240,7 @@ describe("frontend provider catalog", () => {
     });
     assert.equal(liveReady.tone, "ready");
     assert.equal(liveReady.label, "证据较强");
-    assert.equal(liveReady.detail, "手动检测通过 · 目录 Live /models");
+    assert.equal(liveReady.detail, "手动检测通过 · 检测 2024-06-09 · 目录 Live /models");
 
     const staticFallback = deriveProviderEvidenceSummary({
       id: "kimi",
@@ -266,6 +267,7 @@ describe("frontend provider catalog", () => {
       probeEvidence: {
         source: "manual_probe",
         status: "failed",
+        recorded_at_ms: null,
         model: "gpt-4o",
         base_url: "https://api.openai.com/v1",
         checks: [{ id: "key_present", label: "Key present", status: "failed" }],
@@ -273,6 +275,6 @@ describe("frontend provider catalog", () => {
     });
     assert.equal(failedProbe.tone, "blocked");
     assert.equal(failedProbe.label, "检测失败");
-    assert.equal(failedProbe.detail, "手动检测失败 · 目录未验证");
+    assert.equal(failedProbe.detail, "手动检测失败 · 检测时间未知 · 目录未验证");
   });
 });

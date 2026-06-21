@@ -661,6 +661,8 @@ pub struct CachedProviderProbeEvidence {
     pub source: ProviderProbeEvidenceSource,
     pub status: ProviderProbeEvidenceStatus,
     #[serde(default)]
+    pub recorded_at_ms: Option<u64>,
+    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub base_url: Option<String>,
@@ -1302,6 +1304,7 @@ mod tests {
                 CachedProviderProbeEvidence {
                     source: ProviderProbeEvidenceSource::ManualProbe,
                     status: ProviderProbeEvidenceStatus::Passed,
+                    recorded_at_ms: Some(1_717_891_200_000),
                     model: Some("gpt-4o".to_string()),
                     base_url: Some("https://api.openai.com/v1".to_string()),
                     checks: vec![CachedProviderProbeCheck {
@@ -1325,6 +1328,7 @@ mod tests {
 
         assert_eq!(evidence.source, ProviderProbeEvidenceSource::ManualProbe);
         assert_eq!(evidence.status, ProviderProbeEvidenceStatus::Passed);
+        assert_eq!(evidence.recorded_at_ms, Some(1_717_891_200_000));
         assert_eq!(evidence.model.as_deref(), Some("gpt-4o"));
         assert_eq!(
             evidence.base_url.as_deref(),

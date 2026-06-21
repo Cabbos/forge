@@ -654,6 +654,16 @@ This closes a recovery-flow gap after provider evidence started gating readiness
 
 **Still not claimed:** automatic provider repair, automatic probe retry, startup paid-API probing, scheduled provider recertification, or live certification for every provider.
 
+## 2026-06-21 Post-MVP Usability Slice: Dated Manual Probe Evidence
+
+**Status (2026-06-21): Implemented as the eighteenth "fully usable provider" hardening slice after MVP closure.** Cached manual provider probe evidence now carries `recorded_at_ms`. `probe_provider` stamps saved evidence with the current epoch milliseconds; `get_provider_catalog` projects that timestamp; frontend provider definitions preserve it; Settings cached-probe metadata and provider evidence summaries display `检测 YYYY-MM-DD`; and old cached evidence without a timestamp is shown as `检测时间未知`.
+
+This closes the evidence-freshness gap. A durable manual probe result is useful, but without a recorded time it is too easy to treat a stale compatibility check as timeless certification. Provider usability needs the evidence and the age of that evidence to move together through cache, replay, Settings, and start readiness. The boundary remains explicit: a timestamp is not scheduled recertification and does not prove the provider endpoint is currently live.
+
+**Evidence:** TDD red pass failed in Rust because `CachedProviderProbeEvidence` had no `recorded_at_ms`, and failed in TypeScript because provider evidence summaries did not include a date or unknown-time boundary. Green verification covers provider probe cache stamping, Settings catalog projection, frontend evidence summary formatting, readiness strings, and browser-visible cached probe dates.
+
+**Still not claimed:** automatic provider recertification, background probe refresh, live certification for every provider, billing-grade uptime evidence, or automatic repair/retry behavior.
+
 ## MVP Definition
 
 The MVP is complete when:

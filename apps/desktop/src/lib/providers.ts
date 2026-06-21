@@ -89,6 +89,7 @@ export interface ProviderDefinition {
 export interface ProviderProbeEvidence {
   source: ProviderProbeEvidenceSource;
   status: ProviderProbeStatus;
+  recorded_at_ms?: number | null;
   model?: string | null;
   base_url?: string | null;
   checks: ProviderProbeEvidenceCheck[];
@@ -426,6 +427,9 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
       ? "手动检测通过"
       : "手动检测失败"
     : "尚未手动检测";
+  const probeRecordedAtDetail = provider.probeEvidence
+    ? formatProbeRecordedAt(provider.probeEvidence.recorded_at_ms)
+    : null;
   const catalogDetail = provider.modelCatalogSource
     ? provider.modelCatalogSource === "live_endpoint"
       ? "目录 Live /models"
@@ -438,7 +442,7 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
     return {
       tone: "ready",
       label: provider.modelCatalogSource === "live_endpoint" ? "证据较强" : "手动检测通过",
-      detail: `${probeDetail} · ${catalogDetail}`,
+      detail: [probeDetail, probeRecordedAtDetail, catalogDetail].filter(Boolean).join(" · "),
     };
   }
 
@@ -446,7 +450,7 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
     return {
       tone: "blocked",
       label: "检测失败",
-      detail: `${probeDetail} · ${catalogDetail}`,
+      detail: [probeDetail, probeRecordedAtDetail, catalogDetail].filter(Boolean).join(" · "),
     };
   }
 
@@ -463,6 +467,13 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
     label: "需要手动检测",
     detail: `${probeDetail} · ${catalogDetail}`,
   };
+}
+
+function formatProbeRecordedAt(recordedAtMs?: number | null): string {
+  if (typeof recordedAtMs !== "number" || !Number.isFinite(recordedAtMs)) return "检测时间未知";
+  const date = new Date(recordedAtMs);
+  if (Number.isNaN(date.getTime())) return "检测时间未知";
+  return `检测 ${date.toISOString().slice(0, 10)}`;
 }
 
 function mergeModelOptions(

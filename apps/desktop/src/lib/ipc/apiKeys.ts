@@ -82,6 +82,7 @@ export interface ProviderProbeResult {
 export interface ProviderProbeEvidence {
   source: ProviderProbeEvidenceSource;
   status: ProviderProbeStatus;
+  recorded_at_ms: number | null;
   model: string | null;
   base_url: string | null;
   checks: ProviderProbeEvidenceCheck[];
