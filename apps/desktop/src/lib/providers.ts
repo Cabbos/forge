@@ -109,7 +109,14 @@ export interface ProviderEvidenceSummary {
   tone: ProviderEvidenceTone;
   label: string;
   detail: string;
+  reviewRecommended: boolean;
 }
+
+export interface ProviderEvidenceSummaryOptions {
+  nowMs?: number;
+}
+
+const PROVIDER_EVIDENCE_STALE_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
 
 export const PROVIDERS: ProviderDefinition[] = [
   {
@@ -425,7 +432,11 @@ function providerCatalogModelOptions(entry: ProviderCatalogEntry): ModelOption[]
   return options;
 }
 
-export function deriveProviderEvidenceSummary(provider: ProviderDefinition): ProviderEvidenceSummary {
+export function deriveProviderEvidenceSummary(
+  provider: ProviderDefinition,
+  options: ProviderEvidenceSummaryOptions = {},
+): ProviderEvidenceSummary {
+  const nowMs = finiteNumberOrNull(options.nowMs) ?? Date.now();
   const probeDetail = provider.probeEvidence
     ? provider.probeEvidence.status === "passed"
       ? "手动检测通过"
@@ -434,22 +445,36 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
   const probeRecordedAtDetail = provider.probeEvidence
     ? formatProbeRecordedAt(provider.probeEvidence.recorded_at_ms)
     : null;
+  const passedProbeNeedsReview = provider.probeEvidence?.status === "passed";
+  const probeFreshnessDetail = passedProbeNeedsReview
+    ? freshnessReviewDetail(provider.probeEvidence?.recorded_at_ms, nowMs, "检测已超过 14 天", "检测需复核")
+    : null;
+  const catalogSourceDetail = provider.modelCatalogSource
+    ? provider.modelCatalogSource === "live_endpoint"
+      ? "目录 Live /models"
+      : provider.modelCatalogSource === "static_fallback"
+        ? "目录 static fallback"
+        : "目录 unsupported"
+    : null;
+  const catalogRecordedAtDetail = provider.modelCatalogSource
+    ? formatModelCatalogRecordedAt(provider.modelCatalogRecordedAtMs)
+    : null;
+  const catalogFreshnessDetail = passedProbeNeedsReview && provider.modelCatalogSource
+    ? freshnessReviewDetail(provider.modelCatalogRecordedAtMs, nowMs, "目录刷新已超过 14 天", "目录刷新需复核")
+    : null;
   const catalogDetail = provider.modelCatalogSource
-    ? [
-        provider.modelCatalogSource === "live_endpoint"
-          ? "目录 Live /models"
-          : provider.modelCatalogSource === "static_fallback"
-            ? "目录 static fallback"
-            : "目录 unsupported",
-        formatModelCatalogRecordedAt(provider.modelCatalogRecordedAtMs),
-      ].join(" · ")
+    ? [catalogSourceDetail, catalogRecordedAtDetail, catalogFreshnessDetail].filter(Boolean).join(" · ")
     : "目录未验证";
 
   if (provider.probeEvidence?.status === "passed") {
+    const reviewRecommended = Boolean(probeFreshnessDetail || catalogFreshnessDetail);
     return {
-      tone: "ready",
-      label: provider.modelCatalogSource === "live_endpoint" ? "证据较强" : "手动检测通过",
-      detail: [probeDetail, probeRecordedAtDetail, catalogDetail].filter(Boolean).join(" · "),
+      tone: reviewRecommended ? "warning" : "ready",
+      label: reviewRecommended
+        ? "证据需复核"
+        : provider.modelCatalogSource === "live_endpoint" ? "证据较强" : "手动检测通过",
+      detail: [probeDetail, probeRecordedAtDetail, probeFreshnessDetail, catalogDetail].filter(Boolean).join(" · "),
+      reviewRecommended,
     };
   }
 
@@ -458,6 +483,7 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
       tone: "blocked",
       label: "检测失败",
       detail: [probeDetail, probeRecordedAtDetail, catalogDetail].filter(Boolean).join(" · "),
+      reviewRecommended: false,
     };
   }
 
@@ -466,6 +492,7 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
       tone: "warning",
       label: "本地目录已知",
       detail: `${probeDetail} · ${catalogDetail}`,
+      reviewRecommended: false,
     };
   }
 
@@ -473,6 +500,7 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
     tone: "warning",
     label: "需要手动检测",
     detail: `${probeDetail} · ${catalogDetail}`,
+    reviewRecommended: false,
   };
 }
 
@@ -488,6 +516,21 @@ function formatModelCatalogRecordedAt(recordedAtMs?: number | null): string {
   const date = new Date(recordedAtMs);
   if (Number.isNaN(date.getTime())) return "目录刷新时间未知";
   return `目录刷新 ${date.toISOString().slice(0, 10)}`;
+}
+
+function freshnessReviewDetail(
+  recordedAtMs: number | null | undefined,
+  nowMs: number,
+  staleDetail: string,
+  unknownDetail: string,
+): string | null {
+  if (typeof recordedAtMs !== "number" || !Number.isFinite(recordedAtMs)) return unknownDetail;
+  if (!Number.isFinite(nowMs)) return null;
+  return nowMs - recordedAtMs > PROVIDER_EVIDENCE_STALE_AFTER_MS ? staleDetail : null;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function mergeModelOptions(

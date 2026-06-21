@@ -35,6 +35,10 @@ const RUST_BUILTIN_PROVIDER_IDS = [
   "custom_anthropic",
 ];
 
+const PROVIDER_EVIDENCE_RECORDED_AT_MS = 1_717_891_200_000;
+const PROVIDER_EVIDENCE_FRESH_NOW_MS = PROVIDER_EVIDENCE_RECORDED_AT_MS + 86_400_000;
+const PROVIDER_EVIDENCE_STALE_NOW_MS = PROVIDER_EVIDENCE_RECORDED_AT_MS + 16 * 86_400_000;
+
 const RUST_DEFAULT_MODELS = {
   deepseek: "deepseek-v4-flash[1m]",
   anthropic: "claude-sonnet-4-6",
@@ -228,11 +232,11 @@ describe("frontend provider catalog", () => {
       models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
       requiresApiKey: true,
       modelCatalogSource: "live_endpoint",
-      modelCatalogRecordedAtMs: 1_717_891_200_000,
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
-        recorded_at_ms: 1_717_891_200_000,
+        recorded_at_ms: PROVIDER_EVIDENCE_RECORDED_AT_MS,
         model: "nvidia/llama-3.1-nemotron",
         base_url: "https://integrate.api.nvidia.com/v1",
         checks: [
@@ -240,10 +244,38 @@ describe("frontend provider catalog", () => {
           { id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed" },
         ],
       },
-    });
+    }, { nowMs: PROVIDER_EVIDENCE_FRESH_NOW_MS });
     assert.equal(liveReady.tone, "ready");
     assert.equal(liveReady.label, "证据较强");
+    assert.equal(liveReady.reviewRecommended, false);
     assert.equal(liveReady.detail, "手动检测通过 · 检测 2024-06-09 · 目录 Live /models · 目录刷新 2024-06-09");
+
+    const staleLiveEvidence = deriveProviderEvidenceSummary({
+      id: "nvidia",
+      label: "NVIDIA NIM",
+      shortLabel: "NVIDIA",
+      keyPlaceholder: "sk-...",
+      defaultModel: "nvidia/llama-3.1-nemotron",
+      models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
+      requiresApiKey: true,
+      modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
+      probeEvidence: {
+        source: "manual_probe",
+        status: "passed",
+        recorded_at_ms: PROVIDER_EVIDENCE_RECORDED_AT_MS,
+        model: "nvidia/llama-3.1-nemotron",
+        base_url: "https://integrate.api.nvidia.com/v1",
+        checks: [{ id: "streaming_accepted", label: "Streaming accepted", status: "passed" }],
+      },
+    }, { nowMs: PROVIDER_EVIDENCE_STALE_NOW_MS });
+    assert.equal(staleLiveEvidence.tone, "warning");
+    assert.equal(staleLiveEvidence.label, "证据需复核");
+    assert.equal(staleLiveEvidence.reviewRecommended, true);
+    assert.equal(
+      staleLiveEvidence.detail,
+      "手动检测通过 · 检测 2024-06-09 · 检测已超过 14 天 · 目录 Live /models · 目录刷新 2024-06-09 · 目录刷新已超过 14 天",
+    );
 
     const staticFallback = deriveProviderEvidenceSummary({
       id: "kimi",

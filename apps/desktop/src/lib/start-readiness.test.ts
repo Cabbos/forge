@@ -49,6 +49,10 @@ const checkpointReady: ProjectCheckpointStatus = {
   message: "Checkpoint ready",
 };
 
+const PROVIDER_EVIDENCE_RECORDED_AT_MS = 1_717_891_200_000;
+const PROVIDER_EVIDENCE_FRESH_NOW_MS = PROVIDER_EVIDENCE_RECORDED_AT_MS + 86_400_000;
+const PROVIDER_EVIDENCE_STALE_NOW_MS = PROVIDER_EVIDENCE_RECORDED_AT_MS + 16 * 86_400_000;
+
 describe("deriveStartReadiness", () => {
   it("does not block no-auth provider profiles on missing API key status", () => {
     const provider: ProviderDefinition = {
@@ -95,11 +99,11 @@ describe("deriveStartReadiness", () => {
       models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
       requiresApiKey: true,
       modelCatalogSource: "live_endpoint",
-      modelCatalogRecordedAtMs: 1_717_891_200_000,
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
-        recorded_at_ms: 1_717_891_200_000,
+        recorded_at_ms: PROVIDER_EVIDENCE_RECORDED_AT_MS,
         model: "nvidia/llama-3.1-nemotron",
         base_url: "https://integrate.api.nvidia.com/v1",
         checks: [
@@ -118,6 +122,7 @@ describe("deriveStartReadiness", () => {
       keyStatuses: [{ provider: "nvidia", set: true, preview: "sk-...1234" }],
       runtime: runtimeReady,
       checkpoint: checkpointReady,
+      nowMs: PROVIDER_EVIDENCE_FRESH_NOW_MS,
     });
 
     const evidenceRow = readiness.rows.find((row) => row.label === "Provider 证据");
@@ -129,6 +134,51 @@ describe("deriveStartReadiness", () => {
       "证据较强：手动检测通过 · 检测 2024-06-09 · 目录 Live /models · 目录刷新 2024-06-09",
     );
     assert.equal(evidenceRow?.action, null);
+  });
+
+  it("warns and links to Settings when passed provider evidence is stale", () => {
+    const provider: ProviderDefinition = {
+      id: "nvidia",
+      label: "NVIDIA NIM",
+      shortLabel: "NVIDIA",
+      keyPlaceholder: "sk-...",
+      defaultModel: "nvidia/llama-3.1-nemotron",
+      models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
+      requiresApiKey: true,
+      modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
+      probeEvidence: {
+        source: "manual_probe",
+        status: "passed",
+        recorded_at_ms: PROVIDER_EVIDENCE_RECORDED_AT_MS,
+        model: "nvidia/llama-3.1-nemotron",
+        base_url: "https://integrate.api.nvidia.com/v1",
+        checks: [{ id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed" }],
+      },
+    };
+
+    const readiness = deriveStartReadiness({
+      workspace,
+      providerId: provider.id,
+      providerLabel: provider.label,
+      provider,
+      model: "nvidia/llama-3.1-nemotron",
+      keyStatuses: [{ provider: "nvidia", set: true, preview: "sk-...1234" }],
+      runtime: runtimeReady,
+      checkpoint: checkpointReady,
+      nowMs: PROVIDER_EVIDENCE_STALE_NOW_MS,
+    });
+
+    const evidenceRow = readiness.rows.find((row) => row.label === "Provider 证据");
+    assert.equal(readiness.title, "准备开始");
+    assert.equal(readiness.issueCount, 1);
+    assert.equal(evidenceRow?.tone, "warning");
+    assert.equal(
+      evidenceRow?.value,
+      "证据需复核：手动检测通过 · 检测 2024-06-09 · 检测已超过 14 天 · 目录 Live /models · 目录刷新 2024-06-09 · 目录刷新已超过 14 天",
+    );
+    assert.equal(evidenceRow?.action, "open_settings");
+    assert.equal(evidenceRow?.actionLabel, "打开设置");
   });
 
   it("blocks start readiness when the cached manual provider probe failed", () => {
@@ -183,9 +233,11 @@ describe("deriveStartReadiness", () => {
       models: [{ id: "deepseek-v4-flash[1m]", name: "DeepSeek V4 Flash 1M" }],
       requiresApiKey: true,
       modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
+        recorded_at_ms: PROVIDER_EVIDENCE_RECORDED_AT_MS,
         model: "deepseek-v4-flash[1m]",
         base_url: "https://api.deepseek.com/anthropic",
         checks: [
@@ -203,6 +255,7 @@ describe("deriveStartReadiness", () => {
       keyStatuses: [{ provider: "deepseek", set: true, preview: "sk-...1234" }],
       runtime: runtimeReady,
       checkpoint: checkpointReady,
+      nowMs: PROVIDER_EVIDENCE_FRESH_NOW_MS,
     });
 
     const modelRow = readiness.rows.find((row) => row.label === "模型");

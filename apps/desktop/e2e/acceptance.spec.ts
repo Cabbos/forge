@@ -154,7 +154,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await expect(providerRow).toContainText("上次手动检测通过");
     await expect(providerRow).toContainText("证据摘要");
-    await expect(providerRow).toContainText("手动检测通过 · 检测 2024-06-09 · 目录未验证");
+    await expect(providerRow).toContainText("证据需复核");
+    await expect(providerRow).toContainText("手动检测通过 · 检测 2024-06-09 · 检测已超过 14 天 · 目录未验证");
     await expect(providerRow).toContainText("模型 deepseek-v4-flash[1m]");
     await expect(providerRow).toContainText("检测 2024-06-09");
     await expect(providerRow).toContainText("Tool schema accepted");

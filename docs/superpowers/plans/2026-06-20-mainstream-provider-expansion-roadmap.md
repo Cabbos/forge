@@ -674,6 +674,16 @@ This closes the parallel freshness gap for model catalog evidence. Probe evidenc
 
 **Still not claimed:** scheduled model-catalog recertification, background `/models` polling, live certification for every provider, native Anthropic/Gemini/Bedrock model-list endpoints, billing-grade catalog freshness proof, or automatic default-model mutation.
 
+## 2026-06-21 Post-MVP Usability Slice: Provider Evidence Freshness Review
+
+**Status (2026-06-21): Implemented as the twentieth "fully usable provider" hardening slice after MVP closure.** Provider evidence summaries now treat old passed evidence as review-worthy instead of timelessly ready. Passed manual probe evidence and live/static model catalog evidence older than the 14-day freshness window are labeled `证据需复核`; the summary keeps the original dates and adds `检测已超过 14 天` and/or `目录刷新已超过 14 天`; start readiness downgrades the row to warning and exposes the Settings recovery action while still allowing the user to continue. Failed probe evidence remains blocked.
+
+This is the next step after storing timestamps. A timestamp is useful only if the product uses it to prevent stale confidence. Forge still does not run paid provider probes automatically, does not poll `/models` in the background, and does not claim live certification. It simply refuses to present old passed evidence as current strong evidence.
+
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/start-readiness.test.ts` because stale passed evidence still returned ready summary state and start readiness had no Settings review action. Browser red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models renders cached manual provider probe evidence"` because Settings still displayed `手动检测通过` instead of `证据需复核`. Green verification covers fresh evidence remaining ready, stale passed probe/catalog evidence becoming warning, failed probe evidence staying blocked, readiness preserving start access while linking Settings, and browser-visible stale-evidence wording.
+
+**Still not claimed:** automatic provider recertification, automatic paid-API probe retry, background model-catalog polling, live certification for every provider, billing-grade uptime proof, or automatic repair/default-model mutation.
+
 ## MVP Definition
 
 The MVP is complete when:

@@ -29,6 +29,7 @@ export function deriveStartReadiness(input: {
   keyStatuses: KeyStatus[];
   runtime: ProjectRuntimeStatus | null;
   checkpoint: ProjectCheckpointStatus | null;
+  nowMs?: number;
 }): StartReadinessView {
   const keyStatuses = Array.isArray(input.keyStatuses) ? input.keyStatuses : [];
   const providerRequiresApiKey = input.provider?.requiresApiKey !== false;
@@ -44,8 +45,11 @@ export function deriveStartReadiness(input: {
     providerModels.some((model) => model.id === selectedModel)
   );
   const modelWarning = Boolean(selectedModel) && !modelKnown;
-  const evidenceSummary = input.provider ? deriveProviderEvidenceSummary(input.provider) : null;
+  const evidenceSummary = input.provider
+    ? deriveProviderEvidenceSummary(input.provider, { nowMs: input.nowMs })
+    : null;
   const evidenceBlocked = evidenceSummary?.tone === "blocked";
+  const evidenceReviewRecommended = evidenceSummary?.reviewRecommended === true;
   const hasCheckpoint = Boolean(input.checkpoint?.last_checkpoint);
   const restorableCheckpoint = Boolean(input.checkpoint?.restorable);
   const rows: StartReadinessRow[] = [
@@ -84,8 +88,8 @@ export function deriveStartReadiness(input: {
         ? `${evidenceSummary.label}：${evidenceSummary.detail}`
         : "Provider 证据未知",
       tone: evidenceSummary?.tone ?? "warning",
-      action: evidenceBlocked ? "open_settings" : null,
-      actionLabel: evidenceBlocked ? "打开设置" : null,
+      action: evidenceBlocked || evidenceReviewRecommended ? "open_settings" : null,
+      actionLabel: evidenceBlocked || evidenceReviewRecommended ? "打开设置" : null,
     },
     {
       label: "预览",
