@@ -684,6 +684,16 @@ This is the next step after storing timestamps. A timestamp is useful only if th
 
 **Still not claimed:** automatic provider recertification, automatic paid-API probe retry, background model-catalog polling, live certification for every provider, billing-grade uptime proof, or automatic repair/default-model mutation.
 
+## 2026-06-22 Post-MVP Usability Slice: Manual Recheck Clears Stale Evidence
+
+**Status (2026-06-22): Implemented as the twenty-first "fully usable provider" hardening slice after MVP closure.** The browser acceptance harness now proves the human-controlled recovery path for stale provider evidence: a provider row can start with old passed manual probe evidence labeled `证据需复核`, the user can click the manual `检测` action, the mocked IPC path persists a fresh `recorded_at_ms` just like the real Rust backend does, the provider catalog query is invalidated, and the evidence summary returns to fresh `手动检测通过` without the stale warning.
+
+This closes a verification gap in the freshness-review loop. The production backend already stamped persisted probe evidence during `probe_provider`, but the E2E harness did not mirror that cache update, so browser coverage could not prove that a stale warning was recoverable by the same user action it recommends. Provider usability needs both sides: stale evidence must be called out, and manual recheck must visibly clear that warning.
+
+**Evidence:** TDD red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models clears stale provider evidence after manual recheck"` because the mocked persisted probe evidence had no `recorded_at_ms`, leaving the summary at `证据需复核 · 检测时间未知`. Green verification proves the stale summary is visible before recheck, the manual probe succeeds, and the summary no longer contains `证据需复核` or `检测已超过 14 天`.
+
+**Still not claimed:** automatic recheck, background recertification, paid-API startup probing, or automatic repair/default-model mutation. The recovery remains explicitly user-triggered.
+
 ## MVP Definition
 
 The MVP is complete when:

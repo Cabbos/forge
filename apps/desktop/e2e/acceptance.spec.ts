@@ -161,6 +161,59 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(providerRow).toContainText("Tool schema accepted");
   });
 
+  test("settings models clears stale provider evidence after manual recheck", async ({ page }) => {
+    await page.addInitScript(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+      // @ts-expect-error acceptance mock
+      window.__mockProviderCatalogCache = [
+        {
+          id: "deepseek",
+          label: "DeepSeek",
+          default_model: "deepseek-v4-flash[1m]",
+          context_window_tokens: 1_000_000,
+          aliases: [],
+          requires_api_key: true,
+          supports_streaming: true,
+          supports_tools: true,
+          source: "built_in",
+          base_url: "https://api.deepseek.com/anthropic",
+          transport: "anthropic_messages",
+          api_key_env: ["DEEPSEEK_API_KEY"],
+          base_url_env: ["DEEPSEEK_BASE_URL"],
+          model_catalog_source: null,
+          model_catalog_recorded_at_ms: null,
+          probe_evidence: {
+            source: "manual_probe",
+            status: "passed",
+            recorded_at_ms: 1717891200000,
+            model: "deepseek-v4-flash[1m]",
+            base_url: "https://api.deepseek.com/anthropic",
+            checks: [
+              { id: "key_present", label: "Key present", status: "passed" },
+              { id: "tool_schema_accepted", label: "Tool schema accepted", status: "passed" },
+            ],
+          },
+          models: [],
+        },
+      ];
+    });
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+    const summary = providerRow.getByTestId("settings-provider-evidence-summary");
+
+    await expect(summary).toContainText("证据需复核");
+    await providerRow.getByRole("button", { name: "检测 DeepSeek" }).click();
+    await expect(providerRow).toContainText("DeepSeek probe passed.");
+    await expect(summary).toContainText("手动检测通过");
+    await expect(summary).not.toContainText("证据需复核");
+    await expect(summary).not.toContainText("检测已超过 14 天");
+  });
+
   test("settings models renders mainstream provider metadata without clipping", async ({ page }) => {
     const providerStatuses = [
       "deepseek",

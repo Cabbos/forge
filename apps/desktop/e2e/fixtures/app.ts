@@ -288,6 +288,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         probe_evidence: {
           source: "manual_probe",
           status: result.status === "passed" ? "passed" : "failed",
+          recorded_at_ms: typeof result.recorded_at_ms === "number" ? result.recorded_at_ms : Date.now(),
           model: typeof result.model === "string" ? result.model : null,
           base_url: typeof result.base_url === "string" ? result.base_url : null,
           checks: checks.map((check) => ({
