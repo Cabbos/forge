@@ -714,6 +714,16 @@ This closes a concrete registry/runtime drift without expanding the product clai
 
 **Still not claimed:** automatic Anthropic refresh, startup paid-API probing, background model-catalog polling, native Gemini/Bedrock model-list endpoints, live certification for every provider, or billing-grade provider pricing metadata.
 
+## 2026-06-22 Post-MVP Usability Slice: Native Ollama Model Catalog Refresh
+
+**Status (2026-06-22): Implemented as the twenty-fourth "fully usable provider" hardening slice after MVP closure.** Ollama's registry profile already declared `HttpModelsEndpoint`, but the backend model-catalog request builder still treated the custom Anthropic-compatible transport as unsupported. Settings can now refresh local Ollama models through the native `GET /api/tags` path, without auth headers, parse returned `models[].model` / `models[].name` values, and write the same dated `Live /models` source evidence as other manual catalog refreshes.
+
+This closes another registry/runtime drift and matters for local-first provider usability. Ollama is a built-in no-auth local provider; users should not have to hand-type local model ids when the local daemon can list pulled models. The action remains explicit and user-triggered. Forge does not start Ollama, scan local model stores, background poll `/api/tags`, or certify that a listed model satisfies the agent loop contract.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog::tests::model_catalog_fetches_ollama_tags_without_auth --lib` because Ollama returned `Unavailable` before any request was sent. Green verification proves Forge sends `GET /api/tags`, sends no `Authorization` or `x-api-key` headers, parses local model ids, and continues to pass the full `provider_model_catalog` suite.
+
+**Still not claimed:** automatic Ollama startup, background local model polling, startup probing, local model compatibility certification, native Gemini/Bedrock model-list endpoints, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

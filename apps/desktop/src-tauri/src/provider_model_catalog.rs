@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::adapters::provider_registry::{
     find_loaded_provider_profile, LoadedProviderProfile, ModelCatalogPolicy, ProviderTransport,
@@ -187,7 +187,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
         );
     }
 
-    let models = parse_http_model_catalog_models(&body);
+    let models = parse_model_catalog_models(profile, &body);
     if models.is_empty() {
         return unavailable(
             &provider_id,
@@ -196,13 +196,11 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
             ProviderModelCatalogSource::LiveEndpoint,
             Vec::new(),
             &format!("{provider_label} returned no model IDs."),
-            Some(
-                "Check that the endpoint implements an OpenAI-compatible /models response."
-                    .to_string(),
-            ),
+            Some(model_catalog_empty_remediation(profile)),
         );
     }
 
+    let model_count = models.len();
     ProviderModelCatalogResult {
         provider: provider_id,
         provider_label: provider_label.clone(),
@@ -211,11 +209,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
         status: ProviderModelCatalogStatus::Available,
         recorded_at_ms: Some(current_epoch_millis()),
         models,
-        message: format!(
-            "{} returned {} models.",
-            provider_label,
-            parse_model_count(&body)
-        ),
+        message: format!("{} returned {} models.", provider_label, model_count),
         remediation: None,
     }
 }
@@ -279,6 +273,9 @@ fn model_catalog_request(
     if base_url.is_empty() {
         return Err("Base URL is empty.".to_string());
     }
+    if profile.id == "ollama" {
+        return Ok(client.get(ollama_tags_url(base_url)));
+    }
     match profile.transport {
         ProviderTransport::OpenAiChatCompletions | ProviderTransport::CustomOpenAiCompatible => Ok(
             with_bearer_auth_header(client.get(format!("{base_url}/models")), api_key),
@@ -297,11 +294,21 @@ fn model_catalog_request(
     }
 }
 
+fn parse_model_catalog_models(
+    profile: &LoadedProviderProfile,
+    body: &str,
+) -> Vec<ProviderModelCatalogItem> {
+    if profile.id == "ollama" {
+        return parse_ollama_models(body);
+    }
+    parse_http_model_catalog_models(body)
+}
+
 fn parse_http_model_catalog_models(body: &str) -> Vec<ProviderModelCatalogItem> {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
         return Vec::new();
     };
-    let mut models = std::collections::BTreeMap::new();
+    let mut models = BTreeMap::new();
     for entry in parsed
         .get("data")
         .and_then(|value| value.as_array())
@@ -329,8 +336,55 @@ fn parse_http_model_catalog_models(body: &str) -> Vec<ProviderModelCatalogItem> 
         .collect()
 }
 
-fn parse_model_count(body: &str) -> usize {
-    parse_http_model_catalog_models(body).len()
+fn parse_ollama_models(body: &str) -> Vec<ProviderModelCatalogItem> {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let mut models = BTreeMap::new();
+    for entry in parsed
+        .get("models")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let id = entry
+            .get("model")
+            .or_else(|| entry.get("name"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(id) = id else {
+            continue;
+        };
+        let name = entry
+            .get("name")
+            .or_else(|| entry.get("model"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(id);
+        models.insert(id.to_string(), name.to_string());
+    }
+    models
+        .into_iter()
+        .map(|(id, name)| ProviderModelCatalogItem { id, name })
+        .collect()
+}
+
+fn model_catalog_empty_remediation(profile: &LoadedProviderProfile) -> String {
+    if profile.id == "ollama" {
+        return "Check that the Ollama endpoint implements /api/tags and has local models pulled."
+            .to_string();
+    }
+    "Check that the endpoint implements an OpenAI-compatible /models response.".to_string()
+}
+
+fn ollama_tags_url(base_url: &str) -> String {
+    if base_url.ends_with("/api") {
+        format!("{base_url}/tags")
+    } else {
+        format!("{base_url}/api/tags")
+    }
 }
 
 fn with_bearer_auth_header(
@@ -564,6 +618,54 @@ mod tests {
         assert_eq!(request["authorization"], "");
         assert_eq!(request["x_api_key"], "test-key");
         assert_eq!(request["anthropic_version"], "2023-06-01");
+    }
+
+    #[tokio::test]
+    async fn model_catalog_fetches_ollama_tags_without_auth() {
+        let (base_url, request_rx) = spawn_json_response_server(&json!({
+            "models": [
+                { "name": "qwen2.5-coder:latest", "model": "qwen2.5-coder:latest" },
+                { "name": "llama3.1:8b", "model": "llama3.1:8b" },
+                { "name": "", "model": "" }
+            ]
+        }));
+
+        let profiles = load_provider_profiles(&[]).expect("built-in profiles load");
+        let result = list_provider_models_with_credentials_and_profiles(
+            "ollama",
+            Credentials {
+                api_key: String::new(),
+                api_base: Some(base_url),
+                model: None,
+            },
+            reqwest::Client::new(),
+            &profiles,
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
+        assert_eq!(result.provider, "ollama");
+        assert_eq!(
+            result
+                .models
+                .iter()
+                .map(|model| (model.id.as_str(), model.name.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("llama3.1:8b", "llama3.1:8b"),
+                ("qwen2.5-coder:latest", "qwen2.5-coder:latest"),
+            ]
+        );
+        assert_eq!(result.message, "Ollama returned 2 models.");
+
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured Ollama tags request");
+        assert_eq!(request["path"], "/api/tags");
+        assert_eq!(request["authorization"], "");
+        assert_eq!(request["x_api_key"], "");
+        assert_eq!(request["anthropic_version"], "");
     }
 
     #[tokio::test]

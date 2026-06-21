@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added native Ollama model catalog refresh. Ollama provider rows now refresh local models through `/api/tags` without auth headers, parse the returned local model names, and keep the same manual live-catalog evidence path instead of treating the custom Anthropic-compatible transport as unsupported.
 - Added native Anthropic model catalog refresh. Anthropic provider rows now fetch Claude models from the official `/v1/models` endpoint with Anthropic API headers, preserve returned display names, and keep the same user-triggered live catalog evidence path without expanding into automatic startup certification.
 - Added model-catalog freshness recovery coverage. Stale cached model catalog evidence now surfaces a refresh warning even before a probe exists, and the manual model refresh path proves that user-triggered refreshes clear the stale catalog warning.
 - Added provider evidence freshness warnings. Passed manual probe/live catalog evidence older than the freshness window is no longer treated as strong ready evidence; Settings/readiness now mark it as needing review and keep the user-controlled Settings recovery path.
