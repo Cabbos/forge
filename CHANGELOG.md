@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added native Anthropic model catalog refresh. Anthropic provider rows now fetch Claude models from the official `/v1/models` endpoint with Anthropic API headers, preserve returned display names, and keep the same user-triggered live catalog evidence path without expanding into automatic startup certification.
 - Added model-catalog freshness recovery coverage. Stale cached model catalog evidence now surfaces a refresh warning even before a probe exists, and the manual model refresh path proves that user-triggered refreshes clear the stale catalog warning.
 - Added provider evidence freshness warnings. Passed manual probe/live catalog evidence older than the freshness window is no longer treated as strong ready evidence; Settings/readiness now mark it as needing review and keep the user-controlled Settings recovery path.
 - Added timestamps to persisted provider model catalog evidence. Manual model refreshes now record when the live `/models` or static fallback catalog evidence was produced, and Settings/readiness summaries display the refresh date or an explicit unknown-time marker for older caches.

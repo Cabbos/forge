@@ -133,7 +133,7 @@ Vite 默认运行在 `http://localhost:1420`。完整桌面端需要通过 Tauri
 
 `providers` 是 data-only profile：它可以添加或覆盖 provider 的 label、transport、base URL、key/model 环境变量、默认模型和基础能力标记，并会同步出现在 Settings provider 行和 Composer 模型菜单里，但不会加载可执行插件代码。Settings 现在也可以直接新增、编辑、删除这类自定义 Provider profile，并提供 NVIDIA NIM、本地 OpenAI-compatible endpoint、Anthropic-compatible gateway 等预填模板。`api_key_env: []` 表示本地兼容服务不需要鉴权；Forge 会跳过 missing-key gate，并且不会发送空 `Authorization` / `x-api-key` header。开始会话前的 readiness panel 也会读取同一份 provider catalog：no-auth local profile 不会被误报为缺密钥，当前模型不在 provider 目录里时会先给出提示，Provider 证据缺失只作为 warning，cached manual probe 失败才会阻断并引导用户回 Settings 的模型服务页重新检测。
 
-Settings 的 Provider 行还支持手动刷新模型目录：OpenAI-compatible endpoint 会调用 `/models`，DeepSeek、Kimi/Moonshot、GLM/Zhipu、MiniMax 这类暂未声明 live model-list endpoint 的 registry provider 会返回 Forge static fallback catalog。刷新结果会明确标注来源和刷新日期：`Live /models · 目录刷新 2024-06-09` 表示来自 endpoint，`Forge static catalog · not live-certified · 目录刷新 2024-06-09` 表示来自 registry fallback。可用结果会连同来源和时间证据写入本机 provider catalog cache，并出现在 Composer 模型菜单和 Settings provider 元信息里供选择；也可以在刷新结果里点某个模型，显式更新当前 Composer provider/model。对可编辑的自定义 Provider，还可以把刷新出的模型显式保存为 Provider 默认模型。Forge 不会自动改 profile 默认模型，static fallback 不代表 live endpoint certification，也不代表 native Anthropic/Gemini/Bedrock 模型端点已经认证。
+Settings 的 Provider 行还支持手动刷新模型目录：OpenAI-compatible endpoint 会调用 `/models`，Anthropic 会调用官方 `/v1/models`，DeepSeek、Kimi/Moonshot、GLM/Zhipu、MiniMax 这类暂未声明 live model-list endpoint 的 registry provider 会返回 Forge static fallback catalog。刷新结果会明确标注来源和刷新日期：`Live /models · 目录刷新 2024-06-09` 表示来自 endpoint，`Forge static catalog · not live-certified · 目录刷新 2024-06-09` 表示来自 registry fallback。可用结果会连同来源和时间证据写入本机 provider catalog cache，并出现在 Composer 模型菜单和 Settings provider 元信息里供选择；也可以在刷新结果里点某个模型，显式更新当前 Composer provider/model。对可编辑的自定义 Provider，还可以把刷新出的模型显式保存为 Provider 默认模型。Forge 不会自动改 profile 默认模型，static fallback 不代表 live endpoint certification，也不代表 native Gemini/Bedrock 或所有非兼容模型端点已经认证。
 
 手动 Provider 兼容性检测也会保存一份脱敏证据摘要：`get_provider_catalog` 会带回上次用户触发的 probe 状态、检测日期、模型、Base URL 和检查项，Settings 可在重新打开后显示“上次手动检测通过/失败”。Provider 行还会把 manual probe、model catalog source 和目录刷新日期汇总成一条“证据摘要”，例如 `手动检测通过 · 检测 2024-06-09 · 目录 Live /models · 目录刷新 2024-06-09`、`尚未手动检测 · 目录 static fallback · 目录刷新时间未知`、`手动检测失败 · 检测时间未知 · 目录未验证`。通过证据或 live catalog 超过 14 天后会降级为 `证据需复核`，例如 `检测已超过 14 天`、`目录刷新已超过 14 天`，readiness 会给出打开 Settings 的复核入口，但不会自动发起付费 API probe；只有旧目录证据时，手动刷新模型目录也会清掉目录 stale 提示。开始会话前的 readiness panel 会复用这份摘要：手动检测失败会显示 `Provider 检测失败` 并提供打开 Settings 的动作；这个动作会直接回到“模型服务”页，即使用户上次把 Settings 停在通用或诊断页。尚未检测或只有 static fallback 只提示用户确认，不会自动发起 probe。这不是启动时自动探测，也不是对所有 provider 的 live certification；它只是让用户已经执行过的检测结果、检测时间、模型目录来源和目录刷新时间不随弹窗状态消失。
 
@@ -163,7 +163,7 @@ OPENROUTER_API_KEY=...
 
 默认 Provider 是 DeepSeek，默认模型是 `deepseek-v4-flash[1m]`。
 
-设置页的 Provider 行提供手动兼容性检测和手动模型目录刷新：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming、工具 schema 或 `/models` 列表，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
+设置页的 Provider 行提供手动兼容性检测和手动模型目录刷新：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming、工具 schema、`/models` 或 Anthropic `/v1/models` 列表，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
 
 ## 开发命令
 

@@ -7,6 +7,7 @@ use crate::adapters::provider_registry::{
 use crate::settings::{Credentials, ProviderCatalogModel, ProviderModelCatalogSource, Settings};
 
 const MODEL_CATALOG_TIMEOUT_SECS: u64 = 12;
+const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -186,7 +187,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
         );
     }
 
-    let models = parse_openai_compatible_models(&body);
+    let models = parse_http_model_catalog_models(&body);
     if models.is_empty() {
         return unavailable(
             &provider_id,
@@ -282,8 +283,11 @@ fn model_catalog_request(
         ProviderTransport::OpenAiChatCompletions | ProviderTransport::CustomOpenAiCompatible => Ok(
             with_bearer_auth_header(client.get(format!("{base_url}/models")), api_key),
         ),
-        ProviderTransport::AnthropicMessages
-        | ProviderTransport::CustomAnthropicCompatible
+        ProviderTransport::AnthropicMessages => Ok(with_anthropic_auth_headers(
+            client.get(format!("{base_url}/v1/models")),
+            api_key,
+        )),
+        ProviderTransport::CustomAnthropicCompatible
         | ProviderTransport::OpenAiResponses
         | ProviderTransport::NativeGemini
         | ProviderTransport::BedrockConverse => Err(format!(
@@ -293,11 +297,11 @@ fn model_catalog_request(
     }
 }
 
-fn parse_openai_compatible_models(body: &str) -> Vec<ProviderModelCatalogItem> {
+fn parse_http_model_catalog_models(body: &str) -> Vec<ProviderModelCatalogItem> {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
         return Vec::new();
     };
-    let mut ids = BTreeSet::new();
+    let mut models = std::collections::BTreeMap::new();
     for entry in parsed
         .get("data")
         .and_then(|value| value.as_array())
@@ -309,19 +313,24 @@ fn parse_openai_compatible_models(body: &str) -> Vec<ProviderModelCatalogItem> {
         };
         let id = id.trim();
         if !id.is_empty() {
-            ids.insert(id.to_string());
+            let name = entry
+                .get("display_name")
+                .or_else(|| entry.get("name"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(id);
+            models.insert(id.to_string(), name.to_string());
         }
     }
-    ids.into_iter()
-        .map(|id| ProviderModelCatalogItem {
-            name: id.clone(),
-            id,
-        })
+    models
+        .into_iter()
+        .map(|(id, name)| ProviderModelCatalogItem { id, name })
         .collect()
 }
 
 fn parse_model_count(body: &str) -> usize {
-    parse_openai_compatible_models(body).len()
+    parse_http_model_catalog_models(body).len()
 }
 
 fn with_bearer_auth_header(
@@ -333,6 +342,15 @@ fn with_bearer_auth_header(
     } else {
         request.header("authorization", format!("Bearer {api_key}"))
     }
+}
+
+fn with_anthropic_auth_headers(
+    request: reqwest::RequestBuilder,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    request
+        .header("x-api-key", api_key)
+        .header("anthropic-version", ANTHROPIC_API_VERSION)
 }
 
 fn unavailable(
@@ -502,6 +520,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_catalog_fetches_anthropic_models_endpoint() {
+        let (base_url, request_rx) = spawn_json_response_server(&json!({
+            "data": [
+                { "type": "model", "id": "claude-zeta", "display_name": "Claude Zeta" },
+                { "type": "model", "id": "claude-alpha", "display_name": "Claude Alpha" }
+            ]
+        }));
+
+        let profiles = load_provider_profiles(&[]).expect("built-in profiles load");
+        let result = list_provider_models_with_credentials_and_profiles(
+            "anthropic",
+            Credentials {
+                api_key: "test-key".to_string(),
+                api_base: Some(base_url),
+                model: None,
+            },
+            reqwest::Client::new(),
+            &profiles,
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
+        assert_eq!(result.provider, "anthropic");
+        assert_eq!(
+            result
+                .models
+                .iter()
+                .map(|model| (model.id.as_str(), model.name.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("claude-alpha", "Claude Alpha"),
+                ("claude-zeta", "Claude Zeta"),
+            ]
+        );
+        assert_eq!(result.message, "Anthropic returned 2 models.");
+
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured models request");
+        assert_eq!(request["path"], "/v1/models");
+        assert_eq!(request["authorization"], "");
+        assert_eq!(request["x_api_key"], "test-key");
+        assert_eq!(request["anthropic_version"], "2023-06-01");
+    }
+
+    #[tokio::test]
     async fn model_catalog_allows_no_auth_local_openai_profiles() {
         let (base_url, request_rx) = spawn_json_response_server(&json!({
             "data": [{ "id": "local-model" }]
@@ -661,9 +726,27 @@ mod tests {
                     .then(|| value.trim().to_string())
             })
             .unwrap_or_default();
+        let x_api_key = request
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("x-api-key")
+                    .then(|| value.trim().to_string())
+            })
+            .unwrap_or_default();
+        let anthropic_version = request
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("anthropic-version")
+                    .then(|| value.trim().to_string())
+            })
+            .unwrap_or_default();
         json!({
             "path": path,
             "authorization": authorization,
+            "x_api_key": x_api_key,
+            "anthropic_version": anthropic_version,
         })
     }
 }

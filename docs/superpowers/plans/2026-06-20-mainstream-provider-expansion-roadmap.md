@@ -704,6 +704,16 @@ This closes the matching recovery loop for model catalog evidence. The previous 
 
 **Still not claimed:** automatic catalog refresh, background `/models` polling, startup paid-API probing, native non-compatible model-list endpoints, or live certification for every provider.
 
+## 2026-06-22 Post-MVP Usability Slice: Native Anthropic Model Catalog Refresh
+
+**Status (2026-06-22): Implemented as the twenty-third "fully usable provider" hardening slice after MVP closure.** Anthropic's registry profile already declared `HttpModelsEndpoint`, but the backend model-catalog request builder still treated every Anthropic Messages transport as unsupported. Settings can now refresh Anthropic's live model catalog through the official `GET /v1/models` path, using Anthropic API headers, preserving returned `display_name` values, and writing the same dated `Live /models` source evidence as other manual catalog refreshes.
+
+This closes a concrete registry/runtime drift without expanding the product claim. Anthropic is no longer grouped with compatibility providers that only have static fallback catalogs, while DeepSeek/Kimi/GLM/MiniMax remain static fallback until their own live model-list contracts are implemented. The action is still user-triggered from Settings; it does not add startup probing, background polling, automatic recertification, or live certification for every provider.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog::tests::model_catalog_fetches_anthropic_models_endpoint --lib` because Anthropic returned `Unavailable` before any request was sent. Green verification proves Forge sends `GET /v1/models`, uses `x-api-key` plus `anthropic-version: 2023-06-01`, keeps display names, and continues to pass the full `provider_model_catalog` suite.
+
+**Still not claimed:** automatic Anthropic refresh, startup paid-API probing, background model-catalog polling, native Gemini/Bedrock model-list endpoints, live certification for every provider, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:
