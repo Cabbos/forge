@@ -328,7 +328,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         api_key_env: Array.isArray(existingEntry?.api_key_env) ? existingEntry.api_key_env : [],
         base_url_env: Array.isArray(existingEntry?.base_url_env) ? existingEntry.base_url_env : [],
         model_catalog_source: typeof result.source === "string" ? result.source : existingEntry?.model_catalog_source ?? null,
-        model_catalog_recorded_at_ms: typeof result.recorded_at_ms === "number" ? result.recorded_at_ms : existingEntry?.model_catalog_recorded_at_ms ?? null,
+        model_catalog_recorded_at_ms: typeof result.recorded_at_ms === "number" ? result.recorded_at_ms : Date.now(),
         probe_evidence: existingEntry?.probe_evidence ?? null,
         models,
       };

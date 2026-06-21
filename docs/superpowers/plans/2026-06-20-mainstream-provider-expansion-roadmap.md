@@ -694,6 +694,16 @@ This closes a verification gap in the freshness-review loop. The production back
 
 **Still not claimed:** automatic recheck, background recertification, paid-API startup probing, or automatic repair/default-model mutation. The recovery remains explicitly user-triggered.
 
+## 2026-06-22 Post-MVP Usability Slice: Manual Catalog Refresh Clears Stale Catalog Evidence
+
+**Status (2026-06-22): Implemented as the twenty-second "fully usable provider" hardening slice after MVP closure.** Provider evidence summaries now review model-catalog freshness independently from manual probe evidence. A provider with cached `Live /models` or static fallback catalog evidence older than the freshness window gets `目录刷新已超过 14 天` even when no probe evidence exists, and start readiness exposes the Settings review action. The browser acceptance harness now proves the user-controlled recovery path: stale catalog evidence is visible, the user clicks `刷新模型`, the mocked IPC cache writes a fresh catalog timestamp like the real backend, and the stale catalog warning disappears.
+
+This closes the matching recovery loop for model catalog evidence. The previous recheck slice proved manual probe recovery; this slice proves manual model-catalog refresh recovery and prevents stale catalog facts from hiding behind the broader `尚未手动检测` warning.
+
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/lib/providers.test.ts src/lib/start-readiness.test.ts` because stale catalog-only evidence did not add `目录刷新已超过 14 天` or the Settings review action. Browser red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings models clears stale catalog evidence after manual refresh"` because Settings did not show the stale catalog warning. Green verification proves the stale catalog warning appears before refresh and disappears after manual model refresh.
+
+**Still not claimed:** automatic catalog refresh, background `/models` polling, startup paid-API probing, native non-compatible model-list endpoints, or live certification for every provider.
+
 ## MVP Definition
 
 The MVP is complete when:

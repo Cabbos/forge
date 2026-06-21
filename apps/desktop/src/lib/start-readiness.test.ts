@@ -89,6 +89,43 @@ describe("deriveStartReadiness", () => {
     assert.equal(evidenceRow?.action, null);
   });
 
+  it("warns and links to Settings when catalog evidence is stale without probe evidence", () => {
+    const provider: ProviderDefinition = {
+      id: "deepseek",
+      label: "DeepSeek",
+      shortLabel: "DeepSeek",
+      keyPlaceholder: "sk-...",
+      defaultModel: "deepseek-v4-flash[1m]",
+      models: [{ id: "deepseek-v4-flash[1m]", name: "DeepSeek V4 Flash 1M" }],
+      requiresApiKey: true,
+      modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
+    };
+
+    const readiness = deriveStartReadiness({
+      workspace,
+      providerId: provider.id,
+      providerLabel: provider.label,
+      provider,
+      model: "deepseek-v4-flash[1m]",
+      keyStatuses: [{ provider: "deepseek", set: true, preview: "sk-...1234" }],
+      runtime: runtimeReady,
+      checkpoint: checkpointReady,
+      nowMs: PROVIDER_EVIDENCE_STALE_NOW_MS,
+    });
+
+    const evidenceRow = readiness.rows.find((row) => row.label === "Provider 证据");
+    assert.equal(readiness.title, "准备开始");
+    assert.equal(readiness.issueCount, 1);
+    assert.equal(evidenceRow?.tone, "warning");
+    assert.equal(
+      evidenceRow?.value,
+      "需要手动检测：尚未手动检测 · 目录 Live /models · 目录刷新 2024-06-09 · 目录刷新已超过 14 天",
+    );
+    assert.equal(evidenceRow?.action, "open_settings");
+    assert.equal(evidenceRow?.actionLabel, "打开设置");
+  });
+
   it("surfaces strong provider evidence when manual probe and live catalog passed", () => {
     const provider: ProviderDefinition = {
       id: "nvidia",

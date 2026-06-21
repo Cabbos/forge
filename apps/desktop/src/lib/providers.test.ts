@@ -291,6 +291,25 @@ describe("frontend provider catalog", () => {
     assert.equal(staticFallback.label, "需要手动检测");
     assert.equal(staticFallback.detail, "尚未手动检测 · 目录 static fallback · 目录刷新时间未知");
 
+    const staleCatalogOnly = deriveProviderEvidenceSummary({
+      id: "deepseek",
+      label: "DeepSeek",
+      shortLabel: "DeepSeek",
+      keyPlaceholder: "sk-...",
+      defaultModel: "deepseek-v4-flash[1m]",
+      models: [{ id: "deepseek-v4-flash[1m]", name: "DeepSeek V4 Flash 1M" }],
+      requiresApiKey: true,
+      modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: PROVIDER_EVIDENCE_RECORDED_AT_MS,
+    }, { nowMs: PROVIDER_EVIDENCE_STALE_NOW_MS });
+    assert.equal(staleCatalogOnly.tone, "warning");
+    assert.equal(staleCatalogOnly.label, "需要手动检测");
+    assert.equal(staleCatalogOnly.reviewRecommended, true);
+    assert.equal(
+      staleCatalogOnly.detail,
+      "尚未手动检测 · 目录 Live /models · 目录刷新 2024-06-09 · 目录刷新已超过 14 天",
+    );
+
     const failedProbe = deriveProviderEvidenceSummary({
       id: "openai",
       label: "OpenAI",

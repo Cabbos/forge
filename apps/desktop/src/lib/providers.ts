@@ -459,8 +459,8 @@ export function deriveProviderEvidenceSummary(
   const catalogRecordedAtDetail = provider.modelCatalogSource
     ? formatModelCatalogRecordedAt(provider.modelCatalogRecordedAtMs)
     : null;
-  const catalogFreshnessDetail = passedProbeNeedsReview && provider.modelCatalogSource
-    ? freshnessReviewDetail(provider.modelCatalogRecordedAtMs, nowMs, "目录刷新已超过 14 天", "目录刷新需复核")
+  const catalogFreshnessDetail = provider.modelCatalogSource
+    ? freshnessReviewDetail(provider.modelCatalogRecordedAtMs, nowMs, "目录刷新已超过 14 天", null)
     : null;
   const catalogDetail = provider.modelCatalogSource
     ? [catalogSourceDetail, catalogRecordedAtDetail, catalogFreshnessDetail].filter(Boolean).join(" · ")
@@ -492,7 +492,7 @@ export function deriveProviderEvidenceSummary(
       tone: "warning",
       label: "本地目录已知",
       detail: `${probeDetail} · ${catalogDetail}`,
-      reviewRecommended: false,
+      reviewRecommended: Boolean(catalogFreshnessDetail),
     };
   }
 
@@ -500,7 +500,7 @@ export function deriveProviderEvidenceSummary(
     tone: "warning",
     label: "需要手动检测",
     detail: `${probeDetail} · ${catalogDetail}`,
-    reviewRecommended: false,
+    reviewRecommended: Boolean(catalogFreshnessDetail),
   };
 }
 
@@ -522,7 +522,7 @@ function freshnessReviewDetail(
   recordedAtMs: number | null | undefined,
   nowMs: number,
   staleDetail: string,
-  unknownDetail: string,
+  unknownDetail: string | null,
 ): string | null {
   if (typeof recordedAtMs !== "number" || !Number.isFinite(recordedAtMs)) return unknownDetail;
   if (!Number.isFinite(nowMs)) return null;

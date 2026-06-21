@@ -326,6 +326,63 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(modelButton).toContainText("deepseek-reasoner");
   });
 
+  test("settings models clears stale catalog evidence after manual refresh", async ({ page }) => {
+    await page.addInitScript(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+      // @ts-expect-error acceptance mock
+      window.__mockProviderCatalogCache = [
+        {
+          id: "deepseek",
+          label: "DeepSeek",
+          default_model: "deepseek-v4-flash[1m]",
+          context_window_tokens: 1_000_000,
+          aliases: [],
+          requires_api_key: true,
+          supports_streaming: true,
+          supports_tools: true,
+          source: "built_in",
+          base_url: "https://api.deepseek.com/anthropic",
+          transport: "anthropic_messages",
+          api_key_env: ["DEEPSEEK_API_KEY"],
+          base_url_env: ["DEEPSEEK_BASE_URL"],
+          model_catalog_source: "live_endpoint",
+          model_catalog_recorded_at_ms: 1717891200000,
+          probe_evidence: null,
+          models: [
+            { id: "deepseek-v4-flash[1m]", name: "deepseek-v4-flash[1m]", context_window_tokens: 1_000_000 },
+          ],
+        },
+      ];
+      // @ts-expect-error acceptance mock
+      window.__mockProviderModelCatalogResult = {
+        provider: "deepseek",
+        provider_label: "DeepSeek",
+        base_url: "https://api.deepseek.com/anthropic",
+        source: "live_endpoint",
+        status: "available",
+        models: [
+          { id: "deepseek-reasoner", name: "deepseek-reasoner" },
+          { id: "deepseek-v4-flash[1m]", name: "deepseek-v4-flash[1m]" },
+        ],
+        message: "DeepSeek returned 2 models.",
+        remediation: null,
+      };
+    });
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    const providerRow = dialog.getByTestId("settings-provider-row").filter({ hasText: "DeepSeek" });
+    const summary = providerRow.getByTestId("settings-provider-evidence-summary");
+
+    await expect(summary).toContainText("目录刷新已超过 14 天");
+    await providerRow.getByRole("button", { name: "刷新模型 DeepSeek" }).click();
+    await expect(providerRow).toContainText("DeepSeek returned 2 models.");
+    await expect(summary).not.toContainText("目录刷新已超过 14 天");
+  });
+
   test("settings models labels static provider model catalog fallback", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock
