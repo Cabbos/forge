@@ -644,6 +644,16 @@ This closes the last obvious evidence-hand-off gap. Settings could already expla
 
 **Still not claimed:** automatic paid-API startup probes, scheduled provider recertification, live certification for every provider, automatic repair of failed providers, native Anthropic/Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-21 Post-MVP Usability Slice: Provider Recovery Settings Deep-Link
+
+**Status (2026-06-21): Implemented as the seventeenth "fully usable provider" hardening slice after MVP closure.** Provider recovery actions from start readiness now carry a Settings section target. `StartReadinessCard` dispatches `forge:open-settings` with `{ section: "models" }` for provider setup/readiness actions; the Settings controller applies that target when the dialog is already mounted; and the Sidebar preserves the requested section when the lazy Settings dialog must be mounted first.
+
+This closes a recovery-flow gap after provider evidence started gating readiness. A failed cached manual probe should not merely open the Settings shell; it should take the user back to the model/provider surface where the failed evidence, probe action, key state, and model catalog controls live. The behavior is intentionally narrow: only Settings navigation is targeted. Forge still does not auto-retry probes, auto-repair provider profiles, or run paid API checks without a user action.
+
+**Evidence:** TDD red pass failed in `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "start readiness blocks a provider profile with failed cached probe evidence"` after the test first moved Settings to the General section, closed it, and then used the failed-provider readiness action. Green verification proves the dialog reopens on `模型服务` and shows the provider row with cached failed manual-probe evidence.
+
+**Still not claimed:** automatic provider repair, automatic probe retry, startup paid-API probing, scheduled provider recertification, or live certification for every provider.
+
 ## MVP Definition
 
 The MVP is complete when:

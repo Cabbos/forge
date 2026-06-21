@@ -32,11 +32,13 @@ import { useStore } from "@/store";
 interface UseSettingsDialogControllerOptions {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  requestedSection?: SettingsSectionId | null;
 }
 
 export function useSettingsDialogController({
   open,
   onOpenChange,
+  requestedSection = null,
 }: UseSettingsDialogControllerOptions = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("models");
@@ -77,7 +79,17 @@ export function useSettingsDialogController({
   const providers = useProviderCatalog(dialogOpen);
 
   useEffect(() => {
-    const openSettings = () => setDialogOpen(true);
+    if (dialogOpen && requestedSection) {
+      setActiveSection(requestedSection);
+    }
+  }, [dialogOpen, requestedSection]);
+
+  useEffect(() => {
+    const openSettings = (event: Event) => {
+      const section = requestedSectionFromEvent(event);
+      if (section) setActiveSection(section);
+      setDialogOpen(true);
+    };
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
@@ -366,4 +378,9 @@ export function useSettingsDialogController({
     profileEditorProps,
     localDataProps,
   };
+}
+
+function requestedSectionFromEvent(event: Event): SettingsSectionId | null {
+  const section = (event as CustomEvent<{ section?: unknown }>).detail?.section;
+  return section === "models" ? "models" : null;
 }

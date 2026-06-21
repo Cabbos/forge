@@ -94,7 +94,7 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
     setBusyAction(action);
     try {
       if (action === "open_settings") {
-        window.dispatchEvent(new Event("forge:open-settings"));
+        window.dispatchEvent(new CustomEvent("forge:open-settings", { detail: { section: "models" } }));
       } else if (action === "start_preview") {
         await startProjectDevServer(sessionId, workingDir);
         await queryClient.invalidateQueries({ queryKey: queryKeys.projectRuntimeStatus(sessionId, workingDir) });

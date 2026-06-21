@@ -22,9 +22,16 @@ interface SettingsDialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   hideTrigger?: boolean;
+  requestedSection?: SettingsSectionId | null;
 }
 
-export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigger = false }: SettingsDialogProps = {}) {
+export function SettingsDialog({
+  triggerClassName,
+  open,
+  onOpenChange,
+  hideTrigger = false,
+  requestedSection = null,
+}: SettingsDialogProps = {}) {
   const {
     dialogOpen,
     setDialogOpen,
@@ -43,7 +50,7 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
     profileEditorProps,
     localDataProps,
     error,
-  } = useSettingsDialogController({ open, onOpenChange });
+  } = useSettingsDialogController({ open, onOpenChange, requestedSection });
 
   return (
     <ForgeDialog open={dialogOpen} onOpenChange={setDialogOpen}>

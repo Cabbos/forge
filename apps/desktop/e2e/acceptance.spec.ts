@@ -499,8 +499,19 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(readiness).toBeVisible();
     await expect(readiness).toContainText("Provider 检测失败");
     await expect(readiness).toContainText("打开设置重新检测 provider。");
+
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    let dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "通用" }).click();
+    await expect(dialog.getByRole("heading", { name: "通用" }).first()).toBeVisible();
+    await dialog.getByRole("button", { name: "关闭" }).click();
+    await expect(dialog).toHaveCount(0);
+
     await readiness.getByRole("button", { name: "打开设置" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    await expect(dialog.getByTestId("settings-provider-row").filter({ hasText: "手动检测失败" })).toBeVisible();
   });
 
   test("settings models edits a custom provider profile", async ({ page }) => {

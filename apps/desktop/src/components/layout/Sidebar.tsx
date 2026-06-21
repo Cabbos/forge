@@ -12,6 +12,7 @@ import {
 import { SidebarSessionHistory } from "./SidebarSessionHistory";
 import { SidebarWorkspaceMenu } from "./SidebarWorkspaceMenu";
 import forgeMark from "@/assets/forge-mark.svg";
+import type { SettingsSectionId } from "@/components/settings/SettingsDialog";
 
 export type { SidebarPanel } from "./SidebarActions";
 
@@ -28,6 +29,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const [sidebarNotice, setSidebarNotice] = useState<SidebarNotice | null>(null);
   const [settingsDialogMounted, setSettingsDialogMounted] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [settingsDialogRequestedSection, setSettingsDialogRequestedSection] = useState<SettingsSectionId | null>(null);
   const [historyDialogMounted, setHistoryDialogMounted] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const activeSessionId = useStore((s) => s.activeSessionId);
@@ -38,8 +40,9 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
 
-  const openSettingsDialog = useCallback(() => {
+  const openSettingsDialog = useCallback((section: SettingsSectionId | null = null) => {
     setSettingsDialogMounted(true);
+    setSettingsDialogRequestedSection(section);
     setSettingsDialogOpen(true);
   }, []);
 
@@ -49,7 +52,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
   }, []);
 
   useEffect(() => {
-    const openSettings = () => openSettingsDialog();
+    const openSettings = (event: Event) => openSettingsDialog(requestedSettingsSectionFromEvent(event));
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
@@ -113,7 +116,7 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
         activePanel={activePanel}
         onOpenHistory={openHistoryDialog}
         onOpenPanel={onOpenPanel}
-        onOpenSettings={openSettingsDialog}
+        onOpenSettings={() => openSettingsDialog()}
       />
       {historyDialogMounted && (
         <Suspense fallback={null}>
@@ -122,9 +125,19 @@ export function Sidebar({ activePanel, onOpenPanel, onOpenSearch }: SidebarProps
       )}
       {settingsDialogMounted && (
         <Suspense fallback={null}>
-          <LazySettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} hideTrigger />
+          <LazySettingsDialog
+            open={settingsDialogOpen}
+            onOpenChange={setSettingsDialogOpen}
+            hideTrigger
+            requestedSection={settingsDialogRequestedSection}
+          />
         </Suspense>
       )}
     </aside>
   );
+}
+
+function requestedSettingsSectionFromEvent(event: Event): SettingsSectionId | null {
+  const section = (event as CustomEvent<{ section?: unknown }>).detail?.section;
+  return section === "models" ? "models" : null;
 }
