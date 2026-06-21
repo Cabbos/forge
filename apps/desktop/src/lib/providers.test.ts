@@ -180,6 +180,7 @@ describe("frontend provider catalog", () => {
         supports_streaming: true,
         supports_tools: true,
         model_catalog_source: "static_fallback",
+        model_catalog_recorded_at_ms: 1_717_891_200_000,
         probe_evidence: {
           source: "manual_probe",
           status: "passed",
@@ -206,6 +207,7 @@ describe("frontend provider catalog", () => {
 
     const nvidia = getProviderDefinition("nim", catalog);
     assert.equal(nvidia.modelCatalogSource, "static_fallback");
+    assert.equal(nvidia.modelCatalogRecordedAtMs, 1_717_891_200_000);
     assert.equal(nvidia.probeEvidence?.source, "manual_probe");
     assert.equal(nvidia.probeEvidence?.status, "passed");
     assert.equal(nvidia.probeEvidence?.checks[0]?.id, "tool_schema_accepted");
@@ -226,6 +228,7 @@ describe("frontend provider catalog", () => {
       models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
       requiresApiKey: true,
       modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: 1_717_891_200_000,
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
@@ -240,7 +243,7 @@ describe("frontend provider catalog", () => {
     });
     assert.equal(liveReady.tone, "ready");
     assert.equal(liveReady.label, "证据较强");
-    assert.equal(liveReady.detail, "手动检测通过 · 检测 2024-06-09 · 目录 Live /models");
+    assert.equal(liveReady.detail, "手动检测通过 · 检测 2024-06-09 · 目录 Live /models · 目录刷新 2024-06-09");
 
     const staticFallback = deriveProviderEvidenceSummary({
       id: "kimi",
@@ -254,7 +257,7 @@ describe("frontend provider catalog", () => {
     });
     assert.equal(staticFallback.tone, "warning");
     assert.equal(staticFallback.label, "需要手动检测");
-    assert.equal(staticFallback.detail, "尚未手动检测 · 目录 static fallback");
+    assert.equal(staticFallback.detail, "尚未手动检测 · 目录 static fallback · 目录刷新时间未知");
 
     const failedProbe = deriveProviderEvidenceSummary({
       id: "openai",

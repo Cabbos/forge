@@ -664,6 +664,16 @@ This closes the evidence-freshness gap. A durable manual probe result is useful,
 
 **Still not claimed:** automatic provider recertification, background probe refresh, live certification for every provider, billing-grade uptime evidence, or automatic repair/retry behavior.
 
+## 2026-06-21 Post-MVP Usability Slice: Dated Model Catalog Evidence
+
+**Status (2026-06-21): Implemented as the nineteenth "fully usable provider" hardening slice after MVP closure.** Cached provider model catalog evidence now carries a recorded timestamp. `list_provider_models` returns `recorded_at_ms` for successful live `/models` and static fallback catalog results; Settings stamps persisted `provider_model_catalogs`; `get_provider_catalog` projects `model_catalog_recorded_at_ms`; frontend provider definitions preserve it as `modelCatalogRecordedAtMs`; Settings model-refresh result rows and cached provider metadata display `目录刷新 YYYY-MM-DD`; and older cached catalogs without a timestamp are shown as `目录刷新时间未知`.
+
+This closes the parallel freshness gap for model catalog evidence. Probe evidence already says when compatibility was checked, but model catalogs also need an age boundary: a cached `Live /models` source is much stronger than a static fallback, yet neither should look timeless after replay. Provider usability now carries both facts independently: when the compatibility probe happened and when the model catalog evidence was produced.
+
+**Evidence:** TDD red pass failed in Rust because `ProviderModelCatalogResult` and `ProviderCatalogEntry` had no model-catalog timestamp fields, and failed in TypeScript because `mergeProviderCatalog(...)` dropped the timestamp and provider evidence summaries did not include `目录刷新 YYYY-MM-DD` / `目录刷新时间未知`. Green verification covers Settings cache projection, live/static model catalog result stamping, frontend merge preservation, readiness summaries, and browser-visible refresh dates for live `/models` and static fallback catalog results.
+
+**Still not claimed:** scheduled model-catalog recertification, background `/models` polling, live certification for every provider, native Anthropic/Gemini/Bedrock model-list endpoints, billing-grade catalog freshness proof, or automatic default-model mutation.
+
 ## MVP Definition
 
 The MVP is complete when:

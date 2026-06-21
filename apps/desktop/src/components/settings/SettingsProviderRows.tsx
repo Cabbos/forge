@@ -78,7 +78,10 @@ export function SettingsProviderRows({
         const defaultModel = provider?.models.find((model) => model.id === provider.defaultModel);
         const defaultContext = formatContextWindow(defaultModel?.contextWindowTokens);
         const cachedModelCatalogSource = provider?.modelCatalogSource
-          ? cachedModelCatalogSourceLabel(provider.modelCatalogSource)
+          ? [
+              cachedModelCatalogSourceLabel(provider.modelCatalogSource),
+              modelCatalogRecordedAtLabel(provider.modelCatalogRecordedAtMs),
+            ].join(" · ")
           : "";
         const probeResult = probeResults[key.provider];
         const cachedProbeEvidence = probeResult ? null : provider?.probeEvidence ?? null;
@@ -416,7 +419,7 @@ export function SettingsProviderRows({
                 )}
                 {modelCatalogResult.source && (
                   <div className="forge-settings-provider-probe-meta">
-                    {modelCatalogSourceLabel(modelCatalogResult.source)}
+                    {[modelCatalogSourceLabel(modelCatalogResult.source), modelCatalogRecordedAtLabel(modelCatalogResult.recorded_at_ms)].join(" · ")}
                   </div>
                 )}
                 {modelCatalogResult.remediation && (
@@ -453,6 +456,15 @@ function cachedModelCatalogSourceLabel(source: ProviderModelCatalogSource) {
     case "unsupported":
       return "目录 unsupported";
   }
+}
+
+function modelCatalogRecordedAtLabel(recordedAtMs?: number | null) {
+  if (typeof recordedAtMs !== "number" || !Number.isFinite(recordedAtMs)) {
+    return "目录刷新时间未知";
+  }
+  const date = new Date(recordedAtMs);
+  if (Number.isNaN(date.getTime())) return "目录刷新时间未知";
+  return `目录刷新 ${date.toISOString().slice(0, 10)}`;
 }
 
 function cachedProbeStatusLabel(evidence: ProviderProbeEvidence) {

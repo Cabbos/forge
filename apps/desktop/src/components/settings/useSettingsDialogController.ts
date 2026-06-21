@@ -209,6 +209,7 @@ export function useSettingsDialogController({
           base_url: null,
           source: "unsupported",
           status: "unavailable",
+          recorded_at_ms: null,
           models: [],
           message: String(e),
           remediation: null,

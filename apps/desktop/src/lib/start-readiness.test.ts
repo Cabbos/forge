@@ -95,6 +95,7 @@ describe("deriveStartReadiness", () => {
       models: [{ id: "nvidia/llama-3.1-nemotron", name: "NVIDIA Nemotron" }],
       requiresApiKey: true,
       modelCatalogSource: "live_endpoint",
+      modelCatalogRecordedAtMs: 1_717_891_200_000,
       probeEvidence: {
         source: "manual_probe",
         status: "passed",
@@ -123,7 +124,10 @@ describe("deriveStartReadiness", () => {
     assert.equal(readiness.title, "准备开始");
     assert.equal(readiness.issueCount, 0);
     assert.equal(evidenceRow?.tone, "ready");
-    assert.equal(evidenceRow?.value, "证据较强：手动检测通过 · 检测 2024-06-09 · 目录 Live /models");
+    assert.equal(
+      evidenceRow?.value,
+      "证据较强：手动检测通过 · 检测 2024-06-09 · 目录 Live /models · 目录刷新 2024-06-09",
+    );
     assert.equal(evidenceRow?.action, null);
   });
 

@@ -23,6 +23,7 @@ export interface ProviderCatalogEntry {
   api_key_env: string[];
   base_url_env: string[];
   model_catalog_source: ProviderModelCatalogSource | null;
+  model_catalog_recorded_at_ms: number | null;
   probe_evidence: ProviderProbeEvidence | null;
 }
 
@@ -105,6 +106,7 @@ export interface ProviderModelCatalogResult {
   base_url: string | null;
   source: ProviderModelCatalogSource;
   status: ProviderModelCatalogStatus;
+  recorded_at_ms: number | null;
   models: ProviderModelCatalogItem[];
   message: string;
   remediation: string | null;

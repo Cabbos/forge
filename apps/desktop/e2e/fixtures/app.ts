@@ -218,6 +218,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         base_url: provider === "deepseek" ? "https://api.deepseek.com/anthropic" : "https://api.openai.com/v1",
         source: "live_endpoint",
         status: "available",
+        recorded_at_ms: 1717891200000,
         models: [
           { id: "deepseek-reasoner", name: "deepseek-reasoner" },
           { id: "deepseek-v4-flash[1m]", name: "deepseek-v4-flash[1m]" },
@@ -254,6 +255,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         api_key_env: apiKeyEnv,
         base_url_env: baseUrlEnv,
         model_catalog_source: null,
+        model_catalog_recorded_at_ms: null,
         probe_evidence: null,
         models: [{ id: defaultModel, name: defaultModel, context_window_tokens: null }],
       };
@@ -282,6 +284,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         api_key_env: Array.isArray(existingEntry?.api_key_env) ? existingEntry.api_key_env : [],
         base_url_env: Array.isArray(existingEntry?.base_url_env) ? existingEntry.base_url_env : [],
         model_catalog_source: existingEntry?.model_catalog_source ?? null,
+        model_catalog_recorded_at_ms: existingEntry?.model_catalog_recorded_at_ms ?? null,
         probe_evidence: {
           source: "manual_probe",
           status: result.status === "passed" ? "passed" : "failed",
@@ -324,6 +327,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         api_key_env: Array.isArray(existingEntry?.api_key_env) ? existingEntry.api_key_env : [],
         base_url_env: Array.isArray(existingEntry?.base_url_env) ? existingEntry.base_url_env : [],
         model_catalog_source: typeof result.source === "string" ? result.source : existingEntry?.model_catalog_source ?? null,
+        model_catalog_recorded_at_ms: typeof result.recorded_at_ms === "number" ? result.recorded_at_ms : existingEntry?.model_catalog_recorded_at_ms ?? null,
         probe_evidence: existingEntry?.probe_evidence ?? null,
         models,
       };

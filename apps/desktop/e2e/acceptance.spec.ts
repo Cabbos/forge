@@ -242,6 +242,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await providerRow.getByRole("button", { name: "刷新模型 DeepSeek" }).click();
     await expect(providerRow).toContainText("DeepSeek returned 2 models.");
     await expect(providerRow).toContainText("Live /models");
+    await expect(providerRow).toContainText("目录刷新 2024-06-09");
     await expect(providerRow).toContainText("deepseek-reasoner");
     await expect(providerRow).toContainText("deepseek-v4-flash[1m]");
     await providerRow.getByRole("button", { name: "使用模型 deepseek-reasoner" }).click();
@@ -280,6 +281,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
         base_url: "https://api.moonshot.cn/anthropic",
         source: "static_fallback",
         status: "available",
+        recorded_at_ms: 1717891200000,
         models: [
           { id: "kimi-k2.7-code", name: "kimi-k2.7-code" },
           { id: "kimi-k2.5", name: "kimi-k2.5" },
@@ -301,8 +303,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await providerRow.getByRole("button", { name: "刷新模型 Kimi / Moonshot" }).click();
     await expect(providerRow).toContainText("Kimi / Moonshot uses Forge's static model catalog.");
     await expect(providerRow).toContainText("Forge static catalog");
+    await expect(providerRow).toContainText("目录刷新 2024-06-09");
     await expect(providerRow).toContainText("not live-certified");
-    await expect(providerRow.locator('[data-provider-readable="meta"]')).toContainText("目录 Forge static catalog");
+    await expect(providerRow.locator('[data-provider-readable="meta"]')).toContainText("目录 Forge static catalog · 目录刷新 2024-06-09");
   });
 
   test("settings models creates and deletes a custom provider profile", async ({ page }) => {

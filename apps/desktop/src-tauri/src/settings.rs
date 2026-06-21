@@ -436,6 +436,8 @@ impl Settings {
                     api_key_env: profile.api_key_env,
                     base_url_env: profile.base_url_env,
                     model_catalog_source: cached_model_catalog.and_then(|catalog| catalog.source),
+                    model_catalog_recorded_at_ms: cached_model_catalog
+                        .and_then(|catalog| catalog.recorded_at_ms),
                     probe_evidence,
                     models: cached_model_catalog
                         .map(|catalog| catalog.models.clone())
@@ -579,6 +581,7 @@ impl Settings {
                 CachedProviderModelCatalog {
                     base_url,
                     source: Some(source),
+                    recorded_at_ms: Some(current_epoch_millis()),
                     models: cleaned_models,
                 },
             );
@@ -622,6 +625,7 @@ pub struct ProviderCatalogEntry {
     pub api_key_env: Vec<String>,
     pub base_url_env: Vec<String>,
     pub model_catalog_source: Option<ProviderModelCatalogSource>,
+    pub model_catalog_recorded_at_ms: Option<u64>,
     pub probe_evidence: Option<CachedProviderProbeEvidence>,
     pub models: Vec<ProviderCatalogModel>,
 }
@@ -652,6 +656,8 @@ pub struct CachedProviderModelCatalog {
     pub base_url: Option<String>,
     #[serde(default)]
     pub source: Option<ProviderModelCatalogSource>,
+    #[serde(default)]
+    pub recorded_at_ms: Option<u64>,
     #[serde(default)]
     pub models: Vec<ProviderCatalogModel>,
 }
@@ -734,6 +740,13 @@ fn home_dir() -> PathBuf {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn current_epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -1292,6 +1305,12 @@ mod tests {
         assert_eq!(
             nvidia.model_catalog_source,
             Some(ProviderModelCatalogSource::LiveEndpoint)
+        );
+        assert!(
+            nvidia
+                .model_catalog_recorded_at_ms
+                .is_some_and(|value| value > 0),
+            "cached model catalog evidence must include when it was recorded"
         );
     }
 

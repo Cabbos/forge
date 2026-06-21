@@ -35,6 +35,7 @@ export interface ProviderCatalogEntry {
   api_key_env?: string[];
   base_url_env?: string[];
   model_catalog_source?: ProviderModelCatalogSource | null;
+  model_catalog_recorded_at_ms?: number | null;
   probe_evidence?: ProviderProbeEvidence | null;
 }
 
@@ -81,6 +82,7 @@ export interface ProviderDefinition {
   apiKeyEnv?: string[];
   baseUrlEnv?: string[];
   modelCatalogSource?: ProviderModelCatalogSource | null;
+  modelCatalogRecordedAtMs?: number | null;
   probeEvidence?: ProviderProbeEvidence | null;
   supportsStreaming?: boolean;
   supportsTools?: boolean;
@@ -371,6 +373,7 @@ export function mergeProviderCatalog(
         apiKeyEnv: entry.api_key_env ?? existing.apiKeyEnv,
         baseUrlEnv: entry.base_url_env ?? existing.baseUrlEnv,
         modelCatalogSource: entry.model_catalog_source ?? existing.modelCatalogSource ?? null,
+        modelCatalogRecordedAtMs: entry.model_catalog_recorded_at_ms ?? existing.modelCatalogRecordedAtMs ?? null,
         probeEvidence: entry.probe_evidence ?? existing.probeEvidence ?? null,
         supportsStreaming: entry.supports_streaming ?? existing.supportsStreaming,
         supportsTools: entry.supports_tools ?? existing.supportsTools,
@@ -396,6 +399,7 @@ export function mergeProviderCatalog(
       apiKeyEnv: entry.api_key_env,
       baseUrlEnv: entry.base_url_env,
       modelCatalogSource: entry.model_catalog_source ?? null,
+      modelCatalogRecordedAtMs: entry.model_catalog_recorded_at_ms ?? null,
       probeEvidence: entry.probe_evidence ?? null,
       supportsStreaming: entry.supports_streaming,
       supportsTools: entry.supports_tools,
@@ -431,11 +435,14 @@ export function deriveProviderEvidenceSummary(provider: ProviderDefinition): Pro
     ? formatProbeRecordedAt(provider.probeEvidence.recorded_at_ms)
     : null;
   const catalogDetail = provider.modelCatalogSource
-    ? provider.modelCatalogSource === "live_endpoint"
-      ? "目录 Live /models"
-      : provider.modelCatalogSource === "static_fallback"
-        ? "目录 static fallback"
-        : "目录 unsupported"
+    ? [
+        provider.modelCatalogSource === "live_endpoint"
+          ? "目录 Live /models"
+          : provider.modelCatalogSource === "static_fallback"
+            ? "目录 static fallback"
+            : "目录 unsupported",
+        formatModelCatalogRecordedAt(provider.modelCatalogRecordedAtMs),
+      ].join(" · ")
     : "目录未验证";
 
   if (provider.probeEvidence?.status === "passed") {
@@ -474,6 +481,13 @@ function formatProbeRecordedAt(recordedAtMs?: number | null): string {
   const date = new Date(recordedAtMs);
   if (Number.isNaN(date.getTime())) return "检测时间未知";
   return `检测 ${date.toISOString().slice(0, 10)}`;
+}
+
+function formatModelCatalogRecordedAt(recordedAtMs?: number | null): string {
+  if (typeof recordedAtMs !== "number" || !Number.isFinite(recordedAtMs)) return "目录刷新时间未知";
+  const date = new Date(recordedAtMs);
+  if (Number.isNaN(date.getTime())) return "目录刷新时间未知";
+  return `目录刷新 ${date.toISOString().slice(0, 10)}`;
 }
 
 function mergeModelOptions(

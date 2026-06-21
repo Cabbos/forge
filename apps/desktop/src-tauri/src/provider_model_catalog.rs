@@ -28,6 +28,7 @@ pub(crate) struct ProviderModelCatalogResult {
     pub(crate) base_url: Option<String>,
     pub(crate) source: ProviderModelCatalogSource,
     pub(crate) status: ProviderModelCatalogStatus,
+    pub(crate) recorded_at_ms: Option<u64>,
     pub(crate) models: Vec<ProviderModelCatalogItem>,
     pub(crate) message: String,
     pub(crate) remediation: Option<String>,
@@ -207,6 +208,7 @@ pub(crate) async fn list_provider_models_with_credentials_and_profiles(
         base_url: Some(safe_base_url_label(&base_url)),
         source: ProviderModelCatalogSource::LiveEndpoint,
         status: ProviderModelCatalogStatus::Available,
+        recorded_at_ms: Some(current_epoch_millis()),
         models,
         message: format!(
             "{} returned {} models.",
@@ -243,6 +245,7 @@ fn static_fallback_catalog(profile: &LoadedProviderProfile) -> ProviderModelCata
         base_url: profile.default_base_url.as_deref().map(safe_base_url_label),
         source: ProviderModelCatalogSource::StaticFallback,
         status: ProviderModelCatalogStatus::Available,
+        recorded_at_ms: Some(current_epoch_millis()),
         models,
         message: format!("{} uses Forge's static model catalog.", profile.label),
         remediation: None,
@@ -347,10 +350,18 @@ fn unavailable(
         base_url,
         source,
         status: ProviderModelCatalogStatus::Unavailable,
+        recorded_at_ms: None,
         models,
         message: message.to_string(),
         remediation,
     }
+}
+
+fn current_epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }
 
 fn safe_base_url_label(base_url: &str) -> String {
@@ -468,6 +479,10 @@ mod tests {
 
         assert_eq!(result.status, ProviderModelCatalogStatus::Available);
         assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
+        assert!(
+            result.recorded_at_ms.is_some_and(|value| value > 0),
+            "live model catalog evidence must include when it was recorded"
+        );
         assert_eq!(result.provider, "openai");
         assert_eq!(
             result
@@ -547,6 +562,10 @@ mod tests {
 
         assert_eq!(result.status, ProviderModelCatalogStatus::Available);
         assert_eq!(result.source, ProviderModelCatalogSource::StaticFallback);
+        assert!(
+            result.recorded_at_ms.is_some_and(|value| value > 0),
+            "static fallback catalog evidence must include when it was recorded"
+        );
         assert_eq!(result.provider, "deepseek");
         assert_eq!(result.provider_label, "DeepSeek");
         assert_eq!(

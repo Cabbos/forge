@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added timestamps to persisted provider model catalog evidence. Manual model refreshes now record when the live `/models` or static fallback catalog evidence was produced, and Settings/readiness summaries display the refresh date or an explicit unknown-time marker for older caches.
 - Added timestamps to persisted provider probe evidence. Manual provider probes now store when the evidence was recorded, and Settings/readiness summaries surface the date or explicitly mark older cached evidence as unknown-time instead of implying timeless certification.
 - Added a provider recovery deep-link from start readiness. Provider setup/readiness actions now dispatch the Settings target section, so a failed cached provider probe reopens Settings on the Models page even if the user previously left Settings on another section.
 - Added provider evidence to start readiness. The empty-session readiness panel now derives a Provider evidence row from cached manual probe evidence and model catalog source; a failed cached manual probe blocks start readiness with an Open Settings action, while missing probe/live-catalog evidence remains a warning rather than a hard stop. This still does not add startup auto-probing, scheduled recertification, or live certification for every provider.
