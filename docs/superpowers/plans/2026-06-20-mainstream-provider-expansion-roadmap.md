@@ -724,6 +724,16 @@ This closes another registry/runtime drift and matters for local-first provider 
 
 **Still not claimed:** automatic Ollama startup, background local model polling, startup probing, local model compatibility certification, native Gemini/Bedrock model-list endpoints, or billing-grade provider pricing metadata.
 
+## 2026-06-22 Post-MVP Usability Slice: Custom Anthropic-Compatible Model Catalog Refresh
+
+**Status (2026-06-22): Implemented as the twenty-fifth "fully usable provider" hardening slice after MVP closure.** User-defined Anthropic-compatible profiles now use the manual live catalog path instead of being forced into a one-model static fallback. The Settings `Anthropic-compatible Gateway` template creates an `anthropic_messages` profile; that profile now resolves to `HttpModelsEndpoint`, calls `GET /v1/models`, preserves returned display names, and skips empty `x-api-key` headers for no-auth local/private gateways.
+
+This closes a product gap in the custom-provider flow. Built-in Anthropic could refresh `/v1/models`, and local Ollama could refresh `/api/tags`, but a user-created Anthropic-compatible gateway still could not discover its model list through the same Settings action. The new behavior is still explicitly user-triggered and evidence-based: if the gateway does not implement `/v1/models`, refresh returns an unavailable result with remediation rather than pretending the endpoint is certified.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog::tests::model_catalog_fetches_no_auth_anthropic_compatible_profile_models --lib` because a configured Anthropic-compatible profile returned `StaticFallback` and never sent a request. Green verification proves the profile sends `GET /v1/models`, sends no empty auth headers when `api_key_env: []`, preserves display names, and continues to pass the full provider catalog and registry suites.
+
+**Still not claimed:** automatic custom-gateway certification, background model polling, startup probing, native Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

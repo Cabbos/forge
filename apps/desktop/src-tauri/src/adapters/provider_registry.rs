@@ -319,7 +319,7 @@ fn model_catalog_policy_for_user_transport(transport: ProviderTransport) -> Mode
             ModelCatalogPolicy::HttpModelsEndpoint
         }
         ProviderTransport::AnthropicMessages | ProviderTransport::CustomAnthropicCompatible => {
-            ModelCatalogPolicy::StaticFallback
+            ModelCatalogPolicy::HttpModelsEndpoint
         }
         ProviderTransport::OpenAiResponses
         | ProviderTransport::NativeGemini

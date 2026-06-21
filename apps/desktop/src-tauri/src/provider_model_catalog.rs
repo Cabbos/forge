@@ -280,12 +280,10 @@ fn model_catalog_request(
         ProviderTransport::OpenAiChatCompletions | ProviderTransport::CustomOpenAiCompatible => Ok(
             with_bearer_auth_header(client.get(format!("{base_url}/models")), api_key),
         ),
-        ProviderTransport::AnthropicMessages => Ok(with_anthropic_auth_headers(
-            client.get(format!("{base_url}/v1/models")),
-            api_key,
-        )),
-        ProviderTransport::CustomAnthropicCompatible
-        | ProviderTransport::OpenAiResponses
+        ProviderTransport::AnthropicMessages | ProviderTransport::CustomAnthropicCompatible => Ok(
+            with_anthropic_auth_headers(client.get(format!("{base_url}/v1/models")), api_key),
+        ),
+        ProviderTransport::OpenAiResponses
         | ProviderTransport::NativeGemini
         | ProviderTransport::BedrockConverse => Err(format!(
             "{} model catalog refresh is not supported for this transport yet.",
@@ -402,9 +400,12 @@ fn with_anthropic_auth_headers(
     request: reqwest::RequestBuilder,
     api_key: &str,
 ) -> reqwest::RequestBuilder {
-    request
-        .header("x-api-key", api_key)
-        .header("anthropic-version", ANTHROPIC_API_VERSION)
+    let request = request.header("anthropic-version", ANTHROPIC_API_VERSION);
+    if api_key.trim().is_empty() {
+        request
+    } else {
+        request.header("x-api-key", api_key)
+    }
 }
 
 fn unavailable(
@@ -666,6 +667,69 @@ mod tests {
         assert_eq!(request["authorization"], "");
         assert_eq!(request["x_api_key"], "");
         assert_eq!(request["anthropic_version"], "");
+    }
+
+    #[tokio::test]
+    async fn model_catalog_fetches_no_auth_anthropic_compatible_profile_models() {
+        let (base_url, request_rx) = spawn_json_response_server(&json!({
+            "data": [
+                { "type": "model", "id": "gateway-sonnet", "display_name": "Gateway Sonnet" },
+                { "type": "model", "id": "gateway-haiku", "display_name": "Gateway Haiku" }
+            ]
+        }));
+        let profiles = load_provider_profiles(&[ProviderProfileConfig {
+            id: "local-anthropic".to_string(),
+            label: Some("Local Anthropic-Compatible".to_string()),
+            base_url: Some(base_url.clone()),
+            api_key_env: Some(EnvVarList::Many(vec![])),
+            base_url_env: None,
+            default_model: Some("gateway-sonnet".to_string()),
+            transport: Some("anthropic_messages".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec!["anthropic-gateway".to_string()],
+        }])
+        .expect("profiles load");
+
+        let result = list_provider_models_with_credentials_and_profiles(
+            "anthropic-gateway",
+            Credentials {
+                api_key: String::new(),
+                api_base: None,
+                model: None,
+            },
+            reqwest::Client::new(),
+            &profiles,
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
+        assert_eq!(result.provider, "local-anthropic");
+        assert_eq!(
+            result
+                .models
+                .iter()
+                .map(|model| (model.id.as_str(), model.name.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("gateway-haiku", "Gateway Haiku"),
+                ("gateway-sonnet", "Gateway Sonnet"),
+            ]
+        );
+        assert_eq!(
+            result.message,
+            "Local Anthropic-Compatible returned 2 models."
+        );
+
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured Anthropic-compatible models request");
+        assert_eq!(request["path"], "/v1/models");
+        assert_eq!(request["authorization"], "");
+        assert_eq!(request["x_api_key"], "");
+        assert_eq!(request["anthropic_version"], "2023-06-01");
     }
 
     #[tokio::test]
