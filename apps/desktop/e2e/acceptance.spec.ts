@@ -438,6 +438,71 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(page.getByTestId("composer-model-chip")).toContainText("local-model");
   });
 
+  test("start readiness blocks a provider profile with failed cached probe evidence", async ({ page }) => {
+    await page.evaluate(async () => {
+      const workspace = {
+        id: "/Users/cabbos/project/forge",
+        name: "forge",
+        path: "/Users/cabbos/project/forge",
+        lastOpenedAt: Date.now(),
+      };
+      // @ts-expect-error acceptance mock
+      await window.__tauriMockIPC("save_app_metadata", {
+        metadata: {
+          workspaces: [workspace],
+          activeWorkspaceId: workspace.id,
+          activeSessionId: null,
+          selectedProvider: "openai",
+          selectedModel: "gpt-4o",
+        },
+      });
+    });
+    await page.addInitScript(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockProviderCatalog = [
+        {
+          id: "openai",
+          label: "OpenAI",
+          default_model: "gpt-4o",
+          context_window_tokens: 128000,
+          aliases: ["gpt"],
+          requires_api_key: true,
+          supports_streaming: true,
+          supports_tools: true,
+          source: "built_in",
+          base_url: "https://api.openai.com/v1",
+          transport: "openai_chat_completions",
+          api_key_env: ["OPENAI_API_KEY"],
+          base_url_env: ["OPENAI_BASE_URL"],
+          model_catalog_source: null,
+          probe_evidence: {
+            source: "manual_probe",
+            status: "failed",
+            model: "gpt-4o",
+            base_url: "https://api.openai.com/v1",
+            checks: [
+              { id: "streaming_accepted", label: "Streaming accepted", status: "failed" },
+            ],
+          },
+          models: [{ id: "gpt-4o", name: "GPT-4o", context_window_tokens: 128000 }],
+        },
+      ];
+      // @ts-expect-error acceptance mock
+      window.__mockApiKeyStatus = [{ provider: "openai", set: true, preview: "sk-...1234" }];
+    });
+
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const readiness = page.getByTestId("start-readiness-panel");
+    await expect(readiness).toBeVisible();
+    await expect(readiness).toContainText("Provider 检测失败");
+    await expect(readiness).toContainText("打开设置重新检测 provider。");
+    await readiness.getByRole("button", { name: "打开设置" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
   test("settings models edits a custom provider profile", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     const dialog = page.getByRole("dialog");

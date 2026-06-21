@@ -1,5 +1,5 @@
 import type { KeyStatus, ProjectCheckpointStatus, ProjectRuntimeStatus } from "@/lib/tauri";
-import type { ProviderDefinition } from "@/lib/providers";
+import { deriveProviderEvidenceSummary, type ProviderDefinition } from "./providers.ts";
 import type { Workspace } from "@/lib/workspaces";
 
 export type ReadinessTone = "ready" | "warning" | "blocked" | "muted";
@@ -44,6 +44,8 @@ export function deriveStartReadiness(input: {
     providerModels.some((model) => model.id === selectedModel)
   );
   const modelWarning = Boolean(selectedModel) && !modelKnown;
+  const evidenceSummary = input.provider ? deriveProviderEvidenceSummary(input.provider) : null;
+  const evidenceBlocked = evidenceSummary?.tone === "blocked";
   const hasCheckpoint = Boolean(input.checkpoint?.last_checkpoint);
   const restorableCheckpoint = Boolean(input.checkpoint?.restorable);
   const rows: StartReadinessRow[] = [
@@ -77,6 +79,15 @@ export function deriveStartReadiness(input: {
       actionLabel: null,
     },
     {
+      label: "Provider 证据",
+      value: evidenceSummary
+        ? `${evidenceSummary.label}：${evidenceSummary.detail}`
+        : "Provider 证据未知",
+      tone: evidenceSummary?.tone ?? "warning",
+      action: evidenceBlocked ? "open_settings" : null,
+      actionLabel: evidenceBlocked ? "打开设置" : null,
+    },
+    {
       label: "预览",
       value: input.runtime?.running
         ? "已启动"
@@ -108,12 +119,20 @@ export function deriveStartReadiness(input: {
 
   const issueCount = rows.filter((row) => row.tone === "blocked" || row.tone === "warning").length;
   return {
-    title: workspaceBlocked ? "选择一个项目开始" : keyBlocked ? "需要配置模型密钥" : "准备开始",
+    title: workspaceBlocked
+      ? "选择一个项目开始"
+      : keyBlocked
+        ? "需要配置模型密钥"
+        : evidenceBlocked
+          ? "Provider 检测失败"
+          : "准备开始",
     subtitle: issueCount === 0
       ? "可以开始做第一版小工具。"
       : keyBlocked
         ? `添加 ${input.providerLabel} 密钥后就可以发送第一句话。`
-        : "开始前有几项可以先确认。",
+        : evidenceBlocked
+          ? "打开设置重新检测 provider。"
+          : "开始前有几项可以先确认。",
     issueCount,
     rows,
   };

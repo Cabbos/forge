@@ -634,6 +634,16 @@ This closes a UX/explainability gap after evidence persistence. Persisting facts
 
 **Still not claimed:** automatic paid-API startup probes, scheduled recertification, live certification for every provider, native Anthropic/Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-21 Post-MVP Usability Slice: Provider Evidence Start Readiness
+
+**Status (2026-06-21): Implemented as the sixteenth "fully usable provider" hardening slice after MVP closure.** The empty-session start readiness contract now consumes the same provider evidence summary that Settings displays. `deriveStartReadiness(...)` adds a `Provider 证据` row derived from cached manual probe evidence plus model catalog source. Passed manual probe plus live `/models` evidence is ready, missing probe/live-catalog evidence is a warning, and a failed cached manual probe blocks start readiness with an Open Settings action and the title `Provider 检测失败`.
+
+This closes the last obvious evidence-hand-off gap. Settings could already explain provider compatibility, but the pre-start path still treated a provider as ready as long as the key/model/runtime checks passed. For a product that wants provider support to be defensible, the point of cached manual probe evidence is not only historical display; it should affect the moment when a user is about to start agent work. The boundary stays conservative: Forge does not run startup probes, does not treat missing evidence as a hard failure, and does not claim live certification for every provider.
+
+**Evidence:** TDD red pass failed in `cd apps/desktop && node --test src/lib/start-readiness.test.ts` because readiness had no `Provider 证据` row and did not block failed cached probe evidence. Green verification covers no-auth custom providers with missing evidence as warnings, passed manual probe plus live catalog as ready, failed manual probe as blocked, and selected-model mismatch behavior with provider evidence present. Browser verification covers a mocked failed cached probe evidence path where the start readiness panel shows `Provider 检测失败`, displays the retry guidance, and opens Settings. Controller verification passed `cd apps/desktop && node --test src/lib/start-readiness.test.ts src/lib/providers.test.ts src/lib/ipc/apiKeys.test.ts src/hooks/sessionProfileDefaults.test.ts` and `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "start readiness accepts a no-auth custom provider profile|start readiness blocks a provider profile with failed cached probe evidence|settings models renders cached manual provider probe evidence|provider probe"`.
+
+**Still not claimed:** automatic paid-API startup probes, scheduled provider recertification, live certification for every provider, automatic repair of failed providers, native Anthropic/Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

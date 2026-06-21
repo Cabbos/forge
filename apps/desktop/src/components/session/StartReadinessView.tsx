@@ -1,5 +1,5 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { CheckCircle2, Circle, FolderOpen, GitBranch, KeyRound, Play, RefreshCw } from "lucide-react";
+import { CheckCircle2, Circle, FolderOpen, GitBranch, KeyRound, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type {
   ReadinessAction,
   StartReadinessRow,
@@ -158,6 +158,7 @@ function ReadinessRows({
 function readinessIconFor(label: string) {
   if (label === "当前项目") return FolderOpen;
   if (label === "模型密钥") return KeyRound;
+  if (label === "Provider 证据") return ShieldCheck;
   if (label === "预览") return Play;
   if (label === "检查点") return GitBranch;
   return Circle;
@@ -166,7 +167,7 @@ function readinessIconFor(label: string) {
 function readinessIconTone(label: string, tone: string): ForgeIconTone {
   if (tone === "blocked") return "danger";
   if (label === "当前项目") return "context";
-  if (label === "模型密钥" || label === "检查点") return "safety";
+  if (label === "模型密钥" || label === "Provider 证据" || label === "检查点") return "safety";
   if (label === "预览") return "action";
   return tone === "ready" ? "safety" : "neutral";
 }

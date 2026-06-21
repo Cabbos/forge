@@ -78,9 +78,12 @@ export function StartReadinessCard({ sessionId, variant = "panel", showDetails =
   const primaryAction = readiness.rows.find((row) => row.action && row.actionLabel);
   const workspaceRow = readiness.rows.find((row) => row.label === "当前项目");
   const keyRow = readiness.rows.find((row) => row.label === "模型密钥");
+  const evidenceRow = readiness.rows.find((row) => row.label === "Provider 证据");
   const panelState = queryError ? "attention" : readiness.issueCount === 0 ? "ready" : primaryAction?.tone === "blocked" ? "blocked" : "attention";
   const secondaryStatus = queryError
     ? `状态读取失败：${queryError}`
+    : evidenceRow?.tone === "blocked"
+      ? readiness.subtitle
     : [
         workspaceRow?.tone === "ready" ? workspaceRow.value.replace("当前项目：", "") : null,
         keyRow?.tone === "blocked" ? keyRow.value : null,
