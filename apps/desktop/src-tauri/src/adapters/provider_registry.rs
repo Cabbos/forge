@@ -321,9 +321,10 @@ fn model_catalog_policy_for_user_transport(transport: ProviderTransport) -> Mode
         ProviderTransport::AnthropicMessages | ProviderTransport::CustomAnthropicCompatible => {
             ModelCatalogPolicy::HttpModelsEndpoint
         }
-        ProviderTransport::OpenAiResponses
-        | ProviderTransport::NativeGemini
-        | ProviderTransport::BedrockConverse => ModelCatalogPolicy::None,
+        ProviderTransport::NativeGemini => ModelCatalogPolicy::HttpModelsEndpoint,
+        ProviderTransport::OpenAiResponses | ProviderTransport::BedrockConverse => {
+            ModelCatalogPolicy::None
+        }
     }
 }
 

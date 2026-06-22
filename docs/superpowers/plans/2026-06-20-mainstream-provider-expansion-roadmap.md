@@ -734,6 +734,16 @@ This closes a product gap in the custom-provider flow. Built-in Anthropic could 
 
 **Still not claimed:** automatic custom-gateway certification, background model polling, startup probing, native Gemini/Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
 
+## 2026-06-22 Post-MVP Usability Slice: Native Gemini Model Catalog Refresh
+
+**Status (2026-06-22): Implemented as the twenty-sixth "fully usable provider" hardening slice after MVP closure.** User-defined profiles that explicitly choose the `native_gemini` transport now use Gemini's manual live catalog path instead of returning an unsupported transport result. Forge calls `GET /v1beta/models`, sends the API key through `x-goog-api-key`, parses Gemini's `models[]` response, preserves `displayName`, strips the `models/` prefix for selectable model ids, and filters out entries that do not advertise `generateContent`.
+
+This closes another registry/runtime drift for provider portability. Built-in Gemini still uses Google's OpenAI-compatible route by default, but custom/native Gemini profiles now have a first-class model-list endpoint inside the same Settings evidence path as OpenAI-compatible, Anthropic-compatible, Anthropic, and Ollama refreshes. The result remains user-triggered: a listed model becomes catalog evidence, not automatic compatibility certification.
+
+**Evidence:** TDD red pass failed in `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_model_catalog::tests::model_catalog_fetches_gemini_models_endpoint --lib` because a configured `native_gemini` profile returned `Unavailable` before any Gemini request was sent. Green verification proves the profile sends `GET /v1beta/models`, sends `x-goog-api-key`, excludes embedding-only models, and preserves display names for generation-capable Gemini models.
+
+**Still not claimed:** automatic Gemini certification, background model polling, startup probing, Bedrock model-list endpoints, executable provider plugins, or billing-grade provider pricing metadata.
+
 ## MVP Definition
 
 The MVP is complete when:

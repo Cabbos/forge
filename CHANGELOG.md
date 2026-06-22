@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added native Gemini model catalog refresh for configured native Gemini profiles. User-defined `native_gemini` providers now use the manual `GET /v1beta/models` path with `x-goog-api-key`, keep generation-capable Gemini models, and filter out embedding-only entries without adding startup certification.
 - Added live model refresh for custom Anthropic-compatible profiles. User-defined Anthropic-compatible gateways now use the manual `/v1/models` refresh path, including no-auth local gateways without empty `x-api-key` headers, instead of falling back to static single-model catalog evidence.
 - Added native Ollama model catalog refresh. Ollama provider rows now refresh local models through `/api/tags` without auth headers, parse the returned local model names, and keep the same manual live-catalog evidence path instead of treating the custom Anthropic-compatible transport as unsupported.
 - Added native Anthropic model catalog refresh. Anthropic provider rows now fetch Claude models from the official `/v1/models` endpoint with Anthropic API headers, preserve returned display names, and keep the same user-triggered live catalog evidence path without expanding into automatic startup certification.

@@ -283,9 +283,11 @@ fn model_catalog_request(
         ProviderTransport::AnthropicMessages | ProviderTransport::CustomAnthropicCompatible => Ok(
             with_anthropic_auth_headers(client.get(format!("{base_url}/v1/models")), api_key),
         ),
-        ProviderTransport::OpenAiResponses
-        | ProviderTransport::NativeGemini
-        | ProviderTransport::BedrockConverse => Err(format!(
+        ProviderTransport::NativeGemini => Ok(with_gemini_auth_header(
+            client.get(gemini_models_url(base_url)),
+            api_key,
+        )),
+        ProviderTransport::OpenAiResponses | ProviderTransport::BedrockConverse => Err(format!(
             "{} model catalog refresh is not supported for this transport yet.",
             profile.label
         )),
@@ -298,6 +300,9 @@ fn parse_model_catalog_models(
 ) -> Vec<ProviderModelCatalogItem> {
     if profile.id == "ollama" {
         return parse_ollama_models(body);
+    }
+    if profile.transport == ProviderTransport::NativeGemini {
+        return parse_gemini_models(body);
     }
     parse_http_model_catalog_models(body)
 }
@@ -369,10 +374,62 @@ fn parse_ollama_models(body: &str) -> Vec<ProviderModelCatalogItem> {
         .collect()
 }
 
+fn parse_gemini_models(body: &str) -> Vec<ProviderModelCatalogItem> {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let mut models = BTreeMap::new();
+    for entry in parsed
+        .get("models")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let supports_generate_content = entry
+            .get("supportedGenerationMethods")
+            .and_then(|value| value.as_array())
+            .is_some_and(|methods| {
+                methods.iter().any(|method| {
+                    method
+                        .as_str()
+                        .is_some_and(|value| value == "generateContent")
+                })
+            });
+        if !supports_generate_content {
+            continue;
+        }
+
+        let id = entry
+            .get("baseModelId")
+            .or_else(|| entry.get("name"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim().trim_start_matches("models/"))
+            .filter(|value| !value.is_empty());
+        let Some(id) = id else {
+            continue;
+        };
+        let name = entry
+            .get("displayName")
+            .or_else(|| entry.get("name"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(id);
+        models.insert(id.to_string(), name.to_string());
+    }
+    models
+        .into_iter()
+        .map(|(id, name)| ProviderModelCatalogItem { id, name })
+        .collect()
+}
+
 fn model_catalog_empty_remediation(profile: &LoadedProviderProfile) -> String {
     if profile.id == "ollama" {
         return "Check that the Ollama endpoint implements /api/tags and has local models pulled."
             .to_string();
+    }
+    if profile.transport == ProviderTransport::NativeGemini {
+        return "Check that the Gemini endpoint implements /v1beta/models and returns models that support generateContent.".to_string();
     }
     "Check that the endpoint implements an OpenAI-compatible /models response.".to_string()
 }
@@ -382,6 +439,15 @@ fn ollama_tags_url(base_url: &str) -> String {
         format!("{base_url}/tags")
     } else {
         format!("{base_url}/api/tags")
+    }
+}
+
+fn gemini_models_url(base_url: &str) -> String {
+    let rest_base = base_url.strip_suffix("/openai").unwrap_or(base_url);
+    if rest_base.ends_with("/v1") || rest_base.ends_with("/v1beta") {
+        format!("{rest_base}/models")
+    } else {
+        format!("{rest_base}/v1beta/models")
     }
 }
 
@@ -405,6 +471,17 @@ fn with_anthropic_auth_headers(
         request
     } else {
         request.header("x-api-key", api_key)
+    }
+}
+
+fn with_gemini_auth_header(
+    request: reqwest::RequestBuilder,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    if api_key.trim().is_empty() {
+        request
+    } else {
+        request.header("x-goog-api-key", api_key)
     }
 }
 
@@ -670,6 +747,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn model_catalog_fetches_gemini_models_endpoint() {
+        let (base_url, request_rx) = spawn_json_response_server(&json!({
+            "models": [
+                {
+                    "name": "models/gemini-2.5-pro",
+                    "displayName": "Gemini 2.5 Pro",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/gemini-2.5-flash",
+                    "displayName": "Gemini 2.5 Flash",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/embedding-001",
+                    "displayName": "Embedding 001",
+                    "supportedGenerationMethods": ["embedContent"]
+                }
+            ]
+        }));
+
+        let profiles = load_provider_profiles(&[ProviderProfileConfig {
+            id: "native-gemini".to_string(),
+            label: Some("Native Gemini".to_string()),
+            base_url: Some(base_url.clone()),
+            api_key_env: Some(EnvVarList::One("GEMINI_API_KEY".to_string())),
+            base_url_env: None,
+            default_model: Some("gemini-2.5-pro".to_string()),
+            transport: Some("native_gemini".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec!["google-native".to_string()],
+        }])
+        .expect("profiles load");
+        let result = list_provider_models_with_credentials_and_profiles(
+            "google-native",
+            Credentials {
+                api_key: "test-key".to_string(),
+                api_base: None,
+                model: None,
+            },
+            reqwest::Client::new(),
+            &profiles,
+        )
+        .await;
+
+        assert_eq!(result.status, ProviderModelCatalogStatus::Available);
+        assert_eq!(result.source, ProviderModelCatalogSource::LiveEndpoint);
+        assert_eq!(result.provider, "native-gemini");
+        assert_eq!(
+            result
+                .models
+                .iter()
+                .map(|model| (model.id.as_str(), model.name.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+                ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+            ]
+        );
+        assert_eq!(result.message, "Native Gemini returned 2 models.");
+
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured Gemini models request");
+        assert_eq!(request["path"], "/v1beta/models");
+        assert_eq!(request["authorization"], "");
+        assert_eq!(request["x_api_key"], "");
+        assert_eq!(request["x_goog_api_key"], "test-key");
+        assert_eq!(request["anthropic_version"], "");
+    }
+
+    #[tokio::test]
     async fn model_catalog_fetches_no_auth_anthropic_compatible_profile_models() {
         let (base_url, request_rx) = spawn_json_response_server(&json!({
             "data": [
@@ -908,10 +1059,19 @@ mod tests {
                     .then(|| value.trim().to_string())
             })
             .unwrap_or_default();
+        let x_goog_api_key = request
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("x-goog-api-key")
+                    .then(|| value.trim().to_string())
+            })
+            .unwrap_or_default();
         json!({
             "path": path,
             "authorization": authorization,
             "x_api_key": x_api_key,
+            "x_goog_api_key": x_goog_api_key,
             "anthropic_version": anthropic_version,
         })
     }
