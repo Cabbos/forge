@@ -486,6 +486,7 @@ impl SubAgent {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_with_mode(
         task: &str,
         adapter: Arc<dyn AiAdapter>,

@@ -27,18 +27,13 @@ pub struct DeliverySummary {
     pub record_target_pages: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderUsageReason {
+    #[default]
     ProviderReported,
     ProviderOmitted,
     PricingUnknown,
-}
-
-impl Default for ProviderUsageReason {
-    fn default() -> Self {
-        Self::ProviderReported
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +88,7 @@ pub enum SubagentRuntimePayload {
 
 /// Streaming events emitted from Rust backend to frontend.
 /// Mirrors the TypeScript protocol in src/lib/protocol.ts
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event_type")]
 pub enum StreamEvent {

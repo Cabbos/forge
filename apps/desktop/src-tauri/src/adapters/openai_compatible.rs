@@ -54,10 +54,8 @@ impl OpenAiCompatibleAdapter {
     }
 
     fn new_with_key_policy(api_key: String, api_key_required: bool) -> Result<Self, AdapterError> {
-        if api_key.trim().is_empty() {
-            if api_key_required {
-                return Err(AdapterError::MissingApiKey);
-            }
+        if api_key.trim().is_empty() && api_key_required {
+            return Err(AdapterError::MissingApiKey);
         }
         Ok(Self {
             api_key,

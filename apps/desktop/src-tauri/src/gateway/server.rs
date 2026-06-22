@@ -1241,6 +1241,7 @@ fn headless_resume_control_response(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_request_matches_task(
     task: &LoopTaskRecord,
     goal: &str,

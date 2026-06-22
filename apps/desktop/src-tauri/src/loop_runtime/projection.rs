@@ -1387,6 +1387,7 @@ mod tests {
         .unwrap()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn headless_owner_run_state_event_for_test(
         sequence: u64,
         task_id: &str,

@@ -57,6 +57,7 @@ impl ChildAgentRuntime {
     /// write files and run shell commands without touching the main workspace.
     /// On completion we collect the git diff (and any test output) and return
     /// a structured summary to the parent model.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn run_worktree_worker(
         worktree_id: &str,
         task: &str,

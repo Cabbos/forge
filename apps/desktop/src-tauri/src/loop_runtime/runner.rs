@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::loop_runtime::headless::{HeadlessResumeReadiness, derive_headless_resume_readiness};
+use crate::loop_runtime::headless::{derive_headless_resume_readiness, HeadlessResumeReadiness};
 use crate::loop_runtime::types::{new_loop_event_id, now_millis};
 use crate::loop_runtime::{
-    BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
-    HeadlessOwnerSnapshotSource, LOOP_RUNTIME_SCHEMA_VERSION, LoopActionIntent, LoopActor,
+    evaluate_completion, BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun,
+    HeadlessOwnerRunState, HeadlessOwnerSnapshotSource, LoopActionIntent, LoopActor,
     LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection,
     LoopTaskProjectionStore, LoopTaskRecord, LoopTaskStatus, PolicyDecisionRecord,
-    evaluate_completion,
+    LOOP_RUNTIME_SCHEMA_VERSION,
 };
 
 pub const LOOP_RUNNER_POLL_INTERVAL_SECS: u64 = 5;
@@ -480,6 +480,7 @@ impl LoopTaskRunner {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn headless_owner_run(
         &self,
         task: &LoopTaskRecord,
@@ -552,6 +553,7 @@ impl LoopTaskRunner {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn record_fake_executor_outcome(
         &self,
         journal: &LoopEventJournal,
@@ -608,6 +610,7 @@ impl LoopTaskRunner {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn headless_owner_state_envelope(
         &self,
         task_id: String,
@@ -674,6 +677,7 @@ impl LoopTaskRunner {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn envelope(
         &self,
         task_id: String,
@@ -1070,9 +1074,9 @@ mod tests {
     use super::{FakeOwnerExecutorFixture, LoopRunnerRunSummary, LoopTaskRunner};
     use crate::loop_runtime::{
         BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
-        HeadlessOwnerSnapshotSource, LOOP_RUNTIME_SCHEMA_VERSION, LoopActionIntent, LoopActor,
-        LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease,
-        LoopTaskProjectionStore, LoopTaskRecord, LoopTaskStatus,
+        HeadlessOwnerSnapshotSource, LoopActionIntent, LoopActor, LoopEventEnvelope,
+        LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjectionStore, LoopTaskRecord,
+        LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
     };
 
     #[test]
@@ -1392,20 +1396,16 @@ mod tests {
         assert_eq!(states.len(), 2);
         assert_eq!(states[0].0, HeadlessOwnerRunState::LeaseAcquired);
         assert_eq!(states[1].0, HeadlessOwnerRunState::WaitingForInput);
-        assert!(
-            states[1]
-                .1
-                .as_deref()
-                .unwrap()
-                .contains("coordinator dry run")
-        );
-        assert!(
-            states[1]
-                .1
-                .as_deref()
-                .unwrap()
-                .contains("no headless AgentSession was created")
-        );
+        assert!(states[1]
+            .1
+            .as_deref()
+            .unwrap()
+            .contains("coordinator dry run"));
+        assert!(states[1]
+            .1
+            .as_deref()
+            .unwrap()
+            .contains("no headless AgentSession was created"));
         assert!(states[1].2.contains(&owner_run.budget_snapshot_id));
 
         let waiting = events
@@ -1712,13 +1712,12 @@ mod tests {
             .unwrap();
         assert_eq!(task.status, LoopTaskStatus::Interrupted);
         assert!(task.lease.is_none());
-        assert!(
-            task.outcome
-                .as_ref()
-                .unwrap()
-                .message
-                .contains("stale lease")
-        );
+        assert!(task
+            .outcome
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("stale lease"));
     }
 
     #[test]
@@ -1762,13 +1761,11 @@ mod tests {
             task.headless_owner_runs[0].state,
             HeadlessOwnerRunState::Expired
         );
-        assert!(
-            task.headless_owner_runs[0]
-                .cancellation_reason
-                .as_deref()
-                .unwrap()
-                .contains("stale lease")
-        );
+        assert!(task.headless_owner_runs[0]
+            .cancellation_reason
+            .as_deref()
+            .unwrap()
+            .contains("stale lease"));
     }
 
     #[test]
@@ -1857,11 +1854,9 @@ mod tests {
         assert_eq!(owner_run.state, HeadlessOwnerRunState::Completed);
         assert!(owner_run.cancellation_reason.is_none());
         assert!(owner_run.waiting_reason.is_none());
-        assert!(
-            owner_run
-                .evidence_refs
-                .contains(&"fake-executor:completed".to_string())
-        );
+        assert!(owner_run
+            .evidence_refs
+            .contains(&"fake-executor:completed".to_string()));
 
         let events = journal.load_all().unwrap();
         let started_lease = events
@@ -1883,20 +1878,15 @@ mod tests {
         for (_, event) in states {
             assert_eq!(event.lease_id.as_deref(), Some(started_lease));
             assert_eq!(event.attempt, Some(1));
-            assert_eq!(
-                event
-                    .idempotency_key
-                    .as_deref()
-                    .unwrap()
-                    .starts_with("runner:runner-1:owner-fake-executor-state:task-fake-completed:"),
-                true
-            );
+            assert!(event
+                .idempotency_key
+                .as_deref()
+                .unwrap()
+                .starts_with("runner:runner-1:owner-fake-executor-state:task-fake-completed:"));
         }
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event.event, LoopRuntimeEvent::TaskCanceled { .. }))
-        );
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event.event, LoopRuntimeEvent::TaskCanceled { .. })));
     }
 
     #[test]
@@ -1924,20 +1914,16 @@ mod tests {
             HeadlessOwnerExecutorKind::FakeExecutor
         );
         assert_eq!(owner_run.state, HeadlessOwnerRunState::WaitingForInput);
-        assert!(
-            owner_run
-                .waiting_reason
-                .as_deref()
-                .unwrap()
-                .contains("pending confirmation confirm-write-1")
-        );
-        assert!(
-            owner_run
-                .waiting_reason
-                .as_deref()
-                .unwrap()
-                .contains("not auto-accepted")
-        );
+        assert!(owner_run
+            .waiting_reason
+            .as_deref()
+            .unwrap()
+            .contains("pending confirmation confirm-write-1"));
+        assert!(owner_run
+            .waiting_reason
+            .as_deref()
+            .unwrap()
+            .contains("not auto-accepted"));
         assert!(owner_run.cancellation_reason.is_none());
 
         let events = journal.load_all().unwrap();
@@ -1977,26 +1963,20 @@ mod tests {
             HeadlessOwnerExecutorKind::FakeExecutor
         );
         assert_eq!(owner_run.state, HeadlessOwnerRunState::WaitingForInput);
-        assert!(
-            owner_run
-                .waiting_reason
-                .as_deref()
-                .unwrap()
-                .contains("pending tool call tool-call-shell-1")
-        );
-        assert!(
-            owner_run
-                .waiting_reason
-                .as_deref()
-                .unwrap()
-                .contains("not auto-accepted")
-        );
+        assert!(owner_run
+            .waiting_reason
+            .as_deref()
+            .unwrap()
+            .contains("pending tool call tool-call-shell-1"));
+        assert!(owner_run
+            .waiting_reason
+            .as_deref()
+            .unwrap()
+            .contains("not auto-accepted"));
         let events = journal.load_all().unwrap();
-        assert!(
-            !owner_state_events(&events)
-                .iter()
-                .any(|state| state.0 == HeadlessOwnerRunState::Completed)
-        );
+        assert!(!owner_state_events(&events)
+            .iter()
+            .any(|state| state.0 == HeadlessOwnerRunState::Completed));
     }
 
     #[test]
@@ -2047,18 +2027,14 @@ mod tests {
                 Some(expected_reason)
             );
             if expected_state == HeadlessOwnerRunState::Expired {
-                assert!(
-                    owner_run
-                        .evidence_refs
-                        .contains(&"fake-executor:waiting-evidence".to_string())
-                );
+                assert!(owner_run
+                    .evidence_refs
+                    .contains(&"fake-executor:waiting-evidence".to_string()));
             }
             let events = journal.load_all().unwrap();
-            assert!(
-                owner_state_events(&events)
-                    .iter()
-                    .any(|state| state.0 == HeadlessOwnerRunState::FakeRunning)
-            );
+            assert!(owner_state_events(&events)
+                .iter()
+                .any(|state| state.0 == HeadlessOwnerRunState::FakeRunning));
         }
     }
 

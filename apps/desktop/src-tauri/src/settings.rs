@@ -490,7 +490,8 @@ impl Settings {
             aliases: clean_string_list(input.aliases),
         };
 
-        load_provider_profiles(&[config.clone()]).map_err(|error| format!("{error:?}"))?;
+        load_provider_profiles(std::slice::from_ref(&config))
+            .map_err(|error| format!("{error:?}"))?;
         self.providers
             .retain(|profile| normalize_profile_key(&profile.id) != id);
         self.providers.push(config);

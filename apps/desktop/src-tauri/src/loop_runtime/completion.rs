@@ -295,9 +295,7 @@ fn completion_facts(
     }
 }
 
-fn latest_review_decision<'a>(
-    evidence: &'a [EvidenceRecord],
-) -> Option<(&'a str, &'a HumanGateDecision)> {
+fn latest_review_decision(evidence: &[EvidenceRecord]) -> Option<(&str, &HumanGateDecision)> {
     evidence.iter().rev().find_map(|evidence| match evidence {
         EvidenceRecord::Review {
             gate_id, decision, ..

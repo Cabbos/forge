@@ -67,8 +67,8 @@ async fn probe_provider_with_credentials_and_profiles(
     client: reqwest::Client,
     profiles: &[LoadedProviderProfile],
 ) -> ProviderProbeResult {
-    let Some(profile) = find_loaded_provider_profile(&profiles, provider) else {
-        return unsupported_provider_result(provider, &profiles);
+    let Some(profile) = find_loaded_provider_profile(profiles, provider) else {
+        return unsupported_provider_result(provider, profiles);
     };
     let provider_id = profile.id.clone();
     let provider_label = profile.label.clone();

@@ -278,6 +278,7 @@ impl LoopEventEnvelope {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LoopRuntimeEvent {

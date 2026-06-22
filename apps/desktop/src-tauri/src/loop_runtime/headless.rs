@@ -259,7 +259,10 @@ mod tests {
             ),
         ];
         for (snapshot_source, expected) in snapshot_source_cases {
-            assert_eq!(serde_json::to_value(snapshot_source).unwrap(), json!(expected));
+            assert_eq!(
+                serde_json::to_value(snapshot_source).unwrap(),
+                json!(expected)
+            );
         }
 
         let executor_kind_cases = [
@@ -272,7 +275,10 @@ mod tests {
             ),
         ];
         for (executor_kind, expected) in executor_kind_cases {
-            assert_eq!(serde_json::to_value(executor_kind).unwrap(), json!(expected));
+            assert_eq!(
+                serde_json::to_value(executor_kind).unwrap(),
+                json!(expected)
+            );
         }
 
         let owner_run = owner_run_for_test();
@@ -318,7 +324,10 @@ mod tests {
     #[test]
     fn headless_owner_contract_rejects_missing_human_gate_policy_budget_or_idempotency() {
         for (field_name, clear_field) in [
-            ("human_gate_id", clear_human_gate_id as fn(&mut HeadlessOwnerRun)),
+            (
+                "human_gate_id",
+                clear_human_gate_id as fn(&mut HeadlessOwnerRun),
+            ),
             ("policy_decision_id", clear_policy_decision_id),
             ("budget_snapshot_id", clear_budget_snapshot_id),
             ("idempotency_key", clear_idempotency_key),
