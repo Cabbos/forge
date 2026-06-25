@@ -15,7 +15,20 @@ Forge source workspace: `/Users/cabbos/project/forge`
 
 ## Workspace Baseline
 
-Not recorded yet.
+Command:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+Output:
+
+```text
+## main
+ M index.html
+ M src/App.tsx
+ M src/styles.css
+```
 
 ## Summary
 
