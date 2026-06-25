@@ -225,4 +225,12 @@ Focus on preview runtime ownership evidence and final response presentation. Do 
 
 ## Final Decision
 
-Not evaluated yet.
+P0 remaining: recorded in Blocker Queue
+P1 remaining: recorded in Blocker Queue
+P2 recorded: recorded in scenario sections
+
+Decision: Continue with a blocker-specific implementation plan.
+
+Rationale:
+
+- The Blocker Queue contains at least one P0 or P1 that prevents a clean internal beta pass.
