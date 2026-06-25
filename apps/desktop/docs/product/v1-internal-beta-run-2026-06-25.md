@@ -201,7 +201,27 @@ Next action: Keep review-priority calibration recorded as P2; do not expand scop
 
 ## Blocker Queue
 
-No P0 or P1 blockers recorded yet.
+### P1: Internal Beta Blocker
+
+Scenario:
+
+Scenario 3: Preview Ownership
+
+Evidence:
+
+Forge checked the preview process and the process cwd belonged to `/Users/cabbos/project/forge-test-app`, but the visible final answer only provided `http://127.0.0.1:5173/`. It did not explicitly state that the preview belonged to the current demo project, nor did it surface the workspace/path evidence in the answer.
+
+Expected:
+
+When asked to verify preview ownership, Forge must state the ownership conclusion in the final answer and include either the owning workspace evidence or a clear port-conflict warning. It must not leave the user to infer ownership from a URL alone.
+
+Recommended test surface:
+
+Add or extend desktop acceptance coverage for preview ownership/status presentation, ideally around the same surface that reports preview URLs after runtime checks.
+
+First fix boundary:
+
+Focus on preview runtime ownership evidence and final response presentation. Do not expand provider/runtime scope beyond making ownership evidence explicit.
 
 ## Final Decision
 
