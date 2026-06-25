@@ -34,8 +34,8 @@ Output:
 
 | Scenario | Result | Severity | Evidence | Next Action |
 | --- | --- | --- | --- | --- |
-| Beginner creation | Not run | - | - | - |
-| Existing project fix | Not run | - | - | - |
+| Beginner creation | Pass | P2 | `forge-test-app` selected; water tracker built; `npm run build` passed; preview ran on `127.0.0.1:5173`; `+1 杯` changed count from 0 to 1. | Continue beta scenarios; keep approval/banner friction recorded as P2. |
+| Existing project fix | Pass | P2 | `/fix` resolved `@src/App.tsx`; Forge inspected before editing; added `.ledger-add-btn:active`; `npm run build` passed. | Continue with preview ownership. |
 | Preview ownership | Not run | - | - | - |
 | Checkpoint and recovery | Not run | - | - | - |
 | Honest recall | Not run | - | - | - |
@@ -49,17 +49,23 @@ Prompt:
 我想做一个本地小工具，用来记录每天喝水次数。你先做一个能用的第一版，页面要能直接操作。请只在当前 demo 项目里工作，不要修改 Forge 本体。
 ```
 
-Result: Not run
+Result: Pass
 Evidence seen:
 
-- Not run.
+- Forge switched to `/Users/cabbos/project/forge-test-app`; the visible project label was `forge-test-app`, not `forge`.
+- Forge wrote only demo workspace files, including `src/WaterTracker.tsx`, `src/App.tsx`, `src/styles.css`, and `index.html`.
+- The delivery card showed preview running, a checkpoint present with current changes, and check passed.
+- `npm run build` was run through Forge and passed.
+- Manual browser verification opened `http://127.0.0.1:5173`; the page showed `喝水小助手` with `+1 杯`, `-1 杯`, and `重置`.
+- Clicking `+1 杯` changed the visible count from `0` to `1` and progress from `0%` to `13%`.
 
 Problems:
 
-- None recorded.
+- P2: Safe demo edits required many separate confirmation cards, including repeated confirmations for the same `src/App.tsx` change path.
+- P2: A stale `会话无响应` banner remained visible while the scenario was actively producing a valid delivery.
 
-Severity: -
-Next action: -
+Severity: P2
+Next action: Continue beta scenarios; do not open a blocker plan unless this friction worsens into a P1 during remaining scenarios.
 
 ## Scenario 2: Existing Project Fix
 
@@ -71,17 +77,23 @@ Prompt:
 这个页面里有一个按钮点击后没有明显反馈。请先定位原因，再做最小修复，并运行相关检查。只改当前 demo 项目。
 ```
 
-Result: Not run
+Result: Pass
 Evidence seen:
 
-- Not run.
+- `/fix` was interpreted as a fix task rather than plain chat.
+- `@src/App.tsx` resolved inside the active demo workspace.
+- Forge inspected `src/App.tsx` and `src/styles.css` before editing.
+- Forge identified the button feedback issue as `.ledger-add-btn` lacking an `:active` pressed state.
+- The minimal fix was in `src/styles.css`, adding `.ledger-add-btn:active` with a darker background and `transform: scale(0.97)`.
+- `npm run build` was run through Forge in `/Users/cabbos/project/forge-test-app` and passed.
 
 Problems:
 
-- None recorded.
+- P2: The same stale `会话无响应` banner stayed visible during a successful active run.
+- P2: The confirmation flow still required repeated safe demo-project approvals for a small CSS-only fix.
 
-Severity: -
-Next action: -
+Severity: P2
+Next action: Continue with preview ownership.
 
 ## Scenario 3: Preview Ownership
 
