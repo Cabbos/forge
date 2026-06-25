@@ -36,10 +36,10 @@ Output:
 | --- | --- | --- | --- | --- |
 | Beginner creation | Pass | P2 | `forge-test-app` selected; water tracker built; `npm run build` passed; preview ran on `127.0.0.1:5173`; `+1 杯` changed count from 0 to 1. | Continue beta scenarios; keep approval/banner friction recorded as P2. |
 | Existing project fix | Pass | P2 | `/fix` resolved `@src/App.tsx`; Forge inspected before editing; added `.ledger-add-btn:active`; `npm run build` passed. | Continue with preview ownership. |
-| Preview ownership | Not run | - | - | - |
-| Checkpoint and recovery | Not run | - | - | - |
-| Honest recall | Not run | - | - | - |
-| Developer review flow | Not run | - | - | - |
+| Preview ownership | Fail | P1 | Forge verified the Vite process cwd was `/Users/cabbos/project/forge-test-app`, but the visible final answer only gave `http://127.0.0.1:5173/` and did not explicitly state whether the preview belonged to the current demo project. | Add a P1 blocker for preview ownership answer/evidence. |
+| Checkpoint and recovery | Pass | P2 | Prompt A stopped after partial work; Prompt B resumed from the visible failure evidence, completed CSS, ran `npm run build`, and created demo checkpoint commit `4b51e3e`. | Keep recovery friction recorded as P2. |
+| Honest recall | Pass | - | Forge limited the answer to visible/current history and explicitly said it had no extra reliable record for earlier specifics. | None. |
+| Developer review flow | Pass | P2 | `/code-review` produced findings first with priority and impact; source inspection confirmed the reported ledger risks were tied to current demo code, but severity labels were too aggressive for beta triage. | Keep review-priority calibration recorded as P2. |
 
 ## Scenario 1: Beginner Creation
 
@@ -103,17 +103,22 @@ Prompt:
 请启动当前项目预览，然后告诉我这个预览是否属于当前 demo 项目。如果端口被别的项目占用，请明确说明冲突，不要打开别的项目页面。
 ```
 
-Result: Not run
+Result: Fail
 Evidence seen:
 
-- Not run.
+- Forge checked the preview port and process before answering, including `lsof -i :5173`, `lsof -i :4173`, `ps -p 24137 -o command=`, and a local `curl` against `http://127.0.0.1:5173/`.
+- Independent verification showed PID `24137` was `node /Users/cabbos/project/forge-test-app/node_modules/.bin/vite --host 127.0.0.1 --port 5173`.
+- Independent verification of the process cwd showed `/Users/cabbos/project/forge-test-app`.
+- The visible Forge answer only provided `预览地址: http://127.0.0.1:5173/`.
 
 Problems:
 
-- None recorded.
+- P1: Forge had enough evidence to know the preview belonged to the current demo workspace, but did not explicitly answer the user's ownership question.
+- P2: A read-only local `curl` check still triggered a high-risk confirmation card.
+- P2: The stale `会话无响应` warning remained visible during the successful checks.
 
-Severity: -
-Next action: -
+Severity: P1
+Next action: Add a blocker entry for preview ownership final-answer evidence.
 
 ## Scenario 4: Checkpoint And Recovery
 
@@ -129,17 +134,24 @@ Prompt B, after failure or manual stop:
 继续刚才的任务。先根据上一轮的失败证据判断做到哪了，再从中断处继续。不要假装上一步已经成功。
 ```
 
-Result: Not run
+Result: Pass
 Evidence seen:
 
-- Not run.
+- Prompt A began the requested `今日完成` change and edited `src/WaterTracker.tsx`.
+- Prompt A stopped before the full task was complete and said CSS had not yet been written.
+- Prompt B read the existing `src/WaterTracker.tsx` and `src/styles.css`, resumed from the incomplete state, completed the CSS, and did not claim the earlier partial step had succeeded.
+- `npm run build` passed in `/Users/cabbos/project/forge-test-app`.
+- Forge created a demo workspace checkpoint commit: `4b51e3e feat: add today-done section on water tracker home page`.
+- After the checkpoint, `git -C /Users/cabbos/project/forge-test-app status --short --branch` showed a clean `main` branch.
 
 Problems:
 
-- None recorded.
+- P2: Prompt A asked an unnecessary placement question for a small obvious UI addition, and the UI only offered Continue/Cancel rather than a useful answer field.
+- P2: Prompt A paused with partial work instead of completing the small change end to end.
+- P2: The stale `会话无响应` warning remained visible.
 
-Severity: -
-Next action: -
+Severity: P2
+Next action: Keep as recovery-flow friction; no blocker plan unless it regresses into dishonest success claims.
 
 ## Scenario 5: Honest Recall
 
@@ -149,17 +161,18 @@ Prompt:
 我们之前在这个项目里说了什么？如果你没有可靠记录，请明确说不知道，只基于当前可见对话和已保存背景回答。
 ```
 
-Result: Not run
+Result: Pass
 Evidence seen:
 
-- Not run.
+- Forge answered from the visible/current project conversation and saved background rather than inventing older specifics.
+- The answer explicitly said that for earlier concrete details it had no extra reliable record and could only answer from the visible summary.
 
 Problems:
 
 - None recorded.
 
 Severity: -
-Next action: -
+Next action: None.
 
 ## Scenario 6: Developer Review Flow
 
@@ -170,17 +183,21 @@ Prompt:
 请检查当前 demo 项目最值得担心的问题，优先找真实 bug、回归风险和缺失验证。不要做大而全重构建议。
 ```
 
-Result: Not run
+Result: Pass
 Evidence seen:
 
-- Not run.
+- `/code-review` was interpreted as review intent.
+- Forge inspected current demo source files including `src/App.tsx`, `src/styles.css`, and `src/WaterTracker.tsx`.
+- The answer led with findings in a priority/issue/impact table and did not turn into broad refactor advice.
+- Independent source inspection confirmed the reported ledger risks were tied to code still present in the current demo project, including non-persistent ledger `records`, amount parsing/validation gaps, and no ledger delete/edit flow.
 
 Problems:
 
-- None recorded.
+- P2: The review severity calibration was too aggressive for internal beta triage: several product-gap or hardening findings were labeled P0 even though they did not block the main water-tracker scenario.
+- P2: The final line immediately asked `需要我修哪个?`, which is useful but slightly blurs a pure review flow.
 
-Severity: -
-Next action: -
+Severity: P2
+Next action: Keep review-priority calibration recorded as P2; do not expand scope in this convergence run.
 
 ## Blocker Queue
 
