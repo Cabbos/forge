@@ -277,6 +277,7 @@ function findLatestPendingWorkspaceConfirm(
     if (!boundary) continue;
     if (normalizeProjectPath(boundary.workspacePath) !== normalizedWorkingDir) continue;
     if (!allowAnyOperation && !isWriteBoundaryOperation(boundary.operationLabel)) continue;
+    if (!isAutoApprovableBoundary(block.metadata.boundary, workingDir, allowAnyOperation)) continue;
     return block;
   }
   return null;
@@ -290,6 +291,34 @@ function normalizeProjectPath(path: string): string {
   const normalized = path.trim().replace(/\/+$/, "");
   if (!normalized || normalized === "/") return "";
   return normalized;
+}
+
+function isAutoApprovableBoundary(
+  boundary: unknown,
+  workingDir: string,
+  allowSensitiveWorkspaceFiles: boolean,
+): boolean {
+  if (!boundary || typeof boundary !== "object" || Array.isArray(boundary)) return false;
+  const rawFiles = (boundary as { affected_files?: unknown }).affected_files;
+  if (!Array.isArray(rawFiles)) return true;
+  const normalizedWorkingDir = normalizeProjectPath(workingDir);
+  return rawFiles.every((file) => {
+    if (typeof file !== "string") return false;
+    const normalizedFile = normalizeProjectPath(file);
+    const projectRelativeFile = normalizedFile.startsWith(`${normalizedWorkingDir}/`)
+      ? normalizedFile.slice(normalizedWorkingDir.length + 1)
+      : normalizedFile;
+    if (normalizedFile.startsWith("~")) return false;
+    if (normalizedFile.startsWith("/") && normalizedFile !== normalizedWorkingDir && !normalizedFile.startsWith(`${normalizedWorkingDir}/`)) return false;
+    if (projectRelativeFile === ".." || projectRelativeFile.startsWith("../") || projectRelativeFile.includes("/../")) return false;
+    if (!allowSensitiveWorkspaceFiles && isSensitiveProjectPath(projectRelativeFile)) return false;
+    return true;
+  });
+}
+
+function isSensitiveProjectPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return normalized === ".env" || normalized.startsWith(".env.") || normalized.endsWith("/.env") || normalized.includes("/.env.");
 }
 
 function formatPermissionError(event: unknown): string {

@@ -11,7 +11,7 @@ Record each result with the exact command, diff, screenshot, or final-answer evi
 | 4 | Preview ownership question | final answer states URL and workspace path | final answer + Project Status details | |
 | 5 | `/code-review` | findings-first, calibrated severity | review output | |
 | 6 | New conversation same workspace | runtime trust/full access inherited | Composer mode + getPermissionMode args | |
-| 7 | External path write attempt | blocked or confirmed | confirm/deny evidence | |
-| 8 | Secret-like path write attempt | blocked or confirmed | confirm/deny evidence | |
+| 7 | External path write attempt | blocked or confirmed | confirm/deny evidence | Automated UI takeover guard passed 2026-06-27: Full Access and Trust did not auto-approve external-path confirmation cards. |
+| 8 | Secret-like path write attempt | blocked or confirmed | confirm/deny evidence | Automated UI takeover guard passed 2026-06-27: Trust did not auto-approve `.env` or `.env.local` workspace confirmation cards. |
 | 9 | Restart with active task | honest restore or recovery notice | restart smoke evidence | |
 | 10 | Context usage after provider event | `余` means true remaining context | Composer label + provider usage row | |
