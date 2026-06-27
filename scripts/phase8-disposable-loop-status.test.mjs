@@ -47,6 +47,16 @@ test("reports UI evidence blocker without marking project as not ready", (t) => 
       reason: "blank screenshot",
       windowSnapshot: null,
       screenSnapshot: null,
+      recoveryCommands: [
+        {
+          label: "diagnose desktop UI evidence",
+          command: "node scripts/desktop-ui-evidence-doctor.mjs --markdown",
+        },
+        {
+          label: "open relevant macOS privacy settings",
+          command: "node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings",
+        },
+      ],
       recommendations: [],
     },
   });
@@ -55,9 +65,13 @@ test("reports UI evidence blocker without marking project as not ready", (t) => 
   assert.equal(result.readyForLiveRun, false);
   assert.equal(result.rows[0].status, "ui_evidence_not_ready");
   assert.equal(result.rows[0].runbook.uiEvidencePreflight.status, "screen_capture_limited");
+  assert.ok(result.rows[0].runbook.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs")));
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs")));
   assert.match(result.nextStep, /trusted desktop session/);
+  assert.match(result.markdown, /Recovery commands:/);
+  assert.match(result.markdown, /desktop-ui-evidence-doctor\.mjs --markdown --open-settings/);
 });
 
 test("skips completed rows and reports the next incomplete row", (t) => {
@@ -127,6 +141,7 @@ test("cli json prints machine-readable status", (t) => {
   assert.equal(parsed.status, "ready_for_live_row");
   assert.equal(parsed.nextRow, "1");
   assert.equal(parsed.rows.length, 3);
+  assert.deepEqual(parsed.recoveryCommands, []);
 });
 
 function writeCompleteArchive(outDir, row) {

@@ -33,6 +33,7 @@ export function generatePhase8DisposableLoopRunbook({
   const manualPath = resolve(manualDir, `phase8-row-${normalizedRow}-manual.json`);
   const prompt = createDisposableLoopManualTemplate({ row: normalizedRow })["Forge prompt"];
   const commands = buildCommands({ projectPath: resolvedProjectPath, row: normalizedRow, manualPath });
+  const recoveryCommands = uiEvidencePreflight.recoveryCommands ?? [];
   const liveEvidenceReady = uiEvidencePreflight.canCollectLiveUiEvidence !== false;
   const readyForLiveRun = preflight.readyForLoop && liveEvidenceReady;
   const status = statusForRunbook({ preflight, archive, liveEvidenceReady });
@@ -46,6 +47,7 @@ export function generatePhase8DisposableLoopRunbook({
     prompt,
     manualPath,
     commands,
+    recoveryCommands,
     uiEvidencePreflight,
     preflight: {
       status: preflight.status,
@@ -152,6 +154,7 @@ function uncheckedDesktopUiEvidencePreflight() {
     reason: "Desktop UI evidence preflight was not run by this pure generator call.",
     windowSnapshot: null,
     screenSnapshot: null,
+    recoveryCommands: [],
     recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
   };
 }
@@ -164,6 +167,7 @@ function collectDesktopUiEvidencePreflight() {
 
 function renderMarkdown(result) {
   const commands = result.commands.map((entry, index) => `${index + 1}. ${entry.label}\n\n   \`${entry.command}\``).join("\n\n");
+  const recoveryCommands = renderRecoveryCommands(result.recoveryCommands);
   return `## Phase 8 Disposable Loop Runbook - Row ${result.row}
 
 Status: ${result.status}
@@ -180,8 +184,19 @@ ${result.prompt}
 Commands:
 
 ${commands}
+${recoveryCommands}
 
 Next step: ${result.nextStep}
+`;
+}
+
+function renderRecoveryCommands(recoveryCommands = []) {
+  if (recoveryCommands.length === 0) return "";
+  const commands = recoveryCommands.map((entry) => `- ${entry.label}: \`${entry.command}\``).join("\n");
+  return `
+Recovery commands:
+
+${commands}
 `;
 }
 

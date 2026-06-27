@@ -45,6 +45,16 @@ test("runbook separates project readiness from desktop UI evidence readiness", (
       reason: "blank screenshot",
       windowSnapshot: null,
       screenSnapshot: null,
+      recoveryCommands: [
+        {
+          label: "diagnose desktop UI evidence",
+          command: "node scripts/desktop-ui-evidence-doctor.mjs --markdown",
+        },
+        {
+          label: "open relevant macOS privacy settings",
+          command: "node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings",
+        },
+      ],
       recommendations: [],
     },
   });
@@ -52,7 +62,11 @@ test("runbook separates project readiness from desktop UI evidence readiness", (
   assert.equal(result.preflight.readyForLoop, true);
   assert.equal(result.readyForLiveRun, false);
   assert.equal(result.status, "ui_evidence_not_ready");
+  assert.equal(result.recoveryCommands.length, 2);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
   assert.match(result.nextStep, /screen_capture_limited/);
+  assert.match(result.markdown, /Recovery commands:/);
+  assert.match(result.markdown, /desktop-ui-evidence-doctor\.mjs --markdown --open-settings/);
 });
 
 test("cli json prints machine-readable runbook", (t) => {
@@ -69,6 +83,7 @@ test("cli json prints machine-readable runbook", (t) => {
 
   assert.equal(parsed.row, "2");
   assert.equal(parsed.readyForLiveRun, true);
+  assert.deepEqual(parsed.recoveryCommands, []);
   assert.match(parsed.prompt, /CSS layout polish/);
   assert.match(parsed.markdown, /Row 2/);
 });

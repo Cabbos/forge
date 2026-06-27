@@ -66,6 +66,7 @@ export function generatePhase8DisposableLoopStatus({
     readyForLiveRun: Boolean(nextRowStatus?.readyForLiveRun),
     rows: rowStatuses,
     nextCommands: nextRowStatus?.runbook?.commands ?? [],
+    recoveryCommands: nextRowStatus?.runbook?.recoveryCommands ?? uiEvidencePreflight.recoveryCommands ?? [],
     nextStep: nextStep(status, nextRowStatus),
     markdown: "",
   };
@@ -121,6 +122,7 @@ function summarizeRunbook(runbook) {
     prompt: runbook.prompt,
     archivePaths: runbook.archiveDryRun.paths,
     commands: runbook.commands,
+    recoveryCommands: runbook.recoveryCommands,
     nextStep: runbook.nextStep,
   };
 }
@@ -157,6 +159,7 @@ function renderMarkdown(result) {
   const commands = result.nextCommands.length > 0
     ? result.nextCommands.map((entry, index) => `${index + 1}. ${entry.label}\n\n   \`${entry.command}\``).join("\n\n")
     : "(none)";
+  const recoveryCommands = renderRecoveryCommands(result.recoveryCommands);
 
   return `## Phase 8 Disposable Loop Status
 
@@ -172,8 +175,19 @@ ${rows}
 Next commands:
 
 ${commands}
+${recoveryCommands}
 
 Next step: ${result.nextStep}
+`;
+}
+
+function renderRecoveryCommands(recoveryCommands = []) {
+  if (recoveryCommands.length === 0) return "";
+  const commands = recoveryCommands.map((entry) => `- ${entry.label}: \`${entry.command}\``).join("\n");
+  return `
+Recovery commands:
+
+${commands}
 `;
 }
 
@@ -252,6 +266,7 @@ function uncheckedDesktopUiEvidencePreflight() {
     reason: "Desktop UI evidence preflight was not run by this pure generator call.",
     windowSnapshot: null,
     screenSnapshot: null,
+    recoveryCommands: [],
     recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
   };
 }
