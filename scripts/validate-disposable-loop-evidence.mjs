@@ -156,7 +156,7 @@ function isStyleFile(file) {
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/validate-disposable-loop-evidence.mjs [--json] [--evidence-json <path>] [--project <path>] [--row <all|1|2|3>] [--run-build] [--require-complete]
+  console.log(`Usage: node scripts/validate-disposable-loop-evidence.mjs [--json] [--evidence-json <path>] [--project <path>] [--manual-json <path>] [--row <all|1|2|3>] [--run-build] [--require-complete]
 
 Validates Phase 8 disposable loop evidence from collector JSON or the current project state.
 
@@ -164,6 +164,7 @@ Options:
   --json                Print machine-readable validation.
   --evidence-json PATH  Read evidence JSON produced by collect-disposable-loop-evidence.mjs.
   --project PATH        Project path to collect when --evidence-json is omitted.
+  --manual-json PATH    JSON object keyed by manual evidence field label.
   --row VALUE           Row scope: all, 1, 2, or 3. Defaults to evidence row or all.
   --run-build           Run build/check while collecting current project evidence.
   --require-complete    Exit non-zero unless all required evidence is complete.
@@ -175,6 +176,7 @@ function parseArgs(argv) {
   const options = {
     json: false,
     evidenceJson: null,
+    manualJson: null,
     projectPath: undefined,
     row: undefined,
     runBuild: false,
@@ -193,6 +195,11 @@ function parseArgs(argv) {
       const value = argv[index + 1];
       if (!value) throw new Error("--evidence-json requires a path");
       options.evidenceJson = value;
+      index += 1;
+    } else if (arg === "--manual-json") {
+      const value = argv[index + 1];
+      if (!value) throw new Error("--manual-json requires a path");
+      options.manualJson = value;
       index += 1;
     } else if (arg === "--project") {
       const value = argv[index + 1];
@@ -222,7 +229,17 @@ function readEvidence(options) {
     projectPath: options.projectPath,
     row: options.row ?? "all",
     runBuild: options.runBuild,
+    manualValues: readManualValues(options.manualJson),
   });
+}
+
+function readManualValues(path) {
+  if (!path) return {};
+  const parsed = JSON.parse(readFileSync(path, "utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--manual-json must contain a JSON object");
+  }
+  return parsed;
 }
 
 function printHuman(result) {

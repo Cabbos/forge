@@ -41,7 +41,7 @@ After each live row, collect a consistent evidence packet:
 ```bash
 node scripts/create-disposable-loop-manual-json.mjs --row 1 --out /tmp/phase8-row-1-manual.json
 node scripts/collect-disposable-loop-evidence.mjs --markdown --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build
-node scripts/validate-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build --require-complete
+node scripts/validate-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --manual-json /tmp/phase8-row-1-manual.json --run-build --require-complete
 node scripts/archive-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --manual-json /tmp/phase8-row-1-manual.json --run-build --require-complete
 ```
 
