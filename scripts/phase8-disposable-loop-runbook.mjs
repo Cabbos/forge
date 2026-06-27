@@ -8,6 +8,7 @@ import { createDisposableLoopManualTemplate } from "./create-disposable-loop-man
 import {
   collectScreenSnapshotSafe,
   evaluateDesktopUiEvidencePreflight,
+  normalizeDesktopUiEvidenceRecoveryCommands,
 } from "./desktop-ui-evidence-preflight.mjs";
 import { DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE } from "./desktop-ui-evidence-permission-scope.mjs";
 import { evaluateDisposableLoopProject } from "./disposable-loop-preflight.mjs";
@@ -35,7 +36,7 @@ export function generatePhase8DisposableLoopRunbook({
   const manualPath = resolve(manualDir, `phase8-row-${normalizedRow}-manual.json`);
   const prompt = createDisposableLoopManualTemplate({ row: normalizedRow })["Forge prompt"];
   const commands = buildCommands({ projectPath: resolvedProjectPath, row: normalizedRow, manualPath });
-  const recoveryCommands = uiEvidencePreflight.recoveryCommands ?? [];
+  const recoveryCommands = recoveryCommandsForUiEvidencePreflight(uiEvidencePreflight);
   const liveEvidenceReady = uiEvidencePreflight.canCollectLiveUiEvidence !== false;
   const readyForLiveRun = preflight.readyForLoop && liveEvidenceReady;
   const status = statusForRunbook({ preflight, archive, liveEvidenceReady });
@@ -128,6 +129,14 @@ function buildCommands({ projectPath, row, manualPath }) {
       ]),
     },
   ];
+}
+
+function recoveryCommandsForUiEvidencePreflight(uiEvidencePreflight) {
+  const commands = uiEvidencePreflight.recoveryCommands ?? [];
+  if (uiEvidencePreflight.canCollectLiveUiEvidence !== false) return commands;
+  return normalizeDesktopUiEvidenceRecoveryCommands(commands, {
+    includeOpenSettings: commands.some((entry) => entry.command.includes("--open-settings")),
+  });
 }
 
 function statusForRunbook({ preflight, archive, liveEvidenceReady }) {
