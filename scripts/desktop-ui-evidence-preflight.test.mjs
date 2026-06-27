@@ -28,6 +28,8 @@ test("reports observer_limited when visible known apps expose zero windows", () 
   assert.equal(result.status, "observer_limited");
   assert.equal(result.canCollectLiveUiEvidence, false);
   assert.match(result.reason, /zero windows/);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs --markdown")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
 });
 
 test("reports screen_capture_limited when screenshots are likely blank", () => {
@@ -52,6 +54,7 @@ test("reports screen_capture_limited when screenshots are likely blank", () => {
   assert.equal(result.status, "screen_capture_limited");
   assert.equal(result.canCollectLiveUiEvidence, false);
   assert.match(result.reason, /blank image/);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs --markdown")));
 });
 
 test("reports screen capture failure separately from Forge runtime status", () => {
@@ -75,6 +78,7 @@ test("reports screen capture failure separately from Forge runtime status", () =
 
   assert.equal(result.status, "screen_capture_failed");
   assert.equal(result.canCollectLiveUiEvidence, false);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
 });
 
 test("reports ready when at least one visible app window is observable", () => {
@@ -101,6 +105,7 @@ test("reports ready when at least one visible app window is observable", () => {
 
   assert.equal(result.status, "ready");
   assert.equal(result.canCollectLiveUiEvidence, true);
+  assert.deepEqual(result.recoveryCommands, []);
 });
 
 test("reports snapshot failure separately from Forge runtime status", () => {
@@ -115,6 +120,7 @@ test("reports snapshot failure separately from Forge runtime status", () => {
 
   assert.equal(result.status, "window_snapshot_failed");
   assert.equal(result.canCollectLiveUiEvidence, false);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs")));
 });
 
 test("cli json emits a machine-readable status", () => {
@@ -127,6 +133,7 @@ test("cli json emits a machine-readable status", () => {
   assert.equal(typeof parsed.status, "string");
   assert.equal(typeof parsed.canCollectLiveUiEvidence, "boolean");
   assert.equal(parsed.platform, process.platform);
+  assert.ok(Array.isArray(parsed.recoveryCommands));
 });
 
 test("screen snapshot collector returns structured status", { skip: process.platform !== "darwin" }, () => {
@@ -147,5 +154,6 @@ test("require-ready exits nonzero when the current observer is not ready", () =>
     assert.match(result.stdout, /Live UI evidence ready: yes/);
   } else {
     assert.match(result.stdout, /Live UI evidence ready: no/);
+    assert.match(result.stdout, /Recovery commands:/);
   }
 });
