@@ -30,7 +30,7 @@ function usage(overrides = {}) {
 }
 
 describe("buildComposerContextUsageView", () => {
-  it("surfaces auto-compact distance in the compact context label and title", () => {
+  it("surfaces context remaining in the compact context label and auto-compact distance in the title", () => {
     const view = buildComposerContextUsageView({
       fallbackContextWindowTokens: null,
       isCompacting: false,
@@ -38,10 +38,79 @@ describe("buildComposerContextUsageView", () => {
       usage: usage(),
     });
 
-    assert.equal(view.label, "142K / 1M · 余 825K");
+    assert.equal(view.label, "142K / 1M · 余 858K");
+    assert.match(view.title, /剩余上下文约 858K tokens/);
     assert.match(view.title, /自动压缩阈值 967K/);
     assert.match(view.title, /距离自动压缩还有约 825K tokens/);
     assert.equal(view.compactButton.disabled, false);
+  });
+
+  it("does not round tiny usage against a 1M window down to the auto-compact threshold", () => {
+    const view = buildComposerContextUsageView({
+      fallbackContextWindowTokens: null,
+      isCompacting: false,
+      isStreaming: false,
+      usage: usage({
+        usedTokens: 411,
+        percentUsed: 0,
+      }),
+    });
+
+    assert.equal(view.label, "411 / 1M · 余 999.5K");
+    assert.match(view.title, /剩余上下文约 999.5K tokens/);
+    assert.match(view.title, /自动压缩阈值 967K/);
+  });
+
+  it("treats zero provider usage as known context usage", () => {
+    const view = buildComposerContextUsageView({
+      fallbackContextWindowTokens: null,
+      isCompacting: false,
+      isStreaming: false,
+      usage: usage({
+        usedTokens: 0,
+        contextWindowTokens: 1_000_000,
+        percentUsed: 0,
+      }),
+    });
+
+    assert.equal(view.label, "0 / 1M · 余 1M");
+    assert.match(view.title, /上下文 0 \/ 1M/);
+    assert.match(view.title, /剩余上下文约 1M tokens/);
+    assert.match(view.title, /自动压缩阈值 967K/);
+    assert.match(view.title, /距离自动压缩还有约 967K tokens/);
+  });
+
+  it("leaves unknown provider usage out of the compact context label", () => {
+    const view = buildComposerContextUsageView({
+      fallbackContextWindowTokens: null,
+      isCompacting: false,
+      isStreaming: false,
+      usage: usage({
+        usedTokens: null,
+        contextWindowTokens: 1_000_000,
+        percentUsed: null,
+      }),
+    });
+
+    assert.equal(view.label, "");
+    assert.equal(view.title, "压缩当前上下文");
+    assert.equal(view.compactButton.title, "压缩当前上下文");
+  });
+
+  it("clamps exhausted context remaining to zero", () => {
+    const view = buildComposerContextUsageView({
+      fallbackContextWindowTokens: null,
+      isCompacting: false,
+      isStreaming: false,
+      usage: usage({
+        usedTokens: 1_005_000,
+        percentUsed: 100,
+      }),
+    });
+
+    assert.equal(view.label, "1M / 1M · 余 0");
+    assert.match(view.title, /剩余上下文约 0 tokens/);
+    assert.match(view.title, /已达到自动压缩阈值/);
   });
 
   it("explains the disabled compact action while a turn is streaming", () => {

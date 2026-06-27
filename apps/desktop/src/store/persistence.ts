@@ -47,6 +47,7 @@ export function persistSessions(
       updatedAt: s.updatedAt ?? null,
       contextWindowTokens: s.contextWindowTokens ?? null,
       contextUsage: s.contextUsage ?? null,
+      usageLedger: s.usageLedger ?? null,
       status: s.status,
       workflowState: workflowBySession.get(s.id) ?? null,
       deliverySummary: deliverySummaryBySession.get(s.id) ?? null,
@@ -135,5 +136,6 @@ type PersistableSession = {
   updatedAt?: number | null;
   contextWindowTokens?: number | null;
   contextUsage?: PersistedSession["contextUsage"];
+  usageLedger?: PersistedSession["usageLedger"];
   status: PersistedSession["status"];
 };

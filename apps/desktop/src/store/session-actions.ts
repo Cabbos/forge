@@ -52,6 +52,7 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
         blocks: existing?.blocks ?? [],
         costUsd: existing?.costUsd ?? 0,
         contextUsage: existing?.contextUsage ?? null,
+        usageLedger: existing?.usageLedger ?? null,
         streaming: existing?.streaming ?? false,
       });
       set({ sessions, workspaces, activeWorkspaceId: workspaceId, activeSessionId: id });

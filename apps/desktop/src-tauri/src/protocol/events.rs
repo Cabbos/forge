@@ -359,6 +359,11 @@ pub enum StreamEvent {
         message: String,
         code: String,
     },
+    /// Legacy compatibility usage event.
+    ///
+    /// New UI and state projections should prefer `ProviderUsage`, because it
+    /// preserves provider, model, unknown/cache/reasoning token fields, pricing
+    /// source, and the reason usage or pricing was omitted.
     #[serde(rename = "usage")]
     Usage {
         session_id: String,
@@ -366,6 +371,7 @@ pub enum StreamEvent {
         output_tokens: u32,
         estimated_cost_usd: f64,
     },
+    /// Canonical provider usage fact for one model call.
     #[serde(rename = "provider_usage")]
     ProviderUsage {
         session_id: String,

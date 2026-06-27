@@ -52,7 +52,7 @@ Do not change provider routing, runtime process management, permission policy, c
 - Read: `apps/desktop/AGENTS.md`
 - Read: `apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md`
 
-- [ ] **Step 1: Confirm the blocker evidence**
+- [x] **Step 1: Confirm the blocker evidence**
 
 Read:
 
@@ -63,7 +63,7 @@ sed -n '/## Blocker Queue/,/## Final Decision/p' apps/desktop/docs/product/v1-in
 
 Expected: the output identifies Scenario 3 as `Fail`, `P1`, and names the missing ownership conclusion.
 
-- [ ] **Step 2: Refresh GitNexus if symbol impact cannot resolve**
+- [x] **Step 2: Refresh GitNexus if symbol impact cannot resolve**
 
 Run these GitNexus MCP calls first:
 
@@ -83,7 +83,7 @@ Then rerun the same GitNexus `impact(...)` calls.
 
 Expected: risk is LOW or MEDIUM. If any risk is HIGH or CRITICAL, stop and report the blast radius before editing.
 
-- [ ] **Step 3: Record the implementation boundary**
+- [x] **Step 3: Record the implementation boundary**
 
 Confirm the planned file list stays within:
 
@@ -104,7 +104,7 @@ Expected: no provider adapter, permission policy, or runtime process manager fil
 **Files:**
 - Modify: `apps/desktop/src-tauri/src/agent/turn_outcome.rs`
 
-- [ ] **Step 1: Add the failing tests**
+- [x] **Step 1: Add the failing tests**
 
 In the existing `#[cfg(test)] mod tests` in `apps/desktop/src-tauri/src/agent/turn_outcome.rs`, extend the imports:
 
@@ -180,7 +180,7 @@ fn final_answer_instruction_omits_preview_ownership_when_no_preview_evidence_exi
 }
 ```
 
-- [ ] **Step 2: Run the focused Rust test and verify it fails**
+- [x] **Step 2: Run the focused Rust test and verify it fails**
 
 Run:
 
@@ -196,7 +196,7 @@ Expected: compile failure or test failure because `final_answer_instruction` doe
 - Modify: `apps/desktop/src-tauri/src/agent/turn_outcome.rs`
 - Modify: `apps/desktop/src-tauri/src/agent/session/loop.rs`
 
-- [ ] **Step 1: Change the final-answer instruction signature**
+- [x] **Step 1: Change the final-answer instruction signature**
 
 In `apps/desktop/src-tauri/src/agent/turn_outcome.rs`, change the imports and signature:
 
@@ -250,7 +250,7 @@ fn failed_verification_final_answer_instruction(trace: &AgentVerificationTrace) 
 }
 ```
 
-- [ ] **Step 2: Add the preview ownership helper**
+- [x] **Step 2: Add the preview ownership helper**
 
 Add this helper in `apps/desktop/src-tauri/src/agent/turn_outcome.rs`:
 
@@ -278,7 +278,7 @@ fn preview_ownership_final_answer_instruction(latest_turn: Option<&AgentTurnStat
 }
 ```
 
-- [ ] **Step 3: Update existing final-answer tests**
+- [x] **Step 3: Update existing final-answer tests**
 
 In `apps/desktop/src-tauri/src/agent/turn_outcome.rs`, update existing calls:
 
@@ -289,7 +289,7 @@ final_answer_instruction(None, None)
 
 Expected: no existing test still calls `final_answer_instruction(...)` with one argument.
 
-- [ ] **Step 4: Pass latest turn state from the session loop**
+- [x] **Step 4: Pass latest turn state from the session loop**
 
 In `apps/desktop/src-tauri/src/agent/session/loop.rs`, inside `finalize_turn(...)`, before building the final summary prompt, clone the latest turn once:
 
@@ -308,7 +308,7 @@ msgs.push(ChatMessage::user(&final_answer_instruction(
 
 Expected: the final-answer prompt now receives the latest preview evidence without holding the `latest_turn` lock during model calls.
 
-- [ ] **Step 5: Run the focused Rust test and verify it passes**
+- [x] **Step 5: Run the focused Rust test and verify it passes**
 
 Run:
 
@@ -318,7 +318,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::turn_outcome
 
 Expected: all `agent::turn_outcome` tests pass.
 
-- [ ] **Step 6: Run the focused session loop tests**
+- [x] **Step 6: Run the focused session loop tests**
 
 Run:
 
@@ -334,7 +334,7 @@ Expected: session loop tests pass after the signature change.
 - Modify: `apps/desktop/src/components/layout/ProjectStatusDetails.tsx`
 - Modify: `apps/desktop/e2e/acceptance.spec.ts`
 
-- [ ] **Step 1: Add the visible ownership line**
+- [x] **Step 1: Add the visible ownership line**
 
 In `apps/desktop/src/components/layout/ProjectStatusDetails.tsx`, add one detail line between `预览地址` and `运行命令`:
 
@@ -351,7 +351,7 @@ The detail block should read:
 <DetailLine label="运行命令" value={runtime?.command || "未检测到"} />
 ```
 
-- [ ] **Step 2: Add the acceptance test**
+- [x] **Step 2: Add the acceptance test**
 
 In `apps/desktop/e2e/acceptance.spec.ts`, add this test inside the existing `test.describe("Phase 7 acceptance surfaces", () => { ... })` block:
 
@@ -369,7 +369,7 @@ test("project status details expose preview ownership workspace", async ({ page 
 });
 ```
 
-- [ ] **Step 3: Run the focused acceptance test and verify it passes**
+- [x] **Step 3: Run the focused acceptance test and verify it passes**
 
 Run:
 
@@ -387,7 +387,7 @@ Expected: the focused Playwright test passes.
 - Modify: `CHANGELOG.md`
 - Modify only if needed: `scripts/acceptance.sh`
 
-- [ ] **Step 1: Update root runtime surface docs**
+- [x] **Step 1: Update root runtime surface docs**
 
 In `README.md`, in `## Desktop Runtime Surfaces`, update the `Acceptance:` bullet to mention preview ownership evidence:
 
@@ -395,7 +395,7 @@ In `README.md`, in `## Desktop Runtime Surfaces`, update the `Acceptance:` bulle
 - Acceptance: browser smoke coverage for resume, diagnostics, provider probes/model catalog refresh, static fallback catalogs, selection/default saving, compact provider metadata rendering, provider evidence start readiness, custom provider profile templates/add/edit/delete, permissions, scheduler, A2A review, background task UI, and preview ownership details, plus runtime ownership gates for mocked restart evidence, provider usage, post-shell file effects, persisted A2A lineage, review-to-commit eligibility, gated headless policy/approval checks, and the real Rust `run_worktree_worker` harness.
 ```
 
-- [ ] **Step 2: Update desktop README**
+- [x] **Step 2: Update desktop README**
 
 In `apps/desktop/README.md`, in the `## 核心承诺` table, replace the `结果可判断` row with:
 
@@ -417,7 +417,7 @@ with:
 
 In the acceptance coverage paragraph, add `预览归属详情` after `Provider evidence start readiness`.
 
-- [ ] **Step 3: Update changelog**
+- [x] **Step 3: Update changelog**
 
 Add this bullet at the top of `CHANGELOG.md` under `## Unreleased`:
 
@@ -425,7 +425,7 @@ Add this bullet at the top of `CHANGELOG.md` under `## Unreleased`:
 - Added explicit preview ownership evidence to delivery/status surfaces. Final answers that report a preview URL now receive the owning project path as final-answer guidance, and expanded project status details show the preview workspace so users do not have to infer ownership from the URL alone.
 ```
 
-- [ ] **Step 4: Check acceptance script dry-run alignment**
+- [x] **Step 4: Check acceptance script dry-run alignment**
 
 Run:
 
@@ -440,7 +440,7 @@ Expected: the output still includes `npm --prefix apps/desktop run test:e2e -- e
 **Files:**
 - Modified files from Tasks 3-5.
 
-- [ ] **Step 1: Run focused Rust tests**
+- [x] **Step 1: Run focused Rust tests**
 
 Run:
 
@@ -451,7 +451,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::loo
 
 Expected: both commands pass.
 
-- [ ] **Step 2: Run focused desktop e2e**
+- [x] **Step 2: Run focused desktop e2e**
 
 Run:
 
@@ -461,7 +461,7 @@ npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project sta
 
 Expected: the focused acceptance test passes.
 
-- [ ] **Step 3: Run desktop build**
+- [x] **Step 3: Run desktop build**
 
 Run:
 
@@ -471,7 +471,7 @@ npm run build:desktop
 
 Expected: command exits 0.
 
-- [ ] **Step 4: Run acceptance dry-run**
+- [x] **Step 4: Run acceptance dry-run**
 
 Run:
 
@@ -512,6 +512,18 @@ git commit -m "fix(desktop): surface preview ownership evidence"
 ```
 
 Expected: commit succeeds with only the intended files staged.
+
+**2026-06-25 implementation evidence:** Preview ownership evidence now flows into the final text-only answer prompt and the expanded project status details. GitNexus impact preflight returned `Target not found` / `UNKNOWN` for `final_answer_instruction`, `finalize_turn`, and `ProjectStatusDetails`; the earlier index refresh attempt was blocked by the known missing `tree-sitter-swift` package, so this slice proceeded with file-level review and limited-confidence impact analysis. RED verification failed first on the new `final_answer_instruction(None, Some(&turn))` signature and then on the acceptance card missing `预览归属`. GREEN verification passed:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::turn_outcome --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::loop_test --lib
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project delivery details surface preview ownership"
+npm run build:desktop
+scripts/acceptance.sh --dry-run
+```
+
+Pending before closing the blocker: staged `detect_changes`, commit, and the manual Scenario 3 beta recheck in Forge.
 
 ## Task 7: Manual Beta Recheck
 

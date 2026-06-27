@@ -1,5 +1,7 @@
 @layer components {
   .forge-composer-frame {
+    position: relative;
+    z-index: 20;
     border-top: 0;
     background: transparent;
     backdrop-filter: none;
@@ -225,6 +227,7 @@
   }
 
   .forge-composer-tool,
+  .forge-composer-permission,
   .forge-composer-model,
   .forge-composer-compact,
   .forge-composer-send {
@@ -241,6 +244,72 @@
 
   .forge-composer-tool {
     width: 1.875rem;
+  }
+
+  .forge-composer-permission-wrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    z-index: 30;
+  }
+
+  .forge-composer-permission {
+    max-width: 8.75rem;
+    gap: 0.3125rem;
+    border-color: var(--forge-border-subtle);
+    background: var(--forge-bg-raised);
+    padding: 0 0.5rem;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--forge-text-muted);
+  }
+
+  .forge-composer-permission span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-composer-permission[data-state="trusted"] {
+    border-color: rgba(74, 149, 112, 0.26);
+    background: rgba(74, 149, 112, 0.08);
+    color: rgb(64, 126, 95);
+  }
+
+  .forge-composer-permission[data-state="full_access"] {
+    border-color: rgba(236, 120, 48, 0.36);
+    background: rgba(236, 120, 48, 0.12);
+    color: rgb(209, 96, 32);
+  }
+
+  .forge-composer-permission-menu {
+    position: fixed;
+    z-index: 80;
+    padding: 0.375rem;
+  }
+
+  .forge-composer-permission-option {
+    display: flex;
+    min-height: 2.75rem;
+    width: 100%;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius) - 2px);
+    padding: 0.375rem 0.5rem;
+    text-align: left;
+    color: var(--forge-text-secondary);
+    transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+
+  .forge-composer-permission-option:hover,
+  .forge-composer-permission-option:focus-visible,
+  .forge-composer-permission-option[data-active="true"] {
+    border-color: var(--forge-border-subtle);
+    background: var(--forge-hover);
+    color: var(--forge-text-primary);
   }
 
   .forge-composer-send {
@@ -288,6 +357,8 @@
 
   .forge-composer-tool:hover,
   .forge-composer-tool[data-active="true"],
+  .forge-composer-permission:hover,
+  .forge-composer-permission[aria-expanded="true"],
   .forge-composer-model:hover,
   .forge-composer-model[data-active="true"],
   .forge-composer-compact:hover,
@@ -319,6 +390,7 @@
   }
 
   .forge-composer-tool:focus-visible,
+  .forge-composer-permission:focus-visible,
   .forge-composer-model:focus-visible,
   .forge-composer-compact:focus-visible,
   .forge-composer-send:focus-visible,
@@ -457,6 +529,10 @@
 
     .forge-composer-model {
       max-width: min(188px, calc(100vw - 12rem));
+    }
+
+    .forge-composer-permission {
+      max-width: min(9rem, calc(100vw - 13rem));
     }
   }
 
@@ -620,6 +696,7 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool,
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-permission,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-model,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-compact,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-resume {
@@ -647,6 +724,25 @@
     color: #8A6127;
   }
 
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-permission {
+    height: 1.875rem;
+    border-radius: 10px;
+    padding: 0 0.625rem;
+    font-size: 12px;
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-permission[data-state="trusted"] {
+    border-color: rgba(74, 149, 112, 0.28);
+    background: rgba(74, 149, 112, 0.1);
+    color: rgb(62, 116, 88);
+  }
+
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-permission[data-state="full_access"] {
+    border-color: rgba(236, 120, 48, 0.42);
+    background: rgba(236, 120, 48, 0.13);
+    color: rgb(205, 91, 27);
+  }
+
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool-label {
     display: inline-flex;
     white-space: nowrap;
@@ -662,6 +758,8 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool:hover,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool[data-active="true"],
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-permission:hover,
+  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-permission[aria-expanded="true"],
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-model:hover,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-model[data-active="true"],
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-compact:hover,

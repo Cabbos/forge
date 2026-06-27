@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { register } from "node:module";
-import type { SessionState, StreamEvent } from "../lib/protocol.ts";
+import type { SessionState, SessionUsageLedgerState, StreamEvent } from "../lib/protocol.ts";
 import type { AppStore } from "./types";
 
 register(
@@ -190,26 +190,108 @@ describe("createOutputEventDispatcher live file_io events", () => {
 });
 
 describe("createOutputEventDispatcher live provider_usage events", () => {
-  it("persists provider_usage as a block without updating legacy cost or context usage", () => {
+  it("updates context usage and cost from provider_usage without legacy usage", () => {
     const { state, dispatch } = createHarness();
 
     dispatch({
       event_type: "provider_usage",
       session_id: "session-1",
-      model: "claude-sonnet",
+      block_id: "usage-provider-only",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
       source: "anthropic",
       reason: "provider_reported",
-      input_tokens: 100,
-      output_tokens: 25,
-      estimated_cost_micros: 1234,
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
     });
 
     const session = state.sessions.get("session-1")!;
-    assert.strictEqual(session.costUsd, 0);
-    assert.strictEqual(session.contextUsage, null);
+    assert.strictEqual(session.usageLedger?.inputTokens, 411);
+    assert.strictEqual(session.usageLedger?.outputTokens, 137);
+    assert.strictEqual(session.usageLedger?.estimatedCostMicros, 96);
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.contextUsage?.contextWindowTokens, 1000);
     assert.strictEqual(session.blocks.length, 1);
     assert.strictEqual(session.blocks[0].event_type, "provider_usage");
-    assert.strictEqual(session.blocks[0].metadata.estimated_cost_micros, 1234);
+    assert.strictEqual(session.blocks[session.blocks.length - 1]?.event_type, "provider_usage");
+    assert.strictEqual(session.blocks[0].metadata.estimated_cost_micros, 96);
+  });
+
+  it("does not double count legacy usage after provider_usage companion", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-provider-first",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+    dispatch({
+      event_type: "usage",
+      session_id: "session-1",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_usd: 0.000096,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.usageLedger?.legacyDuplicateIgnored, true);
+  });
+
+  it("treats near-matching legacy usage after provider_usage as a duplicate companion", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-provider-tolerance",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+    dispatch({
+      event_type: "usage",
+      session_id: "session-1",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_usd: 0.0000964,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.usageLedger?.legacyDuplicateIgnored, true);
+  });
+
+  it("keeps legacy usage as fallback when no provider_usage exists", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "usage",
+      session_id: "session-1",
+      input_tokens: 142_000,
+      output_tokens: 800,
+      estimated_cost_usd: 0.002,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.002);
+    assert.strictEqual(session.contextUsage?.usedTokens, 142_000);
+    assert.strictEqual(session.usageLedger?.lastEventType, "usage");
+    assert.strictEqual(session.usageLedger?.estimatedCostMicros, 2000);
   });
 
   it("does not double-count provider_usage after legacy usage updates cost and context", () => {
@@ -225,6 +307,8 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
     dispatch({
       event_type: "provider_usage",
       session_id: "session-1",
+      block_id: "usage-provider-after-legacy",
+      provider_id: "anthropic",
       model: "claude-sonnet",
       source: "anthropic",
       reason: "provider_reported",
@@ -236,8 +320,195 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
     const session = state.sessions.get("session-1")!;
     assert.strictEqual(session.costUsd, 0.001);
     assert.strictEqual(session.contextUsage?.usedTokens, 100);
+    assert.strictEqual(session.usageLedger?.lastEventType, "provider_usage");
+    assert.strictEqual(session.usageLedger?.estimatedCostMicros, 1000);
     assert.strictEqual(session.blocks.length, 1);
     assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+  });
+
+  it("keeps usage ledger when context compaction applies a local estimate", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-before-compact",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+    dispatch({
+      event_type: "context_compacted",
+      session_id: "session-1",
+      block_id: "compact-1",
+      summary: "Compacted context",
+      retained_messages: 2,
+      compacted_messages: 3,
+      estimated_tokens_before: 411,
+      estimated_tokens_after: 128,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.contextUsage?.source, "local_estimate");
+    assert.strictEqual(session.contextUsage?.usedTokens, 128);
+    assert.strictEqual(session.usageLedger?.lastEventType, "provider_usage");
+    assert.strictEqual(session.usageLedger?.inputTokens, 411);
+  });
+
+  it("keeps compacted local estimate when duplicate legacy usage arrives after provider_usage", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-before-compact-legacy",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+    dispatch({
+      event_type: "context_compacted",
+      session_id: "session-1",
+      block_id: "compact-before-legacy",
+      summary: "Compacted context",
+      retained_messages: 2,
+      compacted_messages: 3,
+      estimated_tokens_before: 411,
+      estimated_tokens_after: 128,
+    });
+    dispatch({
+      event_type: "usage",
+      session_id: "session-1",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_usd: 0.000096,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.contextUsage?.source, "local_estimate");
+    assert.strictEqual(session.contextUsage?.usedTokens, 128);
+    assert.strictEqual(session.usageLedger?.legacyDuplicateIgnored, true);
+  });
+
+  it("ignores replayed provider_usage with the same block id", () => {
+    const { state, dispatch } = createHarness();
+    const event = {
+      event_type: "provider_usage" as const,
+      session_id: "session-1",
+      block_id: "usage-replayed-provider",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported" as const,
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    };
+
+    dispatch(event);
+    dispatch(event);
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].block_id, "usage-replayed-provider");
+  });
+
+  it("restores a replayed provider_usage block when ledger has the block id but blocks are missing", () => {
+    const usageLedger = testUsageLedger({ lastProviderUsageBlockId: "usage-missing-visible-block" });
+    const state = createDispatcherState([
+      [
+        "session-1",
+        {
+          id: "session-1",
+          agentType: "codex",
+          model: "test-model",
+          workingDir: "/workspace",
+          workspaceId: "/workspace",
+          createdAt: 1,
+          updatedAt: 1,
+          contextWindowTokens: 1000,
+          status: "running",
+          streaming: false,
+          blocks: [],
+          costUsd: 0.000096,
+          contextUsage: null,
+          usageLedger,
+        },
+      ],
+    ]);
+    const dispatch = createOutputEventDispatcher(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-missing-visible-block",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].block_id, "usage-missing-visible-block");
+    assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+  });
+});
+
+describe("createOutputEventDispatcher health alerts", () => {
+  it("clears stale same-session health alerts when fresh output arrives", () => {
+    const { state, dispatch } = createHarness();
+    state.healthAlerts = [
+      {
+        alert_id: "session-stale-session-1",
+        session_id: "session-1",
+        level: "warn",
+        title: "会话无响应",
+        message: "No recent events.",
+      },
+      {
+        alert_id: "session-stale-session-2",
+        session_id: "session-2",
+        level: "warn",
+        title: "会话无响应",
+        message: "No recent events.",
+      },
+      {
+        alert_id: "missing-api-key:session-1",
+        session_id: "session-1",
+        level: "critical",
+        title: "缺少模型密钥",
+        message: "Missing key.",
+      },
+    ];
+
+    dispatch({
+      event_type: "text_start",
+      session_id: "session-1",
+      block_id: "fresh-text",
+    });
+
+    assert.deepStrictEqual(
+      state.healthAlerts.map((alert) => alert.alert_id),
+      ["session-stale-session-2", "missing-api-key:session-1"],
+    );
   });
 });
 
@@ -259,6 +530,7 @@ function createHarness(blocks: SessionState["blocks"] = []) {
         blocks,
         costUsd: 0,
         contextUsage: null,
+        usageLedger: null,
       },
     ],
   ]);
@@ -282,6 +554,7 @@ function createDispatcherState(
     agentA2ABySession: new Map(),
     subagentRuntimeByTask: new Map(),
     loopRuntimeByTask: new Map(),
+    healthAlerts: [],
   } as unknown as AppStore;
 }
 
@@ -296,5 +569,30 @@ function testLoopTaskRecord(): Extract<StreamEvent, { event_type: "loop_runtime_
     completion_contract: {},
     created_at_ms: 1,
     updated_at_ms: 10,
+  };
+}
+
+function testUsageLedger(overrides: Partial<SessionUsageLedgerState> = {}): SessionUsageLedgerState {
+  return {
+    providerId: "deepseek",
+    model: "deepseek-v4-flash[1m]",
+    source: "anthropic",
+    reason: "provider_reported",
+    inputTokens: 411,
+    outputTokens: 137,
+    cacheReadTokens: null,
+    cacheCreationTokens: null,
+    reasoningTokens: null,
+    estimatedCostMicros: 96,
+    pricingSource: "forge_static_pricing_2026_06_20",
+    costUsd: 0.000096,
+    hasUnknownInputTokens: false,
+    hasUnknownOutputTokens: false,
+    hasUnknownCost: false,
+    lastEventType: "provider_usage",
+    lastProviderUsageBlockId: "usage-1",
+    legacyDuplicateIgnored: false,
+    updatedAt: 123,
+    ...overrides,
   };
 }

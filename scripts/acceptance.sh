@@ -31,12 +31,15 @@ Runs the Forge Level 3 runtime acceptance gates:
   15. Completion contract mocked desktop smoke
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
   17. Provider usage known/unknown telemetry
-  18. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  19. Persisted A2A lineage tests
-  20. Typed completion evidence and review-to-commit eligibility tests
-  21. Gated headless ownership policy tests
-  22. Desktop Phase 7 provider probe/model catalog selection/readiness/profile editor and A2A worker lifecycle smoke specs
-  23. Rich preview e2e smoke specs
+  18. Composer context usage from provider_usage
+  19. Provider usage trace rendering
+  20. Legacy usage duplicate suppression
+  21. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  22. Persisted A2A lineage tests
+  23. Typed completion evidence and review-to-commit eligibility tests
+  24. Gated headless ownership policy tests
+  25. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  26. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -67,11 +70,14 @@ COMMAND_LABELS=(
   "completion contract mocked desktop smoke"
   "mocked desktop restart runtime smoke (partial macOS evidence)"
   "provider usage known/unknown telemetry"
+  "composer context usage from provider_usage"
+  "provider usage trace rendering"
+  "legacy usage duplicate suppression"
   "post-shell file-effect evidence smoke (bounded, not shell-internal)"
   "persisted A2A lineage tests"
   "typed completion evidence and review-to-commit eligibility tests"
   "gated headless ownership policy tests"
-  "desktop Phase 7 provider probe/model catalog live-static refresh/selection/defaults/metadata rendering/readiness/profile editor and A2A worker lifecycle smoke specs"
+  "desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs"
   "rich preview e2e smoke specs"
 )
 
@@ -93,6 +99,9 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib"
+  "npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g \"provider_usage without legacy usage\""
+  "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"provider usage\""
+  "node --test apps/desktop/src/store/event-dispatch.test.ts"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib"

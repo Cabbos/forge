@@ -13,3 +13,26 @@ export function upsertHealthAlert(
   if (existingIdx < 0) return [...alerts, alert];
   return alerts.map((a, i) => (i === existingIdx ? alert : a));
 }
+
+export function clearStaleSessionHealthAlerts(
+  alerts: RuntimeHealthAlert[],
+  sessionId: string,
+): RuntimeHealthAlert[] {
+  const nextAlerts = alerts.filter((alert) => {
+    const isSameSession = alert.session_id === sessionId;
+    const isStaleSessionAlert = alert.alert_id.startsWith("session-stale");
+    return !(isSameSession && isStaleSessionAlert);
+  });
+  return nextAlerts.length === alerts.length ? alerts : nextAlerts;
+}
+
+export function visibleHealthAlertsForSession(
+  alerts: RuntimeHealthAlert[],
+  activeSessionId: string | null,
+): RuntimeHealthAlert[] {
+  if (!activeSessionId) return alerts;
+  return alerts.filter((alert) => {
+    if (!alert.alert_id.startsWith("session-stale")) return true;
+    return alert.session_id === activeSessionId;
+  });
+}

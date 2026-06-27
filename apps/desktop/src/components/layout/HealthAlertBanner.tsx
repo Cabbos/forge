@@ -1,6 +1,7 @@
 import { ShieldAlert, X } from "lucide-react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { useStore } from "@/store";
+import { visibleHealthAlertsForSession } from "@/store/health-alerts";
 
 const LEVEL_ICONS: Record<string, typeof ShieldAlert> = {
   info: ShieldAlert,
@@ -15,8 +16,10 @@ const LEVEL_BORDER: Record<string, string> = {
 };
 
 export function HealthAlertBanner() {
-  const alerts = useStore((s) => s.healthAlerts);
+  const healthAlerts = useStore((s) => s.healthAlerts);
+  const activeSessionId = useStore((s) => s.activeSessionId);
   const dismiss = useStore((s) => s.dismissHealthAlert);
+  const alerts = visibleHealthAlertsForSession(healthAlerts, activeSessionId);
 
   if (alerts.length === 0) return null;
 

@@ -1,11 +1,25 @@
-use crate::agent::turn_state::{AgentTurnStatus, AgentVerificationStatus, AgentVerificationTrace};
+use crate::agent::turn_state::{
+    AgentEvidenceKind, AgentTurnState, AgentTurnStatus, AgentVerificationStatus,
+    AgentVerificationTrace,
+};
 
-pub(crate) fn final_answer_instruction(verification: Option<&AgentVerificationTrace>) -> String {
-    let Some(trace) = verification.filter(|trace| verification_has_failed(trace)) else {
-        return "Based on the above, provide your final answer as plain text. Do not use tools."
-            .to_string();
+pub(crate) fn final_answer_instruction(
+    verification: Option<&AgentVerificationTrace>,
+    latest_turn: Option<&AgentTurnState>,
+) -> String {
+    let mut instruction = if let Some(trace) =
+        verification.filter(|trace| verification_has_failed(trace))
+    {
+        failed_verification_final_answer_instruction(trace)
+    } else {
+        "Based on the above, provide your final answer as plain text. Do not use tools.".to_string()
     };
 
+    append_preview_ownership_instruction(&mut instruction, latest_turn);
+    instruction
+}
+
+fn failed_verification_final_answer_instruction(trace: &AgentVerificationTrace) -> String {
     let mut detail = String::from(
         "Based on the above, provide your final answer as plain text. Do not use tools. Verification did not pass, so clearly tell the user what failed and avoid claiming the task is fully complete.",
     );
@@ -22,6 +36,29 @@ pub(crate) fn final_answer_instruction(verification: Option<&AgentVerificationTr
         detail.push_str(&format!("\nOutput: {stdout}"));
     }
     detail
+}
+
+fn append_preview_ownership_instruction(
+    instruction: &mut String,
+    latest_turn: Option<&AgentTurnState>,
+) {
+    let Some(summary) = latest_preview_evidence_summary(latest_turn) else {
+        return;
+    };
+
+    instruction.push_str("\nPreview ownership evidence:\n");
+    instruction.push_str(summary);
+    instruction.push_str("\nIf your final answer mentions a preview URL, explicitly say whether it belongs to the current project/workspace based on this evidence. If the evidence indicates a conflict or missing owner, state that clearly instead of leaving ownership implicit.");
+}
+
+fn latest_preview_evidence_summary(latest_turn: Option<&AgentTurnState>) -> Option<&str> {
+    latest_turn?
+        .evidence
+        .iter()
+        .rev()
+        .find(|evidence| evidence.kind == AgentEvidenceKind::Preview)
+        .and_then(|evidence| evidence.summary.as_deref())
+        .filter(|summary| !summary.trim().is_empty())
 }
 
 pub(crate) fn final_turn_status_for_run(
@@ -84,12 +121,12 @@ pub(crate) fn verification_has_failed(trace: &AgentVerificationTrace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        final_turn_status_for_current_turn, final_turn_status_for_run,
+        final_answer_instruction, final_turn_status_for_current_turn, final_turn_status_for_run,
         final_turn_transition_reason_for_current_turn, final_turn_transition_reason_for_run,
         verification_has_failed,
     };
     use crate::agent::turn_state::{
-        AgentTurnStatus, AgentVerificationStatus, AgentVerificationTrace,
+        AgentTurnState, AgentTurnStatus, AgentVerificationStatus, AgentVerificationTrace,
     };
 
     fn verification(status: AgentVerificationStatus) -> AgentVerificationTrace {
@@ -102,6 +139,28 @@ mod tests {
             duration_ms: Some(10),
             completed_at_ms: Some(20),
         }
+    }
+
+    fn turn_with_running_preview() -> AgentTurnState {
+        let mut turn = AgentTurnState::new(
+            "turn-1".to_string(),
+            "session-1".to_string(),
+            "/Users/cabbos/project/forge-test-app".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "chat".to_string(),
+            "working".to_string(),
+            "fix the demo button".to_string(),
+        );
+        turn.record_preview_status(
+            Some("/Users/cabbos/project/forge-test-app"),
+            true,
+            false,
+            true,
+            "Preview is running",
+            Some("http://127.0.0.1:5173"),
+        );
+        turn
     }
 
     #[test]
@@ -192,5 +251,38 @@ mod tests {
         assert!(!verification_has_failed(&verification(
             AgentVerificationStatus::Passed
         )));
+    }
+
+    #[test]
+    fn final_answer_instruction_includes_preview_ownership_evidence_when_present() {
+        let turn = turn_with_running_preview();
+
+        let instruction = final_answer_instruction(None, Some(&turn));
+
+        assert!(instruction.contains("Preview ownership evidence"));
+        assert!(instruction.contains("project_path=/Users/cabbos/project/forge-test-app"));
+        assert!(instruction.contains("url=http://127.0.0.1:5173"));
+        assert!(instruction.contains("explicitly say whether it belongs to the current project"));
+    }
+
+    #[test]
+    fn final_answer_instruction_keeps_failed_verification_and_preview_ownership_guidance() {
+        let turn = turn_with_running_preview();
+        let trace = verification(AgentVerificationStatus::Failed);
+
+        let instruction = final_answer_instruction(Some(&trace), Some(&turn));
+
+        assert!(instruction.contains("Verification did not pass"));
+        assert!(instruction.contains("Verification command: npm run build"));
+        assert!(instruction.contains("Preview ownership evidence"));
+        assert!(instruction.contains("project_path=/Users/cabbos/project/forge-test-app"));
+    }
+
+    #[test]
+    fn final_answer_instruction_omits_preview_ownership_without_preview_evidence() {
+        let instruction = final_answer_instruction(None, None);
+
+        assert!(!instruction.contains("Preview ownership evidence"));
+        assert!(instruction.contains("provide your final answer as plain text"));
     }
 }

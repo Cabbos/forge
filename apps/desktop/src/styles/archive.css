@@ -240,6 +240,32 @@
     background: rgba(184, 138, 86, 0.085);
   }
 
+  .forge-project-status-permission-pill {
+    display: inline-flex;
+    height: 1.75rem;
+    align-items: center;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-bg-surface);
+    padding: 0 0.5rem;
+    color: var(--forge-text-faint);
+    font-size: 10px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .forge-project-status-permission-pill[data-state="trusted"] {
+    border-color: rgba(74, 149, 112, 0.26);
+    background: rgba(74, 149, 112, 0.08);
+    color: rgb(64, 126, 95);
+  }
+
+  .forge-project-status-permission-pill[data-state="full_access"] {
+    border-color: rgba(236, 120, 48, 0.34);
+    background: rgba(236, 120, 48, 0.1);
+    color: rgb(209, 96, 32);
+  }
+
   .forge-project-status-error {
     border: 1px solid rgba(220, 89, 89, 0.22);
     border-radius: calc(var(--radius) - 2px);

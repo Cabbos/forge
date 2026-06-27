@@ -93,6 +93,9 @@ fn slash_command_activation_text_includes_stable_action_intent() {
 
     assert!(activation_text.contains("Action intent:"));
     assert!(activation_text.contains("排查并修复"));
+    assert!(activation_text.contains("小型明显 UI 决策"));
+    assert!(activation_text.contains("继续推进"));
+    assert!(activation_text.contains("不要再询问是否继续执行"));
 }
 
 #[test]
@@ -105,6 +108,11 @@ fn capability_snapshot_translates_slash_command_for_hidden_context() {
 
     assert!(context.contains("当前动作：/code-review"));
     assert!(context.contains("检查风险"));
+    assert!(context.contains("Lead with findings"));
+    assert!(context.contains("Use P0 only for critical blockers"));
+    assert!(context.contains("Use P1 for issues that block the user's stated goal"));
+    assert!(context.contains("Use P2 for product gaps"));
+    assert!(context.contains("Do not offer to fix unless the user asks"));
 }
 
 #[test]

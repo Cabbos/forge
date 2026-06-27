@@ -89,6 +89,7 @@ export interface RenameSessionSnapshotInput {
 }
 
 export type PermissionRuleDecision = "allow" | "deny";
+export type PermissionMode = "manual_confirm" | "trust_current_project" | "full_access";
 
 export interface PermissionRuleView {
   tool_name: string;
@@ -96,9 +97,21 @@ export interface PermissionRuleView {
   created_at: string;
 }
 
+export interface PermissionModeState {
+  mode: PermissionMode;
+  workspace_path: string | null;
+  session_scoped: boolean;
+}
+
 export interface SetPermissionRuleInput {
   toolName: string;
   decision: PermissionRuleDecision;
+}
+
+export interface SetPermissionModeInput {
+  sessionId: string;
+  mode: PermissionMode;
+  workspacePath?: string | null;
 }
 
 export interface AppWorkspaceMetadata {

@@ -1296,6 +1296,58 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn emit_usage_events_keeps_provider_usage_before_legacy_usage() {
+        let emitter = CaptureEmitter::default();
+
+        emit_usage_events_for_provider(
+            &emitter,
+            "session-usage-order",
+            "anthropic",
+            "anthropic",
+            "claude-sonnet-4-6",
+            Some(ProviderTokenUsage {
+                input_tokens: 123,
+                output_tokens: 45,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+            }),
+        );
+
+        let events = emitter.events();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events.first(),
+            Some(StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                estimated_cost_micros: Some(1044),
+                pricing_source: Some(pricing_source),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
+                ..
+            }) if session_id == "session-usage-order"
+                && provider_id == "anthropic"
+                && model == "claude-sonnet-4-6"
+                && pricing_source == "forge_static_pricing_2026_06_20"
+                && source == "anthropic"
+        ));
+        assert!(matches!(
+            events.get(1),
+            Some(StreamEvent::Usage {
+                session_id,
+                input_tokens: 123,
+                output_tokens: 45,
+                estimated_cost_usd,
+            }) if session_id == "session-usage-order"
+                && (*estimated_cost_usd - 0.001044).abs() < f64::EPSILON
+        ));
+    }
+
     #[tokio::test]
     async fn call_with_emitter_records_unknown_usage_when_provider_omits_usage() {
         let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({

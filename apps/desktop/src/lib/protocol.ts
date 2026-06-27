@@ -548,6 +548,28 @@ export interface ContextUsageState {
   compactedToTokens?: number | null;
 }
 
+export interface SessionUsageLedgerState {
+  providerId: string | null;
+  model: string | null;
+  source: string | null;
+  reason: ProviderUsageReason | "legacy_usage";
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  reasoningTokens: number | null;
+  estimatedCostMicros: number | null;
+  pricingSource: string | null;
+  costUsd: number | null;
+  hasUnknownInputTokens: boolean;
+  hasUnknownOutputTokens: boolean;
+  hasUnknownCost: boolean;
+  lastEventType: "provider_usage" | "usage";
+  lastProviderUsageBlockId: string | null;
+  legacyDuplicateIgnored: boolean;
+  updatedAt: number;
+}
+
 // Session state
 export interface SessionState {
   id: string;
@@ -563,6 +585,7 @@ export interface SessionState {
   blocks: BlockState[];
   costUsd: number;
   contextUsage?: ContextUsageState | null;
+  usageLedger?: SessionUsageLedgerState | null;
 }
 
 export type AgentType = "claude" | "codex" | "hermes";

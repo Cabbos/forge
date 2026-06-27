@@ -21,6 +21,7 @@
 | `ConfirmCard.tsx` + `ConfirmActions.tsx` + `ConfirmBoundaryViews.tsx` + `ConfirmViews.tsx` | `confirm_ask` |
 | `DeliverySummaryCard.tsx` + `DeliverySummaryViews.tsx` | `delivery_summary` |
 | `ToolCallCard.tsx` + `ToolActivityGroup.tsx` + `ToolActivitySummary.tsx` + `ToolActivityDetails.tsx` | `tool_call`, `tool_call_result` |
+| `ProviderUsageCard.tsx` | `provider_usage` |
 | `CodeBlock.tsx` | Inline / fenced code inside markdown |
 | `DiagramBlock.tsx` | ASCII / Mermaid diagrams |
 | `FilePreviewSheet.tsx` + `FilePreviewBody.tsx` + `FilePreviewActions.tsx` | File preview overlay |

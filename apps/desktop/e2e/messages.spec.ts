@@ -143,6 +143,79 @@ test.beforeEach(async ({ page }) => {
     await expect(page.getByTestId("message-panel").filter({ hasText: "本轮交付" })).toHaveCount(2);
   });
 
+  test("provider usage renders as trace metadata instead of assistant prose", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "provider_usage",
+        session_id: sessionId,
+        block_id: "usage-visible-placement",
+        provider_id: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        source: "anthropic",
+        reason: "provider_reported",
+        input_tokens: 411,
+        output_tokens: 137,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        reasoning_tokens: null,
+        estimated_cost_micros: 96,
+        pricing_source: "forge_static_pricing_2026_06_20",
+      },
+    ], 1);
+
+    const usageCard = page.getByTestId("provider-usage-card");
+    await expect(usageCard).toBeVisible();
+    await expect(usageCard).toContainText("deepseek-v4-flash[1m]");
+    await expect(usageCard).toContainText("输入 411");
+    await expect(usageCard).toContainText("输出 137");
+    await expect(usageCard).toContainText("96 micros");
+    await expect(page.getByTestId("assistant-message").filter({ hasText: "模型用量 · provider" })).toHaveCount(0);
+
+    const blockRole = await usageCard.evaluate((node) => {
+      return node.closest("[data-testid='message-block']")?.getAttribute("data-block-role");
+    });
+    expect(blockRole).toBe("trace");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "provider_usage",
+        session_id: sessionId,
+        block_id: "usage-unknown-placement",
+        provider_id: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        source: "anthropic",
+        reason: "provider_omitted",
+        input_tokens: null,
+        output_tokens: null,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        reasoning_tokens: null,
+        estimated_cost_micros: null,
+        pricing_source: null,
+      },
+    ], 1);
+
+    const unknownUsageCard = page.getByTestId("provider-usage-card").last();
+    await expect(unknownUsageCard).toContainText("输入 unknown");
+    await expect(unknownUsageCard).toContainText("输出 unknown");
+    await expect(unknownUsageCard).toContainText("费用 unknown");
+    await expect(unknownUsageCard).toContainText("用量未知");
+  });
+
   test("timeline messages render correctly", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -1747,7 +1820,12 @@ test.beforeEach(async ({ page }) => {
 
     const panels = page.getByTestId("message-panel");
     await expect(panels).toHaveCount(3);
-    await expect(panels.filter({ hasText: "准备修改项目" })).toBeVisible();
+    const confirmPanel = panels.filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toBeVisible();
+    await expect(confirmPanel).toContainText("/Users/cabbos/project/forge");
+    await expect(confirmPanel).toContainText("src/App.tsx");
+    await expect(confirmPanel).toContainText("这次确认只对当前这一步生效");
+    await expect(confirmPanel).toContainText("信任当前项目");
     await expect(panels.filter({ hasText: "文件改动" })).toContainText("src/App.tsx");
     await expect(panels.filter({ hasText: "文件改动" }).getByRole("button", { name: "复制 diff" })).toBeVisible();
     await expect(panels.filter({ hasText: "本轮交付" })).toBeVisible();
@@ -1794,6 +1872,36 @@ test.beforeEach(async ({ page }) => {
     expect(deliveryMetrics.itemBackgrounds.every((color) => color !== "rgba(0, 0, 0, 0)")).toBeTruthy();
     expect(deliveryMetrics.itemBorders.every((color) => color !== "rgba(0, 0, 0, 0)")).toBeTruthy();
     expect(deliveryMetrics.minItemHeight).toBeGreaterThanOrEqual(52);
+  });
+
+  test("ask_user confirmation explains boolean-only response limits", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "ask-user-confirm",
+        question: "你想把状态区放在哪里？",
+        kind: "ask_user",
+      },
+    ], 5);
+
+    const prompt = page.getByTestId("message-panel").filter({ hasText: "你想把状态区放在哪里？" });
+    await expect(prompt).toContainText("这一步只能确认是否继续");
+    await expect(prompt).toContainText("请直接发一条新消息");
   });
 
   test("write_file tool details show a markdown write preview", async ({ page }) => {

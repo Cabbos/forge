@@ -18,6 +18,7 @@ export function persistedSessionFromBackend(info: SessionInfo): PersistedSession
     updatedAt: info.updated_at_ms ?? info.created_at_ms ?? null,
     contextWindowTokens: info.context_window_tokens ?? null,
     contextUsage: null,
+    usageLedger: null,
     status: coerceSessionStatus(info.status),
     workflowState: info.latest_workflow ?? null,
     deliverySummary: info.latest_delivery ?? null,

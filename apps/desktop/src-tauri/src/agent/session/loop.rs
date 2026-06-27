@@ -455,8 +455,10 @@ impl AgentSession {
             let mut msgs = repair_tool_use_adjacency(context_bundle.messages);
             let last_role = msgs.last().map(|m| m.role.clone()).unwrap_or_default();
             if last_role == "tool" || last_role == "user" {
+                let latest_turn = lock_unpoisoned(&self.latest_turn).clone();
                 msgs.push(ChatMessage::user(&final_answer_instruction(
                     verification_trace.as_ref(),
+                    latest_turn.as_ref(),
                 )));
                 crate::app_log!("INFO", "Agent loop complete — requesting text-only summary");
                 let adapter_result = self.adapter.call(&msgs, cancel.clone()).await;

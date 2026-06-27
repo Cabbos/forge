@@ -447,7 +447,11 @@ test.describe("InputBar", () => {
       },
     ], 1);
 
-    await expect(page.getByTestId("composer-context-usage")).toContainText("142K / 1M");
+    await expect(page.getByTestId("composer-context-usage")).toContainText("142K / 1M · 余 858K");
+    await expect(page.getByTestId("composer-context-usage")).toHaveAttribute(
+      "title",
+      /剩余上下文约 858K tokens/,
+    );
     await expect(page.getByTestId("composer-context-usage")).toHaveAttribute(
       "title",
       /距离自动压缩还有约 825K tokens/,
@@ -459,6 +463,51 @@ test.describe("InputBar", () => {
       return window.__lastCompactSessionContextArgs;
     })).toMatchObject({ sessionId });
     await expectNoSendInput(page);
+  });
+
+  test("provider_usage without legacy usage updates composer context remaining", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    })).toBe(true);
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "session_started",
+        session_id: sessionId,
+        agent_type: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        context_window_tokens: 1_000_000,
+      },
+      {
+        event_type: "provider_usage",
+        session_id: sessionId,
+        block_id: "usage-provider-only-context",
+        provider_id: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        source: "anthropic",
+        reason: "provider_reported",
+        input_tokens: 411,
+        output_tokens: 137,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        reasoning_tokens: null,
+        estimated_cost_micros: 96,
+        pricing_source: "forge_static_pricing_2026_06_20",
+      },
+    ], 1);
+
+    const usage = page.getByTestId("composer-context-usage");
+    await expect(usage).toContainText("411 / 1M · 余 999.5K");
+    await expect(usage).toHaveAttribute("title", /自动压缩阈值 967K/);
   });
 
   test("composer context usage view-model owns display copy and compact control state", () => {

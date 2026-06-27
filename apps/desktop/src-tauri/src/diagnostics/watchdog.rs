@@ -263,8 +263,14 @@ pub fn spawn_gateway_watchdog(app_handle: tauri::AppHandle) {
 
 // ── Session event tracker ────────────────────────────────────────────────
 
-/// Tracks the latest event timestamp per session, keyed by session_id.
-static SESSION_EVENT_TRACKER: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+#[derive(Clone, Copy, Debug)]
+struct SessionActivity {
+    last_event: Instant,
+    active: bool,
+}
+
+/// Tracks the latest event timestamp and active turn state per session.
+static SESSION_EVENT_TRACKER: OnceLock<Mutex<HashMap<String, SessionActivity>>> = OnceLock::new();
 
 /// Record a session event. Called from `emit_stream_event` for every event
 /// that carries a session_id. Minimal, no-throw — if the lock is poisoned
@@ -273,7 +279,14 @@ pub fn record_session_event(event: &StreamEvent) {
     let session_id = event.session_id().to_string();
     if let Some(registry) = SESSION_EVENT_TRACKER.get() {
         if let Ok(mut guard) = registry.lock() {
-            guard.insert(session_id, Instant::now());
+            let previous_active = guard.get(&session_id).map(|activity| activity.active);
+            guard.insert(
+                session_id,
+                SessionActivity {
+                    last_event: Instant::now(),
+                    active: event_session_active_state(event, previous_active),
+                },
+            );
         }
     }
 }
@@ -281,6 +294,26 @@ pub fn record_session_event(event: &StreamEvent) {
 /// Initialize the tracker (called once on startup).
 pub fn init_session_event_tracker() {
     SESSION_EVENT_TRACKER.get_or_init(|| Mutex::new(HashMap::new()));
+}
+
+fn event_session_active_state(event: &StreamEvent, previous_active: Option<bool>) -> bool {
+    match event {
+        StreamEvent::SessionStatus { status, .. } => {
+            matches!(status.as_str(), "working" | "resuming")
+        }
+        StreamEvent::SessionStopped { .. } => false,
+        _ => previous_active.unwrap_or(true),
+    }
+}
+
+fn session_event_is_stale(activity: Option<SessionActivity>, now: Instant) -> bool {
+    match activity {
+        Some(activity) if !activity.active => false,
+        Some(activity) => {
+            now.duration_since(activity.last_event).as_secs() >= DEFAULT_STALE_THRESHOLD_SECS
+        }
+        None => true,
+    }
 }
 
 // ── Watchdog task ────────────────────────────────────────────────────────
@@ -341,13 +374,7 @@ pub fn spawn_session_watchdog(app_handle: tauri::AppHandle) {
 
                 // Check last event timestamp
                 let is_stale = match registry.lock() {
-                    Ok(guard) => match guard.get(&session_id) {
-                        Some(last_event) => {
-                            now.duration_since(*last_event).as_secs()
-                                >= DEFAULT_STALE_THRESHOLD_SECS
-                        }
-                        None => true, // no event ever recorded → stale
-                    },
+                    Ok(guard) => session_event_is_stale(guard.get(&session_id).copied(), now),
                     Err(_) => continue,
                 };
 
@@ -397,6 +424,7 @@ mod tests {
         let registry = SESSION_EVENT_TRACKER.get().unwrap();
         let guard = registry.lock().unwrap();
         assert!(guard.contains_key("test-session"));
+        assert!(!guard.get("test-session").unwrap().active);
     }
 
     #[test]
@@ -425,6 +453,66 @@ mod tests {
         let threshold = watchdog_threshold_for_test(None);
         assert!(threshold >= 60);
         assert_eq!(threshold, 300);
+    }
+
+    #[test]
+    fn session_event_staleness_tracks_missing_fresh_and_expired_events() {
+        let now = Instant::now();
+
+        assert!(session_event_is_stale(None, now));
+        assert!(!session_event_is_stale(
+            Some(SessionActivity {
+                last_event: now - Duration::from_secs(DEFAULT_STALE_THRESHOLD_SECS - 1),
+                active: true,
+            }),
+            now,
+        ));
+        assert!(session_event_is_stale(
+            Some(SessionActivity {
+                last_event: now - Duration::from_secs(DEFAULT_STALE_THRESHOLD_SECS),
+                active: true,
+            }),
+            now,
+        ));
+        assert!(!session_event_is_stale(
+            Some(SessionActivity {
+                last_event: now - Duration::from_secs(DEFAULT_STALE_THRESHOLD_SECS + 60),
+                active: false,
+            }),
+            now,
+        ));
+    }
+
+    #[test]
+    fn idle_session_status_disables_stale_detection_after_later_events() {
+        init_session_event_tracker();
+        let session_id = "idle-session";
+
+        record_session_event(&StreamEvent::SessionStatus {
+            session_id: session_id.to_string(),
+            status: "working".to_string(),
+        });
+        record_session_event(&StreamEvent::SessionStatus {
+            session_id: session_id.to_string(),
+            status: "idle".to_string(),
+        });
+        record_session_event(&StreamEvent::Usage {
+            session_id: session_id.to_string(),
+            input_tokens: 10,
+            output_tokens: 5,
+            estimated_cost_usd: 0.0,
+        });
+
+        let guard = SESSION_EVENT_TRACKER.get().unwrap().lock().unwrap();
+        let activity = guard.get(session_id).copied().unwrap();
+        assert!(!activity.active);
+        assert!(!session_event_is_stale(
+            Some(SessionActivity {
+                last_event: Instant::now() - Duration::from_secs(DEFAULT_STALE_THRESHOLD_SECS + 1),
+                active: activity.active,
+            }),
+            Instant::now(),
+        ));
     }
 
     #[test]
@@ -523,7 +611,8 @@ mod tests {
         let last_event = guard.get(session_id).unwrap();
 
         // The recorded event should be very recent
-        assert!(last_event.elapsed().as_secs() < 5);
+        assert!(last_event.last_event.elapsed().as_secs() < 5);
+        assert!(last_event.active);
     }
 
     #[test]

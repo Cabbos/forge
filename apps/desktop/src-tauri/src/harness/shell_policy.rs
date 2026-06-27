@@ -49,6 +49,14 @@ pub fn validate_shell_command_failsafe(command: &str) -> Result<(), String> {
 }
 
 fn is_readonly_shell_command(command: &str) -> bool {
+    if is_readonly_command_with_tail_output_clipping(command) {
+        return true;
+    }
+
+    if is_process_status_probe(command) || is_localhost_curl_probe(command) {
+        return true;
+    }
+
     if contains_shell_control(command)
         || contains_write_or_watch_option(command)
         || references_external_path(command)
@@ -60,6 +68,8 @@ fn is_readonly_shell_command(command: &str) -> bool {
     let allowed_prefixes = [
         "pwd",
         "ls",
+        "lsof -i",
+        "ps -p",
         "git status",
         "git diff",
         "git log",
@@ -70,6 +80,7 @@ fn is_readonly_shell_command(command: &str) -> bool {
         "cat ",
         "sed -n",
         "wc ",
+        "npm test",
         "npm run build",
         "cargo test",
         "cargo check",
@@ -84,6 +95,74 @@ fn is_readonly_shell_command(command: &str) -> bool {
                 .map(|rest| rest.starts_with(' '))
                 .unwrap_or(false)
     })
+}
+
+fn is_readonly_command_with_tail_output_clipping(command: &str) -> bool {
+    let parts = command.split('|').map(str::trim).collect::<Vec<_>>();
+    let [left, right] = parts.as_slice() else {
+        return false;
+    };
+    if !is_tail_output_clip(right) {
+        return false;
+    }
+
+    let base = left.trim_end();
+    let base = base.strip_suffix("2>&1").map(str::trim_end).unwrap_or(base);
+    !base.is_empty() && is_readonly_shell_command(base)
+}
+
+fn is_tail_output_clip(command: &str) -> bool {
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    match words.as_slice() {
+        ["tail"] => true,
+        ["tail", count] => is_tail_count_arg(count),
+        ["tail", "-n", count] => count.chars().all(|ch| ch.is_ascii_digit()),
+        _ => false,
+    }
+}
+
+fn is_tail_count_arg(value: &str) -> bool {
+    let Some(count) = value.strip_prefix('-') else {
+        return false;
+    };
+    !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_process_status_probe(command: &str) -> bool {
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    matches!(
+        words.as_slice(),
+        ["ps", "-p", pid, "-o", "command="]
+            if pid.chars().all(|ch| ch.is_ascii_digit())
+    )
+}
+
+fn is_localhost_curl_probe(command: &str) -> bool {
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    let Some(first) = words.first().copied() else {
+        return false;
+    };
+    if first != "curl" {
+        return false;
+    }
+
+    let mut url: Option<&str> = None;
+    for word in words.iter().skip(1) {
+        let value = word.trim_matches(|ch| ch == '"' || ch == '\'');
+        if value.starts_with("http://127.0.0.1:") || value.starts_with("http://localhost:") {
+            url = Some(value);
+            continue;
+        }
+        if matches!(
+            value,
+            "-i" | "-I" | "--head" | "-s" | "-S" | "-L" | "-f" | "-fsS" | "-fsSL"
+        ) {
+            continue;
+        }
+        return false;
+    }
+
+    url.is_some()
 }
 
 fn contains_write_or_watch_option(command: &str) -> bool {
@@ -236,6 +315,23 @@ mod tests {
     }
 
     #[test]
+    fn classifies_local_preview_probe_commands_as_readonly() {
+        for command in [
+            "lsof -i :5173",
+            "ps -p 12345 -o command=",
+            "pwd -P",
+            "curl -I http://127.0.0.1:5173/",
+            "curl http://localhost:5173/",
+        ] {
+            assert_eq!(
+                classify_shell_command(command),
+                ShellPolicyDecision::AllowReadonly,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
     fn classifies_write_like_options_as_confirm() {
         for command in [
             "find . -delete",
@@ -353,6 +449,22 @@ mod tests {
             "find . -name '*.rs' -type f",
             "sed -n '10,20p' file.txt",
             "npm run build -- --mode development",
+        ] {
+            assert_eq!(
+                classify_shell_command(command),
+                ShellPolicyDecision::AllowReadonly,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn readonly_commands_with_tail_output_clipping_still_allowed() {
+        for command in [
+            "npm run build 2>&1 | tail -20",
+            "npm test 2>&1 | tail -40",
+            "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | tail -60",
+            "git status --short 2>&1 | tail -20",
         ] {
             assert_eq!(
                 classify_shell_command(command),

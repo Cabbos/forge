@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::super::permissions::{PermissionDecision, PermissionGate};
+    use super::super::permissions::{PermissionDecision, PermissionGate, PermissionMode};
     use crate::harness::db::Database;
     use std::sync::Arc;
 
@@ -42,6 +42,282 @@ mod tests {
             decision
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn trust_current_project_allows_workspace_writes_for_matching_workspace() {
+        let (db, dir) = temp_db();
+        std::fs::create_dir_all(dir.join("src")).expect("create src");
+        std::fs::write(dir.join("src/main.rs"), "fn main() {}").expect("write main.rs");
+        let gate = PermissionGate::new(db);
+
+        gate.trust_current_project("session-1", &dir).await;
+
+        let state = gate.permission_mode_state("session-1", Some(&dir)).await;
+        let canonical_dir = dir.canonicalize().expect("canonical temp dir");
+        assert_eq!(state.mode, PermissionMode::TrustCurrentProject);
+        assert_eq!(
+            state.workspace_path.as_deref(),
+            Some(canonical_dir.to_string_lossy().as_ref())
+        );
+        assert!(!state.session_scoped);
+
+        let input = serde_json::json!({"path": "src/main.rs"});
+        let decision = gate.check("session-1", "write_to_file", &input, &dir).await;
+        assert!(
+            matches!(decision, PermissionDecision::Allow),
+            "trusted current project should allow matching workspace writes: {:?}",
+            decision
+        );
+
+        let other_session = gate.check("session-2", "write_to_file", &input, &dir).await;
+        assert!(
+            matches!(other_session, PermissionDecision::Allow),
+            "trust mode should follow the trusted workspace into new sessions: {:?}",
+            other_session
+        );
+        let other_state = gate.permission_mode_state("session-2", Some(&dir)).await;
+        assert_eq!(other_state.mode, PermissionMode::TrustCurrentProject);
+
+        gate.restore_manual_confirm("session-2", Some(&dir)).await;
+        let restored = gate.check("session-1", "write_to_file", &input, &dir).await;
+        assert!(
+            matches!(restored, PermissionDecision::Ask { .. }),
+            "manual confirmation should be restored after disabling trust mode: {:?}",
+            restored
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn trust_current_project_does_not_allow_sensitive_or_external_paths() {
+        let (db, dir) = temp_db();
+        let gate = PermissionGate::new(db);
+        gate.trust_current_project("session-1", &dir).await;
+
+        let env_decision = gate
+            .check(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({"path": ".env"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(env_decision, PermissionDecision::Ask { .. }),
+            "sensitive files should still require confirmation: {:?}",
+            env_decision
+        );
+
+        let outside_decision = gate
+            .check(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({"path": "/etc/passwd"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(outside_decision, PermissionDecision::Deny { .. }),
+            "outside workspace writes should still be denied: {:?}",
+            outside_decision
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn full_access_current_project_allows_confirmable_workspace_operations() {
+        let (db, dir) = temp_db();
+        std::fs::create_dir_all(dir.join("src")).expect("create src");
+        std::fs::write(dir.join("src/main.rs"), "fn main() {}").expect("write main.rs");
+        let gate = PermissionGate::new(db);
+
+        gate.full_access_current_project("session-1", &dir).await;
+
+        let state = gate.permission_mode_state("session-1", Some(&dir)).await;
+        let canonical_dir = dir.canonicalize().expect("canonical temp dir");
+        assert_eq!(state.mode, PermissionMode::FullAccess);
+        assert_eq!(
+            state.workspace_path.as_deref(),
+            Some(canonical_dir.to_string_lossy().as_ref())
+        );
+        assert!(!state.session_scoped);
+
+        let write_decision = gate
+            .check(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({"path": ".env"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(write_decision, PermissionDecision::Allow),
+            "full access should allow sensitive workspace writes without prompting: {:?}",
+            write_decision
+        );
+
+        let shell_decision = gate
+            .check(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(shell_decision, PermissionDecision::Allow),
+            "full access should allow confirmable shell commands: {:?}",
+            shell_decision
+        );
+
+        let mcp_decision = gate
+            .check(
+                "session-1",
+                "mcp_read_resource",
+                &serde_json::json!({"server_id": "obsidian", "uri": "file:///notes/forge.md"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(mcp_decision, PermissionDecision::Allow),
+            "full access should allow connector context reads: {:?}",
+            mcp_decision
+        );
+
+        let unknown_decision = gate
+            .check(
+                "session-1",
+                "unknown_magic_tool",
+                &serde_json::json!({}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(unknown_decision, PermissionDecision::Allow),
+            "full access should allow otherwise confirmable tools: {:?}",
+            unknown_decision
+        );
+
+        let other_session = gate
+            .check(
+                "session-2",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(other_session, PermissionDecision::Allow),
+            "full access should follow the workspace into new sessions: {:?}",
+            other_session
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn full_access_current_project_keeps_hard_blocks_and_deny_rules() {
+        let (db, dir) = temp_db();
+        let gate = PermissionGate::new(db);
+        gate.full_access_current_project("session-1", &dir).await;
+
+        let outside_decision = gate
+            .check(
+                "session-1",
+                "edit_file",
+                &serde_json::json!({"path": "/etc/passwd"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(outside_decision, PermissionDecision::Deny { .. }),
+            "full access must not allow writes outside the workspace: {:?}",
+            outside_decision
+        );
+
+        let blocked_shell = gate
+            .check(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "rm -rf /"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(blocked_shell, PermissionDecision::Deny { .. }),
+            "full access must not bypass catastrophic shell blocks: {:?}",
+            blocked_shell
+        );
+
+        gate.deny_permanently("run_shell").await;
+        let denied_shell = gate
+            .check(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(denied_shell, PermissionDecision::Deny { .. }),
+            "explicit deny rules should override full access: {:?}",
+            denied_shell
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn switching_modes_for_session_clears_previous_workspace_mode() {
+        let (db, dir) = temp_db();
+        let other_dir = std::env::temp_dir().join(format!(
+            "forge-perm-gate-test-other-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&other_dir).expect("other temp dir");
+        let gate = PermissionGate::new(db);
+
+        gate.full_access_current_project("session-1", &dir).await;
+        assert_eq!(
+            gate.permission_mode_state("session-1", Some(&dir))
+                .await
+                .mode,
+            PermissionMode::FullAccess
+        );
+
+        gate.trust_current_project("session-1", &other_dir).await;
+        assert_eq!(
+            gate.permission_mode_state("session-1", Some(&other_dir))
+                .await
+                .mode,
+            PermissionMode::TrustCurrentProject
+        );
+        assert_eq!(
+            gate.permission_mode_state("session-2", Some(&dir))
+                .await
+                .mode,
+            PermissionMode::ManualConfirm
+        );
+
+        let former_full_access = gate
+            .check(
+                "session-2",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(former_full_access, PermissionDecision::Ask { .. }),
+            "switching modes should clear previous full-access workspace state: {:?}",
+            former_full_access
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other_dir);
     }
 
     #[tokio::test]

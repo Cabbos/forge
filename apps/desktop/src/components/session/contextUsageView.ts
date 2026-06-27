@@ -91,16 +91,20 @@ function formatComposerContextUsage(
     usage?: ContextUsageState | null;
   },
 ) {
-  const baseLabel = usedTokens && contextWindowTokens
+  const hasUsedTokens = usedTokens !== null && usedTokens !== undefined;
+  const hasContextWindow = contextWindowTokens !== null
+    && contextWindowTokens !== undefined
+    && contextWindowTokens > 0;
+  const baseLabel = hasUsedTokens && hasContextWindow
     ? `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}`
     : "";
 
   if (isCompacting) return baseLabel ? `压缩中 · ${baseLabel}` : "压缩中";
   if (isStreaming) return baseLabel ? `生成中 · ${baseLabel}` : "生成中";
-  if (!baseLabel || !usedTokens || !contextWindowTokens) return baseLabel;
+  if (!baseLabel || !hasUsedTokens || !hasContextWindow) return baseLabel;
   if (usage?.compactedFromTokens && usage.compactedToTokens) return `${baseLabel} · 已压缩`;
 
-  return `${baseLabel} · ${formatAutoCompactLabel(usedTokens, contextWindowTokens)}`;
+  return `${baseLabel} · ${formatContextRemainingLabel(usedTokens, contextWindowTokens)}`;
 }
 
 function formatComposerContextUsageTitle(
@@ -109,16 +113,23 @@ function formatComposerContextUsageTitle(
 ) {
   const usedTokens = usage?.usedTokens ?? null;
   const contextWindowTokens = usage?.contextWindowTokens ?? fallbackContextWindowTokens ?? null;
-  if (!usedTokens || !contextWindowTokens) return "压缩当前上下文";
+  if (
+    usedTokens === null
+    || usedTokens === undefined
+    || contextWindowTokens === null
+    || contextWindowTokens === undefined
+    || contextWindowTokens <= 0
+  ) return "压缩当前上下文";
 
   const percent = usage?.percentUsed !== null && usage?.percentUsed !== undefined ? ` · ${usage.percentUsed}%` : "";
   const source = usage?.source === "local_estimate" ? " · 压缩后估算" : " · 模型 usage";
+  const contextRemaining = formatContextRemainingDistance(usedTokens, contextWindowTokens);
   const autoCompact = formatAutoCompactDistance(usedTokens, contextWindowTokens);
   const compacted = usage?.compactedFromTokens && usage.compactedToTokens
     ? ` · 上次压缩 ${formatTokenCount(usage.compactedFromTokens)} -> ${formatTokenCount(usage.compactedToTokens)}`
     : "";
 
-  return `上下文 ${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}${percent}${source}${autoCompact}${compacted}`;
+  return `上下文 ${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}${percent}${source}${contextRemaining}${autoCompact}${compacted}`;
 }
 
 function formatTokenCount(tokens: number) {
@@ -135,10 +146,23 @@ function formatAutoCompactDistance(usedTokens: number, contextWindowTokens: numb
   return `${thresholdLabel} · 距离自动压缩还有约 ${formatTokenCount(remaining)} tokens`;
 }
 
-function formatAutoCompactLabel(usedTokens: number, contextWindowTokens: number) {
-  const remaining = autoCompactThreshold(contextWindowTokens) - usedTokens;
-  if (remaining <= 0) return "可压缩";
-  return `余 ${formatTokenCount(remaining)}`;
+function formatContextRemainingDistance(usedTokens: number, contextWindowTokens: number) {
+  return ` · 剩余上下文约 ${formatRemainingTokenCount(contextWindowTokens - usedTokens)} tokens`;
+}
+
+function formatContextRemainingLabel(usedTokens: number, contextWindowTokens: number) {
+  return `余 ${formatRemainingTokenCount(contextWindowTokens - usedTokens)}`;
+}
+
+function formatRemainingTokenCount(tokens: number) {
+  const safeTokens = Math.max(0, Math.floor(tokens));
+  if (safeTokens >= 1_000_000) return formatOneDecimal(Math.floor(safeTokens / 100_000) / 10, "M");
+  if (safeTokens >= 1_000) return formatOneDecimal(Math.floor(safeTokens / 100) / 10, "K");
+  return String(safeTokens);
+}
+
+function formatOneDecimal(value: number, suffix: string) {
+  return `${Number.isInteger(value) ? String(value) : value.toFixed(1)}${suffix}`;
 }
 
 function autoCompactThreshold(contextWindowTokens: number) {

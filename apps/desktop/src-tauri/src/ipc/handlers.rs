@@ -6,6 +6,7 @@ use crate::agent::provider_capabilities::{default_model, normalize_provider};
 use crate::agent::session::ManualCompactResult;
 use crate::agent::snapshot::save_session_snapshot;
 use crate::ipc::mcp_context::McpContextSelection;
+use crate::ipc::permission_handlers::sync_app_permission_mode_to_session;
 use crate::ipc::send_input_context::{
     build_prepared_send_input_turn, record_send_input_user_turn, resolve_send_input_session,
     run_reserved_send_input_turn, select_send_input_contexts, BuildPreparedSendInputTurnRequest,
@@ -75,6 +76,7 @@ pub async fn create_session(
     }
 
     let session = Arc::new(session);
+    sync_app_permission_mode_to_session(&state, &session, &session_id, &working_dir).await;
     if let Err(error) = save_session_snapshot(&session.snapshot()) {
         crate::app_log!("WARN", "[session_snapshot] {}", error);
     }
@@ -125,6 +127,13 @@ pub async fn send_input(
     }
 
     let (s, project_path) = resolve_send_input_session(&app_handle, &state, &session_id).await?;
+    sync_app_permission_mode_to_session(
+        &state,
+        &s,
+        &session_id,
+        std::path::Path::new(&project_path),
+    )
+    .await;
     let turn_guard = record_send_input_user_turn(&state, &s, &session_id, &text, &project_path)?;
     let contexts = select_send_input_contexts(SelectSendInputContextsRequest {
         state: &state,
