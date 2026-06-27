@@ -8,6 +8,7 @@
 - Added an opt-in `--open-settings` path to the desktop UI evidence doctor so blocked local evidence can open the relevant macOS privacy panes without changing default acceptance behavior.
 - Added desktop UI evidence recovery commands to the preflight output so blocked screenshot/window evidence points directly to the doctor and opt-in settings opener.
 - Surfaced desktop UI evidence recovery commands in the Phase 8 disposable loop status and runbook outputs so blocked live rows expose the same doctor and settings-opener path from the top-level summary.
+- Added `--require-live-ready` to the Phase 8 disposable loop status helper so automation can fail fast when the next row is blocked by project readiness or desktop UI evidence.
 - Added a disposable loop manual evidence reviewer so Phase 8 row archives catch prompt mismatches, empty fields, and placeholders before strict validation.
 - Tightened the desktop UI evidence preflight to detect failed or likely blank macOS screenshots before treating a local session as usable for live Forge UI evidence.
 - Added a desktop UI evidence preflight so local screen/window automation limits are reported before collecting live Forge UI evidence.

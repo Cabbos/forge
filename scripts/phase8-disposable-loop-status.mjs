@@ -74,6 +74,12 @@ export function generatePhase8DisposableLoopStatus({
   return result;
 }
 
+export function phase8DisposableLoopStatusExitCode(result, { requireLiveReady = false } = {}) {
+  if (result.status === "project_not_ready") return 1;
+  if (requireLiveReady && result.status !== "complete" && !result.readyForLiveRun) return 1;
+  return 0;
+}
+
 function latestArchiveForRow({ outDir, row }) {
   const fallback = {
     complete: false,
@@ -192,7 +198,7 @@ ${commands}
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/phase8-disposable-loop-status.mjs [--json|--markdown] [--project <path>] [--out-dir <path>] [--manual-dir <path>] [--date YYYY-MM-DD] [--skip-ui-preflight]
+  console.log(`Usage: node scripts/phase8-disposable-loop-status.mjs [--json|--markdown] [--project <path>] [--out-dir <path>] [--manual-dir <path>] [--date YYYY-MM-DD] [--skip-ui-preflight] [--require-live-ready]
 
 Reports Phase 8 disposable loop row archive coverage and the next live row runbook commands.
 
@@ -205,6 +211,8 @@ Options:
   --date YYYY-MM-DD  Evidence date for next-row runbooks. Defaults to today.
   --skip-ui-preflight
                      Do not run local desktop UI evidence preflight before printing.
+  --require-live-ready
+                     Exit nonzero unless the next row is ready for live Forge evidence or all rows are complete.
   -h, --help         Show this help.
 `);
 }
@@ -218,6 +226,7 @@ function parseArgs(argv) {
     manualDir: DEFAULT_MANUAL_DIR,
     date: currentDate(),
     skipUiPreflight: false,
+    requireLiveReady: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -248,6 +257,8 @@ function parseArgs(argv) {
       index += 1;
     } else if (arg === "--skip-ui-preflight") {
       options.skipUiPreflight = true;
+    } else if (arg === "--require-live-ready") {
+      options.requireLiveReady = true;
     } else if (arg === "-h" || arg === "--help") {
       options.help = true;
     } else {
@@ -310,7 +321,9 @@ function main(argv = process.argv.slice(2)) {
   } else {
     console.log(result.markdown);
   }
-  return result.status === "project_not_ready" ? 1 : 0;
+  return phase8DisposableLoopStatusExitCode(result, {
+    requireLiveReady: options.requireLiveReady,
+  });
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {

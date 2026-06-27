@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { generatePhase8DisposableLoopStatus } from "./phase8-disposable-loop-status.mjs";
+import {
+  generatePhase8DisposableLoopStatus,
+  phase8DisposableLoopStatusExitCode,
+} from "./phase8-disposable-loop-status.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const scriptPath = join(root, "scripts", "phase8-disposable-loop-status.mjs");
@@ -113,6 +116,20 @@ test("reports complete when all row validations are archived", (t) => {
   assert.match(result.markdown, /All Phase 8 disposable loop rows/);
 });
 
+test("exit code helper can hard-gate live readiness", () => {
+  assert.equal(phase8DisposableLoopStatusExitCode({ status: "ready_for_live_row", readyForLiveRun: true }), 0);
+  assert.equal(phase8DisposableLoopStatusExitCode({ status: "complete", readyForLiveRun: false }, { requireLiveReady: true }), 0);
+  assert.equal(phase8DisposableLoopStatusExitCode({ status: "project_not_ready", readyForLiveRun: false }), 1);
+  assert.equal(
+    phase8DisposableLoopStatusExitCode(
+      { status: "ui_evidence_not_ready", readyForLiveRun: false },
+      { requireLiveReady: true },
+    ),
+    1,
+  );
+  assert.equal(phase8DisposableLoopStatusExitCode({ status: "ui_evidence_not_ready", readyForLiveRun: false }), 0);
+});
+
 test("cli json prints machine-readable status", (t) => {
   const projectPath = createStatusProject(t);
   const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
@@ -142,6 +159,36 @@ test("cli json prints machine-readable status", (t) => {
   assert.equal(parsed.nextRow, "1");
   assert.equal(parsed.rows.length, 3);
   assert.deepEqual(parsed.recoveryCommands, []);
+});
+
+test("cli require-live-ready exits zero for a ready row", (t) => {
+  const projectPath = createStatusProject(t);
+  const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
+  t.after(() => rmSync(outDir, { recursive: true, force: true }));
+
+  const output = execFileSync(
+    process.execPath,
+    [
+      scriptPath,
+      "--json",
+      "--project",
+      projectPath,
+      "--out-dir",
+      outDir,
+      "--date",
+      "2026-06-28",
+      "--skip-ui-preflight",
+      "--require-live-ready",
+    ],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  const parsed = JSON.parse(output);
+
+  assert.equal(parsed.status, "ready_for_live_row");
+  assert.equal(parsed.readyForLiveRun, true);
 });
 
 function writeCompleteArchive(outDir, row) {
