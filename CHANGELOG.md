@@ -9,8 +9,8 @@
 - Added an opt-in `--open-settings` path to the desktop UI evidence doctor so blocked local evidence can open the relevant macOS privacy panes without changing default acceptance behavior.
 - Added the Phase 8 live-ready hard gate rerun command to the desktop UI evidence doctor recovery checklist so macOS permission fixes point back to the same `--require-live-ready` acceptance gate.
 - Clarified desktop UI evidence doctor blocker actions and next-step copy so they visibly send users from fixed macOS permissions back through the Phase 8 live-ready hard gate.
-- Added desktop UI evidence recovery commands to the preflight output so blocked screenshot/window evidence points directly to the doctor and opt-in settings opener.
-- Surfaced desktop UI evidence recovery commands in the Phase 8 disposable loop status and runbook outputs so blocked live rows expose the same doctor and settings-opener path from the top-level summary.
+- Added desktop UI evidence recovery commands to the preflight output so blocked screenshot/window evidence points directly to the doctor, opt-in settings opener, strict preflight rerun, and live-ready hard gate.
+- Surfaced normalized desktop UI evidence recovery commands in the Phase 8 disposable loop status and runbook outputs so blocked live rows expose the same doctor, settings-opener, strict preflight, and live-ready hard-gate path from the top-level summary.
 - Added `--require-live-ready` to the Phase 8 disposable loop status helper so automation can fail fast when the next row is blocked by project readiness or desktop UI evidence.
 - Added shared `liveReadyGate` diagnostics to the Phase 8 disposable loop status and runbook JSON/Markdown so automation can report whether the hard gate passed and why it is blocked.
 - Preserved desktop UI evidence `permissionScope` on status/runbook `not_checked` preflight summaries so skipped UI checks still explain the macOS privacy boundary.

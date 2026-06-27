@@ -12,6 +12,8 @@ const KNOWN_WINDOWED_APPS = ["Google Chrome", "Codex", "Finder"];
 const BLANK_SCREENSHOT_BYTES_PER_PIXEL = 0.08;
 const DOCTOR_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown";
 const DOCTOR_OPEN_SETTINGS_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings";
+const PREFLIGHT_REQUIRE_READY_COMMAND = "node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready";
+const LIVE_READY_HARD_GATE_COMMAND = "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
 
 export function evaluateDesktopUiEvidencePreflight({
   platform = process.platform,
@@ -125,6 +127,17 @@ export function evaluateDesktopUiEvidencePreflight({
   };
 }
 
+export function normalizeDesktopUiEvidenceRecoveryCommands(commands = [], { includeOpenSettings = false } = {}) {
+  const normalized = [...commands];
+  const defaults = recoveryCommands({ includeOpenSettings });
+  for (const entry of defaults) {
+    if (!normalized.some((existing) => existing.command === entry.command)) {
+      normalized.push(entry);
+    }
+  }
+  return normalized;
+}
+
 function recoveryCommands({ includeOpenSettings = false } = {}) {
   const commands = [
     {
@@ -138,6 +151,16 @@ function recoveryCommands({ includeOpenSettings = false } = {}) {
       command: DOCTOR_OPEN_SETTINGS_COMMAND,
     });
   }
+  commands.push(
+    {
+      label: "rerun desktop UI evidence preflight",
+      command: PREFLIGHT_REQUIRE_READY_COMMAND,
+    },
+    {
+      label: "rerun disposable loop live-ready hard gate",
+      command: LIVE_READY_HARD_GATE_COMMAND,
+    },
+  );
   return commands;
 }
 

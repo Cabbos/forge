@@ -77,12 +77,15 @@ test("reports UI evidence blocker without marking project as not ready", (t) => 
   assert.equal(result.rows[0].status, "ui_evidence_not_ready");
   assert.equal(result.rows[0].runbook.uiEvidencePreflight.status, "screen_capture_limited");
   assert.ok(result.rows[0].runbook.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
+  assert.ok(result.rows[0].runbook.recoveryCommands.some((entry) => entry.command.includes("--require-live-ready")));
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--require-live-ready")));
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs")));
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs")));
   assert.match(result.nextStep, /trusted desktop session/);
   assert.match(result.markdown, /Recovery commands:/);
   assert.match(result.markdown, /desktop-ui-evidence-doctor\.mjs --markdown --open-settings/);
+  assert.match(result.markdown, /phase8-disposable-loop-status\.mjs --json --require-live-ready/);
 });
 
 test("skips completed rows and reports the next incomplete row", (t) => {

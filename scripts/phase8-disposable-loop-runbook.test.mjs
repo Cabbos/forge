@@ -70,11 +70,13 @@ test("runbook separates project readiness from desktop UI evidence readiness", (
   assert.equal(result.liveReadyGate.pass, false);
   assert.equal(result.liveReadyGate.reason, "ui_evidence_not_ready");
   assert.equal(result.liveReadyGate.uiEvidenceStatus, "screen_capture_limited");
-  assert.equal(result.recoveryCommands.length, 2);
+  assert.ok(result.recoveryCommands.length >= 4);
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--require-live-ready")));
   assert.match(result.nextStep, /screen_capture_limited/);
   assert.match(result.markdown, /Recovery commands:/);
   assert.match(result.markdown, /desktop-ui-evidence-doctor\.mjs --markdown --open-settings/);
+  assert.match(result.markdown, /phase8-disposable-loop-status\.mjs --json --require-live-ready/);
 });
 
 test("cli json prints machine-readable runbook", (t) => {
