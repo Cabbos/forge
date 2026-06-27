@@ -14,6 +14,7 @@ const DEFAULT_PROJECT_PATH = "/Users/cabbos/project/forge-test-app-phase8-clean"
 const DEFAULT_OUT_DIR = "apps/desktop/docs/product/evidence/phase8-disposable-loop";
 const DEFAULT_MANUAL_DIR = "/tmp";
 const ROWS = ["1", "2", "3"];
+const LIVE_READY_GATE_COMMAND = "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
 
 export function generatePhase8DisposableLoopStatus({
   projectPath = DEFAULT_PROJECT_PATH,
@@ -70,16 +71,16 @@ export function generatePhase8DisposableLoopStatus({
     nextStep: nextStep(status, nextRowStatus),
     markdown: "",
   };
+  result.liveReadyGate = evaluatePhase8DisposableLoopLiveReadyGate(result);
   result.markdown = renderMarkdown(result);
   return result;
 }
 
 export function phase8DisposableLoopStatusExitCode(result, { requireLiveReady = false } = {}) {
   if (result.status === "project_not_ready") return 1;
-  if (!requireLiveReady || result.status === "complete") return 0;
-  if (!result.readyForLiveRun) return 1;
-  if (result.uiEvidencePreflight?.canCollectLiveUiEvidence !== true) return 1;
-  return 0;
+  if (!requireLiveReady) return 0;
+  const gate = result.liveReadyGate ?? evaluatePhase8DisposableLoopLiveReadyGate(result);
+  return gate.pass ? 0 : 1;
 }
 
 function latestArchiveForRow({ outDir, row }) {
@@ -163,6 +164,39 @@ function nextStep(status, nextRowStatus) {
   return `Run row #${nextRowStatus.row} with the listed runbook commands, then archive strict evidence.`;
 }
 
+function evaluatePhase8DisposableLoopLiveReadyGate(result) {
+  const uiEvidenceStatus = result.uiEvidencePreflight?.status ?? "unknown";
+  const checkedUiEvidencePreflight = result.uiEvidencePreflight?.canCollectLiveUiEvidence !== null
+    && result.uiEvidencePreflight?.canCollectLiveUiEvidence !== undefined;
+  const readyForLiveRun = Boolean(result.readyForLiveRun);
+  const base = {
+    pass: false,
+    reason: "project_not_ready",
+    readyForLiveRun,
+    requiresCheckedUiPreflight: true,
+    checkedUiEvidencePreflight,
+    uiEvidenceStatus,
+    command: LIVE_READY_GATE_COMMAND,
+  };
+
+  if (result.status === "complete") {
+    return { ...base, pass: true, reason: "complete" };
+  }
+  if (result.status === "project_not_ready") {
+    return { ...base, reason: "project_not_ready" };
+  }
+  if (!checkedUiEvidencePreflight) {
+    return { ...base, reason: "ui_evidence_not_checked" };
+  }
+  if (result.uiEvidencePreflight?.canCollectLiveUiEvidence !== true) {
+    return { ...base, reason: "ui_evidence_not_ready" };
+  }
+  if (!readyForLiveRun) {
+    return { ...base, reason: "project_not_ready" };
+  }
+  return { ...base, pass: true, reason: "ready" };
+}
+
 function renderMarkdown(result) {
   const rows = result.rows.map((entry) => {
     const archive = entry.archive.complete
@@ -185,6 +219,7 @@ Status: ${result.status}
 Project: \`${result.projectPath}\`
 Evidence dir: \`${result.outDir}\`
 UI evidence preflight: ${result.uiEvidencePreflight.status}
+Live-ready gate: ${result.liveReadyGate.pass ? "pass" : "blocked"} (${result.liveReadyGate.reason})
 Next row: ${result.nextRow ? `#${result.nextRow}` : "(none)"}
 
 Rows:

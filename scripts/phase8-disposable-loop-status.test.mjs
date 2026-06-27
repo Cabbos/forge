@@ -28,9 +28,13 @@ test("reports row #1 as next when no archive exists", (t) => {
   assert.equal(result.status, "ready_for_live_row");
   assert.equal(result.uiEvidencePreflight.status, "not_checked");
   assert.equal(result.nextRow, "1");
+  assert.equal(result.liveReadyGate.pass, false);
+  assert.equal(result.liveReadyGate.reason, "ui_evidence_not_checked");
+  assert.equal(result.liveReadyGate.checkedUiEvidencePreflight, false);
   assert.equal(result.rows[0].status, "pending_live_evidence");
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("--row 1")));
   assert.match(result.markdown, /Next row: #1/);
+  assert.match(result.markdown, /Live-ready gate: blocked \(ui_evidence_not_checked\)/);
 });
 
 test("reports UI evidence blocker without marking project as not ready", (t) => {
@@ -66,6 +70,9 @@ test("reports UI evidence blocker without marking project as not ready", (t) => 
 
   assert.equal(result.status, "ui_evidence_not_ready");
   assert.equal(result.readyForLiveRun, false);
+  assert.equal(result.liveReadyGate.pass, false);
+  assert.equal(result.liveReadyGate.reason, "ui_evidence_not_ready");
+  assert.equal(result.liveReadyGate.uiEvidenceStatus, "screen_capture_limited");
   assert.equal(result.rows[0].status, "ui_evidence_not_ready");
   assert.equal(result.rows[0].runbook.uiEvidencePreflight.status, "screen_capture_limited");
   assert.ok(result.rows[0].runbook.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
@@ -135,8 +142,40 @@ test("reports complete when all row validations are archived", (t) => {
 
   assert.equal(result.status, "complete");
   assert.equal(result.nextRow, null);
+  assert.equal(result.liveReadyGate.pass, true);
+  assert.equal(result.liveReadyGate.reason, "complete");
   assert.deepEqual(result.nextCommands, []);
   assert.match(result.markdown, /All Phase 8 disposable loop rows/);
+});
+
+test("reports live-ready gate pass when project and checked UI evidence are ready", (t) => {
+  const projectPath = createStatusProject(t);
+  const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
+  t.after(() => rmSync(outDir, { recursive: true, force: true }));
+
+  const result = generatePhase8DisposableLoopStatus({
+    projectPath,
+    outDir,
+    manualDir: "/tmp",
+    date: "2026-06-28",
+    uiEvidencePreflight: {
+      status: "ready",
+      canCollectLiveUiEvidence: true,
+      platform: "darwin",
+      reason: "screen capture is available",
+      windowSnapshot: null,
+      screenSnapshot: null,
+      recoveryCommands: [],
+      recommendations: [],
+    },
+  });
+
+  assert.equal(result.status, "ready_for_live_row");
+  assert.equal(result.liveReadyGate.pass, true);
+  assert.equal(result.liveReadyGate.reason, "ready");
+  assert.equal(result.liveReadyGate.checkedUiEvidencePreflight, true);
+  assert.equal(result.liveReadyGate.readyForLiveRun, true);
+  assert.match(result.markdown, /Live-ready gate: pass \(ready\)/);
 });
 
 test("exit code helper can hard-gate live readiness", () => {
@@ -208,6 +247,9 @@ test("cli json prints machine-readable status", (t) => {
 
   assert.equal(parsed.status, "ready_for_live_row");
   assert.equal(parsed.nextRow, "1");
+  assert.equal(parsed.liveReadyGate.pass, false);
+  assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
+  assert.match(parsed.liveReadyGate.command, /--require-live-ready/);
   assert.equal(parsed.rows.length, 3);
   assert.deepEqual(parsed.recoveryCommands, []);
 });
@@ -241,6 +283,8 @@ test("cli require-live-ready exits nonzero when UI preflight is skipped", (t) =>
   assert.equal(result.status, 1);
   assert.equal(parsed.status, "ready_for_live_row");
   assert.equal(parsed.uiEvidencePreflight.status, "not_checked");
+  assert.equal(parsed.liveReadyGate.pass, false);
+  assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
 });
 
 function writeCompleteArchive(outDir, row, { writeEvidence = true, writeMarkdown = true } = {}) {
