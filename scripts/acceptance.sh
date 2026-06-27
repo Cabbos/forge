@@ -30,21 +30,22 @@ Runs the Forge Level 3 runtime acceptance gates:
   14. Completion contract desktop helper smoke
   15. Completion contract mocked desktop smoke
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
-  17. Manual desktop restart smoke protocol gate
-  18. Manual stability regression batch gate
-  19. Manual disposable edit/build loop protocol gate
-  20. Provider usage known/unknown telemetry
-  21. Composer context usage from provider_usage
-  22. Provider usage trace rendering
-  23. Legacy usage duplicate suppression
-  24. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  25. Persisted A2A lineage tests
-  26. Typed completion evidence and review-to-commit eligibility tests
-  27. Gated headless ownership policy tests
-  28. Permission mode, live-session sync, and shell policy contract tests
-  29. Slash command review calibration contract tests
-  30. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  31. Rich preview e2e smoke specs
+  17. Desktop restart harness availability preflight
+  18. Manual desktop restart smoke protocol gate
+  19. Manual stability regression batch gate
+  20. Manual disposable edit/build loop protocol gate
+  21. Provider usage known/unknown telemetry
+  22. Composer context usage from provider_usage
+  23. Provider usage trace rendering
+  24. Legacy usage duplicate suppression
+  25. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  26. Persisted A2A lineage tests
+  27. Typed completion evidence and review-to-commit eligibility tests
+  28. Gated headless ownership policy tests
+  29. Permission mode, live-session sync, and shell policy contract tests
+  30. Slash command review calibration contract tests
+  31. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  32. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -74,6 +75,7 @@ COMMAND_LABELS=(
   "completion contract desktop helper smoke"
   "completion contract mocked desktop smoke"
   "mocked desktop restart runtime smoke (partial macOS evidence)"
+  "desktop restart harness availability preflight"
   "manual desktop restart smoke protocol"
   "manual stability regression batch"
   "manual disposable edit/build loop protocol"
@@ -108,6 +110,7 @@ COMMANDS=(
   "node --test apps/desktop/src/lib/loopRuntime.test.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
+  "node scripts/desktop-restart-harness-preflight.mjs --json"
   "test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"Stability Convergence Restart Smoke - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q \"Stability Regression Batch - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q \"Phase 8 Disposable Edit/Build Loop - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
