@@ -2,6 +2,7 @@ import type { SessionState, StreamEvent } from "../lib/protocol";
 import { queryClient } from "../lib/query-client";
 import { getModelContextWindow } from "../lib/providers";
 import {
+  applyConfirmResponseToBlocks,
   applyCompactResultToBlocks,
   applyFileIoToBlocks,
   applyShellStartToBlocks,
@@ -566,6 +567,17 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
         set({ sessions });
         persistBlocks(session_id, blocks);
       }
+      return;
+    }
+
+    if (event_type === "confirm_response") {
+      blocks = applyConfirmResponseToBlocks(
+        blocks,
+        event as Extract<StreamEvent, { event_type: "confirm_response" }>,
+      );
+      sessions.set(session_id, touchSession(session, { blocks }));
+      set({ sessions });
+      persistBlocks(session_id, blocks);
       return;
     }
 

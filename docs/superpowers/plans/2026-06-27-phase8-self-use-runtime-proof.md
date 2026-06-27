@@ -278,11 +278,30 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 - Modify: `apps/desktop/src/store/blocks.ts`
 - Modify/add focused Rust and TS tests.
 
-- [ ] **Step 1: Run GitNexus impact on protocol/store symbols**
-- [ ] **Step 2: Add failing Rust/TS tests for resolved confirmation replay**
-- [ ] **Step 3: Add minimal `confirm_response` stream event or persisted transcript marker**
-- [ ] **Step 4: Verify restart/history projection**
-- [ ] **Step 5: Run focused Node, Cargo, Playwright checks**
+- [x] **Step 1: Run GitNexus impact on protocol/store symbols**
+- [x] **Step 2: Add failing Rust/TS tests for resolved confirmation replay**
+- [x] **Step 3: Add minimal `confirm_response` stream event or persisted transcript marker**
+- [x] **Step 4: Verify restart/history projection**
+- [x] **Step 5: Run focused Node, Cargo, Playwright checks**
+
+### Task 3 Evidence
+
+- Impact: `StreamEvent` in `apps/desktop/src-tauri/src/protocol/events.rs` reported LOW risk, 0 direct callers, 0 affected processes.
+- Impact: `confirm_response_for_state` reported LOW risk, 3 direct test/IPC callers, 0 affected processes.
+- Impact: `confirm_response` IPC entry reported LOW risk, 0 indexed direct callers, 0 affected processes.
+- Impact: `emit_restored_session_startup` reported LOW risk, 2 direct callers, 1 affected startup process (`run`).
+- Impact warning: `eventToBlock` and `createOutputEventDispatcher` both reported CRITICAL risk across 18 UI processes, so the frontend change was kept to a narrow `confirm_response` projection branch and focused tests.
+- Protocol: Rust and TypeScript now share a `confirm_response` stream event with `block_id`, optional `question/kind/boundary`, `approved` (`true`/`false`/`null`), `responded_at_ms`, optional `reason`, and replay metadata.
+- Runtime marker: live `confirm_response` IPC resolves the pending sender and emits a transcript-backed response event when a pending descriptor is available; restored pending confirmations emit the existing interrupted `confirm_ask` plus an explicit `confirm_response` marker with `approved: null`.
+- Projection: transcript/history and live dispatch both resolve the existing `confirm_ask` block in place; orphan response events create a completed non-interactive audit block.
+- Spec review: no blocking gaps found; remaining restart proof is still bounded to transcript projection tests plus restore-marker Rust tests, not a full real-desktop restart harness.
+- Code quality follow-up: `updateBlock` now merges metadata with the current block so optimistic confirmation writes cannot erase `confirm_response` replay metadata emitted by the backend.
+- Code quality follow-up: when a live response has a pending sender but no descriptor, `confirm_response_for_state` now emits a minimal marker for the single-live-session case instead of silently producing no transcript marker.
+- Tests: `node --test apps/desktop/src/store/blocks.test.ts apps/desktop/src/store/event-dispatch.test.ts apps/desktop/src/store/persistence-hydration.test.ts` passed, 59 tests.
+- Rust: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml protocol::events --lib`, `agent::session_events --lib`, `ipc::confirmations --lib`, `autosave --lib`, and `ipc::session_lifecycle --lib` passed. After quality follow-ups, `ipc::confirmations --lib` passed with 4 tests and `agent::session_events --lib` passed with 10 tests.
+- Playwright: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay"` passed, 1 spec.
+- Build: `npm run build:desktop` and `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml` passed.
+- Acceptance dry-run and formatting: `scripts/acceptance.sh --dry-run` and `git diff --check` passed.
 
 ## Task 4: Final Phase 8 Verification And Commit
 
@@ -291,11 +310,18 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 **Files:**
 - Modify: `docs/superpowers/plans/2026-06-27-phase8-self-use-runtime-proof.md`
 
-- [ ] **Step 1: Run focused verification from completed tasks**
-- [ ] **Step 2: Run `scripts/acceptance.sh --dry-run`**
-- [ ] **Step 3: Run `git diff --check`**
-- [ ] **Step 4: Run GitNexus `detect_changes({ repo: "forge", scope: "staged" })`**
-- [ ] **Step 5: Commit the completed Phase 8 slice**
+- [x] **Step 1: Run focused verification from completed tasks**
+- [x] **Step 2: Run `scripts/acceptance.sh --dry-run`**
+- [x] **Step 3: Run `git diff --check`**
+- [x] **Step 4: Run GitNexus `detect_changes({ repo: "forge", scope: "staged" })`**
+- [x] **Step 5: Commit the completed Phase 8 slice**
+
+### Task 4 Evidence
+
+- Focused checks rerun after review follow-ups: Node store tests passed (59 tests), Rust `ipc::confirmations` passed (4 tests), Rust `agent::session_events` passed (10 tests), Playwright `confirm response replay` passed (1 spec), `npm run build:desktop` passed, and `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml` passed.
+- Final dry-run/formatting: `scripts/acceptance.sh --dry-run`, `git diff --check`, and `git diff --cached --check` passed.
+- GitNexus staged audit: `detect_changes({ repo: "forge", scope: "staged" })` reported MEDIUM risk, 54 changed symbols, 17 changed files, and 4 affected `createOutputEventDispatcher` runtime projection flows; the touched dispatcher path is covered by the focused store tests and Playwright smoke above.
+- Commit: Phase 8 Task 3/4 slice committed as `feat: add confirmation response replay events`.
 
 ## Notes From Initial Subagent Audit
 

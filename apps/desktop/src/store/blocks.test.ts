@@ -391,6 +391,89 @@ describe("replayed confirm_ask", () => {
   });
 });
 
+describe("confirm_response replay", () => {
+  it("applyTranscriptEventToBlocks marks an existing confirmation as approved", () => {
+    let blocks = applyTranscriptEventToBlocks([], {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-1",
+      question: "Allow write?",
+      kind: "file_write",
+      boundary: testWriteBoundary(),
+    });
+
+    blocks = applyTranscriptEventToBlocks(blocks, {
+      event_type: "confirm_response",
+      session_id: "s1",
+      block_id: "confirm-1",
+      approved: true,
+      responded_at_ms: 1,
+      reason: "user_response",
+      replayed: false,
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "confirm_ask");
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.confirmed, true);
+    assert.strictEqual(blocks[0].metadata.answer, true);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted, undefined);
+  });
+
+  it("applyTranscriptEventToBlocks marks an existing confirmation as declined", () => {
+    let blocks = applyTranscriptEventToBlocks([], {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-2",
+      question: "Allow delete?",
+      kind: "file_delete",
+    });
+
+    blocks = applyTranscriptEventToBlocks(blocks, {
+      event_type: "confirm_response",
+      session_id: "s1",
+      block_id: "confirm-2",
+      approved: false,
+      responded_at_ms: 2,
+      reason: "user_response",
+      replayed: false,
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.confirmed, true);
+    assert.strictEqual(blocks[0].metadata.answer, false);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted, undefined);
+  });
+
+  it("applyTranscriptEventToBlocks creates a completed interrupted confirmation from an orphan response", () => {
+    const boundary = testWriteBoundary();
+    const blocks = applyTranscriptEventToBlocks([], {
+      event_type: "confirm_response",
+      session_id: "s1",
+      block_id: "confirm-restored",
+      approved: null,
+      responded_at_ms: 3,
+      reason: "session_restored",
+      replayed: true,
+      question: "Allow restored write?",
+      kind: "write_file",
+      boundary,
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "confirm_ask");
+    assert.strictEqual(blocks[0].content, "Allow restored write?");
+    assert.strictEqual(blocks[0].isComplete, true);
+    assert.strictEqual(blocks[0].metadata.kind, "write_file");
+    assert.deepStrictEqual(blocks[0].metadata.boundary, boundary);
+    assert.strictEqual(blocks[0].metadata.confirmed, true);
+    assert.strictEqual(blocks[0].metadata.answer, null);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted, true);
+    assert.strictEqual(blocks[0].metadata.confirm_interrupted_reason, "session_restored");
+  });
+});
+
 describe("tool_call_start deduplication (Phase 1.6)", () => {
   it("tool_call_start creates a new block when no existing block matches", () => {
     const startEvent: StreamEvent = {
@@ -842,5 +925,22 @@ function testLoopTaskRecord() {
     completion_contract: {},
     created_at_ms: 1,
     updated_at_ms: 10,
+  };
+}
+
+function testWriteBoundary() {
+  return {
+    title: "Write src/main.ts",
+    target_label: "src/main.ts",
+    workspace_name: "workspace",
+    workspace_path: "/workspace",
+    operation: "write_file",
+    affected_files: ["/workspace/src/main.ts"],
+    command: null,
+    impact: "Updates a source file.",
+    risk: "normal" as const,
+    recovery: "Revert the file if needed.",
+    checkpoint_status: "ready" as const,
+    warning: null,
   };
 }

@@ -420,6 +420,18 @@ export type StreamEvent =
       boundary?: WriteBoundary | null;
       replayed_interrupted?: boolean;
     }
+  | {
+      event_type: "confirm_response";
+      session_id: string;
+      block_id: string;
+      question?: string | null;
+      kind?: string | null;
+      boundary?: WriteBoundary | null;
+      approved: boolean | null;
+      responded_at_ms: number;
+      reason?: string | null;
+      replayed?: boolean;
+    }
   // ── Context Management ──
   | {
       event_type: "context_compact_start";

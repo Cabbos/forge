@@ -213,6 +213,23 @@ pub enum StreamEvent {
         #[serde(default, skip_serializing_if = "is_false")]
         replayed_interrupted: bool,
     },
+    #[serde(rename = "confirm_response")]
+    ConfirmResponse {
+        session_id: String,
+        block_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        boundary: Option<WriteBoundary>,
+        approved: Option<bool>,
+        responded_at_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        replayed: bool,
+    },
 
     // ── Context Management ──
     #[serde(rename = "context_compact_start")]
@@ -466,6 +483,7 @@ impl StreamEvent {
             | ShellOutput { session_id, .. }
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
+            | ConfirmResponse { session_id, .. }
             | ContextCompactStart { session_id, .. }
             | ContextCompacted { session_id, .. }
             | ContextCompactSkipped { session_id, .. }
@@ -516,6 +534,7 @@ impl StreamEvent {
             ShellOutput { .. } => "shell_output",
             ShellEnd { .. } => "shell_end",
             ConfirmAsk { .. } => "confirm_ask",
+            ConfirmResponse { .. } => "confirm_response",
             ContextCompactStart { .. } => "context_compact_start",
             ContextCompacted { .. } => "context_compacted",
             ContextCompactSkipped { .. } => "context_compact_skipped",
@@ -588,6 +607,33 @@ mod tests {
         assert_eq!(json["path"], "src/main.rs");
         assert_eq!(json["operation"], "read");
         assert_eq!(json["source"], "executor");
+    }
+
+    #[test]
+    fn confirm_response_event_serializes_replayable_decision() {
+        let event = StreamEvent::ConfirmResponse {
+            session_id: "s1".to_string(),
+            block_id: "confirm-1".to_string(),
+            question: Some("Allow write?".to_string()),
+            kind: Some("file_write".to_string()),
+            boundary: None,
+            approved: Some(false),
+            responded_at_ms: 1234,
+            reason: Some("user_response".to_string()),
+            replayed: false,
+        };
+
+        assert_eq!(event.event_type(), "confirm_response");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "confirm_response");
+        assert_eq!(json["session_id"], "s1");
+        assert_eq!(json["block_id"], "confirm-1");
+        assert_eq!(json["question"], "Allow write?");
+        assert_eq!(json["kind"], "file_write");
+        assert_eq!(json["approved"], false);
+        assert_eq!(json["responded_at_ms"], 1234);
+        assert_eq!(json["reason"], "user_response");
+        assert!(json.get("replayed").is_none());
     }
 
     #[test]
@@ -798,6 +844,20 @@ mod tests {
                     replayed_interrupted: false,
                 },
                 "confirm_ask",
+            ),
+            (
+                StreamEvent::ConfirmResponse {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    question: Some("q".into()),
+                    kind: Some("k".into()),
+                    boundary: None,
+                    approved: Some(true),
+                    responded_at_ms: 1,
+                    reason: Some("user_response".into()),
+                    replayed: false,
+                },
+                "confirm_response",
             ),
             (
                 StreamEvent::ContextCompactStart {

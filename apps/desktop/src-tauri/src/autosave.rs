@@ -293,6 +293,17 @@ mod tests {
             boundary: None,
             replayed_interrupted: false,
         }));
+        assert!(is_significant_stream_event(&StreamEvent::ConfirmResponse {
+            session_id: "s".into(),
+            block_id: "b".into(),
+            question: Some("q".into()),
+            kind: Some("k".into()),
+            boundary: None,
+            approved: Some(true),
+            responded_at_ms: 1,
+            reason: Some("user_response".into()),
+            replayed: false,
+        }));
 
         // Error / usage
         assert!(is_significant_stream_event(&StreamEvent::Error {
@@ -462,6 +473,17 @@ mod tests {
                 kind: "k".into(),
                 boundary: None,
                 replayed_interrupted: false,
+            },
+            StreamEvent::ConfirmResponse {
+                session_id: "s".into(),
+                block_id: "b".into(),
+                question: Some("q".into()),
+                kind: Some("k".into()),
+                boundary: None,
+                approved: Some(true),
+                responded_at_ms: 1,
+                reason: Some("user_response".into()),
+                replayed: false,
             },
             StreamEvent::ContextCompactStart {
                 session_id: "s".into(),
