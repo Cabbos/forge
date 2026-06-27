@@ -27,7 +27,7 @@ export function validateDisposableLoopEvidence(evidence, { row = evidence?.row ?
     };
   }
 
-  if (!evidence.preflight?.readyForLoop) {
+  if (!evidence.preflight?.readyForLoop && !isExpectedPostRunDirtyEvidence(evidence)) {
     issues.push({ code: "project_not_ready", message: "Preflight does not show readyForLoop: true." });
   }
 
@@ -143,6 +143,12 @@ function statusForValidation({ evidence, issues, pass, requireComplete }) {
 
 function changedFiles(evidence) {
   return Array.isArray(evidence.git?.changedFiles) ? evidence.git.changedFiles : [];
+}
+
+function isExpectedPostRunDirtyEvidence(evidence) {
+  const files = changedFiles(evidence);
+  const issues = Array.isArray(evidence.preflight?.issues) ? evidence.preflight.issues : [];
+  return files.length > 0 && issues.length > 0 && issues.every((issue) => issue?.code === "dirty_worktree");
 }
 
 function isStyleFile(file) {
