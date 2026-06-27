@@ -346,6 +346,47 @@ describe("store usageLedger persistence and hydration", () => {
 
     assert.strictEqual(state.sessions.get("session-1")?.usageLedger, null);
   });
+
+  it("merges updateBlock metadata with the current block metadata", () => {
+    const state = createStoreState();
+    state.sessions.set("session-1", testSession({
+      blocks: [
+        {
+          block_id: "confirm-1",
+          event_type: "confirm_ask",
+          content: "Allow write?",
+          isComplete: true,
+          metadata: {
+            kind: "file_write",
+            confirmed: true,
+            answer: false,
+            responded_at_ms: 123,
+            confirm_response_reason: "user_response",
+          },
+        },
+      ],
+    }));
+    const actions = createSessionActions(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    actions.updateBlock("session-1", "confirm-1", {
+      metadata: {
+        confirmed: true,
+        answer: true,
+      },
+    });
+
+    const block = state.sessions.get("session-1")!.blocks[0];
+    assert.deepEqual(block.metadata, {
+      kind: "file_write",
+      confirmed: true,
+      answer: true,
+      responded_at_ms: 123,
+      confirm_response_reason: "user_response",
+    });
+  });
 });
 
 function createStoreState(): AppStore {

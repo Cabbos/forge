@@ -556,6 +556,37 @@ describe("createOutputEventDispatcher replayed confirmations", () => {
     assert.strictEqual(confirmBlocks[0].metadata.confirm_interrupted_reason, "session_restored");
     assert.strictEqual(confirmBlocks[0].isComplete, true);
   });
+
+  it("confirm_response resolves the existing live confirmation block", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "confirm_ask",
+      session_id: "session-1",
+      block_id: "confirm-live",
+      question: "Allow write?",
+      kind: "write_file",
+      boundary: testWriteBoundary(),
+    });
+    dispatch({
+      event_type: "confirm_response",
+      session_id: "session-1",
+      block_id: "confirm-live",
+      approved: false,
+      responded_at_ms: 1,
+      reason: "user_response",
+      replayed: false,
+    });
+
+    const confirmBlocks = state.sessions
+      .get("session-1")!
+      .blocks.filter((block) => block.event_type === "confirm_ask");
+    assert.strictEqual(confirmBlocks.length, 1);
+    assert.strictEqual(confirmBlocks[0].isComplete, true);
+    assert.strictEqual(confirmBlocks[0].metadata.confirmed, true);
+    assert.strictEqual(confirmBlocks[0].metadata.answer, false);
+    assert.strictEqual(confirmBlocks[0].metadata.confirm_interrupted, undefined);
+  });
 });
 
 function createHarness(blocks: SessionState["blocks"] = []) {

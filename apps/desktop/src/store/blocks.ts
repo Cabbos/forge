@@ -64,6 +64,10 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     return applyFileIoToBlocks(blocks, event);
   }
 
+  if (event_type === "confirm_response") {
+    return applyConfirmResponseToBlocks(blocks, event);
+  }
+
   if (event_type === "context_compacted" || event_type === "context_compact_skipped") {
     return applyCompactResultToBlocks(blocks, event);
   }
@@ -191,6 +195,72 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
 
   const block = eventToBlock(event);
   return block ? [...blocks, block] : blocks;
+}
+
+export function applyConfirmResponseToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "confirm_response" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingIdx = next.findIndex((block) =>
+    block.block_id === event.block_id && block.event_type === "confirm_ask"
+  );
+  if (existingIdx >= 0) {
+    const existing = next[existingIdx];
+    next[existingIdx] = {
+      ...existing,
+      isComplete: true,
+      metadata: confirmResponseMetadata(existing.metadata, event, false),
+    };
+    return next;
+  }
+
+  const question = typeof event.question === "string" && event.question.trim().length > 0
+    ? event.question
+    : null;
+  if (!question) return blocks;
+
+  return [
+    ...next,
+    {
+      block_id: event.block_id,
+      event_type: "confirm_ask",
+      content: question,
+      isComplete: true,
+      metadata: confirmResponseMetadata({
+        kind: event.kind ?? "confirm",
+        boundary: event.boundary ?? null,
+      }, event, true),
+    },
+  ];
+}
+
+function confirmResponseMetadata(
+  metadata: Record<string, unknown>,
+  event: Extract<StreamEvent, { event_type: "confirm_response" }>,
+  orphan: boolean,
+): Record<string, unknown> {
+  const base = { ...metadata };
+  delete base.confirm_interrupted;
+  delete base.confirm_interrupted_reason;
+  const next: Record<string, unknown> = {
+    ...base,
+    kind: event.kind ?? base.kind,
+    boundary: event.boundary ?? base.boundary ?? null,
+    confirmed: true,
+    answer: event.approved,
+    confirm_response_reason: event.reason ?? null,
+    confirm_response_replayed: event.replayed === true,
+    responded_at_ms: event.responded_at_ms,
+  };
+  if (orphan) {
+    next.confirm_response_orphan = true;
+  }
+  if (event.approved === null) {
+    next.confirm_interrupted = true;
+    next.confirm_interrupted_reason = event.reason ?? "session_restored";
+  }
+  return next;
 }
 
 export function applyCompactResultToBlocks(

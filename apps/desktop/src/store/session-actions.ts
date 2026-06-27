@@ -164,9 +164,16 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
       const sessions = new Map(get().sessions);
       const session = sessions.get(sessionId);
       if (!session) return;
-      const blocks = session.blocks.map((block) =>
-        block.block_id === blockId ? { ...block, ...patch } : block
-      );
+      const blocks = session.blocks.map((block) => {
+        if (block.block_id !== blockId) return block;
+        return {
+          ...block,
+          ...patch,
+          metadata: patch.metadata
+            ? { ...block.metadata, ...patch.metadata }
+            : block.metadata,
+        };
+      });
       sessions.set(sessionId, touchSession(session, { blocks }));
       set({ sessions });
       persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);

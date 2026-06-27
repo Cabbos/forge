@@ -326,6 +326,10 @@ pub(crate) async fn emit_restored_session_startup(
             app_handle,
             session_events::pending_confirm_replay_event(session_id, descriptor),
         );
+        crate::transcript::emit_stream_event(
+            app_handle,
+            session_events::pending_confirm_response_replay_event(session_id, descriptor),
+        );
     }
     // Phase 1.6: replay active tool-call descriptors as interrupted/completed
     // blocks. Each descriptor produces a ToolCallStart followed by an error

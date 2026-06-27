@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added replayable confirmation response events. Approved, declined, and restored-interrupted confirmation states now have explicit transcript markers, so history/restart projection can resolve confirmation cards without inferring state from the original prompt alone.
 - Fixed usage/context accounting so `provider_usage` events update the Composer context indicator without relying on legacy `usage` events, and the `余` label now means true context remaining rather than auto-compact threshold distance.
 - Added a visible Composer permission mode control with `手动确认`, `信任项目`, and `完全访问`. Full Access is workspace-scoped for the current runtime, inherits into new conversations in the same project, approves the currently pending same-workspace confirmation when enabled, and skips routine write/shell/MCP/tool confirmation prompts while still honoring explicit deny rules, external-write blocks, and catastrophic shell blocks.
 - Changed `信任当前项目` from single-session trust to runtime workspace trust. Once enabled for a project, new conversations in the same workspace inherit routine in-project write approval until the user restores manual confirmation or restarts the app, while sensitive, external, and dangerous actions remain gated. The project status card now also exposes the trust/restore control and can approve the current pending same-workspace write confirmation, so users do not have to dig through Settings or re-run a just-blocked safe edit.

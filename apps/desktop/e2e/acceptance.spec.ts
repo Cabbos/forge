@@ -593,6 +593,53 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(page.getByTestId("composer-permission-mode")).toContainText("手动确认");
   });
 
+  test("confirm response replay resolves a pending confirmation card", async ({ page }) => {
+    const sessionId = "confirm-response-replay-session";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "confirm-response-replay",
+        question: "Allow replayed confirmation?",
+        kind: "ask_user",
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "Allow replayed confirmation?" });
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+    await expect(confirmPanel.getByTestId("confirm-cancel")).toBeVisible();
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_response",
+        session_id: sessionId,
+        block_id: "confirm-response-replay",
+        question: "Allow replayed confirmation?",
+        kind: "ask_user",
+        approved: false,
+        responded_at_ms: Date.now(),
+        reason: "user_response",
+      },
+    ], 1);
+
+    await expect(confirmPanel).toContainText("已取消");
+    await expect(confirmPanel).not.toContainText("确认已中断");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toHaveCount(0);
+    await expect(confirmPanel.getByTestId("confirm-cancel")).toHaveCount(0);
+  });
+
   test("fresh same-session output clears stale session health alert", async ({ page }) => {
     const sessionId = "acceptance-stale-health-session";
     await page.evaluate((id) => {

@@ -103,6 +103,59 @@ pub(crate) fn pending_confirm_replay_event(
     }
 }
 
+pub(crate) fn confirm_response_event(
+    session_id: &str,
+    descriptor: &PendingConfirmDescriptor,
+    approved: bool,
+) -> StreamEvent {
+    StreamEvent::ConfirmResponse {
+        session_id: session_id.to_string(),
+        block_id: descriptor.block_id.clone(),
+        question: Some(descriptor.question.clone()),
+        kind: Some(descriptor.kind.clone()),
+        boundary: descriptor.boundary.clone(),
+        approved: Some(approved),
+        responded_at_ms: now_ms(),
+        reason: Some("user_response".to_string()),
+        replayed: false,
+    }
+}
+
+pub(crate) fn minimal_confirm_response_event(
+    session_id: &str,
+    block_id: &str,
+    approved: bool,
+) -> StreamEvent {
+    StreamEvent::ConfirmResponse {
+        session_id: session_id.to_string(),
+        block_id: block_id.to_string(),
+        question: None,
+        kind: None,
+        boundary: None,
+        approved: Some(approved),
+        responded_at_ms: now_ms(),
+        reason: Some("user_response".to_string()),
+        replayed: false,
+    }
+}
+
+pub(crate) fn pending_confirm_response_replay_event(
+    session_id: &str,
+    descriptor: &PendingConfirmDescriptor,
+) -> StreamEvent {
+    StreamEvent::ConfirmResponse {
+        session_id: session_id.to_string(),
+        block_id: descriptor.block_id.clone(),
+        question: Some(descriptor.question.clone()),
+        kind: Some(descriptor.kind.clone()),
+        boundary: descriptor.boundary.clone(),
+        approved: None,
+        responded_at_ms: now_ms(),
+        reason: Some("session_restored".to_string()),
+        replayed: true,
+    }
+}
+
 /// Build replay events for an active tool call that was interrupted by session
 /// restore. Returns a ToolCallStart followed by a ToolCallResult with
 /// is_error=true so the frontend renders the tool as completed/interrupted rather
@@ -158,8 +211,9 @@ mod tests {
     use crate::agent::auto_compact::CompactStats;
     use crate::agent::session_events::{
         active_tool_call_replay_events, agent_turn_updated_event, api_error_event,
-        context_compact_skipped_event, context_compacted_event, pending_confirm_replay_event,
-        recovery_notice_event, session_status_event, session_stopped_event, tool_call_result_event,
+        confirm_response_event, context_compact_skipped_event, context_compacted_event,
+        pending_confirm_replay_event, pending_confirm_response_replay_event, recovery_notice_event,
+        session_status_event, session_stopped_event, tool_call_result_event,
     };
     use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
     use crate::agent::time::now_ms;
@@ -318,6 +372,68 @@ mod tests {
                 assert_eq!(question, "Allow write?");
                 assert_eq!(kind, "file_write");
                 assert!(replayed_interrupted);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirm_response_event_records_user_decision() {
+        let descriptor = PendingConfirmDescriptor::new(
+            "confirm-1".to_string(),
+            "Allow write?".to_string(),
+            "file_write".to_string(),
+            42,
+        );
+        let event = confirm_response_event("session-1", &descriptor, false);
+
+        match event {
+            StreamEvent::ConfirmResponse {
+                session_id,
+                block_id,
+                question,
+                kind,
+                approved,
+                reason,
+                replayed,
+                ..
+            } => {
+                assert_eq!(session_id, "session-1");
+                assert_eq!(block_id, "confirm-1");
+                assert_eq!(question.as_deref(), Some("Allow write?"));
+                assert_eq!(kind.as_deref(), Some("file_write"));
+                assert_eq!(approved, Some(false));
+                assert_eq!(reason.as_deref(), Some("user_response"));
+                assert!(!replayed);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pending_confirm_response_replay_event_records_restore_interruption() {
+        let descriptor = PendingConfirmDescriptor::new(
+            "confirm-1".to_string(),
+            "Allow write?".to_string(),
+            "file_write".to_string(),
+            42,
+        );
+        let event = pending_confirm_response_replay_event("session-1", &descriptor);
+
+        match event {
+            StreamEvent::ConfirmResponse {
+                session_id,
+                block_id,
+                approved,
+                reason,
+                replayed,
+                ..
+            } => {
+                assert_eq!(session_id, "session-1");
+                assert_eq!(block_id, "confirm-1");
+                assert_eq!(approved, None);
+                assert_eq!(reason.as_deref(), Some("session_restored"));
+                assert!(replayed);
             }
             other => panic!("unexpected event: {other:?}"),
         }
