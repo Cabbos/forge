@@ -23,10 +23,40 @@ test("reports row #1 as next when no archive exists", (t) => {
   });
 
   assert.equal(result.status, "ready_for_live_row");
+  assert.equal(result.uiEvidencePreflight.status, "not_checked");
   assert.equal(result.nextRow, "1");
   assert.equal(result.rows[0].status, "pending_live_evidence");
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("--row 1")));
   assert.match(result.markdown, /Next row: #1/);
+});
+
+test("reports UI evidence blocker without marking project as not ready", (t) => {
+  const projectPath = createStatusProject(t);
+  const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
+  t.after(() => rmSync(outDir, { recursive: true, force: true }));
+
+  const result = generatePhase8DisposableLoopStatus({
+    projectPath,
+    outDir,
+    manualDir: "/tmp",
+    date: "2026-06-28",
+    uiEvidencePreflight: {
+      status: "screen_capture_limited",
+      canCollectLiveUiEvidence: false,
+      platform: "darwin",
+      reason: "blank screenshot",
+      windowSnapshot: null,
+      screenSnapshot: null,
+      recommendations: [],
+    },
+  });
+
+  assert.equal(result.status, "ui_evidence_not_ready");
+  assert.equal(result.readyForLiveRun, false);
+  assert.equal(result.rows[0].status, "ui_evidence_not_ready");
+  assert.equal(result.rows[0].runbook.uiEvidencePreflight.status, "screen_capture_limited");
+  assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs")));
+  assert.match(result.nextStep, /trusted desktop session/);
 });
 
 test("skips completed rows and reports the next incomplete row", (t) => {
@@ -75,7 +105,17 @@ test("cli json prints machine-readable status", (t) => {
 
   const output = execFileSync(
     process.execPath,
-    [scriptPath, "--json", "--project", projectPath, "--out-dir", outDir, "--date", "2026-06-28"],
+    [
+      scriptPath,
+      "--json",
+      "--project",
+      projectPath,
+      "--out-dir",
+      outDir,
+      "--date",
+      "2026-06-28",
+      "--skip-ui-preflight",
+    ],
     {
       cwd: root,
       encoding: "utf8",

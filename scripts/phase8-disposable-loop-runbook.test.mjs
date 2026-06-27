@@ -21,18 +21,44 @@ test("runbook reports ready project and row commands", (t) => {
 
   assert.equal(result.readyForLiveRun, true);
   assert.equal(result.status, "pending_live_evidence");
+  assert.equal(result.uiEvidencePreflight.status, "not_checked");
   assert.match(result.prompt, /^\/fix @src\/App\.tsx/);
   assert.equal(result.manualPath, "/tmp/phase8-row-1-manual.json");
+  assert.ok(result.commands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
   assert.ok(result.commands.some((entry) => entry.command.includes("finalize-disposable-loop-row.mjs")));
   assert.ok(result.commands.some((entry) => entry.command.includes("--manual-json /tmp/phase8-row-1-manual.json")));
   assert.match(result.markdown, /Phase 8 Disposable Loop Runbook - Row 1/);
+});
+
+test("runbook separates project readiness from desktop UI evidence readiness", (t) => {
+  const projectPath = createRunbookProject(t);
+  const result = generatePhase8DisposableLoopRunbook({
+    projectPath,
+    row: "1",
+    manualDir: "/tmp",
+    date: "2026-06-28",
+    uiEvidencePreflight: {
+      status: "screen_capture_limited",
+      canCollectLiveUiEvidence: false,
+      platform: "darwin",
+      reason: "blank screenshot",
+      windowSnapshot: null,
+      screenSnapshot: null,
+      recommendations: [],
+    },
+  });
+
+  assert.equal(result.preflight.readyForLoop, true);
+  assert.equal(result.readyForLiveRun, false);
+  assert.equal(result.status, "ui_evidence_not_ready");
+  assert.match(result.nextStep, /screen_capture_limited/);
 });
 
 test("cli json prints machine-readable runbook", (t) => {
   const projectPath = createRunbookProject(t);
   const output = execFileSync(
     process.execPath,
-    [scriptPath, "--json", "--project", projectPath, "--row", "2", "--date", "2026-06-28"],
+    [scriptPath, "--json", "--project", projectPath, "--row", "2", "--date", "2026-06-28", "--skip-ui-preflight"],
     {
       cwd: root,
       encoding: "utf8",
@@ -50,7 +76,7 @@ test("cli markdown includes ordered commands", (t) => {
   const projectPath = createRunbookProject(t);
   const output = execFileSync(
     process.execPath,
-    [scriptPath, "--markdown", "--project", projectPath, "--row", "3"],
+    [scriptPath, "--markdown", "--project", projectPath, "--row", "3", "--skip-ui-preflight"],
     {
       cwd: root,
       encoding: "utf8",
