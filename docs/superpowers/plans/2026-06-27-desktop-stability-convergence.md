@@ -351,7 +351,7 @@ Expected: all tests pass.
 - Impact: `clearStaleSessionHealthAlerts` was provided by the Task 3 handoff as `LOW`, 0 impacted symbols.
 - Scope: because dispatcher/hydration risk is CRITICAL, Task 3 modified only store test files and this plan. Production store logic was not changed.
 - Replay evidence: `event-dispatch.test.ts` now proves `provider_usage -> context_compacted -> replayed provider_usage -> matching legacy usage` keeps `contextUsage.source` as `local_estimate`, keeps compacted `usedTokens`, keeps the ledger provider-backed, marks `legacyDuplicateIgnored`, and avoids duplicate `provider_usage` blocks.
-- Confirmation evidence/gap: the current stream protocol has no independent `confirm_response` event, so Task 3 does not claim external approval replay coverage. The confirmation test uses the existing replayed `confirm_ask` metadata path and proves an existing hydrated `confirm_ask` block is replaced with restored/interrupted metadata instead of duplicated.
+- Confirmation evidence update: the original Task 3 evidence was limited to replayed `confirm_ask` interruption metadata, but the later Phase 8 confirmation-response slice added an explicit `confirm_response` stream event. The active acceptance matrix now advertises `confirmation response replay contract tests`, covering Rust response-marker builders plus Playwright replay/hydration specs for approved/declined confirmation projection.
 - Hydration evidence: `persistence-hydration.test.ts` now proves persisted provider usage blocks restore usage ledger fields, accumulated cost, context usage, and the input consumed by the Composer context label after reload without a UI render.
 - Health alert evidence: `health-alerts.test.ts` now proves inactive-session stale alerts are hidden while the active-session stale alert and a non-stale global alert remain visible.
 - Verification: `node --test apps/desktop/src/store/event-dispatch.test.ts apps/desktop/src/store/persistence-hydration.test.ts apps/desktop/src/store/health-alerts.test.ts` passed, 31 tests.
@@ -607,7 +607,7 @@ Expected: commit succeeds. Leave generated screenshots, logs, and temporary file
 - Backend check: `npm --prefix apps/desktop run check:backend` passed after running `cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml` to satisfy `cargo fmt --check`.
 - Acceptance dry-run: `scripts/acceptance.sh --dry-run`, `bash -n scripts/acceptance.sh`, and `git diff --check` passed.
 - GitNexus detect_changes: staged audit reported `low` risk, 25 changed symbols across 15 changed files, and 0 affected processes.
-- Residual risk: real desktop restart smoke and the ten-task stability regression batch are documented and advertised but still marked `Not yet run` in the beta log; the stream still has no independent external `confirm_response` replay event, so replay coverage remains limited to existing interrupted `confirm_ask` metadata.
+- Residual risk: real desktop restart smoke and the ten-task stability regression batch are documented and advertised but still marked `Not yet run` in the beta log. Confirmation replay is no longer a protocol gap because Phase 8 added explicit `confirm_response` events and an acceptance gate; the remaining restart gap is true Tauri force-quit/reopen evidence rather than response projection.
 
 ## Execution Notes
 

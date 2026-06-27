@@ -31,28 +31,29 @@ Runs the Forge Level 3 runtime acceptance gates:
   15. Completion contract mocked desktop smoke
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
   17. Desktop restart harness availability preflight
-  18. Manual desktop restart smoke protocol gate
-  19. Manual stability regression batch gate
-  20. Manual disposable edit/build loop protocol gate
-  21. Disposable edit/build loop project readiness preflight
-  22. Disposable edit/build loop clean worktree prepare dry-run
-  23. Disposable edit/build loop evidence collector
-  24. Disposable edit/build loop evidence validator
-  25. Disposable edit/build loop evidence archive dry-run
-  26. Disposable edit/build loop manual evidence template
-  27. Disposable edit/build loop row runbook
-  28. Provider usage known/unknown telemetry
-  29. Composer context usage from provider_usage
-  30. Provider usage trace rendering
-  31. Legacy usage duplicate suppression
-  32. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  33. Persisted A2A lineage tests
-  34. Typed completion evidence and review-to-commit eligibility tests
-  35. Gated headless ownership policy tests
-  36. Permission mode, live-session sync, and shell policy contract tests
-  37. Slash command review calibration contract tests
-  38. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  39. Rich preview e2e smoke specs
+  18. Confirmation response replay contract tests
+  19. Manual desktop restart smoke protocol gate
+  20. Manual stability regression batch gate
+  21. Manual disposable edit/build loop protocol gate
+  22. Disposable edit/build loop project readiness preflight
+  23. Disposable edit/build loop clean worktree prepare dry-run
+  24. Disposable edit/build loop evidence collector
+  25. Disposable edit/build loop evidence validator
+  26. Disposable edit/build loop evidence archive dry-run
+  27. Disposable edit/build loop manual evidence template
+  28. Disposable edit/build loop row runbook
+  29. Provider usage known/unknown telemetry
+  30. Composer context usage from provider_usage
+  31. Provider usage trace rendering
+  32. Legacy usage duplicate suppression
+  33. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  34. Persisted A2A lineage tests
+  35. Typed completion evidence and review-to-commit eligibility tests
+  36. Gated headless ownership policy tests
+  37. Permission mode, live-session sync, and shell policy contract tests
+  38. Slash command review calibration contract tests
+  39. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  40. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -83,6 +84,7 @@ COMMAND_LABELS=(
   "completion contract mocked desktop smoke"
   "mocked desktop restart runtime smoke (partial macOS evidence)"
   "desktop restart harness availability preflight"
+  "confirmation response replay contract tests"
   "manual desktop restart smoke protocol"
   "manual stability regression batch"
   "manual disposable edit/build loop protocol"
@@ -125,6 +127,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
   "node scripts/desktop-restart-harness-preflight.mjs --json"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g \"confirm response replay|startup transcript hydration\""
   "test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"Stability Convergence Restart Smoke - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q \"Stability Regression Batch - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q \"Phase 8 Disposable Edit/Build Loop - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
