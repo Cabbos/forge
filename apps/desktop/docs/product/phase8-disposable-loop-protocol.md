@@ -26,6 +26,16 @@ This preflight verifies that the disposable project exists, is a git worktree ro
 
 `readyForLoop: true` means the project is ready to collect fresh live Forge evidence. `readyForLoop: false` is not a product failure by itself, but the issue must be resolved or explicitly recorded before treating a live run as fresh evidence. Use `--require-ready` when a local script should fail fast on a non-ready project.
 
+If the default disposable project has residual changes that should not be reset, prepare a clean non-destructive worktree from its current `HEAD`:
+
+```bash
+node scripts/prepare-disposable-loop-project.mjs --json --source /Users/cabbos/project/forge-test-app --target /Users/cabbos/project/forge-test-app-phase8-clean
+node scripts/disposable-loop-preflight.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean
+npm --prefix /Users/cabbos/project/forge-test-app-phase8-clean run build
+```
+
+Open the prepared target project in Forge for rows #1-#3. The helper does not reset, stash, or edit the original source project; when possible it symlinks the source `node_modules` into the clean worktree so build/check evidence can run without reinstalling dependencies.
+
 Before starting, record:
 
 ```bash
