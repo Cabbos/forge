@@ -5,6 +5,7 @@
 - Added a disposable loop row finalizer that reviews manual evidence, validates strict row output, and archives the Phase 8 row in one command.
 - Connected the disposable loop status and runbook helpers to desktop UI evidence preflight so a clean project with unusable local screenshots reports `ui_evidence_not_ready` instead of looking ready for live evidence.
 - Added a desktop UI evidence doctor that maps blocked local screenshot/window evidence to Screen Recording and Accessibility recovery commands before rerunning Phase 8 live rows.
+- Clarified in the desktop UI evidence doctor that Forge Trust/Full Access does not grant macOS Screen Recording or Accessibility, so blocked live evidence is not confused with Forge permission mode.
 - Added an opt-in `--open-settings` path to the desktop UI evidence doctor so blocked local evidence can open the relevant macOS privacy panes without changing default acceptance behavior.
 - Added desktop UI evidence recovery commands to the preflight output so blocked screenshot/window evidence points directly to the doctor and opt-in settings opener.
 - Surfaced desktop UI evidence recovery commands in the Phase 8 disposable loop status and runbook outputs so blocked live rows expose the same doctor and settings-opener path from the top-level summary.

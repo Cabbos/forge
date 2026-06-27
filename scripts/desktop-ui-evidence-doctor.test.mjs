@@ -46,9 +46,12 @@ test("diagnoses both screen recording and accessibility blockers", () => {
     "screen_recording_permission",
     "accessibility_permission",
   ]);
+  assert.equal(result.permissionScope.kind, "macos_privacy");
+  assert.match(result.permissionScope.note, /Forge Trust\/Full Access does not grant macOS Screen Recording or Accessibility/);
   assert.ok(result.commands.some((entry) => entry.command.includes("Privacy_ScreenCapture")));
   assert.ok(result.commands.some((entry) => entry.command.includes("Privacy_Accessibility")));
   assert.match(result.markdown, /Grant Screen Recording and Accessibility/);
+  assert.match(result.markdown, /Forge Trust\/Full Access does not grant macOS Screen Recording or Accessibility/);
 });
 
 test("diagnoses a screen recording-only blocker", () => {
