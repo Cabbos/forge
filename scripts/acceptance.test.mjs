@@ -98,6 +98,18 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
     },
     {
+      label: "composer context usage from provider_usage",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g "provider_usage without legacy usage"',
+    },
+    {
+      label: "provider usage trace rendering",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "provider usage"',
+    },
+    {
+      label: "legacy usage duplicate suppression",
+      command: "node --test apps/desktop/src/store/event-dispatch.test.ts",
+    },
+    {
       label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib",
     },
@@ -114,7 +126,7 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib",
     },
     {
-      label: "desktop Phase 7 and A2A worker lifecycle smoke specs",
+      label: "desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs",
       command:
         "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts",
     },
@@ -131,6 +143,9 @@ test("acceptance script dry-run lists the final product gates", () => {
     "completion contract mocked desktop smoke",
     "mocked desktop restart runtime smoke (partial macOS evidence)",
     "provider usage known/unknown telemetry",
+    "composer context usage from provider_usage",
+    "provider usage trace rendering",
+    "legacy usage duplicate suppression",
     "post-shell file-effect evidence smoke (bounded, not shell-internal)",
     "persisted A2A lineage tests",
     "typed completion evidence and review-to-commit eligibility tests",

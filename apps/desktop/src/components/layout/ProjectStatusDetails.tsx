@@ -13,6 +13,7 @@ export function ProjectStatusDetails({
     <div data-forge-motion="project-status-entry" className="forge-project-status-details">
       <DetailLine label="预览状态" value={runtime?.message || "暂无"} />
       <DetailLine label="预览地址" value={runtime?.url || "暂无"} />
+      <DetailLine label="预览归属" value={runtime?.working_dir || "暂无"} />
       <DetailLine label="运行命令" value={runtime?.command || "未检测到"} />
       <DetailLine label="检查点" value={checkpoint?.message || "暂无"} />
       {checkpoint?.snapshot_warning ? (

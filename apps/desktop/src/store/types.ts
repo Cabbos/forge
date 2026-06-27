@@ -8,6 +8,7 @@ import type {
   McpContextStatus,
   SelectedContextMemory,
   SelectedForgeWikiPage,
+  SessionUsageLedgerState,
   SessionState,
   StreamEvent,
   SubagentRuntimePayload,
@@ -128,6 +129,7 @@ export interface PersistedSession {
   updatedAt?: number | null;
   contextWindowTokens?: number | null;
   contextUsage?: ContextUsageState | null;
+  usageLedger?: SessionUsageLedgerState | null;
   status: SessionState["status"];
   workflowState?: WorkflowState | null;
   deliverySummary?: DeliverySummary | null;

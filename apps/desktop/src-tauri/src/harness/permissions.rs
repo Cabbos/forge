@@ -1,6 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use serde::{Deserialize, Serialize};
 
 use crate::harness::db::Database;
 use crate::harness::mcp;
@@ -34,6 +37,21 @@ pub enum PermissionDecision {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
+    ManualConfirm,
+    TrustCurrentProject,
+    FullAccess,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PermissionModeState {
+    pub mode: PermissionMode,
+    pub workspace_path: Option<String>,
+    pub session_scoped: bool,
+}
+
 /// Permission gate with pattern-based approval and per-session memory.
 /// Inspired by Claude Code's `settings.json` permissions model.
 pub struct PermissionGate {
@@ -41,6 +59,14 @@ pub struct PermissionGate {
     allowed_patterns: RwLock<Vec<String>>,
     /// Per-session cached approvals (pattern → allowed).
     session_cache: RwLock<HashMap<String, HashMap<String, bool>>>,
+    /// Per-session current-project trust, scoped to a canonical workspace path.
+    trusted_session_workspaces: RwLock<HashMap<String, PathBuf>>,
+    /// Runtime current-project trust by canonical workspace path.
+    trusted_workspace_paths: RwLock<HashSet<PathBuf>>,
+    /// Per-session full access, scoped to a canonical workspace path.
+    full_access_session_workspaces: RwLock<HashMap<String, PathBuf>>,
+    /// Runtime full access by canonical workspace path.
+    full_access_workspace_paths: RwLock<HashSet<PathBuf>>,
     /// Persistent database-backed permission store.
     db: Arc<Database>,
 }
@@ -55,6 +81,10 @@ impl PermissionGate {
                     .collect(),
             ),
             session_cache: RwLock::new(HashMap::new()),
+            trusted_session_workspaces: RwLock::new(HashMap::new()),
+            trusted_workspace_paths: RwLock::new(HashSet::new()),
+            full_access_session_workspaces: RwLock::new(HashMap::new()),
+            full_access_workspace_paths: RwLock::new(HashSet::new()),
             db,
         }
     }
@@ -82,6 +112,18 @@ impl PermissionGate {
                     if let Err(reason) = ensure_path_in_workspace(working_dir, path) {
                         return PermissionDecision::Deny { reason };
                     }
+                    if self
+                        .full_access_current_project_allows(session_id, working_dir)
+                        .await
+                    {
+                        return PermissionDecision::Allow;
+                    }
+                    if self
+                        .trusted_current_project_allows_write(session_id, path, working_dir)
+                        .await
+                    {
+                        return PermissionDecision::Allow;
+                    }
                 }
                 if self.is_allowed(session_id, tool, input).await {
                     return PermissionDecision::Allow;
@@ -97,29 +139,59 @@ impl PermissionGate {
                 match classify_shell_command(command) {
                     ShellPolicyDecision::AllowReadonly => PermissionDecision::Allow,
                     ShellPolicyDecision::Blocked { reason } => PermissionDecision::Deny { reason },
-                    ShellPolicyDecision::NeedsConfirmation { safety } => PermissionDecision::Ask {
-                        question: format_shell_question(command),
-                        kind: if safety == ShellSafetyLevel::Dangerous {
-                            "dangerous_cmd".to_string()
-                        } else {
-                            "shell_cmd".to_string()
-                        },
-                        remember_key: None,
-                    },
+                    ShellPolicyDecision::NeedsConfirmation { safety } => {
+                        if self
+                            .full_access_current_project_allows(session_id, working_dir)
+                            .await
+                        {
+                            return PermissionDecision::Allow;
+                        }
+                        PermissionDecision::Ask {
+                            question: format_shell_question(command),
+                            kind: if safety == ShellSafetyLevel::Dangerous {
+                                "dangerous_cmd".to_string()
+                            } else {
+                                "shell_cmd".to_string()
+                            },
+                            remember_key: None,
+                        }
+                    }
                 }
             }
             "ask_user" => PermissionDecision::Allow,
-            "mcp_read_resource" => PermissionDecision::Ask {
-                question: format_mcp_resource_question(input),
-                kind: "mcp_resource_read".to_string(),
-                remember_key: None,
-            },
-            "mcp_get_prompt" => PermissionDecision::Ask {
-                question: format_mcp_prompt_question(input),
-                kind: "mcp_prompt_get".to_string(),
-                remember_key: None,
-            },
+            "mcp_read_resource" => {
+                if self
+                    .full_access_current_project_allows(session_id, working_dir)
+                    .await
+                {
+                    return PermissionDecision::Allow;
+                }
+                PermissionDecision::Ask {
+                    question: format_mcp_resource_question(input),
+                    kind: "mcp_resource_read".to_string(),
+                    remember_key: None,
+                }
+            }
+            "mcp_get_prompt" => {
+                if self
+                    .full_access_current_project_allows(session_id, working_dir)
+                    .await
+                {
+                    return PermissionDecision::Allow;
+                }
+                PermissionDecision::Ask {
+                    question: format_mcp_prompt_question(input),
+                    kind: "mcp_prompt_get".to_string(),
+                    remember_key: None,
+                }
+            }
             tool if mcp::is_public_tool_name(tool) => {
+                if self
+                    .full_access_current_project_allows(session_id, working_dir)
+                    .await
+                {
+                    return PermissionDecision::Allow;
+                }
                 if self.is_allowed(session_id, tool, input).await {
                     return PermissionDecision::Allow;
                 }
@@ -130,6 +202,12 @@ impl PermissionGate {
                 }
             }
             _ => {
+                if self
+                    .full_access_current_project_allows(session_id, working_dir)
+                    .await
+                {
+                    return PermissionDecision::Allow;
+                }
                 if self.is_allowed(session_id, tool, input).await {
                     return PermissionDecision::Allow;
                 }
@@ -190,6 +268,168 @@ impl PermissionGate {
             .insert(canonical_tool(tool).to_string(), true);
     }
 
+    pub async fn trust_current_project(&self, session_id: &str, workspace: &Path) {
+        let workspace = canonical_workspace_path(workspace);
+        if let Some(previous_workspace) = self
+            .full_access_session_workspaces
+            .write()
+            .await
+            .remove(session_id)
+        {
+            self.full_access_workspace_paths
+                .write()
+                .await
+                .remove(&previous_workspace);
+        }
+        self.full_access_session_workspaces
+            .write()
+            .await
+            .retain(|_, full_access_workspace| full_access_workspace != &workspace);
+        self.full_access_workspace_paths
+            .write()
+            .await
+            .remove(&workspace);
+        self.trusted_session_workspaces
+            .write()
+            .await
+            .insert(session_id.to_string(), workspace.clone());
+        self.trusted_workspace_paths.write().await.insert(workspace);
+    }
+
+    pub async fn full_access_current_project(&self, session_id: &str, workspace: &Path) {
+        let workspace = canonical_workspace_path(workspace);
+        if let Some(previous_workspace) = self
+            .trusted_session_workspaces
+            .write()
+            .await
+            .remove(session_id)
+        {
+            self.trusted_workspace_paths
+                .write()
+                .await
+                .remove(&previous_workspace);
+        }
+        self.trusted_session_workspaces
+            .write()
+            .await
+            .retain(|_, trusted_workspace| trusted_workspace != &workspace);
+        self.trusted_workspace_paths
+            .write()
+            .await
+            .remove(&workspace);
+        self.full_access_session_workspaces
+            .write()
+            .await
+            .insert(session_id.to_string(), workspace.clone());
+        self.full_access_workspace_paths
+            .write()
+            .await
+            .insert(workspace);
+    }
+
+    pub async fn restore_manual_confirm(&self, session_id: &str, workspace: Option<&Path>) {
+        let workspace = if let Some(workspace) = workspace {
+            Some(canonical_workspace_path(workspace))
+        } else {
+            let trusted_workspace = self
+                .trusted_session_workspaces
+                .write()
+                .await
+                .remove(session_id);
+            let full_access_workspace = self
+                .full_access_session_workspaces
+                .write()
+                .await
+                .remove(session_id);
+            trusted_workspace.or(full_access_workspace)
+        };
+
+        if let Some(workspace) = workspace {
+            self.trusted_session_workspaces
+                .write()
+                .await
+                .retain(|_, trusted_workspace| trusted_workspace != &workspace);
+            self.trusted_workspace_paths
+                .write()
+                .await
+                .remove(&workspace);
+            self.full_access_session_workspaces
+                .write()
+                .await
+                .retain(|_, full_access_workspace| full_access_workspace != &workspace);
+            self.full_access_workspace_paths
+                .write()
+                .await
+                .remove(&workspace);
+        }
+    }
+
+    pub async fn permission_mode_state(
+        &self,
+        session_id: &str,
+        workspace: Option<&Path>,
+    ) -> PermissionModeState {
+        {
+            let full_access = self.full_access_session_workspaces.read().await;
+            if let Some(path) = full_access.get(session_id) {
+                return PermissionModeState {
+                    mode: PermissionMode::FullAccess,
+                    workspace_path: Some(path.to_string_lossy().into_owned()),
+                    session_scoped: false,
+                };
+            }
+        }
+
+        if let Some(workspace) = workspace {
+            let workspace = canonical_workspace_path(workspace);
+            if self
+                .full_access_workspace_paths
+                .read()
+                .await
+                .contains(&workspace)
+            {
+                return PermissionModeState {
+                    mode: PermissionMode::FullAccess,
+                    workspace_path: Some(workspace.to_string_lossy().into_owned()),
+                    session_scoped: false,
+                };
+            }
+        }
+
+        {
+            let trusted = self.trusted_session_workspaces.read().await;
+            if let Some(path) = trusted.get(session_id) {
+                return PermissionModeState {
+                    mode: PermissionMode::TrustCurrentProject,
+                    workspace_path: Some(path.to_string_lossy().into_owned()),
+                    session_scoped: false,
+                };
+            }
+        }
+
+        if let Some(workspace) = workspace {
+            let workspace = canonical_workspace_path(workspace);
+            if self
+                .trusted_workspace_paths
+                .read()
+                .await
+                .contains(&workspace)
+            {
+                return PermissionModeState {
+                    mode: PermissionMode::TrustCurrentProject,
+                    workspace_path: Some(workspace.to_string_lossy().into_owned()),
+                    session_scoped: false,
+                };
+            }
+        }
+
+        PermissionModeState {
+            mode: PermissionMode::ManualConfirm,
+            workspace_path: None,
+            session_scoped: true,
+        }
+    }
+
     /// Add a global allowed pattern (persisted to config).
     pub async fn allow_pattern(&self, pattern: &str) {
         self.allowed_patterns
@@ -239,6 +479,10 @@ impl PermissionGate {
     /// Clear session cache on session stop.
     pub async fn clear_session(&self, session_id: &str) {
         self.session_cache.write().await.remove(session_id);
+        self.trusted_session_workspaces
+            .write()
+            .await
+            .remove(session_id);
     }
 
     async fn remove_custom_allowed_pattern(&self, tool: &str) {
@@ -249,6 +493,55 @@ impl PermissionGate {
             .write()
             .await
             .retain(|pattern| pattern != tool);
+    }
+
+    async fn trusted_current_project_allows_write(
+        &self,
+        session_id: &str,
+        requested_path: &str,
+        working_dir: &Path,
+    ) -> bool {
+        if is_sensitive_write_path(requested_path) {
+            return false;
+        }
+
+        let workspace = canonical_workspace_path(working_dir);
+        {
+            let trusted = self.trusted_session_workspaces.read().await;
+            if trusted
+                .get(session_id)
+                .map(|trusted_workspace| trusted_workspace == &workspace)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        self.trusted_workspace_paths
+            .read()
+            .await
+            .contains(&workspace)
+    }
+
+    async fn full_access_current_project_allows(
+        &self,
+        session_id: &str,
+        working_dir: &Path,
+    ) -> bool {
+        let workspace = canonical_workspace_path(working_dir);
+        {
+            let full_access = self.full_access_session_workspaces.read().await;
+            if full_access
+                .get(session_id)
+                .map(|full_access_workspace| full_access_workspace == &workspace)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        self.full_access_workspace_paths
+            .read()
+            .await
+            .contains(&workspace)
     }
 }
 
@@ -297,6 +590,26 @@ fn ensure_path_in_workspace(working_dir: &std::path::Path, path: &str) -> Result
             workspace.display()
         ))
     }
+}
+
+fn canonical_workspace_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_sensitive_write_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+
+    file_name == ".env"
+        || file_name.starts_with(".env.")
+        || normalized == ".git/config"
+        || normalized.ends_with("/.git/config")
+        || file_name == "id_rsa"
+        || file_name == "id_dsa"
+        || file_name == "id_ecdsa"
+        || file_name == "id_ed25519"
+        || file_name.ends_with(".pem")
+        || file_name.ends_with(".key")
 }
 
 fn format_file_question(tool: &str, input: &serde_json::Value) -> String {

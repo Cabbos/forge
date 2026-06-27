@@ -41,6 +41,7 @@ import {
   workspaceSessionIds,
 } from "./session-utils";
 import type { AppStore, PersistedSession } from "./types";
+import { usageProjectionFromProviderUsageBlocks } from "./usage-ledger";
 
 type StoreSet = (partial: Partial<AppStore>) => void;
 type StoreGet = () => AppStore;
@@ -105,6 +106,12 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
         for (const s of data) {
           const loadedBlocks = await loadBlocks(s.id, transcriptEventsToBlocks);
           const blocks = closeInterruptedConfirmBlocks(loadedBlocks, "session_restored");
+          const restoredUsage = usageProjectionFromProviderUsageBlocks(
+            blocks,
+            s.contextWindowTokens,
+            s.contextUsage,
+            hydratedAt,
+          );
           const workingDir = normalizeWorkspacePath(s.workingDir ?? "");
           const workspaceId = s.workspaceId && workspaces.has(s.workspaceId)
             ? s.workspaceId
@@ -116,8 +123,9 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
             createdAt: s.createdAt ?? hydratedAt,
             updatedAt: s.updatedAt ?? s.createdAt ?? hydratedAt,
             blocks,
-            costUsd: 0,
-            contextUsage: s.contextUsage ?? null,
+            costUsd: restoredUsage?.costUsd ?? 0,
+            contextUsage: s.contextUsage ?? restoredUsage?.contextUsage ?? null,
+            usageLedger: s.usageLedger ?? restoredUsage?.usageLedger ?? null,
             streaming: false,
             // For Tauri, respect the backend-reported status (including "resuming").
             // For IndexedDB-only hydration, force "stopped" so stale persisted state

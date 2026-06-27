@@ -142,6 +142,8 @@ pub fn run() {
             ipc::permission_handlers::list_permission_rules,
             ipc::permission_handlers::set_permission_rule,
             ipc::permission_handlers::reset_permission_rule,
+            ipc::permission_handlers::get_permission_mode,
+            ipc::permission_handlers::set_permission_mode,
             ipc::workspace_files::open_file,
             ipc::workspace_files::preview_file,
             ipc::project_runtime::get_project_runtime_status,

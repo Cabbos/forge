@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, RotateCcw, ShieldAlert, XCircle } from "lucide-react";
 import { ForgeButton } from "@/components/primitives/button";
 import {
+  getPermissionMode,
   listPermissionRules,
   resetPermissionRule,
+  setPermissionMode,
+  type PermissionModeState,
   setPermissionRule,
   type PermissionRuleDecision,
   type PermissionRuleView,
 } from "@/lib/tauri";
+import { useActiveSession, useActiveWorkspace } from "@/store";
 
 const TOOL_LABELS: Record<string, string> = {
   read_file: "读取文件",
@@ -27,9 +31,15 @@ const MANAGED_TOOLS = [
 ];
 
 export function PermissionsPanel() {
+  const activeSession = useActiveSession();
+  const activeWorkspace = useActiveWorkspace();
+  const activeSessionId = activeSession?.id ?? null;
+  const activeWorkspacePath = activeWorkspace?.path ?? activeSession?.workingDir ?? null;
   const [rules, setRules] = useState<PermissionRuleView[]>([]);
+  const [modeState, setModeState] = useState<PermissionModeState>(manualModeState);
   const [loading, setLoading] = useState(true);
   const [busyTool, setBusyTool] = useState<string | null>(null);
+  const [modeBusy, setModeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadRules = useCallback(async () => {
@@ -44,11 +54,28 @@ export function PermissionsPanel() {
     }
   }, []);
 
+  const loadMode = useCallback(async () => {
+    if (!activeSessionId) {
+      setModeState(manualModeState);
+      return;
+    }
+    try {
+      setModeState(await getPermissionMode(activeSessionId, activeWorkspacePath));
+    } catch (event) {
+      setError(formatPermissionError(event));
+    }
+  }, [activeSessionId, activeWorkspacePath]);
+
   useEffect(() => {
     void loadRules();
-  }, [loadRules]);
+    void loadMode();
+  }, [loadMode, loadRules]);
 
   const rows = useMemo(() => buildPermissionRows(rules), [rules]);
+  const trustAvailable = Boolean(activeSessionId && activeWorkspacePath);
+  const trustActive = modeState.mode === "trust_current_project";
+  const fullAccessActive = modeState.mode === "full_access";
+  const modeActive = trustActive || fullAccessActive;
 
   const updateRule = useCallback(async (toolName: string, decision: PermissionRuleDecision) => {
     setBusyTool(toolName);
@@ -74,6 +101,57 @@ export function PermissionsPanel() {
     }
   }, []);
 
+  const trustCurrentProject = useCallback(async () => {
+    if (!activeSessionId || !activeWorkspacePath) return;
+    setModeBusy(true);
+    setError(null);
+    try {
+      setModeState(await setPermissionMode({
+        sessionId: activeSessionId,
+        mode: "trust_current_project",
+        workspacePath: activeWorkspacePath,
+      }));
+    } catch (event) {
+      setError(formatPermissionError(event));
+    } finally {
+      setModeBusy(false);
+    }
+  }, [activeSessionId, activeWorkspacePath]);
+
+  const fullAccessCurrentProject = useCallback(async () => {
+    if (!activeSessionId || !activeWorkspacePath) return;
+    setModeBusy(true);
+    setError(null);
+    try {
+      setModeState(await setPermissionMode({
+        sessionId: activeSessionId,
+        mode: "full_access",
+        workspacePath: activeWorkspacePath,
+      }));
+    } catch (event) {
+      setError(formatPermissionError(event));
+    } finally {
+      setModeBusy(false);
+    }
+  }, [activeSessionId, activeWorkspacePath]);
+
+  const restoreManualConfirm = useCallback(async () => {
+    if (!activeSessionId) return;
+    setModeBusy(true);
+    setError(null);
+    try {
+      setModeState(await setPermissionMode({
+        sessionId: activeSessionId,
+        mode: "manual_confirm",
+        workspacePath: activeWorkspacePath,
+      }));
+    } catch (event) {
+      setError(formatPermissionError(event));
+    } finally {
+      setModeBusy(false);
+    }
+  }, [activeSessionId, activeWorkspacePath]);
+
   return (
     <section
       data-testid="settings-permissions-panel"
@@ -98,6 +176,70 @@ export function PermissionsPanel() {
           <span>{error}</span>
         </div>
       )}
+
+      <div
+        data-testid="settings-permission-mode"
+        data-forge-motion="settings-entry"
+        className="forge-settings-permission-row"
+      >
+        <span
+          className="forge-settings-provider-mark"
+          data-configured={modeActive ? "true" : "false"}
+          aria-hidden="true"
+        >
+          {fullAccessActive ? "全" : trustActive ? "信" : "手"}
+        </span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="truncate text-xs font-medium text-foreground">当前项目权限模式</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {permissionModeLabel(modeState)}
+            </div>
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            {trustAvailable
+              ? activeWorkspacePath
+              : "需要先打开一个项目会话"}
+          </div>
+        </div>
+        <div className="forge-settings-permission-actions">
+          <span
+            className="forge-settings-status-pill"
+            data-state={fullAccessActive ? "configured" : trustActive ? "configured" : "empty"}
+          >
+            {fullAccessActive ? "完全访问" : trustActive ? "已信任" : "手动确认"}
+          </span>
+          <ForgeButton
+            size="xs"
+            variant="outline"
+            onClick={trustCurrentProject}
+            disabled={modeBusy || !trustAvailable || trustActive}
+            aria-label="信任当前项目"
+          >
+            <CheckCircle2 className="size-3" />
+            信任当前项目
+          </ForgeButton>
+          <ForgeButton
+            size="xs"
+            variant="outline"
+            onClick={fullAccessCurrentProject}
+            disabled={modeBusy || !trustAvailable || fullAccessActive}
+            aria-label="完全访问"
+          >
+            <ShieldAlert className="size-3" />
+            完全访问
+          </ForgeButton>
+          <ForgeButton
+            size="xs"
+            variant="ghost"
+            onClick={restoreManualConfirm}
+            disabled={modeBusy || !activeSessionId || !modeActive}
+            aria-label="恢复手动确认"
+          >
+            恢复手动确认
+          </ForgeButton>
+        </div>
+      </div>
 
       <div className="forge-settings-permission-list">
         {rows.map((row) => (
@@ -167,6 +309,12 @@ export function PermissionsPanel() {
   );
 }
 
+const manualModeState: PermissionModeState = {
+  mode: "manual_confirm",
+  workspace_path: null,
+  session_scoped: true,
+};
+
 interface PermissionRow {
   toolName: string;
   label: string;
@@ -192,6 +340,12 @@ function permissionDecisionLabel(decision: PermissionRow["decision"]): string {
   if (decision === "allow") return "允许";
   if (decision === "deny") return "拒绝";
   return "默认";
+}
+
+function permissionModeLabel(state: PermissionModeState): string {
+  if (state.mode === "full_access") return "完全访问";
+  if (state.mode === "trust_current_project") return "信任当前项目";
+  return "手动确认";
 }
 
 function formatPermissionError(event: unknown): string {

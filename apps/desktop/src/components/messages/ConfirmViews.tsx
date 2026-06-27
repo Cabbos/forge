@@ -2,6 +2,7 @@ import { ShieldAlert } from "lucide-react";
 import type { WriteBoundaryViewModel } from "@/lib/write-boundary";
 import { MessagePanel, MessagePanelHeader } from "@/components/messages/MessagePanel";
 import {
+  boundaryPendingHelper,
   confirmIconTone,
   confirmResolvedLabel,
   type ConfirmPromptViewModel,
@@ -95,6 +96,10 @@ export function ConfirmBoundaryPendingView({
       />
 
       <ConfirmBoundaryGrid boundary={boundary} />
+
+      <p data-testid="confirm-boundary-helper" className="forge-confirm-helper">
+        {boundaryPendingHelper(boundary)}
+      </p>
 
       <ConfirmActionBar responded={false} answer={null} onResponse={onResponse} />
     </MessagePanel>

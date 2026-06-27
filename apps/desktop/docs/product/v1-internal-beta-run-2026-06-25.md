@@ -12,6 +12,24 @@ Forge source workspace: `/Users/cabbos/project/forge`
 - Fix P1 during the convergence sprint.
 - Record P2 without expanding scope.
 - Do not edit product code from this run log task.
+- Controller-side writes to `/Users/cabbos/project/forge-test-app` invalidate the current scenario unless the scenario explicitly asks for independent verification.
+- All intended project changes must be performed by Forge and visible through Forge messages, tool events, or resulting git/worktree evidence.
+- Controller-side verification may read files, run status commands, open previews, inspect processes, and click the preview UI.
+
+## Rerun Protocol
+
+Before and after each follow-up beta rerun scenario, record both workspace states:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+git -C /Users/cabbos/project/forge status --short --branch
+```
+
+Scenario result rules:
+
+- If a controller-side write occurs in `/Users/cabbos/project/forge-test-app`, mark the scenario `Invalid` and rerun after cleanup.
+- If the Forge source workspace has unrelated dirty files, call them out as pre-existing or blocking before the scenario starts.
+- A scenario may pass only when the requested product change was performed by Forge, not by the controller.
 
 ## Workspace Baseline
 
@@ -29,6 +47,358 @@ Output:
  M src/App.tsx
  M src/styles.css
 ```
+
+## Follow-up Rerun Baseline - 2026-06-25 21:30 CST
+
+Demo workspace command:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+Output:
+
+```text
+## main
+```
+
+Demo history command:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app log --oneline -5
+```
+
+Output:
+
+```text
+4b51e3e feat: add today-done section on water tracker home page
+087540d chore: initialize Forge test app
+```
+
+Forge source status command:
+
+```bash
+git -C /Users/cabbos/project/forge status --short --branch
+```
+
+Result:
+
+Forge source is on `cabbos/main-restored-history-check` ahead of origin with the current convergence-sprint edits plus pre-existing unrelated `.claude`, `AGENTS.md`, `CLAUDE.md`, `.playwright-cli/`, `tmp/`, and older eval-runner plan changes. Treat those source-workspace changes as outside the demo scenario evidence unless a specific Forge-source verification step calls them out.
+
+## Follow-up Rerun Evidence - Scenario 1 Partial
+
+Time: 2026-06-25 21:39-21:55 CST
+
+Prompt:
+
+```text
+我想做一个本地小工具，用来记录每天喝水次数。你先做一个能用的第一版，页面要能直接操作。请只在当前 demo 项目里工作，不要修改 Forge 本体。
+```
+
+Result: Partial repair evidence, not a clean full scenario rerun.
+
+Evidence:
+
+- Forge ran from the current `/Users/cabbos/project/forge` source tree and the selected project remained `/Users/cabbos/project/forge-test-app`.
+- The demo workspace stayed clean before and after this partial rerun:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+```text
+## main
+```
+
+- Forge inspected the existing water tracker implementation, ran checks in `/Users/cabbos/project/forge-test-app`, started Vite on `http://127.0.0.1:5173/`, and reported delivery with preview running and checks passed.
+- Read-only controller verification showed the preview owner process was the demo workspace:
+
+```text
+node /Users/cabbos/project/forge-test-app/node_modules/.bin/vite --host 127.0.0.1 --port 5173
+```
+
+- The rerun exposed a remaining health-alert bug: after successful output and `session_status: idle`, the Rust watchdog still emitted `session-stale-019efeff-6ae8-7090-bafe-f2393a2cafef` because backend session state stayed `Running`.
+- Fix landed in this convergence sprint: watchdog tracking now records active vs idle state, idle/completed turns are not re-alerted, and top-level stale banners are scoped to the active session. After the Tauri dev app rebuilt, the stale banner disappeared from the live Forge window.
+
+Verification:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml diagnostics::watchdog --lib
+node --test apps/desktop/src/store/health-alerts.test.ts
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "stale alert from another session|fresh same-session output clears stale session health alert"
+```
+
+Next action: rerun the remaining beta scenarios after a full build, with `信任当前项目` enabled first so repeated safe demo checks do not block the flow.
+
+## Follow-up Rerun Evidence - Trust Mode State Regression
+
+Time: 2026-06-25 22:25-22:35 CST
+
+Prompt:
+
+```text
+/fix
+@src/App.tsx
+这个页面里有一个按钮点击后没有明显反馈。请先定位原因，再做最小修复，并运行相关检查。只改当前 demo 项目。
+```
+
+Result: Invalidated rerun, product bug found before Scenario 2 completion.
+
+Evidence:
+
+- The user enabled `信任当前项目` in the real Forge UI before this rerun.
+- The controller then created a new Forge conversation for Scenario 2.
+- Confirmation cards still appeared in the new conversation, which showed that the first trust-mode implementation was keyed only by `sessionId` and did not carry across new conversations in the same project.
+- The demo workspace remained clean before stopping the invalidated rerun:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+```text
+## main
+```
+
+Fix landed in the convergence sprint:
+
+- `trust_current_project` now records a runtime trusted canonical workspace path as well as the originating session.
+- Permission checks for routine in-project writes allow any new session whose working directory matches the trusted workspace.
+- Permission-mode read and restore IPC now include `workspacePath`, so Settings can show inherited trust for the active project and `恢复手动确认` disables that project trust instead of only the current session.
+- The project status card now exposes the same `信任当前项目` / `恢复手动确认` control and `手动确认` / `已信任` indicator, avoiding the fragile Settings-only path during beta reruns.
+
+Verification:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::permission_handlers --lib
+node --test apps/desktop/src/lib/ipc/permissions.test.ts
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "settings tools can trust the current project"
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status card can trust"
+```
+
+Next action: rerun Scenario 2 from the start after confirming the project status trust action can also take over an already-pending confirmation.
+
+## Follow-up Rerun Evidence - Pending Confirmation Takeover
+
+Time: 2026-06-25 23:32-23:47 CST
+
+Prompt:
+
+```text
+/fix
+@src/App.tsx
+这个页面里有一个按钮点击后没有明显反馈。请先定位原因，再做最小修复，并运行相关检查。只改当前 demo 项目。
+```
+
+Result: Invalidated rerun, product bug found before Scenario 2 completion.
+
+Evidence:
+
+- The real Forge UI showed a pending `edit_file` confirmation for `src/styles.css`.
+- The project status card still showed `信任当前项目`, proving the current run had not entered trusted mode before that tool call.
+- After enabling `信任当前项目`, the right status card changed to `已信任`, but the already-rendered confirmation remained a separate gate and no demo diff was produced.
+- The demo workspace stayed clean while diagnosing this product behavior:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+```text
+## main
+```
+
+Fix landed in the convergence sprint:
+
+- The project status card now finds the latest pending write confirmation whose boundary workspace matches the active project and calls `confirm_response(..., true)` after trust mode is enabled.
+- `ConfirmCard` now syncs externally updated `confirmed` / `answer` metadata, so a confirmation approved from the project status card visibly changes to `已继续`.
+- The takeover is bounded to the current session, current workspace, and pending write-boundary confirmations; it does not auto-answer `ask_user` or confirmations for other workspaces.
+
+Verification:
+
+```bash
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status trust approves"
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status card can trust|project status trust approves|does not approve non-write"
+npm run build:desktop
+git diff --check
+```
+
+Next action: relaunch or hot-reload the current source Forge app, enable `信任当前项目` once for `forge-test-app`, create a fresh conversation, and rerun Scenario 2 from the start.
+
+## Follow-up Rerun Evidence - Trusted Session Gate Sync
+
+Time: 2026-06-26 00:58-01:10 CST
+
+Prompt:
+
+```text
+/fix
+@src/App.tsx
+这个页面里有一个按钮点击后没有明显反馈。请先定位原因，再做最小修复，并运行相关检查。只改当前 demo 项目。
+```
+
+Result: Product bug found and fixed; Scenario 2 final UI pass still pending.
+
+Evidence:
+
+- The real Forge UI showed the Project Status card in `已信任` mode for `/Users/cabbos/project/forge-test-app`.
+- In that state, a fresh Scenario 2 still rendered a `准备修改项目` confirmation card for `edit_file src/App.tsx`.
+- The demo workspace stayed clean while diagnosing the bug:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+```text
+## main
+```
+
+Root cause:
+
+- The project status trust control updated `AppState.harness.permission_gate`.
+- Live chat turns execute through per-session `Harness::new_with_pending(...)` instances.
+- New or restored conversations could therefore display inherited app-level trust while the actual session harness still returned `Ask` for `edit_file`.
+
+Fix landed in the convergence sprint:
+
+- Permission mode now synchronizes from the app-level gate into the live session gate when mode is read or changed.
+- `create_session` and `send_input` also sync the app-level mode into the session harness, so the behavior does not depend on the Project Status panel being mounted.
+- Safe output-clipped checks such as `npm run build 2>&1 | tail -20` are now treated as read-only when the base command is already read-only.
+- `/fix` activation text now tells the model not to ask whether to continue after the user already requested a fix and the remaining UI decision is small and obvious.
+
+Verification:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::permission_handlers::tests::inherited_project_trust_syncs_to_live_session_harness --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::permission_handlers --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions_test --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib
+cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check
+```
+
+Manual UI rerun status:
+
+- The fix rebuilt into the Tauri dev app.
+- The desktop entered the macOS lock screen before the final fresh Scenario 2 UI pass could complete.
+- Do not mark Scenario 2 re-passed until it is rerun in an unlocked Forge window with `信任当前项目` enabled and no write confirmation card appears.
+
+## Follow-up Automated Gate - Trust Loop
+
+Time: 2026-06-26 01:18-01:22 CST
+
+Result: Automated gate passed; manual beta rerun still pending.
+
+Evidence:
+
+- The current desktop was not available for manual rerun because screenshots returned a black/locked screen.
+- The demo workspace remained clean:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+```text
+## main
+```
+
+- Focused Rust/Node verification and the full mocked desktop acceptance suite passed:
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::turn_outcome --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml diagnostics::watchdog --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::permission_handlers --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib
+node --test apps/desktop/src/lib/ipc/permissions.test.ts
+node --test apps/desktop/src/store/health-alerts.test.ts
+node --test scripts/acceptance.test.mjs
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
+```
+
+Acceptance result:
+
+- `e2e/acceptance.spec.ts`: 30 passed.
+- Covered visible surfaces include preview ownership details, `信任当前项目` across conversations, pending write-confirm takeover, non-write confirmation protection, same-session stale-alert clearing, Settings trust controls, and existing Phase 7 Settings/runtime surfaces.
+
+Next action:
+
+- Unlock the desktop, enable `信任当前项目` for `forge-test-app`, and rerun the six beta scenarios from Task 9 before updating the final release decision.
+
+## Follow-up Monorepo Gate - Non-UI
+
+Time: 2026-06-26 01:24-01:27 CST
+
+Result: Root non-UI verification passed; manual beta rerun still pending.
+
+Evidence:
+
+- Forge UI was still unavailable for manual rerun because screenshots remained fully black (`mean [0.0, 0.0, 0.0]`).
+- The root command set passed from the current worktree:
+
+```bash
+npm run build:desktop
+npm run build:website
+npm run test:eval
+scripts/acceptance.sh --dry-run
+```
+
+Results:
+
+- Desktop production build passed.
+- Website production build passed.
+- Eval precheck passed and eval runner tests passed: `139 passed, 1 warning`.
+- Acceptance dry-run still includes the desktop trust-loop smoke label.
+
+Next action:
+
+- Unlock the desktop and continue Task 9 manual rerun; do not update the final release decision until the six user-visible beta scenarios are observed in Forge.
+
+## Follow-up Completion Audit - Manual Gate Blocked
+
+Time: 2026-06-26 01:30 CST
+
+Result: Plan implementation is not complete; manual UI gate is externally blocked.
+
+Evidence:
+
+- A third UI availability check still returned a fully black screenshot:
+
+```text
+size (2940, 1912) mean [0.0, 0.0, 0.0] extrema [(0, 0), (0, 0), (0, 0)]
+```
+
+- The demo workspace remained clean:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+```
+
+```text
+## main
+```
+
+Completion audit:
+
+- Automated coverage proves the implementation paths for preview ownership details, trust-mode IPC/UI, pending-confirm takeover, stale-alert clearing, shell policy, and review intent calibration.
+- Root non-UI commands prove the three apps still build/test independently.
+- The run is still missing the authoritative user-visible evidence required by Task 9 Step 2: the six beta prompts must be observed in the real Forge UI.
+- The final release decision must not be changed until Task 9 Step 2 is complete.
+
+Resume instructions:
+
+1. Unlock the desktop.
+2. Confirm `/Users/cabbos/project/forge-test-app` is still clean.
+3. Launch Forge from the current source tree, enable `信任当前项目` for `forge-test-app`, and rerun Scenario 2 first:
+
+```text
+/fix
+@src/App.tsx
+这个页面里有一个按钮点击后没有明显反馈。请先定位原因，再做最小修复，并运行相关检查。只改当前 demo 项目。
+```
+
+4. Pass condition for the first resume step: no write confirmation card appears for routine in-project edits after trust mode is enabled.
+5. Continue Scenario 3 preview ownership and the remaining beta prompts before updating `## Final Decision`.
 
 ## Summary
 

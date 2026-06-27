@@ -82,6 +82,15 @@
     line-height: 1.125rem;
   }
 
+  .forge-confirm-helper {
+    margin: 0;
+    border-top: 1px solid var(--forge-border-subtle);
+    padding: 0.5rem 0.625rem;
+    color: var(--forge-text-faint);
+    font-size: 11px;
+    line-height: 1.25rem;
+  }
+
   .forge-confirm-action-bar {
     display: flex;
     min-height: 2.5rem;

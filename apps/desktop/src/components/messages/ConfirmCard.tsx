@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { BlockState } from "@/lib/protocol";
 import { confirmResponse } from "@/lib/tauri";
 import { parseWriteBoundary } from "@/lib/write-boundary";
@@ -23,6 +23,11 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
   const [answer, setAnswer] = useState<boolean | null>(savedAnswer ?? null);
   const boundary = parseWriteBoundary(block.metadata.boundary);
   const promptView = deriveConfirmPromptView(block.content, block.metadata.kind);
+
+  useEffect(() => {
+    setResponded(block.metadata.confirmed === true);
+    setAnswer(typeof block.metadata.answer === "boolean" ? block.metadata.answer : null);
+  }, [block.block_id, block.metadata.answer, block.metadata.confirmed]);
 
   const handleResponse = async (approved: boolean) => {
     setResponded(true);

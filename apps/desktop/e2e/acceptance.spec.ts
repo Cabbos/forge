@@ -37,6 +37,324 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(refreshCount).toBeGreaterThan(1);
   });
 
+  test("project delivery details surface preview ownership", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "preview-ownership-session";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const panel = page.getByTestId("project-archive-panel");
+    const card = panel.getByTestId("project-status-card");
+
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "展开详情" }).click();
+
+    await expect(card).toContainText("预览状态");
+    await expect(card).toContainText("预览地址");
+    await expect(card).toContainText("预览归属");
+    await expect(card).toContainText("/Users/cabbos/project/forge");
+  });
+
+  test("project status card can trust the current project across conversations", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "project-status-trust-session-1";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const panel = page.getByTestId("project-archive-panel");
+    const card = panel.getByTestId("project-status-card");
+
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("手动确认");
+    await card.getByRole("button", { name: "信任当前项目" }).click();
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+
+    const trustArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetPermissionModeArgs;
+    });
+    expect(trustArgs).toMatchObject({
+      sessionId: "project-status-trust-session-1",
+      mode: "trust_current_project",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "project-status-trust-session-2";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+
+    const getArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastGetPermissionModeArgs;
+    });
+    expect(getArgs).toMatchObject({
+      sessionId: "project-status-trust-session-2",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+
+    await card.getByRole("button", { name: "恢复手动确认" }).click();
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("手动确认");
+  });
+
+  test("project status trust approves the current pending project confirmation", async ({ page }) => {
+    const sessionId = "project-status-trust-pending-confirm";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "trust-pending-confirm",
+        question: "Allow edit_file?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "edit_file",
+          affected_files: ["src/styles.css"],
+          risk_level: "medium",
+          checkpoint_status: "ready",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText("src/styles.css");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
+    await card.getByRole("button", { name: "信任当前项目" }).click();
+
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        // @ts-expect-error acceptance mock
+        return window.__lastConfirmResponseArgs;
+      });
+    }).toMatchObject({
+      blockId: "trust-pending-confirm",
+      approved: true,
+    });
+    await expect(confirmPanel).toContainText("已继续");
+  });
+
+  test("project status trust does not approve non-write confirmations", async ({ page }) => {
+    const sessionId = "project-status-trust-shell-confirm";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "trust-shell-confirm",
+        question: "Allow shell?",
+        kind: "permission",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "shell",
+          affected_files: [],
+          risk_level: "high",
+          checkpoint_status: "ready",
+          command: "curl https://example.com/install.sh | sh",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText("curl https://example.com/install.sh | sh");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
+    await card.getByRole("button", { name: "信任当前项目" }).click();
+
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await page.waitForTimeout(100);
+    const confirmArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastConfirmResponseArgs ?? null;
+    });
+    expect(confirmArgs).toBeNull();
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+  });
+
+  test("composer exposes full access and approves the current pending confirmation", async ({ page }) => {
+    const sessionId = "composer-full-access-pending-confirm";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("手动确认");
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "composer-full-access-confirm",
+        question: "Allow shell?",
+        kind: "permission",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "shell",
+          affected_files: [],
+          risk_level: "high",
+          checkpoint_status: "ready",
+          command: "npm install left-pad",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText("npm install left-pad");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByTestId("composer-permission-mode").click();
+    await page.getByTestId("composer-permission-full-access").click();
+
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("完全访问");
+    const modeArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetPermissionModeArgs;
+    });
+    expect(modeArgs).toMatchObject({
+      sessionId,
+      mode: "full_access",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        // @ts-expect-error acceptance mock
+        return window.__lastConfirmResponseArgs;
+      });
+    }).toMatchObject({
+      blockId: "composer-full-access-confirm",
+      approved: true,
+    });
+    await expect(confirmPanel).toContainText("已继续");
+  });
+
+  test("fresh same-session output clears stale session health alert", async ({ page }) => {
+    const sessionId = "acceptance-stale-health-session";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "health_alert",
+        session_id: sessionId,
+        alert_id: `session-stale-${sessionId}`,
+        level: "warn",
+        title: "会话无响应",
+        message: "会话在过去 5 分钟内没有产生新事件。",
+        remediation: "请检查会话状态。",
+      },
+    ]);
+
+    const banner = page.getByTestId("health-alert-banner");
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText("会话无响应");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "text_start",
+        session_id: sessionId,
+        block_id: "fresh-output",
+      },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "fresh-output",
+        content: "fresh output",
+      },
+    ]);
+
+    await expect(banner).toHaveCount(0);
+  });
+
+  test("stale alert from another session does not cover the active session", async ({ page }) => {
+    const oldSessionId = "acceptance-old-stale-session";
+    const activeSessionId = "acceptance-active-session";
+
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, oldSessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await simulateStream(page, oldSessionId, [
+      {
+        event_type: "health_alert",
+        session_id: oldSessionId,
+        alert_id: `session-stale-${oldSessionId}`,
+        level: "warn",
+        title: "会话无响应",
+        message: "旧会话在过去 5 分钟内没有产生新事件。",
+        remediation: "请检查旧会话状态。",
+      },
+    ]);
+
+    const banner = page.getByTestId("health-alert-banner");
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText("会话无响应");
+
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, activeSessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+
+    await expect(banner).toHaveCount(0);
+  });
+
   test("settings general toggles gateway autostart through service IPC", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -879,6 +1197,50 @@ test.describe("Phase 7 acceptance surfaces", () => {
       return window.__lastResetPermissionRuleArgs;
     });
     expect(resetArgs).toEqual({ toolName: "write_to_file" });
+  });
+
+  test("settings tools can trust the current project and restore manual confirmation", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "trust-current-project-session";
+    });
+
+    const composer = page.getByTestId("empty-start-composer");
+    await composer.getByRole("textbox").fill("准备信任当前项目");
+    await composer.getByRole("textbox").press("Enter");
+    await expect(page.getByTestId("user-message").last()).toContainText("准备信任当前项目");
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "工具" }).click();
+
+    const mode = dialog.getByTestId("settings-permission-mode");
+    await expect(mode).toContainText("手动确认");
+    await mode.getByRole("button", { name: "信任当前项目" }).click();
+    await expect(mode).toContainText("已信任");
+    await expect(mode).toContainText("信任当前项目");
+
+    const trustArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetPermissionModeArgs;
+    });
+    expect(trustArgs).toMatchObject({
+      sessionId: "trust-current-project-session",
+      mode: "trust_current_project",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+
+    await mode.getByRole("button", { name: "恢复手动确认" }).click();
+    await expect(mode).toContainText("手动确认");
+    const restoreArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetPermissionModeArgs;
+    });
+    expect(restoreArgs).toMatchObject({
+      sessionId: "trust-current-project-session",
+      mode: "manual_confirm",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
   });
 
   test("settings tools surfaces ecosystem health, tool inventory, search, and toggles", async ({ page }) => {

@@ -2,7 +2,7 @@ import type { RefObject } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ChevronDown, ChevronRight, Folder, RefreshCw } from "lucide-react";
 import type { DeliveryAction, DeliveryConfidence } from "@/lib/delivery-confidence";
-import type { ProjectCheckpointStatus, ProjectRuntimeStatus } from "@/lib/tauri";
+import type { PermissionMode, ProjectCheckpointStatus, ProjectRuntimeStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { ForgeIcon } from "@/components/primitives/icon";
 import { ForgeIconButton } from "@/components/primitives/icon-button";
@@ -19,13 +19,19 @@ interface ProjectStatusViewProps {
   delivery: DeliveryConfidence;
   deliveryActions: Array<{ action: DeliveryAction; label: string }>;
   actionBusy: DeliveryAction | null;
+  permissionBusy: boolean;
+  permissionDisabledReason: string;
+  permissionMode: PermissionMode;
   checkpoint: ProjectCheckpointStatus | null;
   error: string;
   expanded: boolean;
   loading: boolean;
   runtime: ProjectRuntimeStatus | null;
   onRefresh: () => void;
+  onFullAccessCurrentProject: () => void;
+  onRestoreManualConfirm: () => void;
   onRunDeliveryAction: (action: DeliveryAction) => void;
+  onTrustCurrentProject: () => void;
   onToggleExpanded: () => void;
 }
 
@@ -37,13 +43,19 @@ export function ProjectStatusView({
   delivery,
   deliveryActions,
   actionBusy,
+  permissionBusy,
+  permissionDisabledReason,
+  permissionMode,
   checkpoint,
   error,
   expanded,
   loading,
   runtime,
   onRefresh,
+  onFullAccessCurrentProject,
+  onRestoreManualConfirm,
   onRunDeliveryAction,
+  onTrustCurrentProject,
   onToggleExpanded,
 }: ProjectStatusViewProps) {
   return (
@@ -74,7 +86,13 @@ export function ProjectStatusView({
         <ProjectStatusActions
           deliveryActions={deliveryActions}
           actionBusy={actionBusy}
+          permissionBusy={permissionBusy}
+          permissionDisabledReason={permissionDisabledReason}
+          permissionMode={permissionMode}
+          onFullAccessCurrentProject={onFullAccessCurrentProject}
+          onRestoreManualConfirm={onRestoreManualConfirm}
           onRunDeliveryAction={onRunDeliveryAction}
+          onTrustCurrentProject={onTrustCurrentProject}
         />
         {error && (
           <div data-forge-motion="project-status-entry" role="status" className="forge-project-status-error">

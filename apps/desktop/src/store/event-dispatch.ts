@@ -21,10 +21,16 @@ import {
   buildContextUsage,
   touchSession,
 } from "./session-utils";
+import {
+  applyLegacyUsageToLedger,
+  applyProviderUsageToLedger,
+  contextUsageFromLedger,
+  sameUsageCost,
+} from "./usage-ledger";
 import type { AppStore } from "./types";
 import { invalidateEcosystemQueries } from "./ecosystem-events";
 import { upsertRecoveryNotice } from "./recovery-notices";
-import { upsertHealthAlert } from "./health-alerts";
+import { clearStaleSessionHealthAlerts, upsertHealthAlert } from "./health-alerts";
 import {
   applyLoopRuntimeUpdate,
   applySubagentRuntimeEvent,
@@ -83,6 +89,12 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
         healthAlerts: upsertHealthAlert(get().healthAlerts, alert),
       });
       return;
+    }
+
+    const currentHealthAlerts = get().healthAlerts;
+    const freshHealthAlerts = clearStaleSessionHealthAlerts(currentHealthAlerts, session_id);
+    if (freshHealthAlerts !== currentHealthAlerts) {
+      set({ healthAlerts: freshHealthAlerts });
     }
 
     if (event_type === "workflow_updated") {
@@ -190,6 +202,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
           blocks: [],
           costUsd: 0,
           contextUsage: null,
+          usageLedger: null,
           streaming: false,
         };
         sessions.set(session_id, session);
@@ -252,20 +265,63 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
     if (event_type === "usage") {
       const ue = event as Extract<StreamEvent, { event_type: "usage" }>;
       const contextWindowTokens = session.contextWindowTokens ?? getModelContextWindow(session.model);
-      sessions.set(session_id, {
-        ...session,
-        costUsd: (session.costUsd || 0) + ue.estimated_cost_usd,
-        contextUsage: buildContextUsage(
-          ue.input_tokens,
-          contextWindowTokens,
-          "provider_usage",
-          session.contextUsage,
-        ),
+      const previousLedger = session.usageLedger ?? null;
+      const usageLedger = applyLegacyUsageToLedger(previousLedger, ue);
+      const isDuplicateLegacy = previousLedger?.lastEventType === "provider_usage"
+        && usageLedger.legacyDuplicateIgnored
+        && usageLedger.lastEventType === "provider_usage";
+      const contextUsage = isDuplicateLegacy
+        ? session.contextUsage
+        : contextUsageFromLedger(usageLedger, contextWindowTokens, session.contextUsage);
+      const costDelta = isDuplicateLegacy ? null : usageLedger.costUsd;
+      sessions.set(session_id, touchSession(session, {
+        costUsd: addKnownCost(session.costUsd, costDelta),
+        contextUsage,
+        usageLedger,
         blocks,
-        updatedAt: Date.now(),
-      });
+      }));
       set({ sessions });
       persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
+      return;
+    }
+
+    if (event_type === "provider_usage") {
+      const providerEvent = event as Extract<StreamEvent, { event_type: "provider_usage" }>;
+      const previousLedger = session.usageLedger ?? null;
+      const contextWindowTokens = session.contextWindowTokens ?? getModelContextWindow(session.model);
+      const newBlock = eventToBlock(event);
+      const existingProviderBlockIndex = newBlock
+        ? blocks.findIndex((block) => block.block_id === newBlock.block_id && block.event_type === "provider_usage")
+        : -1;
+      const isProviderReplay = Boolean(
+        newBlock &&
+        (previousLedger?.lastProviderUsageBlockId === newBlock.block_id || existingProviderBlockIndex >= 0),
+      );
+      const usageLedger = isProviderReplay && previousLedger
+        ? previousLedger
+        : applyProviderUsageToLedger(previousLedger, providerEvent);
+      const contextUsage = isProviderReplay
+        ? session.contextUsage
+        : contextUsageFromLedger(usageLedger, contextWindowTokens, session.contextUsage);
+      if (newBlock) {
+        if (existingProviderBlockIndex >= 0) {
+          blocks[existingProviderBlockIndex] = newBlock;
+        } else {
+          blocks.push(newBlock);
+        }
+      }
+      const costDelta = isProviderReplay || isLegacyProviderCompanion(previousLedger, usageLedger)
+        ? null
+        : usageLedger.costUsd;
+      sessions.set(session_id, touchSession(session, {
+        blocks,
+        usageLedger,
+        contextUsage,
+        costUsd: addKnownCost(session.costUsd, costDelta),
+      }));
+      set({ sessions });
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
+      persistBlocks(session_id, blocks);
       return;
     }
 
@@ -522,4 +578,20 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
     set({ sessions });
     persistBlocks(session_id, blocks);
   };
+}
+
+function addKnownCost(current: number, delta: number | null | undefined): number {
+  return typeof delta === "number" && Number.isFinite(delta)
+    ? current + delta
+    : current;
+}
+
+function isLegacyProviderCompanion(
+  previous: SessionState["usageLedger"],
+  next: NonNullable<SessionState["usageLedger"]>,
+): boolean {
+  if (!previous || previous.lastEventType !== "usage") return false;
+  if (previous.inputTokens !== next.inputTokens) return false;
+  if (previous.outputTokens !== next.outputTokens) return false;
+  return sameUsageCost(previous.costUsd, next.costUsd);
 }

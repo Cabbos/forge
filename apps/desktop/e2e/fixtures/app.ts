@@ -467,6 +467,19 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       decision,
       created_at: "2026-06-16T00:00:00.000Z",
     });
+    const permissionMode = () => {
+      // @ts-expect-error mock
+      if (!window.__mockPermissionMode) {
+        // @ts-expect-error mock
+        window.__mockPermissionMode = {
+          mode: "manual_confirm",
+          workspace_path: null,
+          session_scoped: true,
+        };
+      }
+      // @ts-expect-error mock
+      return window.__mockPermissionMode as Record<string, unknown>;
+    };
     const capabilityEnabledState = () => {
       // @ts-expect-error acceptance mock
       if (!window.__mockCapabilityEnabled || typeof window.__mockCapabilityEnabled !== "object") {
@@ -805,6 +818,9 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           window.__lastDeletedSessionId = args.sessionId;
           return undefined;
         case "confirm_response":
+          // @ts-expect-error mock
+          window.__lastConfirmResponseArgs = args;
+          return undefined;
         case "set_api_key":
           return undefined;
         case "get_diagnostics_report":
@@ -859,6 +875,10 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           };
         case "list_permission_rules":
           return permissionRules();
+        case "get_permission_mode":
+          // @ts-expect-error mock
+          window.__lastGetPermissionModeArgs = args;
+          return permissionMode();
         case "set_permission_rule": {
           const toolName = String(args.toolName ?? "");
           const decision = String(args.decision ?? "allow");
@@ -870,6 +890,21 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           window.__mockPermissionRules = next;
           // @ts-expect-error mock
           window.__lastSetPermissionRuleArgs = args;
+          return next;
+        }
+        case "set_permission_mode": {
+          const mode = String(args.mode ?? "manual_confirm");
+          const next = {
+            mode,
+            workspace_path: mode === "trust_current_project" || mode === "full_access"
+              ? String(args.workspacePath ?? workingDir)
+              : null,
+            session_scoped: mode !== "trust_current_project" && mode !== "full_access",
+          };
+          // @ts-expect-error mock
+          window.__mockPermissionMode = next;
+          // @ts-expect-error mock
+          window.__lastSetPermissionModeArgs = args;
           return next;
         }
         case "reset_permission_rule": {
