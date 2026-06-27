@@ -611,6 +611,22 @@ Status: Not yet run.
 
 Protocol: `apps/desktop/docs/product/desktop-restart-smoke-protocol.md`
 
+Automation preflight:
+
+```bash
+node scripts/desktop-restart-harness-preflight.mjs --json
+```
+
+Result on 2026-06-27:
+
+```text
+status: blocked_official_macos
+canRunOfficialHarness: false
+platform: darwin
+missing: tauri-driver, webdriver client package
+fallbackCommand: npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts
+```
+
 Required evidence:
 - Pre-quit workspace:
 - Pre-quit permission mode:
@@ -638,6 +654,7 @@ Partial automation evidence:
 - Row #5 review-calibration automation passed on 2026-06-27: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib` verifies `/code-review` hidden action intent leads with findings, reserves P0/P1 for true blockers or unsafe results, treats product gaps as P2, and avoids offering fixes unless asked. The earlier manual beta output remains Pass/P2 because severity was too aggressive.
 - Row #6 same-workspace inheritance automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status card can trust the current project across conversations|composer full access inherits to a new conversation in the same workspace"` verifies both Trust and Full Access inherit through `getPermissionMode` in a new same-workspace conversation.
 - Row #9 mocked restart automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` verifies durable loop, session, A2A, and gateway facts after browser close/reopen. This remains partial browser-level evidence, not true Tauri force-quit proof.
+- Row #9 desktop harness preflight passed on 2026-06-27 as an honest block: `node scripts/desktop-restart-harness-preflight.mjs --json` reported `blocked_official_macos`, `canRunOfficialHarness: false`, and missing `tauri-driver` plus a WebDriver client package, so the mocked restart smoke remains the fallback rather than a true desktop force-quit claim.
 - Red evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "external-path|sensitive workspace"` initially failed because Full Access auto-approved an external-path confirmation card and Trust auto-approved a sensitive `.env` workspace confirmation card.
 - Fix evidence: Composer and Project Status pending-confirmation takeover now inspect raw `affected_files`; absolute external paths, `~`, `../` traversal, and Trust-mode `.env` / `.env.*` files remain manual.
 - Green evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|external-path|sensitive workspace|dotenv variant|trust|full access"` passed, 12 specs.

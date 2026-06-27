@@ -93,6 +93,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts",
     },
     {
+      label: "desktop restart harness availability preflight",
+      command: "node scripts/desktop-restart-harness-preflight.mjs --json",
+    },
+    {
       label: "manual desktop restart smoke protocol",
       command:
         'test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "Stability Convergence Restart Smoke - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
@@ -166,6 +170,7 @@ test("acceptance script dry-run lists the final product gates", () => {
   const ownershipGateOrder = [
     "completion contract mocked desktop smoke",
     "mocked desktop restart runtime smoke (partial macOS evidence)",
+    "desktop restart harness availability preflight",
     "manual desktop restart smoke protocol",
     "manual stability regression batch",
     "manual disposable edit/build loop protocol",

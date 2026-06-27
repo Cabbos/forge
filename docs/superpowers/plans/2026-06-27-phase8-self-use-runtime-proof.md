@@ -333,4 +333,4 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 - Rows #7/#8 have product-level mocked UI safety evidence plus backend policy evidence.
 - Rows #1/#2/#3 now have backend policy and acceptance-gate evidence, but still need the live disposable-project final-answer/diff/build proof that users feel.
 - Row #5 now has executable hidden-intent contract evidence through `capability_context`, while the older beta run remains Pass/P2 because its model output was too aggressive.
-- Restart remains manual-only until a real desktop restart harness exists.
+- Restart remains manual-only until a real desktop restart harness exists. The acceptance matrix now runs `node scripts/desktop-restart-harness-preflight.mjs --json` so the current `blocked_official_macos` state is explicit instead of implied.

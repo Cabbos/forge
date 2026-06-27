@@ -4,6 +4,16 @@
 
 This is a manual or semi-automated macOS smoke until Forge has a dedicated Tauri WebDriver harness. Run it against the desktop app and a disposable current project so restart recovery is checked against the real Tauri runtime, IndexedDB persistence, and live permission gate state rather than only browser-level mocks.
 
+## Automation Preflight
+
+Before claiming a true desktop restart harness exists, run:
+
+```bash
+node scripts/desktop-restart-harness-preflight.mjs --json
+```
+
+On current macOS runs this is expected to report `blocked_official_macos` and keep `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` as the partial mocked fallback. Use `--require-harness` only on a platform/runner that is expected to provide the official Tauri/WebDriver pieces.
+
 ## Required Evidence
 
 1. Current project path before quit.
