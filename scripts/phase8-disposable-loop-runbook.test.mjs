@@ -23,6 +23,7 @@ test("runbook reports ready project and row commands", (t) => {
   assert.equal(result.status, "pending_live_evidence");
   assert.match(result.prompt, /^\/fix @src\/App\.tsx/);
   assert.equal(result.manualPath, "/tmp/phase8-row-1-manual.json");
+  assert.ok(result.commands.some((entry) => entry.command.includes("review-disposable-loop-manual-json.mjs")));
   assert.ok(result.commands.some((entry) => entry.command.includes("validate-disposable-loop-evidence.mjs")));
   assert.ok(result.commands.some((entry) => entry.command.includes("--manual-json /tmp/phase8-row-1-manual.json")));
   assert.match(result.markdown, /Phase 8 Disposable Loop Runbook - Row 1/);

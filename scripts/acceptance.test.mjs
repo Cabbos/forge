@@ -145,6 +145,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node scripts/create-disposable-loop-manual-json.mjs --json --row 1",
     },
     {
+      label: "disposable edit/build loop manual evidence review",
+      command: "node scripts/review-disposable-loop-manual-json.mjs --json --row 1",
+    },
+    {
       label: "disposable edit/build loop row runbook",
       command: "node scripts/phase8-disposable-loop-runbook.mjs --json --row 1",
     },
@@ -223,6 +227,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "disposable edit/build loop evidence validator",
     "disposable edit/build loop evidence archive dry-run",
     "disposable edit/build loop manual evidence template",
+    "disposable edit/build loop manual evidence review",
     "disposable edit/build loop row runbook",
     "disposable edit/build loop status summary",
     "provider usage known/unknown telemetry",
