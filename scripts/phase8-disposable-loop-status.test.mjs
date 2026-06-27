@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,6 +151,34 @@ test("exit code helper can hard-gate live readiness", () => {
     1,
   );
   assert.equal(phase8DisposableLoopStatusExitCode({ status: "ui_evidence_not_ready", readyForLiveRun: false }), 0);
+  assert.equal(
+    phase8DisposableLoopStatusExitCode(
+      {
+        status: "ready_for_live_row",
+        readyForLiveRun: true,
+        uiEvidencePreflight: {
+          status: "not_checked",
+          canCollectLiveUiEvidence: null,
+        },
+      },
+      { requireLiveReady: true },
+    ),
+    1,
+  );
+  assert.equal(
+    phase8DisposableLoopStatusExitCode(
+      {
+        status: "ready_for_live_row",
+        readyForLiveRun: true,
+        uiEvidencePreflight: {
+          status: "ready",
+          canCollectLiveUiEvidence: true,
+        },
+      },
+      { requireLiveReady: true },
+    ),
+    0,
+  );
 });
 
 test("cli json prints machine-readable status", (t) => {
@@ -184,12 +212,12 @@ test("cli json prints machine-readable status", (t) => {
   assert.deepEqual(parsed.recoveryCommands, []);
 });
 
-test("cli require-live-ready exits zero for a ready row", (t) => {
+test("cli require-live-ready exits nonzero when UI preflight is skipped", (t) => {
   const projectPath = createStatusProject(t);
   const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
   t.after(() => rmSync(outDir, { recursive: true, force: true }));
 
-  const output = execFileSync(
+  const result = spawnSync(
     process.execPath,
     [
       scriptPath,
@@ -208,10 +236,11 @@ test("cli require-live-ready exits zero for a ready row", (t) => {
       encoding: "utf8",
     },
   );
-  const parsed = JSON.parse(output);
+  const parsed = JSON.parse(result.stdout);
 
+  assert.equal(result.status, 1);
   assert.equal(parsed.status, "ready_for_live_row");
-  assert.equal(parsed.readyForLiveRun, true);
+  assert.equal(parsed.uiEvidencePreflight.status, "not_checked");
 });
 
 function writeCompleteArchive(outDir, row, { writeEvidence = true, writeMarkdown = true } = {}) {

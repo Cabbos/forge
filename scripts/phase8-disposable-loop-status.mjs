@@ -76,7 +76,9 @@ export function generatePhase8DisposableLoopStatus({
 
 export function phase8DisposableLoopStatusExitCode(result, { requireLiveReady = false } = {}) {
   if (result.status === "project_not_ready") return 1;
-  if (requireLiveReady && result.status !== "complete" && !result.readyForLiveRun) return 1;
+  if (!requireLiveReady || result.status === "complete") return 0;
+  if (!result.readyForLiveRun) return 1;
+  if (result.uiEvidencePreflight?.canCollectLiveUiEvidence !== true) return 1;
   return 0;
 }
 
@@ -222,7 +224,7 @@ Options:
   --skip-ui-preflight
                      Do not run local desktop UI evidence preflight before printing.
   --require-live-ready
-                     Exit nonzero unless the next row is ready for live Forge evidence or all rows are complete.
+                     Exit nonzero unless the next row is verified ready for live Forge evidence or all rows are complete.
   -h, --help         Show this help.
 `);
 }
