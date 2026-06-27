@@ -141,6 +141,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib",
     },
     {
+      label: "permission mode, live-session sync, and shell policy contract tests",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml permission_handlers --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib",
+    },
+    {
       label: "slash command review calibration contract tests",
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib",
     },
@@ -172,6 +177,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "persisted A2A lineage tests",
     "typed completion evidence and review-to-commit eligibility tests",
     "gated headless ownership policy tests",
+    "permission mode, live-session sync, and shell policy contract tests",
     "slash command review calibration contract tests",
   ];
   let previousIndex = -1;
