@@ -7,6 +7,7 @@
 - Added a desktop UI evidence doctor that maps blocked local screenshot/window evidence to Screen Recording and Accessibility recovery commands before rerunning Phase 8 live rows.
 - Clarified in the desktop UI evidence preflight and doctor that Forge Trust/Full Access does not grant macOS Screen Recording or Accessibility, so blocked live evidence is not confused with Forge permission mode.
 - Added an opt-in `--open-settings` path to the desktop UI evidence doctor so blocked local evidence can open the relevant macOS privacy panes without changing default acceptance behavior.
+- Added the Phase 8 live-ready hard gate rerun command to the desktop UI evidence doctor recovery checklist so macOS permission fixes point back to the same `--require-live-ready` acceptance gate.
 - Added desktop UI evidence recovery commands to the preflight output so blocked screenshot/window evidence points directly to the doctor and opt-in settings opener.
 - Surfaced desktop UI evidence recovery commands in the Phase 8 disposable loop status and runbook outputs so blocked live rows expose the same doctor and settings-opener path from the top-level summary.
 - Added `--require-live-ready` to the Phase 8 disposable loop status helper so automation can fail fast when the next row is blocked by project readiness or desktop UI evidence.
