@@ -36,13 +36,13 @@ npm --prefix /Users/cabbos/project/forge-test-app-phase8-clean run build
 
 Open the prepared target project in Forge for rows #1-#3. The helper does not reset, stash, or edit the original source project; when possible it symlinks the source `node_modules` into the clean worktree so build/check evidence can run without reinstalling dependencies.
 
-Before collecting screen- or Computer Use-based evidence, check whether this desktop session can observe app windows:
+Before collecting screen- or Computer Use-based evidence, check whether this desktop session can observe app windows and capture nonblank screenshots:
 
 ```bash
 node scripts/desktop-ui-evidence-preflight.mjs --json
 ```
 
-If this reports `observer_limited` or `window_snapshot_failed`, do not claim live UI evidence from screenshots, window counts, or Computer Use output. Run the Forge row manually in a trusted desktop session, then paste the final answer, confirmation behavior, and screenshot/transcript reference into the manual JSON fields.
+If this reports `observer_limited`, `window_snapshot_failed`, `screen_capture_failed`, or `screen_capture_limited`, do not claim live UI evidence from screenshots, window counts, or Computer Use output. Run the Forge row manually in a trusted desktop session, then paste the final answer, confirmation behavior, and screenshot/transcript reference into the manual JSON fields.
 
 After each live row, collect a consistent evidence packet:
 
