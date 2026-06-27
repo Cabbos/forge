@@ -50,6 +50,26 @@ test("run-build captures successful build output", (t) => {
   assert.match(result.markdown, /passed: `npm --prefix/);
 });
 
+test("manual values render in markdown evidence", (t) => {
+  const projectPath = createEvidenceProject(t);
+
+  const result = collectDisposableLoopEvidence({
+    projectPath,
+    row: "1",
+    date: "2026-06-27",
+    manualValues: {
+      "Forge prompt": "/fix @src/App.tsx",
+      "Forge final answer": "Changed src/styles.css and build passed.",
+      "Confirmation behavior": "No confirmation card appeared under Full Access.",
+      "Screenshot or transcript reference": "screenshot-1.png",
+    },
+  });
+
+  assert.match(result.markdown, /Forge prompt: \/fix @src\/App\.tsx/);
+  assert.match(result.markdown, /Forge final answer: Changed src\/styles\.css and build passed\./);
+  assert.equal(result.manualFields.find((field) => field.label === "Confirmation behavior")?.value, "No confirmation card appeared under Full Access.");
+});
+
 test("cli markdown mode emits evidence template", (t) => {
   const projectPath = createEvidenceProject(t);
   appendFileSync(join(projectPath, "src", "App.tsx"), "\nexport const touched = true;\n");

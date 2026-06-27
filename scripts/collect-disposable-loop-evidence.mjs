@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import process from "node:process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,6 +15,7 @@ export function collectDisposableLoopEvidence({
   row = "all",
   runBuild = false,
   includeDiff = false,
+  manualValues = {},
   date = currentDate(),
 } = {}) {
   const resolvedProjectPath = resolve(projectPath);
@@ -29,7 +31,7 @@ export function collectDisposableLoopEvidence({
     preflight: summarizePreflight(preflight),
     git,
     build,
-    manualFields: manualFieldsForRow(row),
+    manualFields: manualFieldsForRow(row, manualValues),
   };
 
   if (includeDiff) {
@@ -135,7 +137,7 @@ function parseStatusFiles(statusShort) {
     });
 }
 
-function manualFieldsForRow(row) {
+function manualFieldsForRow(row, manualValues = {}) {
   const fields = [
     "Forge prompt",
     "Forge final answer",
@@ -145,7 +147,7 @@ function manualFieldsForRow(row) {
   if (row === "1" || row === "all") fields.push("Row #1 visible feedback fix result");
   if (row === "2" || row === "all") fields.push("Row #2 style-only polish result");
   if (row === "3" || row === "all") fields.push("Row #3 command-only check result");
-  return fields.map((label) => ({ label, value: "" }));
+  return fields.map((label) => ({ label, value: manualValues[label] ?? "" }));
 }
 
 function renderMarkdownEvidence(result) {
@@ -158,7 +160,7 @@ function renderMarkdownEvidence(result) {
     ? `${result.build.success ? "passed" : "failed"}: \`${result.build.command}\``
     : `not run: \`${result.build.command}\``;
   const buildOutput = result.build.outputTail ? fenced(result.build.outputTail) : "(not captured)";
-  const manualFields = result.manualFields.map((field) => `- ${field.label}:`).join("\n");
+  const manualFields = result.manualFields.map((field) => `- ${field.label}: ${formatManualValue(field.value)}`).join("\n");
 
   return `## Phase 8 Disposable Loop Evidence - ${result.date}
 
@@ -195,6 +197,11 @@ function fenced(value) {
   return `\`\`\`text\n${value}\n\`\`\``;
 }
 
+function formatManualValue(value) {
+  const text = String(value ?? "").trim();
+  return text ? text.replaceAll("\n", "\n  ") : "";
+}
+
 function inlineCodeOrNone(value) {
   return value ? `\`${value.replaceAll("`", "'")}\`` : "`(none)`";
 }
@@ -226,7 +233,11 @@ function shellToken(value) {
 }
 
 function currentDate() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function printHelp() {
@@ -241,6 +252,8 @@ Options:
   --row VALUE     Row scope to label: all, 1, 2, or 3. Defaults to all.
   --run-build     Run npm --prefix <project> run build and capture the output tail.
   --include-diff  Include full staged/unstaged diff text in JSON output.
+  --manual-json PATH
+                  JSON object keyed by manual evidence field label.
   -h, --help      Show this help.
 
 Default build command: npm ${DEFAULT_BUILD_ARGS.join(" ")}
@@ -255,6 +268,7 @@ function parseArgs(argv) {
     row: "all",
     runBuild: false,
     includeDiff: false,
+    manualJson: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -267,6 +281,11 @@ function parseArgs(argv) {
       options.runBuild = true;
     } else if (arg === "--include-diff") {
       options.includeDiff = true;
+    } else if (arg === "--manual-json") {
+      const value = argv[index + 1];
+      if (!value) throw new Error("--manual-json requires a path");
+      options.manualJson = value;
+      index += 1;
     } else if (arg === "--project") {
       const value = argv[index + 1];
       if (!value) throw new Error("--project requires a path");
@@ -301,6 +320,13 @@ function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
+  const manualValues = options.manualJson ? JSON.parse(readFileSync(options.manualJson, "utf8")) : {};
+  if ((manualValues && typeof manualValues !== "object") || Array.isArray(manualValues)) {
+    console.error("--manual-json must contain a JSON object");
+    return 2;
+  }
+
+  options.manualValues = manualValues;
   const result = collectDisposableLoopEvidence(options);
   if (options.markdown) {
     console.log(result.markdown);
