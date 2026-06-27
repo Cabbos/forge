@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a disposable loop row runbook helper. Phase 8 live edit/build proof can now print the prepared-project status, exact row prompt, manual JSON path, and collect/validate/archive command sequence for each row.
 - Fixed the disposable loop validator so strict project-based validation can read `--manual-json` final-answer and confirmation evidence before archive.
 - Added a disposable loop manual evidence template generator. Phase 8 live edit/build proof can now prefill exact row prompts and required manual evidence fields before archiving final-answer and confirmation behavior evidence.
 - Added a disposable loop evidence archive helper. Phase 8 live edit/build proof can now write collector JSON, markdown, and validation JSON into product docs after strict row validation passes, with dry-run support for the acceptance matrix.
