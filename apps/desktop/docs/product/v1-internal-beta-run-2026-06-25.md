@@ -633,6 +633,9 @@ Status: Not yet run.
 Partial automation evidence:
 
 - Rows #7/#8 safety boundary automation added on 2026-06-27.
+- Row #4 preview-ownership automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project delivery details surface preview ownership"` verifies expanded Project Status delivery details show preview status, URL, preview ownership, and `/Users/cabbos/project/forge`.
+- Row #6 same-workspace inheritance automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status card can trust the current project across conversations|composer full access inherits to a new conversation in the same workspace"` verifies both Trust and Full Access inherit through `getPermissionMode` in a new same-workspace conversation.
+- Row #9 mocked restart automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` verifies durable loop, session, A2A, and gateway facts after browser close/reopen. This remains partial browser-level evidence, not true Tauri force-quit proof.
 - Red evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "external-path|sensitive workspace"` initially failed because Full Access auto-approved an external-path confirmation card and Trust auto-approved a sensitive `.env` workspace confirmation card.
 - Fix evidence: Composer and Project Status pending-confirmation takeover now inspect raw `affected_files`; absolute external paths, `~`, `../` traversal, and Trust-mode `.env` / `.env.*` files remain manual.
 - Green evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|external-path|sensitive workspace|dotenv variant|trust|full access"` passed, 12 specs.
