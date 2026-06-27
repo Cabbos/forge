@@ -116,6 +116,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node scripts/disposable-loop-preflight.mjs --json",
     },
     {
+      label: "disposable edit/build loop clean worktree prepare dry-run",
+      command: "node scripts/prepare-disposable-loop-project.mjs --json --dry-run",
+    },
+    {
       label: "provider usage known/unknown telemetry",
       command:
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
@@ -179,6 +183,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "manual stability regression batch",
     "manual disposable edit/build loop protocol",
     "disposable edit/build loop project readiness preflight",
+    "disposable edit/build loop clean worktree prepare dry-run",
     "provider usage known/unknown telemetry",
     "composer context usage from provider_usage",
     "provider usage trace rendering",

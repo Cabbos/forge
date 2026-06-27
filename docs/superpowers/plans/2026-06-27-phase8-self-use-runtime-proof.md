@@ -8,7 +8,7 @@
 
 **Tech Stack:** Tauri Rust backend, React/TypeScript frontend, Zustand store, IndexedDB persistence, Playwright e2e, Node test runner, Cargo tests, GitNexus impact/detect_changes.
 
-**Status:** Tasks 1-4 complete for the implemented Phase 8 slice. Follow-up acceptance gates now cover permission-policy/live-session sync and `/code-review` calibration, and a disposable-project readiness preflight now guards the remaining live edit/build loop. The current local disposable project is dirty, so the full ten-row live disposable-project batch and true Tauri force-quit restart smoke remain manual/not-run evidence items.
+**Status:** Tasks 1-4 complete for the implemented Phase 8 slice. Follow-up acceptance gates now cover permission-policy/live-session sync and `/code-review` calibration, a disposable-project readiness preflight now guards the remaining live edit/build loop, and a clean non-destructive target worktree has been prepared for rows #1-#3. The live Forge UI run and true Tauri force-quit restart smoke remain manual/not-run evidence items.
 
 ---
 
@@ -16,7 +16,7 @@
 
 - **P8-A1 Safety Boundary Honesty:** Trust and Full Access must not auto-approve visible confirmation cards whose affected files are outside the current workspace, even when the confirmation's workspace label points at the current project.
 - **P8-A2 Secret Boundary Honesty:** Trust must not auto-approve sensitive workspace writes such as `.env`; Full Access may skip the prompt only when the backend classifies the operation as same-workspace and confirmable, never for external paths.
-- **P8-A3 Disposable Loop Proof:** A disposable-project edit/build loop records exact changed files, build/check result, and final-answer evidence without manual controller writes. Current state: backend policy and acceptance-gate evidence cover rows #1/#2/#3, and `scripts/disposable-loop-preflight.mjs` records whether the disposable project is ready for fresh evidence, but the live Forge UI loop remains not run end to end.
+- **P8-A3 Disposable Loop Proof:** A disposable-project edit/build loop records exact changed files, build/check result, and final-answer evidence without manual controller writes. Current state: backend policy and acceptance-gate evidence cover rows #1/#2/#3, `scripts/disposable-loop-preflight.mjs` records whether a project is ready for fresh evidence, and `scripts/prepare-disposable-loop-project.mjs` can create a clean target without resetting a dirty source project, but the live Forge UI loop remains not run end to end.
 - **P8-A4 Confirmation Replay Protocol:** Resolved confirmations have an explicit replayable event or persisted transcript marker so restart/history can show approved/declined state without inferring from interrupted `confirm_ask` metadata.
 - **P8-A5 Evidence Trail:** `apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md` records which regression-batch rows are automated, manual-only, passed, failed, or still not run.
 - **P8-A6 Verification:** Focused Playwright, Node, Cargo, acceptance dry-run, `git diff --check`, and GitNexus `detect_changes` pass before any commit.

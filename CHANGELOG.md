@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a non-destructive disposable loop preparation helper. Phase 8 live edit/build proof can now create a clean git worktree target from the demo project's `HEAD`, optionally link existing `node_modules`, and preserve residual changes in the original disposable project.
 - Added a disposable edit/build loop readiness preflight. The Phase 8 acceptance path now records whether the disposable project exists, is a clean git worktree, has expected demo files, and exposes a build script before treating live Forge edit/build evidence as fresh.
 - Added replayable confirmation response events. Approved, declined, and restored-interrupted confirmation states now have explicit transcript markers, so history/restart projection can resolve confirmation cards without inferring state from the original prompt alone.
 - Fixed usage/context accounting so `provider_usage` events update the Composer context indicator without relying on legacy `usage` events, and the `余` label now means true context remaining rather than auto-compact threshold distance.
