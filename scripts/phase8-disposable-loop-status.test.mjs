@@ -27,6 +27,7 @@ test("reports row #1 as next when no archive exists", (t) => {
 
   assert.equal(result.status, "ready_for_live_row");
   assert.equal(result.uiEvidencePreflight.status, "not_checked");
+  assert.equal(result.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
   assert.equal(result.nextRow, "1");
   assert.equal(result.liveReadyGate.pass, false);
   assert.equal(result.liveReadyGate.reason, "ui_evidence_not_checked");
@@ -247,6 +248,7 @@ test("cli json prints machine-readable status", (t) => {
 
   assert.equal(parsed.status, "ready_for_live_row");
   assert.equal(parsed.nextRow, "1");
+  assert.equal(parsed.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
   assert.equal(parsed.liveReadyGate.pass, false);
   assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.match(parsed.liveReadyGate.command, /--require-live-ready/);
@@ -283,6 +285,7 @@ test("cli require-live-ready exits nonzero when UI preflight is skipped", (t) =>
   assert.equal(result.status, 1);
   assert.equal(parsed.status, "ready_for_live_row");
   assert.equal(parsed.uiEvidencePreflight.status, "not_checked");
+  assert.equal(parsed.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
   assert.equal(parsed.liveReadyGate.pass, false);
   assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
 });
