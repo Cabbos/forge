@@ -133,7 +133,10 @@ function buildCommands({ projectPath, row, manualPath }) {
 
 function recoveryCommandsForUiEvidencePreflight(uiEvidencePreflight) {
   const commands = uiEvidencePreflight.recoveryCommands ?? [];
-  if (uiEvidencePreflight.canCollectLiveUiEvidence !== false) return commands;
+  const shouldRecover =
+    uiEvidencePreflight.canCollectLiveUiEvidence === false ||
+    uiEvidencePreflight.status === "not_checked";
+  if (!shouldRecover) return commands;
   return normalizeDesktopUiEvidenceRecoveryCommands(commands, {
     includeOpenSettings: commands.some((entry) => entry.command.includes("--open-settings")),
   });

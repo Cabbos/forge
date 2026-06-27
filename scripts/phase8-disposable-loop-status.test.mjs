@@ -32,6 +32,8 @@ test("reports row #1 as next when no archive exists", (t) => {
   assert.equal(result.liveReadyGate.pass, false);
   assert.equal(result.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.equal(result.liveReadyGate.checkedUiEvidencePreflight, false);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.equal(result.rows[0].status, "pending_live_evidence");
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("--row 1")));
   assert.match(result.markdown, /Next row: #1/);
@@ -256,7 +258,8 @@ test("cli json prints machine-readable status", (t) => {
   assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.match(parsed.liveReadyGate.command, /--require-live-ready/);
   assert.equal(parsed.rows.length, 3);
-  assert.deepEqual(parsed.recoveryCommands, []);
+  assert.ok(parsed.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(parsed.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
 });
 
 test("cli require-live-ready exits nonzero when UI preflight is skipped", (t) => {
@@ -291,6 +294,7 @@ test("cli require-live-ready exits nonzero when UI preflight is skipped", (t) =>
   assert.equal(parsed.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
   assert.equal(parsed.liveReadyGate.pass, false);
   assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
+  assert.ok(parsed.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
 });
 
 function writeCompleteArchive(outDir, row, { writeEvidence = true, writeMarkdown = true } = {}) {
