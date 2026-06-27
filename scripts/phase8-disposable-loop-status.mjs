@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import {
   collectScreenSnapshotSafe,
   evaluateDesktopUiEvidencePreflight,
+  normalizeDesktopUiEvidenceRecoveryCommands,
 } from "./desktop-ui-evidence-preflight.mjs";
 import { DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE } from "./desktop-ui-evidence-permission-scope.mjs";
 import { evaluatePhase8LiveReadyGate } from "./phase8-live-ready-gate.mjs";
@@ -293,7 +294,7 @@ function uncheckedDesktopUiEvidencePreflight() {
     windowSnapshot: null,
     screenSnapshot: null,
     permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
-    recoveryCommands: [],
+    recoveryCommands: normalizeDesktopUiEvidenceRecoveryCommands([]),
     recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
   };
 }

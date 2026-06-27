@@ -23,6 +23,8 @@ test("runbook reports ready project and row commands", (t) => {
   assert.equal(result.status, "pending_live_evidence");
   assert.equal(result.uiEvidencePreflight.status, "not_checked");
   assert.equal(result.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
+  assert.ok(result.uiEvidencePreflight.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(result.uiEvidencePreflight.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.equal(result.liveReadyGate.pass, false);
   assert.equal(result.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.equal(result.liveReadyGate.checkedUiEvidencePreflight, false);
@@ -96,6 +98,8 @@ test("cli json prints machine-readable runbook", (t) => {
   assert.equal(parsed.row, "2");
   assert.equal(parsed.readyForLiveRun, true);
   assert.equal(parsed.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
+  assert.ok(parsed.uiEvidencePreflight.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(parsed.uiEvidencePreflight.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.equal(parsed.liveReadyGate.pass, false);
   assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.ok(parsed.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
