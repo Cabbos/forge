@@ -102,6 +102,10 @@ test("acceptance script dry-run lists the final product gates", () => {
         'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"',
     },
     {
+      label: "desktop UI evidence observer preflight",
+      command: "node scripts/desktop-ui-evidence-preflight.mjs --json",
+    },
+    {
       label: "manual desktop restart smoke protocol",
       command:
         'test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "Stability Convergence Restart Smoke - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
@@ -209,6 +213,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "mocked desktop restart runtime smoke (partial macOS evidence)",
     "desktop restart harness availability preflight",
     "confirmation response replay contract tests",
+    "desktop UI evidence observer preflight",
     "manual desktop restart smoke protocol",
     "manual stability regression batch",
     "manual disposable edit/build loop protocol",

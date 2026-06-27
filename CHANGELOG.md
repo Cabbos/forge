@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a desktop UI evidence preflight so local screen/window automation limits are reported before collecting live Forge UI evidence.
 - Added a disposable loop status helper that reports archived row coverage and the next live row to run for Phase 8 edit/build proof.
 - Added an explicit confirmation-response replay acceptance gate so approved/declined confirmation projection stays visible in the runtime matrix.
 - Added a disposable loop row runbook helper. Phase 8 live edit/build proof can now print the prepared-project status, exact row prompt, manual JSON path, and collect/validate/archive command sequence for each row.

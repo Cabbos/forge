@@ -32,29 +32,30 @@ Runs the Forge Level 3 runtime acceptance gates:
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
   17. Desktop restart harness availability preflight
   18. Confirmation response replay contract tests
-  19. Manual desktop restart smoke protocol gate
-  20. Manual stability regression batch gate
-  21. Manual disposable edit/build loop protocol gate
-  22. Disposable edit/build loop project readiness preflight
-  23. Disposable edit/build loop clean worktree prepare dry-run
-  24. Disposable edit/build loop evidence collector
-  25. Disposable edit/build loop evidence validator
-  26. Disposable edit/build loop evidence archive dry-run
-  27. Disposable edit/build loop manual evidence template
-  28. Disposable edit/build loop row runbook
-  29. Disposable edit/build loop status summary
-  30. Provider usage known/unknown telemetry
-  31. Composer context usage from provider_usage
-  32. Provider usage trace rendering
-  33. Legacy usage duplicate suppression
-  34. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  35. Persisted A2A lineage tests
-  36. Typed completion evidence and review-to-commit eligibility tests
-  37. Gated headless ownership policy tests
-  38. Permission mode, live-session sync, and shell policy contract tests
-  39. Slash command review calibration contract tests
-  40. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  41. Rich preview e2e smoke specs
+  19. Desktop UI evidence observer preflight
+  20. Manual desktop restart smoke protocol gate
+  21. Manual stability regression batch gate
+  22. Manual disposable edit/build loop protocol gate
+  23. Disposable edit/build loop project readiness preflight
+  24. Disposable edit/build loop clean worktree prepare dry-run
+  25. Disposable edit/build loop evidence collector
+  26. Disposable edit/build loop evidence validator
+  27. Disposable edit/build loop evidence archive dry-run
+  28. Disposable edit/build loop manual evidence template
+  29. Disposable edit/build loop row runbook
+  30. Disposable edit/build loop status summary
+  31. Provider usage known/unknown telemetry
+  32. Composer context usage from provider_usage
+  33. Provider usage trace rendering
+  34. Legacy usage duplicate suppression
+  35. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  36. Persisted A2A lineage tests
+  37. Typed completion evidence and review-to-commit eligibility tests
+  38. Gated headless ownership policy tests
+  39. Permission mode, live-session sync, and shell policy contract tests
+  40. Slash command review calibration contract tests
+  41. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  42. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -86,6 +87,7 @@ COMMAND_LABELS=(
   "mocked desktop restart runtime smoke (partial macOS evidence)"
   "desktop restart harness availability preflight"
   "confirmation response replay contract tests"
+  "desktop UI evidence observer preflight"
   "manual desktop restart smoke protocol"
   "manual stability regression batch"
   "manual disposable edit/build loop protocol"
@@ -130,6 +132,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
   "node scripts/desktop-restart-harness-preflight.mjs --json"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g \"confirm response replay|startup transcript hydration\""
+  "node scripts/desktop-ui-evidence-preflight.mjs --json"
   "test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"Stability Convergence Restart Smoke - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q \"Stability Regression Batch - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q \"Phase 8 Disposable Edit/Build Loop - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
