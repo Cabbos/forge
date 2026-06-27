@@ -8,6 +8,7 @@ import {
   collectScreenSnapshotSafe,
   evaluateDesktopUiEvidencePreflight,
 } from "./desktop-ui-evidence-preflight.mjs";
+import { DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE } from "./desktop-ui-evidence-permission-scope.mjs";
 import { evaluatePhase8LiveReadyGate } from "./phase8-live-ready-gate.mjs";
 import { generatePhase8DisposableLoopRunbook } from "./phase8-disposable-loop-runbook.mjs";
 
@@ -291,6 +292,7 @@ function uncheckedDesktopUiEvidencePreflight() {
     reason: "Desktop UI evidence preflight was not run by this pure generator call.",
     windowSnapshot: null,
     screenSnapshot: null,
+    permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
     recoveryCommands: [],
     recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
   };
