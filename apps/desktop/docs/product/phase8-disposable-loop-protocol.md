@@ -50,7 +50,7 @@ For a concrete local recovery checklist, run:
 node scripts/desktop-ui-evidence-doctor.mjs --markdown
 ```
 
-The doctor maps screenshot and window-observation failures to Screen Recording and Accessibility recovery commands, explicitly notes that Forge Trust/Full Access does not grant those macOS privacy permissions, then points back to the strict preflight. To open the relevant macOS settings panes directly, run `node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings`; this is intentionally opt-in and is not used by the acceptance dry-run.
+The doctor maps screenshot and window-observation failures to Screen Recording and Accessibility recovery commands, explicitly notes that Forge Trust/Full Access does not grant those macOS privacy permissions, then points back to the strict preflight and the `node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready` hard gate. To open the relevant macOS settings panes directly, run `node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings`; this is intentionally opt-in and is not used by the acceptance dry-run.
 
 After each live row, collect a consistent evidence packet:
 

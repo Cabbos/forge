@@ -159,6 +159,10 @@ function commandsFor({ blockers }) {
     label: "rerun disposable loop status",
     command: "node scripts/phase8-disposable-loop-status.mjs --json",
   });
+  commands.push({
+    label: "rerun disposable loop live-ready hard gate",
+    command: "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready",
+  });
   return commands;
 }
 

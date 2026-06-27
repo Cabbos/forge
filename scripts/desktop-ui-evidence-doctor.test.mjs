@@ -50,8 +50,10 @@ test("diagnoses both screen recording and accessibility blockers", () => {
   assert.match(result.permissionScope.note, /Forge Trust\/Full Access does not grant macOS Screen Recording or Accessibility/);
   assert.ok(result.commands.some((entry) => entry.command.includes("Privacy_ScreenCapture")));
   assert.ok(result.commands.some((entry) => entry.command.includes("Privacy_Accessibility")));
+  assert.ok(result.commands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.match(result.markdown, /Grant Screen Recording and Accessibility/);
   assert.match(result.markdown, /Forge Trust\/Full Access does not grant macOS Screen Recording or Accessibility/);
+  assert.match(result.markdown, /phase8-disposable-loop-status\.mjs --json --require-live-ready/);
 });
 
 test("diagnoses a screen recording-only blocker", () => {
@@ -233,6 +235,7 @@ test("cli json emits machine-readable diagnosis", () => {
   assert.equal(typeof parsed.status, "string");
   assert.equal(typeof parsed.canCollectLiveUiEvidence, "boolean");
   assert.ok(Array.isArray(parsed.commands));
+  assert.ok(parsed.commands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.equal(parsed.openSettings, null);
 });
 
