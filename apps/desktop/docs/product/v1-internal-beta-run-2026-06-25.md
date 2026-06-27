@@ -636,6 +636,7 @@ Partial automation evidence:
 - Red evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "external-path|sensitive workspace"` initially failed because Full Access auto-approved an external-path confirmation card and Trust auto-approved a sensitive `.env` workspace confirmation card.
 - Fix evidence: Composer and Project Status pending-confirmation takeover now inspect raw `affected_files`; absolute external paths, `~`, `../` traversal, and Trust-mode `.env` / `.env.*` files remain manual.
 - Green evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|external-path|sensitive workspace|dotenv variant|trust|full access"` passed, 12 specs.
+- Row #10 context-remaining automation passed on 2026-06-27: `node --test apps/desktop/src/components/session/contextUsageView.test.mjs` verifies small provider usage is not rounded down to the auto-compact threshold, and `npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g "provider_usage without legacy usage"` verifies provider usage `411 / 1M` renders as `余 999.5K` with the 967K threshold only in the tooltip.
 - Remaining manual status: the full ten-row disposable-project batch is still not run end to end.
 
 ## Phase 8 Disposable Edit/Build Loop - 2026-06-27
