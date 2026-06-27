@@ -618,4 +618,158 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[tokio::test]
+    async fn full_access_project_mode_syncs_to_live_session_harness_before_send_input() {
+        let (state, dir) = temp_state();
+        state
+            .harness
+            .permission_gate
+            .full_access_current_project("previous-session", &dir)
+            .await;
+
+        let session = Arc::new(AgentSession::new(
+            "session-2".to_string(),
+            "deepseek".to_string(),
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")),
+            Arc::new(Harness::new_with_pending(
+                dir.clone(),
+                state.pending_confirms.clone(),
+            )),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-2".to_string(), session.clone())
+            .await;
+
+        let before = session
+            .harness
+            .permission_gate
+            .check(
+                "session-2",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(before, GateDecision::Ask { .. }),
+            "new live session harness starts without app-level full access: {:?}",
+            before
+        );
+
+        let synced = sync_app_permission_mode_to_session(&state, &session, "session-2", &dir).await;
+        assert_eq!(synced.mode, PermissionMode::FullAccess);
+        assert!(!synced.session_scoped);
+
+        let after = session
+            .harness
+            .permission_gate
+            .check(
+                "session-2",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(after, GateDecision::Allow),
+            "send_input sync path should install full access into the live session harness: {:?}",
+            after
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn manual_restore_removes_trust_and_full_access_from_new_sessions() {
+        let (state, dir) = temp_state();
+
+        let trusted = set_permission_mode_for_state(
+            &state,
+            "session-1".to_string(),
+            PermissionMode::TrustCurrentProject,
+            Some(dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("trust mode");
+        assert_eq!(trusted.mode, PermissionMode::TrustCurrentProject);
+
+        let full_access = set_permission_mode_for_state(
+            &state,
+            "session-1".to_string(),
+            PermissionMode::FullAccess,
+            Some(dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("full access mode");
+        assert_eq!(full_access.mode, PermissionMode::FullAccess);
+
+        let restored = set_permission_mode_for_state(
+            &state,
+            "session-1".to_string(),
+            PermissionMode::ManualConfirm,
+            Some(dir.to_string_lossy().to_string()),
+        )
+        .await
+        .expect("manual mode");
+        assert_eq!(restored.mode, PermissionMode::ManualConfirm);
+        assert_eq!(restored.workspace_path, None);
+        assert!(restored.session_scoped);
+
+        let session = Arc::new(AgentSession::new(
+            "session-2".to_string(),
+            "deepseek".to_string(),
+            Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")),
+            Arc::new(Harness::new_with_pending(
+                dir.clone(),
+                state.pending_confirms.clone(),
+            )),
+            "system".to_string(),
+            Some(128_000),
+        ));
+        state
+            .register_session("session-2".to_string(), session.clone())
+            .await;
+
+        let inherited =
+            sync_app_permission_mode_to_session(&state, &session, "session-2", &dir).await;
+        assert_eq!(inherited.mode, PermissionMode::ManualConfirm);
+        assert!(inherited.session_scoped);
+
+        let write_decision = session
+            .harness
+            .permission_gate
+            .check(
+                "session-2",
+                "write_to_file",
+                &serde_json::json!({"path": "src/main.rs"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(write_decision, GateDecision::Ask { .. }),
+            "new session writes should ask after manual restore: {:?}",
+            write_decision
+        );
+
+        let shell_decision = session
+            .harness
+            .permission_gate
+            .check(
+                "session-2",
+                "run_shell",
+                &serde_json::json!({"command": "npm install left-pad"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(shell_decision, GateDecision::Ask { .. }),
+            "new session confirmable shell should ask after manual restore: {:?}",
+            shell_decision
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -147,6 +147,26 @@ describe("visibleHealthAlertsForSession", () => {
     );
   });
 
+  it("does not show stale alerts for an inactive session when another session is active", () => {
+    const globalDiagnostics: RuntimeHealthAlert = {
+      alert_id: "diagnostics-global-warning",
+      session_id: "system",
+      level: "warn",
+      title: "Diagnostics warning",
+      message: "Runtime diagnostics need attention.",
+    };
+
+    const visible = visibleHealthAlertsForSession(
+      [staleSessionOne, staleSessionTwo, globalDiagnostics],
+      "session-2",
+    );
+
+    assert.deepStrictEqual(
+      visible.map((alert) => alert.alert_id),
+      ["session-stale-session-2", "diagnostics-global-warning"],
+    );
+  });
+
   it("shows all alerts before an active session is selected", () => {
     const alerts = [staleSessionOne, missingApiKey];
 

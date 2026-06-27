@@ -273,6 +273,123 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText("已继续");
   });
 
+  test("composer full access inherits to a new conversation in the same workspace", async ({ page }) => {
+    const firstSessionId = "composer-full-access-inherit-1";
+    const secondSessionId = "composer-full-access-inherit-2";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, firstSessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("手动确认");
+
+    await page.getByTestId("composer-permission-mode").click();
+    await page.getByTestId("composer-permission-full-access").click();
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("完全访问");
+
+    const setArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetPermissionModeArgs;
+    });
+    expect(setArgs).toMatchObject({
+      sessionId: firstSessionId,
+      mode: "full_access",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, secondSessionId);
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        // @ts-expect-error acceptance mock
+        return window.__lastGetPermissionModeArgs;
+      });
+    }).toMatchObject({
+      sessionId: secondSessionId,
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("完全访问");
+  });
+
+  test("permission mode does not leak after workspace changes", async ({ page }) => {
+    await page.addInitScript(() => {
+      const now = Date.now();
+      // @ts-expect-error acceptance mock
+      window.__mockProfiles = [
+        {
+          id: "default",
+          name: "默认",
+          default_provider: "deepseek",
+          default_model: "deepseek-v4-flash[1m]",
+          default_workspace: null,
+          api_key_overrides: null,
+          created_at_ms: now,
+          updated_at_ms: now,
+        },
+      ];
+      // @ts-expect-error acceptance mock
+      window.__mockActiveProfileId = "default";
+    });
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+
+    await page.getByTestId("workspace-trigger").click();
+    await page.getByRole("menuitem", { name: "手动输入路径" }).click();
+    await page.getByLabel("项目文件夹路径").fill("/Users/cabbos/project/forge-test-app");
+    await page.getByRole("button", { name: "添加" }).click();
+    await expect(page.getByTestId("workspace-trigger")).toContainText("forge-test-app");
+
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "permission-leak-test-app";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.getByTestId("composer-permission-mode").click();
+    await page.getByTestId("composer-permission-full-access").click();
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("完全访问");
+
+    const testAppArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastSetPermissionModeArgs;
+    });
+    expect(testAppArgs).toMatchObject({
+      sessionId: "permission-leak-test-app",
+      mode: "full_access",
+      workspacePath: "/Users/cabbos/project/forge-test-app",
+    });
+
+    await page.getByTestId("workspace-trigger").click();
+    await page.getByRole("menuitemradio", { name: "forge", exact: true }).click();
+    await expect(page.getByTestId("workspace-trigger")).toContainText("forge");
+    await expect(page.getByTestId("workspace-trigger")).not.toContainText("forge-test-app");
+
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "permission-leak-forge";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        // @ts-expect-error acceptance mock
+        return window.__lastGetPermissionModeArgs;
+      });
+    }).toMatchObject({
+      sessionId: "permission-leak-forge",
+      workspacePath: "/Users/cabbos/project/forge",
+    });
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("手动确认");
+  });
+
   test("fresh same-session output clears stale session health alert", async ({ page }) => {
     const sessionId = "acceptance-stale-health-session";
     await page.evaluate((id) => {

@@ -604,3 +604,28 @@ Decision: Continue with a blocker-specific implementation plan.
 Rationale:
 
 - The Blocker Queue contains at least one P0 or P1 that prevents a clean internal beta pass.
+
+## Stability Convergence Restart Smoke - 2026-06-27
+
+Status: Not yet run.
+
+Protocol: `apps/desktop/docs/product/desktop-restart-smoke-protocol.md`
+
+Required evidence:
+- Pre-quit workspace:
+- Pre-quit permission mode:
+- Pre-quit pending confirmation:
+- Pre-quit session id:
+- Post-restart screenshot or log:
+- Restored session id:
+- Restored permission mode:
+- Restored pending confirmation state:
+- Restored context usage:
+- Health alert state:
+- Result:
+
+## Stability Regression Batch - 2026-06-27
+
+Template: `apps/desktop/docs/product/stability-regression-batch.md`
+
+Status: Not yet run.
