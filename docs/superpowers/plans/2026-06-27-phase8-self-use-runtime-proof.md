@@ -8,7 +8,7 @@
 
 **Tech Stack:** Tauri Rust backend, React/TypeScript frontend, Zustand store, IndexedDB persistence, Playwright e2e, Node test runner, Cargo tests, GitNexus impact/detect_changes.
 
-**Status:** Task 2 complete; Tasks 3-4 pending.
+**Status:** Tasks 1-4 complete for the implemented Phase 8 slice. Follow-up acceptance gates now cover permission-policy/live-session sync and `/code-review` calibration. The full ten-row live disposable-project batch and true Tauri force-quit restart smoke remain manual/not-run evidence items.
 
 ---
 
@@ -16,7 +16,7 @@
 
 - **P8-A1 Safety Boundary Honesty:** Trust and Full Access must not auto-approve visible confirmation cards whose affected files are outside the current workspace, even when the confirmation's workspace label points at the current project.
 - **P8-A2 Secret Boundary Honesty:** Trust must not auto-approve sensitive workspace writes such as `.env`; Full Access may skip the prompt only when the backend classifies the operation as same-workspace and confirmable, never for external paths.
-- **P8-A3 Disposable Loop Proof:** A disposable-project edit/build loop records exact changed files, build/check result, and final-answer evidence without manual controller writes.
+- **P8-A3 Disposable Loop Proof:** A disposable-project edit/build loop records exact changed files, build/check result, and final-answer evidence without manual controller writes. Current state: backend policy and acceptance-gate evidence cover rows #1/#2/#3, but the live Forge UI loop remains not run end to end.
 - **P8-A4 Confirmation Replay Protocol:** Resolved confirmations have an explicit replayable event or persisted transcript marker so restart/history can show approved/declined state without inferring from interrupted `confirm_ask` metadata.
 - **P8-A5 Evidence Trail:** `apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md` records which regression-batch rows are automated, manual-only, passed, failed, or still not run.
 - **P8-A6 Verification:** Focused Playwright, Node, Cargo, acceptance dry-run, `git diff --check`, and GitNexus `detect_changes` pass before any commit.
@@ -257,7 +257,7 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 ### Task 2 Evidence
 
 - Protocol: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md` now defines the no-controller-writes setup, prompt sequence, required evidence, pass criteria, failure taxonomy, and completion evidence template for rows #1/#2/#3.
-- Batch table: rows #1/#2/#3 now reference the protocol and remain honestly marked `not yet run end to end`.
+- Batch table: rows #1/#2/#3 now reference the protocol, carry automated permission-policy evidence, and remain honest that live final-answer/diff/build evidence still follows the protocol and has not been run end to end.
 - Beta log: `Phase 8 Disposable Edit/Build Loop - 2026-06-27` records required evidence fields and `Status: Not yet run`.
 - Acceptance dry-run: `scripts/acceptance.sh --dry-run` now advertises `manual disposable edit/build loop protocol` and checks both the protocol file and beta log section.
 - Impact: `parseDryRunEntries` in `scripts/acceptance.test.mjs` reported LOW risk, 0 direct callers, and 0 affected processes before the acceptance matrix update.
@@ -265,6 +265,7 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 - Code quality review follow-up: protocol and beta log now include Row #2 no-external-write evidence so the style polish row carries its full required evidence into the completion template.
 - Verification: `node --test scripts/acceptance.test.mjs`, `scripts/acceptance.sh --dry-run`, `scripts/acceptance.sh --help`, `bash -n scripts/acceptance.sh`, and `git diff --check` passed after the review follow-ups.
 - GitNexus staged audit: `detect_changes({ repo: "forge", scope: "staged" })` reported LOW risk, 0 changed symbols, and 0 affected processes.
+- Follow-up acceptance gate: `test: add permission policy acceptance gate` added `permission_handlers`, `harness::permissions`, and `harness::shell_policy` to `scripts/acceptance.sh`, proving permission mode inheritance, live-session harness sync, routine workspace write/shell allowance, and catastrophic/external blocking remain covered by the final gate.
 
 ## Task 3: Confirmation Response Replay Protocol
 
@@ -322,10 +323,14 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 - Final dry-run/formatting: `scripts/acceptance.sh --dry-run`, `git diff --check`, and `git diff --cached --check` passed.
 - GitNexus staged audit: `detect_changes({ repo: "forge", scope: "staged" })` reported MEDIUM risk, 54 changed symbols, 17 changed files, and 4 affected `createOutputEventDispatcher` runtime projection flows; the touched dispatcher path is covered by the focused store tests and Playwright smoke above.
 - Commit: Phase 8 Task 3/4 slice committed as `feat: add confirmation response replay events`.
+- Follow-up commits:
+  - `test: add code review calibration acceptance gate` added `capability_context` to the final acceptance matrix so `/code-review` findings-first and severity-calibration behavior stays executable evidence.
+  - `test: add permission policy acceptance gate` added permission-mode/live-session sync and shell-policy contract tests to the final acceptance matrix, closing the evidence drift between mocked UI trust controls and backend session gates.
 
 ## Notes From Initial Subagent Audit
 
 - The ten-row stability regression batch has not been run end-to-end; the beta log still marks it `Not yet run`.
-- Rows #7/#8 are the highest-risk first slice because external path and secret-like writes are safety boundaries.
-- Rows #1/#2/#3 are the highest product-value second slice because they prove the edit/build trust loop users feel.
+- Rows #7/#8 have product-level mocked UI safety evidence plus backend policy evidence.
+- Rows #1/#2/#3 now have backend policy and acceptance-gate evidence, but still need the live disposable-project final-answer/diff/build proof that users feel.
+- Row #5 now has executable hidden-intent contract evidence through `capability_context`, while the older beta run remains Pass/P2 because its model output was too aggressive.
 - Restart remains manual-only until a real desktop restart harness exists.
