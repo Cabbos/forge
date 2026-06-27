@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const KNOWN_WINDOWED_APPS = ["Google Chrome", "Codex", "Finder"];
+const BLANK_SCREENSHOT_BYTES_PER_PIXEL = 0.08;
 
 export function evaluateDesktopUiEvidencePreflight({
   platform = process.platform,
   windowSnapshot = collectWindowSnapshotSafe(),
+  screenSnapshot = null,
   requiredApps = KNOWN_WINDOWED_APPS,
 } = {}) {
   if (platform !== "darwin") {
@@ -17,7 +22,39 @@ export function evaluateDesktopUiEvidencePreflight({
       platform,
       reason: "Desktop UI evidence preflight currently checks macOS window observability only.",
       windowSnapshot,
+      screenSnapshot,
       recommendations: ["Use the platform-specific desktop UI harness for live evidence."],
+    };
+  }
+
+  if (screenSnapshot && !screenSnapshot.ok) {
+    return {
+      status: "screen_capture_failed",
+      canCollectLiveUiEvidence: false,
+      platform,
+      reason: "macOS screen capture failed, so screenshot-based live UI evidence is not trustworthy.",
+      windowSnapshot,
+      screenSnapshot,
+      recommendations: [
+        "Grant Screen Recording permission to the controlling app or collect the live row manually.",
+        "Do not treat missing screenshots as Forge runtime evidence.",
+      ],
+    };
+  }
+
+  if (screenSnapshot?.likelyBlank) {
+    return {
+      status: "screen_capture_limited",
+      canCollectLiveUiEvidence: false,
+      platform,
+      reason:
+        "macOS screen capture produced a likely blank image; screenshot-based live UI evidence is not trustworthy.",
+      windowSnapshot,
+      screenSnapshot,
+      recommendations: [
+        "Grant Screen Recording permission to the controlling app or collect the live row manually.",
+        "Keep Phase 8 row status as pending until final-answer, diff, build, and confirmation evidence is captured.",
+      ],
     };
   }
 
@@ -28,6 +65,7 @@ export function evaluateDesktopUiEvidencePreflight({
       platform,
       reason: "System Events could not enumerate visible process windows.",
       windowSnapshot,
+      screenSnapshot,
       recommendations: [
         "Grant Accessibility permission to the controlling app or run the live row manually.",
         "Do not treat missing screenshots or window counts as Forge runtime evidence.",
@@ -48,6 +86,7 @@ export function evaluateDesktopUiEvidencePreflight({
       reason:
         "Visible apps were found, but System Events reported zero windows for known windowed apps; local UI automation is not a trustworthy live-evidence source.",
       windowSnapshot,
+      screenSnapshot,
       recommendations: [
         "Run Forge live rows manually or from a desktop session with Accessibility/Screen Recording permissions.",
         "Keep Phase 8 row status as pending until final-answer, diff, build, and confirmation evidence is captured.",
@@ -61,6 +100,7 @@ export function evaluateDesktopUiEvidencePreflight({
     platform,
     reason: "System Events can observe at least one visible app window.",
     windowSnapshot,
+    screenSnapshot,
     recommendations: [],
   };
 }
@@ -83,6 +123,63 @@ export function collectWindowSnapshotSafe() {
       rows: [],
       error: String(error.stderr || error.message || error),
     };
+  }
+}
+
+export function collectScreenSnapshotSafe() {
+  const dir = mkdtempSync(join(tmpdir(), "forge-ui-evidence-"));
+  const file = join(dir, "screen.png");
+  try {
+    execFileSync("screencapture", ["-x", file], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5_000,
+    });
+    const sizeBytes = statSync(file).size;
+    const { width, height } = readImageDimensions(file);
+    const pixelCount = width * height;
+    const compressedBytesPerPixel = pixelCount > 0 ? sizeBytes / pixelCount : null;
+    const likelyBlank =
+      compressedBytesPerPixel !== null &&
+      compressedBytesPerPixel > 0 &&
+      compressedBytesPerPixel < BLANK_SCREENSHOT_BYTES_PER_PIXEL;
+
+    return {
+      ok: true,
+      width,
+      height,
+      sizeBytes,
+      compressedBytesPerPixel,
+      likelyBlank,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      width: 0,
+      height: 0,
+      sizeBytes: 0,
+      compressedBytesPerPixel: null,
+      likelyBlank: false,
+      error: String(error.stderr || error.message || error),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function readImageDimensions(file) {
+  try {
+    const output = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5_000,
+    });
+    const width = Number.parseInt(output.match(/pixelWidth:\s*(\d+)/)?.[1] ?? "0", 10);
+    const height = Number.parseInt(output.match(/pixelHeight:\s*(\d+)/)?.[1] ?? "0", 10);
+    return { width, height };
+  } catch {
+    return { width: 0, height: 0 };
   }
 }
 
@@ -114,14 +211,15 @@ function parseWindowSnapshot(output) {
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/desktop-ui-evidence-preflight.mjs [--json] [--require-ready]
+  console.log(`Usage: node scripts/desktop-ui-evidence-preflight.mjs [--json] [--require-ready] [--skip-screen-capture]
 
-Checks whether this local macOS session can observe desktop UI windows well enough to collect live Forge UI evidence.
+Checks whether this local macOS session can observe desktop UI windows and screenshots well enough to collect live Forge UI evidence.
 
 Options:
-  --json           Print machine-readable status.
-  --require-ready  Exit non-zero unless live UI evidence collection appears ready.
-  -h, --help       Show this help.
+  --json                 Print machine-readable status.
+  --require-ready        Exit non-zero unless live UI evidence collection appears ready.
+  --skip-screen-capture  Check only Accessibility window enumeration.
+  -h, --help             Show this help.
 `);
 }
 
@@ -141,12 +239,16 @@ function printHuman(result) {
 function main(argv = process.argv.slice(2)) {
   const json = argv.includes("--json");
   const requireReady = argv.includes("--require-ready");
+  const skipScreenCapture = argv.includes("--skip-screen-capture");
   if (argv.includes("-h") || argv.includes("--help")) {
     printHelp();
     return 0;
   }
 
-  const result = evaluateDesktopUiEvidencePreflight();
+  const result = evaluateDesktopUiEvidencePreflight({
+    screenSnapshot:
+      process.platform === "darwin" && !skipScreenCapture ? collectScreenSnapshotSafe() : null,
+  });
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
