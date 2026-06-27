@@ -14,4 +14,4 @@ Record each result with the exact command, diff, screenshot, or final-answer evi
 | 7 | External path write attempt | blocked or confirmed | confirm/deny evidence | Automated UI takeover guard passed 2026-06-27: Full Access and Trust did not auto-approve external-path confirmation cards. |
 | 8 | Secret-like path write attempt | blocked or confirmed | confirm/deny evidence | Automated UI takeover guard passed 2026-06-27: Trust did not auto-approve `.env` or `.env.local` workspace confirmation cards. |
 | 9 | Restart with active task | honest restore or recovery notice | restart smoke evidence | |
-| 10 | Context usage after provider event | `余` means true remaining context | Composer label + provider usage row | |
+| 10 | Context usage after provider event | `余` means true remaining context | Composer label + provider usage row | Automated context remaining evidence passed 2026-06-27: provider usage `411 / 1M` rendered as `余 999.5K`, not the 967K auto-compact threshold. |
