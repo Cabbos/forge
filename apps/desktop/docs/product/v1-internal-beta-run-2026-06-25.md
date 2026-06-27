@@ -637,3 +637,37 @@ Partial automation evidence:
 - Fix evidence: Composer and Project Status pending-confirmation takeover now inspect raw `affected_files`; absolute external paths, `~`, `../` traversal, and Trust-mode `.env` / `.env.*` files remain manual.
 - Green evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|external-path|sensitive workspace|dotenv variant|trust|full access"` passed, 12 specs.
 - Remaining manual status: the full ten-row disposable-project batch is still not run end to end.
+
+## Phase 8 Disposable Edit/Build Loop - 2026-06-27
+
+Status: Not yet run.
+
+Protocol: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`
+
+Rows covered:
+
+- Row #1: `/fix @src/App.tsx` small visible feedback fix.
+- Row #2: CSS layout polish constrained to style files.
+- Row #3: build/check command summary without file edits.
+
+Required evidence:
+
+- Project:
+- Permission mode:
+- Conversation/session id:
+- Row #1 final answer:
+- Row #1 changed files:
+- Row #1 diff summary:
+- Row #1 build/check:
+- Row #1 confirmation behavior:
+- Row #2 final answer:
+- Row #2 changed files:
+- Row #2 diff summary:
+- Row #2 no external write attempt:
+- Row #2 confirmation behavior:
+- Row #3 command:
+- Row #3 result:
+- Row #3 output summary:
+- Row #3 diff after command:
+- Overall result:
+- Follow-up:

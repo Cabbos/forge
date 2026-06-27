@@ -32,16 +32,17 @@ Runs the Forge Level 3 runtime acceptance gates:
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
   17. Manual desktop restart smoke protocol gate
   18. Manual stability regression batch gate
-  19. Provider usage known/unknown telemetry
-  20. Composer context usage from provider_usage
-  21. Provider usage trace rendering
-  22. Legacy usage duplicate suppression
-  23. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  24. Persisted A2A lineage tests
-  25. Typed completion evidence and review-to-commit eligibility tests
-  26. Gated headless ownership policy tests
-  27. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  28. Rich preview e2e smoke specs
+  19. Manual disposable edit/build loop protocol gate
+  20. Provider usage known/unknown telemetry
+  21. Composer context usage from provider_usage
+  22. Provider usage trace rendering
+  23. Legacy usage duplicate suppression
+  24. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  25. Persisted A2A lineage tests
+  26. Typed completion evidence and review-to-commit eligibility tests
+  27. Gated headless ownership policy tests
+  28. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  29. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -73,6 +74,7 @@ COMMAND_LABELS=(
   "mocked desktop restart runtime smoke (partial macOS evidence)"
   "manual desktop restart smoke protocol"
   "manual stability regression batch"
+  "manual disposable edit/build loop protocol"
   "provider usage known/unknown telemetry"
   "composer context usage from provider_usage"
   "provider usage trace rendering"
@@ -104,6 +106,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
   "test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"Stability Convergence Restart Smoke - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q \"Stability Regression Batch - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
+  "test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q \"Phase 8 Disposable Edit/Build Loop - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib"
   "npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g \"provider_usage without legacy usage\""
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"provider usage\""

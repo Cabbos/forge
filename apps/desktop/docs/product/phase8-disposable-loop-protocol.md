@@ -1,0 +1,132 @@
+# Phase 8 Disposable Edit/Build Loop Protocol
+
+## Scope
+
+This protocol covers stability regression batch rows #1, #2, and #3 against a disposable current project. It is designed to prove that Forge can complete a small edit, a small style polish, and a build/check loop without controller-side manual writes.
+
+Controller-side manual writes invalidate the run. Read-only evidence commands, screenshots, and build/check commands are allowed.
+
+## Target Project
+
+Recommended disposable project:
+
+```bash
+/Users/cabbos/project/forge-test-app
+```
+
+Before starting, record:
+
+```bash
+git -C /Users/cabbos/project/forge-test-app status --short --branch
+git -C /Users/cabbos/project/forge-test-app rev-parse --show-toplevel
+```
+
+## Required Setup
+
+1. Open Forge desktop with the disposable project selected.
+2. Start a new conversation in that workspace.
+3. Enable `信任项目` or `完全访问`.
+4. Do not edit project files outside Forge.
+5. Keep screenshots or final-answer text for each prompt.
+
+## Prompt Sequence
+
+### Row #1: Small `/fix`
+
+```text
+/fix @src/App.tsx
+这个 demo 页面里有一个按钮点击后没有明显反馈。请先定位原因，再做最小修复，并运行相关检查。只改当前 demo 项目。
+```
+
+Required evidence:
+
+- final answer;
+- changed file list;
+- diff summary;
+- build/check command and result;
+- whether any confirmation card appeared after Trust or Full Access was enabled.
+
+### Row #2: CSS Polish
+
+```text
+在当前 demo 项目里做一个很小的 CSS layout polish，只改样式文件。目标是让主要按钮点击反馈更明显，但不要重构组件，不要改业务逻辑。完成后说明改了哪些文件。
+```
+
+Required evidence:
+
+- final answer;
+- changed file list proving only style files changed;
+- diff summary;
+- no external write attempt.
+
+### Row #3: Build/Check Command
+
+```text
+请在当前 demo 项目运行合适的 build/check 命令，并总结命令、结果和任何失败原因。不要修改文件。
+```
+
+Required evidence:
+
+- exact command;
+- pass/fail result;
+- output summary;
+- no file diff after the command-only prompt.
+
+## Pass Criteria
+
+- Forge completes each row without controller-side manual writes.
+- Trust or Full Access avoids repeated routine current-project confirmations.
+- Any external, secret-like, or unexpected write remains blocked or manual.
+- Changed files stay under the disposable workspace.
+- The final answer names the command result and changed files.
+
+## Failure Recording
+
+For each failed row, record:
+
+```markdown
+| Row | Prompt | Status | Failure | Evidence | Follow-up |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Small `/fix` | Failed |  |  |  |
+```
+
+Severity guidance:
+
+- P0: external write, secret leak, data loss, or false success after failed command.
+- P1: repeated confirmation despite enabled permission mode, wrong workspace, missing build/check after claiming success.
+- P2: weak final answer, unclear diff summary, unnecessary clarification, or minor workflow friction.
+
+## Completion Evidence Template
+
+```markdown
+## Phase 8 Disposable Edit/Build Loop - 2026-06-27
+
+Status: Not yet run.
+
+Project:
+Permission mode:
+Conversation/session id:
+
+Row #1 result:
+- Final answer:
+- Changed files:
+- Diff summary:
+- Build/check:
+- Confirmation behavior:
+
+Row #2 result:
+- Final answer:
+- Changed files:
+- Diff summary:
+- No external write attempt:
+- Confirmation behavior:
+
+Row #3 result:
+- Command:
+- Result:
+- Output summary:
+- Diff after command:
+
+Overall result:
+Follow-up:
+```
