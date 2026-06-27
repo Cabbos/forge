@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -100,6 +100,34 @@ test("cli json mode reports pending evidence as pass by default", (t) => {
   assert.equal(parsed.pass, true);
 });
 
+test("cli can validate strict project evidence with manual json", (t) => {
+  const { projectPath, manualPath } = createStrictProjectEvidence(t);
+
+  const output = execFileSync(
+    process.execPath,
+    [
+      scriptPath,
+      "--json",
+      "--project",
+      projectPath,
+      "--manual-json",
+      manualPath,
+      "--row",
+      "1",
+      "--run-build",
+      "--require-complete",
+    ],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  const parsed = JSON.parse(output);
+
+  assert.equal(parsed.status, "complete");
+  assert.equal(parsed.pass, true);
+});
+
 function baseEvidence({
   row = "all",
   status = "changes_detected",
@@ -136,4 +164,59 @@ function baseEvidence({
       { label: "Screenshot or transcript reference", value: fillManualFields ? "screenshot" : "" },
     ],
   };
+}
+
+function createStrictProjectEvidence(t) {
+  const dir = mkdtempSync(join(tmpdir(), "forge-validate-project-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const projectPath = join(dir, "forge-test-app");
+  const manualPath = join(dir, "manual.json");
+  mkdirSync(join(projectPath, "src"), { recursive: true });
+  writeFileSync(
+    join(projectPath, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "forge-test-app",
+        version: "0.1.0",
+        private: true,
+        type: "module",
+        scripts: {
+          build: "node -e \"console.log('build ok')\"",
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(join(projectPath, "src", "App.tsx"), "export default function App() {\n  return <button>Demo</button>;\n}\n");
+  writeFileSync(join(projectPath, "src", "styles.css"), "button { opacity: 1; }\n");
+  git(projectPath, ["init"]);
+  git(projectPath, ["config", "user.email", "forge@example.local"]);
+  git(projectPath, ["config", "user.name", "Forge Test"]);
+  git(projectPath, ["add", "."]);
+  git(projectPath, ["commit", "-m", "initial validation project"]);
+  appendFileSync(join(projectPath, "src", "styles.css"), "\nbutton:active { transform: scale(0.97); }\n");
+  writeFileSync(
+    manualPath,
+    `${JSON.stringify(
+      {
+        "Forge prompt": "/fix @src/App.tsx",
+        "Forge final answer": "Changed feedback styles and build passed.",
+        "Confirmation behavior": "No confirmation card appeared under Full Access.",
+        "Screenshot or transcript reference": "screenshot-row-1.png",
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  return { projectPath, manualPath };
+}
+
+function git(cwd, args) {
+  execFileSync("git", args, {
+    cwd,
+    stdio: "ignore",
+  });
 }

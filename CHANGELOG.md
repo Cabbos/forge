@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed the disposable loop validator so strict project-based validation can read `--manual-json` final-answer and confirmation evidence before archive.
 - Added a disposable loop manual evidence template generator. Phase 8 live edit/build proof can now prefill exact row prompts and required manual evidence fields before archiving final-answer and confirmation behavior evidence.
 - Added a disposable loop evidence archive helper. Phase 8 live edit/build proof can now write collector JSON, markdown, and validation JSON into product docs after strict row validation passes, with dry-run support for the acceptance matrix.
 - Added a disposable loop evidence validator. Phase 8 live edit/build proof can now distinguish pending evidence from strict completion and fail row-specific checks for missing build output, missing manual Forge evidence, row #2 non-style changes, or row #3 file diffs.
