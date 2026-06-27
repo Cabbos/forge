@@ -27,6 +27,8 @@ test("reports observer_limited when visible known apps expose zero windows", () 
 
   assert.equal(result.status, "observer_limited");
   assert.equal(result.canCollectLiveUiEvidence, false);
+  assert.equal(result.permissionScope.kind, "macos_privacy");
+  assert.match(result.permissionScope.note, /Forge Trust\/Full Access does not grant macOS Screen Recording or Accessibility/);
   assert.match(result.reason, /zero windows/);
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs --markdown")));
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
@@ -133,6 +135,7 @@ test("cli json emits a machine-readable status", () => {
   assert.equal(typeof parsed.status, "string");
   assert.equal(typeof parsed.canCollectLiveUiEvidence, "boolean");
   assert.equal(parsed.platform, process.platform);
+  assert.equal(parsed.permissionScope.kind, "macos_privacy");
   assert.ok(Array.isArray(parsed.recoveryCommands));
 });
 

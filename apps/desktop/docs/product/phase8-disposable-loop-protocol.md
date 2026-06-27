@@ -42,7 +42,7 @@ Before collecting screen- or Computer Use-based evidence, check whether this des
 node scripts/desktop-ui-evidence-preflight.mjs --json
 ```
 
-If this reports `observer_limited`, `window_snapshot_failed`, `screen_capture_failed`, or `screen_capture_limited`, do not claim live UI evidence from screenshots, window counts, or Computer Use output. The JSON includes `recoveryCommands` pointing to the desktop UI evidence doctor. Run the Forge row manually in a trusted desktop session, then paste the final answer, confirmation behavior, and screenshot/transcript reference into the manual JSON fields.
+If this reports `observer_limited`, `window_snapshot_failed`, `screen_capture_failed`, or `screen_capture_limited`, do not claim live UI evidence from screenshots, window counts, or Computer Use output. The JSON includes `recoveryCommands` pointing to the desktop UI evidence doctor plus `permissionScope` explaining that Forge Trust/Full Access does not grant macOS Screen Recording or Accessibility. Run the Forge row manually in a trusted desktop session, then paste the final answer, confirmation behavior, and screenshot/transcript reference into the manual JSON fields.
 
 For a concrete local recovery checklist, run:
 

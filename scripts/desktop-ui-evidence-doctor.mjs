@@ -7,15 +7,12 @@ import {
   collectScreenSnapshotSafe,
   evaluateDesktopUiEvidencePreflight,
 } from "./desktop-ui-evidence-preflight.mjs";
+import { DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE } from "./desktop-ui-evidence-permission-scope.mjs";
 
 const SCREEN_RECORDING_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 const ACCESSIBILITY_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
-const PERMISSION_SCOPE = {
-  kind: "macos_privacy",
-  note: "Forge Trust/Full Access does not grant macOS Screen Recording or Accessibility; grant these permissions to the app running the local evidence scripts.",
-};
 
 export function diagnoseDesktopUiEvidence({
   preflight = uncheckedPreflight(),
@@ -47,7 +44,7 @@ export function diagnoseDesktopUiEvidence({
     platform: preflight.platform,
     blockers,
     commands: commandsFor({ blockers }),
-    permissionScope: PERMISSION_SCOPE,
+    permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
     nextStep: nextStepFor({ status }),
     openSettings: null,
     preflight,

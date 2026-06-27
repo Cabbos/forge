@@ -6,6 +6,8 @@ import { join } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
+import { DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE } from "./desktop-ui-evidence-permission-scope.mjs";
+
 const KNOWN_WINDOWED_APPS = ["Google Chrome", "Codex", "Finder"];
 const BLANK_SCREENSHOT_BYTES_PER_PIXEL = 0.08;
 const DOCTOR_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown";
@@ -25,6 +27,7 @@ export function evaluateDesktopUiEvidencePreflight({
       reason: "Desktop UI evidence preflight currently checks macOS window observability only.",
       windowSnapshot,
       screenSnapshot,
+      permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
       recoveryCommands: recoveryCommands(),
       recommendations: ["Use the platform-specific desktop UI harness for live evidence."],
     };
@@ -38,6 +41,7 @@ export function evaluateDesktopUiEvidencePreflight({
       reason: "macOS screen capture failed, so screenshot-based live UI evidence is not trustworthy.",
       windowSnapshot,
       screenSnapshot,
+      permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
       recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Grant Screen Recording permission to the controlling app or collect the live row manually.",
@@ -56,6 +60,7 @@ export function evaluateDesktopUiEvidencePreflight({
         "macOS screen capture produced a likely blank image; screenshot-based live UI evidence is not trustworthy.",
       windowSnapshot,
       screenSnapshot,
+      permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
       recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Grant Screen Recording permission to the controlling app or collect the live row manually.",
@@ -73,6 +78,7 @@ export function evaluateDesktopUiEvidencePreflight({
       reason: "System Events could not enumerate visible process windows.",
       windowSnapshot,
       screenSnapshot,
+      permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
       recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Grant Accessibility permission to the controlling app or run the live row manually.",
@@ -96,6 +102,7 @@ export function evaluateDesktopUiEvidencePreflight({
         "Visible apps were found, but System Events reported zero windows for known windowed apps; local UI automation is not a trustworthy live-evidence source.",
       windowSnapshot,
       screenSnapshot,
+      permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
       recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Run Forge live rows manually or from a desktop session with Accessibility/Screen Recording permissions.",
@@ -112,6 +119,7 @@ export function evaluateDesktopUiEvidencePreflight({
     reason: "System Events can observe at least one visible app window.",
     windowSnapshot,
     screenSnapshot,
+    permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
     recoveryCommands: [],
     recommendations: [],
   };
