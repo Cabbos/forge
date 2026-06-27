@@ -124,6 +124,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node scripts/collect-disposable-loop-evidence.mjs --json",
     },
     {
+      label: "disposable edit/build loop evidence validator",
+      command: "node scripts/validate-disposable-loop-evidence.mjs --json",
+    },
+    {
       label: "provider usage known/unknown telemetry",
       command:
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
@@ -189,6 +193,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "disposable edit/build loop project readiness preflight",
     "disposable edit/build loop clean worktree prepare dry-run",
     "disposable edit/build loop evidence collector",
+    "disposable edit/build loop evidence validator",
     "provider usage known/unknown telemetry",
     "composer context usage from provider_usage",
     "provider usage trace rendering",
