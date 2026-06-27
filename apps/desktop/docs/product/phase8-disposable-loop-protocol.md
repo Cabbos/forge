@@ -39,12 +39,13 @@ Open the prepared target project in Forge for rows #1-#3. The helper does not re
 After each live row, collect a consistent evidence packet:
 
 ```bash
+node scripts/create-disposable-loop-manual-json.mjs --row 1 --out /tmp/phase8-row-1-manual.json
 node scripts/collect-disposable-loop-evidence.mjs --markdown --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build
 node scripts/validate-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build --require-complete
-node scripts/archive-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --manual-json /path/to/manual-row-1.json --run-build --require-complete
+node scripts/archive-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --manual-json /tmp/phase8-row-1-manual.json --run-build --require-complete
 ```
 
-Use `--row 2` or `--row 3` for the later prompts. The collector captures git changed files, diff stat/name-status, optional build/check output, and markdown placeholders for the Forge final answer, confirmation behavior, and screenshot/transcript reference. The validator checks row-specific expectations: row #1 needs an in-`src/` fix plus build/check evidence, row #2 must stay style-file-only, and row #3 must leave no file diff while reporting a successful command. Without `--require-complete`, validation reports pending evidence without failing; with `--require-complete`, missing final-answer/confirmation/build/diff evidence fails the check. The archive helper writes `.evidence.json`, `.md`, and `.validation.json` into `apps/desktop/docs/product/evidence/phase8-disposable-loop/` only after strict validation passes. These helpers do not replace the live Forge UI evidence; paste the missing manual fields into the generated packet or pass them with `--manual-json`.
+Use `--row 2` or `--row 3` for the later prompts. The manual JSON generator pre-fills the exact prompt and correct evidence field labels; after Forge finishes, fill in the final answer, confirmation behavior, screenshot/transcript reference, and row result. The collector captures git changed files, diff stat/name-status, optional build/check output, and markdown placeholders for the Forge final answer, confirmation behavior, and screenshot/transcript reference. The validator checks row-specific expectations: row #1 needs an in-`src/` fix plus build/check evidence, row #2 must stay style-file-only, and row #3 must leave no file diff while reporting a successful command. Without `--require-complete`, validation reports pending evidence without failing; with `--require-complete`, missing final-answer/confirmation/build/diff evidence fails the check. The archive helper writes `.evidence.json`, `.md`, and `.validation.json` into `apps/desktop/docs/product/evidence/phase8-disposable-loop/` only after strict validation passes. These helpers do not replace the live Forge UI evidence; paste the missing manual fields into the generated packet or pass them with `--manual-json`.
 
 Before starting, record:
 
