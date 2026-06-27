@@ -141,6 +141,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib",
     },
     {
+      label: "slash command review calibration contract tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib",
+    },
+    {
       label: "desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs",
       command:
         "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts",
@@ -168,6 +172,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "persisted A2A lineage tests",
     "typed completion evidence and review-to-commit eligibility tests",
     "gated headless ownership policy tests",
+    "slash command review calibration contract tests",
   ];
   let previousIndex = -1;
   for (const label of ownershipGateOrder) {
