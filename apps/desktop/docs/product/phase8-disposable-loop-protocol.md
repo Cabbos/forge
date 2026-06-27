@@ -40,9 +40,10 @@ After each live row, collect a consistent evidence packet:
 
 ```bash
 node scripts/collect-disposable-loop-evidence.mjs --markdown --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build
+node scripts/validate-disposable-loop-evidence.mjs --json --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build --require-complete
 ```
 
-Use `--row 2` or `--row 3` for the later prompts. The collector captures git changed files, diff stat/name-status, optional build/check output, and markdown placeholders for the Forge final answer, confirmation behavior, and screenshot/transcript reference. It does not replace the live Forge UI evidence; paste the missing manual fields into the generated packet.
+Use `--row 2` or `--row 3` for the later prompts. The collector captures git changed files, diff stat/name-status, optional build/check output, and markdown placeholders for the Forge final answer, confirmation behavior, and screenshot/transcript reference. The validator checks row-specific expectations: row #1 needs an in-`src/` fix plus build/check evidence, row #2 must stay style-file-only, and row #3 must leave no file diff while reporting a successful command. Without `--require-complete`, validation reports pending evidence without failing; with `--require-complete`, missing final-answer/confirmation/build/diff evidence fails the check. These helpers do not replace the live Forge UI evidence; paste the missing manual fields into the generated packet.
 
 Before starting, record:
 

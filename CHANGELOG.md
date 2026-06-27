@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a disposable loop evidence validator. Phase 8 live edit/build proof can now distinguish pending evidence from strict completion and fail row-specific checks for missing build output, missing manual Forge evidence, row #2 non-style changes, or row #3 file diffs.
 - Added a disposable loop evidence collector. Phase 8 live edit/build proof can now emit a markdown packet with changed files, diff stat/name-status, optional build/check output, and manual placeholders for Forge final-answer and confirmation behavior evidence.
 - Added a non-destructive disposable loop preparation helper. Phase 8 live edit/build proof can now create a clean git worktree target from the demo project's `HEAD`, optionally link existing `node_modules`, and preserve residual changes in the original disposable project.
 - Added a disposable edit/build loop readiness preflight. The Phase 8 acceptance path now records whether the disposable project exists, is a clean git worktree, has expected demo files, and exposes a build script before treating live Forge edit/build evidence as fresh.
