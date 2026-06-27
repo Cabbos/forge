@@ -170,7 +170,7 @@ function uncheckedDesktopUiEvidencePreflight() {
     windowSnapshot: null,
     screenSnapshot: null,
     permissionScope: DESKTOP_UI_EVIDENCE_PERMISSION_SCOPE,
-    recoveryCommands: [],
+    recoveryCommands: normalizeDesktopUiEvidenceRecoveryCommands([]),
     recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
   };
 }
