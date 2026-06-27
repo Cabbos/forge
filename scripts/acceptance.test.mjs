@@ -106,6 +106,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node scripts/desktop-ui-evidence-preflight.mjs --json",
     },
     {
+      label: "desktop UI evidence doctor",
+      command: "node scripts/desktop-ui-evidence-doctor.mjs --json",
+    },
+    {
       label: "manual desktop restart smoke protocol",
       command:
         'test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "Stability Convergence Restart Smoke - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
@@ -222,6 +226,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "desktop restart harness availability preflight",
     "confirmation response replay contract tests",
     "desktop UI evidence observer preflight",
+    "desktop UI evidence doctor",
     "manual desktop restart smoke protocol",
     "manual stability regression batch",
     "manual disposable edit/build loop protocol",

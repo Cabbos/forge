@@ -56,6 +56,7 @@ test("reports UI evidence blocker without marking project as not ready", (t) => 
   assert.equal(result.rows[0].status, "ui_evidence_not_ready");
   assert.equal(result.rows[0].runbook.uiEvidencePreflight.status, "screen_capture_limited");
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs")));
+  assert.ok(result.nextCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs")));
   assert.match(result.nextStep, /trusted desktop session/);
 });
 

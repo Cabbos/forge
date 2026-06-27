@@ -77,6 +77,13 @@ function buildCommands({ projectPath, row, manualPath }) {
       ]),
     },
     {
+      label: "diagnose desktop UI evidence if preflight is blocked",
+      command: commandText("node", [
+        "scripts/desktop-ui-evidence-doctor.mjs",
+        "--markdown",
+      ]),
+    },
+    {
       label: "create manual evidence template",
       command: commandText("node", ["scripts/create-disposable-loop-manual-json.mjs", "--row", row, "--out", manualPath]),
     },

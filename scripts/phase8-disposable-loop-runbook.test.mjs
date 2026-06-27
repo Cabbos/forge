@@ -25,6 +25,7 @@ test("runbook reports ready project and row commands", (t) => {
   assert.match(result.prompt, /^\/fix @src\/App\.tsx/);
   assert.equal(result.manualPath, "/tmp/phase8-row-1-manual.json");
   assert.ok(result.commands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(result.commands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs --markdown")));
   assert.ok(result.commands.some((entry) => entry.command.includes("finalize-disposable-loop-row.mjs")));
   assert.ok(result.commands.some((entry) => entry.command.includes("--manual-json /tmp/phase8-row-1-manual.json")));
   assert.match(result.markdown, /Phase 8 Disposable Loop Runbook - Row 1/);
