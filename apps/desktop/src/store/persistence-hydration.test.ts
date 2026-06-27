@@ -243,6 +243,98 @@ describe("store usageLedger persistence and hydration", () => {
     assert.strictEqual(session.costUsd, 0.000096);
   });
 
+  it("hydrates usage ledger and composer context label from provider usage blocks after reload", async () => {
+    testIdb().set(PERSIST_KEY, [
+      {
+        id: "session-1",
+        agentType: "codex",
+        model: "deepseek-v4-flash[1m]",
+        workingDir: "/workspace",
+        workspaceId: "/workspace",
+        createdAt: 10,
+        updatedAt: 20,
+        contextWindowTokens: 1_000_000,
+        contextUsage: null,
+        usageLedger: null,
+        status: "running",
+        workflowState: null,
+        deliverySummary: null,
+      },
+    ]);
+    testIdb().set(BLOCKS_PREFIX + "session-1", [
+      {
+        block_id: "usage-after-first-turn",
+        event_type: "provider_usage",
+        content: "provider usage",
+        isComplete: true,
+        metadata: {
+          provider_id: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          source: "anthropic",
+          reason: "provider_reported",
+          input_tokens: 100,
+          output_tokens: 40,
+          cache_read_tokens: null,
+          cache_creation_tokens: null,
+          reasoning_tokens: null,
+          estimated_cost_micros: 50,
+          pricing_source: "forge_static_pricing_2026_06_20",
+        },
+      },
+      {
+        block_id: "usage-after-second-turn",
+        event_type: "provider_usage",
+        content: "provider usage",
+        isComplete: true,
+        metadata: {
+          provider_id: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          source: "anthropic",
+          reason: "provider_reported",
+          input_tokens: 411,
+          output_tokens: 137,
+          cache_read_tokens: null,
+          cache_creation_tokens: null,
+          reasoning_tokens: null,
+          estimated_cost_micros: 96,
+          pricing_source: "forge_static_pricing_2026_06_20",
+        },
+      },
+    ]);
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.usageLedger?.inputTokens, 411);
+    assert.strictEqual(session.usageLedger?.outputTokens, 137);
+    assert.strictEqual(session.usageLedger?.estimatedCostMicros, 96);
+    assert.strictEqual(session.usageLedger?.costUsd, 0.000096);
+    assert.strictEqual(session.costUsd, 0.000146);
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.contextUsage?.contextWindowTokens, 1_000_000);
+    assert.strictEqual(session.contextUsage?.source, "provider_usage");
+    assert.strictEqual(session.contextUsage?.percentUsed, 0);
+
+    const composerContextLabelInput = {
+      fallbackContextWindowTokens: session.contextWindowTokens,
+      isCompacting: false,
+      isStreaming: session.streaming,
+      usage: session.contextUsage,
+    };
+    assert.strictEqual(composerContextLabelInput.usage?.usedTokens, session.usageLedger?.inputTokens);
+    assert.strictEqual(
+      composerContextLabelInput.usage?.contextWindowTokens,
+      composerContextLabelInput.fallbackContextWindowTokens,
+    );
+    assert.strictEqual(composerContextLabelInput.usage?.source, "provider_usage");
+    assert.strictEqual(composerContextLabelInput.isStreaming, false);
+  });
+
   it("initializes a new session with a null usageLedger", () => {
     const state = createStoreState();
     const actions = createSessionActions(

@@ -359,21 +359,22 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
     assert.strictEqual(session.usageLedger?.inputTokens, 411);
   });
 
-  it("keeps compacted local estimate when duplicate legacy usage arrives after provider_usage", () => {
+  it("keeps compacted local estimate after provider usage replay and legacy companion", () => {
     const { state, dispatch } = createHarness();
-
-    dispatch({
-      event_type: "provider_usage",
+    const providerUsageEvent = {
+      event_type: "provider_usage" as const,
       session_id: "session-1",
       block_id: "usage-before-compact-legacy",
       provider_id: "deepseek",
       model: "deepseek-v4-flash[1m]",
       source: "anthropic",
-      reason: "provider_reported",
+      reason: "provider_reported" as const,
       input_tokens: 411,
       output_tokens: 137,
       estimated_cost_micros: 96,
-    });
+    };
+
+    dispatch(providerUsageEvent);
     dispatch({
       event_type: "context_compacted",
       session_id: "session-1",
@@ -384,6 +385,7 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
       estimated_tokens_before: 411,
       estimated_tokens_after: 128,
     });
+    dispatch(providerUsageEvent);
     dispatch({
       event_type: "usage",
       session_id: "session-1",
@@ -396,7 +398,14 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
     assert.strictEqual(session.costUsd, 0.000096);
     assert.strictEqual(session.contextUsage?.source, "local_estimate");
     assert.strictEqual(session.contextUsage?.usedTokens, 128);
+    assert.strictEqual(session.usageLedger?.lastEventType, "provider_usage");
+    assert.strictEqual(session.usageLedger?.inputTokens, 411);
+    assert.strictEqual(session.usageLedger?.lastProviderUsageBlockId, "usage-before-compact-legacy");
     assert.strictEqual(session.usageLedger?.legacyDuplicateIgnored, true);
+    assert.strictEqual(
+      session.blocks.filter((block) => block.event_type === "provider_usage").length,
+      1,
+    );
   });
 
   it("ignores replayed provider_usage with the same block id", () => {
@@ -512,6 +521,43 @@ describe("createOutputEventDispatcher health alerts", () => {
   });
 });
 
+describe("createOutputEventDispatcher replayed confirmations", () => {
+  it("restored interrupted pending confirmation replaces the existing confirm block after hydration", () => {
+    const { state, dispatch } = createHarness([
+      {
+        block_id: "confirm-1",
+        event_type: "confirm_ask",
+        content: "Allow write?",
+        isComplete: false,
+        metadata: {
+          kind: "write_file",
+          boundary: testWriteBoundary(),
+        },
+      },
+    ]);
+
+    dispatch({
+      event_type: "confirm_ask",
+      session_id: "session-1",
+      block_id: "confirm-1",
+      question: "Allow write?",
+      kind: "write_file",
+      boundary: testWriteBoundary(),
+      replayed_interrupted: true,
+    });
+
+    const confirmBlocks = state.sessions
+      .get("session-1")!
+      .blocks.filter((block) => block.event_type === "confirm_ask");
+    assert.strictEqual(confirmBlocks.length, 1);
+    assert.strictEqual(confirmBlocks[0].metadata.confirmed, true);
+    assert.strictEqual(confirmBlocks[0].metadata.answer, null);
+    assert.strictEqual(confirmBlocks[0].metadata.confirm_interrupted, true);
+    assert.strictEqual(confirmBlocks[0].metadata.confirm_interrupted_reason, "session_restored");
+    assert.strictEqual(confirmBlocks[0].isComplete, true);
+  });
+});
+
 function createHarness(blocks: SessionState["blocks"] = []) {
   const state = createDispatcherState([
     [
@@ -594,5 +640,22 @@ function testUsageLedger(overrides: Partial<SessionUsageLedgerState> = {}): Sess
     legacyDuplicateIgnored: false,
     updatedAt: 123,
     ...overrides,
+  };
+}
+
+function testWriteBoundary() {
+  return {
+    title: "Write src/main.ts",
+    target_label: "src/main.ts",
+    workspace_name: "workspace",
+    workspace_path: "/workspace",
+    operation: "write_file",
+    affected_files: ["/workspace/src/main.ts"],
+    command: null,
+    impact: "Updates a source file.",
+    risk: "normal" as const,
+    recovery: "Revert the file if needed.",
+    checkpoint_status: "ready" as const,
+    warning: null,
   };
 }

@@ -467,18 +467,40 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       decision,
       created_at: "2026-06-16T00:00:00.000Z",
     });
-    const permissionMode = () => {
+    const cleanWorkspacePath = (value: unknown) => {
+      const trimmed = typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
+      return trimmed ? trimmed : null;
+    };
+    const manualPermissionMode = () => ({
+      mode: "manual_confirm",
+      workspace_path: null,
+      session_scoped: true,
+    });
+    const permissionModesByWorkspace = () => {
       // @ts-expect-error mock
-      if (!window.__mockPermissionMode) {
+      if (!window.__mockPermissionModesByWorkspace || typeof window.__mockPermissionModesByWorkspace !== "object" || Array.isArray(window.__mockPermissionModesByWorkspace)) {
         // @ts-expect-error mock
-        window.__mockPermissionMode = {
-          mode: "manual_confirm",
-          workspace_path: null,
-          session_scoped: true,
-        };
+        window.__mockPermissionModesByWorkspace = {};
+        // @ts-expect-error mock
+        const legacyMode = window.__mockPermissionMode;
+        const legacyWorkspace = cleanWorkspacePath(legacyMode?.workspace_path);
+        if (
+          legacyMode &&
+          typeof legacyMode === "object" &&
+          legacyWorkspace &&
+          (legacyMode.mode === "trust_current_project" || legacyMode.mode === "full_access")
+        ) {
+          // @ts-expect-error mock
+          window.__mockPermissionModesByWorkspace[legacyWorkspace] = legacyMode;
+        }
       }
       // @ts-expect-error mock
-      return window.__mockPermissionMode as Record<string, unknown>;
+      return window.__mockPermissionModesByWorkspace as Record<string, Record<string, unknown>>;
+    };
+    const permissionModeForWorkspace = (workspacePath: unknown) => {
+      const workspaceKey = cleanWorkspacePath(workspacePath);
+      if (!workspaceKey) return manualPermissionMode();
+      return permissionModesByWorkspace()[workspaceKey] ?? manualPermissionMode();
     };
     const capabilityEnabledState = () => {
       // @ts-expect-error acceptance mock
@@ -878,7 +900,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "get_permission_mode":
           // @ts-expect-error mock
           window.__lastGetPermissionModeArgs = args;
-          return permissionMode();
+          return permissionModeForWorkspace(args.workspacePath);
         case "set_permission_rule": {
           const toolName = String(args.toolName ?? "");
           const decision = String(args.decision ?? "allow");
@@ -894,13 +916,22 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         }
         case "set_permission_mode": {
           const mode = String(args.mode ?? "manual_confirm");
-          const next = {
-            mode,
-            workspace_path: mode === "trust_current_project" || mode === "full_access"
-              ? String(args.workspacePath ?? workingDir)
-              : null,
-            session_scoped: mode !== "trust_current_project" && mode !== "full_access",
-          };
+          const workspaceKey = cleanWorkspacePath(args.workspacePath ?? sessionWorkingDirs.get(String(args.sessionId ?? "")) ?? workingDir);
+          const store = permissionModesByWorkspace();
+          const next = mode === "trust_current_project" || mode === "full_access"
+            ? {
+                mode,
+                workspace_path: workspaceKey ?? workingDir,
+                session_scoped: false,
+              }
+            : manualPermissionMode();
+          if (workspaceKey) {
+            if (mode === "trust_current_project" || mode === "full_access") {
+              store[workspaceKey] = next;
+            } else {
+              delete store[workspaceKey];
+            }
+          }
           // @ts-expect-error mock
           window.__mockPermissionMode = next;
           // @ts-expect-error mock
