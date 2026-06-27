@@ -326,6 +326,7 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 - Follow-up commits:
   - `test: add code review calibration acceptance gate` added `capability_context` to the final acceptance matrix so `/code-review` findings-first and severity-calibration behavior stays executable evidence.
   - `test: add permission policy acceptance gate` added permission-mode/live-session sync and shell-policy contract tests to the final acceptance matrix, closing the evidence drift between mocked UI trust controls and backend session gates.
+  - `test: add confirmation replay acceptance gate` adds a focused acceptance row for Rust `confirm_response` replay markers plus Playwright replay/hydration specs, preventing older restart plans from regressing to the pre-`confirm_response` protocol gap.
 
 ## Notes From Initial Subagent Audit
 
