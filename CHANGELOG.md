@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a disposable loop row finalizer that reviews manual evidence, validates strict row output, and archives the Phase 8 row in one command.
 - Added a disposable loop manual evidence reviewer so Phase 8 row archives catch prompt mismatches, empty fields, and placeholders before strict validation.
 - Added a desktop UI evidence preflight so local screen/window automation limits are reported before collecting live Forge UI evidence.
 - Added a disposable loop status helper that reports archived row coverage and the next live row to run for Phase 8 edit/build proof.

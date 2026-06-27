@@ -43,20 +43,21 @@ Runs the Forge Level 3 runtime acceptance gates:
   27. Disposable edit/build loop evidence archive dry-run
   28. Disposable edit/build loop manual evidence template
   29. Disposable edit/build loop manual evidence review
-  30. Disposable edit/build loop row runbook
-  31. Disposable edit/build loop status summary
-  32. Provider usage known/unknown telemetry
-  33. Composer context usage from provider_usage
-  34. Provider usage trace rendering
-  35. Legacy usage duplicate suppression
-  36. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  37. Persisted A2A lineage tests
-  38. Typed completion evidence and review-to-commit eligibility tests
-  39. Gated headless ownership policy tests
-  40. Permission mode, live-session sync, and shell policy contract tests
-  41. Slash command review calibration contract tests
-  42. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  43. Rich preview e2e smoke specs
+  30. Disposable edit/build loop row finalizer dry-run
+  31. Disposable edit/build loop row runbook
+  32. Disposable edit/build loop status summary
+  33. Provider usage known/unknown telemetry
+  34. Composer context usage from provider_usage
+  35. Provider usage trace rendering
+  36. Legacy usage duplicate suppression
+  37. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  38. Persisted A2A lineage tests
+  39. Typed completion evidence and review-to-commit eligibility tests
+  40. Gated headless ownership policy tests
+  41. Permission mode, live-session sync, and shell policy contract tests
+  42. Slash command review calibration contract tests
+  43. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  44. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -99,6 +100,7 @@ COMMAND_LABELS=(
   "disposable edit/build loop evidence archive dry-run"
   "disposable edit/build loop manual evidence template"
   "disposable edit/build loop manual evidence review"
+  "disposable edit/build loop row finalizer dry-run"
   "disposable edit/build loop row runbook"
   "disposable edit/build loop status summary"
   "provider usage known/unknown telemetry"
@@ -145,6 +147,7 @@ COMMANDS=(
   "node scripts/archive-disposable-loop-evidence.mjs --json --dry-run"
   "node scripts/create-disposable-loop-manual-json.mjs --json --row 1"
   "node scripts/review-disposable-loop-manual-json.mjs --json --row 1"
+  "node scripts/finalize-disposable-loop-row.mjs --json --dry-run --row 1"
   "node scripts/phase8-disposable-loop-runbook.mjs --json --row 1"
   "node scripts/phase8-disposable-loop-status.mjs --json"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib"

@@ -85,36 +85,9 @@ function buildCommands({ projectPath, row, manualPath }) {
       ]),
     },
     {
-      label: "review manual evidence",
+      label: "finalize strict evidence",
       command: commandText("node", [
-        "scripts/review-disposable-loop-manual-json.mjs",
-        "--json",
-        "--row",
-        row,
-        "--manual-json",
-        manualPath,
-        "--require-complete",
-      ]),
-    },
-    {
-      label: "validate strict evidence",
-      command: commandText("node", [
-        "scripts/validate-disposable-loop-evidence.mjs",
-        "--json",
-        "--project",
-        projectPath,
-        "--row",
-        row,
-        "--manual-json",
-        manualPath,
-        "--run-build",
-        "--require-complete",
-      ]),
-    },
-    {
-      label: "archive strict evidence",
-      command: commandText("node", [
-        "scripts/archive-disposable-loop-evidence.mjs",
+        "scripts/finalize-disposable-loop-row.mjs",
         "--json",
         "--project",
         projectPath,
@@ -134,7 +107,7 @@ function nextStep({ preflight, archive, row, manualPath }) {
     return "Resolve project preflight issues before running the live Forge row.";
   }
   if (archive.validationStatus === "pending_live_evidence") {
-    return `Create ${manualPath}, run row #${row} in Forge, fill the manual JSON fields, review them, then run validate and archive commands.`;
+    return `Create ${manualPath}, run row #${row} in Forge, fill the manual JSON fields, then finalize strict evidence.`;
   }
   return "Follow the commands in order and keep the generated archive files with the beta evidence.";
 }
