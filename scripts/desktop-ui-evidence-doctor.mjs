@@ -13,6 +13,10 @@ const SCREEN_RECORDING_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 const ACCESSIBILITY_SETTINGS_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+const DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND =
+  "node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready";
+const DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND =
+  "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
 
 export function diagnoseDesktopUiEvidence({
   preflight = uncheckedPreflight(),
@@ -62,7 +66,7 @@ function uncheckedPreflight() {
     reason: "Desktop UI evidence preflight was not supplied.",
     windowSnapshot: null,
     screenSnapshot: null,
-    recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` first."],
+    recommendations: [`Run \`${DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND}\` first.`],
   };
 }
 
@@ -95,7 +99,8 @@ function screenRecordingBlocker({ preflight, controllingApps }) {
     actions: [
       `Open Screen Recording settings and grant access to the app running these scripts: ${controllingApps.join(", ")}.`,
       "Quit and reopen the controlling app after changing Screen Recording permission.",
-      "Rerun `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready`.",
+      `Rerun \`${DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND}\`.`,
+      liveReadyHardGateAction(),
     ],
   };
 }
@@ -119,9 +124,14 @@ function accessibilityBlocker({ preflight, controllingApps }) {
     actions: [
       `Open Accessibility settings and grant access to the app running these scripts: ${controllingApps.join(", ")}.`,
       "Quit and reopen the controlling app after changing Accessibility permission.",
-      "Rerun `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready`.",
+      `Rerun \`${DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND}\`.`,
+      liveReadyHardGateAction(),
     ],
   };
+}
+
+function liveReadyHardGateAction() {
+  return `After the preflight passes, rerun \`${DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND}\`.`;
 }
 
 function statusFor({ preflight, screenCaptureBlocked, accessibilityBlocked }) {
@@ -153,7 +163,7 @@ function commandsFor({ blockers }) {
   }
   commands.push({
     label: "rerun desktop UI evidence preflight",
-    command: "node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready",
+    command: DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND,
   });
   commands.push({
     label: "rerun disposable loop status",
@@ -161,7 +171,7 @@ function commandsFor({ blockers }) {
   });
   commands.push({
     label: "rerun disposable loop live-ready hard gate",
-    command: "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready",
+    command: DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND,
   });
   return commands;
 }
@@ -171,13 +181,13 @@ function nextStepFor({ status }) {
     return "Desktop UI evidence is ready; run the next Phase 8 disposable loop row.";
   }
   if (status === "needs_screen_recording_and_accessibility") {
-    return "Grant Screen Recording and Accessibility, restart the controlling app, then rerun the preflight.";
+    return "Grant Screen Recording and Accessibility, restart the controlling app, then rerun the preflight and live-ready hard gate.";
   }
   if (status === "needs_screen_recording") {
-    return "Grant Screen Recording, restart the controlling app, then rerun the preflight.";
+    return "Grant Screen Recording, restart the controlling app, then rerun the preflight and live-ready hard gate.";
   }
   if (status === "needs_accessibility") {
-    return "Grant Accessibility, restart the controlling app, then rerun the preflight.";
+    return "Grant Accessibility, restart the controlling app, then rerun the preflight and live-ready hard gate.";
   }
   return "Run the preflight in a trusted desktop session or collect manual evidence outside this limited observer.";
 }
