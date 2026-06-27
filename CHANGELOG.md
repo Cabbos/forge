@@ -10,6 +10,7 @@
 - Surfaced desktop UI evidence recovery commands in the Phase 8 disposable loop status and runbook outputs so blocked live rows expose the same doctor and settings-opener path from the top-level summary.
 - Added `--require-live-ready` to the Phase 8 disposable loop status helper so automation can fail fast when the next row is blocked by project readiness or desktop UI evidence.
 - Tightened `--require-live-ready` so skipped desktop UI preflight no longer passes the hard live-evidence gate.
+- Added the Phase 8 live-ready hard gate to the acceptance matrix so full acceptance cannot pass while disposable loop UI evidence is blocked.
 - Tightened Phase 8 disposable loop status so a row is archived complete only when the validation JSON, evidence JSON, and markdown sidecars all exist.
 - Added a disposable loop manual evidence reviewer so Phase 8 row archives catch prompt mismatches, empty fields, and placeholders before strict validation.
 - Tightened the desktop UI evidence preflight to detect failed or likely blank macOS screenshots before treating a local session as usable for live Forge UI evidence.
