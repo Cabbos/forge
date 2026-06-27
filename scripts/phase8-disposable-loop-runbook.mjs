@@ -10,6 +10,7 @@ import {
   evaluateDesktopUiEvidencePreflight,
 } from "./desktop-ui-evidence-preflight.mjs";
 import { evaluateDisposableLoopProject } from "./disposable-loop-preflight.mjs";
+import { evaluatePhase8LiveReadyGate } from "./phase8-live-ready-gate.mjs";
 
 const DEFAULT_PROJECT_PATH = "/Users/cabbos/project/forge-test-app-phase8-clean";
 const DEFAULT_MANUAL_DIR = "/tmp";
@@ -64,6 +65,7 @@ export function generatePhase8DisposableLoopRunbook({
     nextStep: nextStep({ preflight, archive, uiEvidencePreflight, row: normalizedRow, manualPath }),
     markdown: "",
   };
+  result.liveReadyGate = evaluatePhase8LiveReadyGate(result);
   result.markdown = renderMarkdown(result);
   return result;
 }
@@ -174,6 +176,7 @@ Status: ${result.status}
 Project: \`${result.projectPath}\`
 Manual JSON: \`${result.manualPath}\`
 UI evidence preflight: ${result.uiEvidencePreflight.status}
+Live-ready gate: ${result.liveReadyGate.pass ? "pass" : "blocked"} (${result.liveReadyGate.reason})
 
 Prompt:
 
