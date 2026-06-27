@@ -5,8 +5,13 @@ import type { SessionState, SessionUsageLedgerState } from "../lib/protocol.ts";
 import type { AppStore } from "./types";
 
 declare global {
+  interface Window {
+    __TAURI__?: unknown;
+  }
   // eslint-disable-next-line no-var
   var __forgeTestIdb: Map<string, unknown> | undefined;
+  // eslint-disable-next-line no-var
+  var __forgeTauriInvoke: ((command: string, args?: Record<string, unknown>) => Promise<unknown>) | undefined;
 }
 
 const idbKeyvalStub = `
@@ -26,7 +31,10 @@ export async function del(key) {
 `;
 
 const tauriCoreStub = `
-export async function invoke(command) {
+export async function invoke(command, args) {
+  if (globalThis.__forgeTauriInvoke) {
+    return globalThis.__forgeTauriInvoke(command, args);
+  }
   throw new Error("Unexpected Tauri invoke in store persistence test: " + command);
 }
 `;
@@ -37,12 +45,25 @@ export async function open() {
 }
 `;
 
+const queryClientStub = `
+export const queryClient = {
+  async fetchQuery(options) {
+    return options.queryFn();
+  },
+  clear() {},
+  invalidateQueries() {
+    return Promise.resolve();
+  },
+};
+`;
+
 register(
   `data:text/javascript,${encodeURIComponent(`
     const stubs = new Map([
       ["idb-keyval", ${JSON.stringify(`data:text/javascript,${encodeURIComponent(idbKeyvalStub)}`)}],
       ["@tauri-apps/api/core", ${JSON.stringify(`data:text/javascript,${encodeURIComponent(tauriCoreStub)}`)}],
       ["@tauri-apps/plugin-dialog", ${JSON.stringify(`data:text/javascript,${encodeURIComponent(tauriDialogStub)}`)}],
+      ["../lib/query-client", ${JSON.stringify(`data:text/javascript,${encodeURIComponent(queryClientStub)}`)}],
     ]);
 
     export async function resolve(specifier, context, nextResolve) {
@@ -87,6 +108,8 @@ const { createSessionActions } = await import("./session-actions.ts");
 describe("store usageLedger persistence and hydration", () => {
   beforeEach(() => {
     globalThis.__forgeTestIdb = new Map();
+    globalThis.__forgeTauriInvoke = undefined;
+    delete globalThis.window.__TAURI__;
   });
 
   it("persists usageLedger in the session payload", async () => {
@@ -386,6 +409,86 @@ describe("store usageLedger persistence and hydration", () => {
       responded_at_ms: 123,
       confirm_response_reason: "user_response",
     });
+  });
+
+  it("hydrates resolved confirmations from Tauri transcript events", async () => {
+    globalThis.window.__TAURI__ = {};
+    globalThis.__forgeTauriInvoke = async (command, args) => {
+      switch (command) {
+        case "load_app_metadata":
+          return {
+            workspaces: [
+              {
+                id: "/workspace",
+                name: "workspace",
+                path: "/workspace",
+                lastOpenedAt: 20,
+              },
+            ],
+            activeWorkspaceId: "/workspace",
+            activeSessionId: "session-1",
+            selectedProvider: "deepseek",
+            selectedModel: "deepseek-v4-flash[1m]",
+          };
+        case "list_sessions":
+          return [
+            {
+              id: "session-1",
+              provider: "deepseek",
+              model: "deepseek-v4-flash[1m]",
+              status: "running",
+              created_at: "2026-06-27T00:00:00.000Z",
+              working_dir: "/workspace",
+              created_at_ms: 10,
+              updated_at_ms: 20,
+              context_window_tokens: 1_000_000,
+            },
+          ];
+        case "load_session_transcript":
+          assert.deepEqual(args, { sessionId: "session-1" });
+          return [
+            {
+              event_type: "confirm_ask",
+              session_id: "session-1",
+              block_id: "confirm-1",
+              question: "Allow write?",
+              kind: "file_write",
+              boundary: null,
+            },
+            {
+              event_type: "confirm_response",
+              session_id: "session-1",
+              block_id: "confirm-1",
+              approved: false,
+              responded_at_ms: 123,
+              reason: "user_response",
+            },
+          ];
+        case "save_app_metadata":
+          return null;
+        default:
+          throw new Error(`Unexpected Tauri invoke: ${command}`);
+      }
+    };
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1");
+    assert.ok(session);
+    const block = session.blocks[0];
+    assert.strictEqual(block.event_type, "confirm_ask");
+    assert.strictEqual(block.isComplete, true);
+    assert.strictEqual(block.metadata.confirmed, true);
+    assert.strictEqual(block.metadata.answer, false);
+    assert.strictEqual(block.metadata.responded_at_ms, 123);
+    assert.strictEqual(block.metadata.confirm_response_reason, "user_response");
+    assert.strictEqual(block.metadata.confirm_interrupted, undefined);
+    assert.strictEqual(state.activeSessionId, "session-1");
   });
 });
 
