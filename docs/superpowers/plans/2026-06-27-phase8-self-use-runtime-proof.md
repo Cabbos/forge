@@ -8,7 +8,7 @@
 
 **Tech Stack:** Tauri Rust backend, React/TypeScript frontend, Zustand store, IndexedDB persistence, Playwright e2e, Node test runner, Cargo tests, GitNexus impact/detect_changes.
 
-**Status:** Task 1 complete; Tasks 2-4 pending.
+**Status:** Task 2 complete; Tasks 3-4 pending.
 
 ---
 
@@ -245,12 +245,26 @@ Expected: the new safety specs pass and the existing trust/full-access specs rem
 **Files:**
 - Modify: `apps/desktop/docs/product/stability-regression-batch.md`
 - Modify: `apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md`
-- Create if useful: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`
+- Create: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`
+- Modify: `scripts/acceptance.sh`
+- Modify: `scripts/acceptance.test.mjs`
 
-- [ ] **Step 1: Define disposable-project protocol**
-- [ ] **Step 2: Record exact command and diff evidence format**
-- [ ] **Step 3: Run or mark manual-only evidence**
-- [ ] **Step 4: Verify docs and acceptance dry-run**
+- [x] **Step 1: Define disposable-project protocol**
+- [x] **Step 2: Record exact command and diff evidence format**
+- [x] **Step 3: Run or mark manual-only evidence**
+- [x] **Step 4: Verify docs and acceptance dry-run**
+
+### Task 2 Evidence
+
+- Protocol: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md` now defines the no-controller-writes setup, prompt sequence, required evidence, pass criteria, failure taxonomy, and completion evidence template for rows #1/#2/#3.
+- Batch table: rows #1/#2/#3 now reference the protocol and remain honestly marked `not yet run end to end`.
+- Beta log: `Phase 8 Disposable Edit/Build Loop - 2026-06-27` records required evidence fields and `Status: Not yet run`.
+- Acceptance dry-run: `scripts/acceptance.sh --dry-run` now advertises `manual disposable edit/build loop protocol` and checks both the protocol file and beta log section.
+- Impact: `parseDryRunEntries` in `scripts/acceptance.test.mjs` reported LOW risk, 0 direct callers, and 0 affected processes before the acceptance matrix update.
+- Spec review follow-up: beta log evidence fields were aligned with the protocol template by adding Row #1 diff summary, Row #2 final answer, and Row #3 output summary.
+- Code quality review follow-up: protocol and beta log now include Row #2 no-external-write evidence so the style polish row carries its full required evidence into the completion template.
+- Verification: `node --test scripts/acceptance.test.mjs`, `scripts/acceptance.sh --dry-run`, `scripts/acceptance.sh --help`, `bash -n scripts/acceptance.sh`, and `git diff --check` passed after the review follow-ups.
+- GitNexus staged audit: `detect_changes({ repo: "forge", scope: "staged" })` reported LOW risk, 0 changed symbols, and 0 affected processes.
 
 ## Task 3: Confirmation Response Replay Protocol
 

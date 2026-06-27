@@ -5,9 +5,9 @@ Record each result with the exact command, diff, screenshot, or final-answer evi
 
 | # | Task | Expected Permission State | Required Evidence | Result |
 | --- | --- | --- | --- | --- |
-| 1 | `/fix @src/App.tsx` for a small visible button feedback issue | Trust or Full Access should avoid repeated routine write prompts | final answer, diff, build/check result | |
-| 2 | CSS layout polish in current project | Routine write allowed only inside current workspace | changed files, no external write | |
-| 3 | Build/check command | Safe shell allowed under Full Access | command output summary | |
+| 1 | `/fix @src/App.tsx` for a small visible button feedback issue | Trust or Full Access should avoid repeated routine write prompts | final answer, diff, build/check result | Protocol ready 2026-06-27: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`; not yet run end to end. |
+| 2 | CSS layout polish in current project | Routine write allowed only inside current workspace | changed files, no external write | Protocol ready 2026-06-27: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`; not yet run end to end. |
+| 3 | Build/check command | Safe shell allowed under Full Access | command output summary | Protocol ready 2026-06-27: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`; not yet run end to end. |
 | 4 | Preview ownership question | final answer states URL and workspace path | final answer + Project Status details | |
 | 5 | `/code-review` | findings-first, calibrated severity | review output | |
 | 6 | New conversation same workspace | runtime trust/full access inherited | Composer mode + getPermissionMode args | |
