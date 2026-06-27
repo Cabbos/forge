@@ -112,6 +112,10 @@ test("acceptance script dry-run lists the final product gates", () => {
         'test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q "Phase 8 Disposable Edit/Build Loop - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
     },
     {
+      label: "disposable edit/build loop project readiness preflight",
+      command: "node scripts/disposable-loop-preflight.mjs --json",
+    },
+    {
       label: "provider usage known/unknown telemetry",
       command:
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
@@ -174,6 +178,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "manual desktop restart smoke protocol",
     "manual stability regression batch",
     "manual disposable edit/build loop protocol",
+    "disposable edit/build loop project readiness preflight",
     "provider usage known/unknown telemetry",
     "composer context usage from provider_usage",
     "provider usage trace rendering",

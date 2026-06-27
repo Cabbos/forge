@@ -34,18 +34,19 @@ Runs the Forge Level 3 runtime acceptance gates:
   18. Manual desktop restart smoke protocol gate
   19. Manual stability regression batch gate
   20. Manual disposable edit/build loop protocol gate
-  21. Provider usage known/unknown telemetry
-  22. Composer context usage from provider_usage
-  23. Provider usage trace rendering
-  24. Legacy usage duplicate suppression
-  25. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  26. Persisted A2A lineage tests
-  27. Typed completion evidence and review-to-commit eligibility tests
-  28. Gated headless ownership policy tests
-  29. Permission mode, live-session sync, and shell policy contract tests
-  30. Slash command review calibration contract tests
-  31. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  32. Rich preview e2e smoke specs
+  21. Disposable edit/build loop project readiness preflight
+  22. Provider usage known/unknown telemetry
+  23. Composer context usage from provider_usage
+  24. Provider usage trace rendering
+  25. Legacy usage duplicate suppression
+  26. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  27. Persisted A2A lineage tests
+  28. Typed completion evidence and review-to-commit eligibility tests
+  29. Gated headless ownership policy tests
+  30. Permission mode, live-session sync, and shell policy contract tests
+  31. Slash command review calibration contract tests
+  32. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  33. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -79,6 +80,7 @@ COMMAND_LABELS=(
   "manual desktop restart smoke protocol"
   "manual stability regression batch"
   "manual disposable edit/build loop protocol"
+  "disposable edit/build loop project readiness preflight"
   "provider usage known/unknown telemetry"
   "composer context usage from provider_usage"
   "provider usage trace rendering"
@@ -114,6 +116,7 @@ COMMANDS=(
   "test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"Stability Convergence Restart Smoke - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q \"Stability Regression Batch - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q \"Phase 8 Disposable Edit/Build Loop - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
+  "node scripts/disposable-loop-preflight.mjs --json"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib"
   "npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g \"provider_usage without legacy usage\""
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"provider usage\""

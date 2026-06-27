@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a disposable edit/build loop readiness preflight. The Phase 8 acceptance path now records whether the disposable project exists, is a clean git worktree, has expected demo files, and exposes a build script before treating live Forge edit/build evidence as fresh.
 - Added replayable confirmation response events. Approved, declined, and restored-interrupted confirmation states now have explicit transcript markers, so history/restart projection can resolve confirmation cards without inferring state from the original prompt alone.
 - Fixed usage/context accounting so `provider_usage` events update the Composer context indicator without relying on legacy `usage` events, and the `余` label now means true context remaining rather than auto-compact threshold distance.
 - Added a visible Composer permission mode control with `手动确认`, `信任项目`, and `完全访问`. Full Access is workspace-scoped for the current runtime, inherits into new conversations in the same project, approves the currently pending same-workspace confirmation when enabled, and skips routine write/shell/MCP/tool confirmation prompts while still honoring explicit deny rules, external-write blocks, and catastrophic shell blocks.
