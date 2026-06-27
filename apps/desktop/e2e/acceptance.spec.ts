@@ -273,6 +273,209 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText("已继续");
   });
 
+  test("composer full access does not approve an external-path confirmation card", async ({ page }) => {
+    const sessionId = "composer-full-access-external-boundary";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "full-access-external-write",
+        question: "Allow external write?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "write_file",
+          affected_files: ["/Users/cabbos/.ssh/config"],
+          risk_level: "high",
+          checkpoint_status: "ready",
+          warning: "项目外写入不会被完全访问自动放行。",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText("项目外写入不会被完全访问自动放行。");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByTestId("composer-permission-mode").click();
+    await page.getByTestId("composer-permission-full-access").click();
+
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("完全访问");
+    await page.waitForTimeout(100);
+    const confirmArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastConfirmResponseArgs ?? null;
+    });
+    expect(confirmArgs).toBeNull();
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+  });
+
+  test("project trust does not approve a sensitive workspace confirmation card", async ({ page }) => {
+    const sessionId = "project-trust-sensitive-boundary";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "trust-sensitive-write",
+        question: "Allow .env write?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "write_file",
+          affected_files: ["/Users/cabbos/project/forge/.env"],
+          risk_level: "high",
+          checkpoint_status: "ready",
+          warning: "敏感文件仍需手动确认。",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText(".env");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
+    await card.getByRole("button", { name: "信任当前项目" }).click();
+
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await page.waitForTimeout(100);
+    const confirmArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastConfirmResponseArgs ?? null;
+    });
+    expect(confirmArgs).toBeNull();
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+  });
+
+  test("project trust does not approve an external-path confirmation card", async ({ page }) => {
+    const sessionId = "project-trust-external-boundary";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "trust-external-write",
+        question: "Allow external write?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "write_file",
+          affected_files: ["/Users/cabbos/.ssh/config"],
+          risk_level: "high",
+          checkpoint_status: "ready",
+          warning: "项目外写入不会被信任项目自动放行。",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText("项目外写入不会被信任项目自动放行。");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
+    await card.getByRole("button", { name: "信任当前项目" }).click();
+
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await page.waitForTimeout(100);
+    const confirmArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastConfirmResponseArgs ?? null;
+    });
+    expect(confirmArgs).toBeNull();
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+  });
+
+  test("project trust does not approve a dotenv variant confirmation card", async ({ page }) => {
+    const sessionId = "project-trust-dotenv-variant";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "trust-dotenv-local-write",
+        question: "Allow .env.local write?",
+        kind: "file_write",
+        boundary: {
+          workspace_name: "forge",
+          workspace_path: "/Users/cabbos/project/forge",
+          operation: "write_file",
+          affected_files: ["/Users/cabbos/project/forge/.env.local"],
+          risk_level: "high",
+          checkpoint_status: "ready",
+          warning: "敏感环境文件仍需手动确认。",
+        },
+      },
+    ], 1);
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toContainText(".env.local");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
+    await card.getByRole("button", { name: "信任当前项目" }).click();
+
+    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await page.waitForTimeout(100);
+    const confirmArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastConfirmResponseArgs ?? null;
+    });
+    expect(confirmArgs).toBeNull();
+    await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
+  });
+
   test("composer full access inherits to a new conversation in the same workspace", async ({ page }) => {
     const firstSessionId = "composer-full-access-inherit-1";
     const secondSessionId = "composer-full-access-inherit-2";

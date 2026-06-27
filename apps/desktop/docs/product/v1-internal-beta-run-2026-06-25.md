@@ -629,3 +629,11 @@ Required evidence:
 Template: `apps/desktop/docs/product/stability-regression-batch.md`
 
 Status: Not yet run.
+
+Partial automation evidence:
+
+- Rows #7/#8 safety boundary automation added on 2026-06-27.
+- Red evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "external-path|sensitive workspace"` initially failed because Full Access auto-approved an external-path confirmation card and Trust auto-approved a sensitive `.env` workspace confirmation card.
+- Fix evidence: Composer and Project Status pending-confirmation takeover now inspect raw `affected_files`; absolute external paths, `~`, `../` traversal, and Trust-mode `.env` / `.env.*` files remain manual.
+- Green evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|external-path|sensitive workspace|dotenv variant|trust|full access"` passed, 12 specs.
+- Remaining manual status: the full ten-row disposable-project batch is still not run end to end.
