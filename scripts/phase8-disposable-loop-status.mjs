@@ -83,11 +83,13 @@ export function phase8DisposableLoopStatusExitCode(result, { requireLiveReady = 
 function latestArchiveForRow({ outDir, row }) {
   const fallback = {
     complete: false,
+    validationComplete: false,
     validationPath: null,
     evidencePath: null,
     markdownPath: null,
     validationStatus: null,
     validationPass: null,
+    missingFiles: [],
     basename: null,
   };
   if (!existsSync(outDir)) return fallback;
@@ -106,13 +108,19 @@ function readValidationArchive({ outDir, file }) {
   try {
     const validation = JSON.parse(readFileSync(validationPath, "utf8"));
     const base = basename(file, ".validation.json");
+    const evidencePath = join(outDir, `${base}.evidence.json`);
+    const markdownPath = join(outDir, `${base}.md`);
+    const missingFiles = [evidencePath, markdownPath].filter((path) => !existsSync(path));
+    const validationComplete = validation?.pass === true && validation?.status === "complete";
     return {
-      complete: validation?.pass === true && validation?.status === "complete",
+      complete: validationComplete && missingFiles.length === 0,
+      validationComplete,
       validationPath,
-      evidencePath: join(outDir, `${base}.evidence.json`),
-      markdownPath: join(outDir, `${base}.md`),
+      evidencePath,
+      markdownPath,
       validationStatus: validation?.status ?? null,
       validationPass: validation?.pass ?? null,
+      missingFiles,
       basename: base,
     };
   } catch {
@@ -157,6 +165,8 @@ function renderMarkdown(result) {
   const rows = result.rows.map((entry) => {
     const archive = entry.archive.complete
       ? `archived at \`${entry.archive.validationPath}\``
+      : entry.archive.validationComplete && entry.archive.missingFiles?.length > 0
+        ? `latest validation complete but missing archive sidecars: ${entry.archive.missingFiles.map((file) => `\`${file}\``).join(", ")}`
       : entry.archive.validationPath
         ? `latest validation ${entry.archive.validationStatus ?? "unknown"} at \`${entry.archive.validationPath}\``
         : "no archive yet";
