@@ -3,7 +3,10 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import test from "node:test";
 
-import { diagnoseDesktopUiEvidence } from "./desktop-ui-evidence-doctor.mjs";
+import {
+  diagnoseDesktopUiEvidence,
+  openDesktopUiEvidenceSettings,
+} from "./desktop-ui-evidence-doctor.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const scriptPath = join(root, "scripts", "desktop-ui-evidence-doctor.mjs");
@@ -131,6 +134,76 @@ test("reports ready when preflight evidence is collectible", () => {
   assert.deepEqual(result.blockers, []);
 });
 
+test("opens only settings panes for current blockers when requested", () => {
+  const diagnosis = diagnoseDesktopUiEvidence({
+    preflight: {
+      status: "screen_capture_limited",
+      canCollectLiveUiEvidence: false,
+      platform: "darwin",
+      reason: "blank screenshot",
+      windowSnapshot: {
+        ok: true,
+        rows: [{ name: "Codex", visible: true, windowCount: 0 }],
+        error: null,
+      },
+      screenSnapshot: {
+        ok: true,
+        width: 2940,
+        height: 1912,
+        sizeBytes: 106_973,
+        compressedBytesPerPixel: 0.019,
+        likelyBlank: true,
+        error: null,
+      },
+      recommendations: [],
+    },
+  });
+  const calls = [];
+  const result = openDesktopUiEvidenceSettings({
+    diagnosis,
+    runner: (command, args) => calls.push({ command, args }),
+  });
+
+  assert.equal(result.openedCount, 2);
+  assert.deepEqual(calls.map((call) => call.command), ["open", "open"]);
+  assert.ok(calls[0].args[0].includes("Privacy_ScreenCapture"));
+  assert.ok(calls[1].args[0].includes("Privacy_Accessibility"));
+});
+
+test("does not open settings when no blocker has a settings URL", () => {
+  const diagnosis = diagnoseDesktopUiEvidence({
+    preflight: {
+      status: "ready",
+      canCollectLiveUiEvidence: true,
+      platform: "darwin",
+      reason: "ok",
+      windowSnapshot: {
+        ok: true,
+        rows: [{ name: "Codex", visible: true, windowCount: 1 }],
+        error: null,
+      },
+      screenSnapshot: {
+        ok: true,
+        width: 1920,
+        height: 1080,
+        sizeBytes: 1_000_000,
+        compressedBytesPerPixel: 0.48,
+        likelyBlank: false,
+        error: null,
+      },
+      recommendations: [],
+    },
+  });
+  const calls = [];
+  const result = openDesktopUiEvidenceSettings({
+    diagnosis,
+    runner: (command, args) => calls.push({ command, args }),
+  });
+
+  assert.equal(result.openedCount, 0);
+  assert.deepEqual(calls, []);
+});
+
 test("cli markdown emits a diagnosis", () => {
   const result = spawnSync(process.execPath, [scriptPath, "--markdown"], {
     cwd: root,
@@ -157,6 +230,7 @@ test("cli json emits machine-readable diagnosis", () => {
   assert.equal(typeof parsed.status, "string");
   assert.equal(typeof parsed.canCollectLiveUiEvidence, "boolean");
   assert.ok(Array.isArray(parsed.commands));
+  assert.equal(parsed.openSettings, null);
 });
 
 test("require-ready exits nonzero only when evidence is not ready", () => {
@@ -180,4 +254,5 @@ test("help exits successfully", () => {
   });
 
   assert.match(output, /desktop-ui-evidence-doctor/);
+  assert.match(output, /--open-settings/);
 });

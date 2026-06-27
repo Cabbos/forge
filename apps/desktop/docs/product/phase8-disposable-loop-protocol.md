@@ -50,7 +50,7 @@ For a concrete local recovery checklist, run:
 node scripts/desktop-ui-evidence-doctor.mjs --markdown
 ```
 
-The doctor maps screenshot and window-observation failures to Screen Recording and Accessibility recovery commands, then points back to the strict preflight.
+The doctor maps screenshot and window-observation failures to Screen Recording and Accessibility recovery commands, then points back to the strict preflight. To open the relevant macOS settings panes directly, run `node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings`; this is intentionally opt-in and is not used by the acceptance dry-run.
 
 After each live row, collect a consistent evidence packet:
 

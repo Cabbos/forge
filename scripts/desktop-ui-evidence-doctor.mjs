@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
@@ -43,6 +44,7 @@ export function diagnoseDesktopUiEvidence({
     blockers,
     commands: commandsFor({ blockers }),
     nextStep: nextStepFor({ status }),
+    openSettings: null,
     preflight,
     markdown: "",
   };
@@ -135,12 +137,16 @@ function commandsFor({ blockers }) {
     commands.push({
       label: "open Screen Recording settings",
       command: `open '${SCREEN_RECORDING_SETTINGS_URL}'`,
+      kind: "open_settings",
+      url: SCREEN_RECORDING_SETTINGS_URL,
     });
   }
   if (blockers.some((blocker) => blocker.id === "accessibility_permission")) {
     commands.push({
       label: "open Accessibility settings",
       command: `open '${ACCESSIBILITY_SETTINGS_URL}'`,
+      kind: "open_settings",
+      url: ACCESSIBILITY_SETTINGS_URL,
     });
   }
   commands.push({
@@ -170,6 +176,27 @@ function nextStepFor({ status }) {
   return "Run the preflight in a trusted desktop session or collect manual evidence outside this limited observer.";
 }
 
+export function openDesktopUiEvidenceSettings({ diagnosis, runner = execFileSync } = {}) {
+  const settingsCommands = (diagnosis?.commands ?? []).filter(
+    (entry) => entry.kind === "open_settings" && typeof entry.url === "string",
+  );
+  const opened = [];
+  for (const entry of settingsCommands) {
+    runner("open", [entry.url], {
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    opened.push({
+      label: entry.label,
+      url: entry.url,
+    });
+  }
+  return {
+    openedCount: opened.length,
+    opened,
+  };
+}
+
 function renderMarkdown(result) {
   const blockers = result.blockers.length > 0
     ? result.blockers.map((blocker) => {
@@ -193,12 +220,14 @@ Commands:
 
 ${commands}
 
+Opened settings: ${result.openSettings ? result.openSettings.openedCount : 0}
+
 Next step: ${result.nextStep}
 `;
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/desktop-ui-evidence-doctor.mjs [--json|--markdown] [--require-ready]
+  console.log(`Usage: node scripts/desktop-ui-evidence-doctor.mjs [--json|--markdown] [--require-ready] [--open-settings]
 
 Diagnoses why local desktop UI evidence cannot be trusted and prints concrete permission recovery commands.
 
@@ -206,6 +235,7 @@ Options:
   --json           Print machine-readable diagnosis.
   --markdown       Print markdown diagnosis.
   --require-ready  Exit non-zero unless live UI evidence collection appears ready.
+  --open-settings  Open the relevant macOS Privacy & Security settings panes for the current blockers.
   -h, --help       Show this help.
 `);
 }
@@ -220,12 +250,17 @@ function main(argv = process.argv.slice(2)) {
   const json = argv.includes("--json");
   const markdown = argv.includes("--markdown");
   const requireReady = argv.includes("--require-ready");
+  const shouldOpenSettings = argv.includes("--open-settings");
   if (argv.includes("-h") || argv.includes("--help")) {
     printHelp();
     return 0;
   }
 
   const result = diagnoseDesktopUiEvidence({ preflight: collectCurrentPreflight() });
+  if (shouldOpenSettings) {
+    result.openSettings = openDesktopUiEvidenceSettings({ diagnosis: result });
+    result.markdown = renderMarkdown(result);
+  }
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (markdown || !json) {
