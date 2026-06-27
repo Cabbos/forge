@@ -41,9 +41,10 @@ Runs the Forge Level 3 runtime acceptance gates:
   25. Persisted A2A lineage tests
   26. Typed completion evidence and review-to-commit eligibility tests
   27. Gated headless ownership policy tests
-  28. Slash command review calibration contract tests
-  29. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  30. Rich preview e2e smoke specs
+  28. Permission mode, live-session sync, and shell policy contract tests
+  29. Slash command review calibration contract tests
+  30. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  31. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -84,6 +85,7 @@ COMMAND_LABELS=(
   "persisted A2A lineage tests"
   "typed completion evidence and review-to-commit eligibility tests"
   "gated headless ownership policy tests"
+  "permission mode, live-session sync, and shell policy contract tests"
   "slash command review calibration contract tests"
   "desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs"
   "rich preview e2e smoke specs"
@@ -117,6 +119,7 @@ COMMANDS=(
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib"
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml permission_handlers --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib"
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"write_file tool details show|diff cards show|image diff cards show\""
