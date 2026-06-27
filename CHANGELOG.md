@@ -14,6 +14,7 @@
 - Added `--require-live-ready` to the Phase 8 disposable loop status helper so automation can fail fast when the next row is blocked by project readiness or desktop UI evidence.
 - Added shared `liveReadyGate` diagnostics to the Phase 8 disposable loop status and runbook JSON/Markdown so automation can report whether the hard gate passed and why it is blocked.
 - Preserved desktop UI evidence `permissionScope` on status/runbook `not_checked` preflight summaries so skipped UI checks still explain the macOS privacy boundary.
+- Added strict preflight and live-ready hard-gate recovery commands to status/runbook `not_checked` summaries so skipped UI checks still show the concrete next commands.
 - Tightened `--require-live-ready` so skipped desktop UI preflight no longer passes the hard live-evidence gate.
 - Added the Phase 8 live-ready hard gate to the acceptance matrix so full acceptance cannot pass while disposable loop UI evidence is blocked.
 - Tightened Phase 8 disposable loop status so a row is archived complete only when the validation JSON, evidence JSON, and markdown sidecars all exist.

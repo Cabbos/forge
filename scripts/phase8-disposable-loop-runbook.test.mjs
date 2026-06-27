@@ -26,6 +26,8 @@ test("runbook reports ready project and row commands", (t) => {
   assert.equal(result.liveReadyGate.pass, false);
   assert.equal(result.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.equal(result.liveReadyGate.checkedUiEvidencePreflight, false);
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.match(result.prompt, /^\/fix @src\/App\.tsx/);
   assert.equal(result.manualPath, "/tmp/phase8-row-1-manual.json");
   assert.ok(result.commands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
@@ -96,7 +98,8 @@ test("cli json prints machine-readable runbook", (t) => {
   assert.equal(parsed.uiEvidencePreflight.permissionScope.kind, "macos_privacy");
   assert.equal(parsed.liveReadyGate.pass, false);
   assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
-  assert.deepEqual(parsed.recoveryCommands, []);
+  assert.ok(parsed.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
+  assert.ok(parsed.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
   assert.match(parsed.prompt, /CSS layout polish/);
   assert.match(parsed.markdown, /Row 2/);
 });
@@ -114,6 +117,8 @@ test("cli markdown includes ordered commands", (t) => {
 
   assert.match(output, /send this row prompt in Forge/);
   assert.match(output, /finalize-disposable-loop-row\.mjs/);
+  assert.match(output, /desktop-ui-evidence-preflight\.mjs --json --require-ready/);
+  assert.match(output, /phase8-disposable-loop-status\.mjs --json --require-live-ready/);
 });
 
 test("cli rejects invalid row", () => {
