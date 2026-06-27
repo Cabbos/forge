@@ -185,7 +185,7 @@ scripts/acceptance.sh --dry-run
 
 当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、review-to-commit eligibility、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Provider probe、Provider 模型目录 live/static 刷新、选择、默认值保存、Provider metadata 紧凑渲染、Provider evidence start readiness、预览归属详情、stale 健康告警清除、stale banner 当前会话作用域、自定义 Provider profile 新增/编辑/删除、Gateway runtime、权限规则、Composer 完全访问入口、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含 mocked desktop restart runtime smoke（macOS partial evidence，不是官方 Tauri/WebDriver force-quit proof）、provider usage known/unknown telemetry、bounded post-shell file-effect evidence、persisted A2A lineage、gated headless ownership policy/approval checks、真实 Rust `run_worktree_worker` harness（mock adapter/harness）、A2A child runtime 的 live file-ish tool facts，以及 direct ToolExecutor file-ish tools 的 `file_io` stream smoke。
 
-Phase 8 desktop UI evidence helpers 会在本机截图或窗口观测不可用时，把 recovery commands 从 preflight 透传到 disposable loop status/runbook 摘要，直接指向 doctor 和可选的系统设置打开路径；status helper 也可以用 `--require-live-ready` 作为自动化硬门禁。
+Phase 8 desktop UI evidence helpers 会在本机截图或窗口观测不可用时，把 recovery commands 从 preflight 透传到 disposable loop status/runbook 摘要，直接指向 doctor 和可选的系统设置打开路径；status helper 也可以用 `--require-live-ready` 作为自动化硬门禁，并且只有 validation/evidence/markdown 三件套都存在时才把 row 视为 archived complete。
 
 Forge 会把模型调用用量和上下文窗口状态分开显示：Provider usage 行展示本次模型调用由 provider 回报的 token/cost；Composer 的上下文指示器展示估算的已用上下文和真正剩余上下文，`余` 表示 true remaining context。Auto-compact threshold distance 只放在 tooltip 里，避免被误读成 provider context remaining。
 

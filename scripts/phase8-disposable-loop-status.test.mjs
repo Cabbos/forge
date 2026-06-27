@@ -97,6 +97,29 @@ test("skips completed rows and reports the next incomplete row", (t) => {
   assert.ok(result.nextCommands.some((entry) => entry.command.includes("--row 2")));
 });
 
+test("does not mark complete validation as archived when sidecars are missing", (t) => {
+  const projectPath = createStatusProject(t);
+  const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
+  t.after(() => rmSync(outDir, { recursive: true, force: true }));
+  writeCompleteArchive(outDir, "1", { writeEvidence: false, writeMarkdown: false });
+
+  const result = generatePhase8DisposableLoopStatus({
+    projectPath,
+    outDir,
+    manualDir: "/tmp",
+    date: "2026-06-28",
+  });
+
+  assert.equal(result.status, "ready_for_live_row");
+  assert.equal(result.nextRow, "1");
+  assert.equal(result.rows[0].complete, false);
+  assert.equal(result.rows[0].archive.validationComplete, true);
+  assert.equal(result.rows[0].archive.complete, false);
+  assert.equal(result.rows[0].archive.missingFiles.length, 2);
+  assert.match(result.markdown, /missing archive sidecars/);
+  assert.ok(result.nextCommands.some((entry) => entry.command.includes("--row 1")));
+});
+
 test("reports complete when all row validations are archived", (t) => {
   const projectPath = createStatusProject(t);
   const outDir = mkdtempSync(join(tmpdir(), "forge-loop-status-out-"));
@@ -191,14 +214,14 @@ test("cli require-live-ready exits zero for a ready row", (t) => {
   assert.equal(parsed.readyForLiveRun, true);
 });
 
-function writeCompleteArchive(outDir, row) {
+function writeCompleteArchive(outDir, row, { writeEvidence = true, writeMarkdown = true } = {}) {
   const base = `2026-06-28-row-${row}`;
   writeFileSync(
     join(outDir, `${base}.validation.json`),
     `${JSON.stringify({ status: "complete", pass: true, row }, null, 2)}\n`,
   );
-  writeFileSync(join(outDir, `${base}.evidence.json`), "{}\n");
-  writeFileSync(join(outDir, `${base}.md`), "# evidence\n");
+  if (writeEvidence) writeFileSync(join(outDir, `${base}.evidence.json`), "{}\n");
+  if (writeMarkdown) writeFileSync(join(outDir, `${base}.md`), "# evidence\n");
 }
 
 function createStatusProject(t) {
