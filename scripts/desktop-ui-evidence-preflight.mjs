@@ -8,6 +8,8 @@ import { pathToFileURL } from "node:url";
 
 const KNOWN_WINDOWED_APPS = ["Google Chrome", "Codex", "Finder"];
 const BLANK_SCREENSHOT_BYTES_PER_PIXEL = 0.08;
+const DOCTOR_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown";
+const DOCTOR_OPEN_SETTINGS_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings";
 
 export function evaluateDesktopUiEvidencePreflight({
   platform = process.platform,
@@ -23,6 +25,7 @@ export function evaluateDesktopUiEvidencePreflight({
       reason: "Desktop UI evidence preflight currently checks macOS window observability only.",
       windowSnapshot,
       screenSnapshot,
+      recoveryCommands: recoveryCommands(),
       recommendations: ["Use the platform-specific desktop UI harness for live evidence."],
     };
   }
@@ -35,8 +38,10 @@ export function evaluateDesktopUiEvidencePreflight({
       reason: "macOS screen capture failed, so screenshot-based live UI evidence is not trustworthy.",
       windowSnapshot,
       screenSnapshot,
+      recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Grant Screen Recording permission to the controlling app or collect the live row manually.",
+        `Run \`${DOCTOR_COMMAND}\` for the concrete recovery checklist.`,
         "Do not treat missing screenshots as Forge runtime evidence.",
       ],
     };
@@ -51,8 +56,10 @@ export function evaluateDesktopUiEvidencePreflight({
         "macOS screen capture produced a likely blank image; screenshot-based live UI evidence is not trustworthy.",
       windowSnapshot,
       screenSnapshot,
+      recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Grant Screen Recording permission to the controlling app or collect the live row manually.",
+        `Run \`${DOCTOR_COMMAND}\` for the concrete recovery checklist.`,
         "Keep Phase 8 row status as pending until final-answer, diff, build, and confirmation evidence is captured.",
       ],
     };
@@ -66,8 +73,10 @@ export function evaluateDesktopUiEvidencePreflight({
       reason: "System Events could not enumerate visible process windows.",
       windowSnapshot,
       screenSnapshot,
+      recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Grant Accessibility permission to the controlling app or run the live row manually.",
+        `Run \`${DOCTOR_COMMAND}\` for the concrete recovery checklist.`,
         "Do not treat missing screenshots or window counts as Forge runtime evidence.",
       ],
     };
@@ -87,8 +96,10 @@ export function evaluateDesktopUiEvidencePreflight({
         "Visible apps were found, but System Events reported zero windows for known windowed apps; local UI automation is not a trustworthy live-evidence source.",
       windowSnapshot,
       screenSnapshot,
+      recoveryCommands: recoveryCommands({ includeOpenSettings: true }),
       recommendations: [
         "Run Forge live rows manually or from a desktop session with Accessibility/Screen Recording permissions.",
+        `Run \`${DOCTOR_COMMAND}\` for the concrete recovery checklist.`,
         "Keep Phase 8 row status as pending until final-answer, diff, build, and confirmation evidence is captured.",
       ],
     };
@@ -101,8 +112,25 @@ export function evaluateDesktopUiEvidencePreflight({
     reason: "System Events can observe at least one visible app window.",
     windowSnapshot,
     screenSnapshot,
+    recoveryCommands: [],
     recommendations: [],
   };
+}
+
+function recoveryCommands({ includeOpenSettings = false } = {}) {
+  const commands = [
+    {
+      label: "diagnose desktop UI evidence",
+      command: DOCTOR_COMMAND,
+    },
+  ];
+  if (includeOpenSettings) {
+    commands.push({
+      label: "open relevant macOS privacy settings",
+      command: DOCTOR_OPEN_SETTINGS_COMMAND,
+    });
+  }
+  return commands;
 }
 
 export function collectWindowSnapshotSafe() {
@@ -232,6 +260,12 @@ function printHuman(result) {
     console.log("Recommendations:");
     for (const recommendation of result.recommendations) {
       console.log(`- ${recommendation}`);
+    }
+  }
+  if (result.recoveryCommands?.length > 0) {
+    console.log("Recovery commands:");
+    for (const entry of result.recoveryCommands) {
+      console.log(`- ${entry.label}: ${entry.command}`);
     }
   }
 }
