@@ -40,18 +40,19 @@ Runs the Forge Level 3 runtime acceptance gates:
   24. Disposable edit/build loop evidence validator
   25. Disposable edit/build loop evidence archive dry-run
   26. Disposable edit/build loop manual evidence template
-  27. Provider usage known/unknown telemetry
-  28. Composer context usage from provider_usage
-  29. Provider usage trace rendering
-  30. Legacy usage duplicate suppression
-  31. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  32. Persisted A2A lineage tests
-  33. Typed completion evidence and review-to-commit eligibility tests
-  34. Gated headless ownership policy tests
-  35. Permission mode, live-session sync, and shell policy contract tests
-  36. Slash command review calibration contract tests
-  37. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  38. Rich preview e2e smoke specs
+  27. Disposable edit/build loop row runbook
+  28. Provider usage known/unknown telemetry
+  29. Composer context usage from provider_usage
+  30. Provider usage trace rendering
+  31. Legacy usage duplicate suppression
+  32. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  33. Persisted A2A lineage tests
+  34. Typed completion evidence and review-to-commit eligibility tests
+  35. Gated headless ownership policy tests
+  36. Permission mode, live-session sync, and shell policy contract tests
+  37. Slash command review calibration contract tests
+  38. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  39. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -91,6 +92,7 @@ COMMAND_LABELS=(
   "disposable edit/build loop evidence validator"
   "disposable edit/build loop evidence archive dry-run"
   "disposable edit/build loop manual evidence template"
+  "disposable edit/build loop row runbook"
   "provider usage known/unknown telemetry"
   "composer context usage from provider_usage"
   "provider usage trace rendering"
@@ -132,6 +134,7 @@ COMMANDS=(
   "node scripts/validate-disposable-loop-evidence.mjs --json"
   "node scripts/archive-disposable-loop-evidence.mjs --json --dry-run"
   "node scripts/create-disposable-loop-manual-json.mjs --json --row 1"
+  "node scripts/phase8-disposable-loop-runbook.mjs --json --row 1"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib"
   "npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g \"provider_usage without legacy usage\""
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"provider usage\""
