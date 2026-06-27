@@ -14,6 +14,18 @@ Recommended disposable project:
 /Users/cabbos/project/forge-test-app
 ```
 
+## Readiness Preflight
+
+Before starting a fresh live loop, run:
+
+```bash
+node scripts/disposable-loop-preflight.mjs --json --project /Users/cabbos/project/forge-test-app
+```
+
+This preflight verifies that the disposable project exists, is a git worktree rooted at the selected project path, has no existing git changes, includes the expected demo files, and exposes a package `build` script for row #3.
+
+`readyForLoop: true` means the project is ready to collect fresh live Forge evidence. `readyForLoop: false` is not a product failure by itself, but the issue must be resolved or explicitly recorded before treating a live run as fresh evidence. Use `--require-ready` when a local script should fail fast on a non-ready project.
+
 Before starting, record:
 
 ```bash

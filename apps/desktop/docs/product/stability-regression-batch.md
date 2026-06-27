@@ -3,6 +3,8 @@
 Run these tasks against a disposable current project. Controller-side manual writes invalidate the task.
 Record each result with the exact command, diff, screenshot, or final-answer evidence used to judge it.
 
+Before rows #1-#3, run `node scripts/disposable-loop-preflight.mjs --json --project /Users/cabbos/project/forge-test-app`. `readyForLoop: true` is required for fresh disposable-project evidence; a dirty or missing project must be fixed or recorded before the live run starts.
+
 | # | Task | Expected Permission State | Required Evidence | Result |
 | --- | --- | --- | --- | --- |
 | 1 | `/fix @src/App.tsx` for a small visible button feedback issue | Trust or Full Access should avoid repeated routine write prompts | final answer, diff, build/check result | Automated policy evidence passed 2026-06-27: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml permission_handlers --lib` and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib` prove Trust allows matching workspace writes, Full Access allows confirmable workspace operations, same-workspace sessions inherit the mode, and the mode syncs into the live session harness before send input. Live agent final-answer/diff/build evidence still follows `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`. |

@@ -650,6 +650,7 @@ Partial automation evidence:
 
 - Rows #7/#8 safety boundary automation added on 2026-06-27.
 - Rows #1/#2/#3 permission-policy automation passed on 2026-06-27: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml permission_handlers --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib`, and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib` verify Trust/Full Access same-workspace write behavior, live-session permission sync, safe build/check shell allowance, external-path denial, and catastrophic shell blocking. The live disposable edit/build loop is still not run end to end.
+- Rows #1/#2/#3 disposable-project readiness preflight added on 2026-06-27: `node scripts/disposable-loop-preflight.mjs --json` records project existence, git root, dirty files, required demo files, and package build-script readiness before a live run. Current local output reports `status: dirty_worktree`, `readyForLoop: false`, and dirty file `M src/styles.css` in `/Users/cabbos/project/forge-test-app`, so the live loop remains not ready/not run until that residual project change is resolved or explicitly recorded.
 - Row #4 preview-ownership automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project delivery details surface preview ownership"` verifies expanded Project Status delivery details show preview status, URL, preview ownership, and `/Users/cabbos/project/forge`.
 - Row #5 review-calibration automation passed on 2026-06-27: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib` verifies `/code-review` hidden action intent leads with findings, reserves P0/P1 for true blockers or unsafe results, treats product gaps as P2, and avoids offering fixes unless asked. The earlier manual beta output remains Pass/P2 because severity was too aggressive.
 - Row #6 same-workspace inheritance automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status card can trust the current project across conversations|composer full access inherits to a new conversation in the same workspace"` verifies both Trust and Full Access inherit through `getPermissionMode` in a new same-workspace conversation.
@@ -666,6 +667,7 @@ Partial automation evidence:
 Status: Not yet run.
 
 Protocol: `apps/desktop/docs/product/phase8-disposable-loop-protocol.md`
+Readiness preflight: `node scripts/disposable-loop-preflight.mjs --json` currently reports `status: dirty_worktree`, `readyForLoop: false`, and dirty file `M src/styles.css` in `/Users/cabbos/project/forge-test-app`.
 
 Rows covered:
 
