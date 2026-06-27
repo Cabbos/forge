@@ -4,6 +4,10 @@ import { basename, join, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
+import {
+  collectScreenSnapshotSafe,
+  evaluateDesktopUiEvidencePreflight,
+} from "./desktop-ui-evidence-preflight.mjs";
 import { generatePhase8DisposableLoopRunbook } from "./phase8-disposable-loop-runbook.mjs";
 
 const DEFAULT_PROJECT_PATH = "/Users/cabbos/project/forge-test-app-phase8-clean";
@@ -16,6 +20,7 @@ export function generatePhase8DisposableLoopStatus({
   outDir = DEFAULT_OUT_DIR,
   manualDir = DEFAULT_MANUAL_DIR,
   date = currentDate(),
+  uiEvidencePreflight = uncheckedDesktopUiEvidencePreflight(),
 } = {}) {
   const resolvedProjectPath = resolve(projectPath);
   const resolvedOutDir = resolve(outDir);
@@ -37,10 +42,11 @@ export function generatePhase8DisposableLoopStatus({
       row,
       manualDir,
       date,
+      uiEvidencePreflight,
     });
     return {
       row,
-      status: runbook.readyForLiveRun ? runbook.status : "project_not_ready",
+      status: runbook.status,
       complete: false,
       readyForLiveRun: runbook.readyForLiveRun,
       archive,
@@ -55,6 +61,7 @@ export function generatePhase8DisposableLoopStatus({
     projectPath: resolvedProjectPath,
     outDir: resolvedOutDir,
     date,
+    uiEvidencePreflight,
     nextRow: nextRowStatus?.row ?? null,
     readyForLiveRun: Boolean(nextRowStatus?.readyForLiveRun),
     rows: rowStatuses,
@@ -109,6 +116,7 @@ function readValidationArchive({ outDir, file }) {
 function summarizeRunbook(runbook) {
   return {
     status: runbook.status,
+    uiEvidencePreflight: runbook.uiEvidencePreflight,
     manualPath: runbook.manualPath,
     prompt: runbook.prompt,
     archivePaths: runbook.archiveDryRun.paths,
@@ -119,6 +127,7 @@ function summarizeRunbook(runbook) {
 
 function statusForRows(rows, nextRowStatus) {
   if (rows.every((entry) => entry.complete)) return "complete";
+  if (nextRowStatus?.status === "ui_evidence_not_ready") return "ui_evidence_not_ready";
   if (!nextRowStatus?.readyForLiveRun) return "project_not_ready";
   return "ready_for_live_row";
 }
@@ -126,6 +135,9 @@ function statusForRows(rows, nextRowStatus) {
 function nextStep(status, nextRowStatus) {
   if (status === "complete") {
     return "All Phase 8 disposable loop rows have complete archived evidence.";
+  }
+  if (status === "ui_evidence_not_ready") {
+    return `Resolve desktop UI evidence preflight for row #${nextRowStatus?.row ?? "?"}, or run the row manually in a trusted desktop session before finalizing evidence.`;
   }
   if (!nextRowStatus?.readyForLiveRun) {
     return `Resolve row #${nextRowStatus?.row ?? "?"} readiness issues before running the live Forge row.`;
@@ -151,6 +163,7 @@ function renderMarkdown(result) {
 Status: ${result.status}
 Project: \`${result.projectPath}\`
 Evidence dir: \`${result.outDir}\`
+UI evidence preflight: ${result.uiEvidencePreflight.status}
 Next row: ${result.nextRow ? `#${result.nextRow}` : "(none)"}
 
 Rows:
@@ -165,7 +178,7 @@ Next step: ${result.nextStep}
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/phase8-disposable-loop-status.mjs [--json|--markdown] [--project <path>] [--out-dir <path>] [--manual-dir <path>] [--date YYYY-MM-DD]
+  console.log(`Usage: node scripts/phase8-disposable-loop-status.mjs [--json|--markdown] [--project <path>] [--out-dir <path>] [--manual-dir <path>] [--date YYYY-MM-DD] [--skip-ui-preflight]
 
 Reports Phase 8 disposable loop row archive coverage and the next live row runbook commands.
 
@@ -176,6 +189,8 @@ Options:
   --out-dir PATH     Evidence archive directory. Defaults to ${DEFAULT_OUT_DIR}
   --manual-dir PATH  Directory for generated manual JSON templates. Defaults to ${DEFAULT_MANUAL_DIR}
   --date YYYY-MM-DD  Evidence date for next-row runbooks. Defaults to today.
+  --skip-ui-preflight
+                     Do not run local desktop UI evidence preflight before printing.
   -h, --help         Show this help.
 `);
 }
@@ -188,6 +203,7 @@ function parseArgs(argv) {
     outDir: DEFAULT_OUT_DIR,
     manualDir: DEFAULT_MANUAL_DIR,
     date: currentDate(),
+    skipUiPreflight: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -216,6 +232,8 @@ function parseArgs(argv) {
       if (!value) throw new Error("--date requires a value");
       options.date = value;
       index += 1;
+    } else if (arg === "--skip-ui-preflight") {
+      options.skipUiPreflight = true;
     } else if (arg === "-h" || arg === "--help") {
       options.help = true;
     } else {
@@ -224,6 +242,24 @@ function parseArgs(argv) {
   }
 
   return options;
+}
+
+function uncheckedDesktopUiEvidencePreflight() {
+  return {
+    status: "not_checked",
+    canCollectLiveUiEvidence: null,
+    platform: process.platform,
+    reason: "Desktop UI evidence preflight was not run by this pure generator call.",
+    windowSnapshot: null,
+    screenSnapshot: null,
+    recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
+  };
+}
+
+function collectDesktopUiEvidencePreflight() {
+  return evaluateDesktopUiEvidencePreflight({
+    screenSnapshot: process.platform === "darwin" ? collectScreenSnapshotSafe() : null,
+  });
 }
 
 function currentDate() {
@@ -248,7 +284,12 @@ function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  const result = generatePhase8DisposableLoopStatus(options);
+  const result = generatePhase8DisposableLoopStatus({
+    ...options,
+    uiEvidencePreflight: options.skipUiPreflight
+      ? uncheckedDesktopUiEvidencePreflight()
+      : collectDesktopUiEvidencePreflight(),
+  });
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {

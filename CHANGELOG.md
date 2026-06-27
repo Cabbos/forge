@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added a disposable loop row finalizer that reviews manual evidence, validates strict row output, and archives the Phase 8 row in one command.
+- Connected the disposable loop status and runbook helpers to desktop UI evidence preflight so a clean project with unusable local screenshots reports `ui_evidence_not_ready` instead of looking ready for live evidence.
 - Added a disposable loop manual evidence reviewer so Phase 8 row archives catch prompt mismatches, empty fields, and placeholders before strict validation.
 - Tightened the desktop UI evidence preflight to detect failed or likely blank macOS screenshots before treating a local session as usable for live Forge UI evidence.
 - Added a desktop UI evidence preflight so local screen/window automation limits are reported before collecting live Forge UI evidence.

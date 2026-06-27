@@ -5,6 +5,10 @@ import { pathToFileURL } from "node:url";
 
 import { archiveDisposableLoopEvidence } from "./archive-disposable-loop-evidence.mjs";
 import { createDisposableLoopManualTemplate } from "./create-disposable-loop-manual-json.mjs";
+import {
+  collectScreenSnapshotSafe,
+  evaluateDesktopUiEvidencePreflight,
+} from "./desktop-ui-evidence-preflight.mjs";
 import { evaluateDisposableLoopProject } from "./disposable-loop-preflight.mjs";
 
 const DEFAULT_PROJECT_PATH = "/Users/cabbos/project/forge-test-app-phase8-clean";
@@ -15,6 +19,7 @@ export function generatePhase8DisposableLoopRunbook({
   row = "1",
   manualDir = DEFAULT_MANUAL_DIR,
   date = currentDate(),
+  uiEvidencePreflight = uncheckedDesktopUiEvidencePreflight(),
 } = {}) {
   const normalizedRow = String(row);
   const resolvedProjectPath = resolve(projectPath);
@@ -28,17 +33,20 @@ export function generatePhase8DisposableLoopRunbook({
   const manualPath = resolve(manualDir, `phase8-row-${normalizedRow}-manual.json`);
   const prompt = createDisposableLoopManualTemplate({ row: normalizedRow })["Forge prompt"];
   const commands = buildCommands({ projectPath: resolvedProjectPath, row: normalizedRow, manualPath });
-  const status = preflight.readyForLoop ? archive.validationStatus : "project_not_ready";
+  const liveEvidenceReady = uiEvidencePreflight.canCollectLiveUiEvidence !== false;
+  const readyForLiveRun = preflight.readyForLoop && liveEvidenceReady;
+  const status = statusForRunbook({ preflight, archive, liveEvidenceReady });
 
   const result = {
     status,
-    readyForLiveRun: preflight.readyForLoop,
+    readyForLiveRun,
     projectPath: resolvedProjectPath,
     row: normalizedRow,
     date,
     prompt,
     manualPath,
     commands,
+    uiEvidencePreflight,
     preflight: {
       status: preflight.status,
       readyForLoop: preflight.readyForLoop,
@@ -51,7 +59,7 @@ export function generatePhase8DisposableLoopRunbook({
       validationPass: archive.validationPass,
       paths: archive.paths,
     },
-    nextStep: nextStep({ preflight, archive, row: normalizedRow, manualPath }),
+    nextStep: nextStep({ preflight, archive, uiEvidencePreflight, row: normalizedRow, manualPath }),
     markdown: "",
   };
   result.markdown = renderMarkdown(result);
@@ -60,6 +68,14 @@ export function generatePhase8DisposableLoopRunbook({
 
 function buildCommands({ projectPath, row, manualPath }) {
   return [
+    {
+      label: "check desktop UI evidence preflight",
+      command: commandText("node", [
+        "scripts/desktop-ui-evidence-preflight.mjs",
+        "--json",
+        "--require-ready",
+      ]),
+    },
     {
       label: "create manual evidence template",
       command: commandText("node", ["scripts/create-disposable-loop-manual-json.mjs", "--row", row, "--out", manualPath]),
@@ -102,14 +118,41 @@ function buildCommands({ projectPath, row, manualPath }) {
   ];
 }
 
-function nextStep({ preflight, archive, row, manualPath }) {
+function statusForRunbook({ preflight, archive, liveEvidenceReady }) {
+  if (!preflight.readyForLoop) return "project_not_ready";
+  if (!liveEvidenceReady) return "ui_evidence_not_ready";
+  return archive.validationStatus;
+}
+
+function nextStep({ preflight, archive, uiEvidencePreflight, row, manualPath }) {
   if (!preflight.readyForLoop) {
     return "Resolve project preflight issues before running the live Forge row.";
+  }
+  if (uiEvidencePreflight.canCollectLiveUiEvidence === false) {
+    return `Resolve desktop UI evidence preflight status '${uiEvidencePreflight.status}' or run row #${row} manually in a trusted desktop session before finalizing evidence.`;
   }
   if (archive.validationStatus === "pending_live_evidence") {
     return `Create ${manualPath}, run row #${row} in Forge, fill the manual JSON fields, then finalize strict evidence.`;
   }
   return "Follow the commands in order and keep the generated archive files with the beta evidence.";
+}
+
+function uncheckedDesktopUiEvidencePreflight() {
+  return {
+    status: "not_checked",
+    canCollectLiveUiEvidence: null,
+    platform: process.platform,
+    reason: "Desktop UI evidence preflight was not run by this pure generator call.",
+    windowSnapshot: null,
+    screenSnapshot: null,
+    recommendations: ["Run `node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready` before collecting live UI evidence."],
+  };
+}
+
+function collectDesktopUiEvidencePreflight() {
+  return evaluateDesktopUiEvidencePreflight({
+    screenSnapshot: process.platform === "darwin" ? collectScreenSnapshotSafe() : null,
+  });
 }
 
 function renderMarkdown(result) {
@@ -119,6 +162,7 @@ function renderMarkdown(result) {
 Status: ${result.status}
 Project: \`${result.projectPath}\`
 Manual JSON: \`${result.manualPath}\`
+UI evidence preflight: ${result.uiEvidencePreflight.status}
 
 Prompt:
 
@@ -135,7 +179,7 @@ Next step: ${result.nextStep}
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/phase8-disposable-loop-runbook.mjs [--json|--markdown] [--project <path>] [--row <1|2|3|all>] [--manual-dir <path>] [--date YYYY-MM-DD]
+  console.log(`Usage: node scripts/phase8-disposable-loop-runbook.mjs [--json|--markdown] [--project <path>] [--row <1|2|3|all>] [--manual-dir <path>] [--date YYYY-MM-DD] [--skip-ui-preflight]
 
 Prints the row-by-row Phase 8 live Forge runbook using the existing preflight, collector, validator, and archive helpers.
 
@@ -146,6 +190,8 @@ Options:
   --row VALUE        Row scope: 1, 2, 3, or all. Defaults to 1.
   --manual-dir PATH  Directory for generated manual JSON templates. Defaults to ${DEFAULT_MANUAL_DIR}
   --date YYYY-MM-DD  Evidence date. Defaults to today.
+  --skip-ui-preflight
+                     Do not run local desktop UI evidence preflight before printing.
   -h, --help         Show this help.
 `);
 }
@@ -158,6 +204,7 @@ function parseArgs(argv) {
     row: "1",
     manualDir: DEFAULT_MANUAL_DIR,
     date: currentDate(),
+    skipUiPreflight: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -186,6 +233,8 @@ function parseArgs(argv) {
       if (!value) throw new Error("--date requires a value");
       options.date = value;
       index += 1;
+    } else if (arg === "--skip-ui-preflight") {
+      options.skipUiPreflight = true;
     } else if (arg === "-h" || arg === "--help") {
       options.help = true;
     } else {
@@ -227,7 +276,12 @@ function main(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  const result = generatePhase8DisposableLoopRunbook(options);
+  const result = generatePhase8DisposableLoopRunbook({
+    ...options,
+    uiEvidencePreflight: options.skipUiPreflight
+      ? uncheckedDesktopUiEvidencePreflight()
+      : collectDesktopUiEvidencePreflight(),
+  });
   if (options.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
