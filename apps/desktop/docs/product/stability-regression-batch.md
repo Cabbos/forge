@@ -3,7 +3,7 @@
 Run these tasks against a disposable current project. Controller-side manual writes invalidate the task.
 Record each result with the exact command, diff, screenshot, or final-answer evidence used to judge it.
 
-Before rows #1-#3, run `node scripts/disposable-loop-preflight.mjs --json --project /Users/cabbos/project/forge-test-app`. `readyForLoop: true` is required for fresh disposable-project evidence; a dirty or missing project must be fixed or recorded before the live run starts. If preserving residual changes matters, use `node scripts/prepare-disposable-loop-project.mjs --json` to create a clean worktree target instead of resetting the original project.
+Before rows #1-#3, run `node scripts/disposable-loop-preflight.mjs --json --project /Users/cabbos/project/forge-test-app`. `readyForLoop: true` is required for fresh disposable-project evidence; a dirty or missing project must be fixed or recorded before the live run starts. If preserving residual changes matters, use `node scripts/prepare-disposable-loop-project.mjs --json` to create a clean worktree target instead of resetting the original project. After each live row, use `node scripts/collect-disposable-loop-evidence.mjs --markdown --row <row> --run-build` to capture the changed-file, diff, and build/check evidence packet, then paste the Forge final answer and confirmation behavior into the manual fields.
 
 | # | Task | Expected Permission State | Required Evidence | Result |
 | --- | --- | --- | --- | --- |

@@ -36,6 +36,14 @@ npm --prefix /Users/cabbos/project/forge-test-app-phase8-clean run build
 
 Open the prepared target project in Forge for rows #1-#3. The helper does not reset, stash, or edit the original source project; when possible it symlinks the source `node_modules` into the clean worktree so build/check evidence can run without reinstalling dependencies.
 
+After each live row, collect a consistent evidence packet:
+
+```bash
+node scripts/collect-disposable-loop-evidence.mjs --markdown --project /Users/cabbos/project/forge-test-app-phase8-clean --row 1 --run-build
+```
+
+Use `--row 2` or `--row 3` for the later prompts. The collector captures git changed files, diff stat/name-status, optional build/check output, and markdown placeholders for the Forge final answer, confirmation behavior, and screenshot/transcript reference. It does not replace the live Forge UI evidence; paste the missing manual fields into the generated packet.
+
 Before starting, record:
 
 ```bash
