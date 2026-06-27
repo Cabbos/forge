@@ -1122,8 +1122,21 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "save_app_metadata":
           await saveAppMetadataToIndexedDb(args.metadata as Record<string, unknown>);
           return undefined;
-        case "load_session_transcript":
+        case "load_session_transcript": {
+          const sessionId = String(args.sessionId ?? "");
+          // @ts-expect-error acceptance mock
+          window.__lastLoadSessionTranscriptArgs = args;
+          // @ts-expect-error acceptance mock
+          const transcripts = window.__mockSessionTranscripts;
+          if (
+            transcripts &&
+            typeof transcripts === "object" &&
+            Array.isArray((transcripts as Record<string, unknown>)[sessionId])
+          ) {
+            return (transcripts as Record<string, unknown>)[sessionId];
+          }
           return [];
+        }
         case "get_default_working_dir":
           return workingDir;
         case "list_capabilities":

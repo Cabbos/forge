@@ -640,6 +640,65 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel.getByTestId("confirm-cancel")).toHaveCount(0);
   });
 
+  test("startup transcript hydration resolves a confirmation card", async ({ page }) => {
+    const sessionId = "confirm-response-hydration-session";
+    const blockId = "confirm-response-hydration";
+    await page.addInitScript(({ sessionId, blockId }) => {
+      const now = Date.now();
+      // @ts-expect-error acceptance mock
+      window.__mockListSessions = [
+        {
+          id: sessionId,
+          provider: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          status: "running",
+          created_at: new Date(now - 1_000).toISOString(),
+          working_dir: "/Users/cabbos/project/forge",
+          created_at_ms: now - 1_000,
+          updated_at_ms: now,
+          context_window_tokens: 1_000_000,
+        },
+      ];
+      // @ts-expect-error acceptance mock
+      window.__mockSessionTranscripts = {
+        [sessionId]: [
+          {
+            event_type: "confirm_ask",
+            session_id: sessionId,
+            block_id: blockId,
+            question: "Allow hydrated confirmation?",
+            kind: "ask_user",
+          },
+          {
+            event_type: "confirm_response",
+            session_id: sessionId,
+            block_id: blockId,
+            question: "Allow hydrated confirmation?",
+            kind: "ask_user",
+            approved: false,
+            responded_at_ms: now,
+            reason: "user_response",
+          },
+        ],
+      };
+    }, { sessionId, blockId });
+
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+
+    const transcriptArgs = await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      return window.__lastLoadSessionTranscriptArgs;
+    });
+    expect(transcriptArgs).toMatchObject({ sessionId });
+
+    const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "Allow hydrated confirmation?" });
+    await expect(confirmPanel).toContainText("已取消");
+    await expect(confirmPanel).not.toContainText("确认已中断");
+    await expect(confirmPanel.getByTestId("confirm-approve")).toHaveCount(0);
+    await expect(confirmPanel.getByTestId("confirm-cancel")).toHaveCount(0);
+  });
+
   test("fresh same-session output clears stale session health alert", async ({ page }) => {
     const sessionId = "acceptance-stale-health-session";
     await page.evaluate((id) => {
