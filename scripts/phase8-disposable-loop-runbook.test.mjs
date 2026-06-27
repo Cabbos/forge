@@ -22,6 +22,9 @@ test("runbook reports ready project and row commands", (t) => {
   assert.equal(result.readyForLiveRun, true);
   assert.equal(result.status, "pending_live_evidence");
   assert.equal(result.uiEvidencePreflight.status, "not_checked");
+  assert.equal(result.liveReadyGate.pass, false);
+  assert.equal(result.liveReadyGate.reason, "ui_evidence_not_checked");
+  assert.equal(result.liveReadyGate.checkedUiEvidencePreflight, false);
   assert.match(result.prompt, /^\/fix @src\/App\.tsx/);
   assert.equal(result.manualPath, "/tmp/phase8-row-1-manual.json");
   assert.ok(result.commands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
@@ -29,6 +32,7 @@ test("runbook reports ready project and row commands", (t) => {
   assert.ok(result.commands.some((entry) => entry.command.includes("finalize-disposable-loop-row.mjs")));
   assert.ok(result.commands.some((entry) => entry.command.includes("--manual-json /tmp/phase8-row-1-manual.json")));
   assert.match(result.markdown, /Phase 8 Disposable Loop Runbook - Row 1/);
+  assert.match(result.markdown, /Live-ready gate: blocked \(ui_evidence_not_checked\)/);
 });
 
 test("runbook separates project readiness from desktop UI evidence readiness", (t) => {
@@ -62,6 +66,9 @@ test("runbook separates project readiness from desktop UI evidence readiness", (
   assert.equal(result.preflight.readyForLoop, true);
   assert.equal(result.readyForLiveRun, false);
   assert.equal(result.status, "ui_evidence_not_ready");
+  assert.equal(result.liveReadyGate.pass, false);
+  assert.equal(result.liveReadyGate.reason, "ui_evidence_not_ready");
+  assert.equal(result.liveReadyGate.uiEvidenceStatus, "screen_capture_limited");
   assert.equal(result.recoveryCommands.length, 2);
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
   assert.match(result.nextStep, /screen_capture_limited/);
@@ -83,6 +90,8 @@ test("cli json prints machine-readable runbook", (t) => {
 
   assert.equal(parsed.row, "2");
   assert.equal(parsed.readyForLiveRun, true);
+  assert.equal(parsed.liveReadyGate.pass, false);
+  assert.equal(parsed.liveReadyGate.reason, "ui_evidence_not_checked");
   assert.deepEqual(parsed.recoveryCommands, []);
   assert.match(parsed.prompt, /CSS layout polish/);
   assert.match(parsed.markdown, /Row 2/);
