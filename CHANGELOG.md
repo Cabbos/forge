@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a desktop state-consistency-map acceptance gate so usage/context documentation must keep `provider_usage`, Tauri transcript replay, and transcript hydration evidence aligned.
 - Replayed provider usage now refreshes restored Composer context usage over stale persisted metadata, so reloads do not show an old used/remaining-token count when newer transcript evidence exists.
 - Expanded the transcript usage hydration acceptance coverage to include replayed `provider_usage` events from Tauri transcripts, not just legacy `usage` events.
 - Rejected empty `scripts/acceptance.sh --only` and `--grep` values so automation cannot accidentally fall back to the full acceptance matrix.
