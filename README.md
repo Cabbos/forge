@@ -24,7 +24,7 @@ For the current desktop acceptance sweep, run:
 scripts/acceptance.sh
 ```
 
-Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it.
+Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it, or `scripts/acceptance.sh --list-json` for machine-readable gate metadata.
 
 ## Desktop Runtime Surfaces
 
