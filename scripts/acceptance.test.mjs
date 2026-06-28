@@ -218,6 +218,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node --test apps/desktop/src/store/persistence-hydration.test.ts",
     },
     {
+      label: "desktop state consistency map status",
+      command:
+        'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md',
+    },
+    {
       label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib",
     },
@@ -286,6 +291,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "provider usage trace rendering",
     "legacy usage duplicate suppression",
     "transcript usage hydration",
+    "desktop state consistency map status",
     "post-shell file-effect evidence smoke (bounded, not shell-internal)",
     "persisted A2A lineage tests",
     "typed completion evidence and review-to-commit eligibility tests",
