@@ -129,6 +129,11 @@ test("acceptance script dry-run lists the final product gates", () => {
         'test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q "Phase 8 Disposable Edit/Build Loop - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
     },
     {
+      label: "disposable edit/build loop beta-log archive status",
+      command:
+        'test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-1.validation.json && test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-2.validation.json && test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-3.validation.json && rg -q "Status: Archived complete for rows #1/#2/#3" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "2026-06-28-row-1" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "2026-06-28-row-2" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "2026-06-28-row-3" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
       label: "disposable edit/build loop project readiness preflight",
       command: "node scripts/disposable-loop-preflight.mjs --json",
     },
@@ -243,6 +248,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "manual desktop restart smoke protocol",
     "manual stability regression batch",
     "manual disposable edit/build loop protocol",
+    "disposable edit/build loop beta-log archive status",
     "disposable edit/build loop project readiness preflight",
     "disposable edit/build loop clean worktree prepare dry-run",
     "disposable edit/build loop evidence collector",

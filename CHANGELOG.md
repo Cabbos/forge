@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added a disposable loop row finalizer that reviews manual evidence, validates strict row output, and archives the Phase 8 row in one command.
+- Added an acceptance gate that keeps the Phase 8 beta log synchronized with archived row #1/#2/#3 disposable-loop evidence.
 - Connected the disposable loop status and runbook helpers to desktop UI evidence preflight so a clean project with unusable local screenshots reports `ui_evidence_not_ready` instead of looking ready for live evidence.
 - Added a desktop UI evidence doctor that maps blocked local screenshot/window evidence to Screen Recording and Accessibility recovery commands before rerunning Phase 8 live rows.
 - Clarified in the desktop UI evidence preflight and doctor that Forge Trust/Full Access does not grant macOS Screen Recording or Accessibility, so blocked live evidence is not confused with Forge permission mode.
