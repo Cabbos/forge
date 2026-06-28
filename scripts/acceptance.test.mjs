@@ -429,3 +429,31 @@ test("acceptance script rejects duplicate gate labels", () => {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test("acceptance script rejects duplicate gate commands", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-"));
+  try {
+    const tempScriptPath = join(tempDir, "acceptance.sh");
+    const source = readFileSync(scriptPath, "utf8");
+    const duplicateCommandSource = source.replace(
+      "add_gate 'website production build' 'npm run build:website'",
+      "add_gate 'website production build' 'npm run build:desktop'",
+    );
+    assert.notEqual(duplicateCommandSource, source, "test fixture should inject a duplicate gate command");
+
+    writeFileSync(tempScriptPath, duplicateCommandSource);
+    chmodSync(tempScriptPath, 0o755);
+
+    const result = spawnSync(tempScriptPath, ["--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Duplicate acceptance gate command: npm run build:desktop/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
