@@ -1,0 +1,16 @@
+{
+  "status": "complete",
+  "pass": true,
+  "row": "2",
+  "requireComplete": true,
+  "issues": [],
+  "blockingIssues": [],
+  "summary": {
+    "changedFiles": [
+      "src/styles.css"
+    ],
+    "buildRan": true,
+    "buildSuccess": true,
+    "manualFieldsMissing": []
+  }
+}
