@@ -304,6 +304,10 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       const contextUsage = isProviderReplay && session.contextUsage
         ? session.contextUsage
         : contextUsageFromLedger(usageLedger, contextWindowTokens, session.contextUsage);
+      const shouldRestoreMissingReplayCost = isProviderReplay
+        && !previousLedger
+        && existingProviderBlockIndex >= 0
+        && session.costUsd <= 0;
       if (newBlock) {
         if (existingProviderBlockIndex >= 0) {
           blocks[existingProviderBlockIndex] = newBlock;
@@ -311,7 +315,8 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
           blocks.push(newBlock);
         }
       }
-      const costDelta = isProviderReplay || isLegacyProviderCompanion(previousLedger, usageLedger)
+      const costDelta = (isProviderReplay && !shouldRestoreMissingReplayCost)
+        || isLegacyProviderCompanion(previousLedger, usageLedger)
         ? null
         : usageLedger.costUsd;
       sessions.set(session_id, touchSession(session, {
