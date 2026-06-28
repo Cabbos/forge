@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 LIST_JSON=0
+SHOW_HELP=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -14,66 +15,7 @@ for arg in "$@"; do
       LIST_JSON=1
       ;;
     -h|--help)
-      cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run] [--list-json]
-
-Runs the Forge Level 3 runtime acceptance gates:
-  1. Desktop production build
-  2. Website production build
-  3. Eval runner test suite
-  4. Loop event journal contract tests
-  5. Projection rebuild/replay tests
-  6. Policy preflight tests
-  7. Budget preflight tests
-  8. Durable human gate tests
-  9. Gateway loop runner status smoke
-  10. Subagent runtime event projection smoke
-  11. Live worktree worker lifecycle harness
-  12. A2A child runtime file IO bridge
-  13. Executor file IO stream smoke
-  14. Completion contract desktop helper smoke
-  15. Completion contract mocked desktop smoke
-  16. Mocked desktop restart runtime smoke (partial macOS evidence)
-  17. Desktop restart harness availability preflight
-  18. Desktop restart harness preflight contract tests
-  19. Desktop restart harness blocker documentation status
-  20. Confirmation response replay contract tests
-  21. Desktop UI evidence observer preflight
-  22. Desktop UI evidence doctor
-  23. Desktop UI evidence recovery checks
-  24. Manual desktop restart smoke protocol gate
-  25. Manual stability regression batch gate
-  26. Manual disposable edit/build loop protocol gate
-  27. Disposable edit/build loop beta-log archive status
-  28. Disposable edit/build loop project readiness preflight
-  29. Disposable edit/build loop clean worktree prepare dry-run
-  30. Disposable edit/build loop evidence collector
-  31. Disposable edit/build loop evidence validator
-  32. Disposable edit/build loop evidence archive dry-run
-  33. Disposable edit/build loop manual evidence template
-  34. Disposable edit/build loop manual evidence review
-  35. Disposable edit/build loop row finalizer dry-run
-  36. Disposable edit/build loop row runbook
-  37. Disposable edit/build loop status summary
-  38. Disposable edit/build loop live-ready hard gate
-  39. Provider usage known/unknown telemetry
-  40. Composer context usage from provider_usage
-  41. Provider usage trace rendering
-  42. Legacy usage duplicate suppression
-  43. Legacy transcript usage hydration
-  44. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  45. Persisted A2A lineage tests
-  46. Typed completion evidence and review-to-commit eligibility tests
-  47. Gated headless ownership policy tests
-  48. Permission mode, live-session sync, and shell policy contract tests
-  49. Slash command review calibration contract tests
-  50. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  51. Rich preview e2e smoke specs
-
-Use --dry-run to print the command plan without executing it.
-Use --list-json to print the same gate plan as machine-readable JSON.
-EOF
-      exit 0
+      SHOW_HELP=1
       ;;
     *)
       echo "Unknown argument: $arg" >&2
@@ -193,6 +135,23 @@ COMMANDS=(
 if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" ]]; then
   echo "Acceptance matrix mismatch: ${#COMMAND_LABELS[@]} labels for ${#COMMANDS[@]} commands" >&2
   exit 1
+fi
+
+if [[ "$SHOW_HELP" -eq 1 ]]; then
+  cat <<'EOF'
+Usage: scripts/acceptance.sh [--dry-run] [--list-json]
+
+Runs the Forge Level 3 runtime acceptance gates:
+EOF
+  for index in "${!COMMAND_LABELS[@]}"; do
+    printf '  %s. %s\n' "$((index + 1))" "${COMMAND_LABELS[$index]}"
+  done
+  cat <<'EOF'
+
+Use --dry-run to print the command plan without executing it.
+Use --list-json to print the same gate plan as machine-readable JSON.
+EOF
+  exit 0
 fi
 
 if [[ "$LIST_JSON" -eq 1 ]]; then
