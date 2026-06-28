@@ -850,6 +850,85 @@ describe("store usageLedger persistence and hydration", () => {
     assert.strictEqual(session.contextUsage?.contextWindowTokens, 1_000_000);
     assert.strictEqual(session.contextUsage?.source, "provider_usage");
   });
+
+  it("hydrates provider_usage from Tauri transcript events into context usage", async () => {
+    globalThis.window.__TAURI__ = {};
+    globalThis.__forgeTauriInvoke = async (command, args) => {
+      switch (command) {
+        case "load_app_metadata":
+          return {
+            workspaces: [
+              {
+                id: "/workspace",
+                name: "workspace",
+                path: "/workspace",
+                lastOpenedAt: 20,
+              },
+            ],
+            activeWorkspaceId: "/workspace",
+            activeSessionId: "session-1",
+            selectedProvider: "deepseek",
+            selectedModel: "deepseek-v4-flash[1m]",
+          };
+        case "list_sessions":
+          return [
+            {
+              id: "session-1",
+              provider: "deepseek",
+              model: "deepseek-v4-flash[1m]",
+              status: "running",
+              created_at: "2026-06-27T00:00:00.000Z",
+              working_dir: "/workspace",
+              created_at_ms: 10,
+              updated_at_ms: 20,
+              context_window_tokens: 1_000_000,
+            },
+          ];
+        case "load_session_transcript":
+          assert.deepEqual(args, { sessionId: "session-1" });
+          return [
+            {
+              event_type: "provider_usage",
+              session_id: "session-1",
+              block_id: "provider-usage-tauri",
+              provider_id: "deepseek",
+              model: "deepseek-v4-flash[1m]",
+              source: "anthropic",
+              reason: "provider_reported",
+              input_tokens: 411,
+              output_tokens: 137,
+              cache_read_tokens: null,
+              cache_creation_tokens: null,
+              reasoning_tokens: null,
+              estimated_cost_micros: 96,
+              pricing_source: "forge_static_pricing_2026_06_20",
+            },
+          ];
+        case "save_app_metadata":
+          return null;
+        default:
+          throw new Error(`Unexpected Tauri invoke: ${command}`);
+      }
+    };
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.usageLedger?.lastEventType, "provider_usage");
+    assert.strictEqual(session.usageLedger?.lastProviderUsageBlockId, "provider-usage-tauri");
+    assert.strictEqual(session.usageLedger?.inputTokens, 411);
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.contextUsage?.contextWindowTokens, 1_000_000);
+    assert.strictEqual(session.contextUsage?.source, "provider_usage");
+  });
 });
 
 function createStoreState(): AppStore {
