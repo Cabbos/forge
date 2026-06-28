@@ -79,7 +79,8 @@ export function readWorkspacePackageNames(rootDir) {
   const names = new Set();
   for (const packageFile of packageFiles) {
     if (!existsSync(packageFile)) continue;
-    const parsed = JSON.parse(readFileSync(packageFile, "utf8"));
+    const parsed = readPackageJson(packageFile);
+    if (!parsed) continue;
     for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
       for (const name of Object.keys(parsed[section] ?? {})) {
         names.add(name);
@@ -92,10 +93,19 @@ export function readWorkspacePackageNames(rootDir) {
 export function detectRestartHarnessCommand(rootDir) {
   const packageFile = join(rootDir, "apps", "desktop", "package.json");
   if (!existsSync(packageFile)) return null;
-  const parsed = JSON.parse(readFileSync(packageFile, "utf8"));
+  const parsed = readPackageJson(packageFile);
+  if (!parsed) return null;
   const scripts = parsed.scripts ?? {};
   const scriptName = RESTART_HARNESS_SCRIPT_NAMES.find((candidate) => Object.hasOwn(scripts, candidate));
   return scriptName ? `npm --prefix apps/desktop run ${scriptName}` : null;
+}
+
+function readPackageJson(packageFile) {
+  try {
+    return JSON.parse(readFileSync(packageFile, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 function nativeDriverForPlatform(platform) {
