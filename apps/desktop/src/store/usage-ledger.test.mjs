@@ -239,6 +239,7 @@ describe("usage ledger projection", () => {
 
     assert.equal(projection.contextUsage.usedTokens, 32_000);
     assert.equal(projection.contextUsage.source, "local_estimate");
+    assert.equal(projection.replayedCompactedContext, true);
     assert.equal(projection.contextUsage.lastCompactedAt, 999);
     assert.equal(projection.contextUsage.compactedFromTokens, 142_000);
     assert.equal(projection.contextUsage.compactedToTokens, 32_000);
@@ -266,5 +267,6 @@ describe("usage ledger projection", () => {
     assert.equal(projection.costUsd, 0);
     assert.equal(projection.contextUsage.usedTokens, 32_000);
     assert.equal(projection.contextUsage.source, "local_estimate");
+    assert.equal(projection.replayedCompactedContext, true);
   });
 });
