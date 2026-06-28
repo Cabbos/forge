@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -399,4 +400,32 @@ test("acceptance script suggests a close gate label for --only misses", () => {
   assert.equal(result.status, 2);
   assert.match(result.stderr, /No acceptance gate matched --only: desktop restart blocker documentation status/);
   assert.match(result.stderr, /Did you mean: desktop restart harness blocker documentation status/);
+});
+
+test("acceptance script rejects duplicate gate labels", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-"));
+  try {
+    const tempScriptPath = join(tempDir, "acceptance.sh");
+    const source = readFileSync(scriptPath, "utf8");
+    const duplicateLabelSource = source.replace(
+      "add_gate 'website production build' 'npm run build:website'",
+      "add_gate 'desktop production build' 'npm run build:website'",
+    );
+    assert.notEqual(duplicateLabelSource, source, "test fixture should inject a duplicate gate label");
+
+    writeFileSync(tempScriptPath, duplicateLabelSource);
+    chmodSync(tempScriptPath, 0o755);
+
+    const result = spawnSync(tempScriptPath, ["--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Duplicate acceptance gate label: desktop production build/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });

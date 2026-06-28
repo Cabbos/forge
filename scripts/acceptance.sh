@@ -104,6 +104,18 @@ if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" ]]; then
   exit 1
 fi
 
+for left_index in "${!COMMAND_LABELS[@]}"; do
+  for right_index in "${!COMMAND_LABELS[@]}"; do
+    if [[ "$right_index" -le "$left_index" ]]; then
+      continue
+    fi
+    if [[ "${COMMAND_LABELS[$left_index]}" == "${COMMAND_LABELS[$right_index]}" ]]; then
+      echo "Duplicate acceptance gate label: ${COMMAND_LABELS[$left_index]}" >&2
+      exit 1
+    fi
+  done
+done
+
 SELECTED_INDICES=()
 for index in "${!COMMANDS[@]}"; do
   if [[ -z "$ONLY_LABEL" || "${COMMAND_LABELS[$index]}" == "$ONLY_LABEL" ]]; then

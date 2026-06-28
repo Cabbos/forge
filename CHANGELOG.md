@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a duplicate-label guard to the acceptance matrix so `--only <label>` remains a single-gate selector.
 - Collapsed the acceptance gate definitions into per-gate `add_gate` entries so labels and commands are maintained together instead of across parallel arrays.
 - Added the acceptance matrix contract tests to the full acceptance suite so gate metadata, generated help, JSON output, and exact-label execution are verified before heavier product gates run.
 - Added close-label suggestions when `scripts/acceptance.sh --only` does not match an acceptance gate exactly.
