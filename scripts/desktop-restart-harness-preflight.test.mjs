@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { evaluateRestartHarness } from "./desktop-restart-harness-preflight.mjs";
+import { detectRestartHarnessCommand, evaluateRestartHarness } from "./desktop-restart-harness-preflight.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const scriptPath = join(root, "scripts", "desktop-restart-harness-preflight.mjs");
@@ -55,11 +57,29 @@ test("Linux reports ready when official driver pieces are present", () => {
       msedgedriver: null,
     },
     packageNames: new Set(["selenium-webdriver"]),
+    restartHarnessCommand: "npm --prefix apps/desktop run test:tauri:restart",
   });
 
   assert.equal(result.status, "ready_official_webdriver");
   assert.equal(result.canRunOfficialHarness, true);
   assert.deepEqual(result.missing, []);
+});
+
+test("non-macOS does not report ready without a restart harness launch command", () => {
+  const result = evaluateRestartHarness({
+    platform: "linux",
+    commands: {
+      "tauri-driver": "/usr/bin/tauri-driver",
+      WebKitWebDriver: "/usr/bin/WebKitWebDriver",
+      msedgedriver: null,
+    },
+    packageNames: new Set(["selenium-webdriver"]),
+    restartHarnessCommand: null,
+  });
+
+  assert.equal(result.status, "missing_harness_dependencies");
+  assert.equal(result.canRunOfficialHarness, false);
+  assert.deepEqual(result.missing, ["desktop restart harness launch command"]);
 });
 
 test("non-macOS reports missing harness dependencies precisely", () => {
@@ -75,7 +95,34 @@ test("non-macOS reports missing harness dependencies precisely", () => {
 
   assert.equal(result.status, "missing_harness_dependencies");
   assert.equal(result.canRunOfficialHarness, false);
-  assert.deepEqual(result.missing, ["WebKitWebDriver", "webdriver client package"]);
+  assert.deepEqual(result.missing, [
+    "WebKitWebDriver",
+    "webdriver client package",
+    "desktop restart harness launch command",
+  ]);
+});
+
+test("detects a configured restart harness launch command", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "forge-restart-harness-"));
+  try {
+    const desktopDir = join(tempRoot, "apps", "desktop");
+    mkdirSync(desktopDir, { recursive: true });
+    writeFileSync(
+      join(desktopDir, "package.json"),
+      JSON.stringify({
+        scripts: {
+          "test:desktop:restart": "wdio run ./restart.conf.ts",
+        },
+      }),
+    );
+
+    assert.equal(
+      detectRestartHarnessCommand(tempRoot),
+      "npm --prefix apps/desktop run test:desktop:restart",
+    );
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
 });
 
 test("json mode emits machine-readable current preflight result", () => {

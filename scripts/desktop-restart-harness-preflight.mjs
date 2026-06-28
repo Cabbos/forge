@@ -8,11 +8,13 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT_DIR = resolve(dirname(SCRIPT_PATH), "..");
 const WEBDRIVER_CLIENT_PACKAGES = new Set(["selenium-webdriver", "webdriverio", "@wdio/cli"]);
 const MACOS_OFFICIAL_DRIVER_GAP = "official macOS WKWebView WebDriver support";
+const RESTART_HARNESS_SCRIPT_NAMES = ["test:tauri:restart", "test:desktop:restart", "e2e:tauri:restart"];
 
 export function evaluateRestartHarness({
   platform = process.platform,
   commands = detectCommands(platform),
   packageNames = readWorkspacePackageNames(ROOT_DIR),
+  restartHarnessCommand = detectRestartHarnessCommand(ROOT_DIR),
 } = {}) {
   const packageSet = packageNames instanceof Set ? packageNames : new Set(packageNames);
   const webdriverClientPackages = [...packageSet].filter((name) => WEBDRIVER_CLIENT_PACKAGES.has(name));
@@ -20,11 +22,15 @@ export function evaluateRestartHarness({
   const hasTauriDriver = Boolean(commands["tauri-driver"]);
   const nativeDriverName = nativeDriverForPlatform(platform);
   const hasNativeDriver = nativeDriverName ? Boolean(commands[nativeDriverName]) : false;
+  const hasRestartHarnessCommand = Boolean(restartHarnessCommand);
 
   const missing = [];
   if (!hasTauriDriver) missing.push("tauri-driver");
   if (nativeDriverName && !hasNativeDriver) missing.push(nativeDriverName);
   if (!hasWebdriverClient) missing.push("webdriver client package");
+  if (platform !== "darwin" && !hasRestartHarnessCommand) {
+    missing.push("desktop restart harness launch command");
+  }
 
   if (platform === "darwin") {
     if (!missing.includes(MACOS_OFFICIAL_DRIVER_GAP)) missing.push(MACOS_OFFICIAL_DRIVER_GAP);
@@ -36,6 +42,7 @@ export function evaluateRestartHarness({
       detected: {
         commands,
         webdriverClientPackages,
+        restartHarnessCommand,
       },
       reason:
         "Forge treats true Tauri force-quit/reopen proof as manual on macOS until official WKWebView WebDriver support is available for this repo.",
@@ -43,7 +50,7 @@ export function evaluateRestartHarness({
     };
   }
 
-  const canRunOfficialHarness = hasTauriDriver && hasNativeDriver && hasWebdriverClient;
+  const canRunOfficialHarness = hasTauriDriver && hasNativeDriver && hasWebdriverClient && hasRestartHarnessCommand;
   return {
     status: canRunOfficialHarness ? "ready_official_webdriver" : "missing_harness_dependencies",
     canRunOfficialHarness,
@@ -52,6 +59,7 @@ export function evaluateRestartHarness({
     detected: {
       commands,
       webdriverClientPackages,
+      restartHarnessCommand,
     },
     reason: canRunOfficialHarness
       ? "Official Tauri/WebDriver restart harness dependencies appear available."
@@ -78,6 +86,15 @@ export function readWorkspacePackageNames(rootDir) {
     }
   }
   return names;
+}
+
+export function detectRestartHarnessCommand(rootDir) {
+  const packageFile = join(rootDir, "apps", "desktop", "package.json");
+  if (!existsSync(packageFile)) return null;
+  const parsed = JSON.parse(readFileSync(packageFile, "utf8"));
+  const scripts = parsed.scripts ?? {};
+  const scriptName = RESTART_HARNESS_SCRIPT_NAMES.find((candidate) => Object.hasOwn(scripts, candidate));
+  return scriptName ? `npm --prefix apps/desktop run ${scriptName}` : null;
 }
 
 function nativeDriverForPlatform(platform) {
@@ -110,6 +127,9 @@ function printHuman(result) {
   console.log(`Official harness ready: ${result.canRunOfficialHarness ? "yes" : "no"}`);
   if (result.missing.length > 0) {
     console.log(`Missing: ${result.missing.join(", ")}`);
+  }
+  if (result.detected.restartHarnessCommand) {
+    console.log(`Harness launch: ${result.detected.restartHarnessCommand}`);
   }
   console.log(`Fallback smoke: ${result.fallbackCommand}`);
   console.log(result.reason);
