@@ -479,6 +479,57 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
     assert.strictEqual(session.blocks[0].block_id, "usage-missing-visible-block");
     assert.strictEqual(session.blocks[0].event_type, "provider_usage");
   });
+
+  it("rebuilds missing context usage from a replayed provider_usage ledger without double-counting cost", () => {
+    const usageLedger = testUsageLedger({ lastProviderUsageBlockId: "usage-context-replay" });
+    const state = createDispatcherState([
+      [
+        "session-1",
+        {
+          id: "session-1",
+          agentType: "codex",
+          model: "test-model",
+          workingDir: "/workspace",
+          workspaceId: "/workspace",
+          createdAt: 1,
+          updatedAt: 1,
+          contextWindowTokens: 1000,
+          status: "running",
+          streaming: false,
+          blocks: [],
+          costUsd: 0.000096,
+          contextUsage: null,
+          usageLedger,
+        },
+      ],
+    ]);
+    const dispatch = createOutputEventDispatcher(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-context-replay",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.usageLedger, usageLedger);
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.contextUsage?.contextWindowTokens, 1000);
+    assert.strictEqual(session.contextUsage?.source, "provider_usage");
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].block_id, "usage-context-replay");
+  });
 });
 
 describe("createOutputEventDispatcher health alerts", () => {
