@@ -123,7 +123,7 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
             createdAt: s.createdAt ?? hydratedAt,
             updatedAt: s.updatedAt ?? s.createdAt ?? hydratedAt,
             blocks,
-            costUsd: restoredUsage?.costUsd ?? 0,
+            costUsd: sanitizePersistedCost(s.costUsd) ?? restoredUsage?.costUsd ?? 0,
             contextUsage: s.contextUsage ?? restoredUsage?.contextUsage ?? null,
             usageLedger: s.usageLedger ?? restoredUsage?.usageLedger ?? null,
             streaming: false,
@@ -208,4 +208,8 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
       set({ hydrated: true });
     }
   };
+}
+
+function sanitizePersistedCost(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null;
 }

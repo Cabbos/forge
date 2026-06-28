@@ -112,7 +112,7 @@ describe("store usageLedger persistence and hydration", () => {
     delete globalThis.window.__TAURI__;
   });
 
-  it("persists usageLedger in the session payload", async () => {
+  it("persists usageLedger and cumulative cost in the session payload", async () => {
     const usageLedger = testUsageLedger();
     const sessions = new Map<string, SessionState>([
       ["session-1", testSession({ usageLedger })],
@@ -120,9 +120,13 @@ describe("store usageLedger persistence and hydration", () => {
 
     await persistSessions(sessions, new Map(), new Map());
 
-    const persisted = testIdb().get(PERSIST_KEY) as Array<{ usageLedger?: SessionUsageLedgerState | null }>;
+    const persisted = testIdb().get(PERSIST_KEY) as Array<{
+      costUsd?: number | null;
+      usageLedger?: SessionUsageLedgerState | null;
+    }>;
     assert.equal(persisted.length, 1);
     assert.deepEqual(persisted[0].usageLedger, usageLedger);
+    assert.equal(persisted[0].costUsd, 0.000096);
   });
 
   it("hydrates usageLedger from a persisted session", async () => {
@@ -154,6 +158,39 @@ describe("store usageLedger persistence and hydration", () => {
     await hydrate();
 
     assert.deepEqual(state.sessions.get("session-1")?.usageLedger, usageLedger);
+  });
+
+  it("hydrates cumulative cost from the persisted session when usage blocks are unavailable", async () => {
+    const usageLedger = testUsageLedger();
+    testIdb().set(PERSIST_KEY, [
+      {
+        id: "session-1",
+        agentType: "codex",
+        model: "deepseek-v4-flash[1m]",
+        workingDir: "/workspace",
+        workspaceId: "/workspace",
+        createdAt: 10,
+        updatedAt: 20,
+        contextWindowTokens: 1_000_000,
+        contextUsage: null,
+        usageLedger,
+        costUsd: 0.000146,
+        status: "running",
+        workflowState: null,
+        deliverySummary: null,
+      },
+    ]);
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000146);
+    assert.deepEqual(session.usageLedger, usageLedger);
   });
 
   it("restores cost from provider_usage blocks while keeping a persisted usageLedger", async () => {
