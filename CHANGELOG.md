@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added the acceptance matrix contract tests to the full acceptance suite so gate metadata, generated help, JSON output, and exact-label execution are verified before heavier product gates run.
 - Added close-label suggestions when `scripts/acceptance.sh --only` does not match an acceptance gate exactly.
 - Added `scripts/acceptance.sh --only <label>` so a single acceptance gate can be run or dry-run by exact label.
 - Generated the acceptance script help gate list from the same matrix used by dry-run and JSON output so help text cannot drift from executable gates.

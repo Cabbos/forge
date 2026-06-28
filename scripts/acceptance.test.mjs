@@ -43,6 +43,7 @@ test("acceptance script dry-run lists the final product gates", () => {
 
   const dryRunEntries = parseDryRunEntries(output);
   const expectedEntries = [
+    { label: "acceptance matrix contract tests", command: "node --test scripts/acceptance.test.mjs" },
     { label: "desktop production build", command: "npm run build:desktop" },
     { label: "website production build", command: "npm run build:website" },
     { label: "eval runner test suite", command: "npm run test:eval" },
