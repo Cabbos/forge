@@ -38,30 +38,31 @@ Runs the Forge Level 3 runtime acceptance gates:
   22. Manual desktop restart smoke protocol gate
   23. Manual stability regression batch gate
   24. Manual disposable edit/build loop protocol gate
-  25. Disposable edit/build loop project readiness preflight
-  26. Disposable edit/build loop clean worktree prepare dry-run
-  27. Disposable edit/build loop evidence collector
-  28. Disposable edit/build loop evidence validator
-  29. Disposable edit/build loop evidence archive dry-run
-  30. Disposable edit/build loop manual evidence template
-  31. Disposable edit/build loop manual evidence review
-  32. Disposable edit/build loop row finalizer dry-run
-  33. Disposable edit/build loop row runbook
-  34. Disposable edit/build loop status summary
-  35. Disposable edit/build loop live-ready hard gate
-  36. Provider usage known/unknown telemetry
-  37. Composer context usage from provider_usage
-  38. Provider usage trace rendering
-  39. Legacy usage duplicate suppression
-  40. Legacy transcript usage hydration
-  41. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  42. Persisted A2A lineage tests
-  43. Typed completion evidence and review-to-commit eligibility tests
-  44. Gated headless ownership policy tests
-  45. Permission mode, live-session sync, and shell policy contract tests
-  46. Slash command review calibration contract tests
-  47. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  48. Rich preview e2e smoke specs
+  25. Disposable edit/build loop beta-log archive status
+  26. Disposable edit/build loop project readiness preflight
+  27. Disposable edit/build loop clean worktree prepare dry-run
+  28. Disposable edit/build loop evidence collector
+  29. Disposable edit/build loop evidence validator
+  30. Disposable edit/build loop evidence archive dry-run
+  31. Disposable edit/build loop manual evidence template
+  32. Disposable edit/build loop manual evidence review
+  33. Disposable edit/build loop row finalizer dry-run
+  34. Disposable edit/build loop row runbook
+  35. Disposable edit/build loop status summary
+  36. Disposable edit/build loop live-ready hard gate
+  37. Provider usage known/unknown telemetry
+  38. Composer context usage from provider_usage
+  39. Provider usage trace rendering
+  40. Legacy usage duplicate suppression
+  41. Legacy transcript usage hydration
+  42. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  43. Persisted A2A lineage tests
+  44. Typed completion evidence and review-to-commit eligibility tests
+  45. Gated headless ownership policy tests
+  46. Permission mode, live-session sync, and shell policy contract tests
+  47. Slash command review calibration contract tests
+  48. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  49. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -99,6 +100,7 @@ COMMAND_LABELS=(
   "manual desktop restart smoke protocol"
   "manual stability regression batch"
   "manual disposable edit/build loop protocol"
+  "disposable edit/build loop beta-log archive status"
   "disposable edit/build loop project readiness preflight"
   "disposable edit/build loop clean worktree prepare dry-run"
   "disposable edit/build loop evidence collector"
@@ -150,6 +152,7 @@ COMMANDS=(
   "test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"Stability Convergence Restart Smoke - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q \"Stability Regression Batch - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q \"Phase 8 Disposable Edit/Build Loop - 2026-06-27\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
+  "test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-1.validation.json && test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-2.validation.json && test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-3.validation.json && rg -q \"Status: Archived complete for rows #1/#2/#3\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q \"2026-06-28-row-1\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q \"2026-06-28-row-2\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q \"2026-06-28-row-3\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "node scripts/disposable-loop-preflight.mjs --json"
   "node scripts/prepare-disposable-loop-project.mjs --json --dry-run"
   "node scripts/collect-disposable-loop-evidence.mjs --json"
