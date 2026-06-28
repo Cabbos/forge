@@ -159,6 +159,20 @@ done
 
 if [[ -n "$ONLY_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
   echo "No acceptance gate matched --only: $ONLY_LABEL" >&2
+  read -r -a only_words <<< "$ONLY_LABEL"
+  for label in "${COMMAND_LABELS[@]}"; do
+    suggestion_match=1
+    for word in "${only_words[@]}"; do
+      if [[ "$label" != *"$word"* ]]; then
+        suggestion_match=0
+        break
+      fi
+    done
+    if [[ "$suggestion_match" -eq 1 ]]; then
+      echo "Did you mean: $label" >&2
+      break
+    fi
+  done
   echo "Run scripts/acceptance.sh --list-json to see valid labels." >&2
   exit 2
 fi
