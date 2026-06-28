@@ -1,0 +1,14 @@
+{
+  "status": "complete",
+  "pass": true,
+  "row": "3",
+  "requireComplete": true,
+  "issues": [],
+  "blockingIssues": [],
+  "summary": {
+    "changedFiles": [],
+    "buildRan": true,
+    "buildSuccess": true,
+    "manualFieldsMissing": []
+  }
+}
