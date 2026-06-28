@@ -530,6 +530,70 @@ describe("createOutputEventDispatcher live provider_usage events", () => {
     assert.strictEqual(session.blocks.length, 1);
     assert.strictEqual(session.blocks[0].block_id, "usage-context-replay");
   });
+
+  it("rebuilds missing cost from an existing provider_usage block exactly once", () => {
+    const existingProviderBlock = {
+      block_id: "usage-existing-block-missing-ledger",
+      event_type: "provider_usage",
+      content: "provider usage",
+      isComplete: true,
+      metadata: {
+        provider_id: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        source: "anthropic",
+        reason: "provider_reported",
+        input_tokens: 411,
+        output_tokens: 137,
+        estimated_cost_micros: 96,
+      },
+    };
+    const state = createDispatcherState([
+      [
+        "session-1",
+        {
+          id: "session-1",
+          agentType: "codex",
+          model: "test-model",
+          workingDir: "/workspace",
+          workspaceId: "/workspace",
+          createdAt: 1,
+          updatedAt: 1,
+          contextWindowTokens: 1000,
+          status: "running",
+          streaming: false,
+          blocks: [existingProviderBlock],
+          costUsd: 0,
+          contextUsage: null,
+          usageLedger: null,
+        },
+      ],
+    ]);
+    const dispatch = createOutputEventDispatcher(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+    const replayedUsage = {
+      event_type: "provider_usage" as const,
+      session_id: "session-1",
+      block_id: "usage-existing-block-missing-ledger",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported" as const,
+      input_tokens: 411,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    };
+
+    dispatch(replayedUsage);
+    dispatch(replayedUsage);
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.costUsd, 0.000096);
+    assert.strictEqual(session.usageLedger?.lastProviderUsageBlockId, "usage-existing-block-missing-ledger");
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.blocks.length, 1);
+  });
 });
 
 describe("createOutputEventDispatcher health alerts", () => {
