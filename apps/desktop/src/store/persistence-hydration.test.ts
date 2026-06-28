@@ -719,6 +719,74 @@ describe("store usageLedger persistence and hydration", () => {
     assert.strictEqual(block.metadata.confirm_interrupted, undefined);
     assert.strictEqual(state.activeSessionId, "session-1");
   });
+
+  it("hydrates legacy usage from Tauri transcript events without rendering a usage block", async () => {
+    globalThis.window.__TAURI__ = {};
+    globalThis.__forgeTauriInvoke = async (command, args) => {
+      switch (command) {
+        case "load_app_metadata":
+          return {
+            workspaces: [
+              {
+                id: "/workspace",
+                name: "workspace",
+                path: "/workspace",
+                lastOpenedAt: 20,
+              },
+            ],
+            activeWorkspaceId: "/workspace",
+            activeSessionId: "session-1",
+            selectedProvider: "deepseek",
+            selectedModel: "deepseek-v4-flash[1m]",
+          };
+        case "list_sessions":
+          return [
+            {
+              id: "session-1",
+              provider: "deepseek",
+              model: "deepseek-v4-flash[1m]",
+              status: "running",
+              created_at: "2026-06-27T00:00:00.000Z",
+              working_dir: "/workspace",
+              created_at_ms: 10,
+              updated_at_ms: 20,
+              context_window_tokens: 1_000_000,
+            },
+          ];
+        case "load_session_transcript":
+          assert.deepEqual(args, { sessionId: "session-1" });
+          return [
+            {
+              event_type: "usage",
+              session_id: "session-1",
+              input_tokens: 142_000,
+              output_tokens: 800,
+              estimated_cost_usd: 0.002,
+            },
+          ];
+        case "save_app_metadata":
+          return null;
+        default:
+          throw new Error(`Unexpected Tauri invoke: ${command}`);
+      }
+    };
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.blocks.length, 0);
+    assert.strictEqual(session.costUsd, 0.002);
+    assert.strictEqual(session.usageLedger?.lastEventType, "usage");
+    assert.strictEqual(session.usageLedger?.inputTokens, 142_000);
+    assert.strictEqual(session.contextUsage?.usedTokens, 142_000);
+    assert.strictEqual(session.contextUsage?.contextWindowTokens, 1_000_000);
+    assert.strictEqual(session.contextUsage?.source, "provider_usage");
+  });
 });
 
 function createStoreState(): AppStore {

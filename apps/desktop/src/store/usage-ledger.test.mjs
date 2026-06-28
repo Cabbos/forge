@@ -20,6 +20,7 @@ const {
   applyLegacyUsageToLedger,
   contextUsageFromLedger,
   usageProjectionFromProviderUsageBlocks,
+  usageProjectionFromTranscriptEvents,
 } = await importUsageLedger();
 
 const providerUsage = {
@@ -266,6 +267,54 @@ describe("usage ledger projection", () => {
     assert.equal(projection.usageLedger, null);
     assert.equal(projection.costUsd, 0);
     assert.equal(projection.contextUsage.usedTokens, 32_000);
+    assert.equal(projection.contextUsage.source, "local_estimate");
+    assert.equal(projection.replayedCompactedContext, true);
+  });
+
+  it("replays legacy usage transcript events into cost and context", () => {
+    const projection = usageProjectionFromTranscriptEvents([
+      {
+        event_type: "usage",
+        session_id: "s1",
+        input_tokens: 142_000,
+        output_tokens: 800,
+        estimated_cost_usd: 0.002,
+      },
+    ], 1_000_000, null, 999);
+
+    assert.equal(projection.usageLedger.lastEventType, "usage");
+    assert.equal(projection.usageLedger.inputTokens, 142_000);
+    assert.equal(projection.contextUsage.usedTokens, 142_000);
+    assert.equal(projection.contextUsage.source, "provider_usage");
+    assert.equal(projection.costUsd, 0.002);
+  });
+
+  it("deduplicates provider and legacy companion usage while preserving later compaction", () => {
+    const projection = usageProjectionFromTranscriptEvents([
+      providerUsage,
+      {
+        event_type: "usage",
+        session_id: "s1",
+        input_tokens: 411,
+        output_tokens: 137,
+        estimated_cost_usd: 0.000096,
+      },
+      {
+        event_type: "context_compacted",
+        session_id: "s1",
+        block_id: "compact-after-provider-usage",
+        summary: "Compacted context",
+        retained_messages: 2,
+        compacted_messages: 3,
+        estimated_tokens_before: 411,
+        estimated_tokens_after: 128,
+      },
+    ], 1_000, null, 999);
+
+    assert.equal(projection.costUsd, 0.000096);
+    assert.equal(projection.usageLedger.lastEventType, "provider_usage");
+    assert.equal(projection.usageLedger.legacyDuplicateIgnored, true);
+    assert.equal(projection.contextUsage.usedTokens, 128);
     assert.equal(projection.contextUsage.source, "local_estimate");
     assert.equal(projection.replayedCompactedContext, true);
   });
