@@ -104,29 +104,28 @@ if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" ]]; then
   exit 1
 fi
 
-for left_index in "${!COMMAND_LABELS[@]}"; do
-  for right_index in "${!COMMAND_LABELS[@]}"; do
-    if [[ "$right_index" -le "$left_index" ]]; then
-      continue
-    fi
-    if [[ "${COMMAND_LABELS[$left_index]}" == "${COMMAND_LABELS[$right_index]}" ]]; then
-      echo "Duplicate acceptance gate label: ${COMMAND_LABELS[$left_index]}" >&2
-      exit 1
-    fi
-  done
-done
+assert_unique() {
+  local kind="$1"
+  shift
+  local values=("$@")
+  local left_index
+  local right_index
 
-for left_index in "${!COMMANDS[@]}"; do
-  for right_index in "${!COMMANDS[@]}"; do
-    if [[ "$right_index" -le "$left_index" ]]; then
-      continue
-    fi
-    if [[ "${COMMANDS[$left_index]}" == "${COMMANDS[$right_index]}" ]]; then
-      echo "Duplicate acceptance gate command: ${COMMANDS[$left_index]}" >&2
-      exit 1
-    fi
+  for left_index in "${!values[@]}"; do
+    for right_index in "${!values[@]}"; do
+      if [[ "$right_index" -le "$left_index" ]]; then
+        continue
+      fi
+      if [[ "${values[$left_index]}" == "${values[$right_index]}" ]]; then
+        echo "Duplicate acceptance gate $kind: ${values[$left_index]}" >&2
+        exit 1
+      fi
+    done
   done
-done
+}
+
+assert_unique "label" "${COMMAND_LABELS[@]}"
+assert_unique "command" "${COMMANDS[@]}"
 
 SELECTED_INDICES=()
 for index in "${!COMMANDS[@]}"; do
