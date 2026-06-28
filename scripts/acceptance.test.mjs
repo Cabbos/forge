@@ -101,6 +101,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node --test scripts/desktop-restart-harness-preflight.test.mjs",
     },
     {
+      label: "desktop restart harness blocker documentation status",
+      command:
+        'rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "node --test scripts/desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "blocked_official_macos" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
       label: "confirmation response replay contract tests",
       command:
         'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"',
@@ -246,6 +251,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "mocked desktop restart runtime smoke (partial macOS evidence)",
     "desktop restart harness availability preflight",
     "desktop restart harness preflight contract tests",
+    "desktop restart harness blocker documentation status",
     "confirmation response replay contract tests",
     "desktop UI evidence observer preflight",
     "desktop UI evidence doctor",

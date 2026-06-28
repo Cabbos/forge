@@ -32,38 +32,39 @@ Runs the Forge Level 3 runtime acceptance gates:
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
   17. Desktop restart harness availability preflight
   18. Desktop restart harness preflight contract tests
-  19. Confirmation response replay contract tests
-  20. Desktop UI evidence observer preflight
-  21. Desktop UI evidence doctor
-  22. Desktop UI evidence recovery checks
-  23. Manual desktop restart smoke protocol gate
-  24. Manual stability regression batch gate
-  25. Manual disposable edit/build loop protocol gate
-  26. Disposable edit/build loop beta-log archive status
-  27. Disposable edit/build loop project readiness preflight
-  28. Disposable edit/build loop clean worktree prepare dry-run
-  29. Disposable edit/build loop evidence collector
-  30. Disposable edit/build loop evidence validator
-  31. Disposable edit/build loop evidence archive dry-run
-  32. Disposable edit/build loop manual evidence template
-  33. Disposable edit/build loop manual evidence review
-  34. Disposable edit/build loop row finalizer dry-run
-  35. Disposable edit/build loop row runbook
-  36. Disposable edit/build loop status summary
-  37. Disposable edit/build loop live-ready hard gate
-  38. Provider usage known/unknown telemetry
-  39. Composer context usage from provider_usage
-  40. Provider usage trace rendering
-  41. Legacy usage duplicate suppression
-  42. Legacy transcript usage hydration
-  43. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  44. Persisted A2A lineage tests
-  45. Typed completion evidence and review-to-commit eligibility tests
-  46. Gated headless ownership policy tests
-  47. Permission mode, live-session sync, and shell policy contract tests
-  48. Slash command review calibration contract tests
-  49. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  50. Rich preview e2e smoke specs
+  19. Desktop restart harness blocker documentation status
+  20. Confirmation response replay contract tests
+  21. Desktop UI evidence observer preflight
+  22. Desktop UI evidence doctor
+  23. Desktop UI evidence recovery checks
+  24. Manual desktop restart smoke protocol gate
+  25. Manual stability regression batch gate
+  26. Manual disposable edit/build loop protocol gate
+  27. Disposable edit/build loop beta-log archive status
+  28. Disposable edit/build loop project readiness preflight
+  29. Disposable edit/build loop clean worktree prepare dry-run
+  30. Disposable edit/build loop evidence collector
+  31. Disposable edit/build loop evidence validator
+  32. Disposable edit/build loop evidence archive dry-run
+  33. Disposable edit/build loop manual evidence template
+  34. Disposable edit/build loop manual evidence review
+  35. Disposable edit/build loop row finalizer dry-run
+  36. Disposable edit/build loop row runbook
+  37. Disposable edit/build loop status summary
+  38. Disposable edit/build loop live-ready hard gate
+  39. Provider usage known/unknown telemetry
+  40. Composer context usage from provider_usage
+  41. Provider usage trace rendering
+  42. Legacy usage duplicate suppression
+  43. Legacy transcript usage hydration
+  44. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  45. Persisted A2A lineage tests
+  46. Typed completion evidence and review-to-commit eligibility tests
+  47. Gated headless ownership policy tests
+  48. Permission mode, live-session sync, and shell policy contract tests
+  49. Slash command review calibration contract tests
+  50. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  51. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -95,6 +96,7 @@ COMMAND_LABELS=(
   "mocked desktop restart runtime smoke (partial macOS evidence)"
   "desktop restart harness availability preflight"
   "desktop restart harness preflight contract tests"
+  "desktop restart harness blocker documentation status"
   "confirmation response replay contract tests"
   "desktop UI evidence observer preflight"
   "desktop UI evidence doctor"
@@ -148,6 +150,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
   "node scripts/desktop-restart-harness-preflight.mjs --json"
   "node --test scripts/desktop-restart-harness-preflight.test.mjs"
+  "rg -q \"official macOS WKWebView WebDriver support\" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"node --test scripts/desktop-restart-harness-preflight.test.mjs\" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q \"blocked_official_macos\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q \"official macOS WKWebView WebDriver support\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q \"desktop-restart-harness-preflight.test.mjs\" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g \"confirm response replay|startup transcript hydration\""
   "node scripts/desktop-ui-evidence-preflight.mjs --json"
   "node scripts/desktop-ui-evidence-doctor.mjs --json"

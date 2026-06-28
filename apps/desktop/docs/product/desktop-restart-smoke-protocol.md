@@ -14,7 +14,7 @@ node scripts/desktop-restart-harness-preflight.mjs --json
 
 On current macOS runs this is expected to report `blocked_official_macos`, including the `official macOS WKWebView WebDriver support` gap, and keep `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` as the partial mocked fallback. Use `--require-harness` only on a platform/runner that is expected to provide the official Tauri/WebDriver pieces.
 
-The acceptance matrix also runs `node --test scripts/desktop-restart-harness-preflight.test.mjs` so the macOS blocker remains explicit even if local `tauri-driver` and WebDriver client dependencies are later added.
+The acceptance matrix also runs `node --test scripts/desktop-restart-harness-preflight.test.mjs` and a blocker-documentation status gate that checks this protocol plus the beta log, so the macOS blocker remains explicit even if local `tauri-driver` and WebDriver client dependencies are later added.
 
 ## Required Evidence
 
