@@ -135,9 +135,7 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
             updatedAt: s.updatedAt ?? s.createdAt ?? hydratedAt,
             blocks,
             costUsd: sanitizePersistedCost(s.costUsd) ?? restoredUsage?.costUsd ?? 0,
-            contextUsage: restoredUsage?.replayedCompactedContext
-              ? restoredUsage.contextUsage
-              : s.contextUsage ?? restoredUsage?.contextUsage ?? null,
+            contextUsage: restoredUsage?.contextUsage ?? s.contextUsage ?? null,
             usageLedger: s.usageLedger ?? restoredUsage?.usageLedger ?? null,
             streaming: false,
             // For Tauri, respect the backend-reported status (including "resuming").

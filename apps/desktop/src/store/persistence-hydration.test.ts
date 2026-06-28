@@ -395,6 +395,69 @@ describe("store usageLedger persistence and hydration", () => {
     assert.strictEqual(composerContextLabelInput.isStreaming, false);
   });
 
+  it("hydrates context usage from restored provider_usage blocks over stale persisted context metadata", async () => {
+    testIdb().set(PERSIST_KEY, [
+      {
+        id: "session-1",
+        agentType: "codex",
+        model: "deepseek-v4-flash[1m]",
+        workingDir: "/workspace",
+        workspaceId: "/workspace",
+        createdAt: 10,
+        updatedAt: 20,
+        contextWindowTokens: 1_000_000,
+        contextUsage: {
+          usedTokens: 411,
+          contextWindowTokens: 1_000_000,
+          percentUsed: 0,
+          source: "provider_usage",
+          lastUpdatedAt: 111,
+          lastCompactedAt: null,
+          compactedFromTokens: null,
+          compactedToTokens: null,
+        },
+        usageLedger: null,
+        status: "running",
+        workflowState: null,
+        deliverySummary: null,
+      },
+    ]);
+    testIdb().set(BLOCKS_PREFIX + "session-1", [
+      {
+        block_id: "usage-after-reload",
+        event_type: "provider_usage",
+        content: "provider usage",
+        isComplete: true,
+        metadata: {
+          provider_id: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          source: "anthropic",
+          reason: "provider_reported",
+          input_tokens: 142_000,
+          output_tokens: 800,
+          cache_read_tokens: null,
+          cache_creation_tokens: null,
+          reasoning_tokens: null,
+          estimated_cost_micros: 2000,
+          pricing_source: "forge_static_pricing_2026_06_20",
+        },
+      },
+    ]);
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.usageLedger?.inputTokens, 142_000);
+    assert.strictEqual(session.contextUsage?.usedTokens, 142_000);
+    assert.strictEqual(session.contextUsage?.source, "provider_usage");
+    assert.strictEqual(session.contextUsage?.percentUsed, 14);
+  });
+
   it("hydrates compacted context usage from restored blocks when session context metadata is missing", async () => {
     testIdb().set(PERSIST_KEY, [
       {
