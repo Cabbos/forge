@@ -183,6 +183,7 @@ npm run check:backend  # Rust fmt + clippy + test
 scripts/acceptance.sh          # build + eval + Level 3 runtime + desktop smoke
 scripts/acceptance.sh --dry-run
 scripts/acceptance.sh --list-json
+scripts/acceptance.sh --only "<label>"
 ```
 
 当前 acceptance smoke 覆盖 loop event journal、projection replay、policy/budget preflight、durable human gate、typed completion evidence、review-to-commit eligibility、gateway runner status、subagent runtime projection、completion contract mocked desktop smoke，以及 resume、Settings 诊断、Provider probe、Provider 模型目录 live/static 刷新、选择、默认值保存、Provider metadata 紧凑渲染、Provider evidence start readiness、预览归属详情、stale 健康告警清除、stale banner 当前会话作用域、自定义 Provider profile 新增/编辑/删除、Gateway runtime、权限规则、Composer 完全访问入口、调度任务、A2A 审阅、derived parent/child lineage badge 和后台任务列表。Acceptance 证据现在还包含 mocked desktop restart runtime smoke（macOS partial evidence，不是官方 Tauri/WebDriver force-quit proof）、desktop restart harness preflight、contract tests 和 blocker documentation status gate（明确报告当前 macOS official WKWebView WebDriver support gap）、provider usage known/unknown telemetry、legacy transcript usage hydration、bounded post-shell file-effect evidence、persisted A2A lineage、gated headless ownership policy/approval checks、真实 Rust `run_worktree_worker` harness（mock adapter/harness）、A2A child runtime 的 live file-ish tool facts，以及 direct ToolExecutor file-ish tools 的 `file_io` stream smoke。

@@ -365,3 +365,24 @@ test("acceptance help lists the same gates as list-json", () => {
     matrix.gates.map(({ index, label }) => ({ index, label })),
   );
 });
+
+test("acceptance script can dry-run one named gate", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const output = execFileSync(
+    scriptPath,
+    ["--dry-run", "--only", "desktop restart harness blocker documentation status"],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+
+  assert.deepEqual(parseDryRunEntries(output), [
+    {
+      label: "desktop restart harness blocker documentation status",
+      command:
+        'rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "node --test scripts/desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "blocked_official_macos" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+  ]);
+});

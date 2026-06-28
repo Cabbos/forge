@@ -5,17 +5,30 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
 LIST_JSON=0
 SHOW_HELP=0
+ONLY_LABEL=""
 
-for arg in "$@"; do
+while [[ "$#" -gt 0 ]]; do
+  arg="$1"
   case "$arg" in
     --dry-run)
       DRY_RUN=1
+      shift
       ;;
     --list-json)
       LIST_JSON=1
+      shift
+      ;;
+    --only)
+      if [[ "$#" -lt 2 ]]; then
+        echo "Missing value for --only" >&2
+        exit 2
+      fi
+      ONLY_LABEL="$2"
+      shift 2
       ;;
     -h|--help)
       SHOW_HELP=1
+      shift
       ;;
     *)
       echo "Unknown argument: $arg" >&2
@@ -137,9 +150,22 @@ if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" ]]; then
   exit 1
 fi
 
+SELECTED_INDICES=()
+for index in "${!COMMANDS[@]}"; do
+  if [[ -z "$ONLY_LABEL" || "${COMMAND_LABELS[$index]}" == "$ONLY_LABEL" ]]; then
+    SELECTED_INDICES+=("$index")
+  fi
+done
+
+if [[ -n "$ONLY_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
+  echo "No acceptance gate matched --only: $ONLY_LABEL" >&2
+  echo "Run scripts/acceptance.sh --list-json to see valid labels." >&2
+  exit 2
+fi
+
 if [[ "$SHOW_HELP" -eq 1 ]]; then
   cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run] [--list-json]
+Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>]
 
 Runs the Forge Level 3 runtime acceptance gates:
 EOF
@@ -150,6 +176,7 @@ EOF
 
 Use --dry-run to print the command plan without executing it.
 Use --list-json to print the same gate plan as machine-readable JSON.
+Use --only with an exact gate label to run or dry-run one gate.
 EOF
   exit 0
 fi
@@ -157,7 +184,7 @@ fi
 if [[ "$LIST_JSON" -eq 1 ]]; then
   {
     printf '%s\0' "$ROOT_DIR"
-    for index in "${!COMMANDS[@]}"; do
+    for index in "${SELECTED_INDICES[@]}"; do
       printf '%s\0%s\0%s\0' "$((index + 1))" "${COMMAND_LABELS[$index]}" "${COMMANDS[$index]}"
     done
   } | node -e '
@@ -182,7 +209,7 @@ echo "Forge Level 3 runtime acceptance suite"
 echo "Working directory: $ROOT_DIR"
 echo
 
-for index in "${!COMMANDS[@]}"; do
+for index in "${SELECTED_INDICES[@]}"; do
   label="${COMMAND_LABELS[$index]}"
   command="${COMMANDS[$index]}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
