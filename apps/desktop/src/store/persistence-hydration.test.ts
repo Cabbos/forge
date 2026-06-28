@@ -395,6 +395,123 @@ describe("store usageLedger persistence and hydration", () => {
     assert.strictEqual(composerContextLabelInput.isStreaming, false);
   });
 
+  it("hydrates compacted context usage from restored blocks when session context metadata is missing", async () => {
+    testIdb().set(PERSIST_KEY, [
+      {
+        id: "session-1",
+        agentType: "codex",
+        model: "deepseek-v4-flash[1m]",
+        workingDir: "/workspace",
+        workspaceId: "/workspace",
+        createdAt: 10,
+        updatedAt: 20,
+        contextWindowTokens: 1_000_000,
+        contextUsage: null,
+        usageLedger: null,
+        status: "running",
+        workflowState: null,
+        deliverySummary: null,
+      },
+    ]);
+    testIdb().set(BLOCKS_PREFIX + "session-1", [
+      {
+        block_id: "usage-before-compact",
+        event_type: "provider_usage",
+        content: "provider usage",
+        isComplete: true,
+        metadata: {
+          provider_id: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          source: "anthropic",
+          reason: "provider_reported",
+          input_tokens: 142_000,
+          output_tokens: 800,
+          cache_read_tokens: null,
+          cache_creation_tokens: null,
+          reasoning_tokens: null,
+          estimated_cost_micros: 2000,
+          pricing_source: "forge_static_pricing_2026_06_20",
+        },
+      },
+      {
+        block_id: "compact-after-usage",
+        event_type: "context_compacted",
+        content: "Compacted context",
+        isComplete: true,
+        metadata: {
+          retained_messages: 2,
+          compacted_messages: 3,
+          estimated_tokens_before: 142_000,
+          estimated_tokens_after: 32_000,
+        },
+      },
+    ]);
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.usageLedger?.inputTokens, 142_000);
+    assert.strictEqual(session.costUsd, 0.002);
+    assert.strictEqual(session.contextUsage?.usedTokens, 32_000);
+    assert.strictEqual(session.contextUsage?.source, "local_estimate");
+    assert.strictEqual(session.contextUsage?.compactedFromTokens, 142_000);
+    assert.strictEqual(session.contextUsage?.compactedToTokens, 32_000);
+  });
+
+  it("hydrates compacted context usage when provider usage blocks have been pruned", async () => {
+    testIdb().set(PERSIST_KEY, [
+      {
+        id: "session-1",
+        agentType: "codex",
+        model: "deepseek-v4-flash[1m]",
+        workingDir: "/workspace",
+        workspaceId: "/workspace",
+        createdAt: 10,
+        updatedAt: 20,
+        contextWindowTokens: 1_000_000,
+        contextUsage: null,
+        usageLedger: null,
+        status: "running",
+        workflowState: null,
+        deliverySummary: null,
+      },
+    ]);
+    testIdb().set(BLOCKS_PREFIX + "session-1", [
+      {
+        block_id: "compact-only",
+        event_type: "context_compacted",
+        content: "Compacted context",
+        isComplete: true,
+        metadata: {
+          retained_messages: 2,
+          compacted_messages: 3,
+          estimated_tokens_before: 142_000,
+          estimated_tokens_after: 32_000,
+        },
+      },
+    ]);
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.usageLedger, null);
+    assert.strictEqual(session.costUsd, 0);
+    assert.strictEqual(session.contextUsage?.usedTokens, 32_000);
+    assert.strictEqual(session.contextUsage?.source, "local_estimate");
+    assert.strictEqual(session.contextUsage?.compactedFromTokens, 142_000);
+    assert.strictEqual(session.contextUsage?.compactedToTokens, 32_000);
+  });
+
   it("initializes a new session with a null usageLedger", () => {
     const state = createStoreState();
     const actions = createSessionActions(

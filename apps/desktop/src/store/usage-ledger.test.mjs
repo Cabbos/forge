@@ -19,6 +19,7 @@ const {
   applyProviderUsageToLedger,
   applyLegacyUsageToLedger,
   contextUsageFromLedger,
+  usageProjectionFromProviderUsageBlocks,
 } = await importUsageLedger();
 
 const providerUsage = {
@@ -199,5 +200,71 @@ describe("usage ledger projection", () => {
     assert.equal(invalidWindow.percentUsed, null);
     assert.equal(roundedWindow.contextWindowTokens, 3334);
     assert.equal(roundedWindow.percentUsed, 45);
+  });
+
+  it("replays compacted context blocks as the latest local estimate", () => {
+    const projection = usageProjectionFromProviderUsageBlocks([
+      {
+        block_id: "usage-before-compact",
+        event_type: "provider_usage",
+        content: "provider usage",
+        isComplete: true,
+        metadata: {
+          provider_id: "deepseek",
+          model: "deepseek-v4-flash[1m]",
+          source: "anthropic",
+          reason: "provider_reported",
+          input_tokens: 142_000,
+          output_tokens: 800,
+          cache_read_tokens: null,
+          cache_creation_tokens: null,
+          reasoning_tokens: null,
+          estimated_cost_micros: 2000,
+          pricing_source: "forge_static_pricing_2026_06_20",
+        },
+      },
+      {
+        block_id: "compact-after-usage",
+        event_type: "context_compacted",
+        content: "Compacted context",
+        isComplete: true,
+        metadata: {
+          retained_messages: 2,
+          compacted_messages: 3,
+          estimated_tokens_before: 142_000,
+          estimated_tokens_after: 32_000,
+        },
+      },
+    ], 1_000_000, null, 999);
+
+    assert.equal(projection.contextUsage.usedTokens, 32_000);
+    assert.equal(projection.contextUsage.source, "local_estimate");
+    assert.equal(projection.contextUsage.lastCompactedAt, 999);
+    assert.equal(projection.contextUsage.compactedFromTokens, 142_000);
+    assert.equal(projection.contextUsage.compactedToTokens, 32_000);
+    assert.equal(projection.usageLedger.inputTokens, 142_000);
+    assert.equal(projection.costUsd, 0.002);
+  });
+
+  it("replays compacted context blocks even when provider usage blocks were pruned", () => {
+    const projection = usageProjectionFromProviderUsageBlocks([
+      {
+        block_id: "compact-only",
+        event_type: "context_compacted",
+        content: "Compacted context",
+        isComplete: true,
+        metadata: {
+          retained_messages: 2,
+          compacted_messages: 3,
+          estimated_tokens_before: 142_000,
+          estimated_tokens_after: 32_000,
+        },
+      },
+    ], 1_000_000, null, 999);
+
+    assert.equal(projection.usageLedger, null);
+    assert.equal(projection.costUsd, 0);
+    assert.equal(projection.contextUsage.usedTokens, 32_000);
+    assert.equal(projection.contextUsage.source, "local_estimate");
   });
 });
