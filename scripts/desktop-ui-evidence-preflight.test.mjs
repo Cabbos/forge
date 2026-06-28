@@ -32,6 +32,7 @@ test("reports observer_limited when visible known apps expose zero windows", () 
   assert.match(result.reason, /zero windows/);
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs --markdown")));
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("--open-settings")));
+  assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-doctor.mjs --json --run-checks")));
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("desktop-ui-evidence-preflight.mjs --json --require-ready")));
   assert.ok(result.recoveryCommands.some((entry) => entry.command.includes("phase8-disposable-loop-status.mjs --json --require-live-ready")));
 });
