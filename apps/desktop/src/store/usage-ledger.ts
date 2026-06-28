@@ -13,6 +13,7 @@ export interface UsageProjectionFromBlocks {
   usageLedger: SessionUsageLedgerState | null;
   contextUsage: ContextUsageState | null;
   costUsd: number;
+  replayedCompactedContext: boolean;
 }
 
 export function applyProviderUsageToLedger(
@@ -132,6 +133,7 @@ export function usageProjectionFromProviderUsageBlocks(
   let contextUsage = previousContext ?? null;
   let costUsd = 0;
   let replayedUsageOrContext = false;
+  let replayedCompactedContext = false;
   const seenBlockIds = new Set<string>();
 
   for (const block of blocks) {
@@ -139,6 +141,7 @@ export function usageProjectionFromProviderUsageBlocks(
     if (compactedContext) {
       contextUsage = compactedContext;
       replayedUsageOrContext = true;
+      replayedCompactedContext = true;
       continue;
     }
 
@@ -156,7 +159,7 @@ export function usageProjectionFromProviderUsageBlocks(
     replayedUsageOrContext = true;
   }
 
-  return replayedUsageOrContext ? { usageLedger, contextUsage, costUsd } : null;
+  return replayedUsageOrContext ? { usageLedger, contextUsage, costUsd, replayedCompactedContext } : null;
 }
 
 function contextUsageFromCompactedBlock(
