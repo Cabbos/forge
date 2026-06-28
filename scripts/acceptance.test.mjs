@@ -190,6 +190,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node --test apps/desktop/src/store/event-dispatch.test.ts",
     },
     {
+      label: "legacy transcript usage hydration",
+      command: "node --test apps/desktop/src/store/persistence-hydration.test.ts",
+    },
+    {
       label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib",
     },
@@ -254,6 +258,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "composer context usage from provider_usage",
     "provider usage trace rendering",
     "legacy usage duplicate suppression",
+    "legacy transcript usage hydration",
     "post-shell file-effect evidence smoke (bounded, not shell-internal)",
     "persisted A2A lineage tests",
     "typed completion evidence and review-to-commit eligibility tests",

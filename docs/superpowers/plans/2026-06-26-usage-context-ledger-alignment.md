@@ -804,6 +804,7 @@ In `scripts/acceptance.sh --dry-run`, ensure the advertised desktop checks inclu
 composer context usage from provider_usage
 provider usage trace rendering
 legacy usage duplicate suppression
+legacy transcript usage hydration
 ```
 
 - [ ] **Step 4: Run dry-run acceptance**
@@ -814,7 +815,7 @@ Run:
 scripts/acceptance.sh --dry-run
 ```
 
-Expected: output mentions the three usage/context checks above.
+Expected: output mentions the four usage/context checks above.
 
 ## Task 6: Full Verification And Change Detection
 
@@ -828,6 +829,7 @@ Run:
 ```bash
 node --test apps/desktop/src/store/usage-ledger.test.mjs
 node --test apps/desktop/src/store/event-dispatch.test.ts
+node --test apps/desktop/src/store/persistence-hydration.test.ts
 node --test apps/desktop/src/components/session/contextUsageView.test.mjs
 ```
 
