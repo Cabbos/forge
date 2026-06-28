@@ -448,6 +448,30 @@ test("acceptance script reports --grep misses", () => {
   assert.match(result.stderr, /Run scripts\/acceptance\.sh --list-json to see valid labels\./);
 });
 
+test("acceptance script rejects empty --only values", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--dry-run", "--only", ""], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Missing value for --only/);
+});
+
+test("acceptance script rejects empty --grep values", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--dry-run", "--grep", ""], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Missing value for --grep/);
+});
+
 test("acceptance script rejects combining --only and --grep", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
