@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added close-label suggestions when `scripts/acceptance.sh --only` does not match an acceptance gate exactly.
 - Added `scripts/acceptance.sh --only <label>` so a single acceptance gate can be run or dry-run by exact label.
 - Generated the acceptance script help gate list from the same matrix used by dry-run and JSON output so help text cannot drift from executable gates.
 - Added `scripts/acceptance.sh --list-json` so the Level 3 acceptance matrix can be consumed as machine-readable gate metadata without parsing dry-run text.

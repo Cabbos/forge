@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
@@ -385,4 +385,17 @@ test("acceptance script can dry-run one named gate", () => {
         'rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "node --test scripts/desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "blocked_official_macos" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
     },
   ]);
+});
+
+test("acceptance script suggests a close gate label for --only misses", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--only", "desktop restart blocker documentation status"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /No acceptance gate matched --only: desktop restart blocker documentation status/);
+  assert.match(result.stderr, /Did you mean: desktop restart harness blocker documentation status/);
 });
