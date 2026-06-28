@@ -389,10 +389,10 @@ test("acceptance script can dry-run one named gate", () => {
   ]);
 });
 
-test("acceptance script can dry-run gates by label substring", () => {
+test("acceptance script can dry-run gates by case-insensitive label substring", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
-  const output = execFileSync(scriptPath, ["--dry-run", "--grep", "provider"], {
+  const output = execFileSync(scriptPath, ["--dry-run", "--grep", "Provider"], {
     cwd: root,
     encoding: "utf8",
   });
@@ -412,6 +412,27 @@ test("acceptance script can dry-run gates by label substring", () => {
       command: 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "provider usage"',
     },
   ]);
+});
+
+test("acceptance script list-json uses the same grep-filtered gates as dry-run", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const dryRunOutput = execFileSync(scriptPath, ["--dry-run", "--grep", "Provider"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json", "--grep", "Provider"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.equal(matrix.schemaVersion, 1);
+  assert.deepEqual(
+    matrix.gates.map(({ label, command }) => ({ label, command })),
+    parseDryRunEntries(dryRunOutput),
+  );
 });
 
 test("acceptance script reports --grep misses", () => {
