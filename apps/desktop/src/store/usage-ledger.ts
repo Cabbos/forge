@@ -162,6 +162,57 @@ export function usageProjectionFromProviderUsageBlocks(
   return replayedUsageOrContext ? { usageLedger, contextUsage, costUsd, replayedCompactedContext } : null;
 }
 
+export function usageProjectionFromTranscriptEvents(
+  events: StreamEvent[],
+  contextWindowTokens: number | null | undefined,
+  previousContext?: ContextUsageState | null,
+  now = Date.now(),
+): UsageProjectionFromBlocks | null {
+  let usageLedger: SessionUsageLedgerState | null = null;
+  let contextUsage = previousContext ?? null;
+  let costUsd = 0;
+  let replayedUsageOrContext = false;
+  let replayedCompactedContext = false;
+  const seenProviderBlockIds = new Set<string>();
+
+  for (const event of events) {
+    if (event.event_type === "context_compacted") {
+      const compactedContext = contextUsageFromCompactedEvent(event, contextWindowTokens, now);
+      contextUsage = compactedContext;
+      replayedUsageOrContext = true;
+      replayedCompactedContext = true;
+      continue;
+    }
+
+    if (event.event_type === "provider_usage") {
+      const blockId = event.block_id ?? "";
+      if (blockId && seenProviderBlockIds.has(blockId)) continue;
+      if (blockId) seenProviderBlockIds.add(blockId);
+      const previousLedger = usageLedger;
+      usageLedger = applyProviderUsageToLedger(usageLedger, event, now);
+      if (!isLegacyProviderCompanion(previousLedger, usageLedger) && usageLedger.costUsd !== null) {
+        costUsd += usageLedger.costUsd;
+      }
+      contextUsage = contextUsageFromLedger(usageLedger, contextWindowTokens, contextUsage, now);
+      replayedUsageOrContext = true;
+      continue;
+    }
+
+    if (event.event_type === "usage") {
+      usageLedger = applyLegacyUsageToLedger(usageLedger, event, now);
+      if (!usageLedger.legacyDuplicateIgnored && usageLedger.costUsd !== null) {
+        costUsd += usageLedger.costUsd;
+      }
+      if (!usageLedger.legacyDuplicateIgnored) {
+        contextUsage = contextUsageFromLedger(usageLedger, contextWindowTokens, contextUsage, now);
+      }
+      replayedUsageOrContext = true;
+    }
+  }
+
+  return replayedUsageOrContext ? { usageLedger, contextUsage, costUsd, replayedCompactedContext } : null;
+}
+
 function contextUsageFromCompactedBlock(
   block: BlockState,
   contextWindowTokens: number | null | undefined,
@@ -172,9 +223,31 @@ function contextUsageFromCompactedBlock(
   const estimatedAfter = sanitizeCount(block.metadata?.estimated_tokens_after);
   if (estimatedAfter === null) return null;
 
+  return buildCompactedContextUsage(estimatedBefore, estimatedAfter, contextWindowTokens, now);
+}
+
+function contextUsageFromCompactedEvent(
+  event: Extract<StreamEvent, { event_type: "context_compacted" }>,
+  contextWindowTokens: number | null | undefined,
+  now: number,
+): ContextUsageState {
+  return buildCompactedContextUsage(
+    sanitizeCount(event.estimated_tokens_before),
+    sanitizeCount(event.estimated_tokens_after),
+    contextWindowTokens,
+    now,
+  );
+}
+
+function buildCompactedContextUsage(
+  estimatedBefore: number | null,
+  estimatedAfter: number | null,
+  contextWindowTokens: number | null | undefined,
+  now: number,
+): ContextUsageState {
   const safeWindow = sanitizeCount(contextWindowTokens ?? null);
   const percentUsed = safeWindow && safeWindow > 0
-    ? clampPercent(Math.round((estimatedAfter / safeWindow) * 100))
+    ? clampPercent(Math.round(((estimatedAfter ?? 0) / safeWindow) * 100))
     : null;
 
   return {
@@ -187,6 +260,16 @@ function contextUsageFromCompactedBlock(
     compactedFromTokens: estimatedBefore,
     compactedToTokens: estimatedAfter,
   };
+}
+
+function isLegacyProviderCompanion(
+  previous: SessionUsageLedgerState | null,
+  next: SessionUsageLedgerState,
+): boolean {
+  if (!previous || previous.lastEventType !== "usage") return false;
+  if (previous.inputTokens !== next.inputTokens) return false;
+  if (previous.outputTokens !== next.outputTokens) return false;
+  return sameUsageCost(previous.costUsd, next.costUsd);
 }
 
 function sanitizeCount(value: unknown): number | null {

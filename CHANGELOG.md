@@ -34,6 +34,7 @@
 - Added a non-destructive disposable loop preparation helper. Phase 8 live edit/build proof can now create a clean git worktree target from the demo project's `HEAD`, optionally link existing `node_modules`, and preserve residual changes in the original disposable project.
 - Added a disposable edit/build loop readiness preflight. The Phase 8 acceptance path now records whether the disposable project exists, is a clean git worktree, has expected demo files, and exposes a build script before treating live Forge edit/build evidence as fresh.
 - Added replayable confirmation response events. Approved, declined, and restored-interrupted confirmation states now have explicit transcript markers, so history/restart projection can resolve confirmation cards without inferring state from the original prompt alone.
+- Replayed legacy `usage` transcript events during Tauri startup hydration so older sessions recover cost, usage ledger, and Composer context without rendering a synthetic usage block.
 - Restored missing session cost exactly once when a replayed `provider_usage` event matches an already-visible usage block but the usage ledger was not hydrated yet.
 - Rebuilt missing Composer context state from replayed `provider_usage` events when a restored session already had the usage ledger, avoiding duplicate cost while still restoring the context indicator.
 - Preferred replayed compacted-context transcript evidence over stale persisted context metadata during reload, so reopened sessions do not jump back to the pre-compaction token estimate.
