@@ -19,6 +19,7 @@ const DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND =
   "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
 const DESKTOP_UI_EVIDENCE_RECOVERY_CHECK_COMMAND =
   "node scripts/desktop-ui-evidence-doctor.mjs --json --run-checks";
+const SUPPORTED_ARGS = new Set(["--json", "--markdown", "--require-ready", "--open-settings", "--run-checks", "-h", "--help"]);
 const RECOVERY_CHECKS = [
   {
     label: "strict desktop UI evidence preflight",
@@ -386,6 +387,12 @@ function collectCurrentPreflight() {
 }
 
 function main(argv = process.argv.slice(2)) {
+  const unknownArg = argv.find((arg) => !SUPPORTED_ARGS.has(arg));
+  if (unknownArg) {
+    console.error(`Unknown option: ${unknownArg}`);
+    console.error("Run with --help to see valid options.");
+    return 2;
+  }
   const json = argv.includes("--json");
   const markdown = argv.includes("--markdown");
   const requireReady = argv.includes("--require-ready");

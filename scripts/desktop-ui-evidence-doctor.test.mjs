@@ -364,3 +364,13 @@ test("help exits successfully", () => {
   assert.match(output, /--open-settings/);
   assert.match(output, /--run-checks/);
 });
+
+test("cli rejects unknown options", () => {
+  const result = spawnSync(process.execPath, [scriptPath, "--run-cheks"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Unknown option: --run-cheks/);
+});
