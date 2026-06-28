@@ -221,7 +221,21 @@ test("runs strict preflight and live-ready gate recovery checks", () => {
   const result = runDesktopUiEvidenceRecoveryChecks({
     runner: (command, args) => {
       calls.push({ command, args });
-      return JSON.stringify({ ok: true });
+      if (args.some((arg) => arg.endsWith("desktop-ui-evidence-preflight.mjs"))) {
+        return JSON.stringify({
+          status: "ready",
+          canCollectLiveUiEvidence: true,
+          reason: "screenshots and windows are observable",
+        });
+      }
+      return JSON.stringify({
+        status: "ready_for_live_row",
+        readyForLiveRun: true,
+        liveReadyGate: {
+          pass: true,
+          reason: "ready",
+        },
+      });
     },
   });
 
@@ -235,6 +249,17 @@ test("runs strict preflight and live-ready gate recovery checks", () => {
     ],
   );
   assert.ok(result.checks.every((check) => check.ok));
+  assert.deepEqual(result.checks[0].summary, {
+    status: "ready",
+    canCollectLiveUiEvidence: true,
+    reason: "screenshots and windows are observable",
+  });
+  assert.deepEqual(result.checks[1].summary, {
+    status: "ready_for_live_row",
+    readyForLiveRun: true,
+    liveReadyGatePass: true,
+    liveReadyGateReason: "ready",
+  });
 });
 
 test("reports failing recovery checks without skipping the remaining gate", () => {
@@ -245,11 +270,22 @@ test("reports failing recovery checks without skipping the remaining gate", () =
       if (args.some((arg) => arg.endsWith("desktop-ui-evidence-preflight.mjs"))) {
         const error = new Error("preflight failed");
         error.status = 1;
-        error.stdout = JSON.stringify({ status: "screen_capture_limited" });
+        error.stdout = JSON.stringify({
+          status: "screen_capture_limited",
+          canCollectLiveUiEvidence: false,
+          reason: "blank screenshot",
+        });
         error.stderr = "screen capture blocked";
         throw error;
       }
-      return JSON.stringify({ liveReadyGate: { pass: false } });
+      return JSON.stringify({
+        status: "ui_evidence_not_ready",
+        readyForLiveRun: false,
+        liveReadyGate: {
+          pass: false,
+          reason: "ui_evidence_not_ready",
+        },
+      });
     },
   });
 
@@ -260,7 +296,18 @@ test("reports failing recovery checks without skipping the remaining gate", () =
   assert.equal(result.checks[0].ok, false);
   assert.equal(result.checks[0].exitCode, 1);
   assert.match(result.checks[0].stderr, /screen capture blocked/);
+  assert.deepEqual(result.checks[0].summary, {
+    status: "screen_capture_limited",
+    canCollectLiveUiEvidence: false,
+    reason: "blank screenshot",
+  });
   assert.equal(result.checks[1].ok, true);
+  assert.deepEqual(result.checks[1].summary, {
+    status: "ui_evidence_not_ready",
+    readyForLiveRun: false,
+    liveReadyGatePass: false,
+    liveReadyGateReason: "ui_evidence_not_ready",
+  });
 });
 
 test("cli markdown emits a diagnosis", () => {

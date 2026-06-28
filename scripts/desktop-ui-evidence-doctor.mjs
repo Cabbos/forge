@@ -221,17 +221,60 @@ function runRecoveryCheck({ check, runner }) {
       exitCode: 0,
       stdout: String(stdout ?? ""),
       stderr: "",
+      summary: recoveryCheckSummary({ check, stdout: String(stdout ?? "") }),
     };
   } catch (error) {
+    const stdout = String(error.stdout ?? "");
     return {
       label: check.label,
       command: check.command,
       ok: false,
       exitCode: Number.isInteger(error.status) ? error.status : 1,
-      stdout: String(error.stdout ?? ""),
+      stdout,
       stderr: String(error.stderr ?? error.message ?? error),
+      summary: recoveryCheckSummary({ check, stdout }),
     };
   }
+}
+
+function recoveryCheckSummary({ check, stdout }) {
+  const parsed = parseJsonObject(stdout);
+  if (!parsed) return null;
+  if (check.args.includes("scripts/desktop-ui-evidence-preflight.mjs")) {
+    return compactObject({
+      status: parsed.status,
+      canCollectLiveUiEvidence: parsed.canCollectLiveUiEvidence,
+      reason: parsed.reason,
+    });
+  }
+  if (check.args.includes("scripts/phase8-disposable-loop-status.mjs")) {
+    return compactObject({
+      status: parsed.status,
+      readyForLiveRun: parsed.readyForLiveRun,
+      liveReadyGatePass: parsed.liveReadyGate?.pass,
+      liveReadyGateReason: parsed.liveReadyGate?.reason,
+    });
+  }
+  return compactObject({
+    status: parsed.status,
+    reason: parsed.reason,
+  });
+}
+
+function parseJsonObject(value) {
+  try {
+    const parsed = JSON.parse(String(value));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  );
 }
 
 function nextStepFor({ status }) {
@@ -282,7 +325,7 @@ function renderMarkdown(result) {
   const commands = result.commands.map((entry, index) => `${index + 1}. ${entry.label}\n\n   \`${entry.command}\``).join("\n\n");
   const recoveryChecks = result.recoveryChecks
     ? `\nRecovery checks:\n\n${result.recoveryChecks.checks
-        .map((check) => `- ${check.ok ? "pass" : "fail"} ${check.label}: \`${check.command}\``)
+        .map((check) => `- ${check.ok ? "pass" : "fail"} ${check.label}: \`${check.command}\`${renderCheckSummary(check.summary)}`)
         .join("\n")}\n\nRecovery check next step: ${result.recoveryChecks.nextStep}\n`
     : "";
   return `## Desktop UI Evidence Doctor
@@ -306,6 +349,19 @@ ${recoveryChecks}
 
 Next step: ${result.nextStep}
 `;
+}
+
+function renderCheckSummary(summary) {
+  if (!summary) return "";
+  const fields = [
+    summary.status ? `status ${summary.status}` : null,
+    typeof summary.canCollectLiveUiEvidence === "boolean" ? `live UI ${summary.canCollectLiveUiEvidence ? "ready" : "not ready"}` : null,
+    typeof summary.readyForLiveRun === "boolean" ? `live row ${summary.readyForLiveRun ? "ready" : "not ready"}` : null,
+    typeof summary.liveReadyGatePass === "boolean" ? `gate ${summary.liveReadyGatePass ? "pass" : "fail"}` : null,
+    summary.liveReadyGateReason ? `reason ${summary.liveReadyGateReason}` : null,
+    summary.reason ? `reason ${summary.reason}` : null,
+  ].filter(Boolean);
+  return fields.length > 0 ? ` (${fields.join(", ")})` : "";
 }
 
 function printHelp() {
