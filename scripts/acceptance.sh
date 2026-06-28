@@ -21,7 +21,7 @@ while [[ "$#" -gt 0 ]]; do
       shift
       ;;
     --only)
-      if [[ "$#" -lt 2 ]]; then
+      if [[ "$#" -lt 2 || -z "$2" ]]; then
         echo "Missing value for --only" >&2
         exit 2
       fi
@@ -29,7 +29,7 @@ while [[ "$#" -gt 0 ]]; do
       shift 2
       ;;
     --grep)
-      if [[ "$#" -lt 2 ]]; then
+      if [[ "$#" -lt 2 || -z "$2" ]]; then
         echo "Missing value for --grep" >&2
         exit 2
       fi
