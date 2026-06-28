@@ -12,6 +12,7 @@ const KNOWN_WINDOWED_APPS = ["Google Chrome", "Codex", "Finder"];
 const BLANK_SCREENSHOT_BYTES_PER_PIXEL = 0.08;
 const DOCTOR_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown";
 const DOCTOR_OPEN_SETTINGS_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --markdown --open-settings";
+const DOCTOR_RUN_CHECKS_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --json --run-checks";
 const PREFLIGHT_REQUIRE_READY_COMMAND = "node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready";
 const LIVE_READY_HARD_GATE_COMMAND = "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
 
@@ -152,6 +153,10 @@ function recoveryCommands({ includeOpenSettings = false } = {}) {
     });
   }
   commands.push(
+    {
+      label: "run desktop UI evidence recovery checks",
+      command: DOCTOR_RUN_CHECKS_COMMAND,
+    },
     {
       label: "rerun desktop UI evidence preflight",
       command: PREFLIGHT_REQUIRE_READY_COMMAND,

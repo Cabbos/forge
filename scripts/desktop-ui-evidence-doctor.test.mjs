@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   diagnoseDesktopUiEvidence,
   openDesktopUiEvidenceSettings,
+  runDesktopUiEvidenceRecoveryChecks,
 } from "./desktop-ui-evidence-doctor.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
@@ -215,6 +216,53 @@ test("does not open settings when no blocker has a settings URL", () => {
   assert.deepEqual(calls, []);
 });
 
+test("runs strict preflight and live-ready gate recovery checks", () => {
+  const calls = [];
+  const result = runDesktopUiEvidenceRecoveryChecks({
+    runner: (command, args) => {
+      calls.push({ command, args });
+      return JSON.stringify({ ok: true });
+    },
+  });
+
+  assert.equal(result.status, "passed");
+  assert.equal(result.passed, true);
+  assert.deepEqual(
+    calls.map((call) => call.args.join(" ")),
+    [
+      "scripts/desktop-ui-evidence-preflight.mjs --json --require-ready",
+      "scripts/phase8-disposable-loop-status.mjs --json --require-live-ready",
+    ],
+  );
+  assert.ok(result.checks.every((check) => check.ok));
+});
+
+test("reports failing recovery checks without skipping the remaining gate", () => {
+  const calls = [];
+  const result = runDesktopUiEvidenceRecoveryChecks({
+    runner: (command, args) => {
+      calls.push({ command, args });
+      if (args.some((arg) => arg.endsWith("desktop-ui-evidence-preflight.mjs"))) {
+        const error = new Error("preflight failed");
+        error.status = 1;
+        error.stdout = JSON.stringify({ status: "screen_capture_limited" });
+        error.stderr = "screen capture blocked";
+        throw error;
+      }
+      return JSON.stringify({ liveReadyGate: { pass: false } });
+    },
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.passed, false);
+  assert.equal(result.checks.length, 2);
+  assert.equal(calls.length, 2);
+  assert.equal(result.checks[0].ok, false);
+  assert.equal(result.checks[0].exitCode, 1);
+  assert.match(result.checks[0].stderr, /screen capture blocked/);
+  assert.equal(result.checks[1].ok, true);
+});
+
 test("cli markdown emits a diagnosis", () => {
   const result = spawnSync(process.execPath, [scriptPath, "--markdown"], {
     cwd: root,
@@ -267,4 +315,5 @@ test("help exits successfully", () => {
 
   assert.match(output, /desktop-ui-evidence-doctor/);
   assert.match(output, /--open-settings/);
+  assert.match(output, /--run-checks/);
 });

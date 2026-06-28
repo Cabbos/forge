@@ -17,6 +17,20 @@ const DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND =
   "node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready";
 const DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND =
   "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
+const DESKTOP_UI_EVIDENCE_RECOVERY_CHECK_COMMAND =
+  "node scripts/desktop-ui-evidence-doctor.mjs --json --run-checks";
+const RECOVERY_CHECKS = [
+  {
+    label: "strict desktop UI evidence preflight",
+    command: DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND,
+    args: ["scripts/desktop-ui-evidence-preflight.mjs", "--json", "--require-ready"],
+  },
+  {
+    label: "disposable loop live-ready hard gate",
+    command: DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND,
+    args: ["scripts/phase8-disposable-loop-status.mjs", "--json", "--require-live-ready"],
+  },
+];
 
 export function diagnoseDesktopUiEvidence({
   preflight = uncheckedPreflight(),
@@ -162,6 +176,10 @@ function commandsFor({ blockers }) {
     });
   }
   commands.push({
+    label: "run desktop UI evidence recovery checks",
+    command: DESKTOP_UI_EVIDENCE_RECOVERY_CHECK_COMMAND,
+  });
+  commands.push({
     label: "rerun desktop UI evidence preflight",
     command: DESKTOP_UI_EVIDENCE_PREFLIGHT_COMMAND,
   });
@@ -174,6 +192,46 @@ function commandsFor({ blockers }) {
     command: DISPOSABLE_LOOP_LIVE_READY_HARD_GATE_COMMAND,
   });
   return commands;
+}
+
+export function runDesktopUiEvidenceRecoveryChecks({ runner = execFileSync } = {}) {
+  const checks = RECOVERY_CHECKS.map((check) => runRecoveryCheck({ check, runner }));
+  const passed = checks.every((check) => check.ok);
+  return {
+    status: passed ? "passed" : "failed",
+    passed,
+    checks,
+    nextStep: passed
+      ? "Desktop UI evidence recovery checks passed; run the next Phase 8 disposable loop row."
+      : "Recovery checks still failed; fix the reported macOS permission/runtime blocker, then rerun this command.",
+  };
+}
+
+function runRecoveryCheck({ check, runner }) {
+  try {
+    const stdout = runner(process.execPath, check.args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    });
+    return {
+      label: check.label,
+      command: check.command,
+      ok: true,
+      exitCode: 0,
+      stdout: String(stdout ?? ""),
+      stderr: "",
+    };
+  } catch (error) {
+    return {
+      label: check.label,
+      command: check.command,
+      ok: false,
+      exitCode: Number.isInteger(error.status) ? error.status : 1,
+      stdout: String(error.stdout ?? ""),
+      stderr: String(error.stderr ?? error.message ?? error),
+    };
+  }
 }
 
 function nextStepFor({ status }) {
@@ -222,6 +280,11 @@ function renderMarkdown(result) {
       }).join("\n\n")
     : "- none";
   const commands = result.commands.map((entry, index) => `${index + 1}. ${entry.label}\n\n   \`${entry.command}\``).join("\n\n");
+  const recoveryChecks = result.recoveryChecks
+    ? `\nRecovery checks:\n\n${result.recoveryChecks.checks
+        .map((check) => `- ${check.ok ? "pass" : "fail"} ${check.label}: \`${check.command}\``)
+        .join("\n")}\n\nRecovery check next step: ${result.recoveryChecks.nextStep}\n`
+    : "";
   return `## Desktop UI Evidence Doctor
 
 Status: ${result.status}
@@ -239,13 +302,14 @@ Commands:
 ${commands}
 
 Opened settings: ${result.openSettings ? result.openSettings.openedCount : 0}
+${recoveryChecks}
 
 Next step: ${result.nextStep}
 `;
 }
 
 function printHelp() {
-  console.log(`Usage: node scripts/desktop-ui-evidence-doctor.mjs [--json|--markdown] [--require-ready] [--open-settings]
+  console.log(`Usage: node scripts/desktop-ui-evidence-doctor.mjs [--json|--markdown] [--require-ready] [--open-settings] [--run-checks]
 
 Diagnoses why local desktop UI evidence cannot be trusted and prints concrete permission recovery commands.
 
@@ -254,6 +318,7 @@ Options:
   --markdown       Print markdown diagnosis.
   --require-ready  Exit non-zero unless live UI evidence collection appears ready.
   --open-settings  Open the relevant macOS Privacy & Security settings panes for the current blockers.
+  --run-checks     Run the strict preflight and live-ready hard gate after local permission recovery.
   -h, --help       Show this help.
 `);
 }
@@ -269,6 +334,7 @@ function main(argv = process.argv.slice(2)) {
   const markdown = argv.includes("--markdown");
   const requireReady = argv.includes("--require-ready");
   const shouldOpenSettings = argv.includes("--open-settings");
+  const shouldRunChecks = argv.includes("--run-checks");
   if (argv.includes("-h") || argv.includes("--help")) {
     printHelp();
     return 0;
@@ -279,11 +345,16 @@ function main(argv = process.argv.slice(2)) {
     result.openSettings = openDesktopUiEvidenceSettings({ diagnosis: result });
     result.markdown = renderMarkdown(result);
   }
+  if (shouldRunChecks) {
+    result.recoveryChecks = runDesktopUiEvidenceRecoveryChecks();
+    result.markdown = renderMarkdown(result);
+  }
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (markdown || !json) {
     console.log(result.markdown);
   }
+  if (shouldRunChecks && !result.recoveryChecks.passed) return 1;
   return requireReady && !result.canCollectLiveUiEvidence ? 1 : 0;
 }
 
