@@ -9,6 +9,7 @@ const ROOT_DIR = resolve(dirname(SCRIPT_PATH), "..");
 const WEBDRIVER_CLIENT_PACKAGES = new Set(["selenium-webdriver", "webdriverio", "@wdio/cli"]);
 const MACOS_OFFICIAL_DRIVER_GAP = "official macOS WKWebView WebDriver support";
 const RESTART_HARNESS_SCRIPT_NAMES = ["test:tauri:restart", "test:desktop:restart", "e2e:tauri:restart"];
+const SUPPORTED_ARGS = new Set(["--json", "--require-harness", "-h", "--help"]);
 
 export function evaluateRestartHarness({
   platform = process.platform,
@@ -148,6 +149,12 @@ Options:
 }
 
 function main(argv = process.argv.slice(2)) {
+  const unknownArg = argv.find((arg) => !SUPPORTED_ARGS.has(arg));
+  if (unknownArg) {
+    console.error(`Unknown option: ${unknownArg}`);
+    console.error("Run with --help to see valid options.");
+    return 2;
+  }
   const json = argv.includes("--json");
   const requireHarness = argv.includes("--require-harness");
   if (argv.includes("-h") || argv.includes("--help")) {

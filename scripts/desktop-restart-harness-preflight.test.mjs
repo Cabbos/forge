@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -137,4 +137,14 @@ test("json mode emits machine-readable current preflight result", () => {
   assert.equal(typeof result.canRunOfficialHarness, "boolean");
   assert.ok(Array.isArray(result.missing));
   assert.equal(result.fallbackCommand, "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts");
+});
+
+test("cli rejects unknown options", () => {
+  const result = spawnSync(process.execPath, [scriptPath, "--requre-harness"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Unknown option: --requre-harness/);
 });
