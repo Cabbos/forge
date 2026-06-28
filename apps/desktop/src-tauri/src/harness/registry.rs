@@ -35,6 +35,7 @@ impl CapabilityRegistry {
             CapabilityKind::Skill => "skill",
             CapabilityKind::Hook => "hook",
             CapabilityKind::McpServer => "mcp_server",
+            CapabilityKind::Provider => "provider",
             CapabilityKind::Tool => "tool",
         };
         let enabled = self
@@ -206,4 +207,176 @@ fn matches_event(et: &EventType, event: &Event) -> bool {
                 Event::CapabilityChanged { .. }
             )
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::capability::{EcosystemItem, EcosystemItemStatus};
+
+    // ── capability_id_for_tool ────────────────────────────────────────
+
+    #[test]
+    fn aliases_map_to_canonical_ids() {
+        assert_eq!(capability_id_for_tool("read"), "read_file");
+        assert_eq!(capability_id_for_tool("write"), "write_to_file");
+        assert_eq!(capability_id_for_tool("write_file"), "write_to_file");
+        assert_eq!(capability_id_for_tool("edit"), "edit_file");
+        assert_eq!(capability_id_for_tool("ls"), "list_directory");
+        assert_eq!(capability_id_for_tool("list"), "list_directory");
+        assert_eq!(capability_id_for_tool("glob"), "search_files");
+        assert_eq!(capability_id_for_tool("grep"), "search_content");
+        assert_eq!(capability_id_for_tool("bash"), "run_shell");
+        assert_eq!(capability_id_for_tool("execute_command"), "run_shell");
+        assert_eq!(capability_id_for_tool("shell"), "run_shell");
+        assert_eq!(capability_id_for_tool("shell_command"), "run_shell");
+        assert_eq!(capability_id_for_tool("run_command"), "run_shell");
+        assert_eq!(capability_id_for_tool("run_shell_command"), "run_shell");
+    }
+
+    #[test]
+    fn unknown_tool_name_passes_through() {
+        assert_eq!(capability_id_for_tool("custom_tool"), "custom_tool");
+        assert_eq!(capability_id_for_tool("read_file"), "read_file");
+        assert_eq!(capability_id_for_tool("unknown"), "unknown");
+    }
+
+    // ── matches_event ─────────────────────────────────────────────────
+
+    #[test]
+    fn matches_same_event_type() {
+        assert!(matches_event(
+            &EventType::SessionStart,
+            &Event::SessionStart {
+                session_id: "s1".into(),
+                working_dir: "/tmp".into()
+            }
+        ));
+        assert!(matches_event(
+            &EventType::PreTool,
+            &Event::PreTool {
+                session_id: "s1".into(),
+                tool_name: "write".into(),
+                input: serde_json::json!({})
+            }
+        ));
+    }
+
+    #[test]
+    fn mismatched_event_types_return_false() {
+        assert!(!matches_event(
+            &EventType::SessionStart,
+            &Event::PreTool {
+                session_id: "s1".into(),
+                tool_name: "write".into(),
+                input: serde_json::json!({})
+            }
+        ));
+        assert!(!matches_event(
+            &EventType::PreTool,
+            &Event::SessionStop {
+                session_id: "s1".into()
+            }
+        ));
+    }
+
+    #[test]
+    fn all_event_types_match_correctly() {
+        let pairs = [
+            (
+                EventType::SessionStart,
+                Event::SessionStart {
+                    session_id: "s".into(),
+                    working_dir: "/tmp".into(),
+                },
+            ),
+            (
+                EventType::SessionStop,
+                Event::SessionStop {
+                    session_id: "s".into(),
+                },
+            ),
+            (
+                EventType::PreTool,
+                Event::PreTool {
+                    session_id: "s".into(),
+                    tool_name: "t".into(),
+                    input: serde_json::json!({}),
+                },
+            ),
+            (
+                EventType::PostTool,
+                Event::PostTool {
+                    session_id: "s".into(),
+                    tool_name: "t".into(),
+                    result: "ok".into(),
+                },
+            ),
+            (
+                EventType::CapabilityChanged,
+                Event::CapabilityChanged {
+                    capability_id: "c".into(),
+                    action: "enabled".into(),
+                },
+            ),
+        ];
+        for (et, ev) in &pairs {
+            assert!(matches_event(et, ev), "should match: {et:?} ↔ {ev:?}");
+        }
+    }
+
+    // ── EcosystemItem helpers ─────────────────────────────────────────
+
+    #[test]
+    fn ecosystem_item_with_status_updates_fields() {
+        let entry = CapabilityEntry {
+            metadata: CapabilityMetadata {
+                id: "test".into(),
+                name: "Test".into(),
+                description: "desc".into(),
+                version: "0.1".into(),
+                source: "builtin".into(),
+                kind: CapabilityKind::Tool,
+            },
+            enabled: true,
+        };
+        let item = EcosystemItem::from_capability_entry(&entry)
+            .with_status(EcosystemItemStatus::Healthy, Some("OK".into()));
+        assert_eq!(item.status, EcosystemItemStatus::Healthy);
+        assert_eq!(item.status_message, Some("OK".into()));
+    }
+
+    #[test]
+    fn ecosystem_item_with_configurable_updates_flag() {
+        let entry = CapabilityEntry {
+            metadata: CapabilityMetadata {
+                id: "test".into(),
+                name: "Test".into(),
+                description: "desc".into(),
+                version: "0.1".into(),
+                source: "builtin".into(),
+                kind: CapabilityKind::Tool,
+            },
+            enabled: true,
+        };
+        let item = EcosystemItem::from_capability_entry(&entry).with_configurable(true);
+        assert!(item.configurable);
+    }
+
+    #[test]
+    fn mcp_server_is_configurable() {
+        let entry = CapabilityEntry {
+            metadata: CapabilityMetadata {
+                id: "mcp".into(),
+                name: "MCP".into(),
+                description: "desc".into(),
+                version: "0.1".into(),
+                source: "local".into(),
+                kind: CapabilityKind::McpServer,
+            },
+            enabled: true,
+        };
+        let item = EcosystemItem::from_capability_entry(&entry);
+        assert!(item.configurable, "MCP servers should be configurable");
+    }
 }

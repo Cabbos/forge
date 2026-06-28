@@ -45,8 +45,10 @@ export function persistSessions(
       workspaceId: s.workspaceId ?? null,
       createdAt: s.createdAt ?? null,
       updatedAt: s.updatedAt ?? null,
+      costUsd: s.costUsd ?? null,
       contextWindowTokens: s.contextWindowTokens ?? null,
       contextUsage: s.contextUsage ?? null,
+      usageLedger: s.usageLedger ?? null,
       status: s.status,
       workflowState: workflowBySession.get(s.id) ?? null,
       deliverySummary: deliverySummaryBySession.get(s.id) ?? null,
@@ -133,7 +135,9 @@ type PersistableSession = {
   workspaceId?: string | null;
   createdAt?: number | null;
   updatedAt?: number | null;
+  costUsd?: number | null;
   contextWindowTokens?: number | null;
   contextUsage?: PersistedSession["contextUsage"];
+  usageLedger?: PersistedSession["usageLedger"];
   status: PersistedSession["status"];
 };

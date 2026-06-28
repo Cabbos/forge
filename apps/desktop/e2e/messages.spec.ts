@@ -3,12 +3,34 @@ import { resolve } from "node:path";
 import { setup } from "./fixtures/app";
 import { simulateStream, fullConversation } from "./mock-ipc";
 
+async function forceDarkWorkbench(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const apply = () => {
+      document.querySelectorAll<HTMLElement>("[data-conversation-theme='light']").forEach((el) => {
+        el.setAttribute("data-conversation-theme", "dark");
+      });
+      document.querySelectorAll<HTMLElement>(".forge-app-shell[data-design-version='v3-light-workbench']").forEach((el) => {
+        el.setAttribute("data-design-version", "v3-dark-workbench");
+      });
+    };
 
-  test.beforeEach(async ({ page }) => {
-    await setup(page);
-    await page.goto("http://localhost:1420");
-    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    new MutationObserver(apply).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-conversation-theme", "data-design-version"],
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener("DOMContentLoaded", apply);
+    apply();
   });
+}
+
+test.beforeEach(async ({ page }) => {
+  await setup(page);
+  await forceDarkWorkbench(page);
+  await page.goto("http://localhost:1420");
+  await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+});
 
   test("internal skill context is not rendered in the conversation", async ({ page }) => {
     const sessionId = crypto.randomUUID();
@@ -121,6 +143,79 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     await expect(page.getByTestId("message-panel").filter({ hasText: "本轮交付" })).toHaveCount(2);
   });
 
+  test("provider usage renders as trace metadata instead of assistant prose", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "provider_usage",
+        session_id: sessionId,
+        block_id: "usage-visible-placement",
+        provider_id: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        source: "anthropic",
+        reason: "provider_reported",
+        input_tokens: 411,
+        output_tokens: 137,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        reasoning_tokens: null,
+        estimated_cost_micros: 96,
+        pricing_source: "forge_static_pricing_2026_06_20",
+      },
+    ], 1);
+
+    const usageCard = page.getByTestId("provider-usage-card");
+    await expect(usageCard).toBeVisible();
+    await expect(usageCard).toContainText("deepseek-v4-flash[1m]");
+    await expect(usageCard).toContainText("输入 411");
+    await expect(usageCard).toContainText("输出 137");
+    await expect(usageCard).toContainText("96 micros");
+    await expect(page.getByTestId("assistant-message").filter({ hasText: "模型用量 · provider" })).toHaveCount(0);
+
+    const blockRole = await usageCard.evaluate((node) => {
+      return node.closest("[data-testid='message-block']")?.getAttribute("data-block-role");
+    });
+    expect(blockRole).toBe("trace");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "provider_usage",
+        session_id: sessionId,
+        block_id: "usage-unknown-placement",
+        provider_id: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        source: "anthropic",
+        reason: "provider_omitted",
+        input_tokens: null,
+        output_tokens: null,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        reasoning_tokens: null,
+        estimated_cost_micros: null,
+        pricing_source: null,
+      },
+    ], 1);
+
+    const unknownUsageCard = page.getByTestId("provider-usage-card").last();
+    await expect(unknownUsageCard).toContainText("输入 unknown");
+    await expect(unknownUsageCard).toContainText("输出 unknown");
+    await expect(unknownUsageCard).toContainText("费用 unknown");
+    await expect(unknownUsageCard).toContainText("用量未知");
+  });
+
   test("timeline messages render correctly", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
@@ -150,7 +245,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     await processSummary.click();
 
     // Tool card should show write_to_file after expanding handled work.
-    await expect(page.locator("text=write_to_file")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("tool-card-trigger").filter({ hasText: "write_to_file" })).toBeVisible({ timeout: 5000 });
 
     // Shell card should show terminal output
     await expect(page.locator("text=python test.py")).toBeVisible();
@@ -590,7 +685,7 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(metrics!.right).toBeLessThanOrEqual(4);
     expect(metrics!.background).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.boxShadow).not.toBe("none");
-    expect(metrics!.backdropFilter).not.toBe("none");
+    expect(metrics!.backdropFilter).toBe("none");
     expect(metrics!.transform).not.toBe("none");
     expect(metrics!.transitionProperty).toContain("transform");
   });
@@ -1725,7 +1820,12 @@ import { simulateStream, fullConversation } from "./mock-ipc";
 
     const panels = page.getByTestId("message-panel");
     await expect(panels).toHaveCount(3);
-    await expect(panels.filter({ hasText: "准备修改项目" })).toBeVisible();
+    const confirmPanel = panels.filter({ hasText: "准备修改项目" });
+    await expect(confirmPanel).toBeVisible();
+    await expect(confirmPanel).toContainText("/Users/cabbos/project/forge");
+    await expect(confirmPanel).toContainText("src/App.tsx");
+    await expect(confirmPanel).toContainText("这次确认只对当前这一步生效");
+    await expect(confirmPanel).toContainText("信任当前项目");
     await expect(panels.filter({ hasText: "文件改动" })).toContainText("src/App.tsx");
     await expect(panels.filter({ hasText: "文件改动" }).getByRole("button", { name: "复制 diff" })).toBeVisible();
     await expect(panels.filter({ hasText: "本轮交付" })).toBeVisible();
@@ -1772,6 +1872,222 @@ import { simulateStream, fullConversation } from "./mock-ipc";
     expect(deliveryMetrics.itemBackgrounds.every((color) => color !== "rgba(0, 0, 0, 0)")).toBeTruthy();
     expect(deliveryMetrics.itemBorders.every((color) => color !== "rgba(0, 0, 0, 0)")).toBeTruthy();
     expect(deliveryMetrics.minItemHeight).toBeGreaterThanOrEqual(52);
+  });
+
+  test("ask_user confirmation explains boolean-only response limits", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "ask-user-confirm",
+        question: "你想把状态区放在哪里？",
+        kind: "ask_user",
+      },
+    ], 5);
+
+    const prompt = page.getByTestId("message-panel").filter({ hasText: "你想把状态区放在哪里？" });
+    await expect(prompt).toContainText("这一步只能确认是否继续");
+    await expect(prompt).toContainText("请直接发一条新消息");
+  });
+
+  test("write_file tool details show a markdown write preview", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "write-preview-tool",
+        tool_name: "write_file",
+        tool_input: {
+          path: "docs/runtime.md",
+          content: "# Runtime\n\n- Gateway\n- Sessions\n",
+        },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "write-preview-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 42,
+      },
+    ], 1);
+
+    await page.getByTestId("tool-card-trigger").click();
+
+    const preview = page.getByTestId("write-file-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("docs/runtime.md");
+    await expect(preview).toContainText("Markdown");
+    await expect(preview.locator(".markdown-content")).toContainText("Gateway");
+  });
+
+  test("write_file tool details show an image write preview", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "image-write-preview-tool",
+        tool_name: "write_file",
+        tool_input: {
+          path: "assets/logo.svg",
+          content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#0f766e" /></svg>',
+        },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "image-write-preview-tool",
+        result: "ok",
+        is_error: false,
+        duration_ms: 42,
+      },
+    ], 1);
+
+    await page.getByTestId("tool-card-trigger").click();
+
+    const preview = page.getByTestId("write-file-preview");
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText("assets/logo.svg");
+    await expect(preview).toContainText("SVG");
+
+    const image = preview.getByTestId("write-file-image-preview");
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute("src", /^data:image\/svg\+xml;utf8,/);
+
+    const imageBox = await image.boundingBox();
+    expect(imageBox?.width ?? 0).toBeGreaterThan(0);
+    expect(imageBox?.height ?? 0).toBeGreaterThan(0);
+  });
+
+  test("diff cards show a compact file tree for multi-file changes", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "diff_view",
+        session_id: sessionId,
+        block_id: "multi-file-diff",
+        file_path: "workspace",
+        old_content: "",
+        new_content: [
+          "diff --git a/src/App.tsx b/src/App.tsx",
+          "--- a/src/App.tsx",
+          "+++ b/src/App.tsx",
+          "@@ -1 +1,2 @@",
+          "-old",
+          "+new",
+          "+enabled",
+          "diff --git a/docs/runtime.md b/docs/runtime.md",
+          "--- /dev/null",
+          "+++ b/docs/runtime.md",
+          "@@ -0,0 +1 @@",
+          "+# Runtime",
+        ].join("\n"),
+      },
+    ], 1);
+
+    const tree = page.getByTestId("diff-file-tree");
+    await expect(tree).toBeVisible();
+    await expect(tree).toContainText("src/App.tsx");
+    await expect(tree).toContainText("docs/runtime.md");
+    await expect(tree).toContainText("+2");
+    await expect(tree).toContainText("+1");
+  });
+
+  test("image diff cards show before and after previews", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "diff_view",
+        session_id: sessionId,
+        block_id: "image-diff",
+        file_path: "assets/logo.svg",
+        old_content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#b91c1c" /></svg>',
+        new_content: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#0f766e" /></svg>',
+      },
+    ], 1);
+
+    await page.getByTestId("diff-body-toggle").click();
+
+    const imageDiff = page.getByTestId("image-diff-preview");
+    await expect(imageDiff).toBeVisible();
+    await expect(imageDiff).toContainText("之前");
+    await expect(imageDiff).toContainText("之后");
+
+    const before = imageDiff.getByTestId("image-diff-before");
+    const after = imageDiff.getByTestId("image-diff-after");
+    await expect(before).toHaveAttribute("src", /^data:image\/svg\+xml;utf8,/);
+    await expect(after).toHaveAttribute("src", /^data:image\/svg\+xml;utf8,/);
+
+    const boxes = await Promise.all([before.boundingBox(), after.boundingBox()]);
+    expect(boxes.every((box) => (box?.width ?? 0) > 0 && (box?.height ?? 0) > 0)).toBeTruthy();
   });
 
   test("user messages can carry pasted code paths and logs without breaking the lane", async ({ page }) => {
@@ -1912,11 +2228,12 @@ import { simulateStream, fullConversation } from "./mock-ipc";
 test.describe("Timeline Messages", () => {
   test.beforeEach(async ({ page }) => {
     await setup(page);
+    await forceDarkWorkbench(page);
     await page.goto("http://localhost:1420");
     await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
   });
 
-    test("empty workbench primary action starts a conversation", async ({ page }) => {
+  test("empty workbench primary action starts a conversation", async ({ page }) => {
       await page.getByRole("main").getByRole("button", { name: "开始新对话" }).click();
   
       await expect(page.locator("textarea")).toBeVisible();
@@ -2238,16 +2555,17 @@ test.describe("Timeline Messages", () => {
       await page.goto("http://localhost:1420");
       await page.getByRole("button", { name: "新对话", exact: true }).click();
       await expect(page.locator("textarea")).toBeVisible();
+      await page.locator("textarea").focus();
       await page.waitForFunction(() => {
         const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
         if (!composer) return false;
-        const rootStyle = getComputedStyle(document.documentElement);
+        const rootStyle = getComputedStyle(composer);
         const composerStyle = getComputedStyle(composer);
         return composerStyle.borderTopColor === rootStyle.getPropertyValue("--forge-material-border-focus").trim();
       });
   
       const metrics = await page.evaluate(() => {
-        const root = document.documentElement;
+        const root = document.querySelector<HTMLElement>(".forge-app-shell") ?? document.documentElement;
         const titlebar = document.querySelector("[data-testid='app-titlebar']");
         const sidebar = document.querySelector("aside");
         const composer = document.querySelector("[data-testid='composer-surface']");
@@ -2256,9 +2574,19 @@ test.describe("Timeline Messages", () => {
         const titlebarStyle = getComputedStyle(titlebar);
         const sidebarStyle = getComputedStyle(sidebar);
         const composerStyle = getComputedStyle(composer);
+        const resolveColor = (color: string) => {
+          const probe = document.createElement("span");
+          probe.style.color = color;
+          document.body.append(probe);
+          const resolved = getComputedStyle(probe).color;
+          probe.remove();
+          return resolved;
+        };
+        const materialBorderColor = resolveColor(rootStyle.getPropertyValue("--forge-material-border").trim());
         return {
           borderSubtle: rootStyle.getPropertyValue("--forge-border-subtle").trim(),
           materialBorder: rootStyle.getPropertyValue("--forge-material-border").trim(),
+          materialBorderColor,
           materialSurface: rootStyle.getPropertyValue("--forge-material-surface").trim(),
           materialRaised: rootStyle.getPropertyValue("--forge-material-raised").trim(),
           materialPopover: rootStyle.getPropertyValue("--forge-material-popover").trim(),
@@ -2268,6 +2596,7 @@ test.describe("Timeline Messages", () => {
           composerBorderFocusToken: rootStyle.getPropertyValue("--forge-material-border-focus").trim(),
           composerSurface: rootStyle.getPropertyValue("--forge-composer-surface").trim(),
           composerSurfaceFocus: rootStyle.getPropertyValue("--forge-composer-surface-focus").trim(),
+          composerSurfaceFocusColor: resolveColor(rootStyle.getPropertyValue("--forge-composer-surface-focus").trim()),
           composerShadowToken: rootStyle.getPropertyValue("--forge-composer-shadow").trim(),
           bgRaised: rootStyle.getPropertyValue("--forge-bg-raised").trim(),
           hover: rootStyle.getPropertyValue("--forge-hover").trim(),
@@ -2280,23 +2609,23 @@ test.describe("Timeline Messages", () => {
       });
   
       expect(metrics).not.toBeNull();
-      expect(metrics!.borderSubtle).toBe("#3A352C");
-      expect(metrics!.materialBorder).toBe("#3A352C");
-      expect(metrics!.materialSurface).toBe("rgba(34, 32, 28, 0.96)");
-      expect(metrics!.materialRaised).toBe("rgba(42, 39, 33, 0.94)");
-      expect(metrics!.materialPopover).toBe("rgba(42, 39, 33, 0.99)");
-      expect(metrics!.materialOverlay).toBe("rgba(42, 39, 33, 0.97)");
-      expect(metrics!.materialShadow).toContain("0 10px 28px");
-      expect(metrics!.composerBorderToken).toBe("#514737");
-      expect(metrics!.composerSurface).toBe("rgba(34, 32, 28, 0.98)");
-      expect(metrics!.composerShadowToken).toContain("0 12px 28px");
-      expect(metrics!.bgRaised).toBe("#26231E");
-      expect(metrics!.hover).toBe("rgba(207, 199, 184, 0.07)");
-      expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.42)");
-      expect(metrics!.titlebarBorder).toBe("rgb(58, 53, 44)");
-      expect(metrics!.sidebarBorder).toBe("rgb(58, 53, 44)");
+      expect(metrics!.borderSubtle).toBe("#DDD2C3");
+      expect(metrics!.materialBorder).toBe("#DDD2C3");
+      expect(metrics!.materialSurface).toBe("#FEFCF8");
+      expect(metrics!.materialRaised).toBe("#FEFCF8");
+      expect(metrics!.materialPopover).toBe("#FEFCF8");
+      expect(metrics!.materialOverlay).toBe("rgba(254, 252, 248, 0.97)");
+      expect(metrics!.materialShadow).toContain("0 10px 24px");
+      expect(metrics!.composerBorderToken).toBe("#D8C9B8");
+      expect(metrics!.composerSurface).toBe("#FEFCF8");
+      expect(metrics!.composerShadowToken).toContain("0 10px 26px");
+      expect(metrics!.bgRaised).toBe("#F4EEE4");
+      expect(metrics!.hover).toBe("rgba(92, 81, 68, 0.055)");
+      expect(metrics!.focusRing).toBe("rgba(184, 138, 86, 0.38)");
+      expect(metrics!.titlebarBorder).toBe(metrics!.materialBorderColor);
+      expect(metrics!.sidebarBorder).toBe("rgba(221, 210, 195, 0.72)");
       expect(metrics!.composerBorder).toBe(metrics!.composerBorderFocusToken);
-      expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocus);
+      expect(metrics!.composerBg).toBe(metrics!.composerSurfaceFocusColor);
     });
   
     test("V3 color ladder keeps the dark workbench readable", async ({ page }) => {

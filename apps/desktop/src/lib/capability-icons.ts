@@ -6,6 +6,7 @@ import {
   BrainCircuit,
   Cable,
   Circle,
+  Cpu,
   Clock3,
   Database,
   FileText,
@@ -73,6 +74,8 @@ export function capabilityIconMeta(kind: string): ForgeIconMeta {
       return { icon: SearchCode, tone: "action", label: "工具" };
     case "mcp_server":
       return { icon: Cable, tone: "context", label: "连接" };
+    case "provider":
+      return { icon: Cpu, tone: "reasoning", label: "模型" };
     case "hook":
       return { icon: Workflow, tone: "automation", label: "自动化" };
     default:

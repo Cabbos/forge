@@ -83,6 +83,7 @@ function isEvidenceItem(item: MessageItem) {
     item.block.event_type === "tool_call" ||
     item.block.event_type === "tool_call_result" ||
     item.block.event_type === "shell" ||
+    item.block.event_type === "provider_usage" ||
     item.block.event_type === "diff_view"
   );
 }

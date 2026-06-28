@@ -46,6 +46,102 @@ uv run python -m app.worker --once
 
 Worker 支持 `SIGTERM`/`SIGINT` 优雅停止。
 
+### 队列状态
+
+服务启动后可用 `/queue/status` 查看当前队列概览：
+
+```bash
+curl http://localhost:8000/queue/status
+```
+
+响应包含各 run status 计数，以及最早的 pending/running run ID，便于判断
+worker 是否积压或卡住：
+
+```json
+{
+  "counts": {"pending": 2, "running": 1, "completed": 10},
+  "oldest_pending_run_id": "run-a",
+  "oldest_running_run_id": "run-b"
+}
+```
+
+如果 `oldest_running_run_id` 长时间不变，优先查看对应 run 的
+`failure_reason`、worker 心跳、artifact 目录和 worker stderr 摘要；如果用户
+取消 run，worker 会保留取消前已经写出的 trace/report/trajectory artifact，方便
+继续排障。当前实现使用 claim/heartbeat 元数据避免多个 worker 重复消费同一个
+run；stale lease 的第一信号也是 `/queue/status` 中 running 计数和 oldest running
+run 持续不变。
+
+### 可信回测操作路径
+
+生产或 release 前不要只看任务是否跑完，要同时看两类状态：
+
+- `execution_status`：任务是否 completed、failed、cancelled、timeout。
+- `trust_status`：harness、dataset fingerprint、scorer calibration、red-team gate
+  是否足以让分数进入发布决策。
+
+推荐顺序：
+
+1. 先跑 golden harness self-check。若 mock golden case 不能稳定通过，trust gate
+   必须以 `harness_untrusted` fail closed。
+2. 加载 case 后检查 case quality diagnostics。可执行 case 要有
+   verification/validation 命令、expected file 断言和有效 fixture；prompt-only
+   或 adapter-contract case 要设置 `metadata.contract_only: true`。
+3. 正常 lane 使用 dataset fingerprint 和 immutable experiment snapshot 固化输入：
+
+   ```bash
+   uv run python -m app.cli \
+     --cases eval_cases \
+     --provider mock \
+     --trials 3 \
+     --experiment-name local-regression \
+     --output output/local-regression.json \
+     --min-success-rate 0.1 \
+     --max-scope-violation-rate 0.2 \
+     --max-total-cost-usd 1.00
+   ```
+
+4. 对真实用户表达方式单独跑 prompt mutation：
+
+   ```bash
+   uv run python -m app.cli \
+     --cases eval_cases \
+     --provider mock \
+     --prompt-mutation terse-bug-report \
+     --min-success-rate 0.1
+   ```
+
+5. red-team lane 单独跑，不混入正常 success rate：
+
+   ```bash
+   uv run python -m app.cli \
+     --cases eval_cases \
+     --provider mock \
+     --red-team-only \
+     --max-red-team-failure-rate 0
+   ```
+
+6. 查看 `score_summary` 的 layered scorer：functional correctness、scope、
+   prompt injection、secret leak、unsafe tool use、future-state leakage、
+   `regression_ok`、`bugfix_ok`。LLM-as-judge 或 semantic scorer 未经过
+   golden-label calibration 前只能 report-only，不能 gate CI。
+7. 对真实 Forge 或外部 agent，检查 adapter metadata、`trajectory_path` 和
+   `total_cost_usd`。超预算时用 `--max-total-cost-usd` 阻断。
+8. 对比最近一次可信 baseline：
+
+   ```bash
+   python - <<'PY'
+   import json
+   from pathlib import Path
+   from app.models import BacktestReport
+   from app.report_compare import compare_reports
+
+   old = BacktestReport.model_validate(json.loads(Path("output/baseline.json").read_text())["report"])
+   new = BacktestReport.model_validate(json.loads(Path("output/local-regression.json").read_text())["report"])
+   print(compare_reports(old, new).model_dump_json(indent=2))
+   PY
+   ```
+
 ### 3. 三种 Smoke 模式
 
 | 命令 | 说明 | 需要 API Key | 执行 `forge_eval_agent` | 适用场景 |
@@ -79,6 +175,35 @@ npm run eval:forge:mock
 - 不依赖外部 API，秒级完成
 - 验证 report 格式、scope 检查、verification 逻辑
 
+Red-team cases live under `apps/eval-runner/eval_cases/red_team` and are filtered
+out of normal CLI runs by default so product success rate is not mixed with
+adversarial probes. Run them as a separate lane:
+
+```bash
+cd apps/eval-runner
+uv run python -m app.cli \
+  --cases eval_cases \
+  --provider mock \
+  --red-team-only \
+  --max-red-team-failure-rate 0
+```
+
+Use `--include-red-team` only when you explicitly want normal and red-team cases
+in the same report. The report `score_summary` includes red-team labels such as
+`secret_leak_ok`, `prompt_injection_ok`, `scope_escape_ok`,
+`future_state_leakage_ok`, and `unsafe_tool_use_ok`.
+
+Cost budgets can be enforced in CI with `--max-total-cost-usd`. The mock runner
+can carry `metadata.mock.cost_usd`, while real Forge traces may emit `cost_usd`
+directly in the trace payload:
+
+```bash
+uv run python -m app.cli \
+  --cases eval_cases \
+  --provider mock \
+  --max-total-cost-usd 1.00
+```
+
 #### Real smoke（真实 Forge provider）
 
 ```bash
@@ -97,6 +222,20 @@ npm run eval:forge:smoke:real
 6. 构建 AgentSession，调用真实 LLM API
 7. 执行 tool calls、验证命令、修复循环
 8. 输出 trace JSON → Python runner 生成 report
+
+Forge runner 会在 agent 结束后按顺序执行 `validation_commands`、
+`pass_to_pass_commands`、`fail_to_pass_commands`、`post_validation_commands`。
+`pass_to_pass_commands` 代表既有行为不能回归，失败时报告
+`Regression validation failed`；`fail_to_pass_commands` 代表 bug-fix 测试必须
+转绿，失败时报告 `Bug-fix validation failed`。报告的 `score_summary` 会分别给出
+`regression_ok` 和 `bugfix_ok`。
+
+`forge_eval_agent` 可以在 stdout 先输出少量日志，再输出最终 trace JSON
+object；Python runner 会提取最后一个 JSON object。stdout 中完全没有 JSON、
+JSON 不是 object、缺少 `final_answer`、`tool_calls` / `shell_outputs` 等字段类型
+不符合 trace contract，都会归类为 `forge_contract_error`。这类失败的
+`failure_reason` 会带上异常类型和 stdout/stderr 前 500 字符预览；完整 stdout
+和 stderr 仍会保存在 trace 的 `shell_outputs` 里。
 
 需要 `~/.forge/config.json` 中配置对应 provider 的 API key，或设置环境变量：
 
@@ -159,7 +298,35 @@ Total artifacts on disk: 8
 - 🔴 **critical**: `success_rate` 下降 ≥ 0.5 或 `scope_violation_rate` 上升 ≥ 0.5
 - 🟡 **warning**: `avg_model_rounds` 暴涨 (>2x)、`avg_duration_ms` 暴涨 (>3x)、新增 failure category
 
-### 5. 清理
+### 5. 从生产 trace 晋升 Eval Case
+
+失败 trace 可以直接转换成可回归的 eval case：
+
+```bash
+cd apps/eval-runner
+uv run python -m app.cli promote-trace \
+  --trace artifacts/{run_id}/trace.json \
+  --output eval_cases/promoted
+```
+
+`--trace` 支持 API/SQLite 生成的 trace 列表，也支持 CLI backtest artifact 中的
+`{"traces": [...]}` 结构。命令只会为失败 trace 写出 case，输出目录形如：
+
+```text
+eval_cases/promoted/
+  real-user-failure/
+    case.json
+```
+
+生成的 case 会保留原始 prompt、context files、expected/forbidden file 断言、
+verification command，以及 `metadata.source=trace` 和失败原因，便于把线上问题
+纳入后续回归集。
+
+晋升后建议先以 mock lane 验证 case shape，再把它加入正常 regression 或
+red-team lane。若 trace 只证明了外部 adapter contract，没有可执行断言，请保留
+`metadata.contract_only: true`，避免把 contract-only case 当成可验证修复。
+
+### 6. 清理
 
 ```bash
 cd apps/eval-runner
@@ -231,5 +398,5 @@ uv run ruff format --check .
 
 ```
 forge_eval.db          # SQLite 元数据
-artifacts/{run_id}/    # trace.json, report.json
+artifacts/{run_id}/    # trace.json, report.json, *.trajectory.json
 ```

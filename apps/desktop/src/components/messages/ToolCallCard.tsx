@@ -4,10 +4,13 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ForgeCollapsible, ForgeCollapsibleTrigger, ForgeCollapsibleContent } from "@/components/primitives/collapsible";
 import type { BlockState } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
+import { WriteFilePreview } from "@/components/messages/WriteFilePreview";
 import { deriveToolCallView } from "./processToolPresentation";
+import { deriveWritePreview } from "@/components/messages/writePreviewPresentation";
 
 export function ToolCallCard({ block }: { block: BlockState }) {
   const toolView = deriveToolCallView(block);
+  const writePreview = deriveWritePreview(toolView.toolName, block.metadata.tool_input);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   // Keep normal tool chatter compact; only surface errors automatically.
@@ -80,6 +83,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                   <strong>{toolView.resultSummary}</strong>
                 </div>
               )}
+              <WriteFilePreview preview={writePreview} />
               <div data-testid="log-detail-output" className="forge-log-output">
                 {toolView.detailText}
               </div>

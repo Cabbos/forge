@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from app.cases import load_cases, validate_case_quality
+
 ROOT = Path(__file__).resolve().parents[1]
 CASES_ROOT = ROOT / "eval_cases"
 
@@ -32,10 +34,27 @@ def test_continuity_cases_run_business_and_sqlite_post_validation() -> None:
         assert task["id"].startswith("continuity-pipeline-"), task["_case_path"]
         assert task.get("fixture_path") == "../_fixtures/continuity-ts-tooling", task["_case_path"]
         assert "npm install" in task.get("setup_commands", []), task["_case_path"]
-        assert task.get("validation_commands", []) == [], task["_case_path"]
+        assert task.get("validation_commands", []) == [
+            "python3 scripts/assert-continuity.py"
+        ], task["_case_path"]
         assert "npm test" in post_validation, task["_case_path"]
         assert "npx tsc --noEmit" in post_validation, task["_case_path"]
         assert "scripts/assert-continuity.py" in joined, task["_case_path"]
         assert ".forge/continuity.db" not in forbidden_files, task["_case_path"]
         assert ".env" in forbidden_files, task["_case_path"]
         assert "package-lock.json" in forbidden_files, task["_case_path"]
+
+
+def test_continuity_cases_are_verified_or_marked_contract_only() -> None:
+    tasks = load_cases(CASES_ROOT)
+    continuity_tasks = [
+        task for task in tasks if task.id.startswith("continuity-pipeline-")
+    ]
+
+    issues = validate_case_quality(continuity_tasks)
+
+    assert [
+        issue.model_dump()
+        for issue in issues
+        if issue.code == "missing_verification"
+    ] == []

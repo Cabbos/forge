@@ -44,6 +44,7 @@ class EvalWorker:
         run = self.storage.claim_pending_run(worker_id=self.worker_id)
         if run is None:
             return None
+        self._log(f"claimed run {run.run_id} status={run.status.value}")
 
         started_at = utc_now()
         traces = []
@@ -70,9 +71,12 @@ class EvalWorker:
                         }
                     )
                     self.storage.save_run(cancelled_run)
+                    self._log(f"cancelled run {run.run_id} tasks={len(traces)}")
                     return cancelled_run
 
                 trace = runner.run_task(task)
+                traces.append(trace)
+                self.storage.save_task(run.run_id, trace)
 
                 # Check cancellation at task boundary (after task returns)
                 current = self.storage.get_run(run.run_id)
@@ -89,10 +93,8 @@ class EvalWorker:
                         }
                     )
                     self.storage.save_run(cancelled_run)
+                    self._log(f"cancelled run {run.run_id} tasks={len(traces)}")
                     return cancelled_run
-
-                traces.append(trace)
-                self.storage.save_task(run.run_id, trace)
 
             ended_at = utc_now()
             completed_run = run.model_copy(
@@ -107,7 +109,9 @@ class EvalWorker:
             )
             result = self.storage.complete_run(completed_run)
             if result.status == RunStatus.CANCELLED:
+                self._log(f"cancelled run {run.run_id} tasks={len(result.traces)}")
                 return result
+            self._log(f"completed run {run.run_id} tasks={len(traces)}")
             return result
         except Exception as exc:
             ended_at = utc_now()
@@ -128,7 +132,11 @@ class EvalWorker:
                 )
                 result = self.storage.retry_run(retry_run)
                 if result.status == RunStatus.CANCELLED:
+                    self._log(f"cancelled run {run.run_id} tasks={len(result.traces)}")
                     return result
+                self._log(
+                    f"retried run {run.run_id} retry={result.retry_count}/{result.max_retries}"
+                )
                 return result
             failed_run = run.model_copy(
                 update={
@@ -144,10 +152,15 @@ class EvalWorker:
             )
             result = self.storage.fail_run(failed_run)
             if result.status == RunStatus.CANCELLED:
+                self._log(f"cancelled run {run.run_id} tasks={len(result.traces)}")
                 return result
+            self._log(f"failed run {run.run_id} retries={result.retry_count}/{result.max_retries}")
             return result
         finally:
             heartbeat_stop.set()
+
+    def _log(self, message: str) -> None:
+        print(f"[worker {self.worker_id}] {message}", file=sys.stderr)
 
     def _start_background_heartbeat(self, run_id: str) -> threading.Event:
         """Start a background thread that heartbeats until the event is set."""

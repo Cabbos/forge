@@ -1,7 +1,8 @@
-import { Activity, CheckCircle2, ClipboardList, FileText, FolderOpen, MessagesSquare, ShieldCheck, TerminalSquare, type LucideIcon } from "lucide-react";
+import { Activity, CheckCircle2, ClipboardList, FileText, FolderOpen, MessagesSquare, ShieldCheck, TerminalSquare, Wrench, type LucideIcon } from "lucide-react";
 import { ProjectStatusCard } from "./ProjectStatusCard";
 import { useActiveWorkspace, useStore } from "@/store";
 import { getProjectDisplay, getSessionStatus, getSessionTitle } from "@/lib/session-display";
+import { deriveToolCounts } from "@/components/messages/processActivity";
 
 interface ProjectCockpitProps {
   sessionId: string | null;
@@ -17,8 +18,18 @@ export function ProjectCockpit({ sessionId }: ProjectCockpitProps) {
   const mcpContext = useStore((s) => sessionId ? s.mcpContextBySession.get(sessionId) ?? [] : []);
   const project = getProjectDisplay(session?.workingDir || activeWorkspace?.path);
   const status = getSessionStatus(session);
+  const agentTurn = useStore((s) => sessionId ? s.agentTurnBySession.get(sessionId) ?? null : null);
   const blocks = session?.blocks ?? [];
   const counts = summarizeBlocks(blocks);
+  const toolCounts = deriveToolCounts(blocks);
+  const sessionToolCount = Math.max(agentTurn?.tool_call_count ?? 0, toolCounts.totalTools);
+  const failedToolCount = Math.max(agentTurn?.failed_tool_count ?? 0, toolCounts.failedTools);
+  const toolDetail = sessionToolCount > 0
+    ? [
+        `失败 ${failedToolCount}`,
+        toolCounts.topTool ? `常用 ${toolCounts.topTool}` : "",
+      ].filter(Boolean).join(" · ")
+    : undefined;
   const contextCount = selectedContext.length + wikiContext.length + mcpContext.length;
   const activeTitle = session ? getSessionTitle(session) : "等待开始";
   const workflowLabel = workflow?.beginner_label ?? (session?.streaming ? "正在响应" : session ? "可以继续描述任务" : "选择任务后开始");
@@ -64,6 +75,7 @@ export function ProjectCockpit({ sessionId }: ProjectCockpitProps) {
           <div className="forge-cockpit-metrics">
             <CockpitMetric icon={MessagesSquare} label="消息" value={counts.messages} />
             <CockpitMetric icon={TerminalSquare} label="证据" value={counts.evidence} />
+            <CockpitMetric icon={Wrench} label="工具调用" value={sessionToolCount} detail={toolDetail} />
             <CockpitMetric icon={ShieldCheck} label="权限" value={counts.permissions} />
           </div>
         </section>
@@ -98,16 +110,18 @@ function CockpitMetric({
   icon: Icon,
   label,
   value,
+  detail,
 }: {
   icon: LucideIcon;
   label: string;
   value: number;
+  detail?: string;
 }) {
   return (
-    <div className="forge-cockpit-metric">
+    <div className="forge-cockpit-metric" aria-label={detail ? `${label}: ${value}, ${detail}` : `${label}: ${value}`}>
       <Icon className="size-3.5" />
       <div>
-        <div className="forge-cockpit-metric-value">{value}</div>
+        <div className="forge-cockpit-metric-value" title={detail}>{value}</div>
         <div className="forge-cockpit-metric-label">{label}</div>
       </div>
     </div>

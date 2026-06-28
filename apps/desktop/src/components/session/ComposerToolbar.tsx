@@ -5,6 +5,7 @@ import { ForgeIcon } from "@/components/primitives/icon";
 import { cn } from "@/lib/utils";
 import type { ComposerContextUsageView } from "./contextUsageView";
 import type { ComposerMenuMode } from "./composerTypes";
+import type * as React from "react";
 
 interface ComposerToolbarProps {
   canSend: boolean;
@@ -19,6 +20,7 @@ interface ComposerToolbarProps {
   showModelMenu: boolean;
   showSuggestions: ComposerMenuMode;
   suggestionListId: string;
+  permissionControl?: React.ReactNode;
   onCompact: () => void;
   onResume: () => void;
   onSend: () => void;
@@ -40,6 +42,7 @@ export function ComposerToolbar({
   showModelMenu,
   showSuggestions,
   suggestionListId,
+  permissionControl,
   onCompact,
   onResume,
   onSend,
@@ -84,6 +87,7 @@ export function ComposerToolbar({
             <ForgeIcon icon={composerToolbarIcons.command.icon} tone={composerToolbarIcons.command.tone} contained={false} />
           </ButtonPrimitive>
         </div>
+        {permissionControl}
         <span className="forge-composer-hint hidden truncate sm:inline">
           Enter 发送 · Shift↵ 换行
         </span>

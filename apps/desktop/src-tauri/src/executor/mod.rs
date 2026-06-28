@@ -1,15 +1,23 @@
+#[cfg(test)]
+mod executor_test;
 pub mod files;
+#[cfg(test)]
+mod files_test;
 pub mod shell;
+#[cfg(test)]
+mod shell_test;
 
 pub use files::FileExecutor;
 pub use shell::ShellExecutor;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
 use crate::agent::event_sink::EventEmitter;
+use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
+use crate::agent::time::now_ms;
 use crate::consts::{ASK_USER_TIMEOUT, SEARCH_TIMEOUT, WEB_FETCH_TIMEOUT, WEB_SEARCH_TIMEOUT};
 use crate::harness::shell_policy::validate_shell_command_failsafe;
 use crate::protocol::events::StreamEvent;
@@ -20,12 +28,20 @@ const GIT_DIFF_TEXT_LIMIT: usize = 120_000;
 const SHELL_CAPTURE_LIMIT: usize = 120_000;
 const SHELL_STREAM_LIMIT: usize = 120_000;
 const WEB_BODY_LIMIT: usize = 1_500_000;
+const POST_SHELL_DELTA_SOURCE: &str = "post_shell_delta";
+const POST_SHELL_DELTA_LIMIT: usize = 200;
+const GIT_SNAPSHOT_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+const NON_GIT_WORKSPACE_SENTINEL: &str = "[non_git_workspace]";
+const GIT_SNAPSHOT_UNAVAILABLE_SENTINEL: &str = "[git_snapshot_unavailable]";
+const GIT_BOUNDARY_CHANGED_SENTINEL: &str = "[git_boundary_changed]";
 
 /// Unified executor that handles AI tool calls.
 pub struct ToolExecutor {
     pub file: FileExecutor,
     pub shell: ShellExecutor,
     pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    pending_confirm_descriptors: Option<Arc<RwLock<Vec<PendingConfirmDescriptor>>>>,
+    active_tool_call_descriptors: Option<Arc<RwLock<Vec<ActiveToolCallDescriptor>>>>,
 }
 
 impl ToolExecutor {
@@ -37,6 +53,23 @@ impl ToolExecutor {
             file: FileExecutor::new(working_dir.clone()),
             shell: ShellExecutor::new(working_dir.clone()),
             pending_confirms,
+            pending_confirm_descriptors: None,
+            active_tool_call_descriptors: None,
+        }
+    }
+
+    pub(crate) fn new_with_descriptors(
+        working_dir: PathBuf,
+        pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+        pending_confirm_descriptors: Arc<RwLock<Vec<PendingConfirmDescriptor>>>,
+        active_tool_call_descriptors: Arc<RwLock<Vec<ActiveToolCallDescriptor>>>,
+    ) -> Self {
+        Self {
+            file: FileExecutor::new(working_dir.clone()),
+            shell: ShellExecutor::new(working_dir.clone()),
+            pending_confirms,
+            pending_confirm_descriptors: Some(pending_confirm_descriptors),
+            active_tool_call_descriptors: Some(active_tool_call_descriptors),
         }
     }
 
@@ -99,6 +132,15 @@ impl ToolExecutor {
             .map(str::to_string)
             .unwrap_or_else(|| BlockId::new().to_string());
         let start = std::time::Instant::now();
+        let started_at_ms = now_ms();
+        if let Some(registry) = &self.active_tool_call_descriptors {
+            registry.write().await.push(ActiveToolCallDescriptor::new(
+                block_id.clone(),
+                tool_name.to_string(),
+                tool_input.clone(),
+                started_at_ms,
+            ));
+        }
         crate::app_log!(
             "INFO",
             "[tool] start session={} block={} tool={} {}",
@@ -112,7 +154,16 @@ impl ToolExecutor {
             "read_file" | "read" => {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match self.file.read_file(path) {
-                    Ok(r) => r.content.to_string(),
+                    Ok(r) => {
+                        emit_file_io(
+                            emitter.as_ref(),
+                            session_id,
+                            &block_id,
+                            r.path.as_str(),
+                            "read",
+                        );
+                        r.content.to_string()
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
@@ -130,6 +181,13 @@ impl ToolExecutor {
                             old_content: wr.old_content,
                             new_content: wr.new_content,
                         });
+                        emit_file_io(
+                            emitter.as_ref(),
+                            session_id,
+                            &block_id,
+                            wr.path.as_str(),
+                            "write",
+                        );
                         format!("File written: {}", wr.path)
                     }
                     Err(e) => format!("Error: {}", e),
@@ -153,16 +211,23 @@ impl ToolExecutor {
                 cmd.current_dir(self.file.working_dir());
                 match cmd.output().await {
                     Ok(output) if output.status.success() => {
+                        let file = if file_path.is_empty() {
+                            "all files".to_string()
+                        } else {
+                            file_path.to_string()
+                        };
+                        emit_file_io(
+                            emitter.as_ref(),
+                            session_id,
+                            &block_id,
+                            file.as_str(),
+                            "diff",
+                        );
                         let diff = String::from_utf8_lossy(&output.stdout).to_string();
                         if diff.trim().is_empty() {
                             "No changes (working tree clean)".to_string()
                         } else {
                             let diff = truncate_text(&diff, GIT_DIFF_TEXT_LIMIT);
-                            let file = if file_path.is_empty() {
-                                "all files".to_string()
-                            } else {
-                                file_path.to_string()
-                            };
                             emitter.emit(StreamEvent::DiffView {
                                 session_id: session_id.to_string(),
                                 block_id: block_id.clone(),
@@ -198,39 +263,77 @@ impl ToolExecutor {
                         block_id,
                         reason
                     );
-                    return format!("Error: {}", reason);
-                }
+                    format!("Error: {}", reason)
+                } else {
+                    let before_shell =
+                        ShellFileEffectSnapshot::capture(self.file.working_dir()).await;
+                    // Emit ShellStart before execution so the frontend creates the block immediately
+                    emitter.emit(StreamEvent::ShellStart {
+                        session_id: session_id.to_string(),
+                        block_id: block_id.clone(),
+                        command: command.to_string(),
+                    });
 
-                // Emit ShellStart before execution so the frontend creates the block immediately
-                emitter.emit(StreamEvent::ShellStart {
-                    session_id: session_id.to_string(),
-                    block_id: block_id.clone(),
-                    command: command.to_string(),
-                });
+                    // Collectors accumulate output for the AI response string
+                    let stdout_captured: Arc<std::sync::Mutex<String>> =
+                        Arc::new(std::sync::Mutex::new(String::new()));
+                    let stderr_captured: Arc<std::sync::Mutex<String>> =
+                        Arc::new(std::sync::Mutex::new(String::new()));
+                    let emitted_bytes: Arc<std::sync::Mutex<usize>> =
+                        Arc::new(std::sync::Mutex::new(0));
+                    let emitted_truncation_notice: Arc<std::sync::Mutex<bool>> =
+                        Arc::new(std::sync::Mutex::new(false));
 
-                // Collectors accumulate output for the AI response string
-                let stdout_captured: Arc<std::sync::Mutex<String>> =
-                    Arc::new(std::sync::Mutex::new(String::new()));
-                let stderr_captured: Arc<std::sync::Mutex<String>> =
-                    Arc::new(std::sync::Mutex::new(String::new()));
-                let emitted_bytes: Arc<std::sync::Mutex<usize>> =
-                    Arc::new(std::sync::Mutex::new(0));
-                let emitted_truncation_notice: Arc<std::sync::Mutex<bool>> =
-                    Arc::new(std::sync::Mutex::new(false));
+                    let shell_result = if let Some(cancel) = cancel {
+                        let stdout_for_cb = stdout_captured.clone();
+                        let stderr_for_cb = stderr_captured.clone();
+                        let emitted_for_cb = emitted_bytes.clone();
+                        let notice_for_cb = emitted_truncation_notice.clone();
+                        let sid_for_cb = session_id.to_string();
+                        let bid_for_cb = block_id.clone();
+                        let emitter_for_cb = emitter.clone();
+                        self.shell
+                            .execute_streaming_with_cancel(
+                                command,
+                                cancel,
+                                move |line: String, is_stderr: bool| {
+                                    // Accumulate for AI response
+                                    let cap = if is_stderr {
+                                        &stderr_for_cb
+                                    } else {
+                                        &stdout_for_cb
+                                    };
+                                    {
+                                        let mut guard = cap.lock().unwrap();
+                                        append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
+                                    }
 
-                let shell_result = if let Some(cancel) = cancel {
-                    let stdout_for_cb = stdout_captured.clone();
-                    let stderr_for_cb = stderr_captured.clone();
-                    let emitted_for_cb = emitted_bytes.clone();
-                    let notice_for_cb = emitted_truncation_notice.clone();
-                    let sid_for_cb = session_id.to_string();
-                    let bid_for_cb = block_id.clone();
-                    let emitter_for_cb = emitter.clone();
-                    self.shell
-                        .execute_streaming_with_cancel(
-                            command,
-                            cancel,
-                            move |line: String, is_stderr: bool| {
+                                    // Emit to frontend line by line
+                                    if let Some(content) = next_stream_line(
+                                        &line,
+                                        &emitted_for_cb,
+                                        &notice_for_cb,
+                                        SHELL_STREAM_LIMIT,
+                                    ) {
+                                        emitter_for_cb.emit(StreamEvent::ShellOutput {
+                                            session_id: sid_for_cb.clone(),
+                                            block_id: bid_for_cb.clone(),
+                                            content,
+                                        });
+                                    }
+                                },
+                            )
+                            .await
+                    } else {
+                        let stdout_for_cb = stdout_captured.clone();
+                        let stderr_for_cb = stderr_captured.clone();
+                        let emitted_for_cb = emitted_bytes.clone();
+                        let notice_for_cb = emitted_truncation_notice.clone();
+                        let sid_for_cb = session_id.to_string();
+                        let bid_for_cb = block_id.clone();
+                        let emitter_for_cb = emitter.clone();
+                        self.shell
+                            .execute_streaming(command, move |line: String, is_stderr: bool| {
                                 // Accumulate for AI response
                                 let cap = if is_stderr {
                                     &stderr_for_cb
@@ -255,78 +358,53 @@ impl ToolExecutor {
                                         content,
                                     });
                                 }
-                            },
-                        )
-                        .await
-                } else {
-                    let stdout_for_cb = stdout_captured.clone();
-                    let stderr_for_cb = stderr_captured.clone();
-                    let emitted_for_cb = emitted_bytes.clone();
-                    let notice_for_cb = emitted_truncation_notice.clone();
-                    let sid_for_cb = session_id.to_string();
-                    let bid_for_cb = block_id.clone();
-                    let emitter_for_cb = emitter.clone();
-                    self.shell
-                        .execute_streaming(command, move |line: String, is_stderr: bool| {
-                            // Accumulate for AI response
-                            let cap = if is_stderr {
-                                &stderr_for_cb
-                            } else {
-                                &stdout_for_cb
+                            })
+                            .await
+                    };
+
+                    match shell_result {
+                        Ok(exit_code) => {
+                            emitter.emit(StreamEvent::ShellEnd {
+                                session_id: session_id.to_string(),
+                                block_id: block_id.clone(),
+                                exit_code,
+                            });
+                            if exit_code == 0 {
+                                let after_shell =
+                                    ShellFileEffectSnapshot::capture(self.file.working_dir()).await;
+                                emit_post_shell_file_effects(
+                                    emitter.as_ref(),
+                                    session_id,
+                                    &block_id,
+                                    before_shell,
+                                    after_shell,
+                                );
+                            }
+                            let stdout = stdout_captured.lock().unwrap().clone();
+                            let stderr = stderr_captured.lock().unwrap().clone();
+                            let trunc = |s: &str, max: usize| {
+                                if s.len() > max {
+                                    format!("{}... [truncated {} bytes]", &s[..max], s.len() - max)
+                                } else {
+                                    s.to_string()
+                                }
                             };
-                            {
-                                let mut guard = cap.lock().unwrap();
-                                append_line_capped(&mut guard, &line, SHELL_CAPTURE_LIMIT);
-                            }
-
-                            // Emit to frontend line by line
-                            if let Some(content) = next_stream_line(
-                                &line,
-                                &emitted_for_cb,
-                                &notice_for_cb,
-                                SHELL_STREAM_LIMIT,
-                            ) {
-                                emitter_for_cb.emit(StreamEvent::ShellOutput {
-                                    session_id: sid_for_cb.clone(),
-                                    block_id: bid_for_cb.clone(),
-                                    content,
-                                });
-                            }
-                        })
-                        .await
-                };
-
-                match shell_result {
-                    Ok(exit_code) => {
-                        emitter.emit(StreamEvent::ShellEnd {
-                            session_id: session_id.to_string(),
-                            block_id: block_id.clone(),
-                            exit_code,
-                        });
-                        let stdout = stdout_captured.lock().unwrap().clone();
-                        let stderr = stderr_captured.lock().unwrap().clone();
-                        let trunc = |s: &str, max: usize| {
-                            if s.len() > max {
-                                format!("{}... [truncated {} bytes]", &s[..max], s.len() - max)
-                            } else {
-                                s.to_string()
-                            }
-                        };
-                        format!(
-                            "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
-                            exit_code,
-                            trunc(&stdout, 8000),
-                            trunc(&stderr, 4000)
-                        )
-                    }
-                    Err(e) => {
-                        // Emit ShellEnd to close the block since ShellStart was already sent
-                        emitter.emit(StreamEvent::ShellEnd {
-                            session_id: session_id.to_string(),
-                            block_id: block_id.clone(),
-                            exit_code: -1,
-                        });
-                        format!("Error: {}", e)
+                            format!(
+                                "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
+                                exit_code,
+                                trunc(&stdout, 8000),
+                                trunc(&stderr, 4000)
+                            )
+                        }
+                        Err(e) => {
+                            // Emit ShellEnd to close the block since ShellStart was already sent
+                            emitter.emit(StreamEvent::ShellEnd {
+                                session_id: session_id.to_string(),
+                                block_id: block_id.clone(),
+                                exit_code: -1,
+                            });
+                            format!("Error: {}", e)
+                        }
                     }
                 }
             }
@@ -337,14 +415,21 @@ impl ToolExecutor {
                 // Permission handled by Harness
 
                 match self.file.edit_file(path, old_str, new_str) {
-                    Ok(msg) => msg,
+                    Ok(msg) => {
+                        emit_file_io(emitter.as_ref(), session_id, &block_id, path, "edit");
+                        msg
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
             "list_directory" | "ls" | "list" => {
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match self.file.list_directory(path) {
-                    Ok(listing) => listing,
+                    Ok(listing) => {
+                        let event_path = if path.trim().is_empty() { "." } else { path };
+                        emit_file_io(emitter.as_ref(), session_id, &block_id, event_path, "list");
+                        listing
+                    }
                     Err(e) => format!("Error: {}", e),
                 }
             }
@@ -356,7 +441,7 @@ impl ToolExecutor {
                         let results = search_files_with_rg(&dir, pattern)
                             .await
                             .unwrap_or_else(|| simple_glob(&dir, pattern));
-                        if !results.is_empty() {
+                        let result = if !results.is_empty() {
                             results.join("\n")
                         } else if looks_like_plain_search(pattern) {
                             search_content_with_rg(&dir, pattern)
@@ -366,7 +451,18 @@ impl ToolExecutor {
                                 })
                         } else {
                             "No files matched".to_string()
+                        };
+                        if is_successful_file_io_result(&result) {
+                            let event_path = if path.trim().is_empty() { "." } else { path };
+                            emit_file_io(
+                                emitter.as_ref(),
+                                session_id,
+                                &block_id,
+                                event_path,
+                                "search",
+                            );
                         }
+                        result
                     }
                     Err(e) => e,
                 }
@@ -375,11 +471,25 @@ impl ToolExecutor {
                 let pattern = get_str(tool_input, "pattern").unwrap_or("");
                 let path = get_str(tool_input, "path").unwrap_or("");
                 match resolve_search_path(self.file.working_dir(), path) {
-                    Ok(dir) => search_content_with_rg(&dir, pattern)
-                        .await
-                        .unwrap_or_else(|| {
-                            "Search failed: ripgrep (rg) is unavailable".to_string()
-                        }),
+                    Ok(dir) => {
+                        let result =
+                            search_content_with_rg(&dir, pattern)
+                                .await
+                                .unwrap_or_else(|| {
+                                    "Search failed: ripgrep (rg) is unavailable".to_string()
+                                });
+                        if is_successful_file_io_result(&result) {
+                            let event_path = if path.trim().is_empty() { "." } else { path };
+                            emit_file_io(
+                                emitter.as_ref(),
+                                session_id,
+                                &block_id,
+                                event_path,
+                                "search",
+                            );
+                        }
+                        result
+                    }
                     Err(e) => e,
                 }
             }
@@ -394,11 +504,20 @@ impl ToolExecutor {
             "ask_user" => {
                 let question = get_str(tool_input, "question").unwrap_or("");
                 let (tx, rx) = tokio::sync::oneshot::channel();
+                let descriptor = PendingConfirmDescriptor::new(
+                    block_id.clone(),
+                    question.to_string(),
+                    "ask_user".to_string(),
+                    now_ms(),
+                );
                 {
                     self.pending_confirms
                         .write()
                         .await
                         .insert(block_id.clone(), tx);
+                    if let Some(registry) = &self.pending_confirm_descriptors {
+                        registry.write().await.push(descriptor);
+                    }
                 }
                 emitter.emit(StreamEvent::ConfirmAsk {
                     session_id: session_id.to_string(),
@@ -406,24 +525,27 @@ impl ToolExecutor {
                     question: question.to_string(),
                     kind: "ask_user".to_string(),
                     boundary: None,
+                    replayed_interrupted: false,
                 });
-                match tokio::time::timeout(ASK_USER_TIMEOUT, rx).await {
-                    Ok(Ok(true)) => {
-                        self.pending_confirms.write().await.remove(&block_id);
-                        "User approved".to_string()
+                let approved = tokio::time::timeout(ASK_USER_TIMEOUT, rx).await;
+                {
+                    self.pending_confirms.write().await.remove(&block_id);
+                    if let Some(registry) = &self.pending_confirm_descriptors {
+                        registry.write().await.retain(|d| d.block_id != block_id);
                     }
-                    Ok(Ok(false)) => {
-                        self.pending_confirms.write().await.remove(&block_id);
-                        "User declined".to_string()
-                    }
-                    _ => {
-                        self.pending_confirms.write().await.remove(&block_id);
-                        "No response from user".to_string()
-                    }
+                }
+                match approved {
+                    Ok(Ok(true)) => "User approved".to_string(),
+                    Ok(Ok(false)) => "User declined".to_string(),
+                    _ => "No response from user".to_string(),
                 }
             }
             _ => format!("Unknown tool: {}", tool_name),
         };
+
+        if let Some(registry) = &self.active_tool_call_descriptors {
+            registry.write().await.retain(|d| d.block_id != block_id);
+        }
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let is_error = result.starts_with("Error:")
@@ -510,6 +632,259 @@ fn preview_for_log(value: &str) -> String {
     } else {
         format!("\"{}\"", preview)
     }
+}
+
+fn emit_file_io(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    block_id: &str,
+    path: &str,
+    operation: &str,
+) {
+    emitter.emit(StreamEvent::FileIo {
+        session_id: session_id.to_string(),
+        block_id: block_id.to_string(),
+        path: path.to_string(),
+        operation: operation.to_string(),
+        source: Some("executor".to_string()),
+    });
+}
+
+fn emit_post_shell_file_effects(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    block_id: &str,
+    before: ShellFileEffectSnapshot,
+    after: ShellFileEffectSnapshot,
+) {
+    match before.delta(after) {
+        ShellFileEffectDelta::Paths(paths) => {
+            for (path, operation) in paths.into_iter().take(POST_SHELL_DELTA_LIMIT) {
+                emitter.emit(StreamEvent::FileIo {
+                    session_id: session_id.to_string(),
+                    block_id: block_id.to_string(),
+                    path,
+                    operation,
+                    source: Some(POST_SHELL_DELTA_SOURCE.to_string()),
+                });
+            }
+        }
+        ShellFileEffectDelta::UnknownBoundary { path } => {
+            emitter.emit(StreamEvent::FileIo {
+                session_id: session_id.to_string(),
+                block_id: block_id.to_string(),
+                path,
+                operation: "unknown_boundary".to_string(),
+                source: Some(POST_SHELL_DELTA_SOURCE.to_string()),
+            });
+        }
+        ShellFileEffectDelta::None => {}
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellFileEffectSnapshot {
+    Git {
+        root: String,
+        paths: BTreeMap<String, String>,
+    },
+    UnknownBoundary {
+        path: String,
+    },
+}
+
+impl ShellFileEffectSnapshot {
+    async fn capture(working_dir: &std::path::Path) -> Self {
+        let root = match git_output_z(working_dir, &["rev-parse", "--show-toplevel"]).await {
+            GitSnapshotCommandOutput::Success(output) => {
+                String::from_utf8_lossy(&output).trim().to_string()
+            }
+            GitSnapshotCommandOutput::NonZero => {
+                return Self::UnknownBoundary {
+                    path: NON_GIT_WORKSPACE_SENTINEL.to_string(),
+                };
+            }
+            GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+        if root.is_empty() {
+            return Self::UnknownBoundary {
+                path: NON_GIT_WORKSPACE_SENTINEL.to_string(),
+            };
+        }
+
+        let status = match git_output_z(working_dir, &["status", "--porcelain=v1", "-z"]).await {
+            GitSnapshotCommandOutput::Success(output) => output,
+            GitSnapshotCommandOutput::NonZero | GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+        let diff = match git_output_z(working_dir, &["diff", "--name-only", "-z"]).await {
+            GitSnapshotCommandOutput::Success(output) => output,
+            GitSnapshotCommandOutput::NonZero | GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+        let others = match git_output_z(
+            working_dir,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        )
+        .await
+        {
+            GitSnapshotCommandOutput::Success(output) => output,
+            GitSnapshotCommandOutput::NonZero | GitSnapshotCommandOutput::Unavailable => {
+                return Self::UnknownBoundary {
+                    path: GIT_SNAPSHOT_UNAVAILABLE_SENTINEL.to_string(),
+                };
+            }
+        };
+
+        let mut paths = BTreeMap::new();
+        merge_status_paths(&mut paths, &status);
+        merge_z_paths(&mut paths, &diff, "modified");
+        merge_z_paths(&mut paths, &others, "created");
+        Self::Git { root, paths }
+    }
+
+    fn delta(self, after: Self) -> ShellFileEffectDelta {
+        match (self, after) {
+            (Self::UnknownBoundary { path }, _) if path == GIT_SNAPSHOT_UNAVAILABLE_SENTINEL => {
+                ShellFileEffectDelta::UnknownBoundary { path }
+            }
+            (_, Self::UnknownBoundary { path }) if path == GIT_SNAPSHOT_UNAVAILABLE_SENTINEL => {
+                ShellFileEffectDelta::UnknownBoundary { path }
+            }
+            (
+                Self::Git {
+                    root: before_root,
+                    paths: before_paths,
+                },
+                Self::Git {
+                    root: after_root,
+                    paths: after_paths,
+                },
+            ) if before_root == after_root => {
+                let paths = after_paths
+                    .into_iter()
+                    .filter(|(path, _operation)| !before_paths.contains_key(path))
+                    .collect::<BTreeMap<_, _>>();
+                if paths.is_empty() {
+                    ShellFileEffectDelta::None
+                } else {
+                    ShellFileEffectDelta::Paths(paths)
+                }
+            }
+            (_, Self::UnknownBoundary { path }) => ShellFileEffectDelta::UnknownBoundary { path },
+            (_, Self::Git { .. }) => ShellFileEffectDelta::UnknownBoundary {
+                path: GIT_BOUNDARY_CHANGED_SENTINEL.to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GitSnapshotCommandOutput {
+    Success(Vec<u8>),
+    NonZero,
+    Unavailable,
+}
+
+enum ShellFileEffectDelta {
+    Paths(BTreeMap<String, String>),
+    UnknownBoundary { path: String },
+    None,
+}
+
+async fn git_output_z(working_dir: &std::path::Path, args: &[&str]) -> GitSnapshotCommandOutput {
+    git_output_z_with_timeout(
+        std::ffi::OsStr::new("git"),
+        working_dir,
+        args,
+        GIT_SNAPSHOT_COMMAND_TIMEOUT,
+    )
+    .await
+}
+
+async fn git_output_z_with_timeout(
+    program: &std::ffi::OsStr,
+    working_dir: &std::path::Path,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> GitSnapshotCommandOutput {
+    let output = match tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(program)
+            .args(args)
+            .current_dir(working_dir)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(_)) | Err(_) => return GitSnapshotCommandOutput::Unavailable,
+    };
+
+    if output.status.success() {
+        GitSnapshotCommandOutput::Success(output.stdout)
+    } else {
+        GitSnapshotCommandOutput::NonZero
+    }
+}
+
+fn merge_z_paths(paths: &mut BTreeMap<String, String>, output: &[u8], operation: &str) {
+    for path in split_nul(output) {
+        if !path.is_empty() {
+            paths.entry(path).or_insert_with(|| operation.to_string());
+        }
+    }
+}
+
+fn merge_status_paths(paths: &mut BTreeMap<String, String>, output: &[u8]) {
+    let entries = split_nul(output);
+    let mut index = 0;
+    while index < entries.len() {
+        let entry = &entries[index];
+        if entry.len() < 4 {
+            index += 1;
+            continue;
+        }
+        let status = &entry[..2];
+        let path = entry[3..].to_string();
+        let operation = if status == "??" || status.contains('A') {
+            "created"
+        } else {
+            "modified"
+        };
+        paths.entry(path).or_insert_with(|| operation.to_string());
+        if status.starts_with('R') || status.starts_with('C') {
+            index += 1;
+        }
+        index += 1;
+    }
+}
+
+fn split_nul(output: &[u8]) -> Vec<String> {
+    output
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).to_string())
+        .collect()
+}
+
+fn is_successful_file_io_result(result: &str) -> bool {
+    !(result.starts_with("Error:")
+        || result.starts_with("Denied:")
+        || result.starts_with("Search blocked:")
+        || result.starts_with("Search failed")
+        || result.starts_with("Search timed out"))
 }
 
 fn truncate_text(text: &str, max_bytes: usize) -> String {
@@ -1128,8 +1503,71 @@ fn simple_match(name: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{validate_shell_command_failsafe, ToolExecutor};
+    use crate::agent::event_sink::EventEmitter;
+    use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
+    use crate::protocol::events::StreamEvent;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    /// Emitter that immediately resolves any ConfirmAsk it sees by looking up
+    /// the pending sender and sending `approved`.
+    struct AutoResolveConfirmEmitter {
+        pending_confirms:
+            Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+        approve: bool,
+    }
+
+    impl AutoResolveConfirmEmitter {
+        fn new(
+            pending_confirms: Arc<
+                tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+            >,
+            approve: bool,
+        ) -> Self {
+            Self {
+                pending_confirms,
+                approve,
+            }
+        }
+    }
+
+    impl EventEmitter for AutoResolveConfirmEmitter {
+        fn emit(&self, event: StreamEvent) {
+            if let StreamEvent::ConfirmAsk { block_id, .. } = event {
+                if let Ok(mut guard) = self.pending_confirms.try_write() {
+                    if let Some(sender) = guard.remove(&block_id) {
+                        let _ = sender.send(self.approve);
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn descriptor_executor(
+        workspace: &std::path::Path,
+    ) -> (
+        ToolExecutor,
+        Arc<tokio::sync::RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+        Arc<tokio::sync::RwLock<Vec<PendingConfirmDescriptor>>>,
+        Arc<tokio::sync::RwLock<Vec<ActiveToolCallDescriptor>>>,
+    ) {
+        let pending_confirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
+        let pending_descriptors = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let active_descriptors = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let executor = ToolExecutor::new_with_descriptors(
+            workspace.to_path_buf(),
+            pending_confirms.clone(),
+            pending_descriptors.clone(),
+            active_descriptors.clone(),
+        );
+        (
+            executor,
+            pending_confirms,
+            pending_descriptors,
+            active_descriptors,
+        )
+    }
 
     #[test]
     fn shell_failsafe_blocks_destructive_root_commands() {
@@ -1204,6 +1642,64 @@ mod tests {
             assert!(result.contains("Stdout:"), "{alias}: {result}");
             assert!(result.contains("alias-ok"), "{alias}: {result}");
         }
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn execute_with_emitter_cleans_up_active_tool_call_descriptor() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-active-tool-cleanup-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let (executor, _pending_confirms, _pending_descriptors, active_descriptors) =
+            descriptor_executor(&workspace);
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "list_directory",
+                &serde_json::json!({"path": "."}),
+                Arc::new(crate::agent::event_sink::NoopEventEmitter),
+                Some("tool-block-1"),
+                None,
+            )
+            .await;
+
+        assert!(!result.starts_with("Error:"), "{result}");
+        assert!(
+            active_descriptors.read().await.is_empty(),
+            "active tool call descriptor should be removed after execution"
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn ask_user_cleans_up_pending_confirm_descriptor_on_response() {
+        let workspace =
+            std::env::temp_dir().join(format!("forge-ask-user-cleanup-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let (executor, pending_confirms, pending_descriptors, _active_descriptors) =
+            descriptor_executor(&workspace);
+
+        let result = executor
+            .execute_with_emitter(
+                "session-1",
+                "ask_user",
+                &serde_json::json!({"question": "Continue?"}),
+                Arc::new(AutoResolveConfirmEmitter::new(pending_confirms, true)),
+                Some("ask-block-1"),
+                None,
+            )
+            .await;
+
+        assert_eq!(result, "User approved");
+        assert!(
+            pending_descriptors.read().await.is_empty(),
+            "pending confirm descriptor should be removed after response"
+        );
+
         let _ = std::fs::remove_dir_all(workspace);
     }
 }

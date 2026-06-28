@@ -16,31 +16,43 @@ Keep the three apps independently runnable in the first migration. Do not extrac
 npm run build:desktop
 npm run build:website
 npm run test:eval
+scripts/acceptance.sh --dry-run
 ```
 
 When editing an imported app, also read that app's local `AGENTS.md` if present.
 
+## Current Desktop Product Surfaces
+
+The active desktop hardening work is tracked in `docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`.
+Recent Phase 7 surfaces include History session management, Settings diagnostics, permission rules, scheduler UI, A2A review summaries, background task status/list UI, and the Phase 7 acceptance script.
+
+When touching these surfaces, keep docs and acceptance coverage in sync:
+
+- Update `README.md`, `apps/desktop/README.md`, and `CHANGELOG.md` when a user-visible runtime surface changes.
+- Prefer adding or extending `apps/desktop/e2e/acceptance.spec.ts` for product-level smoke coverage.
+- Keep `scripts/acceptance.sh --dry-run` aligned with the specs it advertises.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **forge** (9760 symbols, 20694 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **forge** (12778 symbols, 33301 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> Index stale? Run `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter --allow-build=tree-sitter-kotlin dlx gitnexus@latest analyze --index-only` from the project root. The generated `.gitnexus/run.cjs` can fall back to an npx cache missing optional grammars (`tree-sitter-swift` / Kotlin native build), so prefer the explicit pnpm command until the upstream runner is fixed.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER edit a function, class, or method without first running `impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit changes without running `detect_changes()` to check affected scope.
 
 ## Resources
 

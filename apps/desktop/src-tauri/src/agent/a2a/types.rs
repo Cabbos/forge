@@ -91,6 +91,15 @@ impl AgentTaskStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct AgentParentSessionContext {
+    pub parent_session_id: String,
+    pub active_parent_task_id: AgentTaskId,
+    pub root_task_id: AgentTaskId,
+    pub selection_reason: String,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PatchRiskLevel {
     Low,
@@ -195,10 +204,17 @@ pub(crate) struct AgentTaskFailure {
     pub created_at_ms: u64,
 }
 
+pub(crate) fn default_max_task_attempts() -> u32 {
+    3
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AgentTaskRecord {
     pub task_id: AgentTaskId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_task_id: Option<AgentTaskId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_task_ids: Vec<AgentTaskId>,
     pub agent_id: AgentId,
     pub role: AgentRole,
     pub execution_mode: AgentExecutionMode,
@@ -213,6 +229,18 @@ pub(crate) struct AgentTaskRecord {
     pub started_at_ms: Option<u64>,
     pub ended_at_ms: Option<u64>,
     pub resume_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_acquired_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at_ms: Option<u64>,
+    #[serde(default)]
+    pub attempt_count: u32,
+    #[serde(default = "default_max_task_attempts")]
+    pub max_attempts: u32,
 }
 
 impl AgentTaskRecord {
@@ -229,6 +257,7 @@ impl AgentTaskRecord {
         Self {
             task_id,
             parent_task_id: None,
+            child_task_ids: Vec::new(),
             agent_id,
             role,
             execution_mode,
@@ -243,7 +272,25 @@ impl AgentTaskRecord {
             started_at_ms: None,
             ended_at_ms: None,
             resume_note: None,
+            lease_owner: None,
+            lease_acquired_at_ms: None,
+            lease_expires_at_ms: None,
+            last_heartbeat_at_ms: None,
+            attempt_count: 0,
+            max_attempts: default_max_task_attempts(),
         }
+    }
+
+    pub(crate) fn record_child_task_id(&mut self, child_task_id: AgentTaskId) -> bool {
+        if self
+            .child_task_ids
+            .iter()
+            .any(|existing| existing == &child_task_id)
+        {
+            return false;
+        }
+        self.child_task_ids.push(child_task_id);
+        true
     }
 }
 
@@ -305,6 +352,71 @@ mod tests {
         assert!(!record.permissions.allow_workspace_write);
         assert!(!record.permissions.allow_shell);
         assert!(!record.permissions.allow_delegate);
+    }
+
+    #[test]
+    fn task_record_deserializes_legacy_json_without_parent_task_id() {
+        let record = AgentTaskRecord::new(
+            AgentTaskId::new("task-legacy"),
+            AgentId::new("agent-legacy"),
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Legacy task",
+            "Inspect old ledger",
+            10,
+        );
+        let mut value = serde_json::to_value(record).expect("serialize task record");
+        value
+            .as_object_mut()
+            .expect("task record object")
+            .remove("parent_task_id");
+
+        let restored: AgentTaskRecord =
+            serde_json::from_value(value).expect("deserialize legacy task record");
+
+        assert_eq!(restored.parent_task_id, None);
+    }
+
+    #[test]
+    fn task_record_deserializes_legacy_json_without_child_task_ids() {
+        let record = AgentTaskRecord::new(
+            AgentTaskId::new("task-legacy"),
+            AgentId::new("agent-legacy"),
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Legacy task",
+            "Inspect old ledger",
+            10,
+        );
+        let mut value = serde_json::to_value(record).expect("serialize task record");
+        value
+            .as_object_mut()
+            .expect("task record object")
+            .remove("child_task_ids");
+
+        let restored: AgentTaskRecord =
+            serde_json::from_value(value).expect("deserialize legacy task record");
+
+        assert!(restored.child_task_ids.is_empty());
+    }
+
+    #[test]
+    fn task_record_records_child_task_id_once() {
+        let mut record = AgentTaskRecord::new(
+            AgentTaskId::new("task-parent"),
+            AgentId::new("agent-parent"),
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent task",
+            "Plan child work",
+            10,
+        );
+        let child_id = AgentTaskId::new("task-child");
+
+        assert!(record.record_child_task_id(child_id.clone()));
+        assert!(!record.record_child_task_id(child_id.clone()));
+
+        assert_eq!(record.child_task_ids, vec![child_id]);
     }
 
     #[test]

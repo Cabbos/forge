@@ -12,6 +12,9 @@ import {
 import type { ComposerCapabilitySelection, McpContextSelection } from "../lib/tauri";
 import { getProviderLabel } from "../lib/providers";
 import { queryKeys } from "@/hooks/queries/queryKeys";
+import { useProviderCatalog } from "@/hooks/queries/useProviderCatalogQuery";
+import { useProfilesQuery } from "@/hooks/queries/useProfilesQuery";
+import { resolveProfileSessionDefaults } from "./sessionProfileDefaults";
 
 export function useSession() {
   const addSession = useStore((s) => s.addSession);
@@ -20,16 +23,36 @@ export function useSession() {
   const dispatchOutputEvent = useStore((s) => s.dispatchOutputEvent);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
+  const { data: profiles } = useProfilesQuery();
+  const providers = useProviderCatalog();
   const queryClient = useQueryClient();
 
   const create = useCallback(
     async (workingDir: string, provider = selectedProvider, model = selectedModel) => {
       try {
-        const result = await createSession(workingDir, provider, model);
-        addSession(result.session_id, result.provider ?? provider, result.model ?? model, workingDir);
+        const sessionDefaults = resolveProfileSessionDefaults({
+          workingDir,
+          provider,
+          model,
+          profiles,
+          providers,
+        });
+        const result = await createSession(
+          sessionDefaults.workingDir,
+          sessionDefaults.provider,
+          sessionDefaults.model,
+          "",
+          sessionDefaults.profileId,
+        );
+        addSession(
+          result.session_id,
+          result.provider ?? sessionDefaults.provider,
+          result.model ?? sessionDefaults.model,
+          sessionDefaults.workingDir,
+        );
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
         if (result.missing_api_key) {
-          const providerLabel = getProviderLabel(result.provider ?? provider);
+          const providerLabel = getProviderLabel(result.provider ?? sessionDefaults.provider, providers);
           dispatchOutputEvent({
             event_type: "error",
             session_id: result.session_id,
@@ -44,7 +67,7 @@ export function useSession() {
         throw e;
       }
     },
-    [addSession, dispatchOutputEvent, queryClient, selectedModel, selectedProvider]
+    [addSession, dispatchOutputEvent, profiles, providers, queryClient, selectedModel, selectedProvider]
   );
 
   const resume = useCallback(
@@ -54,7 +77,7 @@ export function useSession() {
         updateSessionStatus(result.session_id, "running");
         await queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
         if (result.missing_api_key) {
-          const providerLabel = getProviderLabel(result.provider);
+          const providerLabel = getProviderLabel(result.provider, providers);
           dispatchOutputEvent({
             event_type: "error",
             session_id: result.session_id,
@@ -69,7 +92,7 @@ export function useSession() {
         throw e;
       }
     },
-    [dispatchOutputEvent, queryClient, updateSessionStatus]
+    [dispatchOutputEvent, providers, queryClient, updateSessionStatus]
   );
 
   const send = useCallback(async (

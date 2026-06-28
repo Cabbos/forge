@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { WorkflowState } from "@/lib/protocol";
+import type { ProviderDefinition } from "@/lib/providers";
 import {
   buildComposerMenuLayerProps,
   buildComposerSurfaceProps,
@@ -21,6 +22,7 @@ interface UseComposerPresentationOptions {
   isResuming: ComposerSurfaceProps["isResuming"];
   isRunning: ComposerSurfaceProps["isRunning"];
   isTurnInFlight: ComposerSurfaceProps["isStreaming"];
+  providers: ProviderDefinition[];
   resumeError: string;
   selectedContextWindow: ComposerSurfaceProps["selectedContextWindow"];
   selectedModel: ComposerMenuLayerProps["selectedModel"];
@@ -75,6 +77,7 @@ export function useComposerPresentation({
   onTextKeyDown,
   onToggleModelMenu,
   onToggleSuggestion,
+  providers,
   resumeError,
   selectedContextWindow,
   selectedModel,
@@ -110,6 +113,7 @@ export function useComposerPresentation({
     onActiveSuggestionIndexChange,
     onAddChip,
     onSelectModel,
+    providers,
     selectedModel,
     selectedProvider,
     showModelMenu,

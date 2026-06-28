@@ -22,6 +22,7 @@ export interface ComposerSurfaceProps {
   showModelMenu: boolean;
   showSuggestions: ComposerMenuMode;
   suggestionListId: string;
+  permissionControl?: React.ReactNode;
   value: string;
   onCompositionEnd: React.CompositionEventHandler<HTMLTextAreaElement>;
   onCompositionStart: React.CompositionEventHandler<HTMLTextAreaElement>;
@@ -57,6 +58,7 @@ const ComposerSurface = React.forwardRef<HTMLTextAreaElement, ComposerSurfacePro
   onToggleModelMenu,
   onToggleSuggestion,
   placeholder,
+  permissionControl,
   selectedContextWindow,
   selectedModelLabel,
   selectedProviderLabel,
@@ -100,6 +102,7 @@ const ComposerSurface = React.forwardRef<HTMLTextAreaElement, ComposerSurfacePro
         showModelMenu={showModelMenu}
         showSuggestions={showSuggestions}
         suggestionListId={suggestionListId}
+        permissionControl={permissionControl}
         onCompact={onCompact}
         onResume={onResume}
         onSend={onSend}

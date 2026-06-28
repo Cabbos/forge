@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev          # Vite dev server on :1420 (frontend only, no Tauri)
 npm run tauri dev    # Full Tauri desktop app (starts Vite + Rust backend)
 npm run build        # TypeScript check + Vite production build
+npm run test:e2e -- e2e/acceptance.spec.ts
 ```
 
 The `npm run tauri` script proxies to `tauri` CLI. Run individual Tauri commands like `npm run tauri -- build`.
@@ -64,7 +65,10 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 
 - `SessionView` → `ChatView` → `MessageList` (virtualized) → `ConversationLane` → per-type block renderers in `components/messages/`.
 - `SessionView` → `InputBar` → `ComposerSurface` + `ComposerMenuLayer` + `ComposerToolbar` + `ComposerChipTray`.
-- `SettingsDialog` wraps `SettingsCenterShell` with nav sections: models, workspace, tools, memory, data, about.
+- `SettingsDialog` wraps `SettingsCenterShell` with nav sections: models, workspace, tools, memory, data, diagnostics, scheduler, general/service, and about.
+- `HistoryView` is lazy-loaded from the sidebar and uses session-store IPC for search, provider filtering, resume, delete, rename, export, and prune.
+- `StatusBar` sits at the bottom of `AppShell` and derives active A2A work, review items, scheduler tasks, and health alerts into compact background status/task rows.
+- `HubPanelHost` owns the Agent Workbench, including A2A review queue/history and retained-worktree context.
 - `CommandPalette` is the global search/switch surface (Cmd+K).
 
 ## Key patterns
@@ -73,28 +77,30 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 - API keys are stored in `~/.forge/config.json` via `settings.rs`. The frontend fetches status via `getApiKeyStatus()`.
 - The `@/` path alias maps to `src/` (configured in both `vite.config.ts` and `tsconfig.json`).
 - shadcn/ui components live in `src/components/ui/`. The config is in `components.json` (style: "base-nova").
+- Product-level runtime smoke coverage lives in `e2e/acceptance.spec.ts`; extend it when Settings, History, diagnostics, permissions, scheduler, A2A review, or background task surfaces change.
+- Shared e2e IPC mocks live in `e2e/fixtures/app.ts`. Keep those mocks contract-shaped, not implementation-shaped, so acceptance specs exercise the same UI paths users see.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **forge** (monorepo root: `/Users/cabbos/project/forge`). The desktop app lives under `apps/desktop`. Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> If any GitNexus tool warns the index is stale, run `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter --allow-build=tree-sitter-kotlin dlx gitnexus@latest analyze --index-only` from the repo root. The generated `.gitnexus/run.cjs` can fall back to an npx cache missing optional grammars (`tree-sitter-swift` / Kotlin native build), so prefer the explicit pnpm command until the upstream runner is fixed.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER edit a function, class, or method without first running `impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit changes without running `detect_changes()` to check affected scope.
 
 ## Resources
 

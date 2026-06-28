@@ -14,7 +14,9 @@
     "setup_commands": [
       "npm install"
     ],
-    "validation_commands": [],
+    "validation_commands": [
+      "python3 scripts/assert-continuity.py"
+    ],
     "post_validation_commands": [
       "npm test",
       "npx tsc --noEmit",

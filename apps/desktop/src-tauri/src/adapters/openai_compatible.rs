@@ -9,6 +9,9 @@ use super::base::{
     repair_tool_result_adjacency, AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall,
     ToolDef,
 };
+use crate::adapters::anthropic::{
+    emit_usage_events_for_provider, optional_usage_u64, ProviderTokenUsage,
+};
 use crate::agent::event_sink::EventEmitter;
 use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
 use crate::protocol::events::StreamEvent;
@@ -33,6 +36,7 @@ You are a powerful AI coding agent running in a desktop GUI application. You hav
 
 pub struct OpenAiCompatibleAdapter {
     api_key: String,
+    provider_id: String,
     model: String,
     base_url: String,
     max_tokens: u32,
@@ -42,11 +46,20 @@ pub struct OpenAiCompatibleAdapter {
 
 impl OpenAiCompatibleAdapter {
     pub fn new(api_key: String) -> Result<Self, AdapterError> {
-        if api_key.trim().is_empty() {
+        Self::new_with_key_policy(api_key, true)
+    }
+
+    pub(crate) fn new_allowing_empty_api_key(api_key: String) -> Result<Self, AdapterError> {
+        Self::new_with_key_policy(api_key, false)
+    }
+
+    fn new_with_key_policy(api_key: String, api_key_required: bool) -> Result<Self, AdapterError> {
+        if api_key.trim().is_empty() && api_key_required {
             return Err(AdapterError::MissingApiKey);
         }
         Ok(Self {
             api_key,
+            provider_id: "custom_openai".to_string(),
             model: DEFAULT_MODEL.to_string(),
             base_url: "https://api.deepseek.com/v1".to_string(),
             max_tokens: 8192,
@@ -59,13 +72,40 @@ impl OpenAiCompatibleAdapter {
         })
     }
 
+    fn with_auth_header(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.header("Authorization", format!("Bearer {}", self.api_key))
+        }
+    }
+
     pub fn with_model(mut self, model: &str) -> Self {
         self.model = model.to_string();
+        self
+    }
+    pub fn with_provider_id(mut self, provider_id: &str) -> Self {
+        self.provider_id = provider_id.to_string();
         self
     }
     pub fn with_base_url(mut self, url: &str) -> Self {
         self.base_url = url.to_string();
         self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn max_tokens_for_test(&self) -> u32 {
+        self.max_tokens
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_id_for_test(&self) -> &str {
+        &self.provider_id
     }
 
     pub fn with_external_tools(self, tools: Vec<ToolDef>) -> Self {
@@ -107,6 +147,64 @@ impl OpenAiCompatibleAdapter {
             max_tokens: Some(self.max_tokens),
             tools: if tools.is_empty() { None } else { Some(tools) },
         }
+    }
+
+    async fn call_non_streaming(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+        usage_emitter: Option<(&str, &dyn EventEmitter)>,
+    ) -> Result<StreamResult, AdapterError> {
+        let request = self.request_for_messages(messages, false);
+
+        let response = tokio::select! {
+            response = self
+                .with_auth_header(self.client.post(format!("{}/chat/completions", self.base_url)))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send() => response,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text: String = tokio::select! {
+                text = response.text() => text,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            }
+            .unwrap_or_default();
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = tokio::select! {
+            json = response.json() => json,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Stream(e.to_string()))?;
+
+        if parsed["error"].is_object() {
+            let message = parsed["error"]["message"]
+                .as_str()
+                .unwrap_or("Unknown OpenAI-compatible API error");
+            return Err(AdapterError::Api {
+                code: "api_error".to_string(),
+                message: message.to_string(),
+            });
+        }
+
+        if let Some((session_id, emitter)) = usage_emitter {
+            emit_usage_events_for_provider(
+                emitter,
+                session_id,
+                &self.provider_id,
+                "openai_compatible",
+                &self.model,
+                openai_usage_from_response(&parsed),
+            );
+        }
+
+        Ok(parse_openai_chat_completion(&parsed))
     }
 }
 
@@ -188,47 +286,18 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         messages: &[ChatMessage],
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        let request = self.request_for_messages(messages, false);
+        self.call_non_streaming(messages, cancel, None).await
+    }
 
-        let response = tokio::select! {
-            response = self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send() => response,
-            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-        }
-        .map_err(|e| AdapterError::Http(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let text: String = tokio::select! {
-                text = response.text() => text,
-                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-            }
-            .unwrap_or_default();
-            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
-        }
-
-        let parsed: serde_json::Value = tokio::select! {
-            json = response.json() => json,
-            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-        }
-        .map_err(|e| AdapterError::Stream(e.to_string()))?;
-
-        if parsed["error"].is_object() {
-            let message = parsed["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown OpenAI-compatible API error");
-            return Err(AdapterError::Api {
-                code: "api_error".to_string(),
-                message: message.to_string(),
-            });
-        }
-
-        Ok(parse_openai_chat_completion(&parsed))
+    async fn call_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[ChatMessage],
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call_non_streaming(messages, cancel, Some((session_id, emitter)))
+            .await
     }
 
     async fn compact_summary(
@@ -241,9 +310,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
         let response = tokio::select! {
             response = self
-                .client
-                .post(format!("{}/chat/completions", self.base_url))
-                .header("Authorization", format!("Bearer {}", self.api_key))
+                .with_auth_header(self.client.post(format!("{}/chat/completions", self.base_url)))
                 .header("Content-Type", "application/json")
                 .json(&request)
                 .send() => response,
@@ -310,9 +377,10 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         );
 
         let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .with_auth_header(
+                self.client
+                    .post(format!("{}/chat/completions", self.base_url)),
+            )
             .header("Content-Type", "application/json")
             .body(body_json)
             .send()
@@ -330,6 +398,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
 
         let mut active_text_block_id: Option<String> = None;
         let mut parser = OpenAiStreamParser::default();
+        let mut saw_usage = false;
 
         loop {
             let chunk = tokio::select! {
@@ -369,18 +438,16 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     });
                 }
 
-                if let Some((input_toks, output_toks)) = update.usage {
-                    let cost = crate::adapters::anthropic::estimate_cost(
+                if let Some(usage) = update.usage {
+                    saw_usage = true;
+                    emit_usage_events_for_provider(
+                        emitter,
+                        &session,
+                        &self.provider_id,
+                        "openai_compatible",
                         &self.model,
-                        input_toks,
-                        output_toks,
+                        Some(usage),
                     );
-                    emitter.emit(StreamEvent::Usage {
-                        session_id: session.clone(),
-                        input_tokens: input_toks,
-                        output_tokens: output_toks,
-                        estimated_cost_usd: cost,
-                    });
                 }
 
                 if let Some(msg) = update.error {
@@ -403,6 +470,17 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                 session_id: session_id.to_string(),
                 block_id: bid,
             });
+        }
+
+        if !saw_usage {
+            emit_usage_events_for_provider(
+                emitter,
+                session_id,
+                &self.provider_id,
+                "openai_compatible",
+                &self.model,
+                None,
+            );
         }
 
         for tool_call in &result.tool_calls {
@@ -442,7 +520,7 @@ struct OpenAiToolCallBuffer {
 struct OpenAiStreamUpdate {
     text_started: bool,
     text_chunks: Vec<String>,
-    usage: Option<(u32, u32)>,
+    usage: Option<ProviderTokenUsage>,
     error: Option<String>,
 }
 
@@ -500,12 +578,24 @@ impl OpenAiStreamParser {
             let input_tokens = usage
                 .get("prompt_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
+                .unwrap_or(0);
             let output_tokens = usage
                 .get("completion_tokens")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
-            update.usage = Some((input_tokens, output_tokens));
+                .unwrap_or(0);
+            update.usage = Some(ProviderTokenUsage {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens: usage
+                    .get("prompt_tokens_details")
+                    .and_then(|value| value.as_object())
+                    .and_then(|details| optional_usage_u64(details, "cached_tokens")),
+                cache_creation_tokens: None,
+                reasoning_tokens: usage
+                    .get("completion_tokens_details")
+                    .and_then(|value| value.as_object())
+                    .and_then(|details| optional_usage_u64(details, "reasoning_tokens")),
+            });
         }
 
         if parsed["error"].is_object() {
@@ -582,6 +672,25 @@ fn drain_openai_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
     }
 
     events
+}
+
+fn openai_usage_from_response(parsed: &serde_json::Value) -> Option<ProviderTokenUsage> {
+    let usage = parsed["usage"].as_object()?;
+    let input_tokens = usage.get("prompt_tokens")?.as_u64()?;
+    let output_tokens = usage.get("completion_tokens")?.as_u64()?;
+    Some(ProviderTokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens: usage
+            .get("prompt_tokens_details")
+            .and_then(|value| value.as_object())
+            .and_then(|details| optional_usage_u64(details, "cached_tokens")),
+        cache_creation_tokens: None,
+        reasoning_tokens: usage
+            .get("completion_tokens_details")
+            .and_then(|value| value.as_object())
+            .and_then(|details| optional_usage_u64(details, "reasoning_tokens")),
+    })
 }
 
 fn parse_openai_chat_completion(parsed: &serde_json::Value) -> StreamResult {
@@ -882,6 +991,23 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
+    #[derive(Default)]
+    struct CaptureEmitter {
+        events: parking_lot::Mutex<Vec<StreamEvent>>,
+    }
+
+    impl CaptureEmitter {
+        fn events(&self) -> Vec<StreamEvent> {
+            self.events.lock().clone()
+        }
+    }
+
+    impl EventEmitter for CaptureEmitter {
+        fn emit(&self, event: StreamEvent) {
+            self.events.lock().push(event);
+        }
+    }
+
     #[test]
     fn external_tools_are_included_in_openai_compatible_definitions() {
         let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
@@ -900,6 +1026,18 @@ mod tests {
 
         assert!(names.contains(&"read_file".to_string()));
         assert!(names.contains(&"mcp__fixture__echo".to_string()));
+    }
+
+    #[test]
+    fn openai_adapter_uses_configured_max_tokens_in_requests() {
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_max_tokens(65_536);
+        let request = adapter.request_for_messages(&[ChatMessage::user("hello")], false);
+        let serialized = serde_json::to_value(&request).expect("serialize OpenAI request");
+
+        assert_eq!(request.max_tokens, Some(65_536));
+        assert_eq!(serialized["max_tokens"], 65_536);
     }
 
     #[test]
@@ -1226,6 +1364,96 @@ mod tests {
         );
     }
 
+    #[test]
+    fn provider_conformance_openai_streaming_fixture_captures_text_tool_usage_and_reasoning() {
+        let text_delta = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "先看文件。",
+                    "reasoning_content": "Need the file before editing."
+                }
+            }]
+        });
+        let tool_start_delta = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": "{\"path\""
+                        }
+                    }]
+                }
+            }]
+        });
+        let tool_argument_delta = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": {
+                            "arguments": ":\"src/App.tsx\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let usage_delta = serde_json::json!({
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33,
+                "prompt_tokens_details": { "cached_tokens": 8 },
+                "completion_tokens_details": { "reasoning_tokens": 5 }
+            }
+        });
+
+        let mut parser = OpenAiStreamParser::default();
+        let text_update = parser.apply_event(&text_delta);
+        let tool_start_update = parser.apply_event(&tool_start_delta);
+        let tool_argument_update = parser.apply_event(&tool_argument_delta);
+        let usage_update = parser.apply_event(&usage_delta);
+        let result = parser.finish();
+
+        assert_eq!(text_update.text_chunks, vec!["先看文件。".to_string()]);
+        assert!(tool_start_update.text_chunks.is_empty());
+        assert!(tool_argument_update.text_chunks.is_empty());
+        let usage = usage_update.usage.expect("usage update");
+        assert_eq!(usage.input_tokens, 77);
+        assert_eq!(usage.output_tokens, 33);
+        assert_eq!(usage.cache_read_tokens, Some(8));
+        assert_eq!(usage.cache_creation_tokens, None);
+        assert_eq!(usage.reasoning_tokens, Some(5));
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({"type": "text", "text": "先看文件。"}),
+                serde_json::json!({
+                    "type": "reasoning",
+                    "reasoning_content": "Need the file before editing."
+                }),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
     #[tokio::test]
     async fn call_repairs_tool_history_before_serializing_request() {
         let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
@@ -1269,6 +1497,235 @@ mod tests {
         assert!(request_messages
             .iter()
             .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_uses_non_streaming_request_and_emits_usage() {
+        let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33
+            }
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        let result = adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+        let request_body = received_body
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured request body");
+
+        assert_eq!(request_body["stream"], false);
+        assert_eq!(
+            result.assistant_content,
+            vec![serde_json::json!({"type": "text", "text": "ok"})]
+        );
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::Usage {
+                session_id,
+                input_tokens: 77,
+                output_tokens: 33,
+                ..
+            } if session_id == "subagent"
+        )));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(77),
+                output_tokens: Some(33),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: Some(20),
+                pricing_source: Some(pricing_source),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "custom_openai"
+                && model == "deepseek-v4-flash"
+                && pricing_source == "forge_static_pricing_2026_06_20"
+                && source == "openai_compatible"
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_provider_id_cache_and_reasoning_usage() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33,
+                "prompt_tokens_details": {
+                    "cached_tokens": 12
+                },
+                "completion_tokens_details": {
+                    "reasoning_tokens": 9
+                }
+            }
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_provider_id("openai")
+            .with_model("gpt-4o-mini")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(77),
+                output_tokens: Some(33),
+                cache_read_tokens: Some(12),
+                cache_creation_tokens: None,
+                reasoning_tokens: Some(9),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "openai"
+                && model == "gpt-4o-mini"
+                && source == "openai_compatible"
+        )));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_unknown_usage_when_provider_omits_usage() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }]
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: None,
+                output_tokens: None,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: None,
+                pricing_source: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderOmitted,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "custom_openai"
+                && model == "deepseek-v4-flash"
+                && source == "openai_compatible"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_known_tokens_and_unknown_cost_for_unknown_pricing() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "content": "ok" }
+            }],
+            "usage": {
+                "prompt_tokens": 77,
+                "completion_tokens": 33
+            }
+        }));
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_model("mystery-model-v1")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(77),
+                output_tokens: Some(33),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: None,
+                pricing_source: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "custom_openai"
+                && model == "mystery-model-v1"
+                && source == "openai_compatible"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
     }
 
     #[test]

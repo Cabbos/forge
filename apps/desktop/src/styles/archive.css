@@ -12,6 +12,18 @@
     background: var(--forge-material-overlay);
   }
 
+  .forge-app-shell[data-design-version="v3-light-workbench"] .forge-inspector {
+    background: #ECE2D4;
+  }
+
+  .forge-app-shell[data-design-version="v3-light-workbench"] .forge-inspector-subtitle {
+    color: rgb(95, 93, 85);
+  }
+
+  .forge-app-shell[data-design-version="v3-light-workbench"] .forge-archive-summary-value {
+    color: rgb(36, 42, 36);
+  }
+
   .forge-inspector-header {
     display: flex;
     min-height: var(--forge-titlebar-height);
@@ -226,6 +238,32 @@
   .forge-project-status-action:hover {
     border-color: rgba(184, 138, 86, 0.28);
     background: rgba(184, 138, 86, 0.085);
+  }
+
+  .forge-project-status-permission-pill {
+    display: inline-flex;
+    height: 1.75rem;
+    align-items: center;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-bg-surface);
+    padding: 0 0.5rem;
+    color: var(--forge-text-faint);
+    font-size: 10px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .forge-project-status-permission-pill[data-state="trusted"] {
+    border-color: rgba(74, 149, 112, 0.26);
+    background: rgba(74, 149, 112, 0.08);
+    color: rgb(64, 126, 95);
+  }
+
+  .forge-project-status-permission-pill[data-state="full_access"] {
+    border-color: rgba(236, 120, 48, 0.34);
+    background: rgba(236, 120, 48, 0.1);
+    color: rgb(209, 96, 32);
   }
 
   .forge-project-status-error {

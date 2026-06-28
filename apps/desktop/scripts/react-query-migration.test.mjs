@@ -123,7 +123,7 @@ test("File preview clears action errors when switching targets", () => {
 });
 
 test("Migrated components no longer directly call IPC read functions", () => {
-  const startReadiness = read("src/components/workbench/StartReadinessCard.tsx");
+  const startReadiness = read("src/components/session/StartReadinessCard.tsx");
   assert.doesNotMatch(startReadiness, /getProjectRuntimeStatus\(/);
   assert.doesNotMatch(startReadiness, /getProjectCheckpointStatus\(/);
 
@@ -160,7 +160,7 @@ test("Migrated components no longer directly call IPC read functions", () => {
 
 test("Components use useQueryClient instead of importing global queryClient", () => {
   const migratedComponents = [
-    "src/components/workbench/StartReadinessCard.tsx",
+    "src/components/session/StartReadinessCard.tsx",
     "src/components/layout/ProjectStatusCard.tsx",
     "src/components/settings/CapabilityManager.tsx",
     "src/components/context/ContinuityExperiencesSection.tsx",
@@ -175,7 +175,7 @@ test("Components use useQueryClient instead of importing global queryClient", ()
 
 test("No hardcoded queryKey arrays in invalidateQueries", () => {
   const filesWithInvalidation = [
-    "src/components/workbench/StartReadinessCard.tsx",
+    "src/components/session/StartReadinessCard.tsx",
     "src/components/layout/ProjectStatusCard.tsx",
     "src/components/settings/CapabilityManager.tsx",
     "src/components/context/ContinuityExperiencesSection.tsx",
@@ -208,7 +208,7 @@ test("Query hooks do not swallow errors into empty arrays or null", () => {
 
 test("Migrated query consumers surface query errors", () => {
   const consumers = [
-    "src/components/workbench/StartReadinessCard.tsx",
+    "src/components/session/StartReadinessCard.tsx",
     "src/components/layout/ProjectStatusCard.tsx",
     "src/components/settings/CapabilityManager.tsx",
     "src/components/context/ContinuityExperiencesSection.tsx",

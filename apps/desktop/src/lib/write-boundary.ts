@@ -6,6 +6,7 @@ export interface WriteBoundaryViewModel {
   title: string;
   targetLabel: string;
   workspaceLabel: string;
+  workspacePath: string;
   operationLabel: string;
   affectedFiles: string[];
   affectedSummary: string;
@@ -113,6 +114,7 @@ export function parseWriteBoundary(value: unknown): WriteBoundaryViewModel | nul
     title: stringValue(boundary.title) ?? "准备修改项目",
     targetLabel: stringValue(boundary.target_label) ?? "目标项目",
     workspaceLabel: workspaceName ?? workspaceDisplayName(workspacePath),
+    workspacePath,
     operationLabel: operationLabel(boundary.operation),
     affectedFiles,
     affectedSummary: affectedFiles.length > 0 ? `${affectedFiles.length} 个文件 · ${filesLabel}` : filesLabel,

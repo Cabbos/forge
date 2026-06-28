@@ -59,7 +59,7 @@ export function HubPanelContent({
 
         {agentA2A && agentA2A.tasks.length > 0 && (
           <div data-forge-motion="archive-section">
-            <AgentA2AWorkspace state={agentA2A} />
+            <AgentA2AWorkspace state={agentA2A} sessionId={activeId} />
           </div>
         )}
 

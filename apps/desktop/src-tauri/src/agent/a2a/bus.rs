@@ -1,15 +1,50 @@
 use crate::agent::a2a::projection::{
     AgentA2AMessageProjection, AgentA2AProjection, AgentA2ATaskProjection,
+    AgentFileIoEventProjection,
 };
 use crate::agent::a2a::types::{
-    AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind, AgentRole,
-    AgentTaskFailure, AgentTaskId, AgentTaskRecord, AgentTaskStatus,
+    AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind,
+    AgentParentSessionContext, AgentRole, AgentTaskFailure, AgentTaskId, AgentTaskRecord,
+    AgentTaskStatus,
 };
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentReviewDecision {
+    Approve,
+    Reject,
+}
+
+impl AgentReviewDecision {
+    fn metadata_value(self) -> &'static str {
+        match self {
+            Self::Approve => "approved",
+            Self::Reject => "rejected",
+        }
+    }
+
+    fn suggested_action(self) -> &'static str {
+        match self {
+            Self::Approve => "Review approved by controller.",
+            Self::Reject => "Review rejected by controller. Do not merge this worktree.",
+        }
+    }
+
+    fn message_prefix(self) -> &'static str {
+        match self {
+            Self::Approve => "Review approved",
+            Self::Reject => "Review rejected",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AgentA2ABus {
     pub tasks: Vec<AgentTaskRecord>,
     pub messages: Vec<AgentMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_session_context: Option<AgentParentSessionContext>,
     next_task_index: u64,
     next_agent_index: u64,
     next_message_index: u64,
@@ -50,8 +85,194 @@ impl AgentA2ABus {
         task_id
     }
 
+    pub(crate) fn assign_child_task(
+        &mut self,
+        parent_task_id: &AgentTaskId,
+        role: AgentRole,
+        execution_mode: AgentExecutionMode,
+        title: impl Into<String>,
+        prompt: impl Into<String>,
+        timestamp_ms: u64,
+    ) -> Result<AgentTaskId, String> {
+        let Some(parent_index) = self
+            .tasks
+            .iter()
+            .position(|task| task.task_id == *parent_task_id)
+        else {
+            return Err(format!(
+                "parent task '{}' does not exist",
+                parent_task_id.as_str()
+            ));
+        };
+
+        self.next_task_index += 1;
+        self.next_agent_index += 1;
+        let task_id = AgentTaskId::new(format!("a2a-task-{}", self.next_task_index));
+        let agent_id = AgentId::new(format!("a2a-agent-{}", self.next_agent_index));
+        let title = title.into();
+        let prompt = prompt.into();
+        let mut record = AgentTaskRecord::new(
+            task_id.clone(),
+            agent_id.clone(),
+            role,
+            execution_mode,
+            title.clone(),
+            prompt,
+            timestamp_ms,
+        );
+        record.parent_task_id = Some(parent_task_id.clone());
+        if self.tasks[parent_index].record_child_task_id(task_id.clone()) {
+            self.tasks[parent_index].updated_at_ms = timestamp_ms;
+        }
+        self.tasks.push(record);
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::TaskAssigned,
+            title,
+            timestamp_ms,
+        );
+        Ok(task_id)
+    }
+
     pub(crate) fn task(&self, task_id: &AgentTaskId) -> Option<&AgentTaskRecord> {
         self.tasks.iter().find(|task| task.task_id == *task_id)
+    }
+
+    pub(crate) fn set_parent_session_context(&mut self, context: AgentParentSessionContext) {
+        self.parent_session_context = Some(context);
+    }
+
+    pub(crate) fn parent_session_context(&self) -> Option<&AgentParentSessionContext> {
+        self.parent_session_context.as_ref()
+    }
+
+    pub(crate) fn claim_task_lease(
+        &mut self,
+        task_id: &AgentTaskId,
+        owner: impl Into<String>,
+        timestamp_ms: u64,
+        lease_duration_ms: u64,
+    ) -> bool {
+        let owner = owner.into();
+        let Some(task) = self.tasks.iter_mut().find(|task| task.task_id == *task_id) else {
+            return false;
+        };
+        if !is_lease_claimable_status(&task.status) {
+            return false;
+        }
+        if let Some(current_owner) = task.lease_owner.as_deref() {
+            if current_owner != owner && !lease_is_expired(task, timestamp_ms) {
+                return false;
+            }
+        }
+
+        task.updated_at_ms = timestamp_ms;
+        task.status = AgentTaskStatus::Running;
+        task.started_at_ms.get_or_insert(timestamp_ms);
+        task.ended_at_ms = None;
+        task.resume_note = None;
+        task.lease_owner = Some(owner);
+        task.lease_acquired_at_ms = Some(timestamp_ms);
+        task.lease_expires_at_ms = Some(lease_expires_at(timestamp_ms, lease_duration_ms));
+        task.last_heartbeat_at_ms = Some(timestamp_ms);
+        task.attempt_count = task.attempt_count.saturating_add(1);
+        true
+    }
+
+    pub(crate) fn heartbeat_task_lease(
+        &mut self,
+        task_id: &AgentTaskId,
+        owner: &str,
+        timestamp_ms: u64,
+        lease_duration_ms: u64,
+    ) -> bool {
+        let Some(task) = self.tasks.iter_mut().find(|task| task.task_id == *task_id) else {
+            return false;
+        };
+        if task.lease_owner.as_deref() != Some(owner) || lease_is_expired(task, timestamp_ms) {
+            return false;
+        }
+
+        task.updated_at_ms = timestamp_ms;
+        task.last_heartbeat_at_ms = Some(timestamp_ms);
+        task.lease_expires_at_ms = Some(lease_expires_at(timestamp_ms, lease_duration_ms));
+        true
+    }
+
+    pub(crate) fn cancel_task(
+        &mut self,
+        task_id: &AgentTaskId,
+        message: impl Into<String>,
+        timestamp_ms: u64,
+    ) -> bool {
+        let message = message.into();
+        let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
+            if is_terminal_status(&task.status) {
+                return None;
+            }
+            task.status = AgentTaskStatus::Cancelled;
+            task.ended_at_ms = Some(timestamp_ms);
+            task.failure = None;
+            task.resume_note = None;
+            clear_active_lease(task);
+            Some(task.agent_id.clone())
+        }) else {
+            return false;
+        };
+        let Some(agent_id) = agent_id else {
+            return false;
+        };
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::Cancelled,
+            message,
+            timestamp_ms,
+        );
+        true
+    }
+
+    pub(crate) fn retry_task(&mut self, task_id: &AgentTaskId, timestamp_ms: u64) -> bool {
+        let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
+            if !matches!(
+                task.status,
+                AgentTaskStatus::Failed | AgentTaskStatus::Interrupted
+            ) {
+                return None;
+            }
+            if !task
+                .failure
+                .as_ref()
+                .map(|failure| failure.retryable)
+                .unwrap_or(false)
+            {
+                return None;
+            }
+            if task.attempt_count >= task.max_attempts {
+                return None;
+            }
+
+            task.status = AgentTaskStatus::Pending;
+            task.failure = None;
+            task.ended_at_ms = None;
+            task.resume_note = None;
+            clear_active_lease(task);
+            Some(task.agent_id.clone())
+        }) else {
+            return false;
+        };
+        let Some(agent_id) = agent_id else {
+            return false;
+        };
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            AgentMessageKind::Progress,
+            "Retry scheduled".to_string(),
+            timestamp_ms,
+        );
+        true
     }
 
     pub(crate) fn start_task(&mut self, task_id: &AgentTaskId, timestamp_ms: u64) {
@@ -110,6 +331,7 @@ impl AgentA2ABus {
         let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
             task.status = AgentTaskStatus::Completed;
             task.ended_at_ms = Some(timestamp_ms);
+            clear_active_lease(task);
             task.artifacts.extend(artifacts);
             task.agent_id.clone()
         }) else {
@@ -145,6 +367,99 @@ impl AgentA2ABus {
         );
     }
 
+    pub(crate) fn record_review_decision(
+        &mut self,
+        task_id: &AgentTaskId,
+        decision: AgentReviewDecision,
+        message: impl Into<String>,
+        timestamp_ms: u64,
+    ) -> Result<(), String> {
+        let message = message.into();
+        let Some(result) = self.update_task(task_id, timestamp_ms, |task| {
+            if task.execution_mode != AgentExecutionMode::WorktreeWorker {
+                return Err("Only worktree worker tasks can be reviewed".to_string());
+            }
+            let mut metadata = latest_worktree_metadata(task)
+                .ok_or_else(|| "Task does not have worktree metadata".to_string())?;
+            if metadata.get("needs_human_review").and_then(|v| v.as_bool()) != Some(true) {
+                return Err("Task is not awaiting human review".to_string());
+            }
+            let Some(object) = metadata.as_object_mut() else {
+                return Err("Worktree metadata is not an object".to_string());
+            };
+            object.insert("needs_human_review".to_string(), serde_json::json!(false));
+            object.insert(
+                "review_decision".to_string(),
+                serde_json::json!(decision.metadata_value()),
+            );
+            object.insert(
+                "reviewed_at_ms".to_string(),
+                serde_json::json!(timestamp_ms),
+            );
+            if !message.trim().is_empty() {
+                object.insert(
+                    "review_message".to_string(),
+                    serde_json::json!(message.clone()),
+                );
+            }
+            object.insert(
+                "suggested_action".to_string(),
+                serde_json::json!(decision.suggested_action()),
+            );
+
+            task.artifacts.push(AgentArtifact {
+                artifact_id: format!(
+                    "review-{}-{}-{}",
+                    decision.metadata_value(),
+                    task.task_id.as_str(),
+                    timestamp_ms
+                ),
+                task_id: task.task_id.clone(),
+                kind: crate::agent::a2a::types::AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: metadata.to_string(),
+                created_at_ms: timestamp_ms,
+            });
+
+            match decision {
+                AgentReviewDecision::Approve => {
+                    clear_active_lease(task);
+                }
+                AgentReviewDecision::Reject => {
+                    task.status = AgentTaskStatus::Failed;
+                    task.ended_at_ms = Some(timestamp_ms);
+                    clear_active_lease(task);
+                    task.failure = Some(AgentTaskFailure {
+                        kind: "review_rejection".to_string(),
+                        message: if message.trim().is_empty() {
+                            "Review rejected".to_string()
+                        } else {
+                            message.clone()
+                        },
+                        retryable: false,
+                        created_at_ms: timestamp_ms,
+                    });
+                }
+            }
+
+            Ok(task.agent_id.clone())
+        }) else {
+            return Err("Task not found".to_string());
+        };
+        let agent_id = result?;
+        self.push_message(
+            task_id.clone(),
+            agent_id,
+            match decision {
+                AgentReviewDecision::Approve => AgentMessageKind::Progress,
+                AgentReviewDecision::Reject => AgentMessageKind::Failed,
+            },
+            review_message(decision, &message),
+            timestamp_ms,
+        );
+        Ok(())
+    }
+
     pub(crate) fn fail_task(
         &mut self,
         task_id: &AgentTaskId,
@@ -158,6 +473,7 @@ impl AgentA2ABus {
         let Some(agent_id) = self.update_task(task_id, timestamp_ms, |task| {
             task.status = AgentTaskStatus::Failed;
             task.ended_at_ms = Some(timestamp_ms);
+            clear_active_lease(task);
             task.failure = Some(AgentTaskFailure {
                 kind: kind.clone(),
                 message: message.clone(),
@@ -186,6 +502,7 @@ impl AgentA2ABus {
                 task.status = AgentTaskStatus::Interrupted;
                 task.updated_at_ms = timestamp_ms;
                 task.ended_at_ms = Some(timestamp_ms);
+                clear_active_lease(task);
 
                 // For worktree workers, try to preserve the worktree path and
                 // attach a recovery artifact so the UI can guide the user.
@@ -243,6 +560,16 @@ impl AgentA2ABus {
 
     pub(crate) fn projection(&self) -> AgentA2AProjection {
         let mut projection = AgentA2AProjection::default();
+        let mut child_task_ids_by_parent: HashMap<AgentTaskId, Vec<String>> = HashMap::new();
+        for task in &self.tasks {
+            if let Some(parent_task_id) = task.parent_task_id.as_ref() {
+                child_task_ids_by_parent
+                    .entry(parent_task_id.clone())
+                    .or_default()
+                    .push(task.task_id.as_str().to_string());
+            }
+        }
+
         projection.tasks = self
             .tasks
             .iter()
@@ -255,17 +582,74 @@ impl AgentA2ABus {
                     AgentTaskStatus::Pending | AgentTaskStatus::Cancelled => {}
                 }
                 let latest_artifact = task.artifacts.last();
-                let mut worktree_meta: Option<serde_json::Value> = None;
-                // Search for the most recent worktree metadata artifact (Evidence with title "Worktree metadata").
-                for artifact in task.artifacts.iter().rev() {
-                    if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::Evidence
-                        && artifact.title == "Worktree metadata"
+                let worktree_meta = latest_worktree_metadata(task);
+                // Phase 4-B: extract changed files from DiffSummary artifacts.
+                let diff_text = task.artifacts.iter().rev().find_map(|a| {
+                    if a.kind == crate::agent::a2a::types::AgentArtifactKind::DiffSummary
+                        || a.title == "Worktree diff"
                     {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&artifact.content)
+                        Some(a.content.as_str())
+                    } else {
+                        None
+                    }
+                });
+                let all_diff_files = diff_text
+                    .map(extract_files_from_diff_text)
+                    .unwrap_or_default();
+                // Limit to a small safe number (first 8 unique paths).
+                let changed_files: Vec<String> = all_diff_files.iter().take(8).cloned().collect();
+                let changed_file_count = if all_diff_files.is_empty() {
+                    None
+                } else {
+                    Some(all_diff_files.len())
+                };
+                // Phase 4-B: test report excerpt from TestReport artifact.
+                let test_report_excerpt = task.artifacts.iter().rev().find_map(|a| {
+                    if a.kind == crate::agent::a2a::types::AgentArtifactKind::TestReport
+                        || a.title == "Test report"
+                    {
+                        extract_test_report_excerpt(&a.content)
+                    } else {
+                        None
+                    }
+                });
+                // Phase 4-B: diff_available from worktree metadata.
+                let diff_available = worktree_meta
+                    .as_ref()
+                    .and_then(|v| v.get("diff_available").and_then(|x| x.as_bool()));
+                let duration_ms = compute_duration_ms(task.started_at_ms, task.ended_at_ms);
+                let file_io_events = worktree_meta
+                    .as_ref()
+                    .and_then(|value| value.get("file_io_events"))
+                    .map(extract_file_io_events)
+                    .unwrap_or_default();
+                let usage_ledger = worktree_meta
+                    .as_ref()
+                    .and_then(|value| value.get("usage_ledger"))
+                    .and_then(|value| {
+                        serde_json::from_value::<crate::loop_runtime::LoopUsageLedger>(
+                            value.clone(),
+                        )
+                        .ok()
+                    });
+                let mut child_task_ids = Vec::new();
+                for child_task_id in &task.child_task_ids {
+                    let child_task_id = child_task_id.as_str().to_string();
+                    if !child_task_ids
+                        .iter()
+                        .any(|existing| existing == &child_task_id)
+                    {
+                        child_task_ids.push(child_task_id);
+                    }
+                }
+                if let Some(derived_child_task_ids) = child_task_ids_by_parent.get(&task.task_id) {
+                    for child_task_id in derived_child_task_ids {
+                        if !child_task_ids
+                            .iter()
+                            .any(|existing| existing == child_task_id)
                         {
-                            worktree_meta = Some(v);
+                            child_task_ids.push(child_task_id.clone());
                         }
-                        break;
                     }
                 }
                 AgentA2ATaskProjection {
@@ -313,6 +697,41 @@ impl AgentA2ABus {
                         v.get("suggested_action")
                             .and_then(|x| x.as_str().map(|s| s.to_string()))
                     }),
+                    review_decision: worktree_meta.as_ref().and_then(|v| {
+                        v.get("review_decision")
+                            .and_then(|x| x.as_str().map(|s| s.to_string()))
+                    }),
+                    reviewed_at_ms: worktree_meta
+                        .as_ref()
+                        .and_then(|v| v.get("reviewed_at_ms").and_then(|x| x.as_u64())),
+                    // Phase 4-A enriched fields.
+                    parent_task_id: task
+                        .parent_task_id
+                        .as_ref()
+                        .map(|id| id.as_str().to_string()),
+                    child_task_ids,
+                    created_at_ms: task.created_at_ms,
+                    started_at_ms: task.started_at_ms,
+                    ended_at_ms: task.ended_at_ms,
+                    duration_ms,
+                    retryable: task.failure.as_ref().map(|f| f.retryable),
+                    failure_kind: task.failure.as_ref().map(|f| f.kind.clone()),
+                    resume_note: task.resume_note.clone(),
+                    latest_progress: self.latest_progress_for(&task.task_id),
+                    // Phase 4-C — durable worker lease / retry state.
+                    lease_owner: task.lease_owner.clone(),
+                    lease_acquired_at_ms: task.lease_acquired_at_ms,
+                    lease_expires_at_ms: task.lease_expires_at_ms,
+                    last_heartbeat_at_ms: task.last_heartbeat_at_ms,
+                    attempt_count: task.attempt_count,
+                    max_attempts: task.max_attempts,
+                    // Phase 4-B — diff-derived file visibility.
+                    diff_available,
+                    changed_file_count,
+                    changed_files,
+                    test_report_excerpt,
+                    file_io_events,
+                    usage_ledger,
                 }
             })
             .collect();
@@ -324,6 +743,16 @@ impl AgentA2ABus {
             .iter()
             .rev()
             .find(|message| message.task_id == *task_id)
+            .map(|message| message.content.clone())
+    }
+
+    fn latest_progress_for(&self, task_id: &AgentTaskId) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|message| {
+                message.task_id == *task_id && matches!(message.kind, AgentMessageKind::Progress)
+            })
             .map(|message| message.content.clone())
     }
 
@@ -372,6 +801,151 @@ impl AgentA2ABus {
             created_at_ms: timestamp_ms,
         });
     }
+}
+
+/// Extract unique file paths from a git diff text blob.
+/// Parses structured diff headers: `diff --git a/path b/path`, `+++ b/path`, `--- a/path`.
+/// Deduplicates and normalizes by trimming `a/` / `b/` prefixes.
+/// Handles `/dev/null` (added/deleted file) by falling back to the other side.
+fn extract_files_from_diff_text(text: &str) -> Vec<String> {
+    let mut header_paths: Vec<String> = Vec::new();
+    let mut fallback_paths: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            // "a/path b/path" — prefer b/ side, fall back to a/ if b is /dev/null.
+            let mut parts = rest.splitn(2, ' ');
+            let a = parts.next().unwrap_or("");
+            let b = parts.next().unwrap_or("");
+            let b_norm = b.trim_start_matches("b/");
+            if b_norm != "/dev/null" {
+                push_unique_path(&mut header_paths, b_norm);
+            } else {
+                let a_norm = a.trim_start_matches("a/");
+                if a_norm != "/dev/null" {
+                    push_unique_path(&mut header_paths, a_norm);
+                }
+            }
+        } else if let Some(rest) = line.strip_prefix("+++ ") {
+            let p = rest.trim_start_matches("b/");
+            if p != "/dev/null" {
+                push_unique_path(&mut fallback_paths, p);
+            }
+        } else if let Some(rest) = line.strip_prefix("--- ") {
+            let p = rest.trim_start_matches("a/");
+            if p != "/dev/null" {
+                push_unique_path(&mut fallback_paths, p);
+            }
+        }
+    }
+    if header_paths.is_empty() {
+        fallback_paths
+    } else {
+        header_paths
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<String>, path: &str) {
+    if !path.is_empty() && !paths.iter().any(|existing| existing == path) {
+        paths.push(path.to_string());
+    }
+}
+
+/// Extract a short single-line excerpt from a TestReport artifact's JSON content.
+/// Looks for a "summary" or "result" field; falls back to the first non-empty line.
+fn extract_test_report_excerpt(content: &str) -> Option<String> {
+    // Try JSON first — look for a summary or result field.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
+        if let Some(s) = value.get("summary").and_then(|v| v.as_str()) {
+            return Some(s.lines().next().unwrap_or(s).trim().to_string());
+        }
+        if let Some(s) = value.get("result").and_then(|v| v.as_str()) {
+            return Some(s.lines().next().unwrap_or(s).trim().to_string());
+        }
+    }
+    // Fallback: first non-empty line of content, trimmed.
+    content
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+}
+
+fn extract_file_io_events(value: &serde_json::Value) -> Vec<AgentFileIoEventProjection> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|event| {
+            let path = event.get("path").and_then(|value| value.as_str())?;
+            let operation = event.get("operation").and_then(|value| value.as_str())?;
+            Some(AgentFileIoEventProjection {
+                path: path.to_string(),
+                operation: operation.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Compute duration in milliseconds for a finished task.
+/// Running tasks intentionally return None; the UI derives live elapsed time.
+fn compute_duration_ms(started_at_ms: Option<u64>, ended_at_ms: Option<u64>) -> Option<u64> {
+    let start = started_at_ms?;
+    let end = ended_at_ms?;
+    // Guard against clock skew / zero duration.
+    if end > start {
+        Some(end - start)
+    } else {
+        Some(0)
+    }
+}
+
+fn lease_expires_at(timestamp_ms: u64, lease_duration_ms: u64) -> u64 {
+    timestamp_ms.saturating_add(lease_duration_ms)
+}
+
+fn lease_is_expired(task: &AgentTaskRecord, timestamp_ms: u64) -> bool {
+    task.lease_expires_at_ms
+        .map(|expires_at| timestamp_ms > expires_at)
+        .unwrap_or(true)
+}
+
+fn clear_active_lease(task: &mut AgentTaskRecord) {
+    task.lease_owner = None;
+    task.lease_acquired_at_ms = None;
+    task.lease_expires_at_ms = None;
+    task.last_heartbeat_at_ms = None;
+}
+
+fn latest_worktree_metadata(task: &AgentTaskRecord) -> Option<serde_json::Value> {
+    task.artifacts.iter().rev().find_map(|artifact| {
+        if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::Evidence
+            && artifact.title == "Worktree metadata"
+        {
+            serde_json::from_str::<serde_json::Value>(&artifact.content).ok()
+        } else {
+            None
+        }
+    })
+}
+
+fn review_message(decision: AgentReviewDecision, message: &str) -> String {
+    let prefix = decision.message_prefix();
+    let message = message.trim();
+    if message.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}: {message}")
+    }
+}
+
+fn is_terminal_status(status: &AgentTaskStatus) -> bool {
+    matches!(
+        status,
+        AgentTaskStatus::Completed | AgentTaskStatus::Cancelled
+    )
+}
+
+fn is_lease_claimable_status(status: &AgentTaskStatus) -> bool {
+    matches!(status, AgentTaskStatus::Pending | AgentTaskStatus::Running)
 }
 
 fn message_kind_for_projection(kind: &AgentMessageKind) -> &'static str {
@@ -675,6 +1249,1207 @@ mod tests {
         assert_eq!(
             task_proj.reason_codes,
             vec!["diff was truncated", "tests failed"]
+        );
+    }
+
+    #[test]
+    fn projection_contract_retains_review_lease_file_and_test_facts() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement runtime projection",
+            "Add additive protocol events",
+            10,
+        );
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-runtime-worker",
+                    "diff_available": true,
+                    "diff_truncated": false,
+                    "tests_passed": true,
+                    "needs_human_review": true,
+                    "reason_codes": ["tests_passed", "diff_available"],
+                    "suggested_action": "Review before merge.",
+                })
+                .to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "diff-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::DiffSummary,
+                title: "Worktree diff".to_string(),
+                content: "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1 @@\n-old\n+new".to_string(),
+                created_at_ms: 26,
+            },
+            26,
+        );
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "test-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::TestReport,
+                title: "Test report".to_string(),
+                content: r#"{"summary": "12 tests passed"}"#.to_string(),
+                created_at_ms: 27,
+            },
+            27,
+        );
+        bus.complete_task(&task_id, "Patch ready", 30);
+
+        let projection = bus.projection();
+        assert_eq!(projection.completed_count, 1);
+        assert_eq!(projection.running_count, 0);
+        assert_eq!(projection.failed_count, 0);
+        assert_eq!(projection.interrupted_count, 0);
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.status, "completed");
+        assert_eq!(task_proj.lease_owner, None);
+        assert_eq!(task_proj.attempt_count, 1);
+        assert_eq!(task_proj.needs_human_review, Some(true));
+        assert_eq!(task_proj.tests_passed, Some(true));
+        assert_eq!(task_proj.diff_available, Some(true));
+        assert_eq!(task_proj.changed_file_count, Some(1));
+        assert_eq!(task_proj.changed_files, vec!["src/main.rs"]);
+        assert_eq!(
+            task_proj.test_report_excerpt.as_deref(),
+            Some("12 tests passed")
+        );
+    }
+
+    #[test]
+    fn projection_exposes_worktree_boundary_file_io_and_usage_ledger() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+        use crate::loop_runtime::{LoopUsageLedger, UsageEvent};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement telemetry",
+            "Record boundary telemetry",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        let usage = LoopUsageLedger::from_events(vec![UsageEvent {
+            provider_id: Some("anthropic".to_string()),
+            model: Some("claude".to_string()),
+            source: Some("anthropic".to_string()),
+            reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+            input_tokens: Some(100),
+            output_tokens: None,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_micros: None,
+            pricing_source: None,
+        }])
+        .with_runtime_counts(2, 3, 4000);
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-worker",
+                    "cleaned_up": false,
+                    "file_io_events": [
+                        { "path": "/tmp/forge-worker", "operation": "worktree_created" },
+                        { "path": "apps/desktop/src-tauri/src/agent/sub.rs", "operation": "diff_observed" },
+                        { "path": "/tmp/forge-worker", "operation": "worktree_preserved" }
+                    ],
+                    "usage_ledger": usage,
+                })
+                .to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+
+        let projection = bus.projection();
+        let task = &projection.tasks[0];
+        assert_eq!(task.file_io_events.len(), 3);
+        assert_eq!(task.file_io_events[0].operation, "worktree_created");
+        assert_eq!(
+            task.file_io_events[1].path,
+            "apps/desktop/src-tauri/src/agent/sub.rs"
+        );
+        let usage = task.usage_ledger.as_ref().expect("usage ledger");
+        assert_eq!(usage.model.as_deref(), Some("claude"));
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, None);
+        assert!(usage.has_unknown_output_tokens);
+        assert!(usage.has_unknown_cost);
+        assert_eq!(usage.turn_count, 2);
+        assert_eq!(usage.tool_call_count, 3);
+        assert_eq!(usage.elapsed_ms, 4000);
+    }
+
+    #[test]
+    fn approve_review_clears_pending_review_metadata() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = reviewed_worktree_task(&mut bus);
+
+        bus.record_review_decision(&task_id, AgentReviewDecision::Approve, "Looks good", 50)
+            .expect("approve review");
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Completed);
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.needs_human_review, Some(false));
+        assert_eq!(task_proj.review_decision.as_deref(), Some("approved"));
+        assert_eq!(task_proj.reviewed_at_ms, Some(50));
+        assert_eq!(
+            task_proj.latest_message.as_deref(),
+            Some("Review approved: Looks good")
+        );
+    }
+
+    #[test]
+    fn reject_review_marks_task_failed_without_pending_review() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = reviewed_worktree_task(&mut bus);
+
+        bus.record_review_decision(
+            &task_id,
+            AgentReviewDecision::Reject,
+            "Permission surface changed outside scope",
+            50,
+        )
+        .expect("reject review");
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Failed);
+        assert_eq!(
+            task.failure.as_ref().map(|failure| failure.kind.as_str()),
+            Some("review_rejection")
+        );
+        assert_eq!(
+            task.failure.as_ref().map(|failure| failure.retryable),
+            Some(false)
+        );
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.needs_human_review, Some(false));
+        assert_eq!(task_proj.review_decision.as_deref(), Some("rejected"));
+        assert_eq!(task_proj.reviewed_at_ms, Some(50));
+        assert_eq!(task_proj.failure_kind.as_deref(), Some("review_rejection"));
+    }
+
+    fn reviewed_worktree_task(bus: &mut AgentA2ABus) -> AgentTaskId {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement settings recovery polish",
+            "Polish settings recovery",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-review-task-1",
+                    "cleaned_up": false,
+                    "diff_available": true,
+                    "diff_truncated": false,
+                    "tests_passed": true,
+                    "needs_human_review": true,
+                    "suggested_action": "Review and merge after checking settings recovery.",
+                    "reason_codes": ["tests_passed", "diff_available"],
+                })
+                .to_string(),
+                created_at_ms: 30,
+            },
+            30,
+        );
+        bus.complete_task(&task_id, "Patch ready for controller review", 40);
+        task_id
+    }
+
+    // ── Phase 4-A tests: enriched projection fields ──
+
+    #[test]
+    fn compute_duration_returns_correct_value() {
+        assert_eq!(compute_duration_ms(None, None), None);
+        assert_eq!(compute_duration_ms(Some(100), Some(200)), Some(100));
+        assert_eq!(compute_duration_ms(Some(100), None), None);
+        assert_eq!(compute_duration_ms(Some(200), Some(100)), Some(0)); // clock skew guard
+    }
+
+    #[test]
+    fn projection_includes_parent_task_id() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        bus.start_task(&parent_id, 20);
+
+        // Simulate a child task by pushing a record with a parent_task_id.
+        let child_id = AgentTaskId::new("child-1");
+        let mut child = AgentTaskRecord::new(
+            child_id.clone(),
+            AgentId::new("child-agent"),
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Child implementer",
+            "child prompt",
+            25,
+        );
+        child.parent_task_id = Some(parent_id.clone());
+        child.started_at_ms = Some(30);
+        child.ended_at_ms = Some(40);
+        child.status = AgentTaskStatus::Completed;
+        bus.tasks.push(child);
+
+        let projection = bus.projection();
+        // Should have 2 tasks.
+        assert_eq!(projection.tasks.len(), 2);
+        let child_proj = &projection.tasks[1];
+        assert_eq!(child_proj.task_id, "child-1");
+        assert_eq!(
+            child_proj.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+
+    #[test]
+    fn projection_derives_parent_child_task_ids_in_creation_order() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        let child_a_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child A",
+                "child A prompt",
+                20,
+            )
+            .expect("child A assigned");
+        let child_b_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Reviewer,
+                AgentExecutionMode::PatchProposal,
+                "Child B",
+                "child B prompt",
+                30,
+            )
+            .expect("child B assigned");
+        let root_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Root",
+            "root prompt",
+            40,
+        );
+
+        let projection = bus.projection();
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_a_id.as_str())
+            .expect("child projection");
+        let root_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == root_id.as_str())
+            .expect("root projection");
+
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![
+                child_a_id.as_str().to_string(),
+                child_b_id.as_str().to_string()
+            ]
+        );
+        let parent_json =
+            serde_json::to_value(parent_projection).expect("serialize parent projection");
+        assert_eq!(
+            parent_json.get("child_task_ids"),
+            Some(&serde_json::json!([
+                child_a_id.as_str(),
+                child_b_id.as_str()
+            ]))
+        );
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert!(child_projection.child_task_ids.is_empty());
+        assert!(root_projection.child_task_ids.is_empty());
+
+        let root_json = serde_json::to_value(root_projection).expect("serialize root projection");
+        assert!(root_json.get("child_task_ids").is_none());
+    }
+
+    #[test]
+    fn assign_child_task_persists_parent_child_task_ids() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        let child_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child implementer",
+                "child prompt",
+                20,
+            )
+            .expect("child task assigned");
+
+        let parent = bus.task(&parent_id).expect("parent task");
+        let child = bus.task(&child_id).expect("child task");
+
+        assert_eq!(child.parent_task_id.as_ref(), Some(&parent_id));
+        assert_eq!(parent.child_task_ids, vec![child_id]);
+    }
+
+    #[test]
+    fn projection_prefers_persisted_child_task_ids_and_appends_legacy_ids() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = AgentTaskId::new("parent");
+        let child_a_id = AgentTaskId::new("child-a");
+        let child_b_id = AgentTaskId::new("child-b");
+        let mut parent = AgentTaskRecord::new(
+            parent_id.clone(),
+            AgentId::new("parent-agent"),
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        assert!(parent.record_child_task_id(child_b_id.clone()));
+        assert!(!parent.record_child_task_id(child_b_id.clone()));
+        let mut child_a = AgentTaskRecord::new(
+            child_a_id.clone(),
+            AgentId::new("child-a-agent"),
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Child A",
+            "child A prompt",
+            20,
+        );
+        child_a.parent_task_id = Some(parent_id.clone());
+        let mut child_b = AgentTaskRecord::new(
+            child_b_id.clone(),
+            AgentId::new("child-b-agent"),
+            AgentRole::Reviewer,
+            AgentExecutionMode::PatchProposal,
+            "Child B",
+            "child B prompt",
+            30,
+        );
+        child_b.parent_task_id = Some(parent_id.clone());
+        bus.tasks.push(parent);
+        bus.tasks.push(child_a);
+        bus.tasks.push(child_b);
+
+        let projection = bus.projection();
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![
+                child_b_id.as_str().to_string(),
+                child_a_id.as_str().to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn assign_child_task_populates_parent_and_assign_task_stays_root() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "parent prompt",
+            10,
+        );
+        let child_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child implementer",
+                "child prompt",
+                20,
+            )
+            .expect("child task assigned");
+        let root_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Root",
+            "root prompt",
+            30,
+        );
+
+        let parent = bus.task(&parent_id).expect("parent task");
+        let child = bus.task(&child_id).expect("child task");
+        let root = bus.task(&root_id).expect("root task");
+
+        assert_eq!(parent.parent_task_id, None);
+        assert_eq!(child.parent_task_id.as_ref(), Some(&parent_id));
+        assert_eq!(root.parent_task_id, None);
+
+        let projection = bus.projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+        let root_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == root_id.as_str())
+            .expect("root projection");
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert_eq!(root_projection.parent_task_id, None);
+    }
+
+    #[test]
+    fn assign_child_task_rejects_missing_parent_without_mutating_bus() {
+        let mut bus = AgentA2ABus::default();
+        let before = bus.clone();
+        let missing_parent_id = AgentTaskId::new("missing-parent");
+        let result = bus.assign_child_task(
+            &missing_parent_id,
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Child implementer",
+            "child prompt",
+            20,
+        );
+
+        assert!(
+            result.is_err(),
+            "missing parents must reject child assignment"
+        );
+        assert!(
+            bus.projection().tasks.is_empty(),
+            "rejecting a missing parent must leave the bus unchanged"
+        );
+        assert_eq!(bus, before);
+    }
+
+    #[test]
+    fn parent_task_id_survives_bus_serialization_roundtrip() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Parent review",
+            "Review plan",
+            10,
+        );
+        let child_id = crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+            &mut bus,
+            &parent_id,
+            "Child worker",
+            "Implement plan",
+            20,
+        )
+        .expect("child task assigned");
+
+        let json = serde_json::to_string(&bus).expect("serialize bus");
+        let restored: AgentA2ABus = serde_json::from_str(&json).expect("deserialize bus");
+        let projection = restored.projection();
+        let child_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+
+        assert_eq!(
+            child_projection.parent_task_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+
+    #[test]
+    fn parent_child_task_ids_survive_bus_serialization_roundtrip() {
+        let mut bus = AgentA2ABus::default();
+        let parent_id = crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Parent review",
+            "Review plan",
+            10,
+        );
+        let child_id = crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+            &mut bus,
+            &parent_id,
+            "Child worker",
+            "Implement plan",
+            20,
+        )
+        .expect("child task assigned");
+
+        let json = serde_json::to_string(&bus).expect("serialize bus");
+        let restored: AgentA2ABus = serde_json::from_str(&json).expect("deserialize bus");
+        let parent = restored.task(&parent_id).expect("parent task");
+        let projection = restored.projection();
+        let parent_projection = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+
+        assert_eq!(parent.child_task_ids, vec![child_id.clone()]);
+        assert_eq!(
+            parent_projection.child_task_ids,
+            vec![child_id.as_str().to_string()]
+        );
+    }
+
+    #[test]
+    fn parent_session_context_roundtrips_and_defaults() {
+        let mut bus = AgentA2ABus::default();
+        let root_task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Root planning task",
+            "Plan child work",
+            10,
+        );
+        bus.set_parent_session_context(crate::agent::a2a::types::AgentParentSessionContext {
+            parent_session_id: "session-1".to_string(),
+            active_parent_task_id: root_task_id.clone(),
+            root_task_id: root_task_id.clone(),
+            selection_reason: "active planner selected child delegate".to_string(),
+            updated_at_ms: 20,
+        });
+
+        let json = serde_json::to_string(&bus).expect("serialize bus");
+        let restored: AgentA2ABus = serde_json::from_str(&json).expect("deserialize bus");
+        let context = restored
+            .parent_session_context()
+            .expect("parent session context");
+
+        assert_eq!(context.parent_session_id, "session-1");
+        assert_eq!(context.active_parent_task_id, root_task_id);
+        assert_eq!(context.root_task_id, root_task_id);
+        assert_eq!(
+            context.selection_reason,
+            "active planner selected child delegate"
+        );
+        assert_eq!(context.updated_at_ms, 20);
+
+        let legacy: AgentA2ABus = serde_json::from_value(serde_json::json!({
+            "tasks": [],
+            "messages": [],
+            "next_task_index": 0,
+            "next_agent_index": 0,
+            "next_message_index": 0
+        }))
+        .expect("legacy bus without parent context");
+        assert!(legacy.parent_session_context().is_none());
+    }
+
+    #[test]
+    fn projection_includes_timing_fields() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::PatchProposal,
+            "Propose fix",
+            "Fix error",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.complete_task(&task_id, "Done", 40);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.created_at_ms, 10);
+        assert_eq!(task_proj.started_at_ms, Some(20));
+        assert_eq!(task_proj.ended_at_ms, Some(40));
+        assert_eq!(task_proj.duration_ms, Some(20));
+    }
+
+    #[test]
+    fn task_lease_claim_records_owner_attempt_and_projection_fields() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.lease_owner.as_deref(), Some("worker-1"));
+        assert_eq!(task.lease_acquired_at_ms, Some(20));
+        assert_eq!(task.lease_expires_at_ms, Some(120));
+        assert_eq!(task.last_heartbeat_at_ms, Some(20));
+        assert_eq!(task.attempt_count, 1);
+        assert_eq!(task.max_attempts, 3);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.lease_owner.as_deref(), Some("worker-1"));
+        assert_eq!(task_proj.lease_acquired_at_ms, Some(20));
+        assert_eq!(task_proj.lease_expires_at_ms, Some(120));
+        assert_eq!(task_proj.last_heartbeat_at_ms, Some(20));
+        assert_eq!(task_proj.attempt_count, 1);
+        assert_eq!(task_proj.max_attempts, 3);
+    }
+
+    #[test]
+    fn task_lease_heartbeat_extends_only_current_unexpired_owner() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+        assert!(!bus.heartbeat_task_lease(&task_id, "worker-2", 40, 100));
+        assert!(bus.heartbeat_task_lease(&task_id, "worker-1", 50, 100));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.last_heartbeat_at_ms, Some(50));
+        assert_eq!(task.lease_expires_at_ms, Some(150));
+
+        assert!(!bus.heartbeat_task_lease(&task_id, "worker-1", 151, 100));
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.last_heartbeat_at_ms, Some(50));
+        assert_eq!(task.lease_expires_at_ms, Some(150));
+    }
+
+    #[test]
+    fn cancel_task_clears_active_lease_and_marks_cancelled() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+
+        assert!(bus.cancel_task(&task_id, "user_cancelled", 30));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Cancelled);
+        assert_eq!(task.ended_at_ms, Some(30));
+        assert!(task.lease_owner.is_none());
+        assert!(task.lease_expires_at_ms.is_none());
+        assert_eq!(
+            bus.projection().tasks[0].latest_message.as_deref(),
+            Some("user_cancelled")
+        );
+    }
+
+    #[test]
+    fn retry_task_requeues_retryable_failure_and_preserves_attempt_count() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement lifecycle",
+            "Add durable worker state",
+            10,
+        );
+        assert!(bus.claim_task_lease(&task_id, "worker-1", 20, 100));
+        bus.fail_task(&task_id, "tool_error", "worker failed", true, 30);
+
+        assert!(bus.retry_task(&task_id, 40));
+
+        let task = bus.task(&task_id).expect("task");
+        assert_eq!(task.status, AgentTaskStatus::Pending);
+        assert_eq!(task.attempt_count, 1);
+        assert!(task.failure.is_none());
+        assert!(task.ended_at_ms.is_none());
+        assert!(task.lease_owner.is_none());
+        assert_eq!(
+            bus.projection().tasks[0].latest_progress.as_deref(),
+            Some("Retry scheduled")
+        );
+    }
+
+    #[test]
+    fn retry_task_rejects_non_retryable_or_exhausted_tasks() {
+        let mut bus = AgentA2ABus::default();
+        let non_retryable = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Non retryable",
+            "No retry",
+            10,
+        );
+        bus.fail_task(&non_retryable, "review_rejected", "no retry", false, 20);
+
+        assert!(!bus.retry_task(&non_retryable, 30));
+
+        let exhausted = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Exhausted",
+            "No attempts left",
+            40,
+        );
+        assert!(bus.claim_task_lease(&exhausted, "worker-1", 50, 100));
+        assert!(bus.claim_task_lease(&exhausted, "worker-1", 60, 100));
+        assert!(bus.claim_task_lease(&exhausted, "worker-1", 70, 100));
+        bus.fail_task(&exhausted, "tool_error", "failed", true, 80);
+
+        assert!(!bus.retry_task(&exhausted, 90));
+        assert_eq!(bus.task(&exhausted).expect("task").attempt_count, 3);
+    }
+
+    #[test]
+    fn projection_includes_failure_kind_and_retryable() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Reviewer,
+            AgentExecutionMode::ReadOnly,
+            "Review",
+            "review prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.fail_task(&task_id, "tool_error", "bash failed", true, 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.status, "failed");
+        assert_eq!(task_proj.failure_message.as_deref(), Some("bash failed"));
+        assert_eq!(task_proj.failure_kind.as_deref(), Some("tool_error"));
+        assert_eq!(task_proj.retryable, Some(true));
+    }
+
+    #[test]
+    fn projection_includes_failure_not_retryable() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement",
+            "prompt",
+            10,
+        );
+        bus.fail_task(&task_id, "smoke_failure", "smoke test failed", false, 20);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.failure_kind.as_deref(), Some("smoke_failure"));
+        assert_eq!(task_proj.retryable, Some(false));
+    }
+
+    #[test]
+    fn projection_includes_resume_note_for_interrupted_task() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement auth",
+            "Add login flow",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.normalize_for_resume(30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.status, "interrupted");
+        assert!(task_proj
+            .resume_note
+            .as_ref()
+            .is_some_and(|n| n.contains("session was restored")));
+    }
+
+    #[test]
+    fn projection_includes_latest_progress_from_progress_message() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Inspect",
+            "inspect prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.record_progress(&task_id, "Reading session.rs line 100", 25);
+        bus.record_progress(&task_id, "Found delegate_task call", 30);
+        bus.complete_task(&task_id, "Done", 40);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(
+            task_proj.latest_progress.as_deref(),
+            Some("Found delegate_task call")
+        );
+    }
+
+    #[test]
+    fn projection_latest_progress_none_when_no_progress() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            "Inspect",
+            "inspect prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.latest_progress, None);
+    }
+
+    #[test]
+    fn projection_leaves_duration_empty_for_running_task() {
+        // Running elapsed time is a frontend concern because it changes while the task is live.
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement auth",
+            "prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        // Record progress bumps updated_at_ms.
+        bus.record_progress(&task_id, "Working...", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.started_at_ms, Some(20));
+        assert_eq!(task_proj.ended_at_ms, None);
+        assert_eq!(task_proj.duration_ms, None);
+    }
+
+    // ── Phase 4-B tests: diff file extraction and projection enrichment ──
+
+    #[test]
+    fn extract_files_from_modified_diff() {
+        let diff = "diff --git a/src/main.rs b/src/main.rs\nindex abc..def 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n+// new line";
+        let files = extract_files_from_diff_text(diff);
+        assert_eq!(files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn extract_files_from_added_diff() {
+        let diff = "diff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1 @@\n+fn main() {}";
+        let files = extract_files_from_diff_text(diff);
+        assert_eq!(files, vec!["src/new.rs"]);
+    }
+
+    #[test]
+    fn extract_files_from_deleted_diff() {
+        let diff = "diff --git a/src/old.rs b/src/old.rs\ndeleted file mode 100644\n--- a/src/old.rs\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-fn old() {}";
+        let files = extract_files_from_diff_text(diff);
+        assert_eq!(files, vec!["src/old.rs"]);
+    }
+
+    #[test]
+    fn extract_files_from_rename_diff_prefers_new_path() {
+        let diff = "diff --git a/src/old_name.rs b/src/new_name.rs\nsimilarity index 95%\nrename from src/old_name.rs\nrename to src/new_name.rs\n--- a/src/old_name.rs\n+++ b/src/new_name.rs\n@@ -1 +1 @@\n-old\n+new";
+        let files = extract_files_from_diff_text(diff);
+        assert_eq!(files, vec!["src/new_name.rs"]);
+    }
+
+    #[test]
+    fn extract_files_falls_back_to_patch_headers_without_diff_git_line() {
+        let diff = "--- a/src/fallback.rs\n+++ b/src/fallback.rs\n@@ -1 +1 @@\n-old\n+new";
+        let files = extract_files_from_diff_text(diff);
+        assert_eq!(files, vec!["src/fallback.rs"]);
+    }
+
+    #[test]
+    fn extract_files_deduplicates_paths() {
+        let diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1,2 @@\n a\n+b\ndiff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -5 +5,2 @@\n c\n+d";
+        let files = extract_files_from_diff_text(diff);
+        assert_eq!(files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn extract_files_truncation_handled_by_caller() {
+        // extract_files_from_diff_text returns all unique paths; caller limits to 8.
+        let diff = (0..12)
+            .map(|i| format!("diff --git a/file{0}.rs b/file{0}.rs\n--- a/file{0}.rs\n+++ b/file{0}.rs\n@@ -1 +1 @@\n-x\n+y\n", i))
+            .collect::<Vec<_>>()
+            .join("");
+        let all = extract_files_from_diff_text(&diff);
+        assert_eq!(all.len(), 12);
+        let limited: Vec<String> = all.iter().take(8).cloned().collect();
+        assert_eq!(limited.len(), 8);
+    }
+
+    #[test]
+    fn projection_no_diff_when_no_diff_artifact() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "No diff",
+            "no diff prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.changed_file_count, None);
+        assert!(task_proj.changed_files.is_empty());
+        assert_eq!(task_proj.test_report_excerpt, None);
+    }
+
+    #[test]
+    fn projection_extracts_changed_files_from_diff_summary_artifact() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement feature",
+            "prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        let diff_content = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1 +1,2 @@\n a\n+b\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,2 @@\n c\n+d\ndiff --git a/src/new.rs b/src/new.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.rs\n@@ -0,0 +1 @@\n+fn main() {}";
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "diff-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::DiffSummary,
+                title: "Worktree diff".to_string(),
+                content: diff_content.to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.changed_file_count, Some(3));
+        assert_eq!(task_proj.changed_files.len(), 3);
+        assert!(task_proj.changed_files.contains(&"src/main.rs".to_string()));
+        assert!(task_proj.changed_files.contains(&"src/lib.rs".to_string()));
+        assert!(task_proj.changed_files.contains(&"src/new.rs".to_string()));
+    }
+
+    #[test]
+    fn projection_changed_files_limited_to_eight() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Many files",
+            "prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        // Build a diff with 15 unique files.
+        let diff_content = (0..15)
+            .map(|i| format!("diff --git a/file{0}.rs b/file{0}.rs\n--- a/file{0}.rs\n+++ b/file{0}.rs\n@@ -1 +1 @@\n-x\n+y\n", i))
+            .collect::<Vec<_>>()
+            .join("");
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "diff-big".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::DiffSummary,
+                title: "Worktree diff".to_string(),
+                content: diff_content,
+                created_at_ms: 25,
+            },
+            25,
+        );
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        // Total count reflects all 15 unique files.
+        assert_eq!(task_proj.changed_file_count, Some(15));
+        // But the projection list is capped at 8.
+        assert_eq!(task_proj.changed_files.len(), 8);
+    }
+
+    #[test]
+    fn projection_extracts_diff_available_from_worktree_metadata() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "Implement auth",
+            "prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        let meta = serde_json::json!({
+            "worktree_path": "/tmp/wt1",
+            "diff_available": true,
+        });
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: meta.to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.diff_available, Some(true));
+    }
+
+    #[test]
+    fn projection_diff_available_none_when_no_worktree_meta() {
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::Implementer,
+            AgentExecutionMode::WorktreeWorker,
+            "No meta",
+            "prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(task_proj.diff_available, None);
+    }
+
+    #[test]
+    fn extract_test_report_excerpt_from_summary_field() {
+        let content = r#"{"summary": "5 tests passed, 1 failed", "passed": 5, "failed": 1}"#;
+        let excerpt = extract_test_report_excerpt(content);
+        assert_eq!(excerpt.as_deref(), Some("5 tests passed, 1 failed"));
+    }
+
+    #[test]
+    fn extract_test_report_excerpt_from_result_field() {
+        let content = r#"{"result": "All tests pass", "exit_code": 0}"#;
+        let excerpt = extract_test_report_excerpt(content);
+        assert_eq!(excerpt.as_deref(), Some("All tests pass"));
+    }
+
+    #[test]
+    fn extract_test_report_excerpt_fallback_to_first_line() {
+        let content = "test result: ok. 3 passed; 0 failed;\n\nrunning 3 tests\n...";
+        let excerpt = extract_test_report_excerpt(content);
+        assert_eq!(
+            excerpt.as_deref(),
+            Some("test result: ok. 3 passed; 0 failed;")
+        );
+    }
+
+    #[test]
+    fn projection_includes_test_report_excerpt_from_artifact() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let task_id = bus.assign_task(
+            AgentRole::TestPlanner,
+            AgentExecutionMode::WorktreeWorker,
+            "Run tests",
+            "prompt",
+            10,
+        );
+        bus.start_task(&task_id, 20);
+
+        bus.add_artifact(
+            &task_id,
+            AgentArtifact {
+                artifact_id: "test-1".to_string(),
+                task_id: task_id.clone(),
+                kind: AgentArtifactKind::TestReport,
+                title: "Test report".to_string(),
+                content: r#"{"summary": "8 tests passed, 2 failed"}"#.to_string(),
+                created_at_ms: 25,
+            },
+            25,
+        );
+        bus.complete_task(&task_id, "Done", 30);
+
+        let projection = bus.projection();
+        let task_proj = &projection.tasks[0];
+        assert_eq!(
+            task_proj.test_report_excerpt.as_deref(),
+            Some("8 tests passed, 2 failed")
         );
     }
 }

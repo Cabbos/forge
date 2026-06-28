@@ -151,6 +151,40 @@ mod tests {
     }
 
     #[test]
+    fn provider_conformance_compact_summary_prompt_is_tool_free_for_all_transport_families() {
+        for provider in [
+            "deepseek",
+            "anthropic",
+            "kimi",
+            "glm",
+            "minimax",
+            "openai",
+            "openrouter",
+            "alibaba",
+            "gemini",
+            "xai",
+            "groq",
+            "mistral",
+            "ollama",
+            "custom_openai",
+            "custom_anthropic",
+        ] {
+            let prompt = compact_summary_prompt_messages(&compact_plan_for_prompt(), Some(128_000));
+            let system_prompt = prompt[0].content.as_str().expect("system prompt");
+            let user_prompt = prompt[1].content.as_str().expect("user prompt");
+
+            assert!(
+                system_prompt.contains("Do not use tools"),
+                "{provider} compact summary system prompt must forbid tools"
+            );
+            assert!(
+                user_prompt.contains("Do not call tools"),
+                "{provider} compact summary user prompt must forbid tools"
+            );
+        }
+    }
+
+    #[test]
     fn extract_compact_summary_text_prefers_summary_tag_and_strips_analysis() {
         let result = StreamResult {
             assistant_content: vec![serde_json::json!({
@@ -198,5 +232,46 @@ mod tests {
         let summary = extract_compact_summary_text(&result).expect("summary");
 
         assert_eq!(summary, "Keep this\n\nAnd this");
+    }
+
+    #[test]
+    fn provider_conformance_compact_summary_rejects_tool_calls_for_all_transport_families() {
+        for provider in [
+            "deepseek",
+            "anthropic",
+            "kimi",
+            "glm",
+            "minimax",
+            "openai",
+            "openrouter",
+            "alibaba",
+            "gemini",
+            "xai",
+            "groq",
+            "mistral",
+            "ollama",
+            "custom_openai",
+            "custom_anthropic",
+        ] {
+            let result = StreamResult {
+                assistant_content: vec![serde_json::json!({
+                    "type": "text",
+                    "text": "<summary>Should not matter</summary>",
+                })],
+                tool_calls: vec![crate::adapters::base::ToolCall {
+                    id: format!("{provider}-tool"),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({ "path": "src/lib.rs" }),
+                }],
+                stop_reason: Some("tool_use".to_string()),
+            };
+
+            let error = extract_compact_summary_text(&result).expect_err("tool call rejection");
+
+            assert!(
+                error.contains("tool calls"),
+                "{provider} compact summary must reject tool calls"
+            );
+        }
     }
 }

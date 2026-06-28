@@ -1,48 +1,36 @@
 const DEFAULT_PROVIDER: &str = "deepseek";
 
+use crate::adapters::provider_registry::{get_provider_definition, normalize_provider_id};
+
 pub(crate) fn normalize_provider(provider: Option<&str>) -> String {
-    match provider
-        .unwrap_or(DEFAULT_PROVIDER)
-        .trim()
-        .to_lowercase()
-        .as_str()
-    {
-        "anthropic" | "claude" => "anthropic".to_string(),
-        "openai" | "gpt" => "openai".to_string(),
-        "openrouter" => "openrouter".to_string(),
-        "deepseek" | "" => "deepseek".to_string(),
-        other => other.to_string(),
-    }
+    let raw = provider.unwrap_or(DEFAULT_PROVIDER).trim();
+    normalize_provider_id(Some(raw))
+        .map(str::to_string)
+        .unwrap_or_else(|| raw.to_lowercase())
 }
 
 pub(crate) fn default_model(provider: &str) -> &'static str {
-    match provider {
-        "anthropic" => "claude-sonnet-4-6",
-        "openai" => "gpt-4o",
-        "openrouter" => "openai/gpt-4o-mini",
-        _ => "deepseek-v4-flash[1m]",
-    }
+    get_provider_definition(&normalize_provider(Some(provider)))
+        .or_else(|| get_provider_definition(DEFAULT_PROVIDER))
+        .map(|definition| definition.default_model)
+        .unwrap_or("deepseek-v4-flash[1m]")
 }
 
 pub(crate) fn context_window_tokens(provider: &str, model: &str) -> Option<u32> {
-    match provider {
+    let normalized = normalize_provider(Some(provider));
+    match normalized.as_str() {
         "deepseek" if model.contains("[1m]") => Some(1_000_000),
         "deepseek" if model.contains("v4-pro") => Some(1_000_000),
         "deepseek" => Some(128_000),
-        "anthropic" => Some(200_000),
-        "openai" => Some(128_000),
-        _ => None,
+        provider_id => get_provider_definition(provider_id)
+            .and_then(|definition| definition.context_window_tokens),
     }
 }
 
 pub(crate) fn provider_label(provider: &str) -> &'static str {
-    match provider {
-        "anthropic" => "Anthropic",
-        "openai" => "OpenAI",
-        "openrouter" => "OpenRouter",
-        "deepseek" => "DeepSeek",
-        _ => "provider",
-    }
+    get_provider_definition(&normalize_provider(Some(provider)))
+        .map(|definition| definition.label)
+        .unwrap_or("provider")
 }
 
 pub(crate) fn missing_api_key_message(provider: &str) -> String {
@@ -82,7 +70,15 @@ pub(crate) fn is_context_overflow_error(_provider: &str, error_text: &str) -> bo
 
 #[cfg(test)]
 mod tests {
+    use crate::adapters::provider_registry::{
+        get_provider_definition, valid_provider_ids, ProviderDefinition,
+    };
+
     use super::*;
+
+    fn definition(id: &str) -> &'static ProviderDefinition {
+        get_provider_definition(id).unwrap_or_else(|| panic!("missing provider definition: {id}"))
+    }
 
     #[test]
     fn normalizes_provider_aliases() {
@@ -95,6 +91,66 @@ mod tests {
         assert_eq!(normalize_provider(Some("")), "deepseek");
         assert_eq!(normalize_provider(None), "deepseek");
         assert_eq!(normalize_provider(Some("custom")), "custom");
+    }
+
+    #[test]
+    fn normalizes_registry_provider_aliases() {
+        assert_eq!(normalize_provider(Some("moonshot")), "kimi");
+        assert_eq!(normalize_provider(Some("zhipu")), "glm");
+        assert_eq!(normalize_provider(Some("z.ai")), "glm");
+        assert_eq!(normalize_provider(Some("qwen")), "alibaba");
+        assert_eq!(normalize_provider(Some("dashscope")), "alibaba");
+        assert_eq!(normalize_provider(Some("grok")), "xai");
+        assert_eq!(normalize_provider(Some("local")), "ollama");
+        assert_eq!(normalize_provider(Some("lmstudio")), "ollama");
+        assert_eq!(normalize_provider(Some("custom-openai")), "custom_openai");
+        assert_eq!(
+            normalize_provider(Some("custom-anthropic")),
+            "custom_anthropic"
+        );
+    }
+
+    #[test]
+    fn provider_metadata_comes_from_registry_for_known_providers() {
+        for provider in valid_provider_ids() {
+            let definition = definition(provider);
+
+            assert_eq!(
+                default_model(provider),
+                definition.default_model,
+                "default model for {provider}"
+            );
+            assert_eq!(
+                provider_label(provider),
+                definition.label,
+                "label for {provider}"
+            );
+            assert_eq!(
+                context_window_tokens(provider, definition.default_model),
+                definition.context_window_tokens,
+                "context window for {provider}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_registry_provider_defaults_are_available() {
+        assert_eq!(default_model("kimi"), "kimi-k2.7-code");
+        assert_eq!(default_model("glm"), "glm-5.2");
+        assert_eq!(default_model("alibaba"), "qwen3-coder-plus");
+        assert_eq!(default_model("gemini"), "gemini-2.5-pro");
+        assert_eq!(provider_label("minimax"), "MiniMax");
+        assert_eq!(provider_label("custom_openai"), "Custom OpenAI-Compatible");
+        assert_eq!(
+            context_window_tokens("kimi", "kimi-k2.7-code"),
+            Some(262_144)
+        );
+        assert_eq!(context_window_tokens("glm", "glm-5.2"), Some(1_000_000));
+        assert_eq!(
+            context_window_tokens("gemini", "gemini-2.5-pro"),
+            Some(1_000_000)
+        );
+        assert_eq!(context_window_tokens("ollama", "llama3.1"), None);
     }
 
     #[test]

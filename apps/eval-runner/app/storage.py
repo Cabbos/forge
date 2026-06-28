@@ -16,6 +16,7 @@ from app.models import (
     EvaluationTask,
     FailureCategory,
     MetricsSummary,
+    QueueStatus,
     RunStatus,
 )
 from app.reporting import build_report
@@ -32,6 +33,7 @@ class EvalStorage(Protocol):
     def save_run(self, run: EvaluationRun) -> EvaluationRun: ...
     def get_run(self, run_id: str) -> EvaluationRun | None: ...
     def list_runs(self, status_filter: str | None = None) -> list[EvaluationRun]: ...
+    def queue_status(self) -> QueueStatus: ...
     def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None: ...
     def save_task(self, run_id: str, trace: AgentTrace) -> None: ...
     def save_artifact(self, artifact: EvalArtifact) -> EvalArtifact: ...
@@ -94,6 +96,22 @@ class InMemoryStorage:
             runs = [r for r in runs if r.status.value == status_filter]
         return runs
 
+    def queue_status(self) -> QueueStatus:
+        counts: dict[str, int] = {}
+        oldest_pending_run_id: str | None = None
+        oldest_running_run_id: str | None = None
+        for run in self._runs.values():
+            counts[run.status.value] = counts.get(run.status.value, 0) + 1
+            if run.status == RunStatus.PENDING and oldest_pending_run_id is None:
+                oldest_pending_run_id = run.run_id
+            if run.status == RunStatus.RUNNING and oldest_running_run_id is None:
+                oldest_running_run_id = run.run_id
+        return QueueStatus(
+            counts=counts,
+            oldest_pending_run_id=oldest_pending_run_id,
+            oldest_running_run_id=oldest_running_run_id,
+        )
+
     def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
         now = datetime.now(UTC)
         lease_expires = now + timedelta(seconds=300)
@@ -109,17 +127,20 @@ class InMemoryStorage:
                 )
                 self._runs[run.run_id] = claimed
                 return claimed
-            if run.status == RunStatus.RUNNING and run.lease_expires_at is not None:
-                if datetime.now(UTC) > run.lease_expires_at:
-                    reclaimed = run.model_copy(
-                        update={
-                            "worker_id": worker_id,
-                            "claimed_at": now,
-                            "lease_expires_at": lease_expires,
-                        }
-                    )
-                    self._runs[run.run_id] = reclaimed
-                    return reclaimed
+            if (
+                run.status == RunStatus.RUNNING
+                and run.lease_expires_at is not None
+                and datetime.now(UTC) > run.lease_expires_at
+            ):
+                reclaimed = run.model_copy(
+                    update={
+                        "worker_id": worker_id,
+                        "claimed_at": now,
+                        "lease_expires_at": lease_expires,
+                    }
+                )
+                self._runs[run.run_id] = reclaimed
+                return reclaimed
         return None
 
     def save_task(self, run_id: str, trace: AgentTrace) -> None:
@@ -298,6 +319,20 @@ class SQLiteStorage:
                 ).fetchall()
         return [run for row in rows if (run := self.get_run(row["id"])) is not None]
 
+    def queue_status(self) -> QueueStatus:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM eval_runs GROUP BY status"
+            ).fetchall()
+            counts = {row["status"]: row["count"] for row in rows}
+            oldest_pending_run_id = self._oldest_run_id_by_status(connection, RunStatus.PENDING)
+            oldest_running_run_id = self._oldest_run_id_by_status(connection, RunStatus.RUNNING)
+        return QueueStatus(
+            counts=counts,
+            oldest_pending_run_id=oldest_pending_run_id,
+            oldest_running_run_id=oldest_running_run_id,
+        )
+
     def save_task(self, run_id: str, trace: AgentTrace) -> None:
         run = self.get_run(run_id)
         if run is None:
@@ -385,6 +420,19 @@ class SQLiteStorage:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS eval_experiments (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    dataset_fingerprint TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    git_commit TEXT,
+                    command TEXT,
+                    environment_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
+                );
                 """
             )
             ensure_column(connection, "eval_runs", "case_source", "TEXT")
@@ -434,7 +482,14 @@ class SQLiteStorage:
                 SET status = ?, updated_at = ?, worker_id = ?, claimed_at = ?, lease_expires_at = ?
                 WHERE id = ?
                 """,
-                (RunStatus.RUNNING.value, utc_now_iso(), worker_id, now.isoformat(), lease_expires.isoformat(), row["id"]),
+                (
+                    RunStatus.RUNNING.value,
+                    utc_now_iso(),
+                    worker_id,
+                    now.isoformat(),
+                    lease_expires.isoformat(),
+                    row["id"],
+                ),
             )
             run_id = row["id"]
         return self.get_run(run_id)
@@ -470,7 +525,13 @@ class SQLiteStorage:
                 SET worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (worker_id, datetime.now(UTC).isoformat(), lease_expires_at.isoformat(), utc_now_iso(), run_id),
+                (
+                    worker_id,
+                    datetime.now(UTC).isoformat(),
+                    lease_expires_at.isoformat(),
+                    utc_now_iso(),
+                    run_id,
+                ),
             )
 
     def complete_run(self, run: EvaluationRun) -> EvaluationRun:
@@ -581,11 +642,16 @@ class SQLiteStorage:
             ),
         )
 
-    def _write_run_artifacts(self, run: EvaluationRun, connection: sqlite3.Connection | None = None) -> None:
+    def _write_run_artifacts(
+        self,
+        run: EvaluationRun,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
         run_artifacts_path = self.artifacts_path / run.run_id
         run_artifacts_path.mkdir(parents=True, exist_ok=True)
         trace_path = run_artifacts_path / "trace.json"
         report_path = run_artifacts_path / "report.json"
+        trajectory_paths = write_trajectory_artifacts(run, run_artifacts_path)
         trace_path.write_text(
             json.dumps([trace.model_dump(mode="json") for trace in run.traces], indent=2),
             encoding="utf-8",
@@ -603,6 +669,11 @@ class SQLiteStorage:
                 connection,
                 artifact_for_path(run.run_id, "report", report_path),
             )
+            for trace, trajectory_path in zip(run.traces, trajectory_paths, strict=False):
+                self._upsert_artifact(
+                    connection,
+                    trajectory_artifact_for_path(run.run_id, trace.task_id, trajectory_path),
+                )
         else:
             with self._connect() as connection:
                 self._upsert_artifact(
@@ -613,6 +684,11 @@ class SQLiteStorage:
                     connection,
                     artifact_for_path(run.run_id, "report", report_path),
                 )
+                for trace, trajectory_path in zip(run.traces, trajectory_paths, strict=False):
+                    self._upsert_artifact(
+                        connection,
+                        trajectory_artifact_for_path(run.run_id, trace.task_id, trajectory_path),
+                    )
 
     def _read_trace_artifact(self, run_id: str) -> list[AgentTrace]:
         trace_artifacts = [
@@ -701,6 +777,23 @@ class SQLiteStorage:
         connection.row_factory = sqlite3.Row
         return connection
 
+    def _oldest_run_id_by_status(
+        self,
+        connection: sqlite3.Connection,
+        status: RunStatus,
+    ) -> str | None:
+        row = connection.execute(
+            """
+            SELECT id
+            FROM eval_runs
+            WHERE status = ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            (status.value,),
+        ).fetchone()
+        return row["id"] if row is not None else None
+
 
 def replace_trace(traces: Sequence[AgentTrace], trace: AgentTrace) -> list[AgentTrace]:
     filtered = [existing for existing in traces if existing.task_id != trace.task_id]
@@ -729,6 +822,32 @@ def artifact_for_path(run_id: str, kind: str, path: Path) -> EvalArtifact:
         size_bytes=path.stat().st_size,
         created_at=datetime.now(UTC),
     )
+
+
+def trajectory_artifact_for_path(run_id: str, task_id: str, path: Path) -> EvalArtifact:
+    return artifact_for_path(run_id, "trajectory", path).model_copy(
+        update={"id": f"{run_id}:trajectory:{safe_artifact_id_part(task_id)}"}
+    )
+
+
+def write_trajectory_artifacts(run: EvaluationRun, run_artifacts_path: Path) -> list[Path]:
+    paths: list[Path] = []
+    for trace in run.traces:
+        trajectory_path = (
+            run_artifacts_path / f"{safe_artifact_id_part(trace.task_id)}.trajectory.json"
+        )
+        trajectory_path.write_text(
+            trace.model_copy(update={"trajectory_path": str(trajectory_path)}).model_dump_json(
+                indent=2
+            ),
+            encoding="utf-8",
+        )
+        paths.append(trajectory_path)
+    return paths
+
+
+def safe_artifact_id_part(value: str) -> str:
+    return value.replace("/", "_").replace("\\", "_")
 
 
 def artifact_from_row(row: sqlite3.Row) -> EvalArtifact:

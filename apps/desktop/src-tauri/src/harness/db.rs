@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result as SqlResult};
+use rusqlite::{Connection, OptionalExtension, Result as SqlResult};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -120,6 +120,10 @@ impl Database {
     pub fn upsert_permission(&self, tool_name: &str, approved: bool) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
+            "DELETE FROM permission_rules WHERE tool_name = ?1",
+            rusqlite::params![tool_name],
+        )?;
+        conn.execute(
             "INSERT INTO permission_rules (tool_name, approved) VALUES (?1, ?2)",
             rusqlite::params![tool_name, approved as i32],
         )?;
@@ -127,13 +131,74 @@ impl Database {
     }
 
     pub fn is_permission_approved(&self, tool_name: &str) -> SqlResult<bool> {
+        Ok(self
+            .permission_rule(tool_name)?
+            .map(|rule| rule.approved)
+            .unwrap_or(false))
+    }
+
+    pub fn is_permission_denied(&self, tool_name: &str) -> SqlResult<bool> {
+        Ok(self
+            .permission_rule(tool_name)?
+            .map(|rule| !rule.approved)
+            .unwrap_or(false))
+    }
+
+    pub fn delete_permission(&self, tool_name: &str) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
-        let count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM permission_rules WHERE tool_name = ?1 AND approved = 1",
+        conn.execute(
+            "DELETE FROM permission_rules WHERE tool_name = ?1",
             rusqlite::params![tool_name],
-            |row| row.get(0),
         )?;
-        Ok(count > 0)
+        Ok(())
+    }
+
+    pub fn list_permission_rules(&self) -> SqlResult<Vec<PermissionRuleRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "
+            SELECT pr.tool_name, pr.approved, pr.created_at
+            FROM permission_rules pr
+            INNER JOIN (
+                SELECT tool_name, MAX(id) AS id
+                FROM permission_rules
+                GROUP BY tool_name
+            ) latest ON latest.id = pr.id
+            ORDER BY pr.tool_name ASC
+            ",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let approved: i32 = row.get(1)?;
+            Ok(PermissionRuleRow {
+                tool_name: row.get(0)?,
+                approved: approved != 0,
+                created_at: row.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    fn permission_rule(&self, tool_name: &str) -> SqlResult<Option<PermissionRuleRow>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "
+            SELECT tool_name, approved, created_at
+            FROM permission_rules
+            WHERE tool_name = ?1
+            ORDER BY id DESC
+            LIMIT 1
+            ",
+            rusqlite::params![tool_name],
+            |row| {
+                let approved: i32 = row.get(1)?;
+                Ok(PermissionRuleRow {
+                    tool_name: row.get(0)?,
+                    approved: approved != 0,
+                    created_at: row.get(2)?,
+                })
+            },
+        )
+        .optional()
     }
 }
 
@@ -147,4 +212,11 @@ pub struct CapRow {
     pub kind: String,
     pub enabled: bool,
     pub config_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionRuleRow {
+    pub tool_name: String,
+    pub approved: bool,
+    pub created_at: String,
 }

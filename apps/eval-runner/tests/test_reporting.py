@@ -1,7 +1,70 @@
 from datetime import UTC, datetime
 
-from app.models import AgentTrace, FailureCategory, ShellOutput, VerificationResult
+from app.models import (
+    AgentTrace,
+    BacktestReport,
+    FailureCategory,
+    ShellOutput,
+    TaskMetric,
+    VerificationResult,
+)
 from app.reporting import build_report
+
+
+def test_trust_gates_fail_closed_without_harness_check() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=False,
+        dataset_fingerprint="abc",
+        scorer_calibrated=True,
+        red_team_passed=True,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["harness_untrusted"]
+
+
+def test_trust_gates_fail_closed_without_dataset_fingerprint() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=True,
+        dataset_fingerprint=None,
+        scorer_calibrated=True,
+        red_team_passed=True,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["dataset_unfingerprinted"]
+
+
+def test_trust_gates_fail_closed_without_scorer_calibration() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=True,
+        dataset_fingerprint="abc",
+        scorer_calibrated=False,
+        red_team_passed=True,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["scorer_uncalibrated"]
+
+
+def test_trust_gates_fail_closed_when_red_team_fails() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_ok=True,
+        dataset_fingerprint="abc",
+        scorer_calibrated=True,
+        red_team_passed=False,
+    )
+
+    assert result.trusted is False
+    assert result.blockers == ["red_team_failed"]
 
 
 def make_trace(
@@ -16,6 +79,7 @@ def make_trace(
     failure_category: FailureCategory = FailureCategory.NONE,
     scope_violations: list[str] | None = None,
     raw_events: list[dict] | None = None,
+    cost_usd: float | None = None,
 ) -> AgentTrace:
     started_at = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
     ended_at = datetime(2026, 6, 4, 10, 0, 1, tzinfo=UTC)
@@ -49,10 +113,60 @@ def make_trace(
         confirm_requests=confirm_requests,
         repair_attempts_used=repair_attempts_used,
         validation_attempts=validation_attempts,
+        cost_usd=cost_usd,
         started_at=started_at,
         ended_at=ended_at,
         duration_ms=duration_ms,
     )
+
+
+def make_report(**overrides) -> BacktestReport:
+    report = BacktestReport(
+        total_tasks=2,
+        success_rate=1.0,
+        verification_pass_rate=1.0,
+        scope_violation_rate=0.0,
+        avg_duration_ms=100.0,
+        avg_model_rounds=2.0,
+        avg_confirm_requests=0.0,
+    )
+    return report.model_copy(update=overrides)
+
+
+def test_compare_reports_flags_success_rate_regression() -> None:
+    from app.report_compare import compare_reports
+
+    previous = make_report()
+    current = previous.model_copy(update={"success_rate": 0.0})
+
+    result = compare_reports(previous, current)
+
+    assert result["regressions"][0]["metric"] == "success_rate"
+    assert result["regressions"][0]["severity"] == "critical"
+
+
+def test_compare_reports_flags_scope_violation_regression() -> None:
+    from app.report_compare import compare_reports
+
+    result = compare_reports(
+        make_report(scope_violation_rate=0.0),
+        make_report(scope_violation_rate=0.75),
+    )
+
+    assert result["regressions"][0]["metric"] == "scope_violation_rate"
+    assert result["regressions"][0]["severity"] == "critical"
+
+
+def test_compare_reports_flags_model_round_warning() -> None:
+    from app.report_compare import compare_reports
+
+    result = compare_reports(
+        make_report(avg_model_rounds=2.0),
+        make_report(avg_model_rounds=5.0),
+    )
+
+    assert result["regressions"][0]["metric"] == "avg_model_rounds"
+    assert result["regressions"][0]["severity"] == "warning"
 
 
 def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
@@ -95,10 +209,66 @@ def test_build_report_outputs_backtest_rates_and_trace_summaries() -> None:
     assert report.avg_repair_attempts_used == 0.0
     assert report.avg_validation_attempts == 0.0
     assert report.failure_categories == {"scope_violation": 1, "verification_failed": 1}
+    assert report.score_summary["functional_correctness"] == 1 / 3
+    assert report.score_summary["scope_ok"] == 2 / 3
     assert report.tasks[0].task_id == "small-edit-success"
     assert report.tasks[0].passed is True
     assert report.tasks[1].scope_violations == ["forbidden_change:.env"]
     assert report.tasks[2].failure_reason == "Task failed."
+
+
+def test_build_report_sums_total_cost_usd() -> None:
+    report = build_report(
+        [
+            make_trace(
+                "cost-a",
+                verification_passed=True,
+                duration_ms=1000,
+                model_rounds=2,
+                confirm_requests=0,
+                cost_usd=0.05,
+            ),
+            make_trace(
+                "cost-b",
+                verification_passed=True,
+                duration_ms=1000,
+                model_rounds=2,
+                confirm_requests=0,
+                cost_usd=0.15,
+            ),
+        ]
+    )
+
+    assert report.total_cost_usd == 0.2
+
+
+def test_trial_aggregation_marks_flaky_task() -> None:
+    from app.reporting import aggregate_trial_metrics
+
+    trials = [
+        TaskMetric(
+            task_id="a",
+            passed=True,
+            verification_passed=True,
+            tool_calls=1,
+            duration_ms=10,
+            failure_category=FailureCategory.NONE,
+        ),
+        TaskMetric(
+            task_id="a",
+            passed=False,
+            verification_passed=False,
+            tool_calls=1,
+            duration_ms=12,
+            failure_category=FailureCategory.VERIFICATION_FAILED,
+        ),
+    ]
+
+    result = aggregate_trial_metrics(trials)
+
+    assert result["a"]["attempts"] == 2
+    assert result["a"]["pass_rate"] == 0.5
+    assert result["a"]["flaky"] is True
 
 
 def test_build_report_summarizes_continuity_benefit_diagnostics() -> None:

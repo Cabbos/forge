@@ -29,6 +29,7 @@ export function useComposerController(sessionId: string) {
   } = useComposerDraft();
   const {
     closeModelMenu,
+    providers,
     selectModel,
     selectedContextWindow,
     selectedModel,
@@ -136,6 +137,7 @@ export function useComposerController(sessionId: string) {
     onResume: handleResume,
     onCompact: handleCompact,
     onSelectModel: selectModel,
+    providers,
     onSend: handleSend,
     onStop: handleStop,
     onTextChange: handleChange,

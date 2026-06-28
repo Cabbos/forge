@@ -1,11 +1,12 @@
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
-import type { DeliverySummary, SessionState, WorkflowState } from "../lib/protocol";
+import type { DeliverySummary, SessionState, StreamEvent, WorkflowState } from "../lib/protocol";
 import { queryClient } from "../lib/query-client";
 import { queryKeys } from "../hooks/queries/queryKeys";
 import {
   hasTauriRuntime,
   listSessions,
   loadAppMetadata,
+  loadSessionTranscript,
 } from "../lib/tauri";
 import type { Workspace } from "../lib/workspaces";
 import {
@@ -41,6 +42,10 @@ import {
   workspaceSessionIds,
 } from "./session-utils";
 import type { AppStore, PersistedSession } from "./types";
+import {
+  usageProjectionFromProviderUsageBlocks,
+  usageProjectionFromTranscriptEvents,
+} from "./usage-ledger";
 
 type StoreSet = (partial: Partial<AppStore>) => void;
 type StoreGet = () => AppStore;
@@ -103,8 +108,21 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
         const deliverySummaryBySession = new Map<string, DeliverySummary>();
         const hydratedAt = Date.now();
         for (const s of data) {
-          const loadedBlocks = await loadBlocks(s.id, transcriptEventsToBlocks);
+          const transcriptEvents = tauriRuntime
+            ? await loadSessionTranscript(s.id).catch(() => [] as StreamEvent[])
+            : null;
+          const loadedBlocks = transcriptEvents
+            ? transcriptEventsToBlocks(transcriptEvents)
+            : await loadBlocks(s.id, transcriptEventsToBlocks);
           const blocks = closeInterruptedConfirmBlocks(loadedBlocks, "session_restored");
+          const restoredUsage = transcriptEvents
+            ? usageProjectionFromTranscriptEvents(transcriptEvents, s.contextWindowTokens, s.contextUsage, hydratedAt)
+            : usageProjectionFromProviderUsageBlocks(
+                blocks,
+                s.contextWindowTokens,
+                s.contextUsage,
+                hydratedAt,
+              );
           const workingDir = normalizeWorkspacePath(s.workingDir ?? "");
           const workspaceId = s.workspaceId && workspaces.has(s.workspaceId)
             ? s.workspaceId
@@ -116,10 +134,14 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
             createdAt: s.createdAt ?? hydratedAt,
             updatedAt: s.updatedAt ?? s.createdAt ?? hydratedAt,
             blocks,
-            costUsd: 0,
-            contextUsage: s.contextUsage ?? null,
+            costUsd: sanitizePersistedCost(s.costUsd) ?? restoredUsage?.costUsd ?? 0,
+            contextUsage: restoredUsage?.contextUsage ?? s.contextUsage ?? null,
+            usageLedger: s.usageLedger ?? restoredUsage?.usageLedger ?? null,
             streaming: false,
-            status: "stopped" as const,
+            // For Tauri, respect the backend-reported status (including "resuming").
+            // For IndexedDB-only hydration, force "stopped" so stale persisted state
+            // doesn't show a phantom running/resuming session.
+            status: tauriRuntime ? s.status : ("stopped" as const),
           });
           if (s.workflowState) {
             workflowBySession.set(s.id, s.workflowState);
@@ -197,4 +219,8 @@ export function createHydrateAction(set: StoreSet, get: StoreGet) {
       set({ hydrated: true });
     }
   };
+}
+
+function sanitizePersistedCost(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null;
 }

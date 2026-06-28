@@ -1,4 +1,5 @@
 import type { KeyStatus, ProjectCheckpointStatus, ProjectRuntimeStatus } from "@/lib/tauri";
+import { deriveProviderEvidenceSummary, type ProviderDefinition } from "./providers.ts";
 import type { Workspace } from "@/lib/workspaces";
 
 export type ReadinessTone = "ready" | "warning" | "blocked" | "muted";
@@ -23,14 +24,32 @@ export function deriveStartReadiness(input: {
   workspace: Workspace | null;
   providerId: string;
   providerLabel: string;
+  provider?: ProviderDefinition | null;
+  model?: string | null;
   keyStatuses: KeyStatus[];
   runtime: ProjectRuntimeStatus | null;
   checkpoint: ProjectCheckpointStatus | null;
+  nowMs?: number;
 }): StartReadinessView {
   const keyStatuses = Array.isArray(input.keyStatuses) ? input.keyStatuses : [];
-  const keySet = keyStatuses.some((item) => item.provider === input.providerId && item.set);
+  const providerRequiresApiKey = input.provider?.requiresApiKey !== false;
+  const keySet = providerRequiresApiKey
+    ? keyStatuses.some((item) => item.provider === input.providerId && item.set)
+    : true;
   const workspaceBlocked = !input.workspace;
-  const keyBlocked = !keySet;
+  const keyBlocked = providerRequiresApiKey && !keySet;
+  const selectedModel = input.model?.trim() || input.provider?.defaultModel?.trim() || "";
+  const providerModels = input.provider?.models ?? [];
+  const modelKnown = Boolean(selectedModel) && (
+    Boolean(input.provider?.customModels) ||
+    providerModels.some((model) => model.id === selectedModel)
+  );
+  const modelWarning = Boolean(selectedModel) && !modelKnown;
+  const evidenceSummary = input.provider
+    ? deriveProviderEvidenceSummary(input.provider, { nowMs: input.nowMs })
+    : null;
+  const evidenceBlocked = evidenceSummary?.tone === "blocked";
+  const evidenceReviewRecommended = evidenceSummary?.reviewRecommended === true;
   const hasCheckpoint = Boolean(input.checkpoint?.last_checkpoint);
   const restorableCheckpoint = Boolean(input.checkpoint?.restorable);
   const rows: StartReadinessRow[] = [
@@ -43,10 +62,34 @@ export function deriveStartReadiness(input: {
     },
     {
       label: "模型密钥",
-      value: keySet ? `${input.providerLabel} 已配置` : `还没有配置 ${input.providerLabel}`,
+      value: providerRequiresApiKey
+        ? keySet
+          ? `${input.providerLabel} 已配置`
+          : `还没有配置 ${input.providerLabel}`
+        : `${input.providerLabel} 不需要密钥`,
       tone: keySet ? "ready" : "blocked",
       action: keySet ? null : "open_settings",
       actionLabel: keySet ? null : "打开设置",
+    },
+    {
+      label: "模型",
+      value: selectedModel
+        ? modelKnown
+          ? `${selectedModel} 可用`
+          : `${selectedModel} 不在 ${input.providerLabel} 模型目录`
+        : "还没有选择模型",
+      tone: selectedModel ? modelWarning ? "warning" : "ready" : "warning",
+      action: null,
+      actionLabel: null,
+    },
+    {
+      label: "Provider 证据",
+      value: evidenceSummary
+        ? `${evidenceSummary.label}：${evidenceSummary.detail}`
+        : "Provider 证据未知",
+      tone: evidenceSummary?.tone ?? "warning",
+      action: evidenceBlocked || evidenceReviewRecommended ? "open_settings" : null,
+      actionLabel: evidenceBlocked || evidenceReviewRecommended ? "打开设置" : null,
     },
     {
       label: "预览",
@@ -80,12 +123,20 @@ export function deriveStartReadiness(input: {
 
   const issueCount = rows.filter((row) => row.tone === "blocked" || row.tone === "warning").length;
   return {
-    title: workspaceBlocked ? "选择一个项目开始" : keyBlocked ? "需要配置模型密钥" : "准备开始",
+    title: workspaceBlocked
+      ? "选择一个项目开始"
+      : keyBlocked
+        ? "需要配置模型密钥"
+        : evidenceBlocked
+          ? "Provider 检测失败"
+          : "准备开始",
     subtitle: issueCount === 0
       ? "可以开始做第一版小工具。"
       : keyBlocked
         ? `添加 ${input.providerLabel} 密钥后就可以发送第一句话。`
-        : "开始前有几项可以先确认。",
+        : evidenceBlocked
+          ? "打开设置重新检测 provider。"
+          : "开始前有几项可以先确认。",
     issueCount,
     rows,
   };

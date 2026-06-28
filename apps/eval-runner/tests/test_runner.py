@@ -1,14 +1,47 @@
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
-from app.models import EvaluationTask, FailureCategory
+from app.models import (
+    AgentTrace,
+    EvaluationTask,
+    FailureCategory,
+    FileDiff,
+    ShellOutput,
+)
 from app.runner import (
     DeterministicMockRunner,
     ForgeAgentRunner,
     continuity_db_diagnostic,
     create_runner,
 )
+
+
+def test_agent_adapter_metadata_is_attached_to_trace() -> None:
+    from app.agent_adapter import AgentAdapterSpec
+
+    spec = AgentAdapterSpec(name="forge", version="local", command="forge_eval_agent")
+
+    assert spec.model_dump() == {
+        "name": "forge",
+        "version": "local",
+        "command": "forge_eval_agent",
+        "supports_trajectory": True,
+    }
+
+
+def test_task_supports_regression_and_fix_validation_commands() -> None:
+    task = EvaluationTask(
+        id="split-tests",
+        title="Split tests",
+        prompt="Fix bug",
+        pass_to_pass_commands=["pytest tests/test_existing.py"],
+        fail_to_pass_commands=["pytest tests/test_bug.py"],
+    )
+
+    assert task.pass_to_pass_commands == ["pytest tests/test_existing.py"]
+    assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
 
 
 def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
@@ -42,6 +75,166 @@ def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     assert trace.model_dump(mode="json")["started_at"].endswith("+00:00")
 
 
+def test_forge_runner_reports_regression_validation_failure(tmp_path: Path) -> None:
+    script = tmp_path / "fake_success.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    regression_command = f"{sys.executable} -c \"import sys; sys.exit(3)\""
+    task = EvaluationTask(
+        id="regression-split",
+        title="Regression split",
+        prompt="Fix bug.",
+        expected_files_changed=["src/app.py"],
+        pass_to_pass_commands=[regression_command],
+        fail_to_pass_commands=[f"{sys.executable} -c \"print('bug fixed')\""],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == regression_command
+    assert trace.failure_category == FailureCategory.VERIFICATION_FAILED
+    assert trace.failure_reason == "Regression validation failed"
+
+
+def test_forge_runner_reports_bugfix_validation_failure(tmp_path: Path) -> None:
+    script = tmp_path / "fake_success.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    regression_command = f"{sys.executable} -c \"print('existing tests pass')\""
+    bugfix_command = f"{sys.executable} -c \"import sys; sys.exit(4)\""
+    task = EvaluationTask(
+        id="bugfix-split",
+        title="Bugfix split",
+        prompt="Fix bug.",
+        expected_files_changed=["src/app.py"],
+        pass_to_pass_commands=[regression_command],
+        fail_to_pass_commands=[bugfix_command],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == bugfix_command
+    assert [output.command for output in trace.shell_outputs[-2:]] == [
+        regression_command,
+        bugfix_command,
+    ]
+    assert trace.failure_category == FailureCategory.VERIFICATION_FAILED
+    assert trace.failure_reason == "Bug-fix validation failed"
+
+
+def test_sandbox_rejects_dirty_workspace_after_case(tmp_path: Path) -> None:
+    from app.sandbox import assert_clean_workspace
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".env").write_text("SECRET=value\n", encoding="utf-8")
+
+    result = assert_clean_workspace(workspace, allowed_untracked=[])
+
+    assert result.ok is False
+    assert ".env" in result.untracked_files
+
+
+def test_sandbox_scrubs_future_state_git_history(tmp_path: Path) -> None:
+    from app.sandbox import scrub_future_repo_state
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run_git(workspace, "init", "-b", "main")
+    run_git(workspace, "config", "user.email", "eval@example.com")
+    run_git(workspace, "config", "user.name", "Eval Runner")
+    (workspace / "app.txt").write_text("current\n", encoding="utf-8")
+    run_git(workspace, "add", "app.txt")
+    run_git(workspace, "commit", "-m", "current state")
+    run_git(workspace, "checkout", "-b", "future-fix")
+    (workspace / "app.txt").write_text("future fix\n", encoding="utf-8")
+    run_git(workspace, "commit", "-am", "future fix")
+    run_git(workspace, "checkout", "main")
+
+    before = git_stdout(workspace, "log", "--all", "--oneline")
+    assert "future fix" in before
+
+    result = scrub_future_repo_state(workspace)
+
+    after = git_stdout(workspace, "log", "--all", "--oneline")
+    assert result.ok is True
+    assert "future fix" not in after
+    assert "branch:future-fix" in result.scrubbed_items
+
+
+def test_sandbox_detects_future_state_lookup_commands() -> None:
+    from datetime import UTC, datetime
+
+    from app.sandbox import detect_future_state_lookup
+
+    now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+    trace = AgentTrace(
+        task_id="future-state-probe",
+        user_prompt="Solve without peeking.",
+        model="deterministic-agent-v1",
+        provider="mock",
+        tool_calls=[ShellOutput(command="git log --all --oneline")],
+        final_answer="done",
+        started_at=now,
+        ended_at=now,
+        duration_ms=10,
+    )
+
+    result = detect_future_state_lookup(trace)
+
+    assert result.ok is False
+    assert "git log --all" in result.findings[0]
+
+
+def test_patch_replay_applies_trace_diff(tmp_path: Path) -> None:
+    from app.patches import replay_patch
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "hello.txt").write_text("hello\n", encoding="utf-8")
+    diff = FileDiff(
+        path="hello.txt",
+        change_type="modified",
+        diff=(
+            "diff --git a/hello.txt b/hello.txt\n"
+            "--- a/hello.txt\n"
+            "+++ b/hello.txt\n"
+            "@@ -1 +1 @@\n"
+            "-hello\n"
+            "+hello forge\n"
+        ),
+    )
+
+    result = replay_patch(workspace, [diff])
+
+    assert result.ok is True
+    assert (workspace / "hello.txt").read_text(encoding="utf-8") == "hello forge\n"
+
+
 def test_mock_runner_records_verification_failure_reason() -> None:
     task = EvaluationTask(
         id="fix-bug",
@@ -60,6 +253,27 @@ def test_mock_runner_records_verification_failure_reason() -> None:
     assert trace.error == "verification_failed"
     assert trace.failure_reason == "Mock verification command returned a non-zero exit code."
     assert trace.failure_category.value == "verification_failed"
+
+
+def run_git(workspace: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+
+def git_stdout(workspace: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return completed.stdout
 
 
 def test_mock_runner_applies_metadata_for_scope_and_multi_step_trace() -> None:
@@ -718,9 +932,150 @@ json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout
     assert trace.failure_category == FailureCategory.NONE
 
 
+def test_forge_runner_accepts_json_object_after_log_lines(tmp_path: Path) -> None:
+    script = tmp_path / "fake_forge_with_logs.py"
+    script.write_text(
+        """
+import json
+
+print("starting forge eval")
+print(json.dumps({
+    "final_answer": "done",
+    "verification_result": {"command": "pytest", "passed": True, "exit_code": 0},
+    "changed_files": ["src/calculator.py"],
+    "file_diffs": [],
+    "tool_calls": [],
+    "shell_outputs": []
+}))
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="small-edit-success",
+        title="Small edit",
+        prompt="Fix add",
+        expected_files_changed=["src/calculator.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.failure_category == FailureCategory.NONE
+    assert trace.final_answer == "done"
+
+
+def test_forge_runner_reports_missing_final_answer_as_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_missing_final_answer.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump({"changed_files": []}, sys.stdout)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="missing-final-answer",
+        title="Missing final answer",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "final_answer" in (trace.failure_reason or "")
+
+
+def test_forge_runner_reports_malformed_tool_calls_as_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_malformed_tool_calls.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "tool_calls": {"command": "not-a-list"},
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="malformed-tool-calls",
+        title="Malformed tool calls",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "ValidationError" in (trace.failure_reason or "")
+
+
+def test_forge_runner_maps_unknown_failure_category_to_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_unknown_failure_category.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "failure_category": "mystery_failure",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="unknown-failure-category",
+        title="Unknown failure category",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "forge_contract_error"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+
+
 def test_forge_runner_reports_invalid_stdout_as_contract_error(tmp_path: Path) -> None:
     script = tmp_path / "fake_invalid_stdout.py"
-    script.write_text("print('not json')\n", encoding="utf-8")
+    script.write_text(
+        "import sys\nprint('not json')\nprint('bad stderr', file=sys.stderr)\n",
+        encoding="utf-8",
+    )
     task = EvaluationTask(
         id="invalid-stdout",
         title="Invalid stdout",
@@ -735,7 +1090,37 @@ def test_forge_runner_reports_invalid_stdout_as_contract_error(tmp_path: Path) -
 
     assert trace.error == "invalid_forge_trace"
     assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
-    assert trace.failure_reason.startswith("Forge command returned invalid trace JSON:")
+    assert "JSONDecodeError" in (trace.failure_reason or "")
+    assert "stdout preview: not json" in (trace.failure_reason or "")
+    assert "stderr preview: bad stderr" in (trace.failure_reason or "")
+    assert trace.shell_outputs[-1].stdout == "not json\n"
+    assert trace.shell_outputs[-1].stderr == "bad stderr\n"
+
+
+def test_forge_runner_reports_log_lines_without_json_as_contract_error(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "fake_logs_without_json.py"
+    script.write_text(
+        "import sys\nprint('starting forge eval')\nprint('still not json', file=sys.stderr)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="logs-without-json",
+        title="Logs without json",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "stdout preview: starting forge eval" in (trace.failure_reason or "")
+    assert "stderr preview: still not json" in (trace.failure_reason or "")
 
 
 def test_forge_runner_returns_runner_error_when_command_is_missing() -> None:

@@ -82,6 +82,7 @@ class DeterministicMockRunner:
                 validation_attempts=int(mock.get("validation_attempts", 0)),
                 input_tokens=mock.get("input_tokens"),
                 output_tokens=mock.get("output_tokens"),
+                cost_usd=mock.get("cost_usd"),
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=int(mock.get("duration_ms", duration_ms(started_at, ended_at))),
@@ -157,6 +158,7 @@ class DeterministicMockRunner:
             validation_attempts=int(mock.get("validation_attempts", 0)),
             input_tokens=mock.get("input_tokens"),
             output_tokens=mock.get("output_tokens"),
+            cost_usd=mock.get("cost_usd"),
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=int(mock.get("duration_ms", duration_ms(started_at, ended_at))),
@@ -267,7 +269,7 @@ class ForgeAgentRunner:
                 )
 
             try:
-                raw_payload = json.loads(completed.stdout or "{}")
+                raw_payload = parse_forge_stdout(completed.stdout)
                 trace = self._trace_from_payload(
                     task,
                     raw_payload,
@@ -280,7 +282,11 @@ class ForgeAgentRunner:
                     task=task,
                     started_at=started_at,
                     error="invalid_forge_trace",
-                    failure_reason=f"Forge command returned invalid trace JSON: {exc}",
+                    failure_reason=invalid_trace_failure_reason(
+                        exc,
+                        stdout=completed.stdout,
+                        stderr=completed.stderr,
+                    ),
                     failure_category=FailureCategory.FORGE_CONTRACT_ERROR,
                     shell_outputs=[*setup_outputs, command_output],
                 )
@@ -296,13 +302,23 @@ class ForgeAgentRunner:
         workspace: Path,
     ) -> AgentTrace:
         ended_at = utc_now()
+        final_answer = payload.get("final_answer")
+        if not isinstance(final_answer, str):
+            raise ValueError("Forge trace is missing required string field: final_answer")
+
         tool_calls = TypeAdapter(list[ShellOutput]).validate_python(payload.get("tool_calls", []))
-        validation_outputs = [
-            *run_validation_commands(task, workspace),
-            *run_post_validation_commands(task, workspace),
+        validation_outputs = run_validation_commands(task, workspace)
+        regression_outputs = run_shell_commands(task.pass_to_pass_commands, workspace)
+        fix_outputs = run_shell_commands(task.fail_to_pass_commands, workspace)
+        post_validation_outputs = run_post_validation_commands(task, workspace)
+        all_validation_outputs = [
+            *validation_outputs,
+            *regression_outputs,
+            *fix_outputs,
+            *post_validation_outputs,
         ]
         shell_outputs = TypeAdapter(list[ShellOutput]).validate_python(
-            [*setup_outputs, *payload.get("shell_outputs", []), *validation_outputs]
+            [*setup_outputs, *payload.get("shell_outputs", []), *all_validation_outputs]
         )
         file_diffs = TypeAdapter(list[FileDiff]).validate_python(payload.get("file_diffs", []))
         verification_result = (
@@ -310,8 +326,10 @@ class ForgeAgentRunner:
             if payload.get("verification_result") is not None
             else None
         )
-        if validation_outputs:
-            last_validation = first_failed_output(validation_outputs) or validation_outputs[-1]
+        if all_validation_outputs:
+            last_validation = (
+                first_failed_output(all_validation_outputs) or all_validation_outputs[-1]
+            )
             verification_result = VerificationResult(
                 command=last_validation.command,
                 passed=last_validation.exit_code == 0,
@@ -322,6 +340,14 @@ class ForgeAgentRunner:
             )
         changed_files = list(payload.get("changed_files") or [diff.path for diff in file_diffs])
         raw_events = list(payload.get("raw_events", []))
+        if task.pass_to_pass_commands or task.fail_to_pass_commands:
+            raw_events.append(
+                {
+                    "event_type": "split_validation_commands",
+                    "pass_to_pass_commands": task.pass_to_pass_commands,
+                    "fail_to_pass_commands": task.fail_to_pass_commands,
+                }
+            )
         headless_continuity_diagnostic = headless_continuity_diagnostic_from_payload(payload)
         if headless_continuity_diagnostic is not None:
             raw_events.append(headless_continuity_diagnostic)
@@ -336,7 +362,7 @@ class ForgeAgentRunner:
         failure_reason = payload.get("failure_reason")
 
         if (
-            validation_outputs
+            all_validation_outputs
             and verification_result is not None
             and verification_result.passed
             and failure_category == FailureCategory.VERIFICATION_FAILED
@@ -345,7 +371,17 @@ class ForgeAgentRunner:
             failure_reason = None
             failure_category = FailureCategory.NONE
 
-        if (
+        regression_failure = first_failed_output(regression_outputs)
+        bugfix_failure = None if regression_failure else first_failed_output(fix_outputs)
+        if regression_failure is not None and failure_category == FailureCategory.NONE:
+            error = "verification_failed"
+            failure_reason = "Regression validation failed"
+            failure_category = FailureCategory.VERIFICATION_FAILED
+        elif bugfix_failure is not None and failure_category == FailureCategory.NONE:
+            error = "verification_failed"
+            failure_reason = "Bug-fix validation failed"
+            failure_category = FailureCategory.VERIFICATION_FAILED
+        elif (
             verification_result is not None
             and not verification_result.passed
             and failure_category == FailureCategory.NONE
@@ -373,7 +409,7 @@ class ForgeAgentRunner:
             scope_violations=scope_violations,
             expected_files_changed=task.expected_files_changed,
             forbidden_files_changed=task.forbidden_files_changed,
-            final_answer=payload.get("final_answer", ""),
+            final_answer=final_answer,
             verification_result=verification_result,
             error=error,
             failure_reason=failure_reason,
@@ -384,6 +420,7 @@ class ForgeAgentRunner:
             validation_attempts=payload.get("validation_attempts", 0),
             input_tokens=payload.get("input_tokens"),
             output_tokens=payload.get("output_tokens"),
+            cost_usd=payload.get("cost_usd"),
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=duration_ms(started_at, ended_at),
@@ -443,6 +480,40 @@ def normalize_command(command: str | Sequence[str] | None) -> list[str] | None:
 
 def command_label(command: Sequence[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
+
+
+def parse_forge_stdout(stdout: str) -> dict[str, Any]:
+    text = stdout.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.rfind("\n{")
+        if start != -1:
+            parsed = json.loads(text[start + 1 :])
+        else:
+            start = text.find("{")
+            if start == -1:
+                raise
+            parsed = json.loads(text[start:])
+    if not isinstance(parsed, dict):
+        raise TypeError("Forge command stdout must contain a JSON object.")
+    return parsed
+
+
+def invalid_trace_failure_reason(exc: Exception, *, stdout: str, stderr: str) -> str:
+    reason = (
+        "Forge command returned invalid trace JSON: "
+        f"{type(exc).__name__}: {exc}"
+    )
+    stdout_preview = text_preview(stdout, 500)
+    stderr_preview = text_preview(stderr, 500)
+    if stdout_preview:
+        reason += f" | stdout preview: {stdout_preview}"
+    if stderr_preview:
+        reason += f" | stderr preview: {stderr_preview}"
+    return reason
 
 
 def mock_metadata(task: EvaluationTask) -> dict[str, Any]:

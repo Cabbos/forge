@@ -18,7 +18,7 @@ flowchart TD
         M[calculate_metrics()<br/>纯函数，无副作用]
         BR[build_report()<br/>回测报告聚合]
         S[EvalStorage<br/>InMemory / SQLite]
-        DB[(SQLite<br/>eval_runs / eval_run_tasks / eval_artifacts)]
+        DB[(SQLite<br/>eval_runs / eval_run_tasks /<br/>eval_artifacts / eval_experiments)]
         FS[artifacts/{run_id}<br/>trace.json / report.json]
     end
 
@@ -38,10 +38,13 @@ flowchart TD
         GM["GET /runs/{id}/metrics"]
         GP["GET /runs/{id}/report"]
         GA["GET /runs/{id}/artifacts"]
+        RC["POST /runs/{id}/cancel"]
+        QS["GET /queue/status"]
     end
 
     subgraph CLI["CLI"]
         BC["python -m app.cli<br/>--cases eval_cases --provider mock"]
+        PTI["python -m app.cli promote-trace"]
         WC["python -m app.worker<br/>--once / polling"]
     end
 
@@ -76,11 +79,14 @@ flowchart TD
     AT --> GT
     MS --> GM
     RP --> GP
+    S --> QS
+    S --> RC
 
     CR --> R
     R --> S
     BC --> R
     BC --> RP
+    PTI --> CL
     WC --> WK
 
     API --> OD
@@ -139,6 +145,99 @@ flowchart TD
     AGG --> PT[per-task pass/fail]
     AT --> RP[BacktestReport<br/>success_rate, verification_pass_rate,<br/>scope_violation_rate,<br/>avg_duration_ms,<br/>avg_model_rounds,<br/>avg_confirm_requests,<br/>failure_categories,<br/>per-task trace summary]
 ```
+
+## Trust Scorecard
+
+Runs track execution and trust as separate decisions:
+
+- `execution_status` records whether tasks ran to completion, failed, timed out, or were cancelled.
+- `trust_status` records whether the harness self-check, dataset fingerprint, scorer calibration, and red-team gates make the score decision-worthy.
+
+Trust gates fail closed. A run with completed task execution can still be untrusted when the harness is untrusted, the dataset has no fingerprint, a model-graded scorer is uncalibrated, or red-team checks fail.
+
+The optimized backtest path evaluates gates in order:
+
+1. Harness trust: golden mock self-checks, workspace cleanliness,
+   future-state leakage scrubbing, and patch replay must pass first.
+2. Dataset trust: cases need stable fingerprints, split/tag metadata, quality
+   diagnostics, and either executable assertions or `metadata.contract_only`.
+3. Execution trust: external agents must satisfy the adapter contract and emit
+   trace, trajectory, cost, stdout/stderr, patch, and scope data.
+4. Scoring trust: code/test scores are primary; uncalibrated LLM-as-judge or
+   semantic scores remain report-only until calibrated against golden labels.
+5. Robustness trust: repeated trials, prompt mutation, red-team probes, cost
+   budgets, and PASS_TO_PASS / FAIL_TO_PASS splits must meet thresholds.
+6. Operational trust: queue status, cancellation, lease visibility, artifacts,
+   report comparison, and production-trace promotion make failed runs
+   debuggable.
+
+## Sandbox And Leakage Firewall
+
+Trusted evals treat the case workspace as part of the scoring surface, not just a
+temporary directory. The sandbox helpers provide four checks:
+
+- `assert_clean_workspace()` rejects unexpected untracked or modified files after
+  a case run, with a filesystem fallback for non-git fixtures.
+- `scrub_future_repo_state()` removes remotes, non-current branches, tags,
+  reflogs, cached origin metadata, and fixture solution notes before an agent can
+  inspect future state.
+- `detect_future_state_lookup()` flags suspicious commands such as
+  `git log --all`, `git reflog`, `git branch -a`, `git remote -v`, and broad
+  `git show` lookups.
+- `replay_patch()` can apply captured `FileDiff` patches back onto a clean
+  workspace to validate that trace diffs are executable.
+
+Golden harness checks run deterministic expected-success cases through the mock
+runner. If the harness cannot prove those cases pass, the surrounding trust gate
+must fail closed with `harness_untrusted`.
+
+## Dataset And Experiment Snapshots
+
+`dataset_fingerprint()` hashes the stable evaluation surface for a loaded task
+set: task ids, prompts, context, fixture path, setup/validation commands,
+expected/forbidden file assertions, tags, and metadata. Task order is ignored,
+so the same dataset produces the same fingerprint even when cases are loaded in
+a different order.
+
+CLI artifacts can include an `experiment` block when `--experiment-name` and
+`--output` are provided. That block records the experiment name, dataset
+fingerprint, provider, and model beside the report and traces. SQLite also
+creates an `eval_experiments` table so durable experiment snapshots can be
+attached to stored runs without changing the existing run response contract.
+
+Repeated trials use the same dataset fingerprint and experiment identity while
+emitting separate traces. Trial summaries expose mixed pass/fail outcomes as
+flake signals instead of hiding nondeterminism inside a single average.
+
+## Scoring, Robustness, And Feedback Loops
+
+`score_trace()` produces layered scores instead of a single opaque pass/fail.
+The report can include functional correctness, scope preservation,
+future-state leakage, prompt injection, secret leakage, unsafe tool use,
+`regression_ok`, and `bugfix_ok`. The split-validation scores are derived from
+the raw command groups emitted for `pass_to_pass_commands` and
+`fail_to_pass_commands`, so regression-preserving checks and bug-fix checks can
+fail independently.
+
+Prompt mutation expands the same source case into deterministic developer-style
+variants such as terse bug reports. Red-team cases are tagged and filtered out
+of normal runs by default; use `--red-team-only` and
+`--max-red-team-failure-rate` when checking adversarial lanes.
+
+Judge calibration is intentionally separate from scoring. A semantic or
+LLM-as-judge scorer can be useful for analysis, but it remains report-only until
+golden-label calibration marks it gateable.
+
+`AgentAdapter` normalizes external-agent traces so mock, Forge, and future
+agents can be compared through the same contract. Adapter metadata includes the
+trajectory path and cost data; SQLite-backed runs persist `trace.json`,
+`report.json`, and per-task `*.trajectory.json` artifacts.
+
+`compare_reports()` is the release-review helper for baseline-to-candidate
+regressions. `promote_failed_traces()` closes the production feedback loop by
+turning failed traces back into eval case directories while preserving prompt,
+context, expected/forbidden file assertions, verification command, and failure
+metadata.
 
 ## Forge + forge-eval-runner 关系
 
@@ -286,6 +385,14 @@ FORGE_EVAL_DB_PATH=./forge_eval.db \
 FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
 uv run python -m app.worker --once
 ```
+
+Queued operation adds two operator surfaces:
+
+- `GET /queue/status` returns counts by run status plus oldest pending/running
+  run IDs, which is the fastest stale-lease or backlog check.
+- `POST /runs/{id}/cancel` marks queued/running work for cancellation; the
+  worker stops cleanly, records the cancellation outcome, and preserves any
+  trace/report/trajectory artifacts already written.
 
 ## 三种运行方式
 

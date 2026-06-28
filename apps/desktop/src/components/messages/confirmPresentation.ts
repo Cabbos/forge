@@ -1,5 +1,5 @@
 import type { ForgeIconTone } from "@/lib/capability-icons";
-import type { WriteBoundaryRiskView } from "@/lib/write-boundary";
+import type { WriteBoundaryRiskView, WriteBoundaryViewModel } from "@/lib/write-boundary";
 
 export const kindLabels: Record<string, string> = {
   file_write: "确认改文件",
@@ -30,6 +30,9 @@ export function deriveConfirmPromptView(content: string, kindValue: unknown) {
 }
 
 export function helperTextForKind(kind: string) {
+  if (kind === "ask_user") {
+    return "这一步只能确认是否继续；如需补充具体偏好，请直接发一条新消息。";
+  }
   if (kind === "dangerous_cmd") {
     return "这一步可能影响项目或本机环境。不确定时可以取消，再让 Forge 解释原因。";
   }
@@ -64,4 +67,12 @@ export function boundaryCommandLabel(operationLabel: string) {
   if (operationLabel === "读取资料") return "资料";
   if (operationLabel === "使用提示词") return "提示词";
   return "命令";
+}
+
+export function boundaryPendingHelper(boundary: WriteBoundaryViewModel) {
+  const canUseTrustMode = boundary.operationLabel === "写入文件" || boundary.operationLabel === "编辑文件";
+  const trustHint = canUseTrustMode
+    ? " 常规当前项目内的编辑可在设置里启用“信任当前项目”。"
+    : "";
+  return `这次确认只对当前这一步生效。${trustHint}`;
 }

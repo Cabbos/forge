@@ -8,6 +8,10 @@ import { useOutputStream } from "@/hooks/useOutputStream";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
 import { getProjectDisplay } from "@/lib/session-display";
 import { useEmptyWorkbenchController } from "./useEmptyWorkbenchController";
+import { RecoveryNoticeBanner } from "./RecoveryNoticeBanner";
+import { HealthAlertBanner } from "./HealthAlertBanner";
+import { NetworkStatusBanner } from "./NetworkStatusBanner";
+import { StatusBar } from "@/components/StatusBar";
 
 const LazySessionView = lazy(() => import("@/components/session/SessionView").then((module) => ({ default: module.SessionView })));
 const LazyCapabilityDrawer = lazy(() => import("./CapabilityDrawer").then((module) => ({ default: module.CapabilityDrawer })));
@@ -68,6 +72,9 @@ export function AppShell() {
         }}
       />
       <main data-testid="main-workbench" className="forge-main-workbench flex flex-col h-full min-w-0 overflow-hidden">
+        <RecoveryNoticeBanner />
+        <HealthAlertBanner />
+        <NetworkStatusBanner />
         <AppTitlebar
           session={activeSession}
           project={project}
@@ -85,6 +92,7 @@ export function AppShell() {
             project={project}
           />
         )}
+        <StatusBar />
       </main>
       {activeSidebarPanel !== null && (
         <Suspense fallback={null}>

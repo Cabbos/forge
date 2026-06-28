@@ -139,11 +139,11 @@ fn slash_command_intent(command: &str) -> Option<SlashCommandIntent> {
     match command.trim() {
         "/code-review" => Some(SlashCommandIntent {
             label: "检查风险",
-            instruction: "检查风险、回归点和缺失验证；优先给出高信号发现，除非用户明确要求，否则不要直接改代码。",
+            instruction: "检查风险：Lead with findings. Prioritize real bugs, regressions, security or data-loss risk, and missing verification. Use P0 only for critical blockers. Use P1 for issues that block the user's stated goal or make the result unsafe to ship. Use P2 for product gaps, polish, hardening, or follow-up work. Do not offer to fix unless the user asks.",
         }),
         "/fix" => Some(SlashCommandIntent {
             label: "排查并修复",
-            instruction: "排查并修复用户描述的问题；先定位根因，再做小范围改动，并在可行时运行相关验证。",
+            instruction: "排查并修复用户描述的问题；先定位根因，再做小范围改动，并在可行时运行相关验证。用户已明确要求修复时，定位后直接执行最小修复，不要再询问是否继续执行。遇到小型明显 UI 决策时，采用最常规位置继续推进；只有多个选择会明显改变结果时才询问用户。",
         }),
         "/explain" => Some(SlashCommandIntent {
             label: "解释清楚",

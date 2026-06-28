@@ -1,9 +1,11 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from app.cases import CaseLoadError, load_cases
+from app.models import AgentTrace, FailureCategory, VerificationResult
 
 
 def write_case(cases_dir: Path, case_id: str, *, title: str | None = None) -> Path:
@@ -28,6 +30,62 @@ def write_case(cases_dir: Path, case_id: str, *, title: str | None = None) -> Pa
         encoding="utf-8",
     )
     return case_dir
+
+
+def make_trace(
+    task_id: str,
+    *,
+    error: str | None = None,
+    failure_reason: str | None = None,
+) -> AgentTrace:
+    now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=UTC)
+    failed = error is not None or failure_reason is not None
+    return AgentTrace(
+        task_id=task_id,
+        user_prompt=f"Fix production issue {task_id}.",
+        model="local-forge",
+        provider="forge",
+        context_files=["src/app.py"],
+        changed_files=["src/app.py"],
+        expected_files_changed=["src/app.py"],
+        forbidden_files_changed=[".env"],
+        final_answer="failed" if failed else "done",
+        verification_result=VerificationResult(
+            command="pytest",
+            passed=not failed,
+            stdout="" if failed else "passed",
+            stderr="failed" if failed else "",
+            exit_code=1 if failed else 0,
+            duration_ms=120,
+        ),
+        error=error,
+        failure_reason=failure_reason,
+        failure_category=FailureCategory.VERIFICATION_FAILED if failed else FailureCategory.NONE,
+        started_at=now,
+        ended_at=now,
+        duration_ms=120,
+    )
+
+
+def test_failed_trace_can_be_promoted_to_eval_case() -> None:
+    from app.trace_import import case_from_trace
+
+    trace = make_trace(
+        task_id="real-user-failure",
+        error="verification_failed",
+        failure_reason="test failed",
+    )
+    task = case_from_trace(trace)
+
+    assert task.id == "real-user-failure"
+    assert task.title == "Promoted trace: real-user-failure"
+    assert task.prompt == "Fix production issue real-user-failure."
+    assert task.expected_success is False
+    assert task.expected_files_changed == ["src/app.py"]
+    assert task.forbidden_files_changed == [".env"]
+    assert task.verification_command == "pytest"
+    assert task.metadata["source"] == "trace"
+    assert task.metadata["failure_reason"] == "test failed"
 
 
 def test_load_cases_reads_case_directories_and_resolves_fixture_paths(tmp_path: Path) -> None:
@@ -135,3 +193,147 @@ def test_load_cases_includes_agent_loop_stop_reason_backtests() -> None:
         assert mock["failure_category"] == "budget_exhausted"
         assert mock["error"] == stop_reason
         assert stop_reason in raw_stop_reasons
+
+
+def test_case_quality_reports_missing_verification_for_executable_case(tmp_path: Path) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "needs-verification",
+                "title": "Needs verification",
+                "prompt": "Change src/foo.py",
+                "context_files": ["src/foo.py"],
+                "expected_files_changed": ["src/foo.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [issue.model_dump() for issue in issues] == [
+        {
+            "task_id": "needs-verification",
+            "severity": "warning",
+            "code": "missing_verification",
+            "message": "Executable eval case has no verification_command or validation_commands.",
+        }
+    ]
+
+
+def test_case_quality_reports_missing_expected_files_for_executable_case(
+    tmp_path: Path,
+) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "missing-expected-files",
+                "title": "Missing expected files",
+                "prompt": "Change src/foo.py",
+                "verification_command": "pytest",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [issue.model_dump() for issue in issues] == [
+        {
+            "task_id": "missing-expected-files",
+            "severity": "warning",
+            "code": "missing_expected_files",
+            "message": "Executable eval case has no expected_files_changed assertions.",
+        }
+    ]
+
+
+def test_case_quality_reports_missing_fixture_path(tmp_path: Path) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "missing-fixture",
+                "title": "Missing fixture",
+                "prompt": "Change src/foo.py",
+                "fixture_path": "does-not-exist",
+                "verification_command": "pytest",
+                "expected_files_changed": ["src/foo.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [issue.model_dump() for issue in issues] == [
+        {
+            "task_id": "missing-fixture",
+            "severity": "error",
+            "code": "missing_fixture_path",
+            "message": "Eval case fixture_path does not exist.",
+        }
+    ]
+
+
+def test_case_quality_allows_contract_only_cases_without_executable_assertions(
+    tmp_path: Path,
+) -> None:
+    from app.cases import validate_case_quality
+
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "contract-only",
+                "title": "Contract only",
+                "prompt": "Check contract shape.",
+                "metadata": {"contract_only": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert validate_case_quality(load_cases(case)) == []
+
+
+def test_prompt_mutation_creates_stable_user_style_variant() -> None:
+    from app.models import EvaluationTask
+    from app.prompt_mutation import mutate_prompt
+
+    task = EvaluationTask(
+        id="a",
+        title="A",
+        prompt="Implement normalizeInput.",
+        context_files=["src/normalize.ts"],
+    )
+
+    variant = mutate_prompt(task, style="terse-bug-report")
+
+    assert variant.id == "a__terse-bug-report"
+    assert "normalizeInput" in variant.prompt
+    assert variant.context_files == ["src/normalize.ts"]
+    assert variant.metadata["base_task_id"] == "a"
+    assert variant.metadata["mutation_style"] == "terse-bug-report"
+
+
+def test_red_team_case_marks_secret_leak_probe() -> None:
+    from app.models import EvaluationTask
+    from app.red_team import secret_leak_probe
+
+    task = EvaluationTask(id="base", title="Base", prompt="Summarize the repo.")
+    probe = secret_leak_probe(task)
+
+    assert probe.id == "base__red-team-secret-leak"
+    assert "red_team" in probe.tags
+    assert "secret_leak" in probe.tags
+    assert probe.metadata["base_task_id"] == "base"
+    assert probe.metadata["red_team_category"] == "secret_leak"

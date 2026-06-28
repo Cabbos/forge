@@ -6,12 +6,8 @@ use crate::agent::event_sink::EventEmitter;
 use crate::agent::session::AgentSession;
 use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::time::now_ms;
-use crate::agent::tool_results::{
-    build_tool_result_message_for_model, is_read_only_tool,
-};
-use crate::agent::turn_state::{
-    completed_tool_trace, is_errorish_tool_result, running_tool_trace,
-};
+use crate::agent::tool_results::{build_tool_result_message_for_model, is_read_only_tool};
+use crate::agent::turn_state::{completed_tool_trace, is_errorish_tool_result, running_tool_trace};
 
 impl AgentSession {
     /// Execute a batch of tool calls: sub-agents, read tools in parallel, write tools sequentially.
@@ -54,31 +50,84 @@ impl AgentSession {
                     }
                     _ => crate::agent::a2a::types::AgentExecutionMode::ReadOnly,
                 };
-                let a2a_task_id = {
+                let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
+                let a2a_task_id_result = {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
-                    match execution_mode {
-                        crate::agent::a2a::types::AgentExecutionMode::PatchProposal => {
-                            crate::agent::a2a::supervisor::assign_patch_proposal_task(
+                    match delegate_parent_task_id_from_input(&tc.input, &bus, &self.id) {
+                        Ok(parent_task_id) => match (&execution_mode, parent_task_id.as_ref()) {
+                            (
+                                crate::agent::a2a::types::AgentExecutionMode::PatchProposal,
+                                Some(parent_task_id),
+                            ) => crate::agent::a2a::supervisor::assign_patch_proposal_child_task(
                                 &mut bus,
+                                parent_task_id,
                                 "Delegated patch proposal task",
                                 &task,
                                 started_at_ms,
-                            )
-                        }
-                        crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker => {
-                            crate::agent::a2a::supervisor::assign_worktree_worker_task(
+                            ),
+                            (
+                                crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker,
+                                Some(parent_task_id),
+                            ) => crate::agent::a2a::supervisor::assign_worktree_worker_child_task(
+                                &mut bus,
+                                parent_task_id,
+                                "Delegated worktree worker task",
+                                &task,
+                                started_at_ms,
+                            ),
+                            (_, Some(parent_task_id)) => {
+                                crate::agent::a2a::supervisor::assign_delegate_child_task(
+                                    &mut bus,
+                                    parent_task_id,
+                                    "Delegated research task",
+                                    &task,
+                                    started_at_ms,
+                                )
+                            }
+                            (crate::agent::a2a::types::AgentExecutionMode::PatchProposal, None) => {
+                                Ok(crate::agent::a2a::supervisor::assign_patch_proposal_task(
+                                    &mut bus,
+                                    "Delegated patch proposal task",
+                                    &task,
+                                    started_at_ms,
+                                ))
+                            }
+                            (
+                                crate::agent::a2a::types::AgentExecutionMode::WorktreeWorker,
+                                None,
+                            ) => Ok(crate::agent::a2a::supervisor::assign_worktree_worker_task(
                                 &mut bus,
                                 "Delegated worktree worker task",
                                 &task,
                                 started_at_ms,
-                            )
-                        }
-                        _ => crate::agent::a2a::supervisor::assign_delegate_task(
-                            &mut bus,
-                            "Delegated research task",
-                            &task,
-                            started_at_ms,
-                        ),
+                            )),
+                            _ => Ok(crate::agent::a2a::supervisor::assign_delegate_task(
+                                &mut bus,
+                                "Delegated research task",
+                                &task,
+                                started_at_ms,
+                            )),
+                        },
+                        Err(message) => Err(message),
+                    }
+                };
+                let a2a_task_id = match a2a_task_id_result {
+                    Ok(task_id) => task_id,
+                    Err(message) => {
+                        emitter.emit(self.tool_call_result_event(&tc.id, &message, true, 0));
+                        self.record_latest_tool_emitter(
+                            completed_tool_trace(
+                                tc.id.clone(),
+                                tc.name.clone(),
+                                &tc.input,
+                                &message,
+                                started_at_ms,
+                                now_ms(),
+                            ),
+                            emitter,
+                        );
+                        sub_results.push((idx, message));
+                        continue;
                     }
                 };
                 self.emit_a2a_projection(emitter);
@@ -87,18 +136,16 @@ impl AgentSession {
                 let cancel = lock_unpoisoned(&self.cancel)
                     .clone()
                     .unwrap_or_else(|| Arc::new(Notify::new()));
-                let idx = tool_calls.iter().position(|t| t.id == tc.id).unwrap_or(0);
                 let wd = self.harness.working_dir.clone();
-                let sub_emitter: Arc<dyn EventEmitter> =
-                    if let Some(app) = app_handle {
-                        Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
-                            app.clone(),
-                        ))
-                    } else if let Some(shared) = tool_emitter_override.clone() {
-                        shared
-                    } else {
-                        Arc::new(crate::agent::event_sink::NoopEventEmitter)
-                    };
+                let sub_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
+                    Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                        app.clone(),
+                    ))
+                } else if let Some(shared) = tool_emitter_override.clone() {
+                    shared
+                } else {
+                    Arc::new(crate::agent::event_sink::NoopEventEmitter)
+                };
                 {
                     let mut bus = lock_unpoisoned(&self.a2a_bus);
                     bus.start_task(&a2a_task_id, now_ms());
@@ -107,6 +154,11 @@ impl AgentSession {
                 self.emit_a2a_projection(emitter);
                 let execution_mode_clone = execution_mode.clone();
                 let worktree_id = a2a_task_id.as_str().to_string();
+                let runtime_context = Some(crate::agent::sub::SubagentRuntimeContext {
+                    session_id: self.id.clone(),
+                    task_id: a2a_task_id.as_str().to_string(),
+                    loop_task_id: None,
+                });
                 handles.push((
                     idx,
                     tc.id.clone(),
@@ -125,6 +177,7 @@ impl AgentSession {
                                     sub_emitter,
                                     cancel,
                                     &wd,
+                                    runtime_context,
                                 )
                                 .await
                             }
@@ -137,6 +190,7 @@ impl AgentSession {
                                     sub_emitter,
                                     cancel,
                                     &wd,
+                                    runtime_context,
                                 )
                                 .await
                             }
@@ -148,6 +202,7 @@ impl AgentSession {
                                     sub_emitter,
                                     cancel,
                                     &wd,
+                                    runtime_context,
                                 )
                                 .await
                             }
@@ -237,8 +292,8 @@ impl AgentSession {
                         sub_results.push((idx, api_text));
                     }
                     Err(err) => {
-                        let message = crate::agent::session_guards::sub_agent_join_error_message(
-                            &err);
+                        let message =
+                            crate::agent::session_guards::sub_agent_join_error_message(&err);
                         {
                             let mut bus = lock_unpoisoned(&self.a2a_bus);
                             crate::agent::a2a::supervisor::record_child_failure(
@@ -281,16 +336,15 @@ impl AgentSession {
                 let sid = self.id.clone();
                 let name = tc.name.clone();
                 let input = tc.input.clone();
-                let tool_emitter: Arc<dyn EventEmitter> =
-                    if let Some(app) = app_handle {
-                        Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
-                            app.clone(),
-                        ))
-                    } else if let Some(shared) = tool_emitter_override.clone() {
-                        shared
-                    } else {
-                        Arc::new(crate::agent::event_sink::NoopEventEmitter)
-                    };
+                let tool_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
+                    Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                        app.clone(),
+                    ))
+                } else if let Some(shared) = tool_emitter_override.clone() {
+                    shared
+                } else {
+                    Arc::new(crate::agent::event_sink::NoopEventEmitter)
+                };
                 let id = tc.id.clone();
                 let started_at_ms = now_ms();
                 let cancel_for_tool = cancel.clone();
@@ -337,16 +391,15 @@ impl AgentSession {
                 running_tool_trace(tc.id.clone(), tc.name.clone(), &tc.input, started_at_ms),
                 emitter,
             );
-            let tool_emitter: Arc<dyn EventEmitter> =
-                if let Some(app) = app_handle {
-                    Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
-                        app.clone(),
-                    ))
-                } else if let Some(shared) = tool_emitter_override.clone() {
-                    shared
-                } else {
-                    Arc::new(crate::agent::event_sink::NoopEventEmitter)
-                };
+            let tool_emitter: Arc<dyn EventEmitter> = if let Some(app) = app_handle {
+                Arc::new(crate::agent::event_sink::TauriEventEmitter::new(
+                    app.clone(),
+                ))
+            } else if let Some(shared) = tool_emitter_override.clone() {
+                shared
+            } else {
+                Arc::new(crate::agent::event_sink::NoopEventEmitter)
+            };
             let result = self
                 .harness
                 .execute_tool_with_emitter(
@@ -456,6 +509,51 @@ impl AgentSession {
         }
         self.emit_with_emitter(emitter);
     }
+}
+
+pub(crate) fn delegate_parent_task_id_from_input(
+    input: &serde_json::Value,
+    bus: &crate::agent::a2a::bus::AgentA2ABus,
+    current_session_id: &str,
+) -> Result<Option<crate::agent::a2a::types::AgentTaskId>, String> {
+    if let Some(parent_task_id) = input
+        .get("parent_task_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let parent_task_id = crate::agent::a2a::types::AgentTaskId::new(parent_task_id);
+        if bus.task(&parent_task_id).is_some() {
+            return Ok(Some(parent_task_id));
+        }
+        return Err(format!(
+            "parent_task_id '{}' does not match an existing A2A task",
+            parent_task_id.as_str()
+        ));
+    }
+
+    if delegate_is_root_planning_task(input) {
+        return Ok(None);
+    }
+
+    let Some(context) = bus.parent_session_context() else {
+        return Ok(None);
+    };
+    if context.parent_session_id != current_session_id {
+        return Ok(None);
+    }
+    if bus.task(&context.active_parent_task_id).is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some(context.active_parent_task_id.clone()))
+}
+
+fn delegate_is_root_planning_task(input: &serde_json::Value) -> bool {
+    input
+        .get("root_planning_task")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 pub(crate) fn tool_batch_signature(tool_calls: &[crate::adapters::base::ToolCall]) -> String {

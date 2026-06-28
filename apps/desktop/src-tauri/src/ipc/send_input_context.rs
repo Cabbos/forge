@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::agent::capability_context::{
@@ -28,7 +29,10 @@ use crate::ipc::send_input_continuity::{
 use crate::ipc::session_lifecycle::{
     save_session_snapshot_with_workflow, upgrade_missing_key_session_if_possible,
 };
-use crate::memory::{format_selected_memory_context, SelectedContextMemory};
+use crate::memory::facts::{MemoryFact, MemoryFactListFilter};
+use crate::memory::{
+    format_selected_memory_context, MemoryCategory, MemoryScope, SelectedContextMemory,
+};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 use crate::state::AppState;
@@ -44,6 +48,8 @@ pub(crate) struct SendInputMemorySelection {
     pub(crate) selected: Vec<SelectedContextMemory>,
     pub(crate) context: Option<String>,
 }
+
+const MEMORY_FACT_CONTEXT_LIMIT: usize = 6;
 
 pub(crate) async fn resolve_send_input_session(
     app_handle: &tauri::AppHandle,
@@ -83,7 +89,8 @@ pub(crate) async fn select_send_input_memory_context(
     text: &str,
     project_path: &str,
 ) -> SendInputMemorySelection {
-    let selected = state.wiki_memory.select(text, Some(project_path), 8).await;
+    let mut selected = state.wiki_memory.select(text, Some(project_path), 8).await;
+    selected.extend(select_send_input_memory_facts(state, text));
     let context = format_selected_memory_context(&selected);
     SendInputMemorySelection { selected, context }
 }
@@ -557,6 +564,114 @@ pub(crate) async fn run_reserved_send_input_turn(
     )
     .await;
     result
+}
+
+fn select_send_input_memory_facts(state: &Arc<AppState>, text: &str) -> Vec<SelectedContextMemory> {
+    let active_profile_id = state.profiles.active_profile_id();
+    let mut facts = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(profile_id) = active_profile_id.as_deref() {
+        for fact in state.memory_facts.list_with_filter(MemoryFactListFilter {
+            query: Some(text),
+            profile_id: Some(profile_id),
+        }) {
+            if seen.insert(fact.id.clone()) {
+                facts.push(fact);
+            }
+        }
+    }
+
+    for fact in state
+        .memory_facts
+        .list_with_filter(MemoryFactListFilter {
+            query: Some(text),
+            profile_id: None,
+        })
+        .into_iter()
+        .filter(|fact| fact.profile_id.is_none())
+    {
+        if seen.insert(fact.id.clone()) {
+            facts.push(fact);
+        }
+    }
+
+    facts.sort_by(|a, b| {
+        b.updated_at_ms
+            .cmp(&a.updated_at_ms)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    facts
+        .into_iter()
+        .take(MEMORY_FACT_CONTEXT_LIMIT)
+        .map(memory_fact_to_selected_context)
+        .collect()
+}
+
+fn memory_fact_to_selected_context(fact: MemoryFact) -> SelectedContextMemory {
+    let scope_reason = if fact.profile_id.is_some() {
+        "来自当前资料档案的手动记忆"
+    } else {
+        "来自全局手动记忆"
+    };
+    let title = memory_fact_title(&fact);
+    let category = memory_fact_category(&fact);
+    SelectedContextMemory {
+        memory_id: format!("fact:{}", fact.id),
+        title,
+        body: fact.text,
+        category,
+        scope: MemoryScope::UserProfile,
+        score: 1.0,
+        reason: scope_reason.to_string(),
+        injected: true,
+    }
+}
+
+fn memory_fact_title(fact: &MemoryFact) -> String {
+    if !fact.tags.is_empty() {
+        return format!("手动记忆: {}", fact.tags.join(", "));
+    }
+    let summary = fact.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = summary.chars();
+    let title = chars.by_ref().take(48).collect::<String>();
+    if chars.next().is_some() {
+        format!("{title}...")
+    } else if title.is_empty() {
+        "手动记忆".to_string()
+    } else {
+        title
+    }
+}
+
+fn memory_fact_category(fact: &MemoryFact) -> MemoryCategory {
+    if fact
+        .tags
+        .iter()
+        .any(|tag| tag_matches(tag, &["preference", "pref", "偏好"]))
+    {
+        return MemoryCategory::Preference;
+    }
+    if fact
+        .tags
+        .iter()
+        .any(|tag| tag_matches(tag, &["decision", "决定"]))
+    {
+        return MemoryCategory::Decision;
+    }
+    if fact
+        .tags
+        .iter()
+        .any(|tag| tag_matches(tag, &["task", "todo", "progress", "任务", "进度"]))
+    {
+        return MemoryCategory::TaskState;
+    }
+    MemoryCategory::ProjectFact
+}
+
+fn tag_matches(tag: &str, needles: &[&str]) -> bool {
+    let tag = tag.trim().to_lowercase();
+    needles.iter().any(|needle| tag.contains(needle))
 }
 
 #[cfg(test)]

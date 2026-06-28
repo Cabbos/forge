@@ -10,8 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
 import httpx
+import pytest
 
 
 def write_tasks(path: Path) -> None:
@@ -52,6 +52,15 @@ def _wait_for_url(url: str, timeout: float = 10.0) -> None:
             pass
         time.sleep(0.1)
     raise TimeoutError(f"Service at {url} did not become ready within {timeout}s")
+
+
+def test_golden_harness_check_passes_for_expected_success_cases(tmp_path: Path) -> None:
+    from app.harness_checks import run_golden_harness_check
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+
+    assert run_golden_harness_check(tasks_path) is True
 
 
 @pytest.mark.slow
@@ -150,7 +159,7 @@ class TestQueuedServiceSmoke:
             artifacts_resp = httpx.get(f"{base_url}/runs/{run_id}/artifacts", timeout=5)
             assert artifacts_resp.status_code == 200
             artifacts = artifacts_resp.json()
-            assert {a["kind"] for a in artifacts} == {"report", "trace"}
+            assert {a["kind"] for a in artifacts} == {"report", "trace", "trajectory"}
             for artifact in artifacts:
                 assert Path(artifact["path"]).exists()
 
@@ -249,7 +258,11 @@ class TestQueuedServiceSmoke:
                 run_resp = httpx.get(f"{base_url}/runs/{run_id}", timeout=5)
                 assert run_resp.json()["status"] == "completed"
                 artifacts_resp = httpx.get(f"{base_url}/runs/{run_id}/artifacts", timeout=5)
-                assert {a["kind"] for a in artifacts_resp.json()} == {"report", "trace"}
+                assert {a["kind"] for a in artifacts_resp.json()} == {
+                    "report",
+                    "trace",
+                    "trajectory",
+                }
         finally:
             server.terminate()
             try:

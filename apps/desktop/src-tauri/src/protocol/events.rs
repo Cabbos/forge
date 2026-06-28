@@ -2,6 +2,7 @@ use crate::agent::a2a::projection::AgentA2AProjection;
 use crate::agent::turn_state::AgentTurnProjection;
 use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
 use crate::harness::write_boundary::WriteBoundary;
+use crate::loop_runtime::LoopTaskRecord;
 use crate::memory::{SelectedContextMemory, WikiMemory};
 use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
@@ -26,8 +27,68 @@ pub struct DeliverySummary {
     pub record_target_pages: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderUsageReason {
+    #[default]
+    ProviderReported,
+    ProviderOmitted,
+    PricingUnknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SubagentRuntimePayload {
+    Started {
+        role: String,
+    },
+    Status {
+        status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    FileIo {
+        path: String,
+        operation: String,
+    },
+    UsageRecorded {
+        #[serde(default)]
+        provider_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default)]
+        reason: ProviderUsageReason,
+        #[serde(default)]
+        input_tokens: Option<u64>,
+        #[serde(default)]
+        output_tokens: Option<u64>,
+        #[serde(default)]
+        cache_read_tokens: Option<u64>,
+        #[serde(default)]
+        cache_creation_tokens: Option<u64>,
+        #[serde(default)]
+        reasoning_tokens: Option<u64>,
+        #[serde(default)]
+        estimated_cost_micros: Option<u64>,
+        #[serde(default)]
+        pricing_source: Option<String>,
+    },
+    Ended {
+        status: String,
+    },
+    Failed {
+        reason: String,
+    },
+    Interrupted {
+        reason: String,
+    },
+}
+
 /// Streaming events emitted from Rust backend to frontend.
 /// Mirrors the TypeScript protocol in src/lib/protocol.ts
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event_type")]
 pub enum StreamEvent {
@@ -106,6 +167,15 @@ pub enum StreamEvent {
         old_content: String,
         new_content: String,
     },
+    #[serde(rename = "file_io")]
+    FileIo {
+        session_id: String,
+        block_id: String,
+        path: String,
+        operation: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
 
     // ── Shell Commands ──
     #[serde(rename = "shell_start")]
@@ -136,6 +206,29 @@ pub enum StreamEvent {
         kind: String, // "dangerous_cmd" | "file_delete" | "api_call"
         #[serde(skip_serializing_if = "Option::is_none")]
         boundary: Option<WriteBoundary>,
+        /// When true, this confirm is a replayed/interrupted descriptor from a
+        /// restored session. The frontend should render it as non-interactive
+        /// (same visual path as `closeInterruptedConfirmBlocks` with reason
+        /// "session_restored").
+        #[serde(default, skip_serializing_if = "is_false")]
+        replayed_interrupted: bool,
+    },
+    #[serde(rename = "confirm_response")]
+    ConfirmResponse {
+        session_id: String,
+        block_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        question: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        boundary: Option<WriteBoundary>,
+        approved: Option<bool>,
+        responded_at_ms: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        replayed: bool,
     },
 
     // ── Context Management ──
@@ -227,6 +320,32 @@ pub enum StreamEvent {
         state: AgentA2AProjection,
     },
 
+    // ── Subagent / Loop Runtime Projection ──
+    #[serde(rename = "subagent_runtime_event")]
+    SubagentRuntimeEvent {
+        session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        loop_task_id: Option<String>,
+        task_id: String,
+        event: SubagentRuntimePayload,
+    },
+    #[serde(rename = "loop_runtime_updated")]
+    LoopRuntimeUpdated {
+        session_id: String,
+        loop_task_id: String,
+        task: LoopTaskRecord,
+    },
+
+    // ── Ecosystem / Tooling Projection ──
+    #[serde(rename = "ecosystem_changed")]
+    EcosystemChanged {
+        session_id: String,
+        item_id: String,
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+    },
+
     // ── Delivery Summary ──
     #[serde(rename = "delivery_summary")]
     DeliverySummary {
@@ -257,6 +376,11 @@ pub enum StreamEvent {
         message: String,
         code: String,
     },
+    /// Legacy compatibility usage event.
+    ///
+    /// New UI and state projections should prefer `ProviderUsage`, because it
+    /// preserves provider, model, unknown/cache/reasoning token fields, pricing
+    /// source, and the reason usage or pricing was omitted.
     #[serde(rename = "usage")]
     Usage {
         session_id: String,
@@ -264,6 +388,78 @@ pub enum StreamEvent {
         output_tokens: u32,
         estimated_cost_usd: f64,
     },
+    /// Canonical provider usage fact for one model call.
+    #[serde(rename = "provider_usage")]
+    ProviderUsage {
+        session_id: String,
+        #[serde(default = "new_provider_usage_block_id")]
+        block_id: String,
+        #[serde(default)]
+        provider_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default)]
+        input_tokens: Option<u64>,
+        #[serde(default)]
+        output_tokens: Option<u64>,
+        #[serde(default)]
+        cache_read_tokens: Option<u64>,
+        #[serde(default)]
+        cache_creation_tokens: Option<u64>,
+        #[serde(default)]
+        reasoning_tokens: Option<u64>,
+        #[serde(default)]
+        estimated_cost_micros: Option<u64>,
+        #[serde(default)]
+        pricing_source: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default)]
+        reason: ProviderUsageReason,
+    },
+
+    // ── Recovery Notice ──
+    #[serde(rename = "recovery_notice")]
+    RecoveryNotice {
+        session_id: String,
+        notice_id: String,
+        title: String,
+        message: String,
+        reason: String,
+        recoverable: bool,
+    },
+
+    // ── Diagnostics / Health ──
+    /// Emitted when a diagnostics report is refreshed (e.g. after the check
+    /// runner completes). Carries a summary suitable for a status bar badge and
+    /// an optional serialized report for a diagnostics panel.
+    #[serde(rename = "diagnostics_update")]
+    DiagnosticsUpdate {
+        session_id: String,
+        ok: bool,
+        pass_count: u32,
+        warn_count: u32,
+        fail_count: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        report_json: Option<String>,
+    },
+    /// Emitted when a health threshold is crossed (e.g. session hung, gateway
+    /// down, disk space low). Carries an alert level, message, and optional
+    /// remediation hint.
+    #[serde(rename = "health_alert")]
+    HealthAlert {
+        session_id: String,
+        alert_id: String,
+        level: String, // "info" | "warn" | "critical"
+        title: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        remediation: Option<String>,
+    },
+}
+
+fn new_provider_usage_block_id() -> String {
+    uuid::Uuid::now_v7().to_string()
 }
 
 impl StreamEvent {
@@ -282,10 +478,12 @@ impl StreamEvent {
             | ToolCallResult { session_id, .. }
             | ToolCallEnd { session_id, .. }
             | DiffView { session_id, .. }
+            | FileIo { session_id, .. }
             | ShellStart { session_id, .. }
             | ShellOutput { session_id, .. }
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
+            | ConfirmResponse { session_id, .. }
             | ContextCompactStart { session_id, .. }
             | ContextCompacted { session_id, .. }
             | ContextCompactSkipped { session_id, .. }
@@ -299,12 +497,19 @@ impl StreamEvent {
             | WorkflowUpdated { session_id, .. }
             | AgentTurnUpdated { session_id, .. }
             | AgentA2AUpdated { session_id, .. }
+            | SubagentRuntimeEvent { session_id, .. }
+            | LoopRuntimeUpdated { session_id, .. }
+            | EcosystemChanged { session_id, .. }
             | DeliverySummary { session_id, .. }
             | SessionStarted { session_id, .. }
             | SessionStatus { session_id, .. }
             | SessionStopped { session_id, .. }
             | Error { session_id, .. }
-            | Usage { session_id, .. } => session_id,
+            | Usage { session_id, .. }
+            | ProviderUsage { session_id, .. }
+            | RecoveryNotice { session_id, .. }
+            | DiagnosticsUpdate { session_id, .. }
+            | HealthAlert { session_id, .. } => session_id,
         }
     }
 
@@ -324,10 +529,12 @@ impl StreamEvent {
             ToolCallResult { .. } => "tool_call_result",
             ToolCallEnd { .. } => "tool_call_end",
             DiffView { .. } => "diff_view",
+            FileIo { .. } => "file_io",
             ShellStart { .. } => "shell_start",
             ShellOutput { .. } => "shell_output",
             ShellEnd { .. } => "shell_end",
             ConfirmAsk { .. } => "confirm_ask",
+            ConfirmResponse { .. } => "confirm_response",
             ContextCompactStart { .. } => "context_compact_start",
             ContextCompacted { .. } => "context_compacted",
             ContextCompactSkipped { .. } => "context_compact_skipped",
@@ -341,19 +548,163 @@ impl StreamEvent {
             WorkflowUpdated { .. } => "workflow_updated",
             AgentTurnUpdated { .. } => "agent_turn_updated",
             AgentA2AUpdated { .. } => "agent_a2a_updated",
+            SubagentRuntimeEvent { .. } => "subagent_runtime_event",
+            LoopRuntimeUpdated { .. } => "loop_runtime_updated",
+            EcosystemChanged { .. } => "ecosystem_changed",
             DeliverySummary { .. } => "delivery_summary",
             SessionStarted { .. } => "session_started",
             SessionStatus { .. } => "session_status",
             SessionStopped { .. } => "session_stopped",
             Error { .. } => "error",
             Usage { .. } => "usage",
+            ProviderUsage { .. } => "provider_usage",
+            RecoveryNotice { .. } => "recovery_notice",
+            DiagnosticsUpdate { .. } => "diagnostics_update",
+            HealthAlert { .. } => "health_alert",
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagent_runtime_event_serializes_snake_case() {
+        let event = StreamEvent::SubagentRuntimeEvent {
+            session_id: "s1".to_string(),
+            loop_task_id: Some("loop-1".to_string()),
+            task_id: "t1".to_string(),
+            event: SubagentRuntimePayload::Started {
+                role: "implementer".to_string(),
+            },
+        };
+
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "subagent_runtime_event");
+        assert_eq!(json["event"]["type"], "started");
+    }
+
+    #[test]
+    fn file_io_event_serializes_executor_source() {
+        let event = StreamEvent::FileIo {
+            session_id: "s1".to_string(),
+            block_id: "b1".to_string(),
+            path: "src/main.rs".to_string(),
+            operation: "read".to_string(),
+            source: Some("executor".to_string()),
+        };
+
+        assert_eq!(event.event_type(), "file_io");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "file_io");
+        assert_eq!(json["session_id"], "s1");
+        assert_eq!(json["block_id"], "b1");
+        assert_eq!(json["path"], "src/main.rs");
+        assert_eq!(json["operation"], "read");
+        assert_eq!(json["source"], "executor");
+    }
+
+    #[test]
+    fn confirm_response_event_serializes_replayable_decision() {
+        let event = StreamEvent::ConfirmResponse {
+            session_id: "s1".to_string(),
+            block_id: "confirm-1".to_string(),
+            question: Some("Allow write?".to_string()),
+            kind: Some("file_write".to_string()),
+            boundary: None,
+            approved: Some(false),
+            responded_at_ms: 1234,
+            reason: Some("user_response".to_string()),
+            replayed: false,
+        };
+
+        assert_eq!(event.event_type(), "confirm_response");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "confirm_response");
+        assert_eq!(json["session_id"], "s1");
+        assert_eq!(json["block_id"], "confirm-1");
+        assert_eq!(json["question"], "Allow write?");
+        assert_eq!(json["kind"], "file_write");
+        assert_eq!(json["approved"], false);
+        assert_eq!(json["responded_at_ms"], 1234);
+        assert_eq!(json["reason"], "user_response");
+        assert!(json.get("replayed").is_none());
+    }
+
+    #[test]
+    fn provider_usage_event_serializes_unknown_cost_as_null_with_reason() {
+        let event = StreamEvent::ProviderUsage {
+            session_id: "s1".to_string(),
+            block_id: "usage-1".to_string(),
+            provider_id: Some("anthropic".to_string()),
+            model: Some("mystery-model".to_string()),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_micros: None,
+            pricing_source: None,
+            source: Some("anthropic".to_string()),
+            reason: ProviderUsageReason::PricingUnknown,
+        };
+
+        assert_eq!(event.event_type(), "provider_usage");
+        let json = serde_json::to_value(event).unwrap();
+        assert_eq!(json["event_type"], "provider_usage");
+        assert_eq!(json["block_id"], "usage-1");
+        assert_eq!(json["model"], "mystery-model");
+        assert_eq!(json["provider_id"], "anthropic");
+        assert_eq!(json["input_tokens"], 100);
+        assert_eq!(json["output_tokens"], 50);
+        assert_eq!(json["cache_read_tokens"], serde_json::Value::Null);
+        assert_eq!(json["cache_creation_tokens"], serde_json::Value::Null);
+        assert_eq!(json["reasoning_tokens"], serde_json::Value::Null);
+        assert_eq!(json["estimated_cost_micros"], serde_json::Value::Null);
+        assert_eq!(json["pricing_source"], serde_json::Value::Null);
+        assert_eq!(json["source"], "anthropic");
+        assert_eq!(json["reason"], "pricing_unknown");
+    }
+
+    #[test]
+    fn provider_usage_event_deserializes_legacy_payload_without_block_id() {
+        let event: StreamEvent = serde_json::from_value(serde_json::json!({
+            "event_type": "provider_usage",
+            "session_id": "s1",
+            "model": "legacy-model",
+            "input_tokens": null,
+            "output_tokens": null,
+            "estimated_cost_micros": null,
+            "source": "anthropic",
+            "reason": "provider_omitted"
+        }))
+        .unwrap();
+
+        match event {
+            StreamEvent::ProviderUsage {
+                block_id,
+                provider_id,
+                cache_read_tokens,
+                cache_creation_tokens,
+                reasoning_tokens,
+                pricing_source,
+                ..
+            } => {
+                assert!(!block_id.is_empty());
+                assert_eq!(provider_id, None);
+                assert_eq!(cache_read_tokens, None);
+                assert_eq!(cache_creation_tokens, None);
+                assert_eq!(reasoning_tokens, None);
+                assert_eq!(pricing_source, None);
+            }
+            other => panic!("expected provider_usage, got {other:?}"),
+        }
+    }
 
     /// Guardrail: every StreamEvent variant must have an `event_type` that
     /// matches the TypeScript discriminated union in src/lib/protocol.ts.
@@ -450,6 +801,16 @@ mod tests {
                 "diff_view",
             ),
             (
+                StreamEvent::FileIo {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    path: "f".into(),
+                    operation: "read".into(),
+                    source: Some("executor".into()),
+                },
+                "file_io",
+            ),
+            (
                 StreamEvent::ShellStart {
                     session_id: "s".into(),
                     block_id: "b".into(),
@@ -480,8 +841,23 @@ mod tests {
                     question: "q".into(),
                     kind: "k".into(),
                     boundary: None,
+                    replayed_interrupted: false,
                 },
                 "confirm_ask",
+            ),
+            (
+                StreamEvent::ConfirmResponse {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    question: Some("q".into()),
+                    kind: Some("k".into()),
+                    boundary: None,
+                    approved: Some(true),
+                    responded_at_ms: 1,
+                    reason: Some("user_response".into()),
+                    replayed: false,
+                },
+                "confirm_response",
             ),
             (
                 StreamEvent::ContextCompactStart {
@@ -715,6 +1091,35 @@ mod tests {
                 "agent_a2a_updated",
             ),
             (
+                StreamEvent::SubagentRuntimeEvent {
+                    session_id: "s".into(),
+                    loop_task_id: Some("loop".into()),
+                    task_id: "task".into(),
+                    event: SubagentRuntimePayload::Status {
+                        status: "running".into(),
+                        message: None,
+                    },
+                },
+                "subagent_runtime_event",
+            ),
+            (
+                StreamEvent::LoopRuntimeUpdated {
+                    session_id: "gateway".into(),
+                    loop_task_id: "loop".into(),
+                    task: LoopTaskRecord::new_for_test("loop", "goal"),
+                },
+                "loop_runtime_updated",
+            ),
+            (
+                StreamEvent::EcosystemChanged {
+                    session_id: "global".into(),
+                    item_id: "skill-a".into(),
+                    action: "enabled".into(),
+                    enabled: Some(true),
+                },
+                "ecosystem_changed",
+            ),
+            (
                 StreamEvent::Usage {
                     session_id: "s".into(),
                     input_tokens: 0,
@@ -722,6 +1127,57 @@ mod tests {
                     estimated_cost_usd: 0.0,
                 },
                 "usage",
+            ),
+            (
+                StreamEvent::ProviderUsage {
+                    session_id: "s".into(),
+                    block_id: "usage-1".into(),
+                    provider_id: Some("anthropic".into()),
+                    model: Some("m".into()),
+                    input_tokens: Some(1),
+                    output_tokens: Some(2),
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
+                    estimated_cost_micros: None,
+                    pricing_source: None,
+                    source: Some("anthropic".into()),
+                    reason: ProviderUsageReason::PricingUnknown,
+                },
+                "provider_usage",
+            ),
+            (
+                StreamEvent::RecoveryNotice {
+                    session_id: "s".into(),
+                    notice_id: "n".into(),
+                    title: "t".into(),
+                    message: "m".into(),
+                    reason: "r".into(),
+                    recoverable: true,
+                },
+                "recovery_notice",
+            ),
+            (
+                StreamEvent::DiagnosticsUpdate {
+                    session_id: "s".into(),
+                    ok: true,
+                    pass_count: 5,
+                    warn_count: 1,
+                    fail_count: 0,
+                    report_json: None,
+                },
+                "diagnostics_update",
+            ),
+            (
+                StreamEvent::HealthAlert {
+                    session_id: "s".into(),
+                    alert_id: "a".into(),
+                    level: "warn".into(),
+                    title: "t".into(),
+                    message: "m".into(),
+                    remediation: Some("r".into()),
+                },
+                "health_alert",
             ),
         ];
 

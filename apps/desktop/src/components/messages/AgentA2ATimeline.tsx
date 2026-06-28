@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -7,11 +8,30 @@ import {
   GitBranch,
   PanelRightOpen,
   PauseCircle,
+  RefreshCw,
   ShieldAlert,
   TestTube,
   XCircle,
 } from "lucide-react";
 import type { AgentA2AProjection, AgentA2ATaskProjection } from "@/lib/protocol";
+import { reviewAgentA2ATasks, type AgentA2AReviewDecision } from "@/lib/ipc/a2a";
+import {
+  runtimeFactsForSubagentTask,
+  type LoopRuntimeFact,
+  type LoopRuntimeFactSource,
+} from "@/lib/loopRuntime";
+import {
+  deriveWorkbenchFileView,
+  deriveWorkbenchReviewView,
+  deriveWorkbenchSummary,
+  normalizeA2ATaskProjection,
+  type WorkbenchFileView,
+  type WorkbenchReviewItem,
+  type WorkbenchReviewView,
+} from "@/lib/workbenchSummary";
+import { runtimeFactSourcesForSubagentTasks } from "@/store/runtime-projections";
+import { useStore } from "@/store";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 
 function iconFor(status: string) {
   if (status === "completed") return CheckCircle2;
@@ -36,6 +56,30 @@ function statusLabel(status: string) {
   return status;
 }
 
+function failureKindLabel(kind: string): string {
+  switch (kind) {
+    case "tool_error": return "工具错误";
+    case "smoke_failure": return "冒烟测试失败";
+    case "review_rejection": return "审阅拒绝";
+    case "arbitration_timeout": return "仲裁超时";
+    case "user_cancelled": return "用户取消";
+    default: return kind;
+  }
+}
+
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return "";
+  if (ms <= 0) return "<1s";
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${secs}s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
+}
+
 function messageKindLabel(kind: string) {
   if (kind === "task_assigned") return "已分派";
   if (kind === "started") return "已启动";
@@ -48,15 +92,24 @@ function messageKindLabel(kind: string) {
   return "记录";
 }
 
-function WorktreeReviewPanel({ task }: { task: AgentA2ATaskProjection }) {
+function WorktreeReviewPanel({ task: rawTask }: { task: AgentA2ATaskProjection }) {
+  const task = normalizeA2ATaskProjection(rawTask);
   const isReviewRequired = task.needs_human_review === true;
+  const reviewDecision = task.review_decision ?? null;
+  const reviewBadge = isReviewRequired
+    ? "需要人工审阅"
+    : reviewDecision === "approved"
+      ? "审阅通过"
+      : reviewDecision === "rejected"
+        ? "审阅拒绝"
+        : "审阅状态未知";
 
   return (
     <div className="forge-a2a-worktree-panel" data-review-required={isReviewRequired}>
       <div className="forge-a2a-worktree-header">
         <ShieldAlert className="size-3" />
         <span className="forge-a2a-worktree-badge">
-          {isReviewRequired ? "需要人工审阅" : "审阅状态未知"}
+          {reviewBadge}
         </span>
         <span className="forge-a2a-worktree-not-merged">未自动合并</span>
       </div>
@@ -100,6 +153,32 @@ function WorktreeReviewPanel({ task }: { task: AgentA2ATaskProjection }) {
         </div>
       )}
 
+      {task.changed_files.length > 0 && (
+        <div className="forge-a2a-worktree-files">
+          <span className="forge-a2a-worktree-label">
+            <FileCode className="size-3" />
+            Diff 变更文件
+            {task.changed_file_count != null && task.changed_file_count > task.changed_files.length && (
+              <span className="forge-a2a-worktree-files-total">({task.changed_file_count} 总计)</span>
+            )}
+          </span>
+          <div className="forge-a2a-worktree-file-chips">
+            {task.changed_files.map((file) => (
+              <span key={file} className="forge-a2a-worktree-file-chip" title={file}>
+                {file}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {task.test_report_excerpt && (
+        <div className="forge-a2a-worktree-test-excerpt">
+          <TestTube className="size-3" />
+          <span>{task.test_report_excerpt}</span>
+        </div>
+      )}
+
       {task.suggested_action && (
         <div className="forge-a2a-worktree-action">
           <span className="forge-a2a-worktree-label">建议:</span>
@@ -107,6 +186,182 @@ function WorktreeReviewPanel({ task }: { task: AgentA2ATaskProjection }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ReviewWorkbenchItem({
+  item,
+  tone,
+  busyKey,
+  onReview,
+}: {
+  item: WorkbenchReviewItem;
+  tone: "queue" | "history";
+  busyKey?: string | null;
+  onReview?: (taskIds: string[], decision: AgentA2AReviewDecision) => Promise<void>;
+}) {
+  const disabled = busyKey != null;
+
+  return (
+    <li className="forge-a2a-review-item" data-tone={tone}>
+      <div className="forge-a2a-review-item-main">
+        <span className="forge-a2a-review-item-label">{item.label}</span>
+        <span className="forge-a2a-review-item-title">{item.title}</span>
+        <span className="forge-a2a-review-item-role">{item.role}</span>
+      </div>
+      {item.detail && (
+        <p className="forge-a2a-review-item-detail">{item.detail}</p>
+      )}
+      {item.changedFiles.length > 0 && (
+        <div className="forge-a2a-review-files" aria-label={`${item.title} 变更文件`}>
+          {item.changedFiles.slice(0, 4).map((file) => (
+            <span key={file} className="forge-a2a-review-file" title={file}>
+              {file}
+            </span>
+          ))}
+        </div>
+      )}
+      {item.suggestedAction && (
+        <p className="forge-a2a-review-action">{item.suggestedAction}</p>
+      )}
+      {tone === "queue" && onReview && (
+        <div className="forge-a2a-review-actions" aria-label={`${item.title} 审阅操作`}>
+          <ButtonPrimitive
+            type="button"
+            className="forge-a2a-review-action-button"
+            aria-label={`通过审阅 ${item.title}`}
+            disabled={disabled}
+            onClick={() => { void onReview([item.taskId], "approve"); }}
+          >
+            <CheckCircle2 className="size-3" />
+            <span>通过</span>
+          </ButtonPrimitive>
+          <ButtonPrimitive
+            type="button"
+            className="forge-a2a-review-action-button"
+            data-tone="reject"
+            aria-label={`拒绝审阅 ${item.title}`}
+            disabled={disabled}
+            onClick={() => { void onReview([item.taskId], "reject"); }}
+          >
+            <XCircle className="size-3" />
+            <span>拒绝</span>
+          </ButtonPrimitive>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function WorkbenchReviewSummary({
+  view,
+  busyKey,
+  onReview,
+}: {
+  view: WorkbenchReviewView;
+  busyKey?: string | null;
+  onReview?: (taskIds: string[], decision: AgentA2AReviewDecision) => Promise<void>;
+}) {
+  if (view.queue.length === 0 && view.history.length === 0) return null;
+  const queueIds = view.queue.map((item) => item.taskId);
+  const disabled = busyKey != null;
+
+  return (
+    <div className="forge-a2a-review-summary" aria-label="审阅摘要">
+      {view.queue.length > 0 && (
+        <section className="forge-a2a-review-section" aria-label="审阅队列">
+          <div className="forge-a2a-review-section-header">
+            <span className="forge-a2a-review-section-title">审阅队列</span>
+            <div className="forge-a2a-review-section-meta">
+              <span className="forge-a2a-review-section-count">{view.queue.length} 个待审阅</span>
+              {onReview && (
+                <div className="forge-a2a-review-bulk-actions" aria-label="批量审阅操作">
+                  <ButtonPrimitive
+                    type="button"
+                    className="forge-a2a-review-action-button"
+                    aria-label="全部通过审阅"
+                    disabled={disabled}
+                    onClick={() => { void onReview(queueIds, "approve"); }}
+                  >
+                    <CheckCircle2 className="size-3" />
+                    <span>全部通过</span>
+                  </ButtonPrimitive>
+                  <ButtonPrimitive
+                    type="button"
+                    className="forge-a2a-review-action-button"
+                    data-tone="reject"
+                    aria-label="全部拒绝审阅"
+                    disabled={disabled}
+                    onClick={() => { void onReview(queueIds, "reject"); }}
+                  >
+                    <XCircle className="size-3" />
+                    <span>全部拒绝</span>
+                  </ButtonPrimitive>
+                </div>
+              )}
+            </div>
+          </div>
+          <ul className="forge-a2a-review-list">
+            {view.queue.map((item) => (
+              <ReviewWorkbenchItem
+                key={item.taskId}
+                item={item}
+                tone="queue"
+                busyKey={busyKey}
+                onReview={onReview}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {view.history.length > 0 && (
+        <section className="forge-a2a-review-section" aria-label="审阅历史">
+          <div className="forge-a2a-review-section-header">
+            <span className="forge-a2a-review-section-title">审阅历史</span>
+            <span className="forge-a2a-review-section-count">{view.history.length} 条记录</span>
+          </div>
+          <ul className="forge-a2a-review-list">
+            {view.history.map((item) => (
+              <ReviewWorkbenchItem key={item.taskId} item={item} tone="history" />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function WorkbenchFileSummary({ view }: { view: WorkbenchFileView }) {
+  if (view.files.length === 0) return null;
+
+  return (
+    <section className="forge-a2a-file-summary" aria-label="文件视图">
+      <div className="forge-a2a-file-summary-header">
+        <span className="forge-a2a-file-summary-title">文件视图</span>
+        <span className="forge-a2a-file-summary-count">
+          {view.visibleFileCount} 可见 / {view.reportedFileCount} 报告
+        </span>
+        {view.hiddenFileCount > 0 && (
+          <span className="forge-a2a-file-summary-hidden">
+            {view.hiddenFileCount} 未展开
+          </span>
+        )}
+      </div>
+      <div className="forge-a2a-file-summary-list">
+        {view.files.slice(0, 10).map((item) => (
+          <div key={item.file} className="forge-a2a-file-summary-row">
+            <FileCode className="size-3" />
+            <code className="forge-a2a-file-summary-path" title={item.file}>
+              {item.file}
+            </code>
+            <span className="forge-a2a-file-summary-task-count">
+              {item.taskIds.length} 任务
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -128,20 +383,69 @@ function TaskProcess({ task }: { task: AgentA2ATaskProjection }) {
   );
 }
 
+function RuntimeFactSections({ facts }: { facts: LoopRuntimeFact[] }) {
+  if (facts.length === 0) return null;
+  const fileFacts = facts.filter((fact) => fact.kind === "file_io");
+  const usageFacts = facts.filter((fact) => fact.kind === "usage");
+
+  return (
+    <div className="forge-a2a-runtime-facts" data-testid="a2a-runtime-facts">
+      {fileFacts.length > 0 && (
+        <section className="forge-a2a-runtime-fact-section" aria-label="Runtime file IO">
+          <span className="forge-a2a-runtime-fact-title">文件 IO</span>
+          <div className="forge-a2a-runtime-fact-list">
+            {fileFacts.map((fact) => (
+              <div key={fact.id} className="forge-a2a-runtime-fact-row">
+                <span>{fact.label}</span>
+                <code>{fact.detail}</code>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      {usageFacts.length > 0 && (
+        <section className="forge-a2a-runtime-fact-section" aria-label="Runtime usage">
+          <span className="forge-a2a-runtime-fact-title">用量</span>
+          <div className="forge-a2a-runtime-fact-list">
+            {usageFacts.map((fact) => (
+              <div key={fact.id} className="forge-a2a-runtime-fact-row">
+                <span>{fact.label}</span>
+                <span>{fact.detail}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function TaskRow({
-  task,
+  task: rawTask,
   mode = "compact",
+  runtimeFacts = [],
 }: {
   task: AgentA2ATaskProjection;
   mode?: "compact" | "panel";
+  runtimeFacts?: LoopRuntimeFact[];
 }) {
+  const task = normalizeA2ATaskProjection(rawTask);
   const Icon = iconFor(task.status);
   const isWorktree = task.execution_mode === "worktree_worker";
   const hasMeta =
     isWorktree &&
     (task.needs_human_review !== null ||
       task.reason_codes.length > 0 ||
-      task.tests_passed !== null);
+      task.tests_passed !== null ||
+      task.diff_available !== null ||
+      task.changed_files.length > 0 ||
+      task.test_report_excerpt !== null);
+  const duration = formatDuration(task.duration_ms);
+  const runningElapsed = task.status === "running" && task.started_at_ms != null
+    ? formatDuration(Date.now() - task.started_at_ms)
+    : null;
+  const hasRetryable = task.retryable === true && task.status === "failed";
+  const childTaskCount = task.child_task_ids.length;
 
   return (
     <div className="forge-a2a-task-row-wrapper" data-mode={mode}>
@@ -150,6 +454,21 @@ function TaskRow({
         <span className="forge-a2a-task-title">{task.title}</span>
         <span className="forge-a2a-task-role">{task.role}</span>
         <span className="forge-a2a-task-status">{statusLabel(task.status)}</span>
+        {task.parent_task_id && (
+          <span className="forge-a2a-task-lineage" title={`Parent: ${task.parent_task_id}`}>
+            <GitBranch className="size-3" />
+          </span>
+        )}
+        {childTaskCount > 0 && (
+          <span
+            className="forge-a2a-task-lineage forge-a2a-task-lineage--children"
+            title={`Children: ${task.child_task_ids.join(", ")}`}
+            aria-label={`子任务 ${childTaskCount} 个: ${task.child_task_ids.join(", ")}`}
+          >
+            <GitBranch className="size-3" />
+            {childTaskCount}
+          </span>
+        )}
         {task.artifact_count > 0 && (
           <span
             className="forge-a2a-task-artifact"
@@ -159,13 +478,43 @@ function TaskRow({
             {task.artifact_count}
           </span>
         )}
+        {duration && task.status !== "running" && (
+          <span className="forge-a2a-task-duration">{duration}</span>
+        )}
+        {runningElapsed && (
+          <span className="forge-a2a-task-duration forge-a2a-task-duration--running">
+            {runningElapsed}
+          </span>
+        )}
+        {task.latest_progress && task.status === "running" && (
+          <span className="forge-a2a-task-progress">{task.latest_progress}</span>
+        )}
         {task.latest_message && (
           <span className="forge-a2a-task-message">{task.latest_message}</span>
         )}
         {task.failure_message && (
-          <span className="forge-a2a-task-failure">{task.failure_message}</span>
+          <span className="forge-a2a-task-failure">
+            {task.failure_kind && (
+              <span className="forge-a2a-task-failure-kind">
+                {failureKindLabel(task.failure_kind)}
+              </span>
+            )}
+            {task.failure_message}
+            {hasRetryable && (
+              <span className="forge-a2a-task-retryable" title="可重试">
+                <RefreshCw className="size-3" />
+              </span>
+            )}
+          </span>
         )}
       </div>
+      {task.resume_note && (
+        <div className="forge-a2a-task-resume-note" title={task.resume_note}>
+          <PauseCircle className="size-3" />
+          <span>{task.resume_note}</span>
+        </div>
+      )}
+      <RuntimeFactSections facts={runtimeFacts} />
       {mode === "panel" && <TaskProcess task={task} />}
       {hasMeta && <WorktreeReviewPanel task={task} />}
     </div>
@@ -183,7 +532,7 @@ export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | n
     : `${state.completed_count} 个子任务已完成`;
 
   return (
-    <button
+    <ButtonPrimitive
       type="button"
       className="forge-a2a-inline-summary"
       data-running={state.running_count > 0}
@@ -198,11 +547,21 @@ export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | n
         <span className="forge-a2a-inline-detail">{statusText}，查看过程与审阅材料</span>
       </span>
       <PanelRightOpen className="size-3.5" />
-    </button>
+    </ButtonPrimitive>
   );
 }
 
-export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null }) {
+export function AgentA2AWorkspace({
+  state,
+  sessionId,
+}: {
+  state: AgentA2AProjection | null;
+  sessionId?: string | null;
+}) {
+  const [reviewBusyKey, setReviewBusyKey] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const subagentRuntimeByTask = useStore((s) => s.subagentRuntimeByTask);
+
   if (!state || state.tasks.length === 0) {
     return (
       <section className="forge-a2a-workspace" aria-label="子任务">
@@ -214,6 +573,40 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
     );
   }
 
+  const summary = deriveWorkbenchSummary(state);
+  const reviewView = deriveWorkbenchReviewView(state);
+  const fileView = deriveWorkbenchFileView(state);
+  const taskIds = new Set(state.tasks.map((task) => task.task_id));
+  const runtimeSources = runtimeFactSourcesForSubagentTasks({
+    entries: subagentRuntimeByTask,
+    taskIds,
+    sessionId,
+  });
+  const handleReview = async (reviewTaskIds: string[], decision: AgentA2AReviewDecision) => {
+    if (!sessionId || reviewTaskIds.length === 0) return;
+    const key = reviewTaskIds.length === 1 ? `${reviewTaskIds[0]}:${decision}` : `bulk:${decision}`;
+    setReviewBusyKey(key);
+    setReviewError(null);
+    try {
+      const next = await reviewAgentA2ATasks({
+        sessionId,
+        taskIds: reviewTaskIds,
+        decision,
+        message: null,
+        loopTaskId: loopTaskIdForReview(runtimeSources, reviewTaskIds),
+      });
+      useStore.setState((current) => {
+        const agentA2ABySession = new Map(current.agentA2ABySession);
+        agentA2ABySession.set(next.session_id, next.state);
+        return { agentA2ABySession };
+      });
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReviewBusyKey(null);
+    }
+  };
+
   return (
     <section className="forge-a2a-workspace" aria-label="子任务">
       <div className="forge-a2a-workspace-header">
@@ -224,22 +617,73 @@ export function AgentA2AWorkspace({ state }: { state: AgentA2AProjection | null 
         <div className="forge-a2a-workspace-stats" aria-label="子任务统计">
           <span data-tone={state.running_count > 0 ? "running" : "idle"}>{state.running_count} 运行</span>
           <span>{state.completed_count} 完成</span>
-          {state.failed_count > 0 && <span data-tone="failed">{state.failed_count} 失败</span>}
-          {state.interrupted_count > 0 && <span data-tone="interrupted">{state.interrupted_count} 中断</span>}
+          {summary.failed > 0 && <span data-tone="failed">{summary.failed} 失败</span>}
+          {summary.interrupted > 0 && <span data-tone="interrupted">{summary.interrupted} 中断</span>}
+          {summary.reviewNeeded > 0 && <span data-tone="review">{summary.reviewNeeded} 待审阅</span>}
+          {summary.retainedWorktrees > 0 && <span data-tone="retained">{summary.retainedWorktrees} 保留工作树</span>}
+          {summary.tasksWithDiff > 0 && <span data-tone="diff">{summary.tasksWithDiff} 有变更</span>}
         </div>
       </div>
 
+      <WorkbenchReviewSummary
+        view={reviewView}
+        busyKey={reviewBusyKey}
+        onReview={sessionId ? handleReview : undefined}
+      />
+      <WorkbenchFileSummary view={fileView} />
+      {reviewError && (
+        <p className="forge-a2a-review-error" role="alert">
+          {reviewError}
+        </p>
+      )}
+
       <div className="forge-a2a-workspace-task-list">
         {state.tasks.map((task) => (
-          <TaskRow key={task.task_id} task={task} mode="panel" />
+          <TaskRow
+            key={task.task_id}
+            task={task}
+            mode="panel"
+            runtimeFacts={runtimeFactsForSubagentTask(runtimeSources, task.task_id)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-export function AgentA2ATimeline({ state }: { state: AgentA2AProjection | null }) {
+function loopTaskIdForReview(
+  runtimeSources: LoopRuntimeFactSource[],
+  taskIds: string[],
+): string | null {
+  const loopTaskIds = new Set<string>();
+  for (const taskId of taskIds) {
+    const idsForTask = runtimeSources
+      .filter((source) => source.task_id === taskId)
+      .map((source) => source.loop_task_id?.trim() || null)
+      .filter((loopTaskId): loopTaskId is string => loopTaskId != null);
+    if (idsForTask.length === 0) return null;
+    for (const loopTaskId of idsForTask) loopTaskIds.add(loopTaskId);
+  }
+  return loopTaskIds.size === 1 ? [...loopTaskIds][0] : null;
+}
+
+export function AgentA2ATimeline({
+  state,
+  sessionId,
+}: {
+  state: AgentA2AProjection | null;
+  sessionId?: string | null;
+}) {
+  const subagentRuntimeByTask = useStore((s) => s.subagentRuntimeByTask);
   if (!state || state.tasks.length === 0) return null;
+  const taskIds = new Set(state.tasks.map((task) => task.task_id));
+  const runtimeSources = sessionId
+    ? runtimeFactSourcesForSubagentTasks({
+        entries: subagentRuntimeByTask,
+        taskIds,
+        sessionId,
+      })
+    : [];
 
   return (
     <div className="forge-a2a-timeline" data-testid="agent-a2a-timeline">
@@ -251,7 +695,11 @@ export function AgentA2ATimeline({ state }: { state: AgentA2AProjection | null }
       </div>
       <div className="forge-a2a-task-list">
         {state.tasks.map((task) => (
-          <TaskRow key={task.task_id} task={task} />
+          <TaskRow
+            key={task.task_id}
+            task={task}
+            runtimeFacts={runtimeFactsForSubagentTask(runtimeSources, task.task_id)}
+          />
         ))}
       </div>
     </div>

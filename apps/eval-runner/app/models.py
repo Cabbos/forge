@@ -30,6 +30,32 @@ class EvalModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TrustGateResult(EvalModel):
+    trusted: bool
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CaseQualityIssue(EvalModel):
+    task_id: str
+    severity: str
+    code: str
+    message: str
+
+
+class WorkspaceCheck(EvalModel):
+    ok: bool
+    untracked_files: list[str] = Field(default_factory=list)
+    modified_files: list[str] = Field(default_factory=list)
+    message: str | None = None
+
+
+class LeakageCheck(EvalModel):
+    ok: bool
+    findings: list[str] = Field(default_factory=list)
+    scrubbed_items: list[str] = Field(default_factory=list)
+
+
 class EvaluationTask(EvalModel):
     id: str
     title: str
@@ -39,6 +65,8 @@ class EvaluationTask(EvalModel):
     setup_commands: list[str] = Field(default_factory=list)
     validation_commands: list[str] = Field(default_factory=list)
     post_validation_commands: list[str] = Field(default_factory=list)
+    pass_to_pass_commands: list[str] = Field(default_factory=list)
+    fail_to_pass_commands: list[str] = Field(default_factory=list)
     verification_command: str | None = None
     expected_success: bool = True
     expected_files_changed: list[str] = Field(default_factory=list)
@@ -72,6 +100,18 @@ class VerificationResult(EvalModel):
     duration_ms: int = Field(default=0, ge=0)
 
 
+class EvalScore(EvalModel):
+    name: str
+    score: float = Field(ge=0.0, le=1.0)
+    label: str
+    explanation: str | None = None
+    source: str = "code"
+    calibration_dataset_id: str | None = None
+    calibration_agreement: float | None = Field(default=None, ge=0.0, le=1.0)
+    calibration_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    gate_ci: bool = True
+
+
 class AgentTrace(EvalModel):
     task_id: str
     user_prompt: str
@@ -97,6 +137,8 @@ class AgentTrace(EvalModel):
     validation_attempts: int = Field(default=0, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    trajectory_path: str | None = None
+    cost_usd: float | None = Field(default=None, ge=0)
     started_at: datetime
     ended_at: datetime
     duration_ms: int = Field(ge=0)
@@ -136,6 +178,12 @@ class MetricsSummary(EvalModel):
     scope_violation_count: int = 0
     failure_categories: dict[str, int] = Field(default_factory=dict)
     tasks: list[TaskMetric] = Field(default_factory=list)
+
+
+class QueueStatus(EvalModel):
+    counts: dict[str, int] = Field(default_factory=dict)
+    oldest_pending_run_id: str | None = None
+    oldest_running_run_id: str | None = None
 
 
 class TraceSummary(EvalModel):
@@ -182,7 +230,9 @@ class BacktestReport(EvalModel):
     avg_confirm_requests: float
     avg_repair_attempts_used: float = 0.0
     avg_validation_attempts: float = 0.0
+    total_cost_usd: float = 0.0
     failure_categories: dict[str, int] = Field(default_factory=dict)
+    score_summary: dict[str, float] = Field(default_factory=dict)
     tasks: list[TraceSummary] = Field(default_factory=list)
     continuity: ContinuityReport | None = None
 
@@ -193,6 +243,22 @@ class EvalArtifact(EvalModel):
     kind: str
     path: str
     size_bytes: int = Field(ge=0)
+    created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.isoformat()
+
+
+class ExperimentSnapshot(EvalModel):
+    experiment_id: str
+    run_id: str
+    dataset_fingerprint: str
+    provider: str
+    model: str
+    git_commit: str | None = None
+    command: str | None = None
+    environment: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
 
     @field_serializer("created_at")

@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { formatContextWindow, PROVIDERS } from "@/lib/providers";
+import { formatContextWindow, PROVIDERS, type ProviderDefinition } from "@/lib/providers";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 interface ComposerModelMenuProps {
@@ -8,12 +8,14 @@ interface ComposerModelMenuProps {
   labelledBy: string;
   selectedModel: string;
   selectedProvider: string;
+  providers?: ProviderDefinition[];
   onSelect: (provider: string, model: string) => void;
 }
 
 export function ComposerModelMenu({
   id,
   labelledBy,
+  providers = PROVIDERS,
   selectedModel,
   selectedProvider,
   onSelect,
@@ -47,7 +49,7 @@ export function ComposerModelMenu({
       aria-labelledby={labelledBy}
       className="forge-floating-menu forge-composer-model-menu"
     >
-      {PROVIDERS.map((provider) => (
+      {providers.map((provider) => (
         <div key={provider.id} className="py-1">
           <div className="forge-menu-heading flex items-center justify-between">
             <span>{provider.label}</span>

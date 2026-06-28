@@ -4,11 +4,14 @@ import type {
   ContextUsageState,
   DeliverySummary,
   ForgeWikiUpdateProposal,
+  LoopTaskRecord,
   McpContextStatus,
   SelectedContextMemory,
   SelectedForgeWikiPage,
+  SessionUsageLedgerState,
   SessionState,
   StreamEvent,
+  SubagentRuntimePayload,
   WikiMemory,
   WorkflowState,
 } from "../lib/protocol";
@@ -16,6 +19,46 @@ import type { FirstLoopDraft } from "../lib/first-loop";
 import type { McpContextSelection } from "../lib/tauri";
 import type { ProviderId } from "../lib/providers";
 import type { Workspace } from "../lib/workspaces";
+
+export interface RuntimeRecoveryNotice {
+  notice_id: string;
+  session_id: string;
+  title: string;
+  message: string;
+  reason: string;
+  recoverable: boolean;
+}
+
+export interface RuntimeHealthAlert {
+  alert_id: string;
+  session_id: string;
+  level: "info" | "warn" | "critical";
+  title: string;
+  message: string;
+  remediation?: string | null;
+}
+
+export interface SubagentRuntimeEntry {
+  session_id: string;
+  loop_task_id?: string | null;
+  task_id: string;
+  latest_event: SubagentRuntimePayload;
+  latest_usage_event?: Extract<SubagentRuntimePayload, { type: "usage_recorded" }>;
+  latest_file_io_event?: Extract<SubagentRuntimePayload, { type: "file_io" }>;
+  status: string;
+  role?: string | null;
+  message?: string | null;
+  reason?: string | null;
+}
+
+export interface LoopRuntimeEntry {
+  session_id: string;
+  loop_task_id: string;
+  task: LoopTaskRecord;
+}
+
+export type SubagentRuntimeByTask = Map<string, SubagentRuntimeEntry>;
+export type LoopRuntimeByTask = Map<string, LoopRuntimeEntry>;
 
 export interface AppStore {
   sessions: Map<string, SessionState>;
@@ -34,6 +77,14 @@ export interface AppStore {
   firstLoopDraftBySession: Map<string, FirstLoopDraft>;
   deliverySummaryBySession: Map<string, DeliverySummary>;
   agentA2ABySession: Map<string, import("../lib/protocol").AgentA2AProjection>;
+  subagentRuntimeByTask: SubagentRuntimeByTask;
+  loopRuntimeByTask: LoopRuntimeByTask;
+
+  recoveryNotices: RuntimeRecoveryNotice[];
+  dismissRecoveryNotice: (noticeId: string) => void;
+
+  healthAlerts: RuntimeHealthAlert[];
+  dismissHealthAlert: (alertId: string) => void;
 
   selectedProvider: ProviderId;
   setSelectedProvider: (p: string) => void;
@@ -76,8 +127,10 @@ export interface PersistedSession {
   workspaceId?: string | null;
   createdAt?: number | null;
   updatedAt?: number | null;
+  costUsd?: number | null;
   contextWindowTokens?: number | null;
   contextUsage?: ContextUsageState | null;
+  usageLedger?: SessionUsageLedgerState | null;
   status: SessionState["status"];
   workflowState?: WorkflowState | null;
   deliverySummary?: DeliverySummary | null;

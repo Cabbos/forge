@@ -7,6 +7,7 @@ import { DiffCard } from "@/components/messages/DiffCard";
 import { ErrorCard } from "@/components/messages/ErrorCard";
 import { MissingApiKeyCard } from "@/components/messages/MissingApiKeyCard";
 import { PendingBlock } from "@/components/messages/PendingBlock";
+import { ProviderUsageCard } from "@/components/messages/ProviderUsageCard";
 import { ShellCard } from "@/components/messages/ShellCard";
 import { TextBlock } from "@/components/messages/TextBlock";
 import { ThinkingBlock } from "@/components/messages/ThinkingBlock";
@@ -33,6 +34,7 @@ function BlockRenderer({ block, sessionId }: { block: BlockState; sessionId?: st
     case "context_compacted":
     case "context_compact_skipped":
       return <ContextCompactCard block={block} />;
+    case "provider_usage": return <ProviderUsageCard block={block} />;
     case "delivery_summary": return <DeliverySummaryCard block={block} sessionId={sessionId} />;
     case "pending": return <PendingBlock />;
     default: return block.content ? <TextBlock block={block} sessionId={sessionId} /> : null;

@@ -398,8 +398,11 @@ pub trait AiAdapter: Send + Sync {
         self.call(messages, cancel).await
     }
 
-    /// Call the AI API using an abstract event emitter instead of `AppHandle`.
-    /// Default implementation delegates to `call()` (ignoring the emitter).
+    /// Call the AI API without frontend streaming, optionally emitting telemetry.
+    ///
+    /// Sub-agent call sites use this path so they preserve the same tool surface
+    /// as `call()` while adapters that already know response usage can emit it.
+    /// The safe default delegates to `call()` and ignores the emitter.
     async fn call_with_emitter(
         &self,
         _session_id: &str,

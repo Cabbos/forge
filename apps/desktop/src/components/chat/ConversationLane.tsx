@@ -1,6 +1,6 @@
 import type { Ref } from "react";
 import { ToolActivityGroup } from "@/components/messages/ToolActivityGroup";
-import { StartReadinessCard } from "@/components/workbench/StartReadinessCard";
+import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import type { ConversationTurn, MessageItem } from "@/components/chat/messageGrouping";
 
@@ -68,6 +68,7 @@ function getMessageBlockRole(item: MessageItem) {
     case "context_compact_start":
     case "context_compacted":
     case "context_compact_skipped":
+    case "provider_usage":
       return "trace";
     case "diff_view":
     case "confirm_ask":

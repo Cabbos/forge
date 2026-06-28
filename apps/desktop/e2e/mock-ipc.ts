@@ -297,6 +297,12 @@ export async function simulateStream(
             return;
           }
           const event = events[i];
+          if (event.event_type === "agent_a2a_updated") {
+            // @ts-expect-error mock
+            if (!window.__mockA2AStates) window.__mockA2AStates = {};
+            // @ts-expect-error mock
+            window.__mockA2AStates[sessionId] = event.state;
+          }
           // @ts-expect-error Tauri listener
           const listeners = window.__tauriListeners?.["session-output"] ?? [];
           for (const fn of listeners) {

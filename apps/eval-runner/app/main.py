@@ -11,6 +11,7 @@ from app.models import (
     EvaluationRun,
     EvaluationTask,
     MetricsSummary,
+    QueueStatus,
     RunCreateRequest,
     RunStatus,
 )
@@ -115,6 +116,10 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
     @app.get("/runs", response_model=list[EvaluationRun])
     def list_runs(status: str | None = None) -> list[EvaluationRun]:
         return get_storage().list_runs(status_filter=status)
+
+    @app.get("/queue/status", response_model=QueueStatus)
+    def get_queue_status() -> QueueStatus:
+        return get_storage().queue_status()
 
     @app.get("/runs/{run_id}", response_model=EvaluationRun)
     def get_run(run_id: str) -> EvaluationRun:

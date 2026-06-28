@@ -1,8 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  confirmResponse,
   createProjectCheckpoint,
+  getPermissionMode,
   openProjectPreview,
+  setPermissionMode,
   startProjectDevServer,
+  type PermissionModeState,
 } from "@/lib/tauri";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/hooks/queries/queryKeys";
@@ -10,6 +14,7 @@ import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { useProjectRuntimeStatusQuery } from "@/hooks/queries/useProjectRuntimeStatusQuery";
 import { useProjectCheckpointStatusQuery } from "@/hooks/queries/useProjectCheckpointStatusQuery";
 import { getDeliveryConfidence, type DeliveryAction } from "@/lib/delivery-confidence";
+import { findLatestPendingWorkspaceConfirm } from "@/lib/permission-confirm-takeover";
 import { useActiveWorkspace, useStore } from "@/store";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 import { ProjectStatusView } from "./ProjectStatusView";
@@ -25,8 +30,11 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   const [error, setError] = useState("");
   const queryClient = useQueryClient();
   const [actionBusy, setActionBusy] = useState<DeliveryAction | null>(null);
+  const [permissionMode, setPermissionModeState] = useState<PermissionModeState>(manualPermissionMode);
+  const [permissionBusy, setPermissionBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
+  const updateBlock = useStore((s) => s.updateBlock);
 
   const {
     data: runtime = null,
@@ -53,6 +61,22 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     await Promise.all([refetchRuntime(), refetchCheckpoint()]);
   }, [refetchRuntime, refetchCheckpoint]);
 
+  const loadPermissionMode = useCallback(async () => {
+    if (!sessionId || !workingDir) {
+      setPermissionModeState(manualPermissionMode);
+      return;
+    }
+    try {
+      setPermissionModeState(await getPermissionMode(sessionId, workingDir));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [sessionId, workingDir]);
+
+  useEffect(() => {
+    void loadPermissionMode();
+  }, [loadPermissionMode]);
+
   const runDeliveryAction = useCallback(async (action: DeliveryAction) => {
     setActionBusy(action);
     setError("");
@@ -74,6 +98,83 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
     }
   }, [queryClient, sessionId, workingDir]);
 
+  const trustCurrentProject = useCallback(async () => {
+    if (!sessionId || !workingDir) return;
+    setPermissionBusy(true);
+    setError("");
+    try {
+      const nextMode = await setPermissionMode({
+        sessionId,
+        mode: "trust_current_project",
+        workspacePath: workingDir,
+      });
+      setPermissionModeState(nextMode);
+
+      const pendingConfirm = findLatestPendingWorkspaceConfirm(
+        session?.blocks ?? [],
+        workingDir,
+        { allowAnyOperation: false },
+      );
+      if (pendingConfirm) {
+        await confirmResponse(pendingConfirm.block_id, true);
+        updateBlock(sessionId, pendingConfirm.block_id, {
+          metadata: { ...pendingConfirm.metadata, confirmed: true, answer: true },
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPermissionBusy(false);
+    }
+  }, [session?.blocks, sessionId, updateBlock, workingDir]);
+
+  const fullAccessCurrentProject = useCallback(async () => {
+    if (!sessionId || !workingDir) return;
+    setPermissionBusy(true);
+    setError("");
+    try {
+      const nextMode = await setPermissionMode({
+        sessionId,
+        mode: "full_access",
+        workspacePath: workingDir,
+      });
+      setPermissionModeState(nextMode);
+
+      const pendingConfirm = findLatestPendingWorkspaceConfirm(
+        session?.blocks ?? [],
+        workingDir,
+        { allowAnyOperation: true },
+      );
+      if (pendingConfirm) {
+        await confirmResponse(pendingConfirm.block_id, true);
+        updateBlock(sessionId, pendingConfirm.block_id, {
+          metadata: { ...pendingConfirm.metadata, confirmed: true, answer: true },
+        });
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPermissionBusy(false);
+    }
+  }, [session?.blocks, sessionId, updateBlock, workingDir]);
+
+  const restoreManualConfirm = useCallback(async () => {
+    if (!sessionId || !workingDir) return;
+    setPermissionBusy(true);
+    setError("");
+    try {
+      setPermissionModeState(await setPermissionMode({
+        sessionId,
+        mode: "manual_confirm",
+        workspacePath: workingDir,
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPermissionBusy(false);
+    }
+  }, [sessionId, workingDir]);
+
   const projectName = useMemo(() => {
     const path = normalizeProjectPath(runtime?.working_dir || checkpoint?.working_dir || "");
     if (!path) return "未选择项目";
@@ -83,6 +184,11 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   const projectPath = normalizeProjectPath(runtime?.working_dir || checkpoint?.working_dir || "") || "暂无项目路径";
   const projectPathLabel = projectPath === "暂无项目路径" ? "未选择项目" : "当前项目";
   const delivery = getDeliveryConfidence(runtime, checkpoint);
+  const permissionDisabledReason = !workingDir
+    ? "需要先打开一个项目"
+    : !sessionId
+      ? "需要先打开一个对话"
+      : "";
   const deliveryActions = [
     delivery.preview.action && delivery.preview.actionLabel
       ? { action: delivery.preview.action, label: delivery.preview.actionLabel }
@@ -127,17 +233,29 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
       delivery={delivery}
       deliveryActions={deliveryActions}
       actionBusy={actionBusy}
+      permissionBusy={permissionBusy}
+      permissionDisabledReason={permissionDisabledReason}
+      permissionMode={permissionMode.mode}
       checkpoint={checkpoint}
       error={displayError}
       expanded={expanded}
       loading={loading}
       runtime={runtime}
       onRefresh={refresh}
+      onFullAccessCurrentProject={fullAccessCurrentProject}
+      onRestoreManualConfirm={restoreManualConfirm}
       onRunDeliveryAction={runDeliveryAction}
+      onTrustCurrentProject={trustCurrentProject}
       onToggleExpanded={() => setExpanded((value) => !value)}
     />
   );
 }
+
+const manualPermissionMode: PermissionModeState = {
+  mode: "manual_confirm",
+  workspace_path: null,
+  session_scoped: true,
+};
 
 function normalizeProjectPath(path: string): string {
   const normalized = path.trim().replace(/\/+$/, "");

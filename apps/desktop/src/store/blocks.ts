@@ -1,5 +1,10 @@
 import type { BlockState, DeliverySummary, StreamEvent } from "../lib/protocol";
 
+export const SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE =
+  "Tool call interrupted by session restore before it returned.";
+
+const SESSION_RESTORED_TOOL_INTERRUPTION_REASON = "session_restored";
+
 export function transcriptEventsToBlocks(events: StreamEvent[]): BlockState[] {
   let blocks: BlockState[] = [];
   for (const event of events) {
@@ -55,6 +60,14 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     return applyShellStartToBlocks(blocks, event);
   }
 
+  if (event_type === "file_io") {
+    return applyFileIoToBlocks(blocks, event);
+  }
+
+  if (event_type === "confirm_response") {
+    return applyConfirmResponseToBlocks(blocks, event);
+  }
+
   if (event_type === "context_compacted" || event_type === "context_compact_skipped") {
     return applyCompactResultToBlocks(blocks, event);
   }
@@ -71,6 +84,7 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
           ...next[existingIdx].metadata,
           is_error: event.is_error,
           duration_ms: event.duration_ms,
+          ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       };
       return next;
@@ -86,9 +100,34 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
           is_error: event.is_error,
           duration_ms: event.duration_ms,
           tool_name: "Tool",
+          ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       },
     ];
+  }
+
+  // Phase 1.6: dedupe tool_call_start — if a block with the same block_id
+  // already exists (e.g. from a prior transcript load), update its metadata
+  // instead of appending a duplicate. This keeps the block list clean when
+  // startup replays active tool-call descriptors that were already in the
+  // transcript.
+  if (event_type === "tool_call_start") {
+    const next = [...blocks];
+    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+    if (existingIdx >= 0) {
+      next[existingIdx] = {
+        ...next[existingIdx],
+        event_type: "tool_call",
+        metadata: {
+          ...next[existingIdx].metadata,
+          tool_name: event.tool_name,
+          tool_input: event.tool_input,
+        },
+      };
+      return next;
+    }
+    const block = eventToBlock(event);
+    return block ? [...next, block] : next;
   }
 
   if (event_type === "thinking_chunk" || event_type === "text_chunk" || event_type === "shell_output") {
@@ -135,8 +174,93 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     return next;
   }
 
+  // Phase 1.5: dedupe replayed confirm_ask — if a confirm_ask block with the
+  // same block_id already exists (e.g. from a previous transcript replay or
+  // live session), replace it instead of appending a duplicate. This keeps the
+  // block list clean when startup restores a session that already had its
+  // transcript loaded.
+  if (event_type === "confirm_ask" && (event as { replayed_interrupted?: boolean }).replayed_interrupted) {
+    const next = [...blocks];
+    const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+    const block = eventToBlock(event);
+    if (block) {
+      if (existingIdx >= 0) {
+        next[existingIdx] = block;
+      } else {
+        next.push(block);
+      }
+    }
+    return next;
+  }
+
   const block = eventToBlock(event);
   return block ? [...blocks, block] : blocks;
+}
+
+export function applyConfirmResponseToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "confirm_response" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingIdx = next.findIndex((block) =>
+    block.block_id === event.block_id && block.event_type === "confirm_ask"
+  );
+  if (existingIdx >= 0) {
+    const existing = next[existingIdx];
+    next[existingIdx] = {
+      ...existing,
+      isComplete: true,
+      metadata: confirmResponseMetadata(existing.metadata, event, false),
+    };
+    return next;
+  }
+
+  const question = typeof event.question === "string" && event.question.trim().length > 0
+    ? event.question
+    : null;
+  if (!question) return blocks;
+
+  return [
+    ...next,
+    {
+      block_id: event.block_id,
+      event_type: "confirm_ask",
+      content: question,
+      isComplete: true,
+      metadata: confirmResponseMetadata({
+        kind: event.kind ?? "confirm",
+        boundary: event.boundary ?? null,
+      }, event, true),
+    },
+  ];
+}
+
+function confirmResponseMetadata(
+  metadata: Record<string, unknown>,
+  event: Extract<StreamEvent, { event_type: "confirm_response" }>,
+  orphan: boolean,
+): Record<string, unknown> {
+  const base = { ...metadata };
+  delete base.confirm_interrupted;
+  delete base.confirm_interrupted_reason;
+  const next: Record<string, unknown> = {
+    ...base,
+    kind: event.kind ?? base.kind,
+    boundary: event.boundary ?? base.boundary ?? null,
+    confirmed: true,
+    answer: event.approved,
+    confirm_response_reason: event.reason ?? null,
+    confirm_response_replayed: event.replayed === true,
+    responded_at_ms: event.responded_at_ms,
+  };
+  if (orphan) {
+    next.confirm_response_orphan = true;
+  }
+  if (event.approved === null) {
+    next.confirm_interrupted = true;
+    next.confirm_interrupted_reason = event.reason ?? "session_restored";
+  }
+  return next;
 }
 
 export function applyCompactResultToBlocks(
@@ -219,6 +343,39 @@ export function applyShellStartToBlocks(
 
   const block = eventToBlock(event);
   return block ? [...next, block] : next;
+}
+
+export function applyFileIoToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "file_io" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingIdx = next.findIndex((block) =>
+    block.block_id === event.block_id &&
+    (block.event_type === "tool_call" ||
+      block.event_type === "tool_call_result" ||
+      block.event_type === "shell")
+  );
+  if (existingIdx < 0) return blocks;
+
+  const existingEvents = Array.isArray(next[existingIdx].metadata.file_io_events)
+    ? next[existingIdx].metadata.file_io_events
+    : [];
+  next[existingIdx] = {
+    ...next[existingIdx],
+    metadata: {
+      ...next[existingIdx].metadata,
+      file_io_events: [
+        ...existingEvents,
+        {
+          path: event.path,
+          operation: event.operation,
+          ...(event.source ? { source: event.source } : {}),
+        },
+      ],
+    },
+  };
+  return next;
 }
 
 export function findShellTargetBlockIndex(blocks: BlockState[], blockId: string) {
@@ -327,6 +484,7 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         metadata: {
           is_error: event.is_error,
           duration_ms: event.duration_ms,
+          ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       };
     case "diff_view":
@@ -347,6 +505,22 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         metadata: { command: event.command },
       };
     case "confirm_ask":
+      if (event.replayed_interrupted) {
+        return {
+          ...base,
+          event_type: "confirm_ask",
+          content: event.question,
+          isComplete: true,
+          metadata: {
+            kind: event.kind,
+            boundary: event.boundary ?? null,
+            confirmed: true,
+            answer: null,
+            confirm_interrupted: true,
+            confirm_interrupted_reason: "session_restored",
+          },
+        };
+      }
       return {
         ...base,
         event_type: "confirm_ask",
@@ -397,9 +571,56 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         },
         isComplete: true,
       };
+    case "provider_usage": {
+      const providerId = event.provider_id?.trim() || null;
+      const model = event.model?.trim() || null;
+      const source = event.source?.trim() || null;
+      const metadata = {
+        provider_id: providerId,
+        model,
+        source,
+        reason: event.reason,
+        input_tokens: event.input_tokens,
+        output_tokens: event.output_tokens,
+        cache_read_tokens: event.cache_read_tokens ?? null,
+        cache_creation_tokens: event.cache_creation_tokens ?? null,
+        reasoning_tokens: event.reasoning_tokens ?? null,
+        estimated_cost_micros: event.estimated_cost_micros,
+        pricing_source: event.pricing_source ?? null,
+        input_tokens_unknown: !isFiniteNumber(event.input_tokens),
+        output_tokens_unknown: !isFiniteNumber(event.output_tokens),
+        cost_unknown: !isFiniteNumber(event.estimated_cost_micros),
+      };
+      return {
+        ...base,
+        block_id: event.block_id?.trim() || providerUsageBlockId(event),
+        event_type: "provider_usage",
+        content: providerUsageContent({
+          providerId,
+          model,
+          source,
+          reason: event.reason,
+          inputTokens: event.input_tokens,
+          outputTokens: event.output_tokens,
+          estimatedCostMicros: event.estimated_cost_micros,
+        }),
+        metadata,
+        isComplete: true,
+      };
+    }
     default:
       return null;
   }
+}
+
+export function interruptedToolResultMetadata(result: string, isError: boolean): Record<string, unknown> {
+  if (!isError || result !== SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE) {
+    return {};
+  }
+  return {
+    tool_interrupted: true,
+    tool_interrupted_reason: SESSION_RESTORED_TOOL_INTERRUPTION_REASON,
+  };
 }
 
 function compactSkipMessage(reason: string) {
@@ -412,6 +633,68 @@ function compactSkipMessage(reason: string) {
     default:
       return "当前上下文暂时无需压缩。";
   }
+}
+
+function providerUsageBlockId(event: Extract<StreamEvent, { event_type: "provider_usage" }>) {
+  return [
+    "provider_usage",
+    event.session_id,
+    event.provider_id?.trim() || "unknown-provider",
+    event.model?.trim() || "unknown-model",
+    event.source?.trim() || "unknown-source",
+    event.reason,
+    numberOrUnknown(event.input_tokens),
+    numberOrUnknown(event.output_tokens),
+    costOrUnknown(event.estimated_cost_micros),
+  ].join(":");
+}
+
+function providerUsageContent({
+  model,
+  providerId,
+  source,
+  reason,
+  inputTokens,
+  outputTokens,
+  estimatedCostMicros,
+}: {
+  providerId: string | null;
+  model: string | null;
+  source: string | null;
+  reason: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  estimatedCostMicros: number | null;
+}) {
+  const parts = [
+    `provider ${providerId || "unknown provider"}`,
+    `model ${model || "unknown model"}`,
+    `input ${numberOrUnknown(inputTokens)}`,
+    `output ${numberOrUnknown(outputTokens)}`,
+    `cost ${costOrUnknown(estimatedCostMicros)}`,
+  ];
+  if (source) parts.push(`source ${source}`);
+  const reasonLabel = providerUsageReasonLabel(reason);
+  if (reasonLabel) parts.push(reasonLabel);
+  return `模型用量 · ${parts.join(" / ")}`;
+}
+
+function providerUsageReasonLabel(reason: string): string | null {
+  if (reason === "provider_omitted") return "provider omitted";
+  if (reason === "pricing_unknown") return "pricing unknown";
+  return null;
+}
+
+function numberOrUnknown(value: number | null | undefined): string {
+  return isFiniteNumber(value) ? String(value) : "unknown";
+}
+
+function costOrUnknown(value: number | null | undefined): string {
+  return isFiniteNumber(value) ? `${value} micros` : "unknown";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function deliverySummariesEqual(left: DeliverySummary | null, right: DeliverySummary | null) {

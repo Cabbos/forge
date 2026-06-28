@@ -11,6 +11,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
 import { useCapabilitiesQuery } from "@/hooks/queries/useCapabilitiesQuery";
+import { useEcosystemItemsQuery } from "@/hooks/queries/useEcosystemItemsQuery";
+import { useToolInventoryQuery } from "@/hooks/queries/useToolInventoryQuery";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 
 export type { CapabilityTab } from "@/components/settings/capabilityTypes";
@@ -30,6 +32,12 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
     isError: capabilitiesIsError,
     error: capabilitiesError,
   } = useCapabilitiesQuery();
+  const {
+    data: ecosystemItems = [],
+  } = useEcosystemItemsQuery();
+  const {
+    data: toolInventory = [],
+  } = useToolInventoryQuery();
   const queryError = getQueryErrorMessage(capabilitiesIsError ? capabilitiesError : null);
 
   useEffect(() => {
@@ -39,17 +47,20 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
 
   const tabCapabilities = useMemo<Record<CapabilityTab, CapabilityInfo[]>>(() => ({
     skills: capabilities.filter((c) => c.kind === "skill" || c.kind === "tool"),
+    providers: capabilities.filter((c) => c.kind === "provider"),
     mcp: capabilities.filter((c) => c.kind === "mcp_server"),
     hooks: capabilities.filter((c) => c.kind === "hook"),
   }), [capabilities]);
   const counts: Record<CapabilityTab, number> = {
     skills: tabCapabilities.skills.length,
+    providers: tabCapabilities.providers.length,
     mcp: tabCapabilities.mcp.length,
     hooks: tabCapabilities.hooks.length,
   };
   const enabledCount = capabilities.filter((capability) => capability.enabled !== false).length;
   const activeList = tabCapabilities[tab];
   const activeMatches = filterCapabilities(activeList, search, tab).length;
+  const toolEnabledCount = toolInventory.filter((t) => t.enabled).length;
   const summaryItems = [
     {
       icon: CheckCircle2,
@@ -66,6 +77,13 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
       label: search ? "搜索结果" : "筛选",
       value: search ? `${activeMatches} 个匹配` : "未筛选",
     },
+    ...(toolInventory.length > 0
+      ? [{
+          icon: CheckCircle2,
+          label: "可用工具",
+          value: `${toolEnabledCount}/${toolInventory.length}`,
+        }]
+      : []),
   ];
 
   useGSAP(() => {
@@ -102,6 +120,8 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
     try {
       await toggleCapability(id, enabled);
       await queryClient.invalidateQueries({ queryKey: queryKeys.capabilities });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.ecosystemItems });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.toolInventory });
     } catch (e) {
       console.error("Toggle failed:", e);
     }
@@ -148,6 +168,7 @@ export function CapabilityManager({ initialTab = "skills", className }: Capabili
         capabilities={tabCapabilities}
         search={search}
         onToggle={handleToggle}
+        ecosystemItems={ecosystemItems}
       />
     </div>
   );

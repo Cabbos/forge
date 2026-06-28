@@ -8,11 +8,13 @@ import {
 } from "@/components/primitives/dialog";
 import { ForgeButton } from "@/components/primitives/button";
 import { Settings } from "lucide-react";
-import { useState } from "react";
 import {
   SettingsCenterShell,
   type SettingsSectionId,
 } from "@/components/settings/SettingsCenterShell";
+import { SettingsSummaryStrip } from "@/components/settings/SettingsSummaryStrip";
+import { SettingsProviderSection } from "@/components/settings/SettingsProviderSection";
+import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
 import { useSettingsDialogController } from "@/components/settings/useSettingsDialogController";
 
 interface SettingsDialogProps {
@@ -20,26 +22,35 @@ interface SettingsDialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   hideTrigger?: boolean;
+  requestedSection?: SettingsSectionId | null;
 }
 
-export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigger = false }: SettingsDialogProps = {}) {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("models");
+export function SettingsDialog({
+  triggerClassName,
+  open,
+  onOpenChange,
+  hideTrigger = false,
+  requestedSection = null,
+}: SettingsDialogProps = {}) {
   const {
     dialogOpen,
     setDialogOpen,
     dialogRef,
+    activeSection,
+    setActiveSection,
     configuredCount,
     providerTotal,
     sessionCount,
-    error,
     workspaceName,
     workspacePath,
     workspaceCount,
     providerLabel,
     modelLabel,
     providerRowsProps,
+    profileEditorProps,
     localDataProps,
-  } = useSettingsDialogController({ open, onOpenChange });
+    error,
+  } = useSettingsDialogController({ open, onOpenChange, requestedSection });
 
   return (
     <ForgeDialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -66,17 +77,33 @@ export function SettingsDialog({ triggerClassName, open, onOpenChange, hideTrigg
           onSectionChange={setActiveSection}
           configuredCount={configuredCount}
           providerTotal={providerTotal}
-          sessionCount={sessionCount}
           workspaceName={workspaceName}
           workspacePath={workspacePath}
           workspaceCount={workspaceCount}
           providerLabel={providerLabel}
           modelLabel={modelLabel}
-          providerRowsProps={providerRowsProps}
-          localDataProps={localDataProps}
           error={error}
+          summaryStrip={
+            <SettingsSummaryStrip
+              configuredCount={configuredCount}
+              providerTotal={providerTotal}
+              sessionCount={sessionCount}
+            />
+          }
+          providerSection={
+            <SettingsProviderSection
+              providerRowsProps={providerRowsProps}
+              profileEditorProps={profileEditorProps}
+              showHeading={false}
+            />
+          }
+          localDataSection={
+            <SettingsLocalDataSection {...localDataProps} showHeading={false} />
+          }
         />
       </ForgeDialogContent>
     </ForgeDialog>
   );
 }
+
+export type { SettingsSectionId };

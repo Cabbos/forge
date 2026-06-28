@@ -1,31 +1,58 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ComponentProps } from "react";
-import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
+import { useQueryClient } from "@tanstack/react-query";
+import type { SettingsSectionId } from "@/components/settings/SettingsCenterShell";
 import { SettingsLocalDataSection } from "@/components/settings/SettingsLocalDataSection";
+import {
+  EMPTY_PROVIDER_PROFILE_DRAFT,
+  providerProfileDraftFromProvider,
+  providerProfileInputFromDraft,
+  ProviderProfileEditor,
+  type ProviderProfileDraft,
+} from "@/components/settings/ProviderProfileEditor";
 import { SettingsProviderRows } from "@/components/settings/SettingsProviderRows";
 import { buildSettingsProviderState } from "@/components/settings/SettingsDialogModel";
 import { useSettingsDialogMotion } from "@/components/settings/useSettingsDialogMotion";
-import { deleteSession, setApiKey } from "@/lib/tauri";
-import { useQueryClient } from "@tanstack/react-query";
+import {
+  deleteProviderProfile,
+  deleteSession,
+  listProviderModels,
+  probeProvider,
+  setApiKey,
+  upsertProviderProfile,
+} from "@/lib/tauri";
+import type { ProviderModelCatalogResult, ProviderProbeResult } from "@/lib/tauri";
+import { useApiKeyStatusQuery } from "@/hooks/queries/useApiKeyStatusQuery";
 import { queryKeys } from "@/hooks/queries/queryKeys";
 import { getQueryErrorMessage } from "@/hooks/queries/queryErrors";
+import { useProviderCatalog } from "@/hooks/queries/useProviderCatalogQuery";
 import { getModelLabel, getProviderLabel } from "@/lib/providers";
 import { useStore } from "@/store";
 
 interface UseSettingsDialogControllerOptions {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  requestedSection?: SettingsSectionId | null;
 }
 
 export function useSettingsDialogController({
   open,
   onOpenChange,
+  requestedSection = null,
 }: UseSettingsDialogControllerOptions = {}) {
   const [internalOpen, setInternalOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("models");
   const [editing, setEditing] = useState<string | null>(null);
   const [value, setValue] = useState("");
   const [visible, setVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [probingProvider, setProbingProvider] = useState<string | null>(null);
+  const [probeResults, setProbeResults] = useState<Record<string, ProviderProbeResult>>({});
+  const [refreshingModelsProvider, setRefreshingModelsProvider] = useState<string | null>(null);
+  const [modelCatalogResults, setModelCatalogResults] = useState<Record<string, ProviderModelCatalogResult>>({});
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [profileEditorMode, setProfileEditorMode] = useState<"create" | "edit">("create");
+  const [profileDraft, setProfileDraft] = useState<ProviderProfileDraft>(EMPTY_PROVIDER_PROFILE_DRAFT);
   const [error, setError] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
   const queryClient = useQueryClient();
@@ -35,6 +62,8 @@ export function useSettingsDialogController({
   const workspaceCount = useStore((s) => s.workspaces.size);
   const selectedProvider = useStore((s) => s.selectedProvider);
   const selectedModel = useStore((s) => s.selectedModel);
+  const setSelectedProvider = useStore((s) => s.setSelectedProvider);
+  const setSelectedModel = useStore((s) => s.setSelectedModel);
   const dialogOpen = open ?? internalOpen;
   const setDialogOpen = useCallback((nextOpen: boolean) => {
     if (open === undefined) setInternalOpen(nextOpen);
@@ -47,9 +76,20 @@ export function useSettingsDialogController({
     error: keysError,
   } = useApiKeyStatusQuery(dialogOpen);
   const queryError = getQueryErrorMessage(keysIsError ? keysError : null);
+  const providers = useProviderCatalog(dialogOpen);
 
   useEffect(() => {
-    const openSettings = () => setDialogOpen(true);
+    if (dialogOpen && requestedSection) {
+      setActiveSection(requestedSection);
+    }
+  }, [dialogOpen, requestedSection]);
+
+  useEffect(() => {
+    const openSettings = (event: Event) => {
+      const section = requestedSectionFromEvent(event);
+      if (section) setActiveSection(section);
+      setDialogOpen(true);
+    };
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
@@ -82,6 +122,11 @@ export function useSettingsDialogController({
     setError(null);
     try {
       await setApiKey(editing, value);
+      setProbeResults((previous) => {
+        const next = { ...previous };
+        delete next[editing];
+        return next;
+      });
       setEditing(null);
       setValue("");
       await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
@@ -96,6 +141,11 @@ export function useSettingsDialogController({
     setError(null);
     try {
       await setApiKey(provider, "");
+      setProbeResults((previous) => {
+        const next = { ...previous };
+        delete next[provider];
+        return next;
+      });
       await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
     } catch (e) {
       setError(String(e));
@@ -115,23 +165,193 @@ export function useSettingsDialogController({
     setError(null);
   }, []);
 
-  const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys);
+  const handleProbe = useCallback(async (provider: string) => {
+    setProbingProvider(provider);
+    setError(null);
+    try {
+      const result = await probeProvider(provider);
+      setProbeResults((previous) => ({ ...previous, [provider]: result }));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog });
+    } catch (e) {
+      setProbeResults((previous) => ({
+        ...previous,
+        [provider]: {
+          provider,
+          provider_label: getProviderLabel(provider, providers),
+          model: null,
+          base_url: null,
+          status: "failed",
+          checks: [],
+          message: String(e),
+          remediation: null,
+        },
+      }));
+    } finally {
+      setProbingProvider(null);
+    }
+  }, [providers, queryClient]);
+
+  const handleRefreshModels = useCallback(async (provider: string) => {
+    setRefreshingModelsProvider(provider);
+    setError(null);
+    try {
+      const result = await listProviderModels(provider);
+      if (result.status === "available") {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog });
+      }
+      setModelCatalogResults((previous) => ({ ...previous, [provider]: result }));
+    } catch (e) {
+      setModelCatalogResults((previous) => ({
+        ...previous,
+        [provider]: {
+          provider,
+          provider_label: getProviderLabel(provider, providers),
+          base_url: null,
+          source: "unsupported",
+          status: "unavailable",
+          recorded_at_ms: null,
+          models: [],
+          message: String(e),
+          remediation: null,
+        },
+      }));
+    } finally {
+      setRefreshingModelsProvider(null);
+    }
+  }, [providers, queryClient]);
+
+  const handleProfileEditorOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      setProfileEditorMode("create");
+      setProfileDraft(EMPTY_PROVIDER_PROFILE_DRAFT);
+    }
+    setProfileEditorOpen(nextOpen);
+  }, []);
+
+  const handleEditProviderProfile = useCallback((providerId: string) => {
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider) return;
+    setProfileDraft(providerProfileDraftFromProvider(provider));
+    setProfileEditorMode("edit");
+    setProfileEditorOpen(true);
+    setError(null);
+  }, [providers]);
+
+  const handleSaveProviderProfile = useCallback(async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await upsertProviderProfile(providerProfileInputFromDraft(profileDraft));
+      setProfileDraft(EMPTY_PROVIDER_PROFILE_DRAFT);
+      setProfileEditorMode("create");
+      setProfileEditorOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus }),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [profileDraft, queryClient]);
+
+  const handleDeleteProviderProfile = useCallback(async (provider: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteProviderProfile(provider);
+      setProbeResults((previous) => {
+        const next = { ...previous };
+        delete next[provider];
+        return next;
+      });
+      setModelCatalogResults((previous) => {
+        const next = { ...previous };
+        delete next[provider];
+        return next;
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus }),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [queryClient]);
+
+  const handleUseProviderModel = useCallback((provider: string, model: string) => {
+    setSelectedProvider(provider);
+    setSelectedModel(model);
+  }, [setSelectedModel, setSelectedProvider]);
+
+  const handleSetProviderDefaultModel = useCallback(async (providerId: string, model: string) => {
+    const provider = providers.find((item) => item.id === providerId);
+    if (!provider || (provider.source !== "user_defined" && provider.source !== "user_override")) {
+      setError("只有可编辑的自定义 Provider 可以更新默认模型。");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const draft = providerProfileDraftFromProvider(provider);
+      await upsertProviderProfile(providerProfileInputFromDraft({ ...draft, defaultModel: model }));
+      setSelectedProvider(providerId);
+      setSelectedModel(model);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.providerCatalog }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus }),
+      ]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [providers, queryClient, setSelectedModel, setSelectedProvider]);
+
+  const { sortedKeys, configuredCount, providerTotal } = buildSettingsProviderState(keys, providers);
   const sessionCount = sessions.size;
   const workspaceName = activeWorkspace?.name ?? "未选择项目";
   const workspacePath = activeWorkspace?.path ?? "打开项目后绑定工作区设置";
 
   const providerRowsProps: ComponentProps<typeof SettingsProviderRows> = {
     keys: sortedKeys,
+    providers,
     editing,
     value,
     visible,
     saving,
+    probingProvider,
+    probeResults,
+    refreshingModelsProvider,
+    modelCatalogResults,
+    selectedProvider,
+    selectedModel,
     onEdit: handleEdit,
     onValueChange: setValue,
     onVisibleChange: setVisible,
     onSave: handleSave,
     onCancel: handleCancelEdit,
     onRemove: handleRemove,
+    onProbe: handleProbe,
+    onRefreshModels: handleRefreshModels,
+    onUseModel: handleUseProviderModel,
+    onSetDefaultModel: handleSetProviderDefaultModel,
+    onEditProviderProfile: handleEditProviderProfile,
+    onDeleteProviderProfile: handleDeleteProviderProfile,
+  };
+
+  const profileEditorProps: ComponentProps<typeof ProviderProfileEditor> = {
+    open: profileEditorOpen,
+    mode: profileEditorMode,
+    draft: profileDraft,
+    saving,
+    onOpenChange: handleProfileEditorOpenChange,
+    onDraftChange: setProfileDraft,
+    onSave: handleSaveProviderProfile,
   };
 
   const localDataProps: ComponentProps<typeof SettingsLocalDataSection> = {
@@ -144,16 +364,24 @@ export function useSettingsDialogController({
     dialogOpen,
     setDialogOpen,
     dialogRef,
+    activeSection,
+    setActiveSection,
     configuredCount,
     providerTotal,
     sessionCount,
     workspaceName,
     workspacePath,
     workspaceCount,
-    providerLabel: getProviderLabel(selectedProvider),
-    modelLabel: getModelLabel(selectedModel),
+    providerLabel: getProviderLabel(selectedProvider, providers),
+    modelLabel: getModelLabel(selectedModel, providers),
     error: error ?? (queryError ? `密钥状态读取失败：${queryError}` : null),
     providerRowsProps,
+    profileEditorProps,
     localDataProps,
   };
+}
+
+function requestedSectionFromEvent(event: Event): SettingsSectionId | null {
+  const section = (event as CustomEvent<{ section?: unknown }>).detail?.section;
+  return section === "models" ? "models" : null;
 }

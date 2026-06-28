@@ -225,6 +225,31 @@ export interface AgentA2ATaskProjection {
   worktree_path: string | null;
   cleaned_up: boolean | null;
   suggested_action: string | null;
+  review_decision?: string | null;
+  reviewed_at_ms?: number | null;
+  // Phase 4-A enriched fields — derived from AgentTaskRecord / artifacts.
+  parent_task_id: string | null;
+  child_task_ids: string[];
+  created_at_ms: number;
+  started_at_ms: number | null;
+  ended_at_ms: number | null;
+  duration_ms: number | null;
+  retryable: boolean | null;
+  failure_kind: string | null;
+  resume_note: string | null;
+  latest_progress: string | null;
+  // Phase 4-C — durable WorktreeWorker lease / retry state.
+  lease_owner: string | null;
+  lease_acquired_at_ms: number | null;
+  lease_expires_at_ms: number | null;
+  last_heartbeat_at_ms: number | null;
+  attempt_count: number;
+  max_attempts: number;
+  // Phase 4-B — diff-derived file visibility (safe: parsed from existing artifacts).
+  diff_available: boolean | null;
+  changed_file_count: number | null;
+  changed_files: string[];
+  test_report_excerpt: string | null;
 }
 
 export interface AgentA2AMessageProjection {
@@ -240,6 +265,127 @@ export interface AgentA2AProjection {
   failed_count: number;
   interrupted_count: number;
   tasks: AgentA2ATaskProjection[];
+}
+
+export type ProviderUsageReason = "provider_reported" | "provider_omitted" | "pricing_unknown";
+
+export type HeadlessResumeMode = "disabled" | "require_human_approval" | "approved_for_task";
+
+export type HeadlessOwnerRunState =
+  | "requested"
+  | "denied"
+  | "ready"
+  | "lease_acquired"
+  | "dry_run_waiting"
+  | "fake_running"
+  | "running"
+  | "waiting_for_input"
+  | "interrupted"
+  | "cancelled"
+  | "expired"
+  | "completed"
+  | "failed";
+
+export type HeadlessOwnerSnapshotSource =
+  | "unavailable"
+  | "current_desktop_session"
+  | "persisted_session_snapshot"
+  | "workspace_snapshot"
+  | "restored_headless_snapshot";
+
+export type HeadlessOwnerExecutorKind =
+  | "none"
+  | "dry_run"
+  | "fake_executor"
+  | "agent_session_adapter";
+
+export interface HeadlessOwnerRun {
+  owner_run_id: string;
+  task_id: string;
+  session_id?: string | null;
+  lease_id: string;
+  attempt: number;
+  state?: HeadlessOwnerRunState;
+  snapshot_source?: HeadlessOwnerSnapshotSource;
+  snapshot_ref?: string | null;
+  human_gate_id: string;
+  policy_decision_id: string;
+  budget_snapshot_id: string;
+  idempotency_key: string;
+  correlation_id: string;
+  causation_id?: string | null;
+  requested_by: string;
+  requested_at_ms: number;
+  heartbeat_at_ms?: number | null;
+  expires_at_ms: number;
+  cancellation_reason?: string | null;
+  waiting_reason?: string | null;
+  executor_kind?: HeadlessOwnerExecutorKind;
+  evidence_refs?: string[];
+}
+
+export interface HeadlessResumeApproval {
+  task_id: string;
+  approved_by: string;
+  approved_at_ms: number;
+  scope: string;
+  expires_at_ms: number;
+}
+
+export type SubagentRuntimePayload =
+  | { type: "started"; role: string }
+  | { type: "status"; status: string; message?: string | null }
+  | { type: "file_io"; path: string; operation: string }
+  | {
+      type: "usage_recorded";
+      provider_id?: string | null;
+      model?: string | null;
+      source?: string | null;
+      reason?: ProviderUsageReason | null;
+      input_tokens?: number | null;
+      output_tokens?: number | null;
+      cache_read_tokens?: number | null;
+      cache_creation_tokens?: number | null;
+      reasoning_tokens?: number | null;
+      estimated_cost_micros?: number | null;
+      pricing_source?: string | null;
+    }
+  | { type: "ended"; status: string }
+  | { type: "failed"; reason: string }
+  | { type: "interrupted"; reason: string };
+
+export interface LoopTaskRecord {
+  id: string;
+  goal: string;
+  session_id?: string | null;
+  profile_id?: string | null;
+  workspace_path?: string | null;
+  status: string;
+  owner: Record<string, unknown>;
+  policy: Record<string, unknown>;
+  headless_resume_mode?: HeadlessResumeMode;
+  headless_resume_approval?: HeadlessResumeApproval | null;
+  headless_owner_runs?: HeadlessOwnerRun[];
+  budget: Record<string, unknown>;
+  completion_contract: Record<string, unknown>;
+  created_at_ms: number;
+  updated_at_ms: number;
+  lease?: Record<string, unknown> | null;
+  open_gates?: unknown[];
+  evidence?: unknown[];
+  policy_decisions?: unknown[];
+  latest_budget_snapshot?: Record<string, unknown> | null;
+  latest_event_id?: string | null;
+  outcome?: Record<string, unknown> | null;
+  completion_result?: {
+    status?: string;
+    reasons?: string[];
+    review_status?: string;
+    commit_eligible?: boolean;
+    commit_blockers?: string[];
+    human_gate_id?: string | null;
+    last_review_decision?: Record<string, unknown> | null;
+  } | Record<string, unknown> | null;
 }
 
 export type StreamEvent =
@@ -259,6 +405,7 @@ export type StreamEvent =
   | { event_type: "tool_call_end"; session_id: string; block_id: string }
   // ── File Diff ──
   | { event_type: "diff_view"; session_id: string; block_id: string; file_path: string; old_content: string; new_content: string }
+  | { event_type: "file_io"; session_id: string; block_id: string; path: string; operation: string; source?: string | null }
   // ── Shell Commands ──
   | { event_type: "shell_start"; session_id: string; block_id: string; command: string }
   | { event_type: "shell_output"; session_id: string; block_id: string; content: string }
@@ -271,6 +418,19 @@ export type StreamEvent =
       question: string;
       kind: string;
       boundary?: WriteBoundary | null;
+      replayed_interrupted?: boolean;
+    }
+  | {
+      event_type: "confirm_response";
+      session_id: string;
+      block_id: string;
+      question?: string | null;
+      kind?: string | null;
+      boundary?: WriteBoundary | null;
+      approved: boolean | null;
+      responded_at_ms: number;
+      reason?: string | null;
+      replayed?: boolean;
     }
   // ── Context Management ──
   | {
@@ -307,13 +467,78 @@ export type StreamEvent =
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
   | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
   | { event_type: "agent_a2a_updated"; session_id: string; state: AgentA2AProjection }
+  | {
+      event_type: "subagent_runtime_event";
+      session_id: string;
+      loop_task_id?: string | null;
+      task_id: string;
+      event: SubagentRuntimePayload;
+    }
+  | {
+      event_type: "loop_runtime_updated";
+      session_id: string;
+      loop_task_id: string;
+      task: LoopTaskRecord;
+    }
+  | {
+      event_type: "ecosystem_changed";
+      session_id: string;
+      item_id: string;
+      action: string;
+      enabled?: boolean | null;
+    }
   | { event_type: "delivery_summary"; session_id: string; block_id: string; summary: DeliverySummary }
   // ── Session Status ──
   | { event_type: "session_started"; session_id: string; agent_type: string; model: string; context_window_tokens?: number | null }
   | { event_type: "session_status"; session_id: string; status: string }
   | { event_type: "session_stopped"; session_id: string; reason: string }
   | { event_type: "error"; session_id: string; block_id: string; message: string; code: string }
-  | { event_type: "usage"; session_id: string; input_tokens: number; output_tokens: number; estimated_cost_usd: number };
+  | { event_type: "usage"; session_id: string; input_tokens: number; output_tokens: number; estimated_cost_usd: number }
+  | {
+      event_type: "provider_usage";
+      session_id: string;
+      block_id?: string | null;
+      provider_id?: string | null;
+      model?: string | null;
+      input_tokens: number | null;
+      output_tokens: number | null;
+      cache_read_tokens?: number | null;
+      cache_creation_tokens?: number | null;
+      reasoning_tokens?: number | null;
+      estimated_cost_micros: number | null;
+      pricing_source?: string | null;
+      source?: string | null;
+      reason: ProviderUsageReason;
+    }
+  // ── Recovery Notice ──
+  | {
+      event_type: "recovery_notice";
+      session_id: string;
+      notice_id: string;
+      title: string;
+      message: string;
+      reason: string;
+      recoverable: boolean;
+    }
+  // ── Diagnostics / Health ──
+  | {
+      event_type: "diagnostics_update";
+      session_id: string;
+      ok: boolean;
+      pass_count: number;
+      warn_count: number;
+      fail_count: number;
+      report_json?: string | null;
+    }
+  | {
+      event_type: "health_alert";
+      session_id: string;
+      alert_id: string;
+      level: string;
+      title: string;
+      message: string;
+      remediation?: string | null;
+    };
 
 // Block state for accumulating streaming chunks
 export interface BlockState {
@@ -335,6 +560,28 @@ export interface ContextUsageState {
   compactedToTokens?: number | null;
 }
 
+export interface SessionUsageLedgerState {
+  providerId: string | null;
+  model: string | null;
+  source: string | null;
+  reason: ProviderUsageReason | "legacy_usage";
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+  reasoningTokens: number | null;
+  estimatedCostMicros: number | null;
+  pricingSource: string | null;
+  costUsd: number | null;
+  hasUnknownInputTokens: boolean;
+  hasUnknownOutputTokens: boolean;
+  hasUnknownCost: boolean;
+  lastEventType: "provider_usage" | "usage";
+  lastProviderUsageBlockId: string | null;
+  legacyDuplicateIgnored: boolean;
+  updatedAt: number;
+}
+
 // Session state
 export interface SessionState {
   id: string;
@@ -345,11 +592,12 @@ export interface SessionState {
   createdAt?: number | null;
   updatedAt?: number | null;
   contextWindowTokens?: number | null;
-  status: "running" | "stopped" | "error";
+  status: "running" | "stopped" | "error" | "resuming";
   streaming: boolean;
   blocks: BlockState[];
   costUsd: number;
   contextUsage?: ContextUsageState | null;
+  usageLedger?: SessionUsageLedgerState | null;
 }
 
 export type AgentType = "claude" | "codex" | "hermes";

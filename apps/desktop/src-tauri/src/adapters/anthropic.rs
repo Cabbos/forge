@@ -11,11 +11,12 @@ use super::base::{
 };
 use crate::agent::event_sink::EventEmitter;
 use crate::consts::{AGENT_API_TIMEOUT, HTTP_CONNECT_TIMEOUT};
-use crate::protocol::events::StreamEvent;
+use crate::protocol::events::{ProviderUsageReason, StreamEvent};
 use crate::protocol::BlockId;
 
 const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+pub(crate) const STATIC_PRICING_SOURCE: &str = "forge_static_pricing_2026_06_20";
 
 const SYSTEM_PROMPT: &str = "\
 You are a powerful AI coding agent running in a desktop GUI application. You have direct access to the user's filesystem and shell.
@@ -45,6 +46,7 @@ You are a powerful AI coding agent running in a desktop GUI application. You hav
 
 pub struct AnthropicAdapter {
     api_key: String,
+    provider_id: String,
     model: String,
     base_url: String,
     thinking_budget_tokens: u32,
@@ -58,7 +60,15 @@ pub struct AnthropicAdapter {
 
 impl AnthropicAdapter {
     pub fn new(api_key: String) -> Result<Self, AdapterError> {
-        if api_key.trim().is_empty() {
+        Self::new_with_key_policy(api_key, true)
+    }
+
+    pub(crate) fn new_allowing_empty_api_key(api_key: String) -> Result<Self, AdapterError> {
+        Self::new_with_key_policy(api_key, false)
+    }
+
+    fn new_with_key_policy(api_key: String, api_key_required: bool) -> Result<Self, AdapterError> {
+        if api_key.trim().is_empty() && api_key_required {
             return Err(AdapterError::MissingApiKey);
         }
         let client = reqwest::Client::builder()
@@ -68,6 +78,7 @@ impl AnthropicAdapter {
             .map_err(|e| AdapterError::Http(e.to_string()))?;
         Ok(Self {
             api_key,
+            provider_id: "anthropic".to_string(),
             model: DEFAULT_MODEL.to_string(),
             base_url: DEFAULT_BASE_URL.to_string(),
             thinking_budget_tokens: 4000,
@@ -78,8 +89,21 @@ impl AnthropicAdapter {
         })
     }
 
+    fn with_auth_header(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.header("x-api-key", &self.api_key)
+        }
+    }
+
     pub fn with_model(mut self, model: &str) -> Self {
         self.model = model.to_string();
+        self
+    }
+
+    pub fn with_provider_id(mut self, provider_id: &str) -> Self {
+        self.provider_id = provider_id.to_string();
         self
     }
 
@@ -262,7 +286,7 @@ impl AnthropicAdapter {
         ToolDef {
             name: "delegate_task".to_string(),
             description: "Dispatch an independent subtask that runs in parallel with other subtasks. Use 'research' mode for read-only investigation, 'patch_proposal' mode for a structured improvement proposal without writing files, and 'worktree_worker' mode for isolated implementation in a temporary git worktree. Each delegate_task runs concurrently.".to_string(),
-            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to analyze, investigate, or implement."},"mode":{"type":"string","enum":["research","patch_proposal","worktree_worker"],"description":"Execution mode. 'research' (default) — read-only investigation returning text findings. 'patch_proposal' — code analysis that produces a structured patch proposal artifact without modifying files. 'worktree_worker' — isolated implementation in a temporary git worktree, returning diff/test artifacts without merging."}},"required":["task"]}),
+            input_schema: serde_json::json!({"type":"object","properties":{"task":{"type":"string","description":"Focused task description for the sub-agent. Be specific about what to analyze, investigate, or implement."},"mode":{"type":"string","enum":["research","patch_proposal","worktree_worker"],"description":"Execution mode. 'research' (default) — read-only investigation returning text findings. 'patch_proposal' — code analysis that produces a structured patch proposal artifact without modifying files. 'worktree_worker' — isolated implementation in a temporary git worktree, returning diff/test artifacts without merging."},"root_planning_task":{"type":"boolean","description":"Set true only when this delegate should start a new root planning task instead of attaching to the active parent task context."}},"required":["task"]}),
         },
     ];
         tools.extend(
@@ -272,6 +296,78 @@ impl AnthropicAdapter {
                 .clone(),
         );
         tools
+    }
+
+    async fn call_non_streaming(
+        &self,
+        messages: &[ChatMessage],
+        cancel: Arc<Notify>,
+        usage_emitter: Option<(&str, &dyn EventEmitter)>,
+    ) -> Result<StreamResult, AdapterError> {
+        let body = self.request_for_messages(messages, false, true);
+
+        // Race HTTP call against cancel token
+        let url = format!("{}/v1/messages", self.base_url);
+        let request = self
+            .with_auth_header(self.client.post(&url))
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body);
+
+        let response = tokio::select! {
+            r = request.send() => r,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        };
+        let response = response.map_err(|e| AdapterError::Http(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let text: String = tokio::select! {
+                t = response.text() => t,
+                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+            }
+            .unwrap_or_default();
+            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
+        }
+
+        let parsed: serde_json::Value = match tokio::select! {
+            j = response.json() => j,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        } {
+            Ok(v) => v,
+            Err(e) => return Err(AdapterError::Stream(e.to_string())),
+        };
+
+        if let Some((session_id, emitter)) = usage_emitter {
+            emit_usage_events_for_provider(
+                emitter,
+                session_id,
+                &self.provider_id,
+                "anthropic",
+                &self.model,
+                anthropic_usage_from_response(&parsed),
+            );
+        }
+
+        let content = parsed["content"].as_array().cloned().unwrap_or_default();
+
+        let tool_calls: Vec<ToolCall> = content
+            .iter()
+            .filter(|b| b["type"].as_str() == Some("tool_use"))
+            .map(|b| ToolCall {
+                id: b["id"].as_str().unwrap_or("").to_string(),
+                name: b["name"].as_str().unwrap_or("").to_string(),
+                input: b["input"].clone(),
+            })
+            .collect();
+
+        let stop_reason = parsed["stop_reason"].as_str().map(|s| s.to_string());
+
+        Ok(StreamResult {
+            assistant_content: content,
+            tool_calls,
+            stop_reason,
+        })
     }
 }
 
@@ -308,61 +404,18 @@ impl AiAdapter for AnthropicAdapter {
         messages: &[ChatMessage],
         cancel: Arc<Notify>,
     ) -> Result<StreamResult, AdapterError> {
-        let body = self.request_for_messages(messages, false, true);
+        self.call_non_streaming(messages, cancel, None).await
+    }
 
-        // Race HTTP call against cancel token
-        let url = format!("{}/v1/messages", self.base_url);
-        let request = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body);
-
-        let response = tokio::select! {
-            r = request.send() => r,
-            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-        };
-        let response = response.map_err(|e| AdapterError::Http(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let text: String = tokio::select! {
-                t = response.text() => t,
-                _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-            }
-            .unwrap_or_default();
-            return Err(AdapterError::Http(format!("HTTP {status}: {text}")));
-        }
-
-        let parsed: serde_json::Value = match tokio::select! {
-            j = response.json() => j,
-            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
-        } {
-            Ok(v) => v,
-            Err(e) => return Err(AdapterError::Stream(e.to_string())),
-        };
-
-        let content = parsed["content"].as_array().cloned().unwrap_or_default();
-
-        let tool_calls: Vec<ToolCall> = content
-            .iter()
-            .filter(|b| b["type"].as_str() == Some("tool_use"))
-            .map(|b| ToolCall {
-                id: b["id"].as_str().unwrap_or("").to_string(),
-                name: b["name"].as_str().unwrap_or("").to_string(),
-                input: b["input"].clone(),
-            })
-            .collect();
-
-        let stop_reason = parsed["stop_reason"].as_str().map(|s| s.to_string());
-
-        Ok(StreamResult {
-            assistant_content: content,
-            tool_calls,
-            stop_reason,
-        })
+    async fn call_with_emitter(
+        &self,
+        session_id: &str,
+        messages: &[ChatMessage],
+        emitter: &dyn EventEmitter,
+        cancel: Arc<Notify>,
+    ) -> Result<StreamResult, AdapterError> {
+        self.call_non_streaming(messages, cancel, Some((session_id, emitter)))
+            .await
     }
 
     async fn compact_summary(
@@ -376,9 +429,7 @@ impl AiAdapter for AnthropicAdapter {
 
         let url = format!("{}/v1/messages", self.base_url);
         let request = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
+            .with_auth_header(self.client.post(&url))
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body);
@@ -427,9 +478,7 @@ impl AiAdapter for AnthropicAdapter {
         let body = self.request_for_messages(messages, true, false);
 
         let response = self
-            .client
-            .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
+            .with_auth_header(self.client.post(format!("{}/v1/messages", self.base_url)))
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)
@@ -447,6 +496,7 @@ impl AiAdapter for AnthropicAdapter {
         let mut buffer = String::new();
         let mut active_block_id: Option<String> = None;
         let mut parser = AnthropicStreamParser::default();
+        let mut saw_usage = false;
 
         loop {
             let chunk = tokio::select! {
@@ -548,14 +598,16 @@ impl AiAdapter for AnthropicAdapter {
                             active_block_id = None;
                         }
 
-                        if let Some((input_tokens, output_tokens)) = update.usage {
-                            let cost = estimate_cost(&self.model, input_tokens, output_tokens);
-                            emitter.emit(StreamEvent::Usage {
-                                session_id: session.to_string(),
-                                input_tokens,
-                                output_tokens,
-                                estimated_cost_usd: cost,
-                            });
+                        if let Some(usage) = update.usage {
+                            saw_usage = true;
+                            emit_usage_events_for_provider(
+                                emitter,
+                                &session,
+                                &self.provider_id,
+                                "anthropic",
+                                &self.model,
+                                Some(usage),
+                            );
                         }
 
                         if let Some(msg) = update.error {
@@ -574,6 +626,17 @@ impl AiAdapter for AnthropicAdapter {
             }
         }
 
+        if !saw_usage {
+            emit_usage_events_for_provider(
+                emitter,
+                session_id,
+                &self.provider_id,
+                "anthropic",
+                &self.model,
+                None,
+            );
+        }
+
         Ok(parser.finish())
     }
 }
@@ -589,7 +652,9 @@ struct AnthropicStreamParser {
     stop_reason: Option<String>,
     current_text: String,
     current_thinking: String,
-    total_input_tokens: u32,
+    total_input_tokens: u64,
+    cache_read_tokens: Option<u64>,
+    cache_creation_tokens: Option<u64>,
 }
 
 #[derive(Default)]
@@ -599,7 +664,7 @@ struct AnthropicStreamUpdate {
     thinking_chunk: Option<String>,
     text_chunk: Option<String>,
     block_end: Option<AnthropicBlockEnd>,
-    usage: Option<(u32, u32)>,
+    usage: Option<ProviderTokenUsage>,
     error: Option<String>,
 }
 
@@ -626,11 +691,19 @@ impl AnthropicStreamParser {
 
         match sse_type {
             "message_start" => {
-                if let Some(usage) = parsed["message"].get("usage") {
+                if let Some(usage) = parsed["message"]
+                    .get("usage")
+                    .and_then(|value| value.as_object())
+                {
                     self.total_input_tokens = usage
                         .get("input_tokens")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
+                        .unwrap_or(0);
+                    self.cache_read_tokens = optional_usage_u64(usage, "cache_read_input_tokens")
+                        .or_else(|| optional_usage_u64(usage, "cache_read_tokens"));
+                    self.cache_creation_tokens =
+                        optional_usage_u64(usage, "cache_creation_input_tokens")
+                            .or_else(|| optional_usage_u64(usage, "cache_creation_tokens"));
                 }
                 update.session_status = Some("working".to_string());
             }
@@ -745,8 +818,14 @@ impl AnthropicStreamParser {
                     let output_tokens = usage
                         .get("output_tokens")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32;
-                    update.usage = Some((self.total_input_tokens, output_tokens));
+                        .unwrap_or(0);
+                    update.usage = Some(ProviderTokenUsage {
+                        input_tokens: self.total_input_tokens,
+                        output_tokens,
+                        cache_read_tokens: self.cache_read_tokens,
+                        cache_creation_tokens: self.cache_creation_tokens,
+                        reasoning_tokens: optional_usage_u64(usage, "reasoning_tokens"),
+                    });
                 }
             }
             "message_stop" => {
@@ -799,17 +878,198 @@ fn drain_anthropic_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
     events
 }
 
-/// Estimate cost based on model pricing (per 1M tokens).
-pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> f64 {
-    let (input_price, output_price): (f64, f64) = match model {
+pub(crate) fn emit_usage_events(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    source: &str,
+    model: &str,
+    usage: Option<ProviderTokenUsage>,
+) {
+    emit_usage_events_for_provider(emitter, session_id, source, source, model, usage);
+}
+
+pub(crate) fn emit_usage_events_for_provider(
+    emitter: &dyn EventEmitter,
+    session_id: &str,
+    provider_id: &str,
+    source: &str,
+    model: &str,
+    usage: Option<ProviderTokenUsage>,
+) {
+    let (
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
+        estimated_cost_micros,
+        pricing_source,
+        reason,
+    ) = match usage {
+        Some(usage) => {
+            match usage
+                .legacy_token_counts()
+                .and_then(|(input, output)| estimate_cost_details(model, input, output))
+            {
+                Some(estimate) => (
+                    Some(usage.input_tokens),
+                    Some(usage.output_tokens),
+                    usage.cache_read_tokens,
+                    usage.cache_creation_tokens,
+                    usage.reasoning_tokens,
+                    Some(estimate.micros),
+                    Some(estimate.pricing_source.to_string()),
+                    ProviderUsageReason::ProviderReported,
+                ),
+                None => (
+                    Some(usage.input_tokens),
+                    Some(usage.output_tokens),
+                    usage.cache_read_tokens,
+                    usage.cache_creation_tokens,
+                    usage.reasoning_tokens,
+                    None,
+                    None,
+                    ProviderUsageReason::PricingUnknown,
+                ),
+            }
+        }
+        None => (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ProviderUsageReason::ProviderOmitted,
+        ),
+    };
+
+    emitter.emit(StreamEvent::ProviderUsage {
+        session_id: session_id.to_string(),
+        block_id: uuid::Uuid::now_v7().to_string(),
+        provider_id: Some(provider_id.to_string()),
+        model: Some(model.to_string()),
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        reasoning_tokens,
+        estimated_cost_micros,
+        pricing_source,
+        source: Some(source.to_string()),
+        reason,
+    });
+
+    if let (Some(input_tokens), Some(output_tokens), Some(estimated_cost_micros)) =
+        (input_tokens, output_tokens, estimated_cost_micros)
+    {
+        let Ok(input_tokens) = input_tokens.try_into() else {
+            return;
+        };
+        let Ok(output_tokens) = output_tokens.try_into() else {
+            return;
+        };
+        emitter.emit(StreamEvent::Usage {
+            session_id: session_id.to_string(),
+            input_tokens,
+            output_tokens,
+            estimated_cost_usd: estimated_cost_micros as f64 / 1_000_000.0,
+        });
+    }
+}
+
+/// Estimate cost based on known model pricing (per 1M tokens).
+pub fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32) -> Option<f64> {
+    estimate_cost_micros(model, input_tokens, output_tokens)
+        .map(|micros| micros as f64 / 1_000_000.0)
+}
+
+pub fn estimate_cost_micros(model: &str, input_tokens: u32, output_tokens: u32) -> Option<u64> {
+    estimate_cost_details(model, input_tokens, output_tokens).map(|estimate| estimate.micros)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct CostEstimate {
+    micros: u64,
+    pricing_source: &'static str,
+}
+
+fn estimate_cost_details(
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+) -> Option<CostEstimate> {
+    let pricing = pricing_for_model(model)?;
+    let cost = (input_tokens as f64 * pricing.input_micros_per_token)
+        + (output_tokens as f64 * pricing.output_micros_per_token);
+    Some(CostEstimate {
+        micros: cost.round() as u64,
+        pricing_source: pricing.source,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ModelPricing {
+    input_micros_per_token: f64,
+    output_micros_per_token: f64,
+    source: &'static str,
+}
+
+fn pricing_for_model(model: &str) -> Option<ModelPricing> {
+    let model = model.to_ascii_lowercase();
+    let (input_micros_per_token, output_micros_per_token) = match model.as_str() {
         m if m.contains("opus") => (15.0, 75.0),
         m if m.contains("sonnet") => (3.0, 15.0),
         m if m.contains("haiku") => (0.8, 4.0),
         m if m.contains("deepseek") => (0.14, 0.28),
-        _ => (3.0, 15.0), // default sonnet pricing
+        _ => return None,
     };
-    (input_tokens as f64 / 1_000_000.0) * input_price
-        + (output_tokens as f64 / 1_000_000.0) * output_price
+    Some(ModelPricing {
+        input_micros_per_token,
+        output_micros_per_token,
+        source: STATIC_PRICING_SOURCE,
+    })
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProviderTokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_creation_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+}
+
+impl ProviderTokenUsage {
+    fn legacy_token_counts(&self) -> Option<(u32, u32)> {
+        Some((
+            self.input_tokens.try_into().ok()?,
+            self.output_tokens.try_into().ok()?,
+        ))
+    }
+}
+
+fn anthropic_usage_from_response(parsed: &serde_json::Value) -> Option<ProviderTokenUsage> {
+    let usage = parsed["usage"].as_object()?;
+    let input_tokens = usage.get("input_tokens")?.as_u64()?;
+    let output_tokens = usage.get("output_tokens")?.as_u64()?;
+    Some(ProviderTokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens: optional_usage_u64(usage, "cache_read_input_tokens")
+            .or_else(|| optional_usage_u64(usage, "cache_read_tokens")),
+        cache_creation_tokens: optional_usage_u64(usage, "cache_creation_input_tokens")
+            .or_else(|| optional_usage_u64(usage, "cache_creation_tokens")),
+        reasoning_tokens: optional_usage_u64(usage, "reasoning_tokens"),
+    })
+}
+
+pub(crate) fn optional_usage_u64(
+    usage: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<u64> {
+    usage.get(key)?.as_u64()
 }
 
 /// Flush accumulated text or thinking content into the assistant content list.
@@ -831,6 +1091,23 @@ mod tests {
     use std::io::{Read, Write};
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[derive(Default)]
+    struct CaptureEmitter {
+        events: parking_lot::Mutex<Vec<StreamEvent>>,
+    }
+
+    impl CaptureEmitter {
+        fn events(&self) -> Vec<StreamEvent> {
+            self.events.lock().clone()
+        }
+    }
+
+    impl EventEmitter for CaptureEmitter {
+        fn emit(&self, event: StreamEvent) {
+            self.events.lock().push(event);
+        }
+    }
 
     #[test]
     fn external_tools_can_be_replaced_after_session_creation() {
@@ -878,6 +1155,30 @@ mod tests {
         assert!(modes.contains(&"worktree_worker"));
     }
 
+    #[test]
+    fn delegate_task_schema_exposes_optional_root_planning_task_flag() {
+        let adapter = AnthropicAdapter::new("test-key".to_string()).unwrap();
+        let delegate = adapter
+            .tool_definitions()
+            .into_iter()
+            .find(|tool| tool.name == "delegate_task")
+            .expect("delegate_task tool");
+        let root_planning_task = &delegate.input_schema["properties"]["root_planning_task"];
+        let required = delegate.input_schema["required"]
+            .as_array()
+            .expect("required array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(root_planning_task["type"], "boolean");
+        assert!(root_planning_task["description"]
+            .as_str()
+            .expect("root_planning_task description")
+            .contains("root"));
+        assert!(!required.contains(&"root_planning_task"));
+    }
+
     #[tokio::test]
     async fn call_repairs_tool_history_before_serializing_request() {
         let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
@@ -916,6 +1217,236 @@ mod tests {
         assert!(request_messages
             .iter()
             .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_uses_subagent_tools_and_emits_usage() {
+        let (base_url, received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 123,
+                "output_tokens": 45
+            }
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        let result = adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+        let request_body = received_body
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured request body");
+        let tool_names = request_body["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(request_body["stream"], false);
+        assert_eq!(
+            result.assistant_content,
+            vec![serde_json::json!({"type": "text", "text": "ok"})]
+        );
+        assert!(tool_names.contains(&"read_file"));
+        assert!(!tool_names.contains(&"write_to_file"));
+        assert!(!tool_names.contains(&"edit_file"));
+        assert!(!tool_names.contains(&"run_shell"));
+        assert!(!tool_names.contains(&"delegate_task"));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::Usage {
+                session_id,
+                input_tokens: 123,
+                output_tokens: 45,
+                ..
+            } if session_id == "subagent"
+        )));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: Some(1044),
+                pricing_source: Some(pricing_source),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "anthropic"
+                && model == "claude-sonnet-4-6"
+                && pricing_source == "forge_static_pricing_2026_06_20"
+                && source == "anthropic"
+        )));
+    }
+
+    #[test]
+    fn emit_usage_events_keeps_provider_usage_before_legacy_usage() {
+        let emitter = CaptureEmitter::default();
+
+        emit_usage_events_for_provider(
+            &emitter,
+            "session-usage-order",
+            "anthropic",
+            "anthropic",
+            "claude-sonnet-4-6",
+            Some(ProviderTokenUsage {
+                input_tokens: 123,
+                output_tokens: 45,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+            }),
+        );
+
+        let events = emitter.events();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events.first(),
+            Some(StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                estimated_cost_micros: Some(1044),
+                pricing_source: Some(pricing_source),
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderReported,
+                ..
+            }) if session_id == "session-usage-order"
+                && provider_id == "anthropic"
+                && model == "claude-sonnet-4-6"
+                && pricing_source == "forge_static_pricing_2026_06_20"
+                && source == "anthropic"
+        ));
+        assert!(matches!(
+            events.get(1),
+            Some(StreamEvent::Usage {
+                session_id,
+                input_tokens: 123,
+                output_tokens: 45,
+                estimated_cost_usd,
+            }) if session_id == "session-usage-order"
+                && (*estimated_cost_usd - 0.001044).abs() < f64::EPSILON
+        ));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_unknown_usage_when_provider_omits_usage() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn"
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: None,
+                output_tokens: None,
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: None,
+                pricing_source: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::ProviderOmitted,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "anthropic"
+                && model == "claude-sonnet-4-6"
+                && source == "anthropic"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
+    }
+
+    #[tokio::test]
+    async fn call_with_emitter_records_known_tokens_and_unknown_cost_for_unknown_pricing() {
+        let (base_url, _received_body) = spawn_json_capture_server(serde_json::json!({
+            "content": [{ "type": "text", "text": "ok" }],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 123,
+                "output_tokens": 45
+            }
+        }));
+        let adapter = AnthropicAdapter::new("test-key".to_string())
+            .unwrap()
+            .with_model("mystery-model-v1")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        adapter
+            .call_with_emitter(
+                "subagent",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await
+            .expect("adapter call");
+
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::ProviderUsage {
+                session_id,
+                provider_id: Some(provider_id),
+                model: Some(model),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: None,
+                pricing_source: None,
+                source: Some(source),
+                reason: crate::protocol::events::ProviderUsageReason::PricingUnknown,
+                ..
+            } if session_id == "subagent"
+                && provider_id == "anthropic"
+                && model == "mystery-model-v1"
+                && source == "anthropic"
+        )));
+        assert!(!emitter
+            .events()
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Usage { .. })));
     }
 
     #[test]
@@ -988,6 +1519,107 @@ mod tests {
         assert_eq!(
             result.assistant_content,
             vec![
+                serde_json::json!({"type": "text", "text": "先看文件。"}),
+                serde_json::json!({
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": { "path": "src/App.tsx" }
+                })
+            ]
+        );
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_use"));
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "toolu_1");
+        assert_eq!(result.tool_calls[0].name, "read_file");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({ "path": "src/App.tsx" })
+        );
+    }
+
+    #[test]
+    fn provider_conformance_anthropic_streaming_fixture_captures_text_thinking_tool_and_usage() {
+        let events = [
+            serde_json::json!({
+                "type": "message_start",
+                "message": {
+                    "usage": { "input_tokens": 123 }
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "content_block": { "type": "thinking", "thinking": "" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "thinking_delta", "thinking": "Need the file before editing." }
+            }),
+            serde_json::json!({ "type": "content_block_stop" }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "content_block": { "type": "text", "text": "" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "text_delta", "text": "先看文件。" }
+            }),
+            serde_json::json!({ "type": "content_block_stop" }),
+            serde_json::json!({
+                "type": "content_block_start",
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": {}
+                }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "input_json_delta", "partial_json": "{\"path\"" }
+            }),
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "type": "input_json_delta", "partial_json": ":\"src/App.tsx\"}" }
+            }),
+            serde_json::json!({ "type": "content_block_stop" }),
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "tool_use" },
+                "usage": { "output_tokens": 45 }
+            }),
+        ];
+
+        let mut parser = AnthropicStreamParser::default();
+        let mut thinking_chunk = None;
+        let mut text_chunk = None;
+        let mut usage = None;
+        for event in events {
+            let update = parser.apply_event(&event);
+            thinking_chunk = thinking_chunk.or(update.thinking_chunk);
+            text_chunk = text_chunk.or(update.text_chunk);
+            usage = usage.or(update.usage);
+        }
+        let result = parser.finish();
+
+        assert_eq!(
+            thinking_chunk.as_deref(),
+            Some("Need the file before editing.")
+        );
+        assert_eq!(text_chunk.as_deref(), Some("先看文件。"));
+        let usage = usage.expect("usage update");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.cache_read_tokens, None);
+        assert_eq!(usage.cache_creation_tokens, None);
+        assert_eq!(usage.reasoning_tokens, None);
+        assert_eq!(
+            result.assistant_content,
+            vec![
+                serde_json::json!({
+                    "type": "thinking",
+                    "thinking": "Need the file before editing."
+                }),
                 serde_json::json!({"type": "text", "text": "先看文件。"}),
                 serde_json::json!({
                     "type": "tool_use",

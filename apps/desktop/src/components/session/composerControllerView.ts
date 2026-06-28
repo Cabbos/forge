@@ -7,6 +7,7 @@ interface BuildComposerMenuLayerPropsOptions {
   activeSuggestionIndex: ComposerMenuLayerProps["activeSuggestionIndex"];
   atResults: ComposerMenuLayerProps["atResults"];
   modelMenuId: ComposerMenuLayerProps["modelMenuId"];
+  providers: ComposerMenuLayerProps["providers"];
   selectedModel: ComposerMenuLayerProps["selectedModel"];
   selectedProvider: ComposerMenuLayerProps["selectedProvider"];
   showModelMenu: ComposerMenuLayerProps["showModelMenu"];
@@ -51,6 +52,7 @@ export function buildComposerMenuLayerProps({
   activeSuggestionIndex,
   atResults,
   modelMenuId,
+  providers,
   onActiveSuggestionIndexChange,
   onAddChip,
   onSelectModel,
@@ -64,6 +66,7 @@ export function buildComposerMenuLayerProps({
     activeSuggestionIndex,
     atResults,
     modelMenuId,
+    providers,
     selectedModel,
     selectedProvider,
     showModelMenu,

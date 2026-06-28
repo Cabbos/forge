@@ -1,0 +1,560 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+const root = new URL("..", import.meta.url).pathname;
+const scriptPath = join(root, "scripts", "acceptance.sh");
+const a2aLineageCommand = [
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib",
+  "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib",
+].join(" && ");
+
+function parseDryRunEntries(output) {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("[dry-run] "))
+    .map((line) => {
+      const match = line.match(/^\[dry-run\] ([^:]+): (.+)$/);
+      assert.ok(match, `dry-run line should include label and command: ${line}`);
+      return { label: match[1], command: match[2] };
+    });
+}
+
+function parseHelpGateEntries(output) {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s+(\d+)\. (.+)$/))
+    .filter(Boolean)
+    .map((match) => ({ index: Number(match[1]), label: match[2] }));
+}
+
+test("acceptance script dry-run lists the final product gates", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const output = execFileSync(scriptPath, ["--dry-run"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  const dryRunEntries = parseDryRunEntries(output);
+  const expectedEntries = [
+    { label: "acceptance matrix contract tests", command: "node --test scripts/acceptance.test.mjs" },
+    { label: "desktop production build", command: "npm run build:desktop" },
+    { label: "website production build", command: "npm run build:website" },
+    { label: "eval runner test suite", command: "npm run test:eval" },
+    {
+      label: "loop event journal contract tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib",
+    },
+    {
+      label: "projection rebuild/replay tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib",
+    },
+    {
+      label: "policy preflight tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::policy --lib",
+    },
+    {
+      label: "budget preflight tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib",
+    },
+    {
+      label: "durable human gate tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib",
+    },
+    {
+      label: "gateway loop runner status smoke",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib",
+    },
+    {
+      label: "subagent runtime event projection smoke",
+      command: "node --test apps/desktop/src/store/blocks.test.ts",
+    },
+    {
+      label: "live worktree worker lifecycle harness",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib",
+    },
+    {
+      label: "A2A child runtime file IO bridge",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib",
+    },
+    {
+      label: "executor file IO stream smoke",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib",
+    },
+    {
+      label: "completion contract desktop helper smoke",
+      command: "node --test apps/desktop/src/lib/loopRuntime.test.ts",
+    },
+    {
+      label: "completion contract mocked desktop smoke",
+      command: "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts",
+    },
+    {
+      label: "mocked desktop restart runtime smoke (partial macOS evidence)",
+      command: "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts",
+    },
+    {
+      label: "desktop restart harness availability preflight",
+      command: "node scripts/desktop-restart-harness-preflight.mjs --json",
+    },
+    {
+      label: "desktop restart harness preflight contract tests",
+      command: "node --test scripts/desktop-restart-harness-preflight.test.mjs",
+    },
+    {
+      label: "desktop restart harness blocker documentation status",
+      command:
+        'rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "desktop restart harness launch command" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "node --test scripts/desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "blocked_official_macos" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop restart harness launch command" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
+      label: "confirmation response replay contract tests",
+      command:
+        'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"',
+    },
+    {
+      label: "desktop UI evidence observer preflight",
+      command: "node scripts/desktop-ui-evidence-preflight.mjs --json",
+    },
+    {
+      label: "desktop UI evidence doctor",
+      command: "node scripts/desktop-ui-evidence-doctor.mjs --json",
+    },
+    {
+      label: "desktop UI evidence recovery checks",
+      command: "node scripts/desktop-ui-evidence-doctor.mjs --json --run-checks",
+    },
+    {
+      label: "manual desktop restart smoke protocol",
+      command:
+        'test -f apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "Stability Convergence Restart Smoke - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
+      label: "manual stability regression batch",
+      command:
+        'test -f apps/desktop/docs/product/stability-regression-batch.md && rg -q "Stability Regression Batch - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
+      label: "manual disposable edit/build loop protocol",
+      command:
+        'test -f apps/desktop/docs/product/phase8-disposable-loop-protocol.md && rg -q "Phase 8 Disposable Edit/Build Loop - 2026-06-27" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
+      label: "disposable edit/build loop beta-log archive status",
+      command:
+        'test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-1.validation.json && test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-2.validation.json && test -f apps/desktop/docs/product/evidence/phase8-disposable-loop/2026-06-28-row-3.validation.json && rg -q "Status: Archived complete for rows #1/#2/#3" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "2026-06-28-row-1" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "2026-06-28-row-2" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "2026-06-28-row-3" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+    {
+      label: "disposable edit/build loop project readiness preflight",
+      command: "node scripts/disposable-loop-preflight.mjs --json",
+    },
+    {
+      label: "disposable edit/build loop clean worktree prepare dry-run",
+      command: "node scripts/prepare-disposable-loop-project.mjs --json --dry-run",
+    },
+    {
+      label: "disposable edit/build loop evidence collector",
+      command: "node scripts/collect-disposable-loop-evidence.mjs --json",
+    },
+    {
+      label: "disposable edit/build loop evidence validator",
+      command: "node scripts/validate-disposable-loop-evidence.mjs --json",
+    },
+    {
+      label: "disposable edit/build loop evidence archive dry-run",
+      command: "node scripts/archive-disposable-loop-evidence.mjs --json --dry-run",
+    },
+    {
+      label: "disposable edit/build loop manual evidence template",
+      command: "node scripts/create-disposable-loop-manual-json.mjs --json --row 1",
+    },
+    {
+      label: "disposable edit/build loop manual evidence review",
+      command: "node scripts/review-disposable-loop-manual-json.mjs --json --row 1",
+    },
+    {
+      label: "disposable edit/build loop row finalizer dry-run",
+      command: "node scripts/finalize-disposable-loop-row.mjs --json --dry-run --row 1",
+    },
+    {
+      label: "disposable edit/build loop row runbook",
+      command: "node scripts/phase8-disposable-loop-runbook.mjs --json --row 1",
+    },
+    {
+      label: "disposable edit/build loop status summary",
+      command: "node scripts/phase8-disposable-loop-status.mjs --json",
+    },
+    {
+      label: "disposable edit/build loop live-ready hard gate",
+      command: "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready",
+    },
+    {
+      label: "provider usage known/unknown telemetry",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
+    },
+    {
+      label: "composer context usage from provider_usage",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g "provider_usage without legacy usage"',
+    },
+    {
+      label: "provider usage trace rendering",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "provider usage"',
+    },
+    {
+      label: "legacy usage duplicate suppression",
+      command: "node --test apps/desktop/src/store/event-dispatch.test.ts",
+    },
+    {
+      label: "transcript usage hydration",
+      command: "node --test apps/desktop/src/store/persistence-hydration.test.ts",
+    },
+    {
+      label: "desktop state consistency map status",
+      command:
+        'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md',
+    },
+    {
+      label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib",
+    },
+    {
+      label: "persisted A2A lineage tests",
+      command: a2aLineageCommand,
+    },
+    {
+      label: "typed completion evidence and review-to-commit eligibility tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib",
+    },
+    {
+      label: "gated headless ownership policy tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib",
+    },
+    {
+      label: "permission mode, live-session sync, and shell policy contract tests",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml permission_handlers --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib",
+    },
+    {
+      label: "slash command review calibration contract tests",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib",
+    },
+    {
+      label: "desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs",
+      command:
+        "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts",
+    },
+    {
+      label: "rich preview e2e smoke specs",
+      command:
+        'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "write_file tool details show|diff cards show|image diff cards show"',
+    },
+  ];
+
+  assert.deepEqual(dryRunEntries, expectedEntries);
+
+  const ownershipGateOrder = [
+    "completion contract mocked desktop smoke",
+    "mocked desktop restart runtime smoke (partial macOS evidence)",
+    "desktop restart harness availability preflight",
+    "desktop restart harness preflight contract tests",
+    "desktop restart harness blocker documentation status",
+    "confirmation response replay contract tests",
+    "desktop UI evidence observer preflight",
+    "desktop UI evidence doctor",
+    "desktop UI evidence recovery checks",
+    "manual desktop restart smoke protocol",
+    "manual stability regression batch",
+    "manual disposable edit/build loop protocol",
+    "disposable edit/build loop beta-log archive status",
+    "disposable edit/build loop project readiness preflight",
+    "disposable edit/build loop clean worktree prepare dry-run",
+    "disposable edit/build loop evidence collector",
+    "disposable edit/build loop evidence validator",
+    "disposable edit/build loop evidence archive dry-run",
+    "disposable edit/build loop manual evidence template",
+    "disposable edit/build loop manual evidence review",
+    "disposable edit/build loop row finalizer dry-run",
+    "disposable edit/build loop row runbook",
+    "disposable edit/build loop status summary",
+    "disposable edit/build loop live-ready hard gate",
+    "provider usage known/unknown telemetry",
+    "composer context usage from provider_usage",
+    "provider usage trace rendering",
+    "legacy usage duplicate suppression",
+    "transcript usage hydration",
+    "desktop state consistency map status",
+    "post-shell file-effect evidence smoke (bounded, not shell-internal)",
+    "persisted A2A lineage tests",
+    "typed completion evidence and review-to-commit eligibility tests",
+    "gated headless ownership policy tests",
+    "permission mode, live-session sync, and shell policy contract tests",
+    "slash command review calibration contract tests",
+  ];
+  let previousIndex = -1;
+  for (const label of ownershipGateOrder) {
+    const index = output.indexOf(`[dry-run] ${label}:`);
+    assert.notEqual(index, -1, `expected dry-run label: ${label}`);
+    assert.ok(index > previousIndex, `expected ${label} after previous ownership gate`);
+    previousIndex = index;
+  }
+
+  assert.doesNotMatch(output, /\[dry-run\] typed completion evidence tests:/);
+  const ownershipEntries = dryRunEntries.filter(({ label }) => ownershipGateOrder.includes(label));
+  const ownershipCommands = ownershipEntries.map(({ command }) => command);
+  assert.equal(new Set(ownershipCommands).size, ownershipCommands.length, "ownership gate commands must be unique");
+
+  for (const command of ownershipCommands) {
+    assert.equal(
+      dryRunEntries.filter((entry) => entry.command === command).length,
+      1,
+      `ownership command should appear once in the matrix: ${command}`,
+    );
+  }
+
+  const ownershipSubcommands = ownershipCommands.flatMap((command) => command.split(/\s+&&\s+/));
+  assert.equal(
+    new Set(ownershipSubcommands).size,
+    ownershipSubcommands.length,
+    "ownership gate subcommands must be unique",
+  );
+});
+
+test("acceptance script exposes a machine-readable gate list", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const dryRunOutput = execFileSync(scriptPath, ["--dry-run"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const listOutput = execFileSync(scriptPath, ["--list-json"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  const dryRunEntries = parseDryRunEntries(dryRunOutput);
+  const matrix = JSON.parse(listOutput);
+
+  assert.equal(matrix.schemaVersion, 1);
+  assert.equal(matrix.workingDirectory, root.replace(/\/$/, ""));
+  assert.deepEqual(
+    matrix.gates,
+    dryRunEntries.map((entry, index) => ({
+      index: index + 1,
+      ...entry,
+    })),
+  );
+});
+
+test("acceptance help lists the same gates as list-json", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const helpOutput = execFileSync(scriptPath, ["--help"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.deepEqual(
+    parseHelpGateEntries(helpOutput),
+    matrix.gates.map(({ index, label }) => ({ index, label })),
+  );
+});
+
+test("acceptance script can dry-run one named gate", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const output = execFileSync(
+    scriptPath,
+    ["--dry-run", "--only", "desktop restart harness blocker documentation status"],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+
+  assert.deepEqual(parseDryRunEntries(output), [
+    {
+      label: "desktop restart harness blocker documentation status",
+      command:
+        'rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "desktop restart harness launch command" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "node --test scripts/desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "blocked_official_macos" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop restart harness launch command" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md',
+    },
+  ]);
+});
+
+test("acceptance script can dry-run gates by case-insensitive label substring", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const output = execFileSync(scriptPath, ["--dry-run", "--grep", "Provider"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.deepEqual(parseDryRunEntries(output), [
+    {
+      label: "provider usage known/unknown telemetry",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
+    },
+    {
+      label: "composer context usage from provider_usage",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g "provider_usage without legacy usage"',
+    },
+    {
+      label: "provider usage trace rendering",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "provider usage"',
+    },
+  ]);
+});
+
+test("acceptance script list-json uses the same grep-filtered gates as dry-run", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const dryRunOutput = execFileSync(scriptPath, ["--dry-run", "--grep", "Provider"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json", "--grep", "Provider"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.equal(matrix.schemaVersion, 1);
+  assert.deepEqual(
+    matrix.gates.map(({ label, command }) => ({ label, command })),
+    parseDryRunEntries(dryRunOutput),
+  );
+});
+
+test("acceptance script reports --grep misses", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--grep", "definitely missing gate"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /No acceptance gates matched --grep: definitely missing gate/);
+  assert.match(result.stderr, /Run scripts\/acceptance\.sh --list-json to see valid labels\./);
+});
+
+test("acceptance script rejects empty --only values", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--dry-run", "--only", ""], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Missing value for --only/);
+});
+
+test("acceptance script rejects empty --grep values", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--dry-run", "--grep", ""], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Missing value for --grep/);
+});
+
+test("acceptance script rejects combining --only and --grep", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--only", "desktop production build", "--grep", "provider"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Use either --only or --grep, not both\./);
+});
+
+test("acceptance script suggests a close gate label for --only misses", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--only", "desktop restart blocker documentation status"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /No acceptance gate matched --only: desktop restart blocker documentation status/);
+  assert.match(result.stderr, /Did you mean: desktop restart harness blocker documentation status/);
+});
+
+test("acceptance script rejects duplicate gate labels", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-"));
+  try {
+    const tempScriptPath = join(tempDir, "acceptance.sh");
+    const source = readFileSync(scriptPath, "utf8");
+    const duplicateLabelSource = source.replace(
+      "add_gate 'website production build' 'npm run build:website'",
+      "add_gate 'desktop production build' 'npm run build:website'",
+    );
+    assert.notEqual(duplicateLabelSource, source, "test fixture should inject a duplicate gate label");
+
+    writeFileSync(tempScriptPath, duplicateLabelSource);
+    chmodSync(tempScriptPath, 0o755);
+
+    const result = spawnSync(tempScriptPath, ["--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Duplicate acceptance gate label: desktop production build/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("acceptance script rejects duplicate gate commands", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-"));
+  try {
+    const tempScriptPath = join(tempDir, "acceptance.sh");
+    const source = readFileSync(scriptPath, "utf8");
+    const duplicateCommandSource = source.replace(
+      "add_gate 'website production build' 'npm run build:website'",
+      "add_gate 'website production build' 'npm run build:desktop'",
+    );
+    assert.notEqual(duplicateCommandSource, source, "test fixture should inject a duplicate gate command");
+
+    writeFileSync(tempScriptPath, duplicateCommandSource);
+    chmodSync(tempScriptPath, 0o755);
+
+    const result = spawnSync(tempScriptPath, ["--dry-run"], {
+      cwd: root,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Duplicate acceptance gate command: npm run build:desktop/);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});

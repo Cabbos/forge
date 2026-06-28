@@ -129,6 +129,11 @@ where
                     );
                     on_line(line, is_stderr);
                 } else if wait_task.is_finished() {
+                    output.exit_code = Some(
+                        (&mut wait_task)
+                            .await
+                            .map_err(|error| format!("Process task failed: {error}"))??,
+                    );
                     break;
                 }
             }
@@ -316,6 +321,29 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
+
+    #[tokio::test]
+    async fn streaming_no_output_preserves_nonzero_exit_code() {
+        let root = temp_workspace("streaming-no-output-exit-code");
+
+        let output = run_streaming(
+            ProcessSpec::shell("exit 7", root.clone()),
+            ProcessRunOptions {
+                timeout: Duration::from_secs(5),
+                cancel: None,
+                output_limit: 1024,
+            },
+            |_line, _is_stderr| {},
+        )
+        .await
+        .expect("process should start");
+
+        assert_eq!(output.exit_code, Some(7));
+        assert_eq!(output.stdout, "");
+        assert_eq!(output.stderr, "");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[tokio::test]
     #[cfg(unix)]

@@ -1,0 +1,73 @@
+{
+  "status": "changes_detected",
+  "projectPath": "/Users/cabbos/project/forge-test-app-phase8-row2-clean",
+  "row": "2",
+  "date": "2026-06-28",
+  "preflight": {
+    "status": "dirty_worktree",
+    "readyForLoop": false,
+    "issues": [
+      {
+        "code": "dirty_worktree",
+        "message": "Disposable project has existing git changes."
+      }
+    ],
+    "hasBuildScript": true,
+    "requiredFiles": [
+      {
+        "file": "src/App.tsx",
+        "exists": true
+      },
+      {
+        "file": "src/styles.css",
+        "exists": true
+      }
+    ]
+  },
+  "git": {
+    "branchStatus": "## HEAD (no branch)\n M src/styles.css",
+    "statusShort": " M src/styles.css",
+    "clean": false,
+    "changedFiles": [
+      {
+        "status": " M",
+        "file": "src/styles.css",
+        "raw": " M src/styles.css"
+      }
+    ],
+    "unstagedNameStatus": "M\tsrc/styles.css",
+    "stagedNameStatus": "",
+    "unstagedStat": " src/styles.css | 22 +++++++++++++++++++++-\n 1 file changed, 21 insertions(+), 1 deletion(-)",
+    "stagedStat": ""
+  },
+  "build": {
+    "ran": true,
+    "command": "npm --prefix /Users/cabbos/project/forge-test-app-phase8-row2-clean run build",
+    "success": true,
+    "exitCode": 0,
+    "outputTail": "> forge-test-app@0.1.0 build\n> tsc && vite build\nvite v7.3.3 building client environment for production...\ntransforming...\n✓ 30 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.40 kB │ gzip:  0.28 kB\ndist/assets/index-cDpmpKh0.css    7.79 kB │ gzip:  2.23 kB\ndist/assets/index-DVo6NNw1.js   200.55 kB │ gzip: 63.28 kB\n✓ built in 296ms"
+  },
+  "manualFields": [
+    {
+      "label": "Forge prompt",
+      "value": "在当前 demo 项目里做一个很小的 CSS layout polish，只改样式文件。目标是让主要按钮点击反馈更明显，但不要重构组件，不要改业务逻辑。完成后说明改了哪些文件。"
+    },
+    {
+      "label": "Forge final answer",
+      "value": "只修改 src/styles.css：为 .water-btn.is-add、.water-btn.is-sub、.water-btn.is-reset 和 .type-btn 添加 :active 点击反馈；基础 .water-btn transition 补充 transform 0.1s，让缩放动画更顺滑；未触碰组件逻辑或 TSX 文件；npm run build 通过。"
+    },
+    {
+      "label": "Confirmation behavior",
+      "value": "完全访问模式已在发送前启用；本轮 transcript 里 confirm_ask=0，UI 全程没有出现确认卡。"
+    },
+    {
+      "label": "Screenshot or transcript reference",
+      "value": "Screenshot: /tmp/forge-row2-progress-20s.png; transcript: /Users/cabbos/.forge/session-transcripts/019f0c24-24e3-7f10-bb52-c597bb34bc6e.jsonl"
+    },
+    {
+      "label": "Row #2 style-only polish result",
+      "value": "通过：Forge 只修改当前 Row #2 demo worktree 的 src/styles.css，一个 CSS-only polish，验证命令 npm run build 通过。"
+    }
+  ],
+  "markdown": "## Phase 8 Disposable Loop Evidence - 2026-06-28\n\nStatus: changes_detected\nProject: `/Users/cabbos/project/forge-test-app-phase8-row2-clean`\nRow scope: 2\n\nPreflight:\n- readyForLoop: false\n- status: dirty_worktree\n\nGit state:\n- branch/status: `## HEAD (no branch)\n M src/styles.css`\n- changed files:\n- M src/styles.css\n\nName status:\n```text\nM\tsrc/styles.css\n```\n\nDiff stat:\n```text\n src/styles.css | 22 +++++++++++++++++++++-\n 1 file changed, 21 insertions(+), 1 deletion(-)\n```\n\nBuild/check:\n- passed: `npm --prefix /Users/cabbos/project/forge-test-app-phase8-row2-clean run build`\n- output:\n```text\n> forge-test-app@0.1.0 build\n> tsc && vite build\nvite v7.3.3 building client environment for production...\ntransforming...\n✓ 30 modules transformed.\nrendering chunks...\ncomputing gzip size...\ndist/index.html                   0.40 kB │ gzip:  0.28 kB\ndist/assets/index-cDpmpKh0.css    7.79 kB │ gzip:  2.23 kB\ndist/assets/index-DVo6NNw1.js   200.55 kB │ gzip: 63.28 kB\n✓ built in 296ms\n```\n\nManual Forge evidence to paste:\n- Forge prompt: 在当前 demo 项目里做一个很小的 CSS layout polish，只改样式文件。目标是让主要按钮点击反馈更明显，但不要重构组件，不要改业务逻辑。完成后说明改了哪些文件。\n- Forge final answer: 只修改 src/styles.css：为 .water-btn.is-add、.water-btn.is-sub、.water-btn.is-reset 和 .type-btn 添加 :active 点击反馈；基础 .water-btn transition 补充 transform 0.1s，让缩放动画更顺滑；未触碰组件逻辑或 TSX 文件；npm run build 通过。\n- Confirmation behavior: 完全访问模式已在发送前启用；本轮 transcript 里 confirm_ask=0，UI 全程没有出现确认卡。\n- Screenshot or transcript reference: Screenshot: /tmp/forge-row2-progress-20s.png; transcript: /Users/cabbos/.forge/session-transcripts/019f0c24-24e3-7f10-bb52-c597bb34bc6e.jsonl\n- Row #2 style-only polish result: 通过：Forge 只修改当前 Row #2 demo worktree 的 src/styles.css，一个 CSS-only polish，验证命令 npm run build 通过。\n"
+}

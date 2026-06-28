@@ -1,8 +1,9 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any
 
 from app.metrics import calculate_metrics
-from app.models import AgentTrace, BacktestReport, ContinuityReport, TraceSummary
+from app.models import AgentTrace, BacktestReport, ContinuityReport, TaskMetric, TraceSummary
+from app.scoring import score_trace
 
 
 def build_report(traces: list[AgentTrace]) -> BacktestReport:
@@ -17,7 +18,9 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
             avg_duration_ms=0.0,
             avg_model_rounds=0.0,
             avg_confirm_requests=0.0,
+            total_cost_usd=0.0,
             failure_categories={},
+            score_summary={},
             tasks=[],
             continuity=None,
         )
@@ -59,10 +62,41 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         avg_confirm_requests=metrics.average_confirm_requests,
         avg_repair_attempts_used=metrics.average_repair_attempts_used,
         avg_validation_attempts=metrics.average_validation_attempts,
+        total_cost_usd=sum(trace.cost_usd or 0.0 for trace in traces),
         failure_categories=metrics.failure_categories,
+        score_summary=build_score_summary(traces),
         tasks=task_summaries,
         continuity=build_continuity_report(traces),
     )
+
+
+def build_score_summary(traces: list[AgentTrace]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    counts: Counter[str] = Counter()
+    for trace in traces:
+        for name, score in score_trace(trace).items():
+            totals[name] = totals.get(name, 0.0) + score.score
+            counts[name] += 1
+    return {name: totals[name] / counts[name] for name in sorted(totals)}
+
+
+def aggregate_trial_metrics(
+    tasks: list[TaskMetric],
+) -> dict[str, dict[str, float | int | bool]]:
+    grouped: dict[str, list[TaskMetric]] = defaultdict(list)
+    for task in tasks:
+        grouped[task.task_id].append(task)
+
+    result: dict[str, dict[str, float | int | bool]] = {}
+    for task_id, attempts in grouped.items():
+        passed = sum(1 for attempt in attempts if attempt.passed)
+        pass_rate = passed / len(attempts)
+        result[task_id] = {
+            "attempts": len(attempts),
+            "pass_rate": pass_rate,
+            "flaky": 0 < passed < len(attempts),
+        }
+    return result
 
 
 def build_continuity_report(traces: list[AgentTrace]) -> ContinuityReport | None:
