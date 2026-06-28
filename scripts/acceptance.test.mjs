@@ -311,3 +311,29 @@ test("acceptance script dry-run lists the final product gates", () => {
     "ownership gate subcommands must be unique",
   );
 });
+
+test("acceptance script exposes a machine-readable gate list", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const dryRunOutput = execFileSync(scriptPath, ["--dry-run"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const listOutput = execFileSync(scriptPath, ["--list-json"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  const dryRunEntries = parseDryRunEntries(dryRunOutput);
+  const matrix = JSON.parse(listOutput);
+
+  assert.equal(matrix.schemaVersion, 1);
+  assert.equal(matrix.workingDirectory, root.replace(/\/$/, ""));
+  assert.deepEqual(
+    matrix.gates,
+    dryRunEntries.map((entry, index) => ({
+      index: index + 1,
+      ...entry,
+    })),
+  );
+});

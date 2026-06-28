@@ -3,15 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN=0
+LIST_JSON=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)
       DRY_RUN=1
       ;;
+    --list-json)
+      LIST_JSON=1
+      ;;
     -h|--help)
       cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run]
+Usage: scripts/acceptance.sh [--dry-run] [--list-json]
 
 Runs the Forge Level 3 runtime acceptance gates:
   1. Desktop production build
@@ -67,6 +71,7 @@ Runs the Forge Level 3 runtime acceptance gates:
   51. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
+Use --list-json to print the same gate plan as machine-readable JSON.
 EOF
       exit 0
       ;;
@@ -184,6 +189,35 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"write_file tool details show|diff cards show|image diff cards show\""
 )
+
+if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" ]]; then
+  echo "Acceptance matrix mismatch: ${#COMMAND_LABELS[@]} labels for ${#COMMANDS[@]} commands" >&2
+  exit 1
+fi
+
+if [[ "$LIST_JSON" -eq 1 ]]; then
+  {
+    printf '%s\0' "$ROOT_DIR"
+    for index in "${!COMMANDS[@]}"; do
+      printf '%s\0%s\0%s\0' "$((index + 1))" "${COMMAND_LABELS[$index]}" "${COMMANDS[$index]}"
+    done
+  } | node -e '
+const fs = require("node:fs");
+const parts = fs.readFileSync(0).toString("utf8").split("\0");
+const workingDirectory = parts.shift();
+if (parts.at(-1) === "") parts.pop();
+const gates = [];
+for (let index = 0; index < parts.length; index += 3) {
+  gates.push({
+    index: Number(parts[index]),
+    label: parts[index + 1],
+    command: parts[index + 2],
+  });
+}
+process.stdout.write(JSON.stringify({ schemaVersion: 1, workingDirectory, gates }, null, 2) + "\n");
+'
+  exit 0
+fi
 
 echo "Forge Level 3 runtime acceptance suite"
 echo "Working directory: $ROOT_DIR"
