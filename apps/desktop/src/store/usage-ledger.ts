@@ -10,7 +10,7 @@ type ProviderUsageEvent = Extract<StreamEvent, { event_type: "provider_usage" }>
 type LegacyUsageEvent = Extract<StreamEvent, { event_type: "usage" }>;
 
 export interface UsageProjectionFromBlocks {
-  usageLedger: SessionUsageLedgerState;
+  usageLedger: SessionUsageLedgerState | null;
   contextUsage: ContextUsageState | null;
   costUsd: number;
 }
@@ -131,9 +131,17 @@ export function usageProjectionFromProviderUsageBlocks(
   let usageLedger: SessionUsageLedgerState | null = null;
   let contextUsage = previousContext ?? null;
   let costUsd = 0;
+  let replayedUsageOrContext = false;
   const seenBlockIds = new Set<string>();
 
   for (const block of blocks) {
+    const compactedContext = contextUsageFromCompactedBlock(block, contextWindowTokens, now);
+    if (compactedContext) {
+      contextUsage = compactedContext;
+      replayedUsageOrContext = true;
+      continue;
+    }
+
     const event = providerUsageEventFromBlock(block);
     if (!event) continue;
     const blockId = event.block_id ?? "";
@@ -145,12 +153,40 @@ export function usageProjectionFromProviderUsageBlocks(
       costUsd += usageLedger.costUsd;
     }
     contextUsage = contextUsageFromLedger(usageLedger, contextWindowTokens, contextUsage, now);
+    replayedUsageOrContext = true;
   }
 
-  return usageLedger ? { usageLedger, contextUsage, costUsd } : null;
+  return replayedUsageOrContext ? { usageLedger, contextUsage, costUsd } : null;
 }
 
-function sanitizeCount(value: number | null | undefined): number | null {
+function contextUsageFromCompactedBlock(
+  block: BlockState,
+  contextWindowTokens: number | null | undefined,
+  now: number,
+): ContextUsageState | null {
+  if (block.event_type !== "context_compacted") return null;
+  const estimatedBefore = sanitizeCount(block.metadata?.estimated_tokens_before);
+  const estimatedAfter = sanitizeCount(block.metadata?.estimated_tokens_after);
+  if (estimatedAfter === null) return null;
+
+  const safeWindow = sanitizeCount(contextWindowTokens ?? null);
+  const percentUsed = safeWindow && safeWindow > 0
+    ? clampPercent(Math.round((estimatedAfter / safeWindow) * 100))
+    : null;
+
+  return {
+    usedTokens: estimatedAfter,
+    contextWindowTokens: safeWindow,
+    percentUsed,
+    source: "local_estimate",
+    lastUpdatedAt: now,
+    lastCompactedAt: now,
+    compactedFromTokens: estimatedBefore,
+    compactedToTokens: estimatedAfter,
+  };
+}
+
+function sanitizeCount(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(0, Math.round(value))
     : null;
