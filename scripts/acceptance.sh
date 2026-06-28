@@ -53,14 +53,15 @@ Runs the Forge Level 3 runtime acceptance gates:
   37. Composer context usage from provider_usage
   38. Provider usage trace rendering
   39. Legacy usage duplicate suppression
-  40. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  41. Persisted A2A lineage tests
-  42. Typed completion evidence and review-to-commit eligibility tests
-  43. Gated headless ownership policy tests
-  44. Permission mode, live-session sync, and shell policy contract tests
-  45. Slash command review calibration contract tests
-  46. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  47. Rich preview e2e smoke specs
+  40. Legacy transcript usage hydration
+  41. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  42. Persisted A2A lineage tests
+  43. Typed completion evidence and review-to-commit eligibility tests
+  44. Gated headless ownership policy tests
+  45. Permission mode, live-session sync, and shell policy contract tests
+  46. Slash command review calibration contract tests
+  47. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  48. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -113,6 +114,7 @@ COMMAND_LABELS=(
   "composer context usage from provider_usage"
   "provider usage trace rendering"
   "legacy usage duplicate suppression"
+  "legacy transcript usage hydration"
   "post-shell file-effect evidence smoke (bounded, not shell-internal)"
   "persisted A2A lineage tests"
   "typed completion evidence and review-to-commit eligibility tests"
@@ -163,6 +165,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g \"provider_usage without legacy usage\""
   "npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g \"provider usage\""
   "node --test apps/desktop/src/store/event-dispatch.test.ts"
+  "node --test apps/desktop/src/store/persistence-hydration.test.ts"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml shell_file_effect --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib"
