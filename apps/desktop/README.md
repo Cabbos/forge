@@ -191,7 +191,7 @@ scripts/acceptance.sh --grep "<text>"
 
 Phase 8 desktop UI evidence helpers 会把标准化 recovery commands 和 `permissionScope` 从 preflight 透传到 disposable loop status/runbook 摘要，即使 UI preflight 被跳过、嵌套状态是 `not_checked` 也会保留 macOS privacy 边界说明和 strict preflight / `--require-live-ready` 恢复命令；preflight/status/runbook/doctor 会明确说明 Forge 的 Trust/Full Access 不会授予 macOS Screen Recording 或 Accessibility，并且恢复路径会在本机权限修复后指回 strict preflight 和 `--require-live-ready` 硬门禁；doctor 还提供 `--run-checks`，用于在修复权限后一次性复跑 strict preflight 和 live-ready gate；status/runbook JSON/Markdown 现在共用 `liveReadyGate.pass/reason`，用于解释 hard gate 为什么通过或被阻塞；acceptance matrix 现在运行 `--require-live-ready` 作为自动化硬门禁，这个门禁要求实际跑过 UI preflight，并且只有 validation/evidence/markdown 三件套都存在时才把 row 视为 archived complete。
 
-Forge 会把模型调用用量和上下文窗口状态分开显示：Provider usage 行展示本次模型调用由 provider 回报的 token/cost；Composer 的上下文指示器展示估算的已用上下文和真正剩余上下文，`余` 表示 true remaining context。Auto-compact threshold distance 只放在 tooltip 里，避免被误读成 provider context remaining。
+Forge 会把模型调用用量和上下文窗口状态分开显示：Provider usage 行展示本次模型调用由 provider 回报的 token/cost；Composer 的上下文指示器展示估算的已用上下文和真正剩余上下文，`余` 表示 true remaining context。恢复会优先用 transcript/provider_usage 重建出的上下文用量刷新 Composer label，避免旧的持久化 metadata 覆盖更新的 token 证据。Auto-compact threshold distance 只放在 tooltip 里，避免被误读成 provider context remaining。
 
 4C.4 fake headless owner executor fixture 当前由 focused runner/journal/projection/replay Rust tests 证明。它只在 runner test fixture 中记录 completed、pending confirmation blocker、pending tool-call blocker、interrupted、cancelled、expired 和 stale pending-view idempotency 状态链；还不是 acceptance matrix 或 e2e autonomous resume gate。
 

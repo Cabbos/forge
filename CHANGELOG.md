@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Replayed provider usage now refreshes restored Composer context usage over stale persisted metadata, so reloads do not show an old used/remaining-token count when newer transcript evidence exists.
 - Rejected empty `scripts/acceptance.sh --only` and `--grep` values so automation cannot accidentally fall back to the full acceptance matrix.
 - Added `scripts/acceptance.sh --grep <text>` so the Level 3 acceptance matrix can be filtered by case-insensitive gate-label substring before running, dry-running, or exporting JSON.
 - Added a duplicate-command guard to the acceptance matrix so full acceptance does not silently rerun the same gate under different labels.
