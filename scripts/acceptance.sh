@@ -7,6 +7,7 @@ LIST_JSON=0
 SHOW_HELP=0
 ONLY_LABEL=""
 GREP_LABEL=""
+GREP_LABEL_MATCH=""
 
 while [[ "$#" -gt 0 ]]; do
   arg="$1"
@@ -49,6 +50,10 @@ done
 if [[ -n "$ONLY_LABEL" && -n "$GREP_LABEL" ]]; then
   echo "Use either --only or --grep, not both." >&2
   exit 2
+fi
+
+if [[ -n "$GREP_LABEL" ]]; then
+  GREP_LABEL_MATCH="$(printf '%s' "$GREP_LABEL" | tr '[:upper:]' '[:lower:]')"
 fi
 
 COMMAND_LABELS=()
@@ -146,8 +151,11 @@ for index in "${!COMMANDS[@]}"; do
   if [[ -n "$ONLY_LABEL" && "${COMMAND_LABELS[$index]}" != "$ONLY_LABEL" ]]; then
     continue
   fi
-  if [[ -n "$GREP_LABEL" && "${COMMAND_LABELS[$index]}" != *"$GREP_LABEL"* ]]; then
-    continue
+  if [[ -n "$GREP_LABEL" ]]; then
+    label_match="$(printf '%s' "${COMMAND_LABELS[$index]}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$label_match" != *"$GREP_LABEL_MATCH"* ]]; then
+      continue
+    fi
   fi
   SELECTED_INDICES+=("$index")
 done
@@ -192,7 +200,7 @@ EOF
 Use --dry-run to print the command plan without executing it.
 Use --list-json to print the same gate plan as machine-readable JSON.
 Use --only with an exact gate label to run or dry-run one gate.
-Use --grep to filter gates by label substring; do not combine it with --only.
+Use --grep to filter gates by case-insensitive label substring; do not combine it with --only.
 EOF
   exit 0
 fi
