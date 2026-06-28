@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rejected unknown `desktop-ui-evidence-preflight.mjs` options so misspelled live-evidence readiness flags cannot silently run the report-only path.
 - Handled malformed package metadata in the desktop restart harness preflight so dependency detection falls back to missing facts instead of crashing.
 - Rejected unknown `desktop-restart-harness-preflight.mjs` options so misspelled restart-harness CI flags cannot silently run the report-only path.
 - Tightened the desktop restart harness preflight so non-macOS runners cannot claim official Tauri/WebDriver restart readiness without an explicit desktop restart harness launch command.
