@@ -25,6 +25,14 @@ function parseDryRunEntries(output) {
     });
 }
 
+function parseHelpGateEntries(output) {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s+(\d+)\. (.+)$/))
+    .filter(Boolean)
+    .map((match) => ({ index: Number(match[1]), label: match[2] }));
+}
+
 test("acceptance script dry-run lists the final product gates", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
@@ -335,5 +343,25 @@ test("acceptance script exposes a machine-readable gate list", () => {
       index: index + 1,
       ...entry,
     })),
+  );
+});
+
+test("acceptance help lists the same gates as list-json", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const helpOutput = execFileSync(scriptPath, ["--help"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.deepEqual(
+    parseHelpGateEntries(helpOutput),
+    matrix.gates.map(({ index, label }) => ({ index, label })),
   );
 });

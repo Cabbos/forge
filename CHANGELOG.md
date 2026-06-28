@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Generated the acceptance script help gate list from the same matrix used by dry-run and JSON output so help text cannot drift from executable gates.
 - Added `scripts/acceptance.sh --list-json` so the Level 3 acceptance matrix can be consumed as machine-readable gate metadata without parsing dry-run text.
 - Clarified the desktop restart harness preflight and added contract plus blocker-documentation gates to acceptance so macOS reports the official WKWebView WebDriver support gap even if local WebDriver dependencies are later added.
 - Added a disposable loop row finalizer that reviews manual evidence, validates strict row output, and archives the Phase 8 row in one command.
