@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { detectRestartHarnessCommand, evaluateRestartHarness } from "./desktop-restart-harness-preflight.mjs";
+import {
+  detectRestartHarnessCommand,
+  evaluateRestartHarness,
+  readWorkspacePackageNames,
+} from "./desktop-restart-harness-preflight.mjs";
 
 const root = new URL("..", import.meta.url).pathname;
 const scriptPath = join(root, "scripts", "desktop-restart-harness-preflight.mjs");
@@ -120,6 +124,21 @@ test("detects a configured restart harness launch command", () => {
       detectRestartHarnessCommand(tempRoot),
       "npm --prefix apps/desktop run test:desktop:restart",
     );
+  } finally {
+    rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
+test("malformed package metadata does not crash harness detection", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "forge-restart-harness-"));
+  try {
+    const desktopDir = join(tempRoot, "apps", "desktop");
+    mkdirSync(desktopDir, { recursive: true });
+    writeFileSync(join(tempRoot, "package.json"), "{bad");
+    writeFileSync(join(desktopDir, "package.json"), "{bad");
+
+    assert.deepEqual([...readWorkspacePackageNames(tempRoot)], []);
+    assert.equal(detectRestartHarnessCommand(tempRoot), null);
   } finally {
     rmSync(tempRoot, { force: true, recursive: true });
   }
