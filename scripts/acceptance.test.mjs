@@ -97,6 +97,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "node scripts/desktop-restart-harness-preflight.mjs --json",
     },
     {
+      label: "desktop restart harness preflight contract tests",
+      command: "node --test scripts/desktop-restart-harness-preflight.test.mjs",
+    },
+    {
       label: "confirmation response replay contract tests",
       command:
         'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"',
@@ -241,6 +245,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "completion contract mocked desktop smoke",
     "mocked desktop restart runtime smoke (partial macOS evidence)",
     "desktop restart harness availability preflight",
+    "desktop restart harness preflight contract tests",
     "confirmation response replay contract tests",
     "desktop UI evidence observer preflight",
     "desktop UI evidence doctor",

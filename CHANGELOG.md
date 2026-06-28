@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Clarified the desktop restart harness preflight and added its contract tests to acceptance so macOS reports the official WKWebView WebDriver support gap even if local WebDriver dependencies are later added.
 - Added a disposable loop row finalizer that reviews manual evidence, validates strict row output, and archives the Phase 8 row in one command.
 - Added an acceptance gate that keeps the Phase 8 beta log synchronized with archived row #1/#2/#3 disposable-loop evidence.
 - Connected the disposable loop status and runbook helpers to desktop UI evidence preflight so a clean project with unusable local screenshots reports `ui_evidence_not_ready` instead of looking ready for live evidence.

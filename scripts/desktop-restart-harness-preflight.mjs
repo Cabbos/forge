@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT_DIR = resolve(dirname(SCRIPT_PATH), "..");
 const WEBDRIVER_CLIENT_PACKAGES = new Set(["selenium-webdriver", "webdriverio", "@wdio/cli"]);
+const MACOS_OFFICIAL_DRIVER_GAP = "official macOS WKWebView WebDriver support";
 
 export function evaluateRestartHarness({
   platform = process.platform,
@@ -26,6 +27,7 @@ export function evaluateRestartHarness({
   if (!hasWebdriverClient) missing.push("webdriver client package");
 
   if (platform === "darwin") {
+    if (!missing.includes(MACOS_OFFICIAL_DRIVER_GAP)) missing.push(MACOS_OFFICIAL_DRIVER_GAP);
     return {
       status: "blocked_official_macos",
       canRunOfficialHarness: false,
@@ -36,7 +38,7 @@ export function evaluateRestartHarness({
         webdriverClientPackages,
       },
       reason:
-        "Forge treats true Tauri force-quit/reopen proof as manual on macOS until an official desktop WebDriver path is available in this repo.",
+        "Forge treats true Tauri force-quit/reopen proof as manual on macOS until official WKWebView WebDriver support is available for this repo.",
       fallbackCommand: "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts",
     };
   }

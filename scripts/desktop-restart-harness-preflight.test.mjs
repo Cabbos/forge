@@ -22,7 +22,28 @@ test("macOS remains explicit manual-only restart evidence", () => {
   assert.equal(result.status, "blocked_official_macos");
   assert.equal(result.canRunOfficialHarness, false);
   assert.match(result.reason, /manual on macOS/);
-  assert.deepEqual(result.missing, ["tauri-driver", "webdriver client package"]);
+  assert.deepEqual(result.missing, [
+    "tauri-driver",
+    "webdriver client package",
+    "official macOS WKWebView WebDriver support",
+  ]);
+});
+
+test("macOS reports the official WKWebView driver gap even when repo dependencies exist", () => {
+  const result = evaluateRestartHarness({
+    platform: "darwin",
+    commands: {
+      "tauri-driver": "/usr/local/bin/tauri-driver",
+      WebKitWebDriver: null,
+      msedgedriver: null,
+    },
+    packageNames: new Set(["selenium-webdriver"]),
+  });
+
+  assert.equal(result.status, "blocked_official_macos");
+  assert.equal(result.canRunOfficialHarness, false);
+  assert.deepEqual(result.missing, ["official macOS WKWebView WebDriver support"]);
+  assert.match(result.reason, /WKWebView/);
 });
 
 test("Linux reports ready when official driver pieces are present", () => {
