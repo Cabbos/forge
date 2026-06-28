@@ -31,38 +31,39 @@ Runs the Forge Level 3 runtime acceptance gates:
   15. Completion contract mocked desktop smoke
   16. Mocked desktop restart runtime smoke (partial macOS evidence)
   17. Desktop restart harness availability preflight
-  18. Confirmation response replay contract tests
-  19. Desktop UI evidence observer preflight
-  20. Desktop UI evidence doctor
-  21. Desktop UI evidence recovery checks
-  22. Manual desktop restart smoke protocol gate
-  23. Manual stability regression batch gate
-  24. Manual disposable edit/build loop protocol gate
-  25. Disposable edit/build loop beta-log archive status
-  26. Disposable edit/build loop project readiness preflight
-  27. Disposable edit/build loop clean worktree prepare dry-run
-  28. Disposable edit/build loop evidence collector
-  29. Disposable edit/build loop evidence validator
-  30. Disposable edit/build loop evidence archive dry-run
-  31. Disposable edit/build loop manual evidence template
-  32. Disposable edit/build loop manual evidence review
-  33. Disposable edit/build loop row finalizer dry-run
-  34. Disposable edit/build loop row runbook
-  35. Disposable edit/build loop status summary
-  36. Disposable edit/build loop live-ready hard gate
-  37. Provider usage known/unknown telemetry
-  38. Composer context usage from provider_usage
-  39. Provider usage trace rendering
-  40. Legacy usage duplicate suppression
-  41. Legacy transcript usage hydration
-  42. Post-shell file-effect evidence smoke (bounded, not shell-internal)
-  43. Persisted A2A lineage tests
-  44. Typed completion evidence and review-to-commit eligibility tests
-  45. Gated headless ownership policy tests
-  46. Permission mode, live-session sync, and shell policy contract tests
-  47. Slash command review calibration contract tests
-  48. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
-  49. Rich preview e2e smoke specs
+  18. Desktop restart harness preflight contract tests
+  19. Confirmation response replay contract tests
+  20. Desktop UI evidence observer preflight
+  21. Desktop UI evidence doctor
+  22. Desktop UI evidence recovery checks
+  23. Manual desktop restart smoke protocol gate
+  24. Manual stability regression batch gate
+  25. Manual disposable edit/build loop protocol gate
+  26. Disposable edit/build loop beta-log archive status
+  27. Disposable edit/build loop project readiness preflight
+  28. Disposable edit/build loop clean worktree prepare dry-run
+  29. Disposable edit/build loop evidence collector
+  30. Disposable edit/build loop evidence validator
+  31. Disposable edit/build loop evidence archive dry-run
+  32. Disposable edit/build loop manual evidence template
+  33. Disposable edit/build loop manual evidence review
+  34. Disposable edit/build loop row finalizer dry-run
+  35. Disposable edit/build loop row runbook
+  36. Disposable edit/build loop status summary
+  37. Disposable edit/build loop live-ready hard gate
+  38. Provider usage known/unknown telemetry
+  39. Composer context usage from provider_usage
+  40. Provider usage trace rendering
+  41. Legacy usage duplicate suppression
+  42. Legacy transcript usage hydration
+  43. Post-shell file-effect evidence smoke (bounded, not shell-internal)
+  44. Persisted A2A lineage tests
+  45. Typed completion evidence and review-to-commit eligibility tests
+  46. Gated headless ownership policy tests
+  47. Permission mode, live-session sync, and shell policy contract tests
+  48. Slash command review calibration contract tests
+  49. Desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs
+  50. Rich preview e2e smoke specs
 
 Use --dry-run to print the command plan without executing it.
 EOF
@@ -93,6 +94,7 @@ COMMAND_LABELS=(
   "completion contract mocked desktop smoke"
   "mocked desktop restart runtime smoke (partial macOS evidence)"
   "desktop restart harness availability preflight"
+  "desktop restart harness preflight contract tests"
   "confirmation response replay contract tests"
   "desktop UI evidence observer preflight"
   "desktop UI evidence doctor"
@@ -145,6 +147,7 @@ COMMANDS=(
   "npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts"
   "npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts"
   "node scripts/desktop-restart-harness-preflight.mjs --json"
+  "node --test scripts/desktop-restart-harness-preflight.test.mjs"
   "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g \"confirm response replay|startup transcript hydration\""
   "node scripts/desktop-ui-evidence-preflight.mjs --json"
   "node scripts/desktop-ui-evidence-doctor.mjs --json"

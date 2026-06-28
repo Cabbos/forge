@@ -617,13 +617,13 @@ Automation preflight:
 node scripts/desktop-restart-harness-preflight.mjs --json
 ```
 
-Result on 2026-06-27:
+Result updated on 2026-06-28:
 
 ```text
 status: blocked_official_macos
 canRunOfficialHarness: false
 platform: darwin
-missing: tauri-driver, webdriver client package
+missing: tauri-driver, webdriver client package, official macOS WKWebView WebDriver support
 fallbackCommand: npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts
 ```
 
@@ -670,7 +670,7 @@ Automation and archived row evidence:
 - Row #5 review-calibration automation passed on 2026-06-27: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib` verifies `/code-review` hidden action intent leads with findings, reserves P0/P1 for true blockers or unsafe results, treats product gaps as P2, and avoids offering fixes unless asked. The earlier manual beta output remains Pass/P2 because severity was too aggressive.
 - Row #6 same-workspace inheritance automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "project status card can trust the current project across conversations|composer full access inherits to a new conversation in the same workspace"` verifies both Trust and Full Access inherit through `getPermissionMode` in a new same-workspace conversation.
 - Row #9 mocked restart automation passed on 2026-06-27: `npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts` verifies durable loop, session, A2A, and gateway facts after browser close/reopen. This remains partial browser-level evidence, not true Tauri force-quit proof.
-- Row #9 desktop harness preflight passed on 2026-06-27 as an honest block: `node scripts/desktop-restart-harness-preflight.mjs --json` reported `blocked_official_macos`, `canRunOfficialHarness: false`, and missing `tauri-driver` plus a WebDriver client package, so the mocked restart smoke remains the fallback rather than a true desktop force-quit claim.
+- Row #9 desktop harness preflight passed on 2026-06-27 as an honest block and was clarified on 2026-06-28: `node scripts/desktop-restart-harness-preflight.mjs --json` reports `blocked_official_macos`, `canRunOfficialHarness: false`, missing `tauri-driver`, a WebDriver client package, and `official macOS WKWebView WebDriver support`, while `node --test scripts/desktop-restart-harness-preflight.test.mjs` is now part of acceptance so the macOS blocker contract cannot drift back to an empty missing list. The mocked restart smoke remains the fallback rather than a true desktop force-quit claim.
 - Confirmation response replay gate added on 2026-06-28: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib`, `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib`, and `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"` passed, making approved/declined confirmation projection an explicit acceptance row instead of an implicit broad acceptance side effect.
 - Red evidence: `npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "external-path|sensitive workspace"` initially failed because Full Access auto-approved an external-path confirmation card and Trust auto-approved a sensitive `.env` workspace confirmation card.
 - Fix evidence: Composer and Project Status pending-confirmation takeover now inspect raw `affected_files`; absolute external paths, `~`, `../` traversal, and Trust-mode `.env` / `.env.*` files remain manual.
