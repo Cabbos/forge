@@ -172,7 +172,8 @@ mod tests {
     #[tokio::test]
     async fn confirm_response_for_state_returns_minimal_event_when_descriptor_is_missing() {
         let nonce = uuid::Uuid::now_v7();
-        let workspace = std::env::temp_dir().join(format!("forge-confirm-response-minimal-{nonce}"));
+        let workspace =
+            std::env::temp_dir().join(format!("forge-confirm-response-minimal-{nonce}"));
         std::fs::create_dir_all(&workspace).expect("workspace");
         let harness = Arc::new(Harness::new(workspace.clone()));
         let state = Arc::new(AppState::new(harness.clone()));

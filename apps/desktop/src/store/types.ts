@@ -127,6 +127,7 @@ export interface PersistedSession {
   workspaceId?: string | null;
   createdAt?: number | null;
   updatedAt?: number | null;
+  costUsd?: number | null;
   contextWindowTokens?: number | null;
   contextUsage?: ContextUsageState | null;
   usageLedger?: SessionUsageLedgerState | null;
