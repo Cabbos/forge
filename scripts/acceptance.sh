@@ -6,6 +6,7 @@ DRY_RUN=0
 LIST_JSON=0
 SHOW_HELP=0
 ONLY_LABEL=""
+GREP_LABEL=""
 
 while [[ "$#" -gt 0 ]]; do
   arg="$1"
@@ -26,6 +27,14 @@ while [[ "$#" -gt 0 ]]; do
       ONLY_LABEL="$2"
       shift 2
       ;;
+    --grep)
+      if [[ "$#" -lt 2 ]]; then
+        echo "Missing value for --grep" >&2
+        exit 2
+      fi
+      GREP_LABEL="$2"
+      shift 2
+      ;;
     -h|--help)
       SHOW_HELP=1
       shift
@@ -36,6 +45,11 @@ while [[ "$#" -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "$ONLY_LABEL" && -n "$GREP_LABEL" ]]; then
+  echo "Use either --only or --grep, not both." >&2
+  exit 2
+fi
 
 COMMAND_LABELS=()
 COMMANDS=()
@@ -129,9 +143,13 @@ assert_unique "command" "${COMMANDS[@]}"
 
 SELECTED_INDICES=()
 for index in "${!COMMANDS[@]}"; do
-  if [[ -z "$ONLY_LABEL" || "${COMMAND_LABELS[$index]}" == "$ONLY_LABEL" ]]; then
-    SELECTED_INDICES+=("$index")
+  if [[ -n "$ONLY_LABEL" && "${COMMAND_LABELS[$index]}" != "$ONLY_LABEL" ]]; then
+    continue
   fi
+  if [[ -n "$GREP_LABEL" && "${COMMAND_LABELS[$index]}" != *"$GREP_LABEL"* ]]; then
+    continue
+  fi
+  SELECTED_INDICES+=("$index")
 done
 
 if [[ -n "$ONLY_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
@@ -154,9 +172,15 @@ if [[ -n "$ONLY_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
   exit 2
 fi
 
+if [[ -n "$GREP_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
+  echo "No acceptance gates matched --grep: $GREP_LABEL" >&2
+  echo "Run scripts/acceptance.sh --list-json to see valid labels." >&2
+  exit 2
+fi
+
 if [[ "$SHOW_HELP" -eq 1 ]]; then
   cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>]
+Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>]
 
 Runs the Forge Level 3 runtime acceptance gates:
 EOF
@@ -168,6 +192,7 @@ EOF
 Use --dry-run to print the command plan without executing it.
 Use --list-json to print the same gate plan as machine-readable JSON.
 Use --only with an exact gate label to run or dry-run one gate.
+Use --grep to filter gates by label substring; do not combine it with --only.
 EOF
   exit 0
 fi
