@@ -301,7 +301,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       const usageLedger = isProviderReplay && previousLedger
         ? previousLedger
         : applyProviderUsageToLedger(previousLedger, providerEvent);
-      const contextUsage = isProviderReplay
+      const contextUsage = isProviderReplay && session.contextUsage
         ? session.contextUsage
         : contextUsageFromLedger(usageLedger, contextWindowTokens, session.contextUsage);
       if (newBlock) {
