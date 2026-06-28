@@ -15,6 +15,7 @@ const DOCTOR_OPEN_SETTINGS_COMMAND = "node scripts/desktop-ui-evidence-doctor.mj
 const DOCTOR_RUN_CHECKS_COMMAND = "node scripts/desktop-ui-evidence-doctor.mjs --json --run-checks";
 const PREFLIGHT_REQUIRE_READY_COMMAND = "node scripts/desktop-ui-evidence-preflight.mjs --json --require-ready";
 const LIVE_READY_HARD_GATE_COMMAND = "node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready";
+const SUPPORTED_ARGS = new Set(["--json", "--require-ready", "--skip-screen-capture", "-h", "--help"]);
 
 export function evaluateDesktopUiEvidencePreflight({
   platform = process.platform,
@@ -307,6 +308,12 @@ function printHuman(result) {
 }
 
 function main(argv = process.argv.slice(2)) {
+  const unknownArg = argv.find((arg) => !SUPPORTED_ARGS.has(arg));
+  if (unknownArg) {
+    console.error(`Unknown option: ${unknownArg}`);
+    console.error("Run with --help to see valid options.");
+    return 2;
+  }
   const json = argv.includes("--json");
   const requireReady = argv.includes("--require-ready");
   const skipScreenCapture = argv.includes("--skip-screen-capture");

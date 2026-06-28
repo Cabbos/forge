@@ -164,3 +164,13 @@ test("require-ready exits nonzero when the current observer is not ready", () =>
     assert.match(result.stdout, /Recovery commands:/);
   }
 });
+
+test("cli rejects unknown options", () => {
+  const result = spawnSync(process.execPath, [scriptPath, "--requre-ready"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Unknown option: --requre-ready/);
+});
