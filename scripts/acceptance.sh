@@ -38,6 +38,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 COMMAND_LABELS=(
+  "acceptance matrix contract tests"
   "desktop production build"
   "website production build"
   "eval runner test suite"
@@ -92,6 +93,7 @@ COMMAND_LABELS=(
 )
 
 COMMANDS=(
+  "node --test scripts/acceptance.test.mjs"
   "npm run build:desktop"
   "npm run build:website"
   "npm run test:eval"
