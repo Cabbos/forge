@@ -24,7 +24,7 @@ For the current desktop acceptance sweep, run:
 scripts/acceptance.sh
 ```
 
-Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it, `scripts/acceptance.sh --list-json` for machine-readable gate metadata, or `scripts/acceptance.sh --only "<label>"` to run one exact gate.
+Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it, `scripts/acceptance.sh --list-json` for machine-readable gate metadata, `scripts/acceptance.sh --only "<label>"` to run one exact gate, or `scripts/acceptance.sh --grep "<text>"` to filter gates by label substring.
 Full acceptance starts with `node --test scripts/acceptance.test.mjs` so the executable gate matrix, generated help text, JSON output, and exact-label runner stay in sync.
 
 ## Desktop Runtime Surfaces

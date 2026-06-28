@@ -389,6 +389,56 @@ test("acceptance script can dry-run one named gate", () => {
   ]);
 });
 
+test("acceptance script can dry-run gates by label substring", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const output = execFileSync(scriptPath, ["--dry-run", "--grep", "provider"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.deepEqual(parseDryRunEntries(output), [
+    {
+      label: "provider usage known/unknown telemetry",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib",
+    },
+    {
+      label: "composer context usage from provider_usage",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g "provider_usage without legacy usage"',
+    },
+    {
+      label: "provider usage trace rendering",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "provider usage"',
+    },
+  ]);
+});
+
+test("acceptance script reports --grep misses", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--grep", "definitely missing gate"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /No acceptance gates matched --grep: definitely missing gate/);
+  assert.match(result.stderr, /Run scripts\/acceptance\.sh --list-json to see valid labels\./);
+});
+
+test("acceptance script rejects combining --only and --grep", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--only", "desktop production build", "--grep", "provider"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Use either --only or --grep, not both\./);
+});
+
 test("acceptance script suggests a close gate label for --only misses", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
