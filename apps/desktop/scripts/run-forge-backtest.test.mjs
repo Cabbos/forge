@@ -9,6 +9,7 @@ import {
   buildBacktestPlan,
   checkApiKey,
   createSuiteCaseFile,
+  runBacktestProcess,
   selectCaseFiles,
 } from "./run-forge-backtest.mjs";
 
@@ -148,6 +149,25 @@ test("plans Forge provider command with default headless binary", () => {
     plan.env.FORGE_EVAL_FORGE_AGENT_COMMAND,
     "cargo run --manifest-path /repo/forge/src-tauri/Cargo.toml --bin forge_eval_agent --quiet",
   );
+});
+
+test("runBacktestProcess reports runner spawn errors", () => {
+  const messages = [];
+  const originalError = console.error;
+  console.error = (message) => messages.push(String(message));
+  try {
+    const status = runBacktestProcess({
+      command: "definitely-not-a-forge-command",
+      args: ["--version"],
+      cwd: resolve("."),
+      env: process.env,
+    });
+
+    assert.equal(status, 1);
+    assert.match(messages.join("\n"), /failed to start definitely-not-a-forge-command/);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test("createSuiteCaseFile applies budget overrides to all tasks", () => {

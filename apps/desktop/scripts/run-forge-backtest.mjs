@@ -304,6 +304,25 @@ function assertRunnerRoot(runnerRoot) {
   }
 }
 
+export function runBacktestProcess(plan) {
+  const result = spawnSync(plan.command, plan.args, {
+    cwd: plan.cwd,
+    env: plan.env,
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    console.error(
+      `[forge-backtest] ERROR: failed to start ${plan.command}: ${result.error.message}`,
+    );
+    console.error(`[forge-backtest] cwd: ${plan.cwd}`);
+    console.error(`[forge-backtest] command: ${[plan.command, ...plan.args].join(" ")}`);
+    return 1;
+  }
+
+  return result.status ?? 1;
+}
+
 function runCli(argv) {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const options = parseArgs(argv);
@@ -402,13 +421,7 @@ function runCli(argv) {
   );
   console.log(`[forge-backtest] output: ${outputPath}`);
 
-  const result = spawnSync(plan.command, plan.args, {
-    cwd: plan.cwd,
-    env: plan.env,
-    stdio: "inherit",
-  });
-
-  return result.status ?? 1;
+  return runBacktestProcess(plan);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
