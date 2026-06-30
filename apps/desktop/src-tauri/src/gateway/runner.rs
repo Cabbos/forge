@@ -14,6 +14,8 @@ const TRIGGER_POLL_INTERVAL_SECS: u64 = 5;
 const TRIGGER_LEASE_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 const MAX_TRIGGER_ATTEMPTS: u32 = 3;
 const MAX_TRIGGER_RUN_RECORDS: usize = 1000;
+const GATEWAY_HEADLESS_APPROVAL_REQUIRED_MESSAGE: &str =
+    "Gateway headless execution requires explicit human approval for this task.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TriggerRunRecord {
@@ -291,6 +293,42 @@ where
     records
 }
 
+pub async fn run_gateway_owned_triggers_once<F, Fut>(
+    store: &TriggerStore,
+    run_store: &TriggerRunStore,
+    _fallback_workspace: &Path,
+    _executor: F,
+) -> Vec<TriggerRunRecord>
+where
+    F: FnMut(EvalHeadlessRequest) -> Fut,
+    Fut: Future<Output = Result<serde_json::Value, String>>,
+{
+    let triggers = store.claim_available(now_millis(), TRIGGER_LEASE_TIMEOUT_MS);
+    let mut records = Vec::with_capacity(triggers.len());
+
+    for trigger in triggers {
+        if approval_required_record_exists(run_store, &trigger.id) {
+            continue;
+        }
+
+        records.push(record_trigger_approval_required(
+            run_store,
+            trigger,
+            now_millis(),
+        ));
+    }
+
+    records
+}
+
+fn approval_required_record_exists(run_store: &TriggerRunStore, trigger_id: &str) -> bool {
+    run_store.list().iter().any(|record| {
+        record.trigger_id == trigger_id
+            && record.status == "approval_required"
+            && record.failure_category.as_deref() == Some("approval_required")
+    })
+}
+
 fn record_trigger_success(
     store: &TriggerStore,
     run_store: &TriggerRunStore,
@@ -311,6 +349,25 @@ fn record_trigger_success(
     );
     run_store.push(record.clone());
     store.complete(&trigger_id);
+    record
+}
+
+fn record_trigger_approval_required(
+    run_store: &TriggerRunStore,
+    trigger: PendingTrigger,
+    started_at_ms: u64,
+) -> TriggerRunRecord {
+    let mut record = TriggerRunRecord::from_trigger(
+        &trigger,
+        trigger.attempt_count.saturating_add(1),
+        "approval_required",
+        GATEWAY_HEADLESS_APPROVAL_REQUIRED_MESSAGE.to_string(),
+        started_at_ms,
+        None,
+    );
+    record.executor_kind = Some("none".to_string());
+    record.failure_category = Some("approval_required".to_string());
+    run_store.push(record.clone());
     record
 }
 
@@ -353,7 +410,7 @@ pub fn spawn_trigger_runner(
 ) {
     tokio::spawn(async move {
         loop {
-            let records = run_pending_triggers_once(
+            let records = run_gateway_owned_triggers_once(
                 &store,
                 &run_store,
                 &fallback_workspace,
@@ -615,6 +672,106 @@ mod tests {
         assert_eq!(records[0].status, "retrying");
         assert_eq!(records[0].executor_kind.as_deref(), Some("eval_headless"));
         assert_eq!(records[0].failure_category.as_deref(), Some("runner_error"));
+    }
+
+    #[tokio::test]
+    async fn run_pending_triggers_once_requires_approval_for_gateway_owned_execution() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let store = TriggerStore::new();
+        let run_store = super::TriggerRunStore::new();
+        store.push(PendingTrigger {
+            id: "trigger-approval".into(),
+            message: "run guarded gateway work".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: Some(workspace.path().to_string_lossy().to_string()),
+            attempt_count: 0,
+            claimed_at_ms: None,
+            received_at_ms: 36,
+        });
+
+        let executor_calls = Arc::new(Mutex::new(0));
+        let executor_calls_for_run = executor_calls.clone();
+        let records = super::run_gateway_owned_triggers_once(
+            &store,
+            &run_store,
+            workspace.path(),
+            move |_request| {
+                let executor_calls = executor_calls_for_run.clone();
+                async move {
+                    *executor_calls.lock().unwrap() += 1;
+                    Ok(serde_json::json!({"session_id": "should-not-run"}))
+                }
+            },
+        )
+        .await;
+
+        assert_eq!(*executor_calls.lock().unwrap(), 0);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "approval_required");
+        assert_eq!(
+            records[0].message,
+            "Gateway headless execution requires explicit human approval for this task."
+        );
+        assert_eq!(records[0].executor_kind.as_deref(), Some("none"));
+        assert_eq!(
+            records[0].failure_category.as_deref(),
+            Some("approval_required")
+        );
+        assert!(
+            !store.list().is_empty(),
+            "approval-required trigger should remain inspectable"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_gateway_owned_triggers_once_records_approval_required_once_per_trigger() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let store = TriggerStore::new();
+        let run_store = super::TriggerRunStore::new();
+        store.push(PendingTrigger {
+            id: "trigger-approval-once".into(),
+            message: "run guarded gateway work once".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: Some(workspace.path().to_string_lossy().to_string()),
+            attempt_count: 0,
+            claimed_at_ms: None,
+            received_at_ms: 37,
+        });
+
+        let first = super::run_gateway_owned_triggers_once(
+            &store,
+            &run_store,
+            workspace.path(),
+            |_request| async { Ok(serde_json::json!({"session_id": "should-not-run"})) },
+        )
+        .await;
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].status, "approval_required");
+
+        let mut expired_claim = store.list().remove(0);
+        expired_claim.claimed_at_ms =
+            Some(super::now_millis().saturating_sub(super::TRIGGER_LEASE_TIMEOUT_MS + 1));
+        store.push(expired_claim);
+
+        let second = super::run_gateway_owned_triggers_once(
+            &store,
+            &run_store,
+            workspace.path(),
+            |_request| async { Ok(serde_json::json!({"session_id": "should-not-run"})) },
+        )
+        .await;
+
+        assert!(second.is_empty());
+        assert_eq!(run_store.list().len(), 1);
+        assert!(
+            !store.list().is_empty(),
+            "approval-required trigger should remain inspectable"
+        );
     }
 
     #[tokio::test]
