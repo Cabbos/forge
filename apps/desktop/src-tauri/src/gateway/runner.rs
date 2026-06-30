@@ -27,6 +27,12 @@ pub struct TriggerRunRecord {
     pub started_at_ms: u64,
     pub ended_at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
@@ -56,6 +62,11 @@ impl TriggerRunRecord {
             message,
             started_at_ms,
             ended_at_ms: now_millis(),
+            executor_kind: Some("eval_headless".to_string()),
+            failure_category: None,
+            lease_expires_at_ms: trigger
+                .claimed_at_ms
+                .map(|claimed| claimed + TRIGGER_LEASE_TIMEOUT_MS),
             trigger_message: Some(trigger.message.clone()),
             profile_id: trigger.profile_id.clone(),
             provider: trigger.provider.clone(),
@@ -233,6 +244,7 @@ where
                     error,
                     started_at_ms,
                     None,
+                    None,
                 ));
                 continue;
             }
@@ -250,6 +262,7 @@ where
                         message,
                         started_at_ms,
                         session_id_from_payload(&payload),
+                        failure_category_from_payload(&payload),
                     ));
                 } else {
                     records.push(record_trigger_success(
@@ -269,6 +282,7 @@ where
                 trigger,
                 error,
                 started_at_ms,
+                None,
                 None,
             )),
         }
@@ -307,6 +321,7 @@ fn record_trigger_failure(
     message: String,
     started_at_ms: u64,
     session_id: Option<String>,
+    failure_category: Option<String>,
 ) -> TriggerRunRecord {
     let next_attempt = trigger.attempt_count.saturating_add(1);
     trigger.attempt_count = next_attempt;
@@ -318,7 +333,7 @@ fn record_trigger_failure(
         "dead_letter"
     };
 
-    let record = TriggerRunRecord::from_trigger(
+    let mut record = TriggerRunRecord::from_trigger(
         &trigger,
         next_attempt,
         status,
@@ -326,6 +341,7 @@ fn record_trigger_failure(
         started_at_ms,
         session_id,
     );
+    record.failure_category = failure_category;
     run_store.push(record.clone());
     record
 }
@@ -418,6 +434,15 @@ fn session_id_from_payload(payload: &serde_json::Value) -> Option<String> {
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|session_id| !session_id.is_empty())
+        .map(str::to_string)
+}
+
+fn failure_category_from_payload(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("failure_category")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|category| !category.is_empty())
         .map(str::to_string)
 }
 
@@ -553,6 +578,43 @@ mod tests {
         assert_eq!(third[0].status, "dead_letter");
         assert_eq!(third[0].message, "provider offline");
         assert!(store.list().is_empty());
+    }
+
+    #[tokio::test]
+    async fn trigger_run_record_preserves_executor_kind_and_failure_category() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let store = TriggerStore::new();
+        let run_store = super::TriggerRunStore::new();
+        store.push(PendingTrigger {
+            id: "trigger-evidence".into(),
+            message: "run evidence check".into(),
+            profile_id: None,
+            provider: None,
+            model: None,
+            workspace_path: Some(workspace.path().to_string_lossy().to_string()),
+            attempt_count: 0,
+            claimed_at_ms: None,
+            received_at_ms: 35,
+        });
+
+        let records = super::run_pending_triggers_once(
+            &store,
+            &run_store,
+            workspace.path(),
+            |_request| async {
+                Ok(serde_json::json!({
+                    "error": "missing_api_key",
+                    "failure_category": "runner_error",
+                    "failure_reason": "headless setup failed"
+                }))
+            },
+        )
+        .await;
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "retrying");
+        assert_eq!(records[0].executor_kind.as_deref(), Some("eval_headless"));
+        assert_eq!(records[0].failure_category.as_deref(), Some("runner_error"));
     }
 
     #[tokio::test]
