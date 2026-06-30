@@ -27,6 +27,7 @@
     "eval:forge:smoke:worktree:real": "node scripts/smoke-worktree-worker.mjs --require-key --timeout 120 --max-model-rounds 20",
     "eval:forge:smoke:worktree:dry-run": "node scripts/smoke-worktree-worker.mjs --dry-run",
     "smoke:gateway:webhook": "node scripts/smoke-gateway-webhook.mjs",
+    "smoke:gateway:restart": "node scripts/smoke-gateway-restart.mjs",
     "eval:continuity": "node scripts/run-forge-backtest.mjs --suite continuity",
     "eval:continuity:dry-run": "node scripts/run-forge-backtest.mjs --suite continuity --dry-run",
     "eval:continuity:smoke": "node scripts/run-forge-backtest.mjs --suite continuity --case continuity-pipeline-normalize-input",
