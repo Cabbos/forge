@@ -345,6 +345,36 @@ mod tests {
     }
 
     #[test]
+    fn headless_owner_run_requires_approval_bundle_before_agent_session_adapter() {
+        let run = HeadlessOwnerRun {
+            owner_run_id: "owner-1".into(),
+            task_id: "task-1".into(),
+            session_id: Some("session-1".into()),
+            lease_id: "lease-1".into(),
+            attempt: 1,
+            state: HeadlessOwnerRunState::Ready,
+            snapshot_source: HeadlessOwnerSnapshotSource::PersistedSessionSnapshot,
+            snapshot_ref: Some("snapshot-1".into()),
+            human_gate_id: "gate-1".into(),
+            policy_decision_id: "policy-1".into(),
+            budget_snapshot_id: "budget-1".into(),
+            idempotency_key: "task-1:attempt-1".into(),
+            correlation_id: "correlation-1".into(),
+            causation_id: None,
+            requested_by: "gateway".into(),
+            requested_at_ms: 100,
+            heartbeat_at_ms: None,
+            expires_at_ms: 200,
+            cancellation_reason: None,
+            waiting_reason: None,
+            executor_kind: HeadlessOwnerExecutorKind::AgentSessionAdapter,
+            evidence_refs: vec!["approval:gate-1".into(), "policy:policy-1".into()],
+        };
+
+        assert!(run.validate_authorization_bundle().is_ok());
+    }
+
+    #[test]
     fn headless_owner_contract_matches_duplicate_task_and_idempotency_key() {
         let owner_run = owner_run_for_test();
 
