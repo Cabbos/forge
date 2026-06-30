@@ -44,6 +44,32 @@ test("dry-run json prints the restart plan and exits successfully", () => {
   assert.equal(payload.plan.runStorePath.endsWith("/home/.forge/trigger-runs.json"), true);
 });
 
+test("default dry-run roots are fresh for each invocation", () => {
+  const first = spawnSync(process.execPath, ["scripts/smoke-gateway-restart.mjs", "--json", "--dry-run"], {
+    cwd: desktopRoot,
+    encoding: "utf8",
+  });
+  const second = spawnSync(process.execPath, ["scripts/smoke-gateway-restart.mjs", "--json", "--dry-run"], {
+    cwd: desktopRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(first.status, 0);
+  assert.equal(second.status, 0);
+  assert.notEqual(JSON.parse(first.stdout).plan.root, JSON.parse(second.stdout).plan.root);
+});
+
+test("json without dry-run refuses live restart execution", () => {
+  const result = spawnSync(process.execPath, ["scripts/smoke-gateway-restart.mjs", "--json"], {
+    cwd: desktopRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Live gateway restart smoke is not implemented/);
+  assert.equal(result.stdout, "");
+});
+
 test("live mode refuses to claim restart execution", () => {
   const result = spawnSync(process.execPath, ["scripts/smoke-gateway-restart.mjs"], {
     cwd: desktopRoot,
