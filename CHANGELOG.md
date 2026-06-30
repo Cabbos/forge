@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Surfaced gateway trigger-run executor, failure-category, and lease-expiry evidence through IPC types, Settings diagnostics, the embedded gateway dashboard, and `forge_trigger show`.
 - Rejected unknown `desktop-ui-evidence-doctor.mjs` options so misspelled recovery-check flags cannot silently print the diagnosis-only path.
 - Rejected unknown `desktop-ui-evidence-preflight.mjs` options so misspelled live-evidence readiness flags cannot silently run the report-only path.
 - Handled malformed package metadata in the desktop restart harness preflight so dependency detection falls back to missing facts instead of crashing.

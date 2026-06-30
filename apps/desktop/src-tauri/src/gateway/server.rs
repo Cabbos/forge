@@ -2760,8 +2760,8 @@ mod tests {
                 started_at_ms: 1,
                 ended_at_ms: 2,
                 executor_kind: Some("eval_headless".into()),
-                failure_category: None,
-                lease_expires_at_ms: None,
+                failure_category: Some("runner_error".into()),
+                lease_expires_at_ms: Some(300_010),
                 trigger_message: None,
                 profile_id: None,
                 provider: None,
@@ -2783,6 +2783,9 @@ mod tests {
                 assert_eq!(runs.len(), 1);
                 assert_eq!(runs[0].trigger_id, "trigger-1");
                 assert_eq!(runs[0].status, "completed");
+                assert_eq!(runs[0].executor_kind.as_deref(), Some("eval_headless"));
+                assert_eq!(runs[0].failure_category.as_deref(), Some("runner_error"));
+                assert_eq!(runs[0].lease_expires_at_ms, Some(300_010));
             }
             _ => panic!("expected Ok reply"),
         }
@@ -2849,7 +2852,7 @@ mod tests {
                 ended_at_ms: 11,
                 executor_kind: Some("eval_headless".into()),
                 failure_category: Some("runner_error".into()),
-                lease_expires_at_ms: None,
+                lease_expires_at_ms: Some(300_010),
                 trigger_message: None,
                 profile_id: None,
                 provider: None,
@@ -2918,6 +2921,16 @@ mod tests {
                 assert_eq!(status.expired_headless_owner_runs, 0);
                 assert_eq!(status.recent_runs.len(), 2);
                 assert_eq!(status.recent_runs[0].id, "run-ok");
+                assert_eq!(status.recent_runs[1].id, "run-dead");
+                assert_eq!(
+                    status.recent_runs[1].executor_kind.as_deref(),
+                    Some("eval_headless")
+                );
+                assert_eq!(
+                    status.recent_runs[1].failure_category.as_deref(),
+                    Some("runner_error")
+                );
+                assert_eq!(status.recent_runs[1].lease_expires_at_ms, Some(300_010));
                 assert_eq!(status.recent_session_inputs.len(), 1);
                 assert_eq!(status.recent_session_inputs[0].input_id, "input-1");
                 assert_eq!(status.recent_session_inputs[0].session_id, "session-1");
@@ -2961,7 +2974,7 @@ mod tests {
                 ended_at_ms: 21,
                 executor_kind: Some("eval_headless".into()),
                 failure_category: None,
-                lease_expires_at_ms: None,
+                lease_expires_at_ms: Some(300_010),
                 trigger_message: Some("run digest".into()),
                 profile_id: Some("ops".into()),
                 provider: Some("claude".into()),
@@ -3038,6 +3051,12 @@ mod tests {
                 assert_eq!(snapshot.queued_triggers.len(), 2);
                 assert_eq!(snapshot.recent_runs.len(), 1);
                 assert_eq!(snapshot.recent_runs[0].id, "run-ok");
+                assert_eq!(
+                    snapshot.recent_runs[0].executor_kind.as_deref(),
+                    Some("eval_headless")
+                );
+                assert_eq!(snapshot.recent_runs[0].failure_category, None);
+                assert_eq!(snapshot.recent_runs[0].lease_expires_at_ms, Some(300_010));
                 assert_eq!(snapshot.recent_session_inputs.len(), 1);
                 assert_eq!(snapshot.recent_session_inputs[0].input_id, "input-1");
                 assert!(snapshot
@@ -3652,6 +3671,9 @@ mod tests {
                 assert!(result.ok);
                 assert_eq!(result.run.id, "run-detail");
                 assert_eq!(result.run.trigger_id, "trigger-detail");
+                assert_eq!(result.run.executor_kind.as_deref(), Some("eval_headless"));
+                assert_eq!(result.run.failure_category.as_deref(), Some("runner_error"));
+                assert_eq!(result.run.lease_expires_at_ms, Some(300_010));
                 assert_eq!(result.run.trigger_message.as_deref(), Some("run digest"));
                 assert_eq!(result.run.workspace_path.as_deref(), Some("/repo"));
             }

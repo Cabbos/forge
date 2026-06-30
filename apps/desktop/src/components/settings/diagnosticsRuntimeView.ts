@@ -98,6 +98,9 @@ export interface GatewayTriggerRunLike {
   message: string;
   started_at_ms: number;
   ended_at_ms: number;
+  executor_kind?: string | null;
+  failure_category?: string | null;
+  lease_expires_at_ms?: number | null;
   trigger_message?: string | null;
   profile_id?: string | null;
   provider?: string | null;
@@ -353,11 +356,16 @@ export function buildGatewayTriggerRunRows(
 ): GatewayTriggerRunRow[] {
   return runs.map((run) => {
     const runtime = buildRuntimeLabel(run.provider, run.model);
+    const executorKind = cleanOptionalText(run.executor_kind);
+    const failureCategory = cleanOptionalText(run.failure_category);
     const subtitleParts = [
       `trigger=${run.trigger_id}`,
       run.session_id?.trim() ? `session=${run.session_id.trim()}` : null,
       `profile=${run.profile_id?.trim() || "-"}`,
       runtime,
+      executorKind ? `executor=${executorKind}` : null,
+      failureCategory ? `failure=${failureCategory}` : null,
+      run.lease_expires_at_ms != null ? `lease_expires=${run.lease_expires_at_ms}` : null,
     ].filter(Boolean);
 
     return {
@@ -368,6 +376,20 @@ export function buildGatewayTriggerRunRows(
       canReplay: Boolean(run.trigger_message?.trim()),
     };
   });
+}
+
+export function formatGatewayTriggerRunDetail(run: GatewayTriggerRunLike): string {
+  const parts = [
+    `session=${cleanOptionalText(run.session_id) ?? "-"}`,
+    `executor=${cleanOptionalText(run.executor_kind) ?? "-"}`,
+    `failure=${cleanOptionalText(run.failure_category) ?? "-"}`,
+    `lease_expires=${run.lease_expires_at_ms ?? "-"}`,
+    `started=${run.started_at_ms}`,
+    `ended=${run.ended_at_ms}`,
+    `workspace=${cleanOptionalText(run.workspace_path) ?? "-"}`,
+    `trigger_message=${cleanOptionalText(run.trigger_message) ?? "-"}`,
+  ];
+  return parts.join(" · ");
 }
 
 export function buildGatewaySessionEventRows(
@@ -435,6 +457,11 @@ function truncateTriggerMessage(message: string, maxLength = 120): string {
   const chars = [...message.trim()];
   if (chars.length <= maxLength) return chars.join("");
   return `${chars.slice(0, maxLength).join("")}…`;
+}
+
+function cleanOptionalText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 function eventPreview(event: GatewaySessionEventLike): string {

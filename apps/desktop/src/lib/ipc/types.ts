@@ -417,6 +417,9 @@ export interface GatewayTriggerRunRecord {
   message: string;
   started_at_ms: number;
   ended_at_ms: number;
+  executor_kind?: string | null;
+  failure_category?: string | null;
+  lease_expires_at_ms?: number | null;
   trigger_message?: string | null;
   profile_id?: string | null;
   provider?: string | null;

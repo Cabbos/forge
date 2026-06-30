@@ -57,7 +57,7 @@ Forge 希望用户只需要理解三个产品层级：
 - 记录任务状态、上下文来源、工具证据、预览归属、检查点、验证结果和恢复状态。
 - 记录 provider usage、legacy usage、上下文用量和累计成本；本地 reload 后即使较早的 usage block 不再可用，成本展示也会跟随 session 快照或 Tauri transcript 恢复；如果历史 blocks 里有压缩记录，即使旧 session metadata 还停在压缩前，也会恢复压缩后的上下文估算。
 - 通过 History 搜索、筛选、恢复、重命名、导出和清理本地 session 快照。
-- 在 Settings 中查看诊断、Gateway runtime、调度任务、权限规则、记忆/资料和本机服务状态。
+- 在 Settings 中查看诊断、Gateway runtime、最近 trigger run 的 executor/failure/lease 证据、调度任务、权限规则、记忆/资料和本机服务状态。
 - 在 Agent Workbench 和全局后台状态栏里查看子任务、审阅队列、completion/review-to-commit eligibility、调度任务和健康告警；同一会话恢复输出后，过期的 `会话无响应` 提醒会自动清除，正常 idle/completed 会话不会被 watchdog 重新误报。
 
 ## 适合的场景
@@ -256,7 +256,7 @@ Forge 的可信度来自几个工程约束：
 - 检查点、验证结果和交付状态的显式展示。
 - 后端使用 Rust 和 Tokio 承载 agent loop、IPC、PTY、MCP 和本地存储。
 - Playwright E2E 与 Rust 后端检查共同覆盖关键路径。
-- Gateway runtime、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
+- Gateway runtime、trigger run executor/failure/lease 证据、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
 - 子任务、审阅队列、健康告警和后台调度通过 Agent Workbench 与全局状态栏持续暴露。
 - Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、crash/replay regression coverage、gateway runner lease、mocked restart runtime smoke、provider usage known/unknown telemetry、persisted A2A lineage、review-to-commit eligibility、gated headless ownership policy/coordinator dry run、test-only fake owner executor fixture、A2A child runtime file-ish tool facts、direct ToolExecutor file-ish `file_io` stream、bounded post-shell delta evidence 和真实 Rust `run_worktree_worker` harness 支撑长期 agent 工作；billing-grade usage accounting、usage/pricing unknown 时的精确 cost、shell-internal tracing、syscall/file-descriptor tracing、full non-git workspace enumeration、default gateway autonomous resume、real headless `AgentSession` execution、model/tool/file side effects、Tauri/WebDriver force-quit harness、automatic creation of parent-session context、fuzzy parent/root-task selection 和 auto commit/merge/push 仍未声明覆盖。
 
