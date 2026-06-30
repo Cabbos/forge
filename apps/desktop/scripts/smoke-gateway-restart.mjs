@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { tmpdir } from "node:os";
+import { mkdtempSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -32,7 +33,7 @@ function parseArgs(argv) {
   const options = {
     dryRun: false,
     json: false,
-    root: join(tmpdir(), "forge-gateway-restart-smoke"),
+    root: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -68,8 +69,9 @@ function main() {
     process.exit(1);
   }
 
-  const plan = buildGatewayRestartPlan({ root: options.root });
-  if (options.dryRun || options.json) {
+  const root = options.root ?? mkdtempSync(join(tmpdir(), "forge-gateway-restart-"));
+  const plan = buildGatewayRestartPlan({ root });
+  if (options.dryRun) {
     printJson({ ok: true, dryRun: options.dryRun, plan });
     return;
   }
