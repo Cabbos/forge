@@ -414,7 +414,10 @@ fn dashboard_html() -> &'static str {
         { label: 'Run', value: (row) => row.id, code: true },
         { label: 'Status', value: (row) => row.status },
         { label: 'Message', value: (row) => row.message },
-        { label: 'Session', value: (row) => row.session_id || '-', code: true }
+        { label: 'Session', value: (row) => row.session_id || '-', code: true },
+        { label: 'Executor', value: (row) => row.executor_kind || '-' },
+        { label: 'Failure', value: (row) => row.failure_category || '-' },
+        { label: 'Lease expires', value: (row) => time(row.lease_expires_at_ms) }
       ], snapshot.recent_runs || []));
 
       replace('session-inputs', table([
@@ -505,6 +508,9 @@ mod tests {
         assert!(response.contains("Latest event"));
         assert!(response.contains("Sessions"));
         assert!(response.contains("Queued Triggers"));
+        assert!(response.contains("Executor"));
+        assert!(response.contains("Failure"));
+        assert!(response.contains("Lease expires"));
         assert!(response.contains("Event Log"));
     }
 

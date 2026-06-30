@@ -9,6 +9,7 @@ import {
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
   buildGatewayTriggerInput,
+  formatGatewayTriggerRunDetail,
 } from "./diagnosticsRuntimeView.ts";
 
 describe("buildGatewayRuntimeSummary", () => {
@@ -381,6 +382,9 @@ describe("buildGatewayTriggerRunRows", () => {
         message: "provider offline",
         started_at_ms: 20,
         ended_at_ms: 25,
+        executor_kind: "eval_headless",
+        failure_category: "runner_error",
+        lease_expires_at_ms: 300_010,
         trigger_message: "run digest",
         profile_id: "ops",
         provider: "openai",
@@ -393,7 +397,8 @@ describe("buildGatewayTriggerRunRows", () => {
       {
         id: "run-1",
         title: "dead_letter · attempt 2",
-        subtitle: "trigger=trigger-1 · session=gateway-session-1 · profile=ops · openai/gpt-5",
+        subtitle:
+          "trigger=trigger-1 · session=gateway-session-1 · profile=ops · openai/gpt-5 · executor=eval_headless · failure=runner_error · lease_expires=300010",
         message: "provider offline",
         canReplay: true,
       },
@@ -415,5 +420,29 @@ describe("buildGatewayTriggerRunRows", () => {
 
     assert.equal(rows[0].canReplay, false);
     assert.equal(rows[0].subtitle, "trigger=trigger-legacy · profile=-");
+  });
+
+  it("formats run detail evidence fields for diagnostics inspection", () => {
+    assert.equal(
+      formatGatewayTriggerRunDetail({
+        id: "run-detail",
+        trigger_id: "trigger-detail",
+        session_id: "gateway-session-1",
+        attempt: 3,
+        status: "dead_letter",
+        message: "provider offline",
+        started_at_ms: 10,
+        ended_at_ms: 20,
+        executor_kind: "eval_headless",
+        failure_category: "runner_error",
+        lease_expires_at_ms: 300_010,
+        trigger_message: "run digest",
+        profile_id: "ops",
+        provider: "openai",
+        model: "gpt-5",
+        workspace_path: "/repo",
+      }),
+      "session=gateway-session-1 · executor=eval_headless · failure=runner_error · lease_expires=300010 · started=10 · ended=20 · workspace=/repo · trigger_message=run digest",
+    );
   });
 });

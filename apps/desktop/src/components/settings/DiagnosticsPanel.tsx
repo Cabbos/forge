@@ -45,6 +45,7 @@ import {
   buildGatewayTriggerInput,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
+  formatGatewayTriggerRunDetail,
 } from "./diagnosticsRuntimeView";
 import {
   buildDiagnosticRepairAction,
@@ -857,7 +858,7 @@ function GatewayRuntimeRuns({
             <span className="forge-gateway-trigger-row-meta">{row.subtitle}</span>
             {selectedRunDetail?.id === row.id && (
               <span className="forge-gateway-trigger-row-meta">
-                {formatRunDetail(selectedRunDetail)}
+                {formatGatewayTriggerRunDetail(selectedRunDetail)}
               </span>
             )}
           </div>
@@ -893,17 +894,6 @@ function GatewayRuntimeRuns({
       ))}
     </div>
   );
-}
-
-function formatRunDetail(run: GatewayTriggerRunRecord): string {
-  const parts = [
-    `session=${run.session_id?.trim() || "-"}`,
-    `started=${run.started_at_ms}`,
-    `ended=${run.ended_at_ms}`,
-    `workspace=${run.workspace_path?.trim() || "-"}`,
-    `trigger_message=${run.trigger_message?.trim() || "-"}`,
-  ];
-  return parts.join(" · ");
 }
 
 function GatewayTriggerQueue({

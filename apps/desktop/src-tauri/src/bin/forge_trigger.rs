@@ -354,26 +354,48 @@ async fn show_trigger_run(
     let result = serde_json::from_value::<GetTriggerRunResult>(response.result)
         .map_err(|error| format!("Gateway returned invalid trigger run detail: {error}"))?;
 
-    let run = result.run;
-    println!("Trigger run {}", run.id);
-    println!("  trigger: {}", run.trigger_id);
-    println!("  session: {}", run.session_id.as_deref().unwrap_or("-"));
-    println!("  status: {}", run.status);
-    println!("  attempt: {}", run.attempt);
-    println!("  started_at_ms: {}", run.started_at_ms);
-    println!("  ended_at_ms: {}", run.ended_at_ms);
-    println!("  profile: {}", run.profile_id.as_deref().unwrap_or("-"));
-    println!("  provider: {}", run.provider.as_deref().unwrap_or("-"));
-    println!("  model: {}", run.model.as_deref().unwrap_or("-"));
-    println!(
-        "  workspace: {}",
-        run.workspace_path.as_deref().unwrap_or("-")
-    );
-    println!("  message: {}", run.message);
-    if let Some(trigger_message) = run.trigger_message.as_deref() {
-        println!("  trigger_message: {}", trigger_message);
+    for line in render_trigger_run_detail_lines(&result.run) {
+        println!("{line}");
     }
     Ok(())
+}
+
+fn render_trigger_run_detail_lines(run: &TriggerRunRecord) -> Vec<String> {
+    let mut lines = vec![
+        format!("Trigger run {}", run.id),
+        format!("  trigger: {}", run.trigger_id),
+        format!("  session: {}", run.session_id.as_deref().unwrap_or("-")),
+        format!("  status: {}", run.status),
+        format!("  attempt: {}", run.attempt),
+        format!("  started_at_ms: {}", run.started_at_ms),
+        format!("  ended_at_ms: {}", run.ended_at_ms),
+        format!(
+            "  executor: {}",
+            run.executor_kind.as_deref().unwrap_or("-")
+        ),
+        format!(
+            "  failure_category: {}",
+            run.failure_category.as_deref().unwrap_or("-")
+        ),
+        format!(
+            "  lease_expires_at_ms: {}",
+            run.lease_expires_at_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ),
+        format!("  profile: {}", run.profile_id.as_deref().unwrap_or("-")),
+        format!("  provider: {}", run.provider.as_deref().unwrap_or("-")),
+        format!("  model: {}", run.model.as_deref().unwrap_or("-")),
+        format!(
+            "  workspace: {}",
+            run.workspace_path.as_deref().unwrap_or("-")
+        ),
+        format!("  message: {}", run.message),
+    ];
+    if let Some(trigger_message) = run.trigger_message.as_deref() {
+        lines.push(format!("  trigger_message: {trigger_message}"));
+    }
+    lines
 }
 
 async fn show_runtime_status(client: &mut GatewayClient) -> Result<(), String> {
@@ -700,6 +722,34 @@ mod tests {
             super::render_trigger_run_summary_line(&run),
             "  run-1  trigger=trigger-1  session=gateway-session-1  attempt=2  completed  done"
         );
+    }
+
+    #[test]
+    fn render_trigger_run_detail_lines_include_runtime_evidence() {
+        let run = super::TriggerRunRecord {
+            id: "run-detail".into(),
+            trigger_id: "trigger-detail".into(),
+            session_id: Some("gateway-session-1".into()),
+            attempt: 3,
+            status: "dead_letter".into(),
+            message: "provider offline".into(),
+            started_at_ms: 10,
+            ended_at_ms: 20,
+            executor_kind: Some("eval_headless".into()),
+            failure_category: Some("runner_error".into()),
+            lease_expires_at_ms: Some(300_010),
+            trigger_message: Some("run digest".into()),
+            profile_id: Some("ops".into()),
+            provider: Some("openai".into()),
+            model: Some("gpt-5".into()),
+            workspace_path: Some("/repo".into()),
+        };
+
+        let lines = super::render_trigger_run_detail_lines(&run);
+
+        assert!(lines.contains(&"  executor: eval_headless".to_string()));
+        assert!(lines.contains(&"  failure_category: runner_error".to_string()));
+        assert!(lines.contains(&"  lease_expires_at_ms: 300010".to_string()));
     }
 
     #[test]

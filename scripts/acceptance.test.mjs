@@ -220,7 +220,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "desktop state consistency map status",
       command:
-        'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md',
+        'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md && rg -q "Gateway trigger run evidence" docs/desktop/state-consistency-map.md && rg -q "TriggerRunRecord" docs/desktop/state-consistency-map.md',
     },
     {
       label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
