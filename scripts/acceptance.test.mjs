@@ -74,6 +74,10 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib",
     },
     {
+      label: "gateway session-host run evidence",
+      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway::runner --lib",
+    },
+    {
       label: "backend gateway restart smoke dry-run",
       command: "npm --prefix apps/desktop run smoke:gateway:restart -- --json --dry-run",
     },
@@ -224,7 +228,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "desktop state consistency map status",
       command:
-        'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md && rg -q "Gateway trigger run evidence" docs/desktop/state-consistency-map.md && rg -q "TriggerRunRecord" docs/desktop/state-consistency-map.md',
+        'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md && rg -q "Gateway trigger run evidence" docs/desktop/state-consistency-map.md && rg -q "TriggerRunRecord" docs/desktop/state-consistency-map.md && rg -q "Gateway run state" docs/desktop/state-consistency-map.md && rg -q "smoke:gateway:restart" docs/desktop/state-consistency-map.md && rg -q "gateway::runner --lib" docs/desktop/state-consistency-map.md',
     },
     {
       label: "post-shell file-effect evidence smoke (bounded, not shell-internal)",
