@@ -14,7 +14,7 @@ test("buildGatewayRestartPlan points at isolated restart smoke stores", () => {
   const plan = buildGatewayRestartPlan({ root });
 
   assert.equal(plan.home, join(root, "home"));
-  assert.equal(plan.triggerStorePath, join(root, "home", ".forge", "triggers.json"));
+  assert.equal(plan.triggerStorePath, join(root, "home", ".forge", "pending-triggers.json"));
   assert.equal(plan.runStorePath, join(root, "home", ".forge", "trigger-runs.json"));
   assert.match(plan.gatewayCommand.join(" "), /cargo run .*--bin gateway/);
   assert.deepEqual(plan.gatewayCommand, [
@@ -40,7 +40,7 @@ test("dry-run json prints the restart plan and exits successfully", () => {
   assert.equal(payload.ok, true);
   assert.equal(payload.dryRun, true);
   assert.equal(payload.plan.home.endsWith("/home"), true);
-  assert.equal(payload.plan.triggerStorePath.endsWith("/home/.forge/triggers.json"), true);
+  assert.equal(payload.plan.triggerStorePath.endsWith("/home/.forge/pending-triggers.json"), true);
   assert.equal(payload.plan.runStorePath.endsWith("/home/.forge/trigger-runs.json"), true);
 });
 
@@ -87,5 +87,9 @@ test("package.json exposes the gateway restart smoke command", () => {
   assert.equal(
     pkg.scripts["smoke:gateway:restart"],
     "node scripts/smoke-gateway-restart.mjs",
+  );
+  assert.match(
+    pkg.scripts["eval:forge:test"],
+    /scripts\/smoke-gateway-restart\.test\.mjs/,
   );
 });

@@ -24,7 +24,7 @@ export function buildGatewayRestartPlan({ root }) {
       "gateway",
       "--quiet",
     ],
-    triggerStorePath: join(home, ".forge", "triggers.json"),
+    triggerStorePath: join(home, ".forge", "pending-triggers.json"),
     runStorePath: join(home, ".forge", "trigger-runs.json"),
   };
 }
