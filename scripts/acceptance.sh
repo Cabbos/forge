@@ -75,6 +75,7 @@ add_gate 'policy preflight tests' 'cargo test --manifest-path apps/desktop/src-t
 add_gate 'budget preflight tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib'
 add_gate 'durable human gate tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib'
 add_gate 'gateway loop runner status smoke' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib'
+add_gate 'backend gateway restart smoke dry-run' 'npm --prefix apps/desktop run smoke:gateway:restart -- --json --dry-run'
 add_gate 'subagent runtime event projection smoke' 'node --test apps/desktop/src/store/blocks.test.ts'
 add_gate 'live worktree worker lifecycle harness' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib'
 add_gate 'A2A child runtime file IO bridge' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib'

@@ -74,6 +74,10 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib",
     },
     {
+      label: "backend gateway restart smoke dry-run",
+      command: "npm --prefix apps/desktop run smoke:gateway:restart -- --json --dry-run",
+    },
+    {
       label: "subagent runtime event projection smoke",
       command: "node --test apps/desktop/src/store/blocks.test.ts",
     },
