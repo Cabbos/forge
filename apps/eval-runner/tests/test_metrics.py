@@ -340,6 +340,48 @@ def test_forge_runtime_scores_reject_usage_unknown_with_invented_values() -> Non
     assert "usage:unknown_cost_has_value:cost_micros" in explanation
 
 
+def test_forge_runtime_scores_reject_negative_provider_usage_values() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-usage-negative",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={
+                    "latest": {
+                        "input_tokens": -1,
+                        "output_tokens": -2,
+                        "cost_micros": -10,
+                    }
+                },
+                failure_category="none",
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_usage_accounting_consistency_ok"].score == 0.0
+    assert scores["forge_usage_accounting_consistency_ok"].label == "invalid_usage_values"
+    explanation = scores["forge_usage_accounting_consistency_ok"].explanation or ""
+    assert "usage:invalid_input_tokens" in explanation
+    assert "usage:invalid_output_tokens" in explanation
+    assert "usage:invalid_cost:cost_micros" in explanation
+
+
 def test_forge_runtime_scores_grade_prepared_turn_evidence_quality() -> None:
     from app.scoring import score_trace
 
