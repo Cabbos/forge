@@ -295,6 +295,110 @@ def test_forge_runtime_scores_pass_with_complete_evidence() -> None:
     assert scores["forge_permission_decision_evidence_ok"].label == "ok"
 
 
+def test_forge_runtime_scores_grade_verification_evidence_quality() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-verification",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "verification_result": VerificationResult(
+                command="pytest tests/test_example.py",
+                passed=True,
+                stdout="passed",
+                stderr="",
+                exit_code=0,
+                duration_ms=120,
+            ),
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=["src/example.py"],
+                verification={
+                    "command": "pytest tests/test_example.py",
+                    "passed": True,
+                    "exit_code": 0,
+                    "duration_ms": 120,
+                },
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_verification_evidence_quality_ok"].score == 1.0
+    assert scores["forge_verification_evidence_quality_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_verification_evidence_quality_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-verification-bad",
+        passed=False,
+        duration_ms=10,
+        tool_count=1,
+        failure_category=FailureCategory.VERIFICATION_FAILED,
+    ).model_copy(
+        update={
+            "verification_result": VerificationResult(
+                command="pytest tests/test_example.py",
+                passed=False,
+                stdout="failed",
+                stderr="",
+                exit_code=1,
+                duration_ms=120,
+            ),
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=["src/example.py"],
+                verification={
+                    "command": "",
+                    "passed": True,
+                    "exit_code": 1,
+                    "duration_ms": -5,
+                },
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_verification_evidence_quality_ok"].score == 0.0
+    assert (
+        scores["forge_verification_evidence_quality_ok"].label
+        == "verification_evidence_quality_failed"
+    )
+    explanation = scores["forge_verification_evidence_quality_ok"].explanation or ""
+    assert "verification:missing_command" in explanation
+    assert "verification:exit_code_conflicts_with_passed" in explanation
+    assert "verification:invalid_duration_ms" in explanation
+    assert "verification:trace_command_mismatch" in explanation
+    assert "verification:trace_passed_mismatch" in explanation
+
+
 def test_forge_runtime_scores_grade_permission_decision_evidence() -> None:
     from app.scoring import score_trace
 

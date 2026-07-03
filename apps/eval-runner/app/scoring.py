@@ -89,6 +89,10 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
     }
     if evidence.a2a_child_capsules:
         scores["forge_a2a_child_evidence_complete_ok"] = a2a_child_evidence_score(evidence)
+    if isinstance(evidence.verification, dict):
+        scores["forge_verification_evidence_quality_ok"] = verification_evidence_quality_score(
+            trace, evidence
+        )
     if has_context_budget_evidence(evidence):
         scores["forge_context_budget_buckets_ok"] = context_budget_bucket_score(evidence)
     if has_memory_recall_evidence(evidence):
@@ -316,6 +320,57 @@ def verification_present_score(trace: AgentTrace, evidence: ForgeRunEvidence) ->
         verification is not None,
         "ok" if verification is not None else "missing_verification",
     )
+
+
+def verification_evidence_quality_score(
+    trace: AgentTrace, evidence: ForgeRunEvidence
+) -> EvalScore:
+    findings = verification_evidence_findings(trace, evidence)
+    return runtime_score(
+        "forge_verification_evidence_quality_ok",
+        not findings,
+        "ok" if not findings else "verification_evidence_quality_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def verification_evidence_findings(
+    trace: AgentTrace, evidence: ForgeRunEvidence
+) -> list[str]:
+    verification = evidence.verification
+    if not isinstance(verification, dict):
+        return []
+
+    findings: list[str] = []
+    command = first_string(verification, ["command", "verification_command"])
+    if not command:
+        findings.append("verification:missing_command")
+
+    passed = verification.get("passed")
+    if not isinstance(passed, bool):
+        findings.append("verification:missing_passed")
+
+    exit_code = int_or_none(verification.get("exit_code"))
+    if "exit_code" in verification and exit_code is None:
+        findings.append("verification:invalid_exit_code")
+    if isinstance(passed, bool) and exit_code is not None:
+        if passed and exit_code != 0:
+            findings.append("verification:exit_code_conflicts_with_passed")
+        if not passed and exit_code == 0:
+            findings.append("verification:exit_code_conflicts_with_failed")
+
+    duration_ms = int_or_none(verification.get("duration_ms"))
+    if "duration_ms" in verification and (duration_ms is None or duration_ms < 0):
+        findings.append("verification:invalid_duration_ms")
+
+    if trace.verification_result is not None:
+        if not command or command != trace.verification_result.command:
+            findings.append("verification:trace_command_mismatch")
+        if isinstance(passed, bool) and passed is not trace.verification_result.passed:
+            findings.append("verification:trace_passed_mismatch")
+        if exit_code is not None and exit_code != trace.verification_result.exit_code:
+            findings.append("verification:trace_exit_code_mismatch")
+    return findings
 
 
 def changed_file_scope_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:
