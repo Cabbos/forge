@@ -52,7 +52,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "release confidence summary contract tests",
       command:
-        'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && node scripts/release-confidence-summary.mjs --json --ci-default-only >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "ci-default-only" CHANGELOG.md && rg -q "ci-default-only" README.md && rg -q "ci-default-only" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md',
+        'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && node scripts/release-confidence-summary.mjs --json --ci-default-only >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "ci-default-only" CHANGELOG.md && rg -q "ci-default-only" README.md && rg -q "ci-default-only" apps/eval-runner/README.md && rg -q "results-json" CHANGELOG.md && rg -q "results-json" README.md && rg -q "results-json" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md',
     },
     {
       label: "loop event journal contract tests",
@@ -543,6 +543,7 @@ test("acceptance help lists the same gates as list-json", () => {
     parseHelpGateEntries(helpOutput),
     matrix.gates.map(({ index, label }) => ({ index, label })),
   );
+  assert.match(helpOutput, /--results-json <path>/);
 });
 
 test("acceptance script can dry-run one named gate", () => {
@@ -661,6 +662,37 @@ test("acceptance script can dry-run and list CI-default gates", () => {
   assert.ok(ciMatrix.gates.every((gate) => ["fast-contract", "runtime-core"].includes(gate.tier)));
 });
 
+test("acceptance script can write gate results JSON", (t) => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-results-"));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+  const resultsPath = join(tempDir, "gate-results.json");
+
+  execFileSync(
+    scriptPath,
+    ["--only", "desktop state consistency map status", "--results-json", resultsPath],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+
+  const results = JSON.parse(readFileSync(resultsPath, "utf8"));
+  assert.equal(results.schemaVersion, 1);
+  assert.equal(results.workingDirectory, root.replace(/\/$/, ""));
+  assert.equal(results.status, "passed");
+  assert.equal(results.selectedGateCount, 1);
+  assert.equal(results.executedGateCount, 1);
+  assert.deepEqual(results.gates.map(({ label, status, exitCode }) => ({ label, status, exitCode })), [
+    {
+      label: "desktop state consistency map status",
+      status: "passed",
+      exitCode: 0,
+    },
+  ]);
+  assert.equal(typeof results.gates[0].durationMs, "number");
+});
+
 test("acceptance script reports --grep misses", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
@@ -708,6 +740,18 @@ test("acceptance script rejects combining --only and --grep", () => {
 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Use only one selector: --only, --grep, or --ci-default\./);
+});
+
+test("acceptance script rejects results-json for dry-run output", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const result = spawnSync(scriptPath, ["--dry-run", "--results-json", "gate-results.json"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Use --results-json only when executing gates\./);
 });
 
 test("acceptance script suggests a close gate label for --only misses", () => {

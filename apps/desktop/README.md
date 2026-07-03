@@ -185,6 +185,7 @@ scripts/acceptance.sh --dry-run
 scripts/acceptance.sh --list-json
 scripts/acceptance.sh --only "<label>"
 scripts/acceptance.sh --grep "<text>"
+scripts/acceptance.sh --results-json gate-results.json
 node scripts/release-confidence-summary.mjs --markdown
 ```
 
