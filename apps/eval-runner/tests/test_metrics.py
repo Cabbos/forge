@@ -399,6 +399,98 @@ def test_forge_runtime_scores_explain_verification_evidence_quality_failures() -
     assert "verification:trace_passed_mismatch" in explanation
 
 
+def test_forge_runtime_scores_grade_file_effects_evidence_quality() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-file-effects",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(update={"changed_files": ["src/example.py"]})
+    trace = trace.model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=["src/example.py"],
+                file_diffs=[
+                    {
+                        "path": "src/example.py",
+                        "change_type": "modified",
+                        "diff": "diff --git a/src/example.py b/src/example.py",
+                    }
+                ],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_file_effects_evidence_ok"].score == 1.0
+    assert scores["forge_file_effects_evidence_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_file_effects_evidence_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-file-effects-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(update={"changed_files": ["src/from-trace.py"]})
+    trace = trace.model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=["src/from-evidence.py", "src/from-evidence.py"],
+                file_diffs=[
+                    {"path": "", "change_type": "", "diff": ""},
+                    {
+                        "path": "src/untracked.py",
+                        "change_type": "modified",
+                        "diff": "diff --git a/src/untracked.py b/src/untracked.py",
+                    },
+                ],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_file_effects_evidence_ok"].score == 0.0
+    assert scores["forge_file_effects_evidence_ok"].label == "file_effects_evidence_failed"
+    explanation = scores["forge_file_effects_evidence_ok"].explanation or ""
+    assert "changed_files:duplicate_path:src/from-evidence.py" in explanation
+    assert "trace:evidence_changed_files_mismatch:src/from-trace.py" in explanation
+    assert "file_diff_1:missing_path" in explanation
+    assert "file_diff_1:missing_change_type" in explanation
+    assert "file_diff_1:missing_diff" in explanation
+    assert "file_diff_2:path_not_in_changed_files:src/untracked.py" in explanation
+
+
 def test_forge_runtime_scores_grade_permission_decision_evidence() -> None:
     from app.scoring import score_trace
 
