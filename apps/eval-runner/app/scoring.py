@@ -93,6 +93,10 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
         scores["forge_verification_evidence_quality_ok"] = verification_evidence_quality_score(
             trace, evidence
         )
+    if evidence.changed_files or evidence.file_diffs:
+        scores["forge_file_effects_evidence_ok"] = file_effects_evidence_score(
+            trace, evidence
+        )
     if has_context_budget_evidence(evidence):
         scores["forge_context_budget_buckets_ok"] = context_budget_bucket_score(evidence)
     if has_memory_recall_evidence(evidence):
@@ -370,6 +374,56 @@ def verification_evidence_findings(
             findings.append("verification:trace_passed_mismatch")
         if exit_code is not None and exit_code != trace.verification_result.exit_code:
             findings.append("verification:trace_exit_code_mismatch")
+    return findings
+
+
+def file_effects_evidence_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:
+    findings = file_effects_evidence_findings(trace, evidence)
+    return runtime_score(
+        "forge_file_effects_evidence_ok",
+        not findings,
+        "ok" if not findings else "file_effects_evidence_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def file_effects_evidence_findings(
+    trace: AgentTrace, evidence: ForgeRunEvidence
+) -> list[str]:
+    findings: list[str] = []
+    evidence_changed_files = normalized_strings(evidence.changed_files)
+    trace_changed_files = normalized_strings(trace.changed_files)
+
+    seen_changed_files: set[str] = set()
+    for path in evidence_changed_files:
+        if path in seen_changed_files:
+            findings.append(f"changed_files:duplicate_path:{path}")
+        else:
+            seen_changed_files.add(path)
+
+    if evidence_changed_files and trace_changed_files:
+        evidence_paths = set(evidence_changed_files)
+        for path in trace_changed_files:
+            if path not in evidence_paths:
+                findings.append(f"trace:evidence_changed_files_mismatch:{path}")
+
+    evidence_paths = set(evidence_changed_files)
+    for index, file_diff in enumerate(evidence.file_diffs, start=1):
+        if not isinstance(file_diff, dict):
+            findings.append(f"file_diff_{index}:invalid_diff")
+            continue
+
+        path = first_string(file_diff, ["path", "file", "file_path"])
+        if path is None:
+            findings.append(f"file_diff_{index}:missing_path")
+        elif evidence_paths and path not in evidence_paths:
+            findings.append(f"file_diff_{index}:path_not_in_changed_files:{path}")
+
+        if not first_string(file_diff, ["change_type", "kind", "status"]):
+            findings.append(f"file_diff_{index}:missing_change_type")
+        if not first_string(file_diff, ["diff", "patch", "unified_diff"]):
+            findings.append(f"file_diff_{index}:missing_diff")
+
     return findings
 
 
@@ -1461,6 +1515,10 @@ def first_string(value: object, keys: list[str]) -> str | None:
 
 def as_list(value: object) -> list:
     return value if isinstance(value, list) else []
+
+
+def normalized_strings(value: object) -> list[str]:
+    return [item.strip() for item in as_list(value) if isinstance(item, str) and item.strip()]
 
 
 def dict_items(value: object) -> list[dict]:
