@@ -690,6 +690,24 @@ test("acceptance script can write gate results JSON", (t) => {
       exitCode: 0,
     },
   ]);
+  assert.deepEqual(
+    results.gates.map(({ domain, tier, runtimeCost, manualRequirement, ciDefault }) => ({
+      domain,
+      tier,
+      runtimeCost,
+      manualRequirement,
+      ciDefault,
+    })),
+    [
+      {
+        domain: "usage-context",
+        tier: "fast-contract",
+        runtimeCost: "short",
+        manualRequirement: false,
+        ciDefault: true,
+      },
+    ],
+  );
   assert.equal(typeof results.gates[0].durationMs, "number");
 });
 
