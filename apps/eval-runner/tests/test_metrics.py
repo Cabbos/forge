@@ -2163,6 +2163,114 @@ def test_forge_runtime_scores_explain_failure_evidence_failures() -> None:
     assert "failure_reason:success_trace_has_failure_reason" in success_explanation
 
 
+def test_forge_runtime_scores_grade_continuity_lessons_quality() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-continuity-lessons",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                continuity_lessons=[
+                    {"formed_count": 1, "error": None},
+                    {
+                        "lesson_id": "lesson-1",
+                        "status": "accepted",
+                        "kind": "lesson",
+                        "title": "Prefer compact evidence.",
+                    },
+                ],
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_continuity_lessons_ok"].score == 1.0
+    assert scores["forge_continuity_lessons_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_continuity_lessons_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-continuity-lessons-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                continuity_lessons=[
+                    {"formed_count": -1, "error": "reflection failed"},
+                    {
+                        "lesson_id": "",
+                        "status": "",
+                        "kind": "",
+                        "body": "Hidden continuity body should not be exposed here.",
+                    },
+                    {
+                        "lesson_id": "lesson-dup",
+                        "status": "accepted",
+                        "kind": "lesson",
+                        "title": "First duplicate",
+                    },
+                    {
+                        "lesson_id": "lesson-dup",
+                        "status": "candidate",
+                        "kind": "lesson",
+                        "raw_body": "Raw continuity detail",
+                    },
+                ],
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_continuity_lessons_ok"].score == 0.0
+    assert scores["forge_continuity_lessons_ok"].label == "continuity_lessons_failed"
+    explanation = scores["forge_continuity_lessons_ok"].explanation or ""
+    assert "continuity_summary:invalid_formed_count" in explanation
+    assert "continuity_summary:headless_continuity_error" in explanation
+    assert "continuity_lesson_2:missing_lesson_id" in explanation
+    assert "continuity_lesson_2:missing_status" in explanation
+    assert "continuity_lesson_2:missing_kind" in explanation
+    assert "continuity_lesson_2:missing_title_or_summary" in explanation
+    assert "continuity_lesson_2:hidden_body_exposed" in explanation
+    assert "continuity_lesson_4:duplicate_lesson_id:lesson-dup" in explanation
+    assert "continuity_lesson_4:hidden_body_exposed" in explanation
+
+
 def test_forge_runtime_scores_accept_completion_eligibility_unknown() -> None:
     from app.scoring import score_trace
 

@@ -117,6 +117,8 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
         scores["forge_runtime_recovery_quality_ok"] = runtime_recovery_quality_score(evidence)
     if has_failure_evidence(trace, evidence):
         scores["forge_failure_evidence_ok"] = failure_evidence_score(trace, evidence)
+    if evidence.continuity_lessons:
+        scores["forge_continuity_lessons_ok"] = continuity_lessons_score(evidence)
     return scores
 
 
@@ -1408,6 +1410,64 @@ def normalized_failure_category(value: object) -> str | None:
         return None
     normalized = value.strip().casefold().replace("-", "_")
     return normalized or None
+
+
+def continuity_lessons_score(evidence: ForgeRunEvidence) -> EvalScore:
+    findings = continuity_lessons_findings(evidence)
+    return runtime_score(
+        "forge_continuity_lessons_ok",
+        not findings,
+        "ok" if not findings else "continuity_lessons_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def continuity_lessons_findings(evidence: ForgeRunEvidence) -> list[str]:
+    findings: list[str] = []
+    seen_lesson_ids: set[str] = set()
+
+    for index, lesson in enumerate(evidence.continuity_lessons, start=1):
+        if not isinstance(lesson, dict):
+            findings.append(f"continuity_lesson_{index}:invalid_lesson")
+            continue
+        if continuity_lesson_is_summary(lesson):
+            findings.extend(continuity_summary_findings(lesson))
+            continue
+
+        lesson_id = first_string(lesson, ["lesson_id", "continuity_id", "experience_id", "id"])
+        lesson_label = f"continuity_lesson_{index}"
+        if lesson_id is None:
+            findings.append(f"{lesson_label}:missing_lesson_id")
+        elif lesson_id in seen_lesson_ids:
+            findings.append(f"{lesson_label}:duplicate_lesson_id:{lesson_id}")
+        else:
+            seen_lesson_ids.add(lesson_id)
+
+        if not first_string(lesson, ["status", "state"]):
+            findings.append(f"{lesson_label}:missing_status")
+        if not first_string(lesson, ["kind", "type", "lesson_kind"]):
+            findings.append(f"{lesson_label}:missing_kind")
+        if not first_string(lesson, ["title", "summary", "label"]):
+            findings.append(f"{lesson_label}:missing_title_or_summary")
+        if source_contains_hidden_body(lesson):
+            findings.append(f"{lesson_label}:hidden_body_exposed")
+
+    return findings
+
+
+def continuity_lesson_is_summary(lesson: dict) -> bool:
+    return "formed_count" in lesson or "error" in lesson or "headless_continuity_error" in lesson
+
+
+def continuity_summary_findings(summary: dict) -> list[str]:
+    findings: list[str] = []
+    formed_count = int_or_none(summary.get("formed_count"))
+    if "formed_count" in summary and (formed_count is None or formed_count < 0):
+        findings.append("continuity_summary:invalid_formed_count")
+    error = summary.get("error", summary.get("headless_continuity_error"))
+    if isinstance(error, str) and error.strip():
+        findings.append("continuity_summary:headless_continuity_error")
+    return findings
 
 
 def runtime_recovery_findings(case: dict) -> list[str]:
