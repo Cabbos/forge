@@ -462,6 +462,69 @@ test("cli can scope release confidence to CI-default gates", (t) => {
   assert.equal(parsed.acceptance.ciDefault.totalGates, 2);
 });
 
+test("cli can summarize self-describing gate results without acceptance matrix", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "forge-release-confidence-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const gatesPath = join(dir, "gate-results.json");
+  const evalPath = join(dir, "eval-report.json");
+  writeFileSync(
+    gatesPath,
+    JSON.stringify({
+      gates: [
+        {
+          label: "runtime authority fast gate",
+          command: "cargo test runtime",
+          domain: "runtime",
+          tier: "runtime-core",
+          runtimeCost: "medium",
+          manualRequirement: false,
+          ciDefault: true,
+          status: "passed",
+        },
+        {
+          label: "gateway parity and degraded fallback smoke",
+          command: "cargo test gateway",
+          domain: "gateway",
+          tier: "runtime-core",
+          runtimeCost: "medium",
+          manualRequirement: false,
+          ciDefault: true,
+          status: "failed",
+          reason: "exit_code_1",
+        },
+      ],
+    }),
+    "utf8",
+  );
+  writeFileSync(
+    evalPath,
+    JSON.stringify({ report: { total_tasks: 1, success_rate: 1, score_summary: {} } }),
+    "utf8",
+  );
+
+  const output = execFileSync(
+    process.execPath,
+    [scriptPath, "--json", "--no-acceptance-matrix", "--gate-results", gatesPath, "--eval-report", evalPath],
+    { cwd: root, encoding: "utf8" },
+  );
+  const parsed = JSON.parse(output);
+
+  assert.equal(parsed.status, "failed");
+  assert.equal(parsed.acceptance.totalGates, 2);
+  assert.equal(parsed.acceptance.passedGates.length, 1);
+  assert.equal(parsed.acceptance.failedGates.length, 1);
+  assert.deepEqual(parsed.acceptance.failedGates.map(({ label, domain, reason }) => ({ label, domain, reason })), [
+    {
+      label: "gateway parity and degraded fallback smoke",
+      domain: "gateway",
+      reason: "exit_code_1",
+    },
+  ]);
+  assert.equal(parsed.acceptance.ciDefault.totalGates, 2);
+  assert.deepEqual(parsed.affectedDomains, ["gateway"]);
+});
+
 test("cli can fail when release confidence needs attention", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "forge-release-confidence-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
