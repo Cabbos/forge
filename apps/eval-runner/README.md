@@ -242,7 +242,8 @@ can combine acceptance metadata, optional gate results, eval reports, and
 boundary evidence. It reads failing eval scores from either `score_summary` or
 task-level `scores`, and includes failing task ids in the Markdown summary when
 only task-level score evidence is available, reports gate-results execution completeness
-and execution reason evidence, CI-default gate totals/pass/fail/unknown counts beside the full
+and execution reason evidence, writes dashboard artifact output with `--out-dir`,
+CI-default gate totals/pass/fail/unknown counts beside the full
 matrix, and includes acceptance domain/tier breakdowns. Failed, manual, and unknown gate details
 preserve gate detail metadata such as domain, status, tier, runtime cost, and manual-evidence state. Add
 `--ci-default-only` when a PR fast-gate report should ignore non-CI gates without
