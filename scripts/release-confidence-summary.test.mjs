@@ -310,6 +310,43 @@ test("summarizes acceptance gates by domain and tier", () => {
   assert.match(markdown, /runtime-core: total 2, passed 1, failed 1, manual 0, unknown 0/);
 });
 
+test("summarizes gate-results execution completeness", () => {
+  const summary = buildReleaseConfidenceSummary({
+    acceptanceMatrix,
+    gateResults: {
+      status: "failed",
+      selectedGateCount: 3,
+      executedGateCount: 2,
+      failedGateCount: 1,
+      gates: [
+        { label: "runtime authority fast gate", status: "passed" },
+        {
+          label: "gateway parity and degraded fallback smoke",
+          status: "failed",
+          reason: "exit_code_1",
+        },
+      ],
+    },
+    evalReport: { report: { total_tasks: 1, success_rate: 1, score_summary: {} } },
+  });
+
+  assert.deepEqual(summary.acceptance.execution, {
+    available: true,
+    status: "failed",
+    selectedGateCount: 3,
+    executedGateCount: 2,
+    failedGateCount: 1,
+    incomplete: true,
+  });
+
+  const markdown = renderReleaseConfidenceMarkdown(summary);
+  assert.match(markdown, /### Acceptance Execution/);
+  assert.match(markdown, /Status: failed/);
+  assert.match(markdown, /Selected gates: 3/);
+  assert.match(markdown, /Executed gates: 2/);
+  assert.match(markdown, /Incomplete execution: yes/);
+});
+
 test("flags declared capability claims that do not have acceptance evidence", () => {
   const summary = buildReleaseConfidenceSummary({
     acceptanceMatrix,
