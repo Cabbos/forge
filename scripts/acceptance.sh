@@ -84,6 +84,11 @@ COMMANDS=()
 GATE_DOMAINS=()
 RESULT_LABELS=()
 RESULT_COMMANDS=()
+RESULT_DOMAINS=()
+RESULT_TIERS=()
+RESULT_RUNTIME_COSTS=()
+RESULT_MANUAL_REQUIREMENTS=()
+RESULT_CI_DEFAULTS=()
 RESULT_STATUSES=()
 RESULT_EXIT_CODES=()
 RESULT_DURATION_MS=()
@@ -108,8 +113,13 @@ now_ms() {
 record_gate_result() {
   local label="$1"
   local command="$2"
-  local exit_code="$3"
-  local duration_ms="$4"
+  local domain="$3"
+  local tier="$4"
+  local runtime_cost="$5"
+  local manual_requirement="$6"
+  local ci_default="$7"
+  local exit_code="$8"
+  local duration_ms="$9"
   local status="passed"
   local reason=""
 
@@ -120,6 +130,11 @@ record_gate_result() {
 
   RESULT_LABELS+=("$label")
   RESULT_COMMANDS+=("$command")
+  RESULT_DOMAINS+=("$domain")
+  RESULT_TIERS+=("$tier")
+  RESULT_RUNTIME_COSTS+=("$runtime_cost")
+  RESULT_MANUAL_REQUIREMENTS+=("$manual_requirement")
+  RESULT_CI_DEFAULTS+=("$ci_default")
   RESULT_STATUSES+=("$status")
   RESULT_EXIT_CODES+=("$exit_code")
   RESULT_DURATION_MS+=("$duration_ms")
@@ -135,9 +150,14 @@ write_results_json() {
   {
     printf '%s\0%s\0%s\0' "$ROOT_DIR" "$overall_exit_code" "${#SELECTED_INDICES[@]}"
     for index in "${!RESULT_LABELS[@]}"; do
-      printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "${RESULT_LABELS[$index]}" \
         "${RESULT_COMMANDS[$index]}" \
+        "${RESULT_DOMAINS[$index]}" \
+        "${RESULT_TIERS[$index]}" \
+        "${RESULT_RUNTIME_COSTS[$index]}" \
+        "${RESULT_MANUAL_REQUIREMENTS[$index]}" \
+        "${RESULT_CI_DEFAULTS[$index]}" \
         "${RESULT_STATUSES[$index]}" \
         "${RESULT_EXIT_CODES[$index]}" \
         "${RESULT_DURATION_MS[$index]}" \
@@ -153,14 +173,19 @@ const selectedGateCount = Number(parts.shift());
 if (parts.at(-1) === "") parts.pop();
 
 const gates = [];
-for (let index = 0; index < parts.length; index += 6) {
+for (let index = 0; index < parts.length; index += 11) {
   gates.push({
     label: parts[index],
     command: parts[index + 1],
-    status: parts[index + 2],
-    exitCode: Number(parts[index + 3]),
-    durationMs: Number(parts[index + 4]),
-    reason: parts[index + 5] || null,
+    domain: parts[index + 2],
+    tier: parts[index + 3],
+    runtimeCost: parts[index + 4],
+    manualRequirement: parts[index + 5] === "true",
+    ciDefault: parts[index + 6] === "true",
+    status: parts[index + 7],
+    exitCode: Number(parts[index + 8]),
+    durationMs: Number(parts[index + 9]),
+    reason: parts[index + 10] || null,
   });
 }
 
@@ -336,6 +361,23 @@ gate_tier() {
 
 ci_default_tier() {
   [[ "$1" == "fast-contract" || "$1" == "runtime-core" ]]
+}
+
+runtime_cost() {
+  local label="$1"
+  local command="$2"
+
+  if [[ "$command" =~ production\ build || "$command" =~ test:eval || "$command" =~ test:e2e || "$command" =~ uv\ run\ pytest\ tests/test_cases.py ]]; then
+    printf 'long'
+  elif [[ "$command" =~ cargo\ test || "$command" =~ uv\ run\ pytest || "$command" =~ node\ --test ]]; then
+    if [[ "$command" == *"&&"* || "$label" =~ runtime\ authority\ fast\ gate || "$label" =~ desktop\ eval ]]; then
+      printf 'medium'
+    else
+      printf 'short'
+    fi
+  else
+    printf 'short'
+  fi
 }
 
 SELECTED_INDICES=()
@@ -519,6 +561,19 @@ overall_exit_code=0
 for index in "${SELECTED_INDICES[@]}"; do
   label="${COMMAND_LABELS[$index]}"
   command="${COMMANDS[$index]}"
+  domain="${GATE_DOMAINS[$index]}"
+  tier="$(gate_tier "$domain" "$label" "$command")"
+  cost="$(runtime_cost "$label" "$command")"
+  if manual_requirement "$label"; then
+    manual="true"
+  else
+    manual="false"
+  fi
+  if ci_default_tier "$tier"; then
+    ci_default="true"
+  else
+    ci_default="false"
+  fi
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "[dry-run] $label: $command"
   else
@@ -531,7 +586,7 @@ for index in "${SELECTED_INDICES[@]}"; do
     set -e
     finished_at_ms="$(now_ms)"
     duration_ms=$((finished_at_ms - started_at_ms))
-    record_gate_result "$label" "$command" "$gate_exit_code" "$duration_ms"
+    record_gate_result "$label" "$command" "$domain" "$tier" "$cost" "$manual" "$ci_default" "$gate_exit_code" "$duration_ms"
     if [[ "$gate_exit_code" -ne 0 ]]; then
       overall_exit_code="$gate_exit_code"
       break
