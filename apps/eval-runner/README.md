@@ -264,12 +264,14 @@ Desktop headless traces and `forge_session export-eval` emit
 `ForgeRunEvidence` V2. The V2 payload includes completion eligibility evidence
 alongside prepared context, memory audit, permissions, file effects,
 verification, provider usage, recovery, A2A child capsules, memory recall,
-gateway, and runtime recovery facts. Eval scoring includes context budget bucket scoring
-for explicit `turn_prepared.context_estimate` buckets plus a dedicated
+gateway, and runtime recovery facts. Eval scoring includes schema identity scoring
+for schema/source/session/loop-task evidence, context budget bucket scoring for
+explicit `turn_prepared.context_estimate` buckets, plus a dedicated
 completion-eligibility consistency score: `unknown` authority is accepted, while
 commit-eligible claims with blockers, nonterminal status, or malformed fact
 buckets are flagged. Explicit V1 evidence is still accepted; missing V2-only
-fields are represented as `unknown` rather than pass, fail, or zero.
+fields are represented as `unknown` rather than pass, fail, or zero, and explicit
+V1 schema identity is labeled `legacy_v1`.
 
 The gateway eval pack lives in `eval_cases/gateway-*` and runs offline through
 the deterministic mock provider. It covers local parity dry-run evidence,
