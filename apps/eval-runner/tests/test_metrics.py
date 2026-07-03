@@ -295,6 +295,51 @@ def test_forge_runtime_scores_pass_with_complete_evidence() -> None:
     assert scores["forge_permission_decision_evidence_ok"].label == "ok"
 
 
+def test_forge_runtime_scores_reject_usage_unknown_with_invented_values() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-usage-unknown-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={
+                    "latest": {
+                        "has_unknown_input_tokens": True,
+                        "has_unknown_output_tokens": True,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cost_micros": 0,
+                    }
+                },
+                failure_category="none",
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_usage_accounting_consistency_ok"].score == 0.0
+    assert scores["forge_usage_accounting_consistency_ok"].label == "usage_unknown_conflict"
+    explanation = scores["forge_usage_accounting_consistency_ok"].explanation or ""
+    assert "usage:missing_unknown_reason" in explanation
+    assert "usage:unknown_input_tokens_has_value" in explanation
+    assert "usage:unknown_output_tokens_has_value" in explanation
+    assert "usage:unknown_cost_has_value:cost_micros" in explanation
+
+
 def test_forge_runtime_scores_grade_prepared_turn_evidence_quality() -> None:
     from app.scoring import score_trace
 
