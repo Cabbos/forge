@@ -93,6 +93,10 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
         scores["forge_verification_evidence_quality_ok"] = verification_evidence_quality_score(
             trace, evidence
         )
+    if evidence.prompt is not None or evidence.prepared_context:
+        scores["forge_prepared_turn_evidence_ok"] = prepared_turn_evidence_score(
+            trace, evidence
+        )
     if evidence.changed_files or evidence.file_diffs:
         scores["forge_file_effects_evidence_ok"] = file_effects_evidence_score(
             trace, evidence
@@ -376,6 +380,79 @@ def verification_evidence_findings(
             findings.append("verification:trace_passed_mismatch")
         if exit_code is not None and exit_code != trace.verification_result.exit_code:
             findings.append("verification:trace_exit_code_mismatch")
+    return findings
+
+
+def prepared_turn_evidence_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:
+    findings = prepared_turn_evidence_findings(trace, evidence)
+    return runtime_score(
+        "forge_prepared_turn_evidence_ok",
+        not findings,
+        "ok" if not findings else "prepared_turn_evidence_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def prepared_turn_evidence_findings(
+    trace: AgentTrace, evidence: ForgeRunEvidence
+) -> list[str]:
+    findings: list[str] = []
+
+    if evidence.prompt is not None:
+        if not evidence.prompt.strip():
+            findings.append("prompt:missing_prompt")
+        elif evidence.prompt != trace.user_prompt:
+            findings.append("prompt:trace_prompt_mismatch")
+
+    prepared = evidence.prepared_context.get("turn_prepared")
+    if not isinstance(prepared, dict):
+        findings.append("prepared_context:missing_turn_prepared")
+        return findings
+
+    if not first_string(prepared, ["run_id", "loop_task_id", "task_id"]):
+        findings.append("turn_prepared:missing_run_id")
+    if not first_string(prepared, ["session_id"]):
+        findings.append("turn_prepared:missing_session_id")
+
+    estimate = prepared.get("context_estimate")
+    if not isinstance(estimate, dict):
+        findings.append("turn_prepared:missing_context_estimate")
+        return findings
+
+    used_tokens = int_or_none(estimate.get("used_tokens"))
+    if "used_tokens" in estimate and (used_tokens is None or used_tokens < 0):
+        findings.append("context_estimate:invalid_used_tokens")
+
+    sources = dict_items(estimate.get("sources"))
+    if not sources:
+        findings.append("context_estimate:missing_sources")
+        return findings
+
+    for index, source in enumerate(sources, start=1):
+        source_id = f"context_source_{index}"
+        if not first_string(source, ["kind", "source", "source_kind", "source_type"]):
+            findings.append(f"{source_id}:missing_kind")
+        if not first_string(
+            source,
+            [
+                "label",
+                "source_id",
+                "memory_id",
+                "continuity_id",
+                "record_id",
+                "experience_id",
+                "id",
+            ],
+        ):
+            findings.append(f"{source_id}:missing_label_or_id")
+        estimated_tokens = int_or_none(source.get("estimated_tokens"))
+        if "estimated_tokens" in source and (
+            estimated_tokens is None or estimated_tokens < 0
+        ):
+            findings.append(f"{source_id}:invalid_estimated_tokens")
+        if source_contains_hidden_body(source):
+            findings.append(f"{source_id}:hidden_body_exposed")
+
     return findings
 
 
@@ -1550,11 +1627,10 @@ def candidate_scope_text(candidate: dict) -> str:
 
 def memory_context_body_leaks(evidence: ForgeRunEvidence) -> list[str]:
     leak_ids: list[str] = []
-    body_keys = {"body", "content", "raw_body", "memory_body"}
     for index, source in enumerate(prepared_context_sources(evidence), start=1):
         if not source_is_memory(source):
             continue
-        if any(key in source and source.get(key) for key in body_keys):
+        if source_contains_hidden_body(source):
             leak_ids.append(
                 first_string(source, ["source_id", "memory_id", "id", "label"])
                 or f"memory-source-{index}"
@@ -1581,6 +1657,11 @@ def source_is_memory(source: dict) -> bool:
         str(source.get(key, "")) for key in ["kind", "source", "source_kind", "source_type"]
     )
     return "memory" in text.casefold()
+
+
+def source_contains_hidden_body(source: dict) -> bool:
+    body_keys = {"body", "content", "raw_body", "memory_body"}
+    return any(key in source and source.get(key) for key in body_keys)
 
 
 def latest_usage_fact(usage: dict) -> dict | None:

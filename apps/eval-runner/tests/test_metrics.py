@@ -295,6 +295,97 @@ def test_forge_runtime_scores_pass_with_complete_evidence() -> None:
     assert scores["forge_permission_decision_evidence_ok"].label == "ok"
 
 
+def test_forge_runtime_scores_grade_prepared_turn_evidence_quality() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-prepared-turn",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    )
+    trace = trace.model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prompt=trace.user_prompt,
+                prepared_context={
+                    "turn_prepared": {
+                        "run_id": "loop-task-1",
+                        "session_id": "session-1",
+                        "context_estimate": {
+                            "used_tokens": 256,
+                            "sources": [
+                                {
+                                    "kind": "user_input",
+                                    "label": "prompt",
+                                    "estimated_tokens": 8,
+                                }
+                            ],
+                        },
+                    }
+                },
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_prepared_turn_evidence_ok"].score == 1.0
+    assert scores["forge_prepared_turn_evidence_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_prepared_turn_evidence_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-prepared-turn-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prompt="Different prompt",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [
+                                {
+                                    "body": "Hidden memory body must not appear here.",
+                                    "estimated_tokens": -1,
+                                }
+                            ]
+                        }
+                    }
+                },
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_prepared_turn_evidence_ok"].score == 0.0
+    assert scores["forge_prepared_turn_evidence_ok"].label == "prepared_turn_evidence_failed"
+    explanation = scores["forge_prepared_turn_evidence_ok"].explanation or ""
+    assert "prompt:trace_prompt_mismatch" in explanation
+    assert "turn_prepared:missing_run_id" in explanation
+    assert "turn_prepared:missing_session_id" in explanation
+    assert "context_source_1:missing_kind" in explanation
+    assert "context_source_1:missing_label_or_id" in explanation
+    assert "context_source_1:invalid_estimated_tokens" in explanation
+    assert "context_source_1:hidden_body_exposed" in explanation
+
+
 def test_forge_runtime_scores_grade_verification_evidence_quality() -> None:
     from app.scoring import score_trace
 
