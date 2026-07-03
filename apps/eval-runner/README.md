@@ -273,6 +273,8 @@ file effects evidence scoring for changed-file and diff alignment,
 tool/shell evidence scoring for replayable tool and shell facts,
 failure evidence scoring for category/reason alignment,
 continuity lessons scoring for formed lesson metadata,
+memory recall audit scoring for candidate decision reasons and injected
+token/budget evidence,
 context budget bucket scoring for explicit
 `turn_prepared.context_estimate` buckets, plus a dedicated
 completion-eligibility consistency score: `unknown` authority is accepted, while
@@ -308,7 +310,8 @@ offline. It covers correct recall selection, duplicate and over-budget
 filtering, memory/continuity dedupe, wrong-project and wrong-profile filtering,
 archived/forgotten record filtering, and hidden-body leak prevention. The same
 scoring also detects when the same continuity record is injected through both
-memory and continuity context sources; these cases feed
+memory and continuity context sources, and detailed recall candidates must carry
+decision reasons plus injected token/budget evidence; these cases feed
 `forge_memory_recall_quality_ok` while keeping prepared context sources
 body-free.
 
