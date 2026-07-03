@@ -34,6 +34,9 @@ const acceptanceMatrix = {
       domain: "gateway",
       label: "gateway parity and degraded fallback smoke",
       command: "cargo test gateway",
+      tier: "runtime-core",
+      runtimeCost: "medium",
+      manualRequirement: false,
       ciDefault: true,
     },
     {
@@ -94,6 +97,22 @@ test("builds a release confidence summary from acceptance and eval evidence", ()
   assert.deepEqual(summary.acceptance.failedGates.map((gate) => gate.label), [
     "gateway parity and degraded fallback smoke",
   ]);
+  assert.deepEqual(
+    summary.acceptance.failedGates.map(({ label, tier, runtimeCost, manualRequirement }) => ({
+      label,
+      tier,
+      runtimeCost,
+      manualRequirement,
+    })),
+    [
+      {
+        label: "gateway parity and degraded fallback smoke",
+        tier: "runtime-core",
+        runtimeCost: "medium",
+        manualRequirement: false,
+      },
+    ],
+  );
   assert.deepEqual(summary.acceptance.manualEvidenceGates.map((gate) => gate.label), [
     "desktop eval promotion evidence smoke",
   ]);
@@ -125,6 +144,10 @@ test("renders release confidence markdown for PR evidence", () => {
   assert.match(markdown, /CI-default failed: 0/);
   assert.match(markdown, /CI-default unknown: 1/);
   assert.match(markdown, /Affected domains: eval, gateway/);
+  assert.match(
+    markdown,
+    /desktop eval promotion evidence smoke \(domain: eval; status: unknown; tier: unknown; cost: unknown; manual: unknown\)/,
+  );
 });
 
 test("summarizes failing task-level eval scores when score summary is absent", () => {
