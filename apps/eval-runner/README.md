@@ -271,6 +271,7 @@ verification evidence quality scoring for command/pass/exit/duration
 consistency, prepared-turn evidence scoring for prompt/context-source quality,
 file effects evidence scoring for changed-file and diff alignment,
 tool/shell evidence scoring for replayable tool and shell facts,
+failure evidence scoring for category/reason alignment,
 context budget bucket scoring for explicit
 `turn_prepared.context_estimate` buckets, plus a dedicated
 completion-eligibility consistency score: `unknown` authority is accepted, while
