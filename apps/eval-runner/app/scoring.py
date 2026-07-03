@@ -115,6 +115,8 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
         )
     if evidence.recovery_cases:
         scores["forge_runtime_recovery_quality_ok"] = runtime_recovery_quality_score(evidence)
+    if has_failure_evidence(trace, evidence):
+        scores["forge_failure_evidence_ok"] = failure_evidence_score(trace, evidence)
     return scores
 
 
@@ -1353,6 +1355,61 @@ def runtime_recovery_quality_score(evidence: ForgeRunEvidence) -> EvalScore:
     )
 
 
+def has_failure_evidence(trace: AgentTrace, evidence: ForgeRunEvidence) -> bool:
+    return (
+        trace.failure_category != FailureCategory.NONE
+        or bool(trace.failure_reason)
+        or bool(trace.error)
+        or evidence.failure_category is not None
+        or evidence.failure_reason is not None
+    )
+
+
+def failure_evidence_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:
+    findings = failure_evidence_findings(trace, evidence)
+    return runtime_score(
+        "forge_failure_evidence_ok",
+        not findings,
+        "ok" if not findings else "failure_evidence_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def failure_evidence_findings(trace: AgentTrace, evidence: ForgeRunEvidence) -> list[str]:
+    findings: list[str] = []
+    trace_category = trace.failure_category.value
+    evidence_category = normalized_failure_category(evidence.failure_category)
+    trace_failed = trace.failure_category != FailureCategory.NONE or not trace_passed(trace)
+
+    if trace_failed:
+        if evidence_category is None:
+            findings.append("failure_category:missing_failure_category")
+        elif evidence_category == FailureCategory.NONE.value:
+            findings.append("failure_category:failed_trace_marked_none")
+        elif trace.failure_category != FailureCategory.NONE and evidence_category != trace_category:
+            findings.append(
+                f"failure_category:trace_category_mismatch:{trace_category}!={evidence_category}"
+            )
+        if not string_has_value(evidence.failure_reason):
+            findings.append("failure_reason:missing_failure_reason")
+    else:
+        if evidence_category is not None and evidence_category != FailureCategory.NONE.value:
+            findings.append(
+                f"failure_category:success_trace_has_failure_category:{evidence_category}"
+            )
+        if string_has_value(evidence.failure_reason):
+            findings.append("failure_reason:success_trace_has_failure_reason")
+
+    return findings
+
+
+def normalized_failure_category(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold().replace("-", "_")
+    return normalized or None
+
+
 def runtime_recovery_findings(case: dict) -> list[str]:
     kind = str(case.get("kind") or case.get("case_kind") or "").casefold()
     if kind == "orphaned_run":
@@ -1692,6 +1749,10 @@ def as_list(value: object) -> list:
 
 def normalized_strings(value: object) -> list[str]:
     return [item.strip() for item in as_list(value) if isinstance(item, str) and item.strip()]
+
+
+def string_has_value(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def shell_output_commands(outputs: list) -> list[str]:
