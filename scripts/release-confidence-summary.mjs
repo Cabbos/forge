@@ -35,7 +35,7 @@ export function buildReleaseConfidenceSummary({
     }
   }
 
-  const acceptance = summarizeAcceptance(gates, resultByLabel);
+  const acceptance = summarizeAcceptance(gates, resultByLabel, gateResults);
   const evalSummary = summarizeEval(evalReport);
   const undeclaredBoundaries = summarizeUndeclaredBoundaries(boundaries);
   const capabilityEvidence = summarizeCapabilityEvidence({
@@ -104,6 +104,7 @@ export function renderReleaseConfidenceMarkdown(summary) {
     `CI-default unknown: ${summary.acceptance.ciDefault?.unknownGates?.length ?? 0}`,
   ];
 
+  appendExecutionSummary(lines, summary.acceptance.execution);
   appendBreakdownList(lines, "Acceptance Domains", summary.acceptance.domainBreakdown, "domain");
   appendBreakdownList(lines, "Acceptance Tiers", summary.acceptance.tierBreakdown, "tier");
   appendGateList(lines, "Failed Gate Details", summary.acceptance.failedGates);
@@ -159,7 +160,7 @@ export function renderReleaseConfidenceMarkdown(summary) {
   return `${lines.join("\n")}\n`;
 }
 
-function summarizeAcceptance(gates, resultByLabel) {
+function summarizeAcceptance(gates, resultByLabel, gateResults) {
   const passedGates = [];
   const failedGates = [];
   const manualEvidenceGates = [];
@@ -199,6 +200,7 @@ function summarizeAcceptance(gates, resultByLabel) {
     failedGates,
     manualEvidenceGates,
     unknownGates,
+    execution: summarizeGateExecution(gateResults),
     domainBreakdown: summarizeGateBreakdown(gateItems, "domain"),
     tierBreakdown: summarizeGateBreakdown(gateItems, "tier"),
     ciDefault: {
@@ -208,6 +210,34 @@ function summarizeAcceptance(gates, resultByLabel) {
       manualEvidenceGates: manualEvidenceGates.filter((gate) => gate.ciDefault),
       unknownGates: unknownGates.filter((gate) => gate.ciDefault),
     },
+  };
+}
+
+function summarizeGateExecution(gateResults) {
+  if (!gateResults || typeof gateResults !== "object") {
+    return {
+      available: false,
+      status: "unknown",
+      selectedGateCount: 0,
+      executedGateCount: 0,
+      failedGateCount: 0,
+      incomplete: false,
+    };
+  }
+  const gates = asArray(gateResults.gates);
+  const selectedGateCount = numberValue(gateResults.selectedGateCount);
+  const executedGateCount = numberValue(gateResults.executedGateCount ?? gates.length);
+  const failedGateCount = numberValue(
+    gateResults.failedGateCount ??
+      gates.filter((gate) => FAIL_STATUSES.has(normalizeStatus(gate?.status))).length,
+  );
+  return {
+    available: true,
+    status: normalizeStatus(gateResults.status),
+    selectedGateCount,
+    executedGateCount,
+    failedGateCount,
+    incomplete: selectedGateCount > executedGateCount,
   };
 }
 
@@ -589,6 +619,25 @@ function stringValue(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length ? trimmed : null;
+}
+
+function numberValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function appendExecutionSummary(lines, execution) {
+  if (!execution?.available) return;
+  lines.push(
+    "",
+    "### Acceptance Execution",
+    "",
+    `Status: ${execution.status}`,
+    `Selected gates: ${execution.selectedGateCount}`,
+    `Executed gates: ${execution.executedGateCount}`,
+    `Failed gates: ${execution.failedGateCount}`,
+    `Incomplete execution: ${execution.incomplete ? "yes" : "no"}`,
+  );
 }
 
 function appendGateList(lines, title, gates) {
