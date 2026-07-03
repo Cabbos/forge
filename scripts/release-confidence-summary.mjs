@@ -21,7 +21,9 @@ export function buildReleaseConfidenceSummary({
   acceptanceScope = "all",
 } = {}) {
   const normalizedAcceptanceScope = normalizeAcceptanceScope(acceptanceScope);
-  const allGates = Array.isArray(acceptanceMatrix?.gates) ? acceptanceMatrix.gates : [];
+  const allGates = Array.isArray(acceptanceMatrix?.gates)
+    ? acceptanceMatrix.gates
+    : gatesFromGateResults(gateResults);
   const gates =
     normalizedAcceptanceScope === "ci-default"
       ? allGates.filter((gate) => gate?.ciDefault === true)
@@ -65,6 +67,21 @@ export function buildReleaseConfidenceSummary({
 
 function normalizeAcceptanceScope(scope) {
   return scope === "ci-default" ? "ci-default" : "all";
+}
+
+function gatesFromGateResults(gateResults) {
+  return asArray(gateResults?.gates)
+    .filter((gate) => typeof gate?.label === "string" && gate.label)
+    .map((gate, index) => ({
+      index: Number(gate.index ?? index + 1),
+      label: gate.label,
+      command: stringValue(gate.command) ?? "",
+      domain: stringValue(gate.domain) ?? "unknown",
+      tier: stringValue(gate.tier) ?? "unknown",
+      runtimeCost: stringValue(gate.runtimeCost) ?? "unknown",
+      manualRequirement: gate.manualRequirement === true,
+      ciDefault: gate.ciDefault === true,
+    }));
 }
 
 export function renderReleaseConfidenceMarkdown(summary) {
@@ -572,6 +589,7 @@ function parseArgs(argv) {
   const options = {
     format: "markdown",
     acceptanceJson: null,
+    noAcceptanceMatrix: false,
     gateResults: null,
     evalReport: null,
     boundariesJson: null,
@@ -590,6 +608,8 @@ function parseArgs(argv) {
       options.format = "markdown";
     } else if (arg === "--acceptance-json") {
       options.acceptanceJson = requireValue(argv, (index += 1), arg);
+    } else if (arg === "--no-acceptance-matrix") {
+      options.noAcceptanceMatrix = true;
     } else if (arg === "--gate-results") {
       options.gateResults = requireValue(argv, (index += 1), arg);
     } else if (arg === "--eval-report") {
@@ -620,7 +640,7 @@ function requireValue(argv, index, flag) {
 }
 
 function printUsage() {
-  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--ci-default-only] [--fail-on-attention]
+  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH|--no-acceptance-matrix] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--ci-default-only] [--fail-on-attention]
 
 Builds a release confidence summary from acceptance matrix metadata plus optional gate-result, eval-report, and boundary evidence.
 
@@ -628,7 +648,8 @@ Options:
   --json                  Print JSON summary.
   --markdown              Print Markdown summary (default).
   --acceptance-json PATH  Acceptance matrix JSON; defaults to scripts/acceptance.sh --list-json.
-  --gate-results PATH     JSON with gates: [{ label, status, reason? }].
+  --no-acceptance-matrix  Derive gates only from self-describing --gate-results metadata.
+  --gate-results PATH     JSON with gates: [{ label, status, reason?, domain?, tier?, ciDefault? }].
   --eval-report PATH      Eval-runner BacktestReport JSON or { report } wrapper.
   --boundaries-json PATH  JSON with declared, required, and capabilityClaims boundary lists.
   --out-json PATH         Also write JSON summary to a file.
@@ -645,9 +666,10 @@ function main(argv) {
     return 0;
   }
 
+  const gateResults = options.gateResults && existsSync(options.gateResults) ? readJsonFile(options.gateResults) : null;
   const summary = buildReleaseConfidenceSummary({
-    acceptanceMatrix: loadAcceptanceMatrix(options.acceptanceJson),
-    gateResults: options.gateResults && existsSync(options.gateResults) ? readJsonFile(options.gateResults) : null,
+    acceptanceMatrix: options.noAcceptanceMatrix ? null : loadAcceptanceMatrix(options.acceptanceJson),
+    gateResults,
     evalReport: options.evalReport && existsSync(options.evalReport) ? readJsonFile(options.evalReport) : null,
     boundaries:
       options.boundariesJson && existsSync(options.boundariesJson)

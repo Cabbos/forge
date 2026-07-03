@@ -247,7 +247,8 @@ totals/pass/fail/unknown counts beside the full matrix. Add
 supplied results. `scripts/acceptance.sh --results-json gate-results.json`
 produces the gate-results payload consumed by `--gate-results`, including each
 executed gate's authority domain, tier, runtime cost, manual-evidence flag, and
-CI-default metadata. Boundary evidence can also list `capabilityClaims`; declared capabilities with passing
+CI-default metadata; add `--no-acceptance-matrix` when that self-describing
+gate-results file should be the only acceptance source. Boundary evidence can also list `capabilityClaims`; declared capabilities with passing
 `evidenceGate` and `evidenceScore` references are listed as verified capability evidence,
 while a missing acceptance gate, missing acceptance result, failing
 acceptance gate, missing eval score, or failing eval score is reported as
