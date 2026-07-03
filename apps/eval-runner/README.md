@@ -265,7 +265,8 @@ Desktop headless traces and `forge_session export-eval` emit
 alongside prepared context, memory audit, permissions, file effects,
 verification, provider usage, recovery, A2A child capsules, memory recall,
 gateway, and runtime recovery facts. Eval scoring includes schema identity scoring
-for schema/source/session/loop-task evidence, context budget bucket scoring for
+for schema/source/session/loop-task evidence, permission decision evidence scoring
+for replayable permission ledger records and full-access block boundaries, context budget bucket scoring for
 explicit `turn_prepared.context_estimate` buckets, plus a dedicated
 completion-eligibility consistency score: `unknown` authority is accepted, while
 commit-eligible claims with blockers, nonterminal status, or malformed fact
