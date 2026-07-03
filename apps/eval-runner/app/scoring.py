@@ -662,6 +662,15 @@ def usage_accounting_consistency_score(
             ", ".join(findings) if findings else None,
         )
 
+    usage_value_findings = provider_usage_value_findings(usage_fact)
+    if usage_value_findings:
+        return runtime_score(
+            "forge_usage_accounting_consistency_ok",
+            False,
+            "invalid_usage_values",
+            ", ".join(usage_value_findings),
+        )
+
     input_tokens = int_or_none(usage_fact.get("input_tokens"))
     output_tokens = int_or_none(usage_fact.get("output_tokens"))
     if (
@@ -685,6 +694,25 @@ def usage_accounting_consistency_score(
             "output_token_mismatch",
         )
     return runtime_score("forge_usage_accounting_consistency_ok", True, "ok")
+
+
+def provider_usage_value_findings(usage_fact: dict) -> list[str]:
+    findings: list[str] = []
+    input_tokens = int_or_none(usage_fact.get("input_tokens"))
+    if "input_tokens" in usage_fact and (input_tokens is None or input_tokens < 0):
+        findings.append("usage:invalid_input_tokens")
+
+    output_tokens = int_or_none(usage_fact.get("output_tokens"))
+    if "output_tokens" in usage_fact and (output_tokens is None or output_tokens < 0):
+        findings.append("usage:invalid_output_tokens")
+
+    for key in ["cost", "cost_micros", "cost_usd", "estimated_cost", "total_cost"]:
+        if key not in usage_fact:
+            continue
+        cost = numeric_or_none(usage_fact.get(key))
+        if cost is None or cost < 0:
+            findings.append(f"usage:invalid_cost:{key}")
+    return findings
 
 
 def usage_unknown_conflict_findings(usage_fact: dict) -> list[str]:
@@ -1980,6 +2008,14 @@ def int_or_none(value: object) -> int | None:
         return value
     if isinstance(value, float) and value.is_integer():
         return int(value)
+    return None
+
+
+def numeric_or_none(value: object) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return value
     return None
 
 
