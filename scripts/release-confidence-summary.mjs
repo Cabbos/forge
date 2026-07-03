@@ -169,6 +169,10 @@ function summarizeAcceptance(gates, resultByLabel) {
     const item = {
       label: gate.label,
       domain: gate.domain ?? "unknown",
+      tier: stringValue(gate.tier) ?? "unknown",
+      runtimeCost: stringValue(gate.runtimeCost) ?? "unknown",
+      manualRequirement:
+        typeof gate.manualRequirement === "boolean" ? gate.manualRequirement : "unknown",
       status: normalizedStatus,
       reason: result?.reason ?? result?.message ?? null,
       ciDefault: gate.ciDefault === true,
@@ -559,7 +563,9 @@ function appendGateList(lines, title, gates) {
   lines.push("", `### ${title}`, "");
   for (const gate of gates) {
     const reason = gate.reason ? ` - ${gate.reason}` : "";
-    lines.push(`- ${gate.label} (${gate.domain}, ${gate.status})${reason}`);
+    lines.push(
+      `- ${gate.label} (domain: ${gate.domain}; status: ${gate.status}; tier: ${gate.tier}; cost: ${gate.runtimeCost}; manual: ${gate.manualRequirement})${reason}`,
+    );
   }
 }
 
