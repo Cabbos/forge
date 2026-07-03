@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -716,6 +716,51 @@ test("cli can summarize self-describing gate results without acceptance matrix",
   ]);
   assert.equal(parsed.acceptance.ciDefault.totalGates, 2);
   assert.deepEqual(parsed.affectedDomains, ["gateway"]);
+});
+
+test("cli can write dashboard JSON and Markdown artifacts to an output directory", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "forge-release-confidence-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const matrixPath = join(dir, "acceptance.json");
+  const gatesPath = join(dir, "gate-results.json");
+  const evalPath = join(dir, "eval-report.json");
+  const reportDir = join(dir, "confidence-report");
+  writeFileSync(matrixPath, JSON.stringify(acceptanceMatrix), "utf8");
+  writeFileSync(
+    gatesPath,
+    JSON.stringify({ gates: acceptanceMatrix.gates.map((gate) => ({ label: gate.label, status: "passed" })) }),
+    "utf8",
+  );
+  writeFileSync(
+    evalPath,
+    JSON.stringify({ report: { total_tasks: 1, success_rate: 1, score_summary: {} } }),
+    "utf8",
+  );
+
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      scriptPath,
+      "--markdown",
+      "--acceptance-json",
+      matrixPath,
+      "--gate-results",
+      gatesPath,
+      "--eval-report",
+      evalPath,
+      "--out-dir",
+      reportDir,
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+
+  const jsonPath = join(reportDir, "release-confidence-summary.json");
+  const markdownPath = join(reportDir, "release-confidence-summary.md");
+  assert.equal(existsSync(jsonPath), true);
+  assert.equal(existsSync(markdownPath), true);
+  assert.equal(JSON.parse(readFileSync(jsonPath, "utf8")).status, "passed");
+  assert.equal(readFileSync(markdownPath, "utf8"), stdout);
 });
 
 test("cli can fail when release confidence needs attention", (t) => {

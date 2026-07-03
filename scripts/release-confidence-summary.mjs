@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -701,6 +701,7 @@ function parseArgs(argv) {
     boundariesJson: null,
     outJson: null,
     outMarkdown: null,
+    outDir: null,
     ciDefaultOnly: false,
     failOnAttention: false,
     help: false,
@@ -726,6 +727,8 @@ function parseArgs(argv) {
       options.outJson = requireValue(argv, (index += 1), arg);
     } else if (arg === "--out-md") {
       options.outMarkdown = requireValue(argv, (index += 1), arg);
+    } else if (arg === "--out-dir") {
+      options.outDir = requireValue(argv, (index += 1), arg);
     } else if (arg === "--ci-default-only") {
       options.ciDefaultOnly = true;
     } else if (arg === "--fail-on-attention") {
@@ -746,7 +749,7 @@ function requireValue(argv, index, flag) {
 }
 
 function printUsage() {
-  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH|--no-acceptance-matrix] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--ci-default-only] [--fail-on-attention]
+  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH|--no-acceptance-matrix] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--out-dir PATH] [--ci-default-only] [--fail-on-attention]
 
 Builds a release confidence summary from acceptance matrix metadata plus optional gate-result, eval-report, and boundary evidence.
 
@@ -760,9 +763,16 @@ Options:
   --boundaries-json PATH  JSON with declared, required, and capabilityClaims boundary lists.
   --out-json PATH         Also write JSON summary to a file.
   --out-md PATH           Also write Markdown summary to a file.
+  --out-dir PATH          Also write release-confidence-summary.json and .md under PATH.
   --ci-default-only       Summarize only gates marked ciDefault in the acceptance matrix.
   --fail-on-attention     Exit 1 when the summary status is failed or attention_required.
 `);
+}
+
+function writeDashboardArtifacts(outDir, json, markdown) {
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(join(outDir, "release-confidence-summary.json"), json, "utf8");
+  writeFileSync(join(outDir, "release-confidence-summary.md"), markdown, "utf8");
 }
 
 function main(argv) {
@@ -788,6 +798,7 @@ function main(argv) {
 
   if (options.outJson) writeFileSync(options.outJson, json, "utf8");
   if (options.outMarkdown) writeFileSync(options.outMarkdown, markdown, "utf8");
+  if (options.outDir) writeDashboardArtifacts(options.outDir, json, markdown);
 
   process.stdout.write(options.format === "json" ? json : markdown);
   if (options.failOnAttention && summary.status !== "passed") {
