@@ -104,6 +104,8 @@ export function renderReleaseConfidenceMarkdown(summary) {
     `CI-default unknown: ${summary.acceptance.ciDefault?.unknownGates?.length ?? 0}`,
   ];
 
+  appendBreakdownList(lines, "Acceptance Domains", summary.acceptance.domainBreakdown, "domain");
+  appendBreakdownList(lines, "Acceptance Tiers", summary.acceptance.tierBreakdown, "tier");
   appendGateList(lines, "Failed Gate Details", summary.acceptance.failedGates);
   appendGateList(lines, "Manual Evidence", summary.acceptance.manualEvidenceGates);
   appendGateList(lines, "Unknown Gate Results", summary.acceptance.unknownGates);
@@ -162,6 +164,7 @@ function summarizeAcceptance(gates, resultByLabel) {
   const failedGates = [];
   const manualEvidenceGates = [];
   const unknownGates = [];
+  const gateItems = [];
 
   for (const gate of gates) {
     const result = resultByLabel.get(gate.label);
@@ -177,6 +180,7 @@ function summarizeAcceptance(gates, resultByLabel) {
       reason: result?.reason ?? result?.message ?? null,
       ciDefault: gate.ciDefault === true,
     };
+    gateItems.push(item);
 
     if (PASS_STATUSES.has(normalizedStatus)) {
       passedGates.push(item);
@@ -195,6 +199,8 @@ function summarizeAcceptance(gates, resultByLabel) {
     failedGates,
     manualEvidenceGates,
     unknownGates,
+    domainBreakdown: summarizeGateBreakdown(gateItems, "domain"),
+    tierBreakdown: summarizeGateBreakdown(gateItems, "tier"),
     ciDefault: {
       totalGates: gates.filter((gate) => gate.ciDefault === true).length,
       passedGates: passedGates.filter((gate) => gate.ciDefault),
@@ -203,6 +209,33 @@ function summarizeAcceptance(gates, resultByLabel) {
       unknownGates: unknownGates.filter((gate) => gate.ciDefault),
     },
   };
+}
+
+function summarizeGateBreakdown(gates, key) {
+  const rows = new Map();
+  for (const gate of gates) {
+    const id = String(gate[key] ?? "unknown");
+    const row = rows.get(id) ?? {
+      [key]: id,
+      totalGates: 0,
+      passedGates: 0,
+      failedGates: 0,
+      manualEvidenceGates: 0,
+      unknownGates: 0,
+    };
+    row.totalGates += 1;
+    if (PASS_STATUSES.has(gate.status)) {
+      row.passedGates += 1;
+    } else if (FAIL_STATUSES.has(gate.status)) {
+      row.failedGates += 1;
+    } else if (MANUAL_STATUSES.has(gate.status)) {
+      row.manualEvidenceGates += 1;
+    } else {
+      row.unknownGates += 1;
+    }
+    rows.set(id, row);
+  }
+  return [...rows.values()].sort((left, right) => String(left[key]).localeCompare(String(right[key])));
 }
 
 function summarizeEval(evalReport) {
@@ -565,6 +598,16 @@ function appendGateList(lines, title, gates) {
     const reason = gate.reason ? ` - ${gate.reason}` : "";
     lines.push(
       `- ${gate.label} (domain: ${gate.domain}; status: ${gate.status}; tier: ${gate.tier}; cost: ${gate.runtimeCost}; manual: ${gate.manualRequirement})${reason}`,
+    );
+  }
+}
+
+function appendBreakdownList(lines, title, rows, key) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  lines.push("", `### ${title}`, "");
+  for (const row of rows) {
+    lines.push(
+      `- ${row[key]}: total ${row.totalGates}, passed ${row.passedGates}, failed ${row.failedGates}, manual ${row.manualEvidenceGates}, unknown ${row.unknownGates}`,
     );
   }
 }
