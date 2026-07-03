@@ -200,6 +200,116 @@ test("summarizes failing task-level eval scores when score summary is absent", (
   assert.match(markdown, /forge_completion_eligibility_evidence_ok: 0 \(runtime; tasks: task-1\)/);
 });
 
+test("summarizes acceptance gates by domain and tier", () => {
+  const matrix = {
+    gates: [
+      {
+        label: "runtime authority fast gate",
+        domain: "runtime",
+        tier: "runtime-core",
+        ciDefault: true,
+      },
+      {
+        label: "gateway parity and degraded fallback smoke",
+        domain: "gateway",
+        tier: "runtime-core",
+        ciDefault: true,
+      },
+      {
+        label: "manual desktop restart smoke protocol",
+        domain: "ui-evidence",
+        tier: "manual-evidence",
+        manualRequirement: true,
+        ciDefault: false,
+      },
+      {
+        label: "desktop eval promotion evidence smoke",
+        domain: "eval",
+        tier: "full-release",
+        ciDefault: false,
+      },
+    ],
+  };
+  const summary = buildReleaseConfidenceSummary({
+    acceptanceMatrix: matrix,
+    gateResults: {
+      gates: [
+        { label: "runtime authority fast gate", status: "passed" },
+        { label: "gateway parity and degraded fallback smoke", status: "failed" },
+        { label: "manual desktop restart smoke protocol", status: "manual" },
+      ],
+    },
+    evalReport: { report: { total_tasks: 1, success_rate: 1, score_summary: {} } },
+  });
+
+  assert.deepEqual(summary.acceptance.domainBreakdown, [
+    {
+      domain: "eval",
+      totalGates: 1,
+      passedGates: 0,
+      failedGates: 0,
+      manualEvidenceGates: 0,
+      unknownGates: 1,
+    },
+    {
+      domain: "gateway",
+      totalGates: 1,
+      passedGates: 0,
+      failedGates: 1,
+      manualEvidenceGates: 0,
+      unknownGates: 0,
+    },
+    {
+      domain: "runtime",
+      totalGates: 1,
+      passedGates: 1,
+      failedGates: 0,
+      manualEvidenceGates: 0,
+      unknownGates: 0,
+    },
+    {
+      domain: "ui-evidence",
+      totalGates: 1,
+      passedGates: 0,
+      failedGates: 0,
+      manualEvidenceGates: 1,
+      unknownGates: 0,
+    },
+  ]);
+  assert.deepEqual(summary.acceptance.tierBreakdown, [
+    {
+      tier: "full-release",
+      totalGates: 1,
+      passedGates: 0,
+      failedGates: 0,
+      manualEvidenceGates: 0,
+      unknownGates: 1,
+    },
+    {
+      tier: "manual-evidence",
+      totalGates: 1,
+      passedGates: 0,
+      failedGates: 0,
+      manualEvidenceGates: 1,
+      unknownGates: 0,
+    },
+    {
+      tier: "runtime-core",
+      totalGates: 2,
+      passedGates: 1,
+      failedGates: 1,
+      manualEvidenceGates: 0,
+      unknownGates: 0,
+    },
+  ]);
+
+  const markdown = renderReleaseConfidenceMarkdown(summary);
+  assert.match(markdown, /### Acceptance Domains/);
+  assert.match(markdown, /gateway: total 1, passed 0, failed 1, manual 0, unknown 0/);
+  assert.match(markdown, /### Acceptance Tiers/);
+  assert.match(markdown, /runtime-core: total 2, passed 1, failed 1, manual 0, unknown 0/);
+});
+
 test("flags declared capability claims that do not have acceptance evidence", () => {
   const summary = buildReleaseConfidenceSummary({
     acceptanceMatrix,
