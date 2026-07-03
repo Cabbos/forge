@@ -53,7 +53,9 @@
                 "decision": "injected",
                 "status": "active",
                 "scope": "project",
-                "project_match": true
+                "project_match": true,
+                "selection_reason": "Continuity lesson selected once after dedupe.",
+                "estimated_tokens": 22
               },
               {
                 "memory_id": "continuity-lesson-1",

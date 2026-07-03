@@ -53,7 +53,9 @@
                 "status": "active",
                 "visibility": "hidden",
                 "project_match": true,
-                "profile_match": true
+                "profile_match": true,
+                "selection_reason": "Hidden memory selected with body redacted.",
+                "estimated_tokens": 19
               }
             ]
           },
