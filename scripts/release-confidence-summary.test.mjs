@@ -347,6 +347,29 @@ test("summarizes gate-results execution completeness", () => {
   assert.match(markdown, /Incomplete execution: yes/);
 });
 
+test("preserves gate-results execution reason evidence", () => {
+  const summary = buildReleaseConfidenceSummary({
+    acceptanceMatrix,
+    gateResults: {
+      status: "failed",
+      reason: "runner stopped after gateway parity failed",
+      selectedGateCount: 3,
+      executedGateCount: 2,
+      failedGateCount: 1,
+      gates: [
+        { label: "runtime authority fast gate", status: "passed" },
+        { label: "gateway parity and degraded fallback smoke", status: "failed" },
+      ],
+    },
+    evalReport: { report: { total_tasks: 1, success_rate: 1, score_summary: {} } },
+  });
+
+  assert.equal(summary.acceptance.execution.reason, "runner stopped after gateway parity failed");
+
+  const markdown = renderReleaseConfidenceMarkdown(summary);
+  assert.match(markdown, /Reason: runner stopped after gateway parity failed/);
+});
+
 test("flags declared capability claims that do not have acceptance evidence", () => {
   const summary = buildReleaseConfidenceSummary({
     acceptanceMatrix,
