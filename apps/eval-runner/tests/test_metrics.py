@@ -262,7 +262,20 @@ def test_forge_runtime_scores_pass_with_complete_evidence() -> None:
                     }
                 },
                 memory_audit={"selected_memory_ids": ["memory-1"]},
-                permission_decisions=[{"approved": True, "decision": "allow"}],
+                permission_decisions=[
+                    {
+                        "decision_id": "decision-1",
+                        "source_event_id": "event-1",
+                        "approved": True,
+                        "decision": "allow",
+                        "permission_mode": "manual",
+                        "operation": "write_file",
+                        "workspace_path": "/tmp/forge-runtime",
+                        "affected_files": ["src/example.py"],
+                        "risk": "low",
+                        "reason": "User approved a scoped project edit.",
+                    }
+                ],
                 changed_files=["src/example.py"],
                 verification={"command": "pytest", "passed": True},
                 provider_usage={"input_tokens": 123, "output_tokens": 45},
@@ -279,6 +292,122 @@ def test_forge_runtime_scores_pass_with_complete_evidence() -> None:
     assert scores["forge_changed_file_scope_ok"].label == "ok"
     assert scores["forge_recovery_evidence_ok"].label == "not_needed"
     assert scores["forge_usage_accounting_consistency_ok"].label == "ok"
+    assert scores["forge_permission_decision_evidence_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_grade_permission_decision_evidence() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-permission",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+        confirm_requests=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                permission_decisions=[
+                    {
+                        "decision_id": "permission-decision-1",
+                        "source_event_id": "event-1",
+                        "approved": True,
+                        "decision": "allow",
+                        "permission_mode": "trust_project",
+                        "operation": "write_file",
+                        "workspace_path": "/tmp/forge-runtime",
+                        "affected_files": ["src/example.py"],
+                        "risk": "low",
+                        "reason": "Trusted project allows this workspace edit.",
+                    }
+                ],
+                changed_files=["src/example.py"],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_permission_decision_evidence_ok"].score == 1.0
+    assert scores["forge_permission_decision_evidence_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_permission_decision_evidence_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-permission-bad",
+        passed=False,
+        duration_ms=10,
+        tool_count=1,
+        confirm_requests=1,
+        failure_category=FailureCategory.FORGE_CONTRACT_ERROR,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                permission_decisions=[
+                    {
+                        "decision": "allow",
+                        "permission_mode": "full_access",
+                        "operation": "write_file",
+                        "external_path": True,
+                        "affected_files": [],
+                    },
+                    {
+                        "decision_id": "permission-decision-2",
+                        "source_event_id": "event-2",
+                        "decision": "allow",
+                        "permission_mode": "full_access",
+                        "operation": "shell",
+                        "sensitive_operation": True,
+                        "risk": "high",
+                        "reason": "Full access was treated as enough for a sensitive shell.",
+                    },
+                ],
+                changed_files=[],
+                verification={"command": "pytest", "passed": False},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_permission_decision_evidence_ok"].score == 0.0
+    assert (
+        scores["forge_permission_decision_evidence_ok"].label
+        == "permission_decision_evidence_failed"
+    )
+    explanation = scores["forge_permission_decision_evidence_ok"].explanation or ""
+    assert "decision-1:missing_replay_identity" in explanation
+    assert "decision-1:missing_workspace" in explanation
+    assert "decision-1:missing_reason" in explanation
+    assert "decision-1:missing_risk" in explanation
+    assert "decision-1:file_operation_missing_affected_files" in explanation
+    assert "decision-1:full_access_allows_external_path" in explanation
+    assert "permission-decision-2:full_access_allows_sensitive_operation" in explanation
 
 
 def test_forge_runtime_scores_grade_memory_recall_quality() -> None:
