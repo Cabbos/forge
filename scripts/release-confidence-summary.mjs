@@ -18,8 +18,14 @@ export function buildReleaseConfidenceSummary({
   evalReport = null,
   boundaries = null,
   generatedAt = null,
+  acceptanceScope = "all",
 } = {}) {
-  const gates = Array.isArray(acceptanceMatrix?.gates) ? acceptanceMatrix.gates : [];
+  const normalizedAcceptanceScope = normalizeAcceptanceScope(acceptanceScope);
+  const allGates = Array.isArray(acceptanceMatrix?.gates) ? acceptanceMatrix.gates : [];
+  const gates =
+    normalizedAcceptanceScope === "ci-default"
+      ? allGates.filter((gate) => gate?.ciDefault === true)
+      : allGates;
   const resultByLabel = new Map();
   for (const result of asArray(gateResults?.gates)) {
     if (typeof result?.label === "string" && result.label) {
@@ -47,6 +53,7 @@ export function buildReleaseConfidenceSummary({
   return {
     schemaVersion: 1,
     generatedAt: generatedAt ?? new Date().toISOString(),
+    acceptanceScope: normalizedAcceptanceScope,
     status,
     affectedDomains,
     acceptance,
@@ -54,6 +61,10 @@ export function buildReleaseConfidenceSummary({
     undeclaredBoundaries,
     capabilityEvidence,
   };
+}
+
+function normalizeAcceptanceScope(scope) {
+  return scope === "ci-default" ? "ci-default" : "all";
 }
 
 export function renderReleaseConfidenceMarkdown(summary) {
@@ -566,6 +577,7 @@ function parseArgs(argv) {
     boundariesJson: null,
     outJson: null,
     outMarkdown: null,
+    ciDefaultOnly: false,
     failOnAttention: false,
     help: false,
   };
@@ -588,6 +600,8 @@ function parseArgs(argv) {
       options.outJson = requireValue(argv, (index += 1), arg);
     } else if (arg === "--out-md") {
       options.outMarkdown = requireValue(argv, (index += 1), arg);
+    } else if (arg === "--ci-default-only") {
+      options.ciDefaultOnly = true;
     } else if (arg === "--fail-on-attention") {
       options.failOnAttention = true;
     } else if (arg === "-h" || arg === "--help") {
@@ -606,7 +620,7 @@ function requireValue(argv, index, flag) {
 }
 
 function printUsage() {
-  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--fail-on-attention]
+  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--ci-default-only] [--fail-on-attention]
 
 Builds a release confidence summary from acceptance matrix metadata plus optional gate-result, eval-report, and boundary evidence.
 
@@ -619,6 +633,7 @@ Options:
   --boundaries-json PATH  JSON with declared, required, and capabilityClaims boundary lists.
   --out-json PATH         Also write JSON summary to a file.
   --out-md PATH           Also write Markdown summary to a file.
+  --ci-default-only       Summarize only gates marked ciDefault in the acceptance matrix.
   --fail-on-attention     Exit 1 when the summary status is failed or attention_required.
 `);
 }
@@ -638,6 +653,7 @@ function main(argv) {
       options.boundariesJson && existsSync(options.boundariesJson)
         ? readJsonFile(options.boundariesJson)
         : null,
+    acceptanceScope: options.ciDefaultOnly ? "ci-default" : "all",
   });
   const json = `${JSON.stringify(summary, null, 2)}\n`;
   const markdown = renderReleaseConfidenceMarkdown(summary);
