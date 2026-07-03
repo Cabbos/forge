@@ -52,7 +52,9 @@
                 "decision": "injected",
                 "status": "active",
                 "scope": "project",
-                "project_match": true
+                "project_match": true,
+                "selection_reason": "First matching project memory won dedupe.",
+                "estimated_tokens": 20
               },
               {
                 "memory_id": "memory-dedupe-1",

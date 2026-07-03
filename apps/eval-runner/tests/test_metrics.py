@@ -871,6 +871,8 @@ def test_forge_runtime_scores_grade_memory_recall_quality() -> None:
                             "status": "active",
                             "project_match": True,
                             "profile_match": True,
+                            "selection_reason": "Project preference matched the current task.",
+                            "estimated_tokens": 24,
                         },
                         {
                             "memory_id": "memory-3",
@@ -880,12 +882,15 @@ def test_forge_runtime_scores_grade_memory_recall_quality() -> None:
                             "status": "active",
                             "project_match": True,
                             "profile_match": False,
+                            "selection_reason": "Wiki preference is project-scoped.",
+                            "estimated_tokens": 16,
                         },
                         {
                             "memory_id": "memory-2",
                             "decision": "filtered",
                             "status": "active",
                             "project_match": False,
+                            "filter_reason": "wrong_project",
                         },
                     ],
                 },
@@ -978,6 +983,8 @@ def test_forge_runtime_scores_ignore_filtered_memory_duplicates_as_context_sourc
                             "source": "continuity_experience",
                             "decision": "injected",
                             "status": "active",
+                            "selection_reason": "Continuity lesson selected once.",
+                            "estimated_tokens": 18,
                         },
                         {
                             "memory_id": "continuity-1",
@@ -1173,6 +1180,8 @@ def test_forge_runtime_scores_explain_memory_recall_quality_failures() -> None:
     assert "duplicate-memory:duplicate_memory_injected" in explanation
     assert "over-budget-memory:over_budget_memory_injected" in explanation
     assert "memory-secret:hidden_memory_body_exposed" in explanation
+    assert "wrong-project:missing_decision_reason" in explanation
+    assert "wrong-project:missing_injection_budget" in explanation
 
 
 def test_forge_runtime_scores_grade_gateway_runtime_safety() -> None:

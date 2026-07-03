@@ -1303,9 +1303,11 @@ def memory_recall_quality_score(evidence: ForgeRunEvidence) -> EvalScore:
     injected_ids: list[str] = []
 
     for index, candidate in enumerate(memory_recall_candidates(evidence), start=1):
+        memory_id = memory_candidate_id(candidate) or f"memory-{index}"
+        findings.extend(memory_recall_audit_findings(evidence, candidate, memory_id))
+
         if not memory_candidate_injected(candidate):
             continue
-        memory_id = memory_candidate_id(candidate) or f"memory-{index}"
         injected_ids.append(memory_id)
 
         if candidate.get("project_match") is False and memory_candidate_requires_project_match(
@@ -1341,6 +1343,136 @@ def memory_recall_quality_score(evidence: ForgeRunEvidence) -> EvalScore:
         "ok" if not findings else "memory_recall_quality_failed",
         ", ".join(findings) if findings else None,
     )
+
+
+def memory_recall_audit_findings(
+    evidence: ForgeRunEvidence, candidate: dict, memory_id: str
+) -> list[str]:
+    findings: list[str] = []
+    if memory_candidate_decision(candidate) is None:
+        findings.append(f"{memory_id}:missing_decision")
+    if memory_candidate_decision_reason(candidate) is None:
+        findings.append(f"{memory_id}:missing_decision_reason")
+    if memory_candidate_injected(candidate):
+        budget_finding = memory_candidate_injection_budget_finding(
+            evidence, candidate, memory_id
+        )
+        if budget_finding is not None:
+            findings.append(budget_finding)
+    return findings
+
+
+def memory_candidate_decision(candidate: dict) -> str | None:
+    return first_string(candidate, ["decision", "injection_decision", "recall_decision"])
+
+
+def memory_candidate_decision_reason(candidate: dict) -> str | None:
+    return first_string(
+        candidate,
+        [
+            "reason",
+            "filter_reason",
+            "selection_reason",
+            "decision_reason",
+            "score_reason",
+            "rationale",
+            "why",
+            "explanation",
+        ],
+    )
+
+
+def memory_candidate_injection_budget_finding(
+    evidence: ForgeRunEvidence, candidate: dict, memory_id: str
+) -> str | None:
+    if memory_candidate_has_valid_token_budget(candidate):
+        return None
+    if memory_candidate_has_invalid_token_budget(candidate):
+        return f"{memory_id}:invalid_injection_budget"
+    if memory_recall_plan_has_budget(evidence):
+        return None
+    return f"{memory_id}:missing_injection_budget"
+
+
+def memory_candidate_has_valid_token_budget(candidate: dict) -> bool:
+    for value in memory_candidate_token_budget_values(candidate):
+        tokens = int_or_none(value)
+        if tokens is not None and tokens >= 0:
+            return True
+    return False
+
+
+def memory_candidate_has_invalid_token_budget(candidate: dict) -> bool:
+    return bool(memory_candidate_token_budget_values(candidate))
+
+
+def memory_candidate_token_budget_values(candidate: dict) -> list[object]:
+    values: list[object] = []
+    for key in [
+        "estimated_tokens",
+        "injected_tokens",
+        "tokens",
+        "token_count",
+        "budget_tokens",
+        "allocated_tokens",
+    ]:
+        if key in candidate:
+            values.append(candidate.get(key))
+
+    for key in ["budget", "budget_allocation", "injection_budget"]:
+        nested = candidate.get(key)
+        if not isinstance(nested, dict):
+            continue
+        for nested_key in [
+            "estimated_tokens",
+            "injected_tokens",
+            "tokens",
+            "token_count",
+            "budget_tokens",
+            "allocated_tokens",
+        ]:
+            if nested_key in nested:
+                values.append(nested.get(nested_key))
+    return values
+
+
+def memory_recall_plan_has_budget(evidence: ForgeRunEvidence) -> bool:
+    for plan in memory_recall_plans(evidence):
+        for key in [
+            "injection_budget",
+            "budget",
+            "token_budget",
+            "estimated_injected_tokens",
+            "injected_tokens",
+        ]:
+            if key not in plan:
+                continue
+            value = plan.get(key)
+            if isinstance(value, dict):
+                if any(
+                    (tokens := int_or_none(value.get(token_key))) is not None and tokens >= 0
+                    for token_key in ["tokens", "estimated_tokens", "available_tokens"]
+                ):
+                    return True
+            else:
+                tokens = int_or_none(value)
+                if tokens is not None and tokens >= 0:
+                    return True
+    return False
+
+
+def memory_recall_plans(evidence: ForgeRunEvidence) -> list[dict]:
+    plans: list[dict] = []
+    prepared = evidence.prepared_context.get("turn_prepared")
+    if isinstance(prepared, dict):
+        plan = prepared.get("memory_recall_plan")
+        if isinstance(plan, dict):
+            plans.append(plan)
+    for key in ["memory_recall_plan", "recall_plan"]:
+        plan = evidence.memory_audit.get(key)
+        if isinstance(plan, dict):
+            plans.append(plan)
+    return plans
 
 
 def runtime_recovery_quality_score(evidence: ForgeRunEvidence) -> EvalScore:

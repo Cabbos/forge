@@ -51,7 +51,9 @@
                 "memory_id": "memory-active-survivor",
                 "decision": "injected",
                 "status": "active",
-                "project_match": true
+                "project_match": true,
+                "selection_reason": "Active memory matched the current project.",
+                "estimated_tokens": 18
               },
               {
                 "memory_id": "memory-archived",

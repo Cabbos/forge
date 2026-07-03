@@ -53,7 +53,9 @@
                 "status": "active",
                 "scope": "project profile",
                 "project_match": true,
-                "profile_match": true
+                "profile_match": true,
+                "selection_reason": "Active memory matched project and profile scope.",
+                "estimated_tokens": 24
               }
             ]
           },

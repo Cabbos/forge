@@ -53,7 +53,9 @@
                 "decision": "injected",
                 "status": "active",
                 "scope": "profile",
-                "profile_match": true
+                "profile_match": true,
+                "selection_reason": "Current profile memory matched the active profile.",
+                "estimated_tokens": 17
               },
               {
                 "memory_id": "memory-profile-other",
