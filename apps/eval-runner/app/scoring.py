@@ -654,7 +654,13 @@ def usage_accounting_consistency_score(
             "missing_usage_tokens",
         )
     if usage_fact.get("has_unknown_input_tokens") or usage_fact.get("has_unknown_output_tokens"):
-        return runtime_score("forge_usage_accounting_consistency_ok", True, "usage_unknown")
+        findings = usage_unknown_conflict_findings(usage_fact)
+        return runtime_score(
+            "forge_usage_accounting_consistency_ok",
+            not findings,
+            "usage_unknown" if not findings else "usage_unknown_conflict",
+            ", ".join(findings) if findings else None,
+        )
 
     input_tokens = int_or_none(usage_fact.get("input_tokens"))
     output_tokens = int_or_none(usage_fact.get("output_tokens"))
@@ -679,6 +685,20 @@ def usage_accounting_consistency_score(
             "output_token_mismatch",
         )
     return runtime_score("forge_usage_accounting_consistency_ok", True, "ok")
+
+
+def usage_unknown_conflict_findings(usage_fact: dict) -> list[str]:
+    findings: list[str] = []
+    if not first_string(usage_fact, ["unknown_reason", "reason", "omitted_reason"]):
+        findings.append("usage:missing_unknown_reason")
+    if usage_fact.get("has_unknown_input_tokens") is True and "input_tokens" in usage_fact:
+        findings.append("usage:unknown_input_tokens_has_value")
+    if usage_fact.get("has_unknown_output_tokens") is True and "output_tokens" in usage_fact:
+        findings.append("usage:unknown_output_tokens_has_value")
+    for key in ["cost", "cost_micros", "cost_usd", "estimated_cost", "total_cost"]:
+        if key in usage_fact and usage_fact.get(key) is not None:
+            findings.append(f"usage:unknown_cost_has_value:{key}")
+    return findings
 
 
 def completion_eligibility_score(evidence: ForgeRunEvidence) -> EvalScore:
