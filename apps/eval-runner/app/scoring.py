@@ -76,6 +76,7 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
         return {}
 
     scores = {
+        "forge_schema_identity_ok": schema_identity_score(evidence),
         "forge_confirmation_correctness_ok": confirmation_correctness_score(trace, evidence),
         "forge_context_duplication_ok": context_duplication_score(evidence),
         "forge_verification_present_ok": verification_present_score(trace, evidence),
@@ -97,6 +98,55 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
     if evidence.recovery_cases:
         scores["forge_runtime_recovery_quality_ok"] = runtime_recovery_quality_score(evidence)
     return scores
+
+
+def schema_identity_score(evidence: ForgeRunEvidence) -> EvalScore:
+    if evidence.schema_version == 1:
+        return runtime_score("forge_schema_identity_ok", True, "legacy_v1")
+    if evidence.schema_version < 1:
+        return runtime_score(
+            "forge_schema_identity_ok",
+            False,
+            "schema_identity_failed",
+            f"schema_version:unsupported_schema_version:{evidence.schema_version}",
+        )
+
+    findings: list[str] = []
+    if not evidence.source.strip():
+        findings.append("source:missing_source")
+    if not evidence.session_id:
+        findings.append("session_id:missing_session_id")
+    if not evidence.loop_task_id:
+        findings.append("loop_task_id:missing_loop_task_id")
+
+    findings.extend(prepared_context_identity_findings(evidence))
+
+    return runtime_score(
+        "forge_schema_identity_ok",
+        not findings,
+        "ok" if not findings else "schema_identity_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def prepared_context_identity_findings(evidence: ForgeRunEvidence) -> list[str]:
+    prepared = evidence.prepared_context.get("turn_prepared")
+    if not isinstance(prepared, dict):
+        return []
+
+    findings: list[str] = []
+    run_id = first_string(prepared, ["run_id", "loop_task_id", "task_id"])
+    if run_id and evidence.loop_task_id and run_id != evidence.loop_task_id:
+        findings.append("prepared_context:turn_run_id_mismatch")
+
+    prepared_session_id = first_string(prepared, ["session_id"])
+    if (
+        prepared_session_id
+        and evidence.session_id
+        and prepared_session_id != evidence.session_id
+    ):
+        findings.append("prepared_context:session_id_mismatch")
+    return findings
 
 
 def confirmation_correctness_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:

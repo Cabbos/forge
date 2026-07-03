@@ -1524,6 +1524,87 @@ def test_forge_runtime_scores_accept_completion_eligibility_unknown() -> None:
     assert scores["forge_completion_eligibility_evidence_ok"].label == "unknown"
 
 
+def test_forge_runtime_scores_grade_schema_identity_evidence() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "loop-task-1",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                schema_version=2,
+                source="desktop_trace",
+                session_id="session-1",
+                turn_id="turn-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "session_input": {"input_id": "input-1"},
+                    "turn_prepared": {
+                        "run_id": "loop-task-1",
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        },
+                    },
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_schema_identity_ok"].score == 1.0
+    assert scores["forge_schema_identity_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_schema_identity_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "trace-task-1",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                schema_version=2,
+                source="",
+                session_id=None,
+                turn_id=None,
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "run_id": "other-run",
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_schema_identity_ok"].score == 0.0
+    assert scores["forge_schema_identity_ok"].label == "schema_identity_failed"
+    explanation = scores["forge_schema_identity_ok"].explanation or ""
+    assert "source:missing_source" in explanation
+    assert "session_id:missing_session_id" in explanation
+    assert "prepared_context:turn_run_id_mismatch" in explanation
+
+
 def test_forge_runtime_scores_explain_completion_eligibility_conflicts() -> None:
     from app.scoring import score_trace
 
