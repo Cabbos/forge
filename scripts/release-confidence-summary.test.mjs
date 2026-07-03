@@ -414,6 +414,54 @@ test("cli emits machine-readable release confidence summary", (t) => {
   assert.equal(parsed.acceptance.unknownGates.length, 2);
 });
 
+test("cli can scope release confidence to CI-default gates", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "forge-release-confidence-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const matrixPath = join(dir, "acceptance.json");
+  const gatesPath = join(dir, "gate-results.json");
+  const evalPath = join(dir, "eval-report.json");
+  writeFileSync(matrixPath, JSON.stringify(acceptanceMatrix), "utf8");
+  writeFileSync(
+    gatesPath,
+    JSON.stringify({
+      gates: acceptanceMatrix.gates
+        .filter(({ ciDefault }) => ciDefault)
+        .map((gate) => ({ label: gate.label, status: "passed" })),
+    }),
+    "utf8",
+  );
+  writeFileSync(
+    evalPath,
+    JSON.stringify({ report: { total_tasks: 1, success_rate: 1, score_summary: {} } }),
+    "utf8",
+  );
+
+  const output = execFileSync(
+    process.execPath,
+    [
+      scriptPath,
+      "--json",
+      "--ci-default-only",
+      "--acceptance-json",
+      matrixPath,
+      "--gate-results",
+      gatesPath,
+      "--eval-report",
+      evalPath,
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  const parsed = JSON.parse(output);
+
+  assert.equal(parsed.acceptanceScope, "ci-default");
+  assert.equal(parsed.status, "passed");
+  assert.equal(parsed.acceptance.totalGates, 2);
+  assert.equal(parsed.acceptance.passedGates.length, 2);
+  assert.equal(parsed.acceptance.unknownGates.length, 0);
+  assert.equal(parsed.acceptance.ciDefault.totalGates, 2);
+});
+
 test("cli can fail when release confidence needs attention", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "forge-release-confidence-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

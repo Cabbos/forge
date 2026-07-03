@@ -52,7 +52,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "release confidence summary contract tests",
       command:
-        'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md',
+        'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && node scripts/release-confidence-summary.mjs --json --ci-default-only >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "ci-default-only" CHANGELOG.md && rg -q "ci-default-only" README.md && rg -q "ci-default-only" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md',
     },
     {
       label: "loop event journal contract tests",
