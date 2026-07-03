@@ -2053,6 +2053,116 @@ def test_forge_runtime_scores_explain_runtime_recovery_quality_failures() -> Non
     assert "verify-1:missing_recovery_action" in explanation
 
 
+def test_forge_runtime_scores_grade_failure_evidence_quality() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-failure",
+        passed=False,
+        duration_ms=10,
+        tool_count=1,
+        failure_category=FailureCategory.VERIFICATION_FAILED,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": False},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                failure_category="verification_failed",
+                failure_reason="Tests failed",
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_failure_evidence_ok"].score == 1.0
+    assert scores["forge_failure_evidence_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_failure_evidence_failures() -> None:
+    from app.scoring import score_trace
+
+    failed_trace = make_trace(
+        "forge-failure-bad",
+        passed=False,
+        duration_ms=10,
+        tool_count=1,
+        failure_category=FailureCategory.VERIFICATION_FAILED,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": False},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                failure_category="timeout",
+                failure_reason="",
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+    success_trace = make_trace(
+        "forge-failure-success-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                changed_files=[],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                failure_category="tool_error",
+                failure_reason="Tool failed despite success.",
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    failed_scores = score_trace(failed_trace)
+    success_scores = score_trace(success_trace)
+
+    assert failed_scores["forge_failure_evidence_ok"].score == 0.0
+    assert failed_scores["forge_failure_evidence_ok"].label == "failure_evidence_failed"
+    failed_explanation = failed_scores["forge_failure_evidence_ok"].explanation or ""
+    assert "failure_category:trace_category_mismatch:verification_failed!=timeout" in failed_explanation
+    assert "failure_reason:missing_failure_reason" in failed_explanation
+
+    assert success_scores["forge_failure_evidence_ok"].score == 0.0
+    assert success_scores["forge_failure_evidence_ok"].label == "failure_evidence_failed"
+    success_explanation = success_scores["forge_failure_evidence_ok"].explanation or ""
+    assert "failure_category:success_trace_has_failure_category:tool_error" in success_explanation
+    assert "failure_reason:success_trace_has_failure_reason" in success_explanation
+
+
 def test_forge_runtime_scores_accept_completion_eligibility_unknown() -> None:
     from app.scoring import score_trace
 
