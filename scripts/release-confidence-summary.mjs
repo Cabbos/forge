@@ -231,7 +231,7 @@ function summarizeGateExecution(gateResults) {
     gateResults.failedGateCount ??
       gates.filter((gate) => FAIL_STATUSES.has(normalizeStatus(gate?.status))).length,
   );
-  return {
+  const summary = {
     available: true,
     status: normalizeStatus(gateResults.status),
     selectedGateCount,
@@ -239,6 +239,11 @@ function summarizeGateExecution(gateResults) {
     failedGateCount,
     incomplete: selectedGateCount > executedGateCount,
   };
+  const reason = stringValue(gateResults.reason ?? gateResults.message ?? gateResults.error);
+  if (reason) {
+    summary.reason = reason;
+  }
+  return summary;
 }
 
 function summarizeGateBreakdown(gates, key) {
@@ -638,6 +643,9 @@ function appendExecutionSummary(lines, execution) {
     `Failed gates: ${execution.failedGateCount}`,
     `Incomplete execution: ${execution.incomplete ? "yes" : "no"}`,
   );
+  if (execution.reason) {
+    lines.push(`Reason: ${execution.reason}`);
+  }
 }
 
 function appendGateList(lines, title, gates) {
