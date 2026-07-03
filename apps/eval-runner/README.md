@@ -266,8 +266,10 @@ alongside prepared context, memory audit, permissions, file effects,
 verification, provider usage, recovery, A2A child capsules, memory recall,
 gateway, and runtime recovery facts. Eval scoring includes schema identity scoring
 for schema/source/session/loop-task evidence, permission decision evidence scoring
-for replayable permission ledger records and full-access block boundaries, context budget bucket scoring for
-explicit `turn_prepared.context_estimate` buckets, plus a dedicated
+for replayable permission ledger records and full-access block boundaries,
+verification evidence quality scoring for command/pass/exit/duration
+consistency, context budget bucket scoring for explicit
+`turn_prepared.context_estimate` buckets, plus a dedicated
 completion-eligibility consistency score: `unknown` authority is accepted, while
 commit-eligible claims with blockers, nonterminal status, or malformed fact
 buckets are flagged. Explicit V1 evidence is still accepted; missing V2-only
