@@ -268,7 +268,8 @@ gateway, and runtime recovery facts. Eval scoring includes schema identity scori
 for schema/source/session/loop-task evidence, permission decision evidence scoring
 for replayable permission ledger records and full-access block boundaries,
 verification evidence quality scoring for command/pass/exit/duration
-consistency, context budget bucket scoring for explicit
+consistency, file effects evidence scoring for changed-file and diff alignment,
+context budget bucket scoring for explicit
 `turn_prepared.context_estimate` buckets, plus a dedicated
 completion-eligibility consistency score: `unknown` authority is accepted, while
 commit-eligible claims with blockers, nonterminal status, or malformed fact
