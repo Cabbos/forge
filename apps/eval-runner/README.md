@@ -271,6 +271,8 @@ verification evidence quality scoring for command/pass/exit/duration
 consistency, prepared-turn evidence scoring for prompt/context-source quality,
 file effects evidence scoring for changed-file and diff alignment,
 tool/shell evidence scoring for replayable tool and shell facts,
+usage unknown conflict scoring so unknown token usage keeps an explicit reason
+and does not carry invented token or cost values,
 failure evidence scoring for category/reason alignment,
 continuity lessons scoring for formed lesson metadata,
 memory recall audit scoring for candidate decision reasons and injected
