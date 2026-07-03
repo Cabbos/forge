@@ -9,6 +9,7 @@ ONLY_LABEL=""
 GREP_LABEL=""
 GREP_LABEL_MATCH=""
 CI_DEFAULT=0
+RESULTS_JSON=""
 
 while [[ "$#" -gt 0 ]]; do
   arg="$1"
@@ -41,6 +42,14 @@ while [[ "$#" -gt 0 ]]; do
       CI_DEFAULT=1
       shift
       ;;
+    --results-json)
+      if [[ "$#" -lt 2 || -z "$2" ]]; then
+        echo "Missing value for --results-json" >&2
+        exit 2
+      fi
+      RESULTS_JSON="$2"
+      shift 2
+      ;;
     -h|--help)
       SHOW_HELP=1
       shift
@@ -61,6 +70,11 @@ if [[ "$selector_count" -gt 1 ]]; then
   exit 2
 fi
 
+if [[ -n "$RESULTS_JSON" && ( "$DRY_RUN" -eq 1 || "$LIST_JSON" -eq 1 || "$SHOW_HELP" -eq 1 ) ]]; then
+  echo "Use --results-json only when executing gates." >&2
+  exit 2
+fi
+
 if [[ -n "$GREP_LABEL" ]]; then
   GREP_LABEL_MATCH="$(printf '%s' "$GREP_LABEL" | tr '[:upper:]' '[:lower:]')"
 fi
@@ -68,6 +82,12 @@ fi
 COMMAND_LABELS=()
 COMMANDS=()
 GATE_DOMAINS=()
+RESULT_LABELS=()
+RESULT_COMMANDS=()
+RESULT_STATUSES=()
+RESULT_EXIT_CODES=()
+RESULT_DURATION_MS=()
+RESULT_REASONS=()
 CURRENT_DOMAIN="foundation"
 
 set_domain() {
@@ -81,13 +101,90 @@ add_gate() {
   COMMANDS+=("$2")
 }
 
+now_ms() {
+  node -e 'process.stdout.write(String(Date.now()))'
+}
+
+record_gate_result() {
+  local label="$1"
+  local command="$2"
+  local exit_code="$3"
+  local duration_ms="$4"
+  local status="passed"
+  local reason=""
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    status="failed"
+    reason="exit_code_$exit_code"
+  fi
+
+  RESULT_LABELS+=("$label")
+  RESULT_COMMANDS+=("$command")
+  RESULT_STATUSES+=("$status")
+  RESULT_EXIT_CODES+=("$exit_code")
+  RESULT_DURATION_MS+=("$duration_ms")
+  RESULT_REASONS+=("$reason")
+}
+
+write_results_json() {
+  local overall_exit_code="$1"
+  if [[ -z "$RESULTS_JSON" ]]; then
+    return
+  fi
+
+  {
+    printf '%s\0%s\0%s\0' "$ROOT_DIR" "$overall_exit_code" "${#SELECTED_INDICES[@]}"
+    for index in "${!RESULT_LABELS[@]}"; do
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+        "${RESULT_LABELS[$index]}" \
+        "${RESULT_COMMANDS[$index]}" \
+        "${RESULT_STATUSES[$index]}" \
+        "${RESULT_EXIT_CODES[$index]}" \
+        "${RESULT_DURATION_MS[$index]}" \
+        "${RESULT_REASONS[$index]}"
+    done
+  } | node -e '
+const fs = require("node:fs");
+const outputPath = process.argv[1];
+const parts = fs.readFileSync(0).toString("utf8").split("\0");
+const workingDirectory = parts.shift();
+const overallExitCode = Number(parts.shift());
+const selectedGateCount = Number(parts.shift());
+if (parts.at(-1) === "") parts.pop();
+
+const gates = [];
+for (let index = 0; index < parts.length; index += 6) {
+  gates.push({
+    label: parts[index],
+    command: parts[index + 1],
+    status: parts[index + 2],
+    exitCode: Number(parts[index + 3]),
+    durationMs: Number(parts[index + 4]),
+    reason: parts[index + 5] || null,
+  });
+}
+
+const payload = {
+  schemaVersion: 1,
+  generatedAt: new Date().toISOString(),
+  workingDirectory,
+  status: overallExitCode === 0 ? "passed" : "failed",
+  selectedGateCount,
+  executedGateCount: gates.length,
+  failedGateCount: gates.filter((gate) => gate.status === "failed").length,
+  gates,
+};
+fs.writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+' "$RESULTS_JSON"
+}
+
 add_gate 'acceptance matrix contract tests' 'node --test scripts/acceptance.test.mjs'
 add_gate 'gitnexus fallback wrapper contract tests' 'node --test scripts/gitnexus-safe.test.mjs'
 add_gate 'desktop production build' 'npm run build:desktop'
 add_gate 'website production build' 'npm run build:website'
 set_domain 'eval'
 add_gate 'eval runner test suite' 'npm run test:eval'
-add_gate 'release confidence summary contract tests' 'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && node scripts/release-confidence-summary.mjs --json --ci-default-only >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "ci-default-only" CHANGELOG.md && rg -q "ci-default-only" README.md && rg -q "ci-default-only" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md'
+add_gate 'release confidence summary contract tests' 'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && node scripts/release-confidence-summary.mjs --json --ci-default-only >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "ci-default-only" CHANGELOG.md && rg -q "ci-default-only" README.md && rg -q "ci-default-only" apps/eval-runner/README.md && rg -q "results-json" CHANGELOG.md && rg -q "results-json" README.md && rg -q "results-json" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md'
 set_domain 'runtime'
 add_gate 'loop event journal contract tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib'
 add_gate 'projection rebuild/replay tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib'
@@ -295,7 +392,7 @@ fi
 
 if [[ "$SHOW_HELP" -eq 1 ]]; then
   cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>] [--ci-default]
+Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>] [--ci-default] [--results-json <path>]
 
 Runs the Forge Level 3 runtime acceptance gates:
 EOF
@@ -315,6 +412,7 @@ Use --list-json to print the same gate plan as machine-readable JSON.
 Use --only with an exact gate label to run or dry-run one gate.
 Use --grep to filter gates by case-insensitive label substring.
 Use --ci-default to run or list only fast-contract and runtime-core gates.
+Use --results-json to write executed gate statuses for release confidence reports.
 Do not combine --only, --grep, and --ci-default.
 EOF
   exit 0
@@ -417,6 +515,7 @@ echo "Forge Level 3 runtime acceptance suite"
 echo "Working directory: $ROOT_DIR"
 echo
 
+overall_exit_code=0
 for index in "${SELECTED_INDICES[@]}"; do
   label="${COMMAND_LABELS[$index]}"
   command="${COMMANDS[$index]}"
@@ -425,6 +524,20 @@ for index in "${SELECTED_INDICES[@]}"; do
   else
     echo "==> $label"
     echo "    $command"
+    started_at_ms="$(now_ms)"
+    set +e
     (cd "$ROOT_DIR" && eval "$command")
+    gate_exit_code="$?"
+    set -e
+    finished_at_ms="$(now_ms)"
+    duration_ms=$((finished_at_ms - started_at_ms))
+    record_gate_result "$label" "$command" "$gate_exit_code" "$duration_ms"
+    if [[ "$gate_exit_code" -ne 0 ]]; then
+      overall_exit_code="$gate_exit_code"
+      break
+    fi
   fi
 done
+
+write_results_json "$overall_exit_code"
+exit "$overall_exit_code"

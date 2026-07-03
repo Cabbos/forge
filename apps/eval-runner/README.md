@@ -244,13 +244,14 @@ task-level `scores`, and includes failing task ids in the Markdown summary when
 only task-level score evidence is available, and reports CI-default gate
 totals/pass/fail/unknown counts beside the full matrix. Add
 `--ci-default-only` when a PR fast-gate report should ignore non-CI gates without
-supplied results. Boundary evidence can also list `capabilityClaims`; declared
-capabilities with passing `evidenceGate` and `evidenceScore` references are
-listed as verified capability evidence, while a missing acceptance gate, missing
-acceptance result, failing acceptance gate, missing eval score, or failing eval
-score is reported as missing capability evidence. Add `--fail-on-attention` when
-the summary is being used as a gate and should exit nonzero for
-`attention_required` or `failed`.
+supplied results. `scripts/acceptance.sh --results-json gate-results.json`
+produces the gate-results payload consumed by `--gate-results`. Boundary evidence
+can also list `capabilityClaims`; declared capabilities with passing
+`evidenceGate` and `evidenceScore` references are listed as verified capability evidence,
+while a missing acceptance gate, missing acceptance result, failing
+acceptance gate, missing eval score, or failing eval score is reported as
+missing capability evidence. Add `--fail-on-attention` when the summary is being
+used as a gate and should exit nonzero for `attention_required` or `failed`.
 
 ## Forge Runtime Evidence
 
