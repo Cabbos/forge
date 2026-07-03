@@ -97,6 +97,8 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
         scores["forge_file_effects_evidence_ok"] = file_effects_evidence_score(
             trace, evidence
         )
+    if evidence.tool_calls or evidence.shell_outputs:
+        scores["forge_tool_shell_evidence_ok"] = tool_shell_evidence_score(trace, evidence)
     if has_context_budget_evidence(evidence):
         scores["forge_context_budget_buckets_ok"] = context_budget_bucket_score(evidence)
     if has_memory_recall_evidence(evidence):
@@ -423,6 +425,96 @@ def file_effects_evidence_findings(
             findings.append(f"file_diff_{index}:missing_change_type")
         if not first_string(file_diff, ["diff", "patch", "unified_diff"]):
             findings.append(f"file_diff_{index}:missing_diff")
+
+    return findings
+
+
+def tool_shell_evidence_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:
+    findings = tool_shell_evidence_findings(trace, evidence)
+    return runtime_score(
+        "forge_tool_shell_evidence_ok",
+        not findings,
+        "ok" if not findings else "tool_shell_evidence_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def tool_shell_evidence_findings(
+    trace: AgentTrace, evidence: ForgeRunEvidence
+) -> list[str]:
+    findings: list[str] = []
+    evidence_tool_names: list[str] = []
+    evidence_shell_commands: list[str] = []
+
+    for index, tool_call in enumerate(evidence.tool_calls, start=1):
+        if not isinstance(tool_call, dict):
+            findings.append(f"tool_call_{index}:invalid_tool_call")
+            continue
+        tool_id = first_string(
+            tool_call,
+            ["call_id", "tool_call_id", "event_id", "source_event_id", "id", "request_id"],
+        )
+        if tool_id is None:
+            findings.append(f"tool_call_{index}:missing_replay_identity")
+
+        tool_name = first_string(tool_call, ["tool_name", "name", "tool", "command"])
+        if tool_name is None:
+            findings.append(f"tool_call_{index}:missing_tool_name")
+        else:
+            evidence_tool_names.append(tool_name)
+
+        if not first_string(tool_call, ["status", "outcome", "result", "state"]):
+            findings.append(f"tool_call_{index}:missing_status")
+        duration_ms = int_or_none(tool_call.get("duration_ms"))
+        if "duration_ms" in tool_call and (duration_ms is None or duration_ms < 0):
+            findings.append(f"tool_call_{index}:invalid_duration_ms")
+
+    for trace_tool_name in shell_output_commands(trace.tool_calls):
+        if evidence.tool_calls and trace_tool_name not in set(evidence_tool_names):
+            findings.append(f"trace:evidence_tool_calls_mismatch:{trace_tool_name}")
+
+    for index, shell_output in enumerate(evidence.shell_outputs, start=1):
+        if not isinstance(shell_output, dict):
+            findings.append(f"shell_output_{index}:invalid_shell_output")
+            continue
+        shell_id = first_string(
+            shell_output,
+            ["event_id", "shell_id", "source_event_id", "id", "command_id"],
+        )
+        if shell_id is None:
+            findings.append(f"shell_output_{index}:missing_replay_identity")
+
+        command = first_string(shell_output, ["command", "shell_command"])
+        if command is None:
+            findings.append(f"shell_output_{index}:missing_command")
+        else:
+            evidence_shell_commands.append(command)
+
+        exit_code = int_or_none(shell_output.get("exit_code"))
+        if "exit_code" not in shell_output:
+            findings.append(f"shell_output_{index}:missing_exit_code")
+        elif exit_code is None:
+            findings.append(f"shell_output_{index}:invalid_exit_code")
+
+        success = bool_or_none(shell_output.get("success"))
+        if success is not None and exit_code is not None:
+            if success and exit_code != 0:
+                findings.append(f"shell_output_{index}:success_conflicts_with_exit_code")
+            if not success and exit_code == 0:
+                findings.append(f"shell_output_{index}:success_conflicts_with_exit_code")
+
+        duration_ms = int_or_none(shell_output.get("duration_ms"))
+        if "duration_ms" in shell_output and (duration_ms is None or duration_ms < 0):
+            findings.append(f"shell_output_{index}:invalid_duration_ms")
+
+        for stream in ["stdout", "stderr"]:
+            stream_value = shell_output.get(stream)
+            if isinstance(stream_value, str) and contains_secret_like_text(stream_value):
+                findings.append(f"shell_output_{index}:{stream}_contains_secret_signal")
+
+    for trace_shell_command in shell_output_commands(trace.shell_outputs):
+        if evidence.shell_outputs and trace_shell_command not in set(evidence_shell_commands):
+            findings.append(f"trace:evidence_shell_outputs_mismatch:{trace_shell_command}")
 
     return findings
 
@@ -1521,6 +1613,10 @@ def normalized_strings(value: object) -> list[str]:
     return [item.strip() for item in as_list(value) if isinstance(item, str) and item.strip()]
 
 
+def shell_output_commands(outputs: list) -> list[str]:
+    return [output.command for output in outputs if output.command.strip()]
+
+
 def dict_items(value: object) -> list[dict]:
     return [item for item in as_list(value) if isinstance(item, dict)]
 
@@ -1531,6 +1627,18 @@ def int_or_none(value: object) -> int | None:
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return None
+
+
+def bool_or_none(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def contains_secret_like_text(text: str) -> bool:
+    lowered = text.casefold()
+    return any(
+        marker in lowered
+        for marker in [".env", "api_key", "api key", "token=", "password=", "sk-"]
+    )
 
 
 def red_team_score(name: str, ok: bool, *, failure_label: str) -> EvalScore:

@@ -491,6 +491,152 @@ def test_forge_runtime_scores_explain_file_effects_evidence_failures() -> None:
     assert "file_diff_2:path_not_in_changed_files:src/untracked.py" in explanation
 
 
+def test_forge_runtime_scores_grade_tool_shell_evidence_quality() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-tool-shell",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "shell_outputs": [
+                ShellOutput(
+                    command="npm test",
+                    stdout="passed",
+                    stderr="",
+                    exit_code=0,
+                    duration_ms=120,
+                )
+            ]
+        }
+    )
+    trace = trace.model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                tool_calls=[
+                    {
+                        "call_id": "tool-call-1",
+                        "tool_name": "tool-0",
+                        "status": "completed",
+                        "duration_ms": 10,
+                    }
+                ],
+                shell_outputs=[
+                    {
+                        "event_id": "shell-1",
+                        "command": "npm test",
+                        "exit_code": 0,
+                        "duration_ms": 120,
+                        "stdout": "passed",
+                        "stderr": "",
+                    }
+                ],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_tool_shell_evidence_ok"].score == 1.0
+    assert scores["forge_tool_shell_evidence_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_tool_shell_evidence_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-tool-shell-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "shell_outputs": [
+                ShellOutput(command="npm test", stdout="passed", exit_code=0, duration_ms=120)
+            ]
+        }
+    )
+    trace = trace.model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-task-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "sources": [{"kind": "user_input", "label": "prompt"}]
+                        }
+                    }
+                },
+                tool_calls=[
+                    {
+                        "call_id": "",
+                        "tool_name": "",
+                        "status": "",
+                        "duration_ms": -1,
+                    },
+                    {
+                        "call_id": "tool-call-2",
+                        "tool_name": "other-tool",
+                        "status": "completed",
+                    },
+                ],
+                shell_outputs=[
+                    {
+                        "event_id": "",
+                        "command": "",
+                        "exit_code": "zero",
+                        "duration_ms": -5,
+                        "stdout": "API_KEY=secret",
+                    },
+                    {
+                        "event_id": "shell-2",
+                        "command": "npm run build",
+                        "exit_code": 0,
+                        "success": False,
+                        "duration_ms": 1,
+                    },
+                ],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
+                completion_eligibility={"status": "unknown"},
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_tool_shell_evidence_ok"].score == 0.0
+    assert scores["forge_tool_shell_evidence_ok"].label == "tool_shell_evidence_failed"
+    explanation = scores["forge_tool_shell_evidence_ok"].explanation or ""
+    assert "tool_call_1:missing_replay_identity" in explanation
+    assert "tool_call_1:missing_tool_name" in explanation
+    assert "tool_call_1:missing_status" in explanation
+    assert "tool_call_1:invalid_duration_ms" in explanation
+    assert "trace:evidence_tool_calls_mismatch:tool-0" in explanation
+    assert "shell_output_1:missing_replay_identity" in explanation
+    assert "shell_output_1:missing_command" in explanation
+    assert "shell_output_1:invalid_exit_code" in explanation
+    assert "shell_output_1:invalid_duration_ms" in explanation
+    assert "shell_output_1:stdout_contains_secret_signal" in explanation
+    assert "shell_output_2:success_conflicts_with_exit_code" in explanation
+    assert "trace:evidence_shell_outputs_mismatch:npm test" in explanation
+
+
 def test_forge_runtime_scores_grade_permission_decision_evidence() -> None:
     from app.scoring import score_trace
 
