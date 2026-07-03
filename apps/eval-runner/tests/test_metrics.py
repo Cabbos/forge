@@ -441,6 +441,91 @@ def test_forge_runtime_scores_ignore_filtered_memory_duplicates_as_context_sourc
     assert scores["forge_context_duplication_ok"].label == "ok"
 
 
+def test_forge_runtime_scores_grade_context_budget_bucket_evidence() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-context-budget",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "buckets": {
+                                "visible_input": 32,
+                                "hidden_system": 96,
+                                "memory": 128,
+                                "files": 256,
+                                "project_records": 64,
+                                "compacted_transcript": 512,
+                                "reserved_output": 1024,
+                            },
+                            "total_tokens": 2112,
+                        }
+                    }
+                },
+                changed_files=["src/example.py"],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"input_tokens": 10, "output_tokens": 2},
+                failure_category="none",
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_context_budget_buckets_ok"].score == 1.0
+    assert scores["forge_context_budget_buckets_ok"].label == "ok"
+
+
+def test_forge_runtime_scores_explain_context_budget_bucket_failures() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-context-budget-bad",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {
+                            "buckets": {
+                                "visible_input": 32,
+                                "memory": -1,
+                                "files": "unknown",
+                                "reserved_output": 0,
+                            }
+                        }
+                    }
+                },
+                changed_files=["src/example.py"],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"input_tokens": 10, "output_tokens": 2},
+                failure_category="none",
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_context_budget_buckets_ok"].score == 0.0
+    assert scores["forge_context_budget_buckets_ok"].label == "context_budget_bucket_evidence_failed"
+    explanation = scores["forge_context_budget_buckets_ok"].explanation or ""
+    assert "hidden_system:missing_bucket" in explanation
+    assert "memory:invalid_token_count" in explanation
+    assert "files:invalid_token_count" in explanation
+    assert "project_records:missing_bucket" in explanation
+    assert "compacted_transcript:missing_bucket" in explanation
+    assert "reserved_output:missing_reserved_budget" in explanation
+
+
 def test_forge_runtime_scores_explain_memory_recall_quality_failures() -> None:
     from app.scoring import score_trace
 

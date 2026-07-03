@@ -88,6 +88,8 @@ def forge_run_evidence_scores(trace: AgentTrace) -> dict[str, EvalScore]:
     }
     if evidence.a2a_child_capsules:
         scores["forge_a2a_child_evidence_complete_ok"] = a2a_child_evidence_score(evidence)
+    if has_context_budget_evidence(evidence):
+        scores["forge_context_budget_buckets_ok"] = context_budget_bucket_score(evidence)
     if has_memory_recall_evidence(evidence):
         scores["forge_memory_recall_quality_ok"] = memory_recall_quality_score(evidence)
     if evidence.gateway:
@@ -527,6 +529,129 @@ def nested_contains_string(value: object, target: str) -> bool:
 
 def has_memory_recall_evidence(evidence: ForgeRunEvidence) -> bool:
     return bool(memory_recall_candidates(evidence) or memory_context_body_leaks(evidence))
+
+
+def has_context_budget_evidence(evidence: ForgeRunEvidence) -> bool:
+    estimate = context_estimate(evidence)
+    if not estimate:
+        return False
+    bucket_keys = {
+        "buckets",
+        "token_buckets",
+        "visible_input",
+        "visible_input_tokens",
+        "hidden_system",
+        "hidden_system_tokens",
+        "memory",
+        "memory_tokens",
+        "files",
+        "file_tokens",
+        "project_records",
+        "project_record_tokens",
+        "compacted_transcript",
+        "compacted_transcript_tokens",
+        "reserved_output",
+        "reserved_output_tokens",
+    }
+    return any(key in estimate for key in bucket_keys)
+
+
+def context_budget_bucket_score(evidence: ForgeRunEvidence) -> EvalScore:
+    findings = context_budget_bucket_findings(evidence)
+    return runtime_score(
+        "forge_context_budget_buckets_ok",
+        not findings,
+        "ok" if not findings else "context_budget_bucket_evidence_failed",
+        ", ".join(findings) if findings else None,
+    )
+
+
+def context_budget_bucket_findings(evidence: ForgeRunEvidence) -> list[str]:
+    buckets = context_budget_buckets(evidence)
+    required_buckets = [
+        "visible_input",
+        "hidden_system",
+        "memory",
+        "files",
+        "project_records",
+        "compacted_transcript",
+        "reserved_output",
+    ]
+    findings: list[str] = []
+    for bucket in required_buckets:
+        if bucket not in buckets:
+            findings.append(f"{bucket}:missing_bucket")
+            continue
+        tokens = buckets[bucket]
+        if tokens is None or tokens < 0:
+            findings.append(f"{bucket}:invalid_token_count")
+        if bucket == "reserved_output" and tokens is not None and tokens <= 0:
+            findings.append(f"{bucket}:missing_reserved_budget")
+    return findings
+
+
+def context_budget_buckets(evidence: ForgeRunEvidence) -> dict[str, int | None]:
+    estimate = context_estimate(evidence) or {}
+    buckets: dict[str, int | None] = {}
+    for source in [estimate.get("buckets"), estimate.get("token_buckets")]:
+        if isinstance(source, dict):
+            for raw_name, raw_value in source.items():
+                normalized = normalize_context_bucket_name(str(raw_name))
+                if normalized:
+                    buckets[normalized] = context_bucket_token_count(raw_value)
+    for raw_name, raw_value in estimate.items():
+        normalized = normalize_context_bucket_name(str(raw_name))
+        if normalized:
+            buckets.setdefault(normalized, context_bucket_token_count(raw_value))
+    return buckets
+
+
+def context_estimate(evidence: ForgeRunEvidence) -> dict | None:
+    prepared = evidence.prepared_context.get("turn_prepared")
+    if not isinstance(prepared, dict):
+        return None
+    estimate = prepared.get("context_estimate")
+    return estimate if isinstance(estimate, dict) else None
+
+
+def normalize_context_bucket_name(name: str) -> str | None:
+    normalized = name.casefold().replace("-", "_")
+    if normalized.endswith("_tokens"):
+        normalized = normalized.removesuffix("_tokens")
+    aliases = {
+        "user_input": "visible_input",
+        "visible": "visible_input",
+        "hidden": "hidden_system",
+        "system": "hidden_system",
+        "file": "files",
+        "project_record": "project_records",
+        "project": "project_records",
+        "transcript": "compacted_transcript",
+        "compacted": "compacted_transcript",
+        "reserved": "reserved_output",
+        "output_reserve": "reserved_output",
+    }
+    normalized = aliases.get(normalized, normalized)
+    allowed = {
+        "visible_input",
+        "hidden_system",
+        "memory",
+        "files",
+        "project_records",
+        "compacted_transcript",
+        "reserved_output",
+    }
+    return normalized if normalized in allowed else None
+
+
+def context_bucket_token_count(value: object) -> int | None:
+    if isinstance(value, dict):
+        for key in ["tokens", "estimated_tokens", "input_tokens", "count"]:
+            tokens = int_or_none(value.get(key))
+            if tokens is not None:
+                return tokens
+        return None
+    return int_or_none(value)
 
 
 def gateway_runtime_safety_score(evidence: ForgeRunEvidence) -> EvalScore:
