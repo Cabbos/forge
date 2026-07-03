@@ -970,3 +970,34 @@ This file is the local audit trail for valuable Forge upgrade summaries synced t
 
 ### 边界
 - 本条同步由本地 hook 生成，只记录高层升级，不包含完整 diff。
+
+<!-- feishu-sync: uploaded url="https://www.feishu.cn/wiki/PQOcwfctwiQCE8kpT3zcTQJ2nne" -->
+## 2026-07-03 · 26bc33b · docs(eval): document memory recall audit scoring
+
+### 升级摘要
+本次 Forge 升级围绕「docs(eval): document memory recall audit scoring」展开，自动识别为需要同步的高价值变更。
+
+### 影响范围
+- Acceptance
+- Docs
+
+### 关键改动
+- CHANGELOG.md
+- README.md
+- apps/desktop/README.md
+- apps/eval-runner/README.md
+- scripts/acceptance.sh
+- scripts/acceptance.test.mjs
+
+### 验证证据
+- `cd apps/eval-runner && uv run pytest tests/test_metrics.py -q`
+- `cd apps/eval-runner && uv run pytest tests/test_cases.py tests/test_metrics.py -q`
+- `git diff --check`
+- `bash -n scripts/acceptance.sh`
+- `node --test scripts/acceptance.test.mjs`
+- `cd apps/eval-runner && uv run pytest tests/test_cases.py tests/test_metrics.py tests/test_runner.py -q`
+- `scripts/acceptance.sh --only 'desktop eval promotion evidence smoke'`
+- `npm run test:eval`
+
+### 边界
+- 本条同步由本地 hook 生成，只记录高层升级，不包含完整 diff。
