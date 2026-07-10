@@ -12,12 +12,14 @@ from app.metrics import calculate_metrics
 from app.models import (
     AgentTrace,
     EvalArtifact,
+    EvalProvider,
     EvaluationRun,
     EvaluationTask,
     FailureCategory,
     MetricsSummary,
     QueueStatus,
     RunStatus,
+    TrustGateResult,
 )
 from app.reporting import build_report
 
@@ -290,9 +292,21 @@ class SQLiteStorage:
         return EvaluationRun(
             run_id=row["id"],
             status=RunStatus(row["status"]),
+            provider=(
+                EvalProvider(provider_value)
+                if (provider_value := _row_val("provider")) is not None
+                else None
+            ),
+            model=_row_val("model"),
+            case_source=_row_val("case_source"),
             requested_task_ids=json.loads(row["requested_task_ids_json"]),
             traces=traces,
             metrics=MetricsSummary.model_validate(json.loads(row["metrics_json"])),
+            trust_result=(
+                TrustGateResult.model_validate_json(trust_payload)
+                if (trust_payload := _row_val("trust_result_json"))
+                else TrustGateResult()
+            ),
             started_at=datetime.fromisoformat(row["started_at"]),
             ended_at=datetime.fromisoformat(row["ended_at"]),
             duration_ms=row["duration_ms"],
@@ -301,6 +315,7 @@ class SQLiteStorage:
             failure_reason=_row_val("failure_reason"),
             failure_category=FailureCategory(_row_val("failure_category") or "none"),
             worker_id=_row_val("worker_id"),
+            lease_token=_row_val("lease_token"),
             claimed_at=_parse_datetime(_row_val("claimed_at")),
             heartbeat_at=_parse_datetime(_row_val("heartbeat_at")),
             lease_expires_at=_parse_datetime(_row_val("lease_expires_at")),
@@ -382,6 +397,8 @@ class SQLiteStorage:
                     provider TEXT,
                     model TEXT,
                     case_source TEXT,
+                    trust_result_json TEXT,
+                    lease_token TEXT,
                     success_rate REAL NOT NULL DEFAULT 0,
                     verification_pass_rate REAL NOT NULL DEFAULT 0,
                     scope_violation_rate REAL NOT NULL DEFAULT 0,
@@ -435,7 +452,11 @@ class SQLiteStorage:
                 );
                 """
             )
+            ensure_column(connection, "eval_runs", "provider", "TEXT")
+            ensure_column(connection, "eval_runs", "model", "TEXT")
             ensure_column(connection, "eval_runs", "case_source", "TEXT")
+            ensure_column(connection, "eval_runs", "trust_result_json", "TEXT")
+            ensure_column(connection, "eval_runs", "lease_token", "TEXT")
             ensure_column(connection, "eval_runs", "retry_count", "INTEGER NOT NULL DEFAULT 0")
             ensure_column(connection, "eval_runs", "max_retries", "INTEGER NOT NULL DEFAULT 0")
             ensure_column(connection, "eval_runs", "failure_reason", "TEXT")
@@ -571,8 +592,6 @@ class SQLiteStorage:
 
     def _upsert_run_connection(self, connection: sqlite3.Connection, run: EvaluationRun) -> None:
         report = build_report(run.traces)
-        provider = run.provider or first_trace_attr(run.traces, "provider")
-        model = run.model or first_trace_attr(run.traces, "model")
         now = utc_now_iso()
         existing = connection.execute(
             "SELECT created_at FROM eval_runs WHERE id = ?",
@@ -584,12 +603,13 @@ class SQLiteStorage:
             INSERT INTO eval_runs (
                 id, status, requested_task_ids_json, provider, model, success_rate,
                 case_source, verification_pass_rate, scope_violation_rate,
-                failure_categories_json, metrics_json, started_at, ended_at, duration_ms,
+                failure_categories_json, metrics_json, trust_result_json,
+                started_at, ended_at, duration_ms,
                 retry_count, max_retries, failure_reason, failure_category,
-                worker_id, claimed_at, heartbeat_at, lease_expires_at,
+                worker_id, lease_token, claimed_at, heartbeat_at, lease_expires_at,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 status = excluded.status,
                 requested_task_ids_json = excluded.requested_task_ids_json,
@@ -601,6 +621,7 @@ class SQLiteStorage:
                 scope_violation_rate = excluded.scope_violation_rate,
                 failure_categories_json = excluded.failure_categories_json,
                 metrics_json = excluded.metrics_json,
+                trust_result_json = excluded.trust_result_json,
                 started_at = excluded.started_at,
                 ended_at = excluded.ended_at,
                 duration_ms = excluded.duration_ms,
@@ -609,6 +630,7 @@ class SQLiteStorage:
                 failure_reason = excluded.failure_reason,
                 failure_category = excluded.failure_category,
                 worker_id = excluded.worker_id,
+                lease_token = excluded.lease_token,
                 claimed_at = excluded.claimed_at,
                 heartbeat_at = excluded.heartbeat_at,
                 lease_expires_at = excluded.lease_expires_at,
@@ -618,14 +640,15 @@ class SQLiteStorage:
                 run.run_id,
                 run.status.value,
                 json.dumps(run.requested_task_ids),
-                provider,
-                model,
+                run.provider.value if run.provider is not None else None,
+                run.model,
                 report.success_rate,
                 run.case_source,
                 report.verification_pass_rate,
                 report.scope_violation_rate,
                 json.dumps(report.failure_categories),
                 run.metrics.model_dump_json(),
+                run.trust_result.model_dump_json(),
                 run.started_at.isoformat(),
                 run.ended_at.isoformat(),
                 run.duration_ms,
@@ -634,6 +657,7 @@ class SQLiteStorage:
                 run.failure_reason,
                 run.failure_category.value,
                 run.worker_id,
+                run.lease_token,
                 run.claimed_at.isoformat() if run.claimed_at is not None else None,
                 run.heartbeat_at.isoformat() if run.heartbeat_at is not None else None,
                 run.lease_expires_at.isoformat() if run.lease_expires_at is not None else None,
@@ -804,13 +828,6 @@ def optional_bool_to_int(value: bool | None) -> int | None:
     if value is None:
         return None
     return int(value)
-
-
-def first_trace_attr(traces: Sequence[AgentTrace], attr: str) -> str | None:
-    if not traces:
-        return None
-    value = getattr(traces[0], attr)
-    return str(value) if value is not None else None
 
 
 def artifact_for_path(run_id: str, kind: str, path: Path) -> EvalArtifact:

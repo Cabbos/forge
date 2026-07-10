@@ -48,6 +48,10 @@ test("acceptance script dry-run lists the final product gates", () => {
     { label: "gitnexus fallback wrapper contract tests", command: "node --test scripts/gitnexus-safe.test.mjs" },
     { label: "desktop production build", command: "npm run build:desktop" },
     { label: "website production build", command: "npm run build:website" },
+    {
+      label: "desktop deterministic signal cleanup",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"',
+    },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {
       label: "release confidence summary contract tests",

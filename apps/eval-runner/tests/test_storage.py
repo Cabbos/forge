@@ -10,11 +10,14 @@ from app.metrics import calculate_metrics
 from app.models import (
     AgentTrace,
     EvalArtifact,
+    EvalProvider,
     EvaluationRun,
     EvaluationTask,
     FailureCategory,
     RunStatus,
     ShellOutput,
+    TrustGateResult,
+    TrustStatus,
     VerificationResult,
 )
 from app.storage import InMemoryStorage, RunAlreadyTerminalError, SQLiteStorage
@@ -108,6 +111,18 @@ def make_artifact(artifacts_path: Path, run_id: str, *, kind: str = "stdout") ->
     )
 
 
+def test_evaluation_run_can_represent_legacy_missing_execution_identity() -> None:
+    run = make_run("legacy").model_copy(
+        update={"provider": None, "model": None, "case_source": None}
+    )
+
+    assert run.provider is None
+    assert run.model is None
+    assert run.case_source is None
+    assert run.lease_token is None
+    assert run.trust_result.status == TrustStatus.UNKNOWN
+
+
 def test_dataset_fingerprint_is_stable_for_same_cases() -> None:
     from app.cases import load_cases
     from app.datasets import dataset_fingerprint
@@ -173,6 +188,96 @@ def storage_factories() -> list[tuple[str, StorageFactory]]:
             ),
         ),
     ]
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_round_trips_execution_identity(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    run = make_run("identity-run").model_copy(
+        update={
+            "provider": EvalProvider.FORGE,
+            "model": "deepseek-v4-flash",
+            "case_source": "/cases/release",
+        }
+    )
+
+    storage.create_run(run)
+    fetched = storage.get_run(run.run_id)
+
+    assert fetched is not None
+    assert fetched.provider == EvalProvider.FORGE
+    assert fetched.model == "deepseek-v4-flash"
+    assert fetched.case_source == "/cases/release"
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_storage_contract_round_trips_trust_and_lease(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    storage = storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+    run = make_run("trust-lease-run").model_copy(
+        update={
+            "trust_result": TrustGateResult(
+                status=TrustStatus.TRUSTED,
+                trusted=True,
+            ),
+            "lease_token": "lease-token-1",
+        }
+    )
+
+    storage.create_run(run)
+    fetched = storage.get_run(run.run_id)
+
+    assert fetched is not None
+    assert fetched.trust_result == run.trust_result
+    assert fetched.lease_token == "lease-token-1"
+
+
+def test_sqlite_storage_migrates_legacy_execution_identity_columns(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    db_path = tmp_path / "legacy.db"
+    write_tasks(tasks_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE eval_runs (id TEXT PRIMARY KEY, status TEXT NOT NULL, "
+            "requested_task_ids_json TEXT NOT NULL, metrics_json TEXT NOT NULL, "
+            "started_at TEXT NOT NULL, ended_at TEXT NOT NULL, duration_ms INTEGER NOT NULL, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+
+    SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=db_path,
+        artifacts_path=tmp_path / "artifacts",
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(eval_runs)")}
+    assert {
+        "provider",
+        "model",
+        "case_source",
+        "trust_result_json",
+        "lease_token",
+    } <= columns
 
 
 @pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())

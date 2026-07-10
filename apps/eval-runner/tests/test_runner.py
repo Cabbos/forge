@@ -3,13 +3,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.models import (
     AgentTrace,
+    EvalProvider,
     EvaluationTask,
     FailureCategory,
     FileDiff,
     ForgeRunEvidence,
+    ProcessOutcome,
+    RunCreateRequest,
     ShellOutput,
+    WorkspaceObservation,
 )
 from app.runner import (
     DeterministicMockRunner,
@@ -17,6 +24,44 @@ from app.runner import (
     continuity_db_diagnostic,
     create_runner,
 )
+
+
+def test_run_create_request_rejects_unknown_provider() -> None:
+    with pytest.raises(ValidationError):
+        RunCreateRequest(provider="unknown-provider", model="model-a")
+
+
+def test_task_and_trace_accept_required_workspace_evidence_contracts() -> None:
+    from datetime import UTC, datetime
+
+    task = EvaluationTask(
+        id="evidence-contract",
+        title="Evidence contract",
+        prompt="Run the task.",
+        required_scores=["scope_ok"],
+    )
+    observation = WorkspaceObservation(
+        available=True,
+        source="filesystem_snapshot",
+        changed_files=["src/app.py"],
+    )
+    now = datetime.now(UTC)
+    trace = AgentTrace(
+        task_id=task.id,
+        user_prompt=task.prompt,
+        model="model-a",
+        provider=EvalProvider.MOCK,
+        required_scores=task.required_scores,
+        workspace_observation=observation,
+        final_answer="done",
+        started_at=now,
+        ended_at=now,
+        duration_ms=0,
+    )
+
+    assert trace.required_scores == ["scope_ok"]
+    assert trace.workspace_observation == observation
+    assert ProcessOutcome.CANCELLED.value == "cancelled"
 
 
 def test_agent_adapter_metadata_is_attached_to_trace() -> None:
@@ -431,6 +476,27 @@ def test_runner_factory_selects_mock_and_forge_runners(tmp_path: Path) -> None:
         create_runner(provider="forge", model="local-forge", forge_command=command),
         ForgeAgentRunner,
     )
+
+
+def test_runner_factory_rejects_unknown_provider() -> None:
+    with pytest.raises(ValueError, match="Unsupported eval provider: unknown-provider"):
+        create_runner(provider="unknown-provider", model="model-a")
+
+
+def test_validate_execution_identity_is_fail_closed() -> None:
+    from app.runner import validate_execution_identity
+
+    assert validate_execution_identity(
+        EvalProvider.FORGE,
+        "model-a",
+        "/cases/release",
+    ) == (EvalProvider.FORGE, "model-a", "/cases/release")
+    with pytest.raises(ValueError, match="missing provider"):
+        validate_execution_identity(None, "model-a", "/cases/release")
+    with pytest.raises(ValueError, match="missing model"):
+        validate_execution_identity(EvalProvider.FORGE, " ", "/cases/release")
+    with pytest.raises(ValueError, match="missing case_source"):
+        validate_execution_identity(EvalProvider.FORGE, "model-a", "")
 
 
 def test_forge_runner_converts_external_trace_payload(tmp_path: Path) -> None:
