@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 class FailureCategory(StrEnum):
@@ -26,14 +26,47 @@ class RunStatus(StrEnum):
     TIMEOUT = "timeout"
 
 
+class EvalProvider(StrEnum):
+    MOCK = "mock"
+    FORGE = "forge"
+
+
+class TrustStatus(StrEnum):
+    UNKNOWN = "unknown"
+    TRUSTED = "trusted"
+    UNTRUSTED = "untrusted"
+
+
+class ProcessOutcome(StrEnum):
+    COMPLETED = "completed"
+    TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
+
+
 class EvalModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class TrustGateResult(EvalModel):
-    trusted: bool
+    status: TrustStatus = TrustStatus.UNKNOWN
+    trusted: bool = False
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_trusted_status(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "status" not in value and value.get("trusted") is True:
+            return {**value, "status": TrustStatus.TRUSTED}
+        return value
+
+    @model_validator(mode="after")
+    def validate_status(self) -> "TrustGateResult":
+        if self.trusted != (self.status == TrustStatus.TRUSTED):
+            raise ValueError("trusted must match trust status")
+        if self.status == TrustStatus.TRUSTED and self.blockers:
+            raise ValueError("trusted result cannot contain blockers")
+        return self
 
 
 class CaseQualityIssue(EvalModel):
@@ -56,6 +89,36 @@ class LeakageCheck(EvalModel):
     scrubbed_items: list[str] = Field(default_factory=list)
 
 
+class WorkspaceObservation(EvalModel):
+    available: bool
+    source: str
+    changed_files: list[str] = Field(default_factory=list)
+    added_files: list[str] = Field(default_factory=list)
+    modified_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
+    reported_changed_files: list[str] = Field(default_factory=list)
+    mismatch_files: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ScoreCoverage(EvalModel):
+    mean: float | None = Field(default=None, ge=0.0, le=1.0)
+    observed: int = Field(ge=0)
+    expected: int = Field(ge=0)
+    coverage: float = Field(ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "ScoreCoverage":
+        if self.observed > self.expected:
+            raise ValueError("observed score count cannot exceed expected score count")
+        expected_coverage = self.observed / self.expected if self.expected else 1.0
+        if abs(self.coverage - expected_coverage) > 1e-12:
+            raise ValueError("score coverage does not match observed/expected counts")
+        if self.observed == 0 and self.mean is not None:
+            raise ValueError("mean must be null when no score was observed")
+        return self
+
+
 class EvaluationTask(EvalModel):
     id: str
     title: str
@@ -71,6 +134,7 @@ class EvaluationTask(EvalModel):
     expected_success: bool = True
     expected_files_changed: list[str] = Field(default_factory=list)
     forbidden_files_changed: list[str] = Field(default_factory=list)
+    required_scores: list[str] = Field(default_factory=list)
     max_duration_seconds: int | None = Field(default=None, ge=1)
     max_model_rounds: int | None = Field(default=None, ge=1)
     tags: list[str] = Field(default_factory=list)
@@ -146,7 +210,7 @@ class AgentTrace(EvalModel):
     task_id: str
     user_prompt: str
     model: str
-    provider: str
+    provider: EvalProvider
     context_files: list[str] = Field(default_factory=list)
     raw_events: list[dict[str, Any]] = Field(default_factory=list)
     tool_calls: list[ShellOutput] = Field(default_factory=list)
@@ -156,6 +220,7 @@ class AgentTrace(EvalModel):
     scope_violations: list[str] = Field(default_factory=list)
     expected_files_changed: list[str] = Field(default_factory=list)
     forbidden_files_changed: list[str] = Field(default_factory=list)
+    required_scores: list[str] = Field(default_factory=list)
     final_answer: str
     verification_result: VerificationResult | None = None
     error: str | None = None
@@ -170,6 +235,9 @@ class AgentTrace(EvalModel):
     trajectory_path: str | None = None
     cost_usd: float | None = Field(default=None, ge=0)
     forge_run_evidence: ForgeRunEvidence | None = None
+    workspace_observation: WorkspaceObservation | None = None
+    sandbox_scrub: LeakageCheck | None = None
+    patch_replay: WorkspaceCheck | None = None
     started_at: datetime
     ended_at: datetime
     duration_ms: int = Field(ge=0)
@@ -264,6 +332,8 @@ class BacktestReport(EvalModel):
     total_cost_usd: float = 0.0
     failure_categories: dict[str, int] = Field(default_factory=dict)
     score_summary: dict[str, float] = Field(default_factory=dict)
+    score_coverage: dict[str, ScoreCoverage] = Field(default_factory=dict)
+    trust_result: TrustGateResult = Field(default_factory=TrustGateResult)
     tasks: list[TraceSummary] = Field(default_factory=list)
     continuity: ContinuityReport | None = None
 
@@ -299,20 +369,21 @@ class ExperimentSnapshot(EvalModel):
 
 class RunCreateRequest(EvalModel):
     task_ids: list[str] | None = None
-    provider: str = "mock"
-    model: str = "deterministic-agent-v1"
+    provider: EvalProvider = EvalProvider.MOCK
+    model: str = Field(default="deterministic-agent-v1", min_length=1)
     max_retries: int = Field(default=1, ge=0)
 
 
 class EvaluationRun(EvalModel):
     run_id: str
     status: RunStatus
-    provider: str = "mock"
-    model: str = "deterministic-agent-v1"
+    provider: EvalProvider | None = None
+    model: str | None = None
     case_source: str | None = None
     requested_task_ids: list[str]
     traces: list[AgentTrace] = Field(default_factory=list)
     metrics: MetricsSummary
+    trust_result: TrustGateResult = Field(default_factory=TrustGateResult)
     started_at: datetime
     ended_at: datetime
     duration_ms: int = Field(ge=0)
@@ -321,6 +392,7 @@ class EvaluationRun(EvalModel):
     failure_reason: str | None = None
     failure_category: FailureCategory = FailureCategory.NONE
     worker_id: str | None = None
+    lease_token: str | None = None
     claimed_at: datetime | None = None
     heartbeat_at: datetime | None = None
     lease_expires_at: datetime | None = None

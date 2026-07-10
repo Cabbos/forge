@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.models import (
     AgentTrace,
+    EvalProvider,
     EvaluationTask,
     FailureCategory,
     FileDiff,
@@ -470,14 +471,38 @@ class ForgeAgentRunner:
         )
 
 
+def validate_execution_identity(
+    provider: EvalProvider | None,
+    model: str | None,
+    case_source: str | None,
+) -> tuple[EvalProvider, str, str]:
+    if provider is None:
+        raise ValueError("Persisted eval run is missing provider")
+    if model is None or not model.strip():
+        raise ValueError("Persisted eval run is missing model")
+    if case_source is None or not case_source.strip():
+        raise ValueError("Persisted eval run is missing case_source")
+    return provider, model, case_source
+
+
 def create_runner(
-    provider: str,
+    provider: EvalProvider | str,
     model: str,
     forge_command: str | Sequence[str] | None = None,
 ) -> EvalRunner:
-    if provider == "forge":
-        return ForgeAgentRunner(provider=provider, model=model, command=forge_command)
-    return DeterministicMockRunner(provider=provider, model=model)
+    try:
+        normalized_provider = EvalProvider(provider)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported eval provider: {provider}") from exc
+    if normalized_provider == EvalProvider.MOCK:
+        return DeterministicMockRunner(provider=normalized_provider, model=model)
+    if normalized_provider == EvalProvider.FORGE:
+        return ForgeAgentRunner(
+            provider=normalized_provider,
+            model=model,
+            command=forge_command,
+        )
+    raise ValueError(f"Unsupported eval provider: {provider}")
 
 
 def normalize_command(command: str | Sequence[str] | None) -> list[str] | None:

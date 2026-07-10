@@ -1,14 +1,51 @@
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from app.models import (
     AgentTrace,
     BacktestReport,
     FailureCategory,
+    ScoreCoverage,
     ShellOutput,
     TaskMetric,
+    TrustGateResult,
+    TrustStatus,
     VerificationResult,
 )
 from app.reporting import build_report
+
+
+def test_trust_result_rejects_inconsistent_status_and_boolean() -> None:
+    with pytest.raises(ValidationError):
+        TrustGateResult(status=TrustStatus.TRUSTED, trusted=False)
+
+
+def test_trust_result_infers_trusted_status_for_legacy_constructor() -> None:
+    result = TrustGateResult(trusted=True)
+
+    assert result.status == TrustStatus.TRUSTED
+
+
+def test_score_coverage_requires_consistent_counts() -> None:
+    with pytest.raises(ValidationError):
+        ScoreCoverage(mean=1.0, observed=2, expected=1, coverage=1.0)
+
+
+def test_backtest_report_defaults_to_unknown_trust_and_empty_score_coverage() -> None:
+    report = BacktestReport(
+        total_tasks=0,
+        success_rate=0.0,
+        verification_pass_rate=0.0,
+        scope_violation_rate=0.0,
+        avg_duration_ms=0.0,
+        avg_model_rounds=0.0,
+        avg_confirm_requests=0.0,
+    )
+
+    assert report.score_coverage == {}
+    assert report.trust_result.status == TrustStatus.UNKNOWN
 
 
 def test_trust_gates_fail_closed_without_harness_check() -> None:

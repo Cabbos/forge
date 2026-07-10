@@ -1123,7 +1123,7 @@ async fn forgotten_memory_not_injected_via_select_context() {
         selected_before
             .selected
             .iter()
-            .any(|m| m.memory_id == "will-forget"),
+            .any(|m| m.memory_id == "wiki_memory:will-forget"),
         "memory should be injected before forgetting"
     );
 
@@ -1145,7 +1145,7 @@ async fn forgotten_memory_not_injected_via_select_context() {
         !selected_after
             .selected
             .iter()
-            .any(|m| m.memory_id == "will-forget"),
+            .any(|m| m.memory_id == "wiki_memory:will-forget"),
         "forgotten memory must not be injected"
     );
 

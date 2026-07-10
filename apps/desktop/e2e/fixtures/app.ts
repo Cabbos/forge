@@ -12,6 +12,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
     const callbacks = new Map<number, (data: unknown) => void>();
     const workingDir = initialWorkingDir ?? "/Users/cabbos/project/forge";
     const sessionWorkingDirs = new Map<string, string>();
+    const continuityExperiences: Array<Record<string, unknown>> = [];
     if (initialWorkingDir === null) {
       window.localStorage.removeItem("forge-working-dir");
     } else {
@@ -1754,6 +1755,30 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           const discarded = { ...proposal, status: "discarded" };
           forgeWikiProposals.set(String(discarded.id), discarded);
           return discarded;
+        }
+        case "list_continuity_experiences":
+          return continuityExperiences.filter(
+            (experience) => !args.workingDir || experience.project_path === args.workingDir,
+          );
+        case "search_continuity_experiences": {
+          const query = String(args.query ?? "").trim().toLocaleLowerCase();
+          const matches = continuityExperiences.filter((experience) => {
+            if (args.workingDir && experience.project_path !== args.workingDir) return false;
+            const tags = Array.isArray(experience.tags) ? experience.tags.join(" ") : "";
+            return `${String(experience.title ?? "")}\n${String(experience.body ?? "")}\n${tags}`
+              .toLocaleLowerCase()
+              .includes(query);
+          });
+          return matches.slice(0, Number(args.limit ?? matches.length));
+        }
+        case "update_continuity_experience_status": {
+          const experience = continuityExperiences.find(
+            (candidate) => candidate.id === args.experienceId,
+          );
+          if (!experience) throw new Error("continuity experience not found");
+          experience.status = args.status;
+          experience.updated_at_ms = Date.now();
+          return experience;
         }
         default:
           return undefined;

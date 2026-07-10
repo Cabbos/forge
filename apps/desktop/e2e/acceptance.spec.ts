@@ -85,6 +85,22 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(records.getByText("确认卡片回归")).toBeVisible();
   });
 
+  test("continuity query stays console-clean", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const records = await expandArchiveRecords(page);
+    await expect(records.getByText("经验回忆")).toBeVisible();
+    await expect(records.getByText("还没有经验")).toBeVisible();
+
+    expect(consoleErrors).not.toContainEqual(expect.stringContaining("Query data cannot be undefined"));
+  });
+
   test("project status card can trust the current project across conversations", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock

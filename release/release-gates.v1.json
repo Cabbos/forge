@@ -1,0 +1,127 @@
+{
+  "id": "public-beta-r3-v1",
+  "version": 1,
+  "gates": [
+    {
+      "id": "desktop-safety",
+      "required_for": ["R1", "R3"],
+      "label": "desktop command execution safety baseline",
+      "domain": "desktop-safety",
+      "tier": "security",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'desktop command execution safety baseline'",
+      "evidence_schema": "desktop-safety.v1",
+      "ci_default": false
+    },
+    {
+      "id": "eval-trust",
+      "required_for": ["R2", "R3"],
+      "label": "eval trusted execution baseline",
+      "domain": "eval",
+      "tier": "trust",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'eval trusted execution baseline'",
+      "evidence_schema": "eval-trust.v1",
+      "ci_default": false
+    },
+    {
+      "id": "desktop-deterministic",
+      "required_for": ["R1", "R3"],
+      "label": "desktop deterministic signal cleanup",
+      "domain": "desktop-safety",
+      "tier": "contract",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'desktop deterministic signal cleanup'",
+      "evidence_schema": "desktop-deterministic.v1",
+      "ci_default": true
+    },
+    {
+      "id": "desktop-credentials",
+      "required_for": ["R1", "R3"],
+      "label": "desktop credential and redaction safety baseline",
+      "domain": "desktop-safety",
+      "tier": "security",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'desktop credential and redaction safety baseline'",
+      "evidence_schema": "desktop-credentials.v1",
+      "ci_default": false
+    },
+    {
+      "id": "desktop-checkpoint",
+      "required_for": ["R1", "R3"],
+      "label": "desktop checkpoint restore safety baseline",
+      "domain": "desktop-safety",
+      "tier": "security",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'desktop checkpoint restore safety baseline'",
+      "evidence_schema": "desktop-checkpoint.v1",
+      "ci_default": false
+    },
+    {
+      "id": "desktop-csp",
+      "required_for": ["R1", "R3"],
+      "label": "desktop CSP and capability safety baseline",
+      "domain": "desktop-safety",
+      "tier": "security",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'desktop CSP and capability safety baseline'",
+      "evidence_schema": "desktop-csp.v1",
+      "ci_default": false
+    },
+    {
+      "id": "eval-identity",
+      "required_for": ["R2", "R3"],
+      "label": "eval execution identity baseline",
+      "domain": "eval",
+      "tier": "trust",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'eval execution identity baseline'",
+      "evidence_schema": "eval-identity.v1",
+      "ci_default": false
+    },
+    {
+      "id": "eval-workspace",
+      "required_for": ["R2", "R3"],
+      "label": "eval independent workspace evidence baseline",
+      "domain": "eval",
+      "tier": "trust",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'eval independent workspace evidence baseline'",
+      "evidence_schema": "eval-workspace.v1",
+      "ci_default": false
+    },
+    {
+      "id": "eval-worker",
+      "required_for": ["R2", "R3"],
+      "label": "eval authenticated fenced worker baseline",
+      "domain": "eval",
+      "tier": "trust",
+      "manual_allowed": false,
+      "command": "scripts/acceptance.sh --only 'eval authenticated fenced worker baseline'",
+      "evidence_schema": "eval-worker.v1",
+      "ci_default": false
+    },
+    {
+      "id": "candidate-manifest",
+      "required_for": ["R3"],
+      "label": "release candidate manifest validation",
+      "domain": "release",
+      "tier": "contract",
+      "manual_allowed": false,
+      "command": "node scripts/validate-release-manifest.mjs --manifest release/evidence/$TAG/candidate-manifest.json --require-state R3",
+      "evidence_schema": "release-manifest.v1",
+      "ci_default": true
+    },
+    {
+      "id": "macos-artifact",
+      "required_for": ["R4"],
+      "label": "signed notarized macOS artifact",
+      "domain": "distribution",
+      "tier": "manual-artifact",
+      "manual_allowed": true,
+      "command": "node scripts/verify-macos-artifact.mjs",
+      "evidence_schema": "macos-artifact.v1",
+      "ci_default": false
+    }
+  ]
+}

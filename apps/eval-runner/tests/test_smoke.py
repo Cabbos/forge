@@ -63,6 +63,50 @@ def test_golden_harness_check_passes_for_expected_success_cases(tmp_path: Path) 
     assert run_golden_harness_check(tasks_path) is True
 
 
+def test_queued_sqlite_forge_run_preserves_execution_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.storage import SQLiteStorage
+    from app.worker import EvalWorker
+
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    monkeypatch.setenv("FORGE_EVAL_RUN_EXECUTION_MODE", "queued")
+    monkeypatch.setenv("FORGE_EVAL_TASKS_PATH", str(tasks_path))
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    client = TestClient(create_app(storage=storage))
+    created = client.post(
+        "/runs",
+        json={
+            "task_ids": ["task-pass"],
+            "provider": "forge",
+            "model": "local-forge",
+            "max_retries": 0,
+        },
+    )
+    assert created.status_code == 201
+    run_id = created.json()["run_id"]
+
+    completed = EvalWorker(storage=storage, forge_command=None).run_once()
+    run_data = client.get(f"/runs/{run_id}").json()
+
+    assert completed is not None
+    assert run_data["status"] == "completed"
+    assert run_data["provider"] == "forge"
+    assert run_data["model"] == "local-forge"
+    assert run_data["case_source"] == str(tasks_path)
+    assert run_data["traces"][0]["provider"] == "forge"
+    assert run_data["traces"][0]["error"] == "forge_command_not_configured"
+
+
 @pytest.mark.slow
 class TestQueuedServiceSmoke:
     """Smoke tests that spin up the real FastAPI service and worker process."""

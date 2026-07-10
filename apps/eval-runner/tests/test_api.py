@@ -108,6 +108,23 @@ def test_api_can_create_forge_run_without_configured_command_as_traceable_failur
     assert payload["traces"][0]["failure_category"] == "runner_error"
 
 
+def test_api_rejects_unknown_provider(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    client = TestClient(create_app(storage=InMemoryStorage(tasks_path=tasks_path)))
+
+    response = client.post(
+        "/runs",
+        json={
+            "task_ids": ["task-pass"],
+            "provider": "unknown-provider",
+            "model": "model-a",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_api_can_load_eval_case_directory_and_expose_report(tmp_path: Path) -> None:
     case_dir = tmp_path / "eval_cases" / "small-edit-success"
     (case_dir / "fixture" / "src").mkdir(parents=True)
