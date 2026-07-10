@@ -15,7 +15,14 @@ export const REQUIRED_R3_LABELS = Object.freeze([
   "desktop protocol sync",
   "website production build",
   "eval quality suite",
-  "release candidate manifest validation",
+  "release manifest contract validation",
+]);
+
+export const REQUIRED_R4_LABELS = Object.freeze([
+  "macOS signing configuration contract",
+  "public beta artifact verification contract",
+  "public beta install evidence contract",
+  "website verified download contract",
 ]);
 
 export function validateReleaseGateProfile(profile, { requiredState = null } = {}) {
@@ -36,6 +43,15 @@ export function validateReleaseGateProfile(profile, { requiredState = null } = {
       const gate = (profile.gates ?? []).find((candidate) => candidate.label === label);
       if (!gate) errors.push(`missing required R3 gate: ${label}`);
       else if (!gate.required_for.includes("R3")) errors.push(`gate is not required for R3: ${label}`);
+    }
+  }
+  if (requiredState === "R4") {
+    for (const label of [...REQUIRED_R3_LABELS, ...REQUIRED_R4_LABELS]) {
+      const gate = (profile.gates ?? []).find((candidate) => candidate.label === label);
+      if (!gate) errors.push(`missing required R4 gate: ${label}`);
+      else if (!gate.required_for.includes("R4") && !gate.required_for.includes("R3")) {
+        errors.push(`gate is not part of the R4 lineage: ${label}`);
+      }
     }
   }
   return { ok: errors.length === 0, errors };

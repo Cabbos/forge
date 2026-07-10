@@ -144,7 +144,7 @@ Keep the forgotten-memory negative assertion intact so the test still proves tha
 
 Run the focused command again. Expected: one passed, zero failed.
 
-- [ ] **Step 4 (Red): Add a production-build warning contract**
+- [x] **Step 4 (Red): Add a production-build warning contract**
 
 Create `apps/desktop/scripts/desktop-deterministic-signals.test.mjs` with a test that runs the real build from `apps/desktop` and includes complete output on failure:
 
@@ -185,7 +185,7 @@ npm --prefix apps/desktop run check:deterministic-signals
 
 Expected: the build itself succeeds, but the test fails because the captured output contains the current unknown-at-rule warnings.
 
-- [ ] **Step 5 (Green): Move the desktop pipeline coherently to Tailwind 4**
+- [x] **Step 5 (Green): Move the desktop pipeline coherently to Tailwind 4**
 
 From `apps/desktop`, update and lock the build dependencies:
 
@@ -228,8 +228,6 @@ Replace the Tailwind header in `src/styles/globals.css` with this ordered header
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
-
 @config "../../tailwind.config.js";
 @source "../../index.html";
 @source "../**/*.{js,ts,jsx,tsx}";
@@ -245,7 +243,9 @@ Remove the Tailwind 3 directives:
 
 Do not remove `tw-animate-css` or `shadcn/tailwind.css`; `dialog.tsx`, `dropdown-menu.tsx`, and `tooltip.tsx` consume their Tailwind 4 variants.
 
-- [ ] **Step 6 (Refactor): Verify generated utilities and visual primitives, not only warning text**
+Import `@fontsource-variable/geist` from `src/main.tsx` so Vite resolves and fingerprints the font files instead of leaving package-relative `./files/*` URLs in the flattened CSS.
+
+- [x] **Step 6 (Refactor): Verify generated utilities and visual primitives, not only warning text**
 
 Run:
 

@@ -9,7 +9,7 @@
       "domain": "desktop-safety",
       "tier": "security",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'desktop command execution safety baseline'",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test harness_test project_defined -- --nocapture",
       "evidence_schema": "desktop-safety.v1",
       "ci_default": false
     },
@@ -20,7 +20,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'eval trusted execution baseline'",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_cli.py tests/test_api.py tests/test_worker.py -q -k \"trust\"",
       "evidence_schema": "eval-trust.v1",
       "ci_default": false
     },
@@ -31,7 +31,7 @@
       "domain": "desktop-safety",
       "tier": "contract",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'desktop deterministic signal cleanup'",
+      "command": "npm --prefix apps/desktop run check:deterministic-signals && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep \"continuity query stays console-clean\"",
       "evidence_schema": "desktop-deterministic.v1",
       "ci_default": true
     },
@@ -42,7 +42,7 @@
       "domain": "desktop-safety",
       "tier": "security",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'desktop credential and redaction safety baseline'",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_store --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_migration --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml redaction --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml profile --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml log_store --lib",
       "evidence_schema": "desktop-credentials.v1",
       "ci_default": false
     },
@@ -53,7 +53,7 @@
       "domain": "desktop-safety",
       "tier": "security",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'desktop checkpoint restore safety baseline'",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib",
       "evidence_schema": "desktop-checkpoint.v1",
       "ci_default": false
     },
@@ -64,7 +64,7 @@
       "domain": "desktop-safety",
       "tier": "security",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'desktop CSP and capability safety baseline'",
+      "command": "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle",
       "evidence_schema": "desktop-csp.v1",
       "ci_default": false
     },
@@ -75,7 +75,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'eval execution identity baseline'",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py tests/test_smoke.py -q -k \"execution_identity or unknown_provider or queued_forge\"",
       "evidence_schema": "eval-identity.v1",
       "ci_default": false
     },
@@ -86,7 +86,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'eval independent workspace evidence baseline'",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_workspace_observer.py tests/test_runner.py -q -k \"workspace\"",
       "evidence_schema": "eval-workspace.v1",
       "ci_default": false
     },
@@ -97,7 +97,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "scripts/acceptance.sh --only 'eval authenticated fenced worker baseline'",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py -q -k \"auth or lease or stale\"",
       "evidence_schema": "eval-worker.v1",
       "ci_default": false
     },
@@ -152,30 +152,63 @@
       "domain": "eval",
       "tier": "quality",
       "manual_allowed": false,
-      "command": "npm run test:eval",
+      "command": "cd apps/eval-runner && uv sync --frozen --dev && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app",
       "evidence_schema": "eval-quality.v1",
       "ci_default": true
     },
     {
-      "id": "candidate-manifest",
+      "id": "manifest-contract",
       "required_for": ["R3"],
-      "label": "release candidate manifest validation",
+      "label": "release manifest contract validation",
       "domain": "release",
       "tier": "contract",
       "manual_allowed": false,
-      "command": "node scripts/validate-release-manifest.mjs --manifest release/evidence/$TAG/candidate-manifest.json --require-state R3",
+      "command": "node --test scripts/validate-release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs",
       "evidence_schema": "release-manifest.v1",
       "ci_default": true
     },
     {
-      "id": "macos-artifact",
+      "id": "macos-signing-config",
       "required_for": ["R4"],
-      "label": "signed notarized macOS artifact",
+      "label": "macOS signing configuration contract",
+      "domain": "distribution",
+      "tier": "manual-artifact",
+      "manual_allowed": false,
+      "command": "node --test scripts/macos-signing-config.test.mjs",
+      "evidence_schema": "macos-signing-config.v1",
+      "ci_default": false
+    },
+    {
+      "id": "public-beta-artifact",
+      "required_for": ["R4"],
+      "label": "public beta artifact verification contract",
       "domain": "distribution",
       "tier": "manual-artifact",
       "manual_allowed": true,
       "command": "node scripts/verify-macos-artifact.mjs",
       "evidence_schema": "macos-artifact.v1",
+      "ci_default": false
+    },
+    {
+      "id": "public-beta-install",
+      "required_for": ["R4"],
+      "label": "public beta install evidence contract",
+      "domain": "distribution",
+      "tier": "manual-artifact",
+      "manual_allowed": true,
+      "command": "node scripts/validate-macos-install-evidence.mjs",
+      "evidence_schema": "macos-install.v1",
+      "ci_default": false
+    },
+    {
+      "id": "website-verified-download",
+      "required_for": ["R4"],
+      "label": "website verified download contract",
+      "domain": "distribution",
+      "tier": "contract",
+      "manual_allowed": false,
+      "command": "npm --prefix apps/website run test && npm --prefix apps/website run test:e2e",
+      "evidence_schema": "website-release.v1",
       "ci_default": false
     }
   ]

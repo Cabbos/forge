@@ -51,9 +51,67 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "desktop deterministic signal cleanup",
       command:
-        'tmp="${TMPDIR:-/tmp}/forge-desktop-build.$$"; npm --prefix apps/desktop run build >"$tmp" 2>&1; code=$?; cat "$tmp"; if [ "$code" -ne 0 ]; then rm -f "$tmp"; exit "$code"; fi; if rg -qi "Unknown at rule|@theme|@utility|@custom-variant" "$tmp"; then rm -f "$tmp"; exit 1; fi; rm -f "$tmp"; cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"',
+        'npm --prefix apps/desktop run check:deterministic-signals && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"',
+    },
+    {
+      label: "desktop command execution safety baseline",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test harness_test project_defined -- --nocapture",
+    },
+    {
+      label: "desktop credential and redaction safety baseline",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_store --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_migration --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml redaction --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml profile --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml log_store --lib",
+    },
+    {
+      label: "desktop checkpoint restore safety baseline",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib",
+    },
+    {
+      label: "desktop CSP and capability safety baseline",
+      command:
+        "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle",
+    },
+    {
+      label: "desktop frontend architecture",
+      command: "npm --prefix apps/desktop run check:frontend-architecture",
+    },
+    {
+      label: "desktop protocol sync",
+      command: "npm --prefix apps/desktop run check:protocol",
     },
     { label: "eval runner test suite", command: "npm run test:eval" },
+    {
+      label: "eval quality suite",
+      command:
+        "cd apps/eval-runner && uv sync --frozen --dev && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app",
+    },
+    {
+      label: "eval execution identity baseline",
+      command:
+        'cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py tests/test_smoke.py -q -k "execution_identity or unknown_provider or queued_forge"',
+    },
+    {
+      label: "eval independent workspace evidence baseline",
+      command:
+        'cd apps/eval-runner && uv run pytest tests/test_workspace_observer.py tests/test_runner.py -q -k "workspace"',
+    },
+    {
+      label: "eval trusted execution baseline",
+      command:
+        'cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_cli.py tests/test_api.py tests/test_worker.py -q -k "trust"',
+    },
+    {
+      label: "eval authenticated fenced worker baseline",
+      command:
+        'cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py -q -k "auth or lease or stale"',
+    },
+    {
+      label: "release manifest contract validation",
+      command:
+        "node --test scripts/validate-release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs",
+    },
     {
       label: "release confidence summary contract tests",
       command:
@@ -436,7 +494,7 @@ test("acceptance script annotates gates with backend authority domains", () => {
 
   assert.deepEqual(
     matrix.domains.map(({ id }) => id),
-    ["foundation", "runtime", "permission", "usage-context", "memory", "gateway", "eval", "ui-evidence"],
+    ["foundation", "desktop-safety", "runtime", "permission", "usage-context", "memory", "gateway", "eval", "ui-evidence"],
   );
   assert.equal(
     matrix.gates.find(({ label }) => label === "runtime journal authority and recovery smoke").domain,
@@ -667,6 +725,28 @@ test("acceptance script can dry-run and list CI-default gates", () => {
   assert.ok(ciMatrix.gates.every((gate) => ["fast-contract", "runtime-core"].includes(gate.tier)));
 });
 
+test("acceptance script can dry-run and list an exact release profile", () => {
+  const profilePath = "release/release-gates.v1.json";
+  const profile = JSON.parse(readFileSync(join(root, profilePath), "utf8"));
+  const expectedLabels = profile.gates
+    .filter((gate) => gate.required_for.includes("R3"))
+    .map((gate) => gate.label);
+  const args = ["--release-profile", profilePath, "--require-state", "R3"];
+  const dryRun = execFileSync(scriptPath, ["--dry-run", ...args], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json", ...args], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.deepEqual(parseDryRunEntries(dryRun).map((entry) => entry.label), expectedLabels);
+  assert.deepEqual(matrix.gates.map((gate) => gate.label), expectedLabels);
+});
+
 test("acceptance script can write gate results JSON", (t) => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
   const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-results-"));
@@ -762,7 +842,10 @@ test("acceptance script rejects combining --only and --grep", () => {
   });
 
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /Use only one selector: --only, --grep, or --ci-default\./);
+  assert.match(
+    result.stderr,
+    /Use only one selector: --only, --grep, --ci-default, or --release-profile\./,
+  );
 });
 
 test("acceptance script rejects results-json for dry-run output", () => {
