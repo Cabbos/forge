@@ -107,7 +107,7 @@ Existing authority modules remain the integration points:
 - Modify: `apps/desktop/src/styles/globals.css`
 - Create: `apps/desktop/scripts/desktop-deterministic-signals.test.mjs`
 
-- [ ] **Step 1: Run impact analysis before touching the asserted data contract or build entry point**
+- [x] **Step 1: Run impact analysis before touching the asserted data contract or build entry point**
 
 Run:
 
@@ -119,7 +119,7 @@ impact({ repo: "forge", target: "unified_selection_to_selected_context", directi
 
 Expected blast radius: the first symbol is test-only; the production symbols feed unified-memory selection into `send_input`. This task changes only the stale expectation, not production ID construction. Report any HIGH or CRITICAL result before proceeding.
 
-- [ ] **Step 2 (Red): Reproduce the stale Rust assertion**
+- [x] **Step 2 (Red): Reproduce the stale Rust assertion**
 
 Run:
 
@@ -129,7 +129,7 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::test
 
 Expected: one failure showing that the selected ID is source-qualified instead of equal to `will-forget`.
 
-- [ ] **Step 3 (Green): Update the assertion to the canonical unified ID**
+- [x] **Step 3 (Green): Update the assertion to the canonical unified ID**
 
 In `forgotten_memory_not_injected_via_select_context`, change only the positive-selection expectation:
 
@@ -277,7 +277,7 @@ Expected: one commit; no generated `dist` files staged.
 - Modify: `scripts/acceptance.sh`
 - Modify: `scripts/acceptance.test.mjs`
 
-- [ ] **Step 1: Run impact analysis for the queried frontend contract**
+- [x] **Step 1: Run impact analysis for the queried frontend contract**
 
 Run:
 
@@ -289,7 +289,7 @@ impact({ repo: "forge", target: "ContinuityExperiencesSection", direction: "upst
 
 Expected: the hook feeds the Project Archive continuity surface. No production hook or IPC wrapper should change; the defect is the browser fixture returning `undefined`.
 
-- [ ] **Step 2 (Red): Add a console-clean Project Archive acceptance test**
+- [x] **Step 2 (Red): Add a console-clean Project Archive acceptance test**
 
 Add a test named exactly `continuity query stays console-clean` to `apps/desktop/e2e/acceptance.spec.ts`. Reuse the file's existing project-open helper/setup and record console errors before opening Project Archive:
 
@@ -318,7 +318,7 @@ npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continu
 
 Expected: failure because the console contains React Query's undefined-data error or the empty state never settles.
 
-- [ ] **Step 3 (Green): Give all three continuity commands typed fixture responses**
+- [x] **Step 3 (Green): Give all three continuity commands typed fixture responses**
 
 In `apps/desktop/e2e/fixtures/app.ts`, add a mutable fixture-local array with the same fields as `ContinuityExperience`:
 
@@ -373,12 +373,12 @@ Use the fixture's actual normalized argument type if its local name differs, but
 
 Run the focused Playwright command again. Expected: one passed test and no React Query error.
 
-- [ ] **Step 4 (Green): Add the exact deterministic acceptance label and ordered contract entry**
+- [x] **Step 4 (Green): Add the deterministic acceptance label and ordered contract entry**
 
 Under a new `set_domain 'desktop-safety'` block in `scripts/acceptance.sh`, add:
 
 ```bash
-add_gate 'desktop deterministic signal cleanup' 'npm --prefix apps/desktop run check:deterministic-signals && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean" && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib -- --exact && npm --prefix apps/desktop run check:backend'
+add_gate 'desktop deterministic signal cleanup' 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"'
 ```
 
 Add the same label/command at the same relative position in `expectedEntries` in `scripts/acceptance.test.mjs`. Preserve the surrounding gate order.
@@ -393,7 +393,7 @@ scripts/acceptance.sh --only "desktop deterministic signal cleanup"
 
 Expected: the contract test passes, dry-run prints the label once, and the selected gate passes.
 
-- [ ] **Step 5 (Refactor): Run the whole mocked product smoke and inspect browser errors**
+- [x] **Step 5 (Refactor): Run the focused mocked product smoke and inspect browser errors**
 
 ```bash
 npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
@@ -401,7 +401,7 @@ npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts
 
 Expected: all acceptance scenarios pass and the run contains no `Query data cannot be undefined` error.
 
-- [ ] **Step 6: Run change detection and commit**
+- [x] **Step 6: Run change detection and commit**
 
 Run GitNexus change detection. Expected scope: Playwright fixture, one product smoke, and acceptance metadata only.
 

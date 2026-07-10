@@ -56,7 +56,7 @@
 
 - [ ] Define gate states separately: `execution_status` (`not_started`, `running`, `completed`, `execution_failed`) and `condition_status` (`passed`, `failed`, `manual`, `unknown`). Preserve the legacy `status` field as a compatibility alias to `condition_status` for one migration window.
 - [ ] Define the profile fields `id`, `required_for` (`R1`–`R4`), `label`, `domain`, `tier`, `manual_allowed`, `command`, `evidence_schema`, and `ci_default`. A gate is required only when explicitly present in the profile.
-- [ ] Implement `scripts/validate-release-gate-profile.mjs` and its test. It must require the fixed five Desktop Safety labels, four Eval Trustworthiness labels, and four repository/distribution contract labels; reject duplicate labels, missing R3 entries, and any acceptance label that is not explicitly classified. Add `--release-profile release/release-gates.v1.json --require-state R3` as the only supported R3 selection path across acceptance, summary, and manifest commands.
+- [ ] Implement `scripts/validate-release-gate-profile.mjs` and its test. It must require these exact R1/R2/R3 labels: Desktop Safety (`desktop deterministic signal cleanup`, `desktop command execution safety baseline`, `desktop credential and redaction safety baseline`, `desktop checkpoint restore safety baseline`, `desktop CSP and capability safety baseline`); Eval (`eval execution identity baseline`, `eval independent workspace evidence baseline`, `eval trusted execution baseline`, `eval authenticated fenced worker baseline`); repository (`acceptance matrix contract tests`, `desktop frontend architecture`, `desktop protocol sync`, `website production build`, `eval quality suite`, `release candidate manifest validation`). R4 signing/notarization/install/website labels are separate Distribution gates. Reject duplicate/missing labels and any acceptance label that is not explicitly classified. Add `--release-profile release/release-gates.v1.json --require-state R3` as the only supported R3 selection path across acceptance, summary, and manifest commands.
 - [ ] Define manifest schema version 1 with `version`, `release_state`, `generated_at`, commit SHA, source branch, lockfile hashes, profile ID, selected gates, gate results, Eval evidence, artifacts, signing, notarization, installation smoke, website, previous release, GitNexus impact/fallback evidence, and residual risks. Require explicit `unknown` entries for selected gates that did not run.
 - [ ] Write validator tests for missing fields, duplicate gate labels, selected-vs-executed mismatch, failed/unknown required gates, mismatched commit SHA, missing lockfile hash, and a fully valid R3 fixture.
 - [ ] **Red:** run both test files before implementing validators; the invalid fixtures must fail validation.
@@ -81,7 +81,7 @@
 
 **Files:** `scripts/build-release-candidate.mjs`, `scripts/build-release-candidate.test.mjs`, `release/evidence/$TAG/candidate-manifest.json`, `scripts/acceptance.sh`, `package.json`, `.github/workflows/ci.yml`.
 
-- [ ] Implement `build-release-candidate.mjs` to require a clean Git tree, full commit SHA, profile ID, lockfile hashes, acceptance results, Eval Trust evidence, Desktop Safety evidence, and the GitNexus fallback/refresh record.
+- [ ] Implement `build-release-candidate.mjs` to require a clean Git tree, full commit SHA reachable from `main`, profile ID, lockfile hashes, full profile-selected acceptance results, R1 Desktop Safety evidence, R2 Eval Trust evidence, representative mock and real-Forge evidence with the real-Forge trust result explicitly `trusted`, and the GitNexus fallback/refresh record. Accept these as explicit `--acceptance-json`, `--desktop-safety-evidence`, `--eval-trust-evidence`, and `--gitnexus-evidence` inputs; never infer them from prose or newest artifacts.
 - [ ] Require an explicit `--tag desktop-vX.Y.Z-beta.N` and require the candidate commit to be reachable from integrated `main`; bind every input by SHA-256 and write the manifest atomically under `release/evidence/$TAG/candidate-manifest.json`; refuse overwrite unless `--replace-existing` is explicitly used for a still-R3 candidate with the same commit.
 - [ ] Upload the exact candidate JSON as the immutable CI artifact `forge-r3-<full-sha>`, where `<full-sha>` is the 40-character candidate commit SHA. Public Beta Distribution must resolve this artifact by tag target SHA, never by newest-run lookup.
 - [ ] **Red:** test that missing safety/eval evidence, dirty worktree, stale selected gate count, or a different commit SHA exits nonzero and writes no candidate.
@@ -103,15 +103,16 @@
 
 ## Task 9: Execute the merge train and bind evidence to main
 
-**Files:** `docs/superpowers/plans/2026-07-10-main-integration-release-truth.md`, `release/evidence/merge-train/<slice>.json`, `docs/release/merge-train-2026-07-10.md`.
+**Files:** `docs/superpowers/plans/2026-07-10-main-integration-release-truth.md`, `release/evidence/merge-train/$SLICE.json`, `docs/release/merge-train-2026-07-10.json`.
 
-- [ ] Create one branch/commit per completed task in this order: contract repairs, Desktop Safety, Eval Trustworthiness, runtime/evidence consumers, frontend consumers, release contract, distribution.
+- [ ] Create the merge-train ledger with one immutable row per `main..HEAD` commit: ordinal, parent SHA, commit SHA, source branch, stacked base/head, changed-file digest, owner plan, targeted gate result, GitNexus evidence, and merge timestamp. Use temporary worktrees/branches for each slice; no commit may appear twice or be omitted.
+- [ ] Create one branch/commit per completed task in this order: contract repairs, Desktop Safety, Eval Trustworthiness, runtime/evidence consumers, frontend consumers, release contract, distribution. Merge each stacked branch through the protected `main` review path only after its ledger row is complete.
 - [ ] For every slice, record parent SHA, child SHA, changed files, GitNexus impact result or fallback, targeted Red/Green commands, full relevant gate output paths, and residual risk. A later slice cannot update an earlier slice’s evidence.
 - [ ] Before each shared runtime/API change, run `mcp__gitnexus__impact` with `direction: "upstream"`, `includeTests: true`, and the exact file/symbol. Before every slice commit and again before the candidate, run `mcp__gitnexus__detect_changes` with `scope: "compare"`, `base_ref: "main"`; if refresh times out, attach the fallback report and set residual risk to `HIGH`.
 - [ ] Merge only slices whose required gates are green. Resolve conflicts by preserving the owning plan’s authority boundary; do not merge generated artifacts or credentials.
 - [ ] **Red:** run the full acceptance matrix from a clean install before the first merge slice and retain the known failures.
-- [ ] **Green:** after each slice run its targeted tests; after the final slice run clean app-level `npm ci`, `uv sync --dev`, Cargo checks, `npm run check:ci`, `npm run build:desktop`, `npm run build:website`, `npm run test:eval`, and the profile-selected R3 acceptance run (not the unrestricted matrix and not only `--ci-default`).
-- [ ] Once the integrated commit is on `main`, run `scripts/build-release-candidate.mjs --tag "$TAG" --release-profile release/release-gates.v1.json --require-state R3`, upload the resulting JSON as `forge-r3-<full-sha>`, and record the artifact URL/SHA in the merge-train evidence.
+- [ ] **Green:** after each slice run its targeted tests; after the final slice run clean app-level `npm ci`, `uv sync --dev`, Cargo checks, `npm run check:ci`, `npm run build:desktop`, `npm run build:website`, the full Eval quality suite, and the profile-selected R3 acceptance run (not the unrestricted matrix and not only `--ci-default`). Verify `git rev-list --reverse main..HEAD` equals the ledger rows and the final tree-equivalence snapshot is empty.
+- [ ] Once the integrated commit is on `main`, set `TAG=desktop-vX.Y.Z-beta.N` and run `scripts/build-release-candidate.mjs --tag "$TAG" --release-profile release/release-gates.v1.json --require-state R3 --acceptance-json /tmp/forge-r3-gates.json --desktop-safety-evidence release/evidence/merge-train/desktop-safety.json --eval-trust-evidence release/evidence/merge-train/eval-trustworthiness.json --gitnexus-evidence release/evidence/merge-train/gitnexus.json`; upload the resulting JSON from the dedicated `release-candidate` job as `forge-r3-<full-sha>`, download it by exact commit SHA for Distribution, and record the artifact URL/SHA.
 - [ ] Commit the merge-train record as `docs(release): record main integration evidence`.
 
 ## Task 10: Handoff R3 to Public Beta Distribution
@@ -135,6 +136,7 @@ npm run check:ci
 npm run build:desktop
 npm run build:website
 npm run test:eval
+cd apps/eval-runner && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app && cd ../..
 cd apps/eval-runner && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app && cd ../..
 node --test scripts/release-baseline.test.mjs scripts/release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs scripts/acceptance.test.mjs scripts/release-confidence-summary.test.mjs scripts/ci-workflow.test.mjs
 scripts/acceptance.sh --dry-run
