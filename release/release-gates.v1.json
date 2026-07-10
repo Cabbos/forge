@@ -102,6 +102,61 @@
       "ci_default": false
     },
     {
+      "id": "acceptance-contract",
+      "required_for": ["R3"],
+      "label": "acceptance matrix contract tests",
+      "domain": "foundation",
+      "tier": "contract",
+      "manual_allowed": false,
+      "command": "node --test scripts/acceptance.test.mjs",
+      "evidence_schema": "acceptance.v1",
+      "ci_default": true
+    },
+    {
+      "id": "desktop-frontend-architecture",
+      "required_for": ["R3"],
+      "label": "desktop frontend architecture",
+      "domain": "desktop",
+      "tier": "frontend",
+      "manual_allowed": false,
+      "command": "npm --prefix apps/desktop run check:frontend-architecture",
+      "evidence_schema": "desktop-frontend.v1",
+      "ci_default": true
+    },
+    {
+      "id": "desktop-protocol-sync",
+      "required_for": ["R3"],
+      "label": "desktop protocol sync",
+      "domain": "desktop",
+      "tier": "protocol",
+      "manual_allowed": false,
+      "command": "npm --prefix apps/desktop run check:protocol",
+      "evidence_schema": "desktop-protocol.v1",
+      "ci_default": true
+    },
+    {
+      "id": "website-build",
+      "required_for": ["R3"],
+      "label": "website production build",
+      "domain": "website",
+      "tier": "build",
+      "manual_allowed": false,
+      "command": "npm run build:website",
+      "evidence_schema": "website-build.v1",
+      "ci_default": true
+    },
+    {
+      "id": "eval-quality",
+      "required_for": ["R3"],
+      "label": "eval quality suite",
+      "domain": "eval",
+      "tier": "quality",
+      "manual_allowed": false,
+      "command": "npm run test:eval",
+      "evidence_schema": "eval-quality.v1",
+      "ci_default": true
+    },
+    {
       "id": "candidate-manifest",
       "required_for": ["R3"],
       "label": "release candidate manifest validation",
