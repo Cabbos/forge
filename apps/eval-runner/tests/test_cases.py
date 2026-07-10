@@ -132,9 +132,7 @@ def test_trace_promotion_preserves_v1_evidence_with_unknown_v2_fields() -> None:
     task = case_from_trace(trace)
 
     assert task.metadata["forge_run_evidence"]["schema_version"] == 1
-    assert task.metadata["forge_run_evidence"]["completion_eligibility"] == {
-        "status": "unknown"
-    }
+    assert task.metadata["forge_run_evidence"]["completion_eligibility"] == {"status": "unknown"}
 
 
 def test_load_traces_normalizes_single_desktop_trace_payload(tmp_path: Path) -> None:
@@ -338,8 +336,7 @@ def test_load_cases_includes_agent_loop_stop_reason_backtests() -> None:
         task = task_by_id[task_id]
         mock = task.metadata["mock"]
         raw_stop_reasons = {
-            event.get("stop_reason")
-            or (event.get("state") or {}).get("stop_reason")
+            event.get("stop_reason") or (event.get("state") or {}).get("stop_reason")
             for event in mock["raw_events"]
         }
 

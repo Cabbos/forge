@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import signal
 import sys
 import threading
@@ -7,8 +8,8 @@ import time
 from app.config import get_settings
 from app.main import build_storage
 from app.metrics import calculate_metrics
-from app.models import EvaluationRun, FailureCategory, RunStatus
-from app.runner import create_runner
+from app.models import AgentTrace, EvaluationRun, FailureCategory, RunStatus
+from app.runner import create_runner, validate_execution_identity
 from app.storage import EvalStorage
 from app.trace import duration_ms, utc_now
 
@@ -47,12 +48,17 @@ class EvalWorker:
         self._log(f"claimed run {run.run_id} status={run.status.value}")
 
         started_at = utc_now()
-        traces = []
+        traces: list[AgentTrace] = []
         heartbeat_stop = self._start_background_heartbeat(run.run_id)
         try:
+            provider, model, _case_source = validate_execution_identity(
+                run.provider,
+                run.model,
+                run.case_source,
+            )
             runner = create_runner(
-                provider=run.provider,
-                model=run.model,
+                provider=provider,
+                model=model,
                 forge_command=self.forge_command,
             )
             for task in self.storage.get_tasks(run.requested_task_ids):
@@ -168,12 +174,8 @@ class EvalWorker:
 
         def heartbeat_loop() -> None:
             while not stop_event.wait(timeout=self.heartbeat_interval_seconds):
-                try:
+                with contextlib.suppress(Exception):
                     self._heartbeat(run_id)
-                except Exception:
-                    # Heartbeat failures are non-fatal; the lease may expire
-                    # and another worker can reclaim the run.
-                    pass
 
         thread = threading.Thread(target=heartbeat_loop, daemon=True)
         thread.start()
@@ -181,6 +183,7 @@ class EvalWorker:
 
     def _heartbeat(self, run_id: str) -> None:
         from datetime import UTC, datetime, timedelta
+
         expires = datetime.now(UTC) + timedelta(seconds=300)
         self.storage.heartbeat_run(run_id, self.worker_id, expires)
 
@@ -207,7 +210,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # Register graceful shutdown handlers
     def _signal_handler(_signum: int, _frame: object) -> None:
-        print(f"[worker {worker.worker_id}] Received shutdown signal, stopping gracefully...", file=sys.stderr)
+        print(
+            f"[worker {worker.worker_id}] Received shutdown signal, stopping gracefully...",
+            file=sys.stderr,
+        )
         worker.stop()
 
     signal.signal(signal.SIGTERM, _signal_handler)

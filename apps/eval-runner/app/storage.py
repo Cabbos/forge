@@ -576,7 +576,10 @@ class SQLiteStorage:
             current_status = RunStatus(row["status"])
             if current_status != RunStatus.RUNNING:
                 connection.execute("ROLLBACK")
-                return self.get_run(run.run_id)
+                stored_run = self.get_run(run.run_id)
+                if stored_run is None:
+                    raise KeyError(f"Unknown run id after rollback: {run.run_id}")
+                return stored_run
             run = run.model_copy(update={"status": target_status})
             self._write_run_artifacts(run, connection)
             self._upsert_run_connection(connection, run)
@@ -584,7 +587,10 @@ class SQLiteStorage:
             for trace in run.traces:
                 self._upsert_task(connection, run.run_id, trace)
             connection.execute("COMMIT")
-        return self.get_run(run.run_id)
+        stored_run = self.get_run(run.run_id)
+        if stored_run is None:
+            raise KeyError(f"Unknown run id after finalize: {run.run_id}")
+        return stored_run
 
     def _upsert_run(self, run: EvaluationRun) -> None:
         with self._connect() as connection:

@@ -11,7 +11,7 @@ def case_from_trace(trace: AgentTrace) -> EvaluationTask:
     verification_command = (
         trace.verification_result.command if trace.verification_result is not None else None
     )
-    metadata = {
+    metadata: dict[str, Any] = {
         "source": "trace",
         "failure_reason": trace.failure_reason,
         "failure_category": trace.failure_category.value,
@@ -50,9 +50,7 @@ def normalize_trace_payload(payload: Any) -> list[dict[str, Any]]:
         return []
     if isinstance(payload.get("traces"), list):
         return [
-            normalize_trace_object(item)
-            for item in payload["traces"]
-            if isinstance(item, dict)
+            normalize_trace_object(item) for item in payload["traces"] if isinstance(item, dict)
         ]
     return [normalize_trace_object(payload)]
 
@@ -101,7 +99,8 @@ def normalize_forge_run_evidence(raw: dict[str, Any]) -> dict[str, Any]:
         evidence = dict(existing)
         evidence.setdefault("schema_version", 1)
     else:
-        loop_task = raw.get("loop_task") if isinstance(raw.get("loop_task"), dict) else {}
+        raw_loop_task = raw.get("loop_task")
+        loop_task: dict[str, Any] = raw_loop_task if isinstance(raw_loop_task, dict) else {}
         evidence = {
             "schema_version": 2,
             "source": "desktop_trace",
@@ -201,9 +200,10 @@ def provider_usage_events_from_raw_events(raw_events: Any) -> list[dict[str, Any
 
 
 def continuity_from_desktop_trace(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    if raw.get("headless_continuity_formed_count") is None and raw.get(
-        "headless_continuity_error"
-    ) is None:
+    if (
+        raw.get("headless_continuity_formed_count") is None
+        and raw.get("headless_continuity_error") is None
+    ):
         return []
     return [
         {

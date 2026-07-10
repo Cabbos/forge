@@ -171,9 +171,7 @@ def test_mock_runner_preserves_forge_run_evidence_from_case_metadata() -> None:
         loop_task_id="loop-gateway-readonly",
         prepared_context={
             "turn_prepared": {
-                "context_estimate": {
-                    "sources": [{"kind": "user_input", "label": "prompt"}]
-                }
+                "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
             }
         },
         changed_files=[],
@@ -206,7 +204,7 @@ json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout
 """.strip(),
         encoding="utf-8",
     )
-    regression_command = f"{sys.executable} -c \"import sys; sys.exit(3)\""
+    regression_command = f'{sys.executable} -c "import sys; sys.exit(3)"'
     task = EvaluationTask(
         id="regression-split",
         title="Regression split",
@@ -240,7 +238,7 @@ json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout
         encoding="utf-8",
     )
     regression_command = f"{sys.executable} -c \"print('existing tests pass')\""
-    bugfix_command = f"{sys.executable} -c \"import sys; sys.exit(4)\""
+    bugfix_command = f'{sys.executable} -c "import sys; sys.exit(4)"'
     task = EvaluationTask(
         id="bugfix-split",
         title="Bugfix split",
