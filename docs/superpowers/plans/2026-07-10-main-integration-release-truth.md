@@ -25,7 +25,7 @@
 
 ## Task 2: Specify the Desktop Safety handoff (execute after Task 5)
 
-**Files:** `release/evidence/merge-train/desktop-safety.json`, `scripts/release-gate-profile.test.mjs`, `docs/release/merge-train-2026-07-10.md`.
+**Files:** `release/evidence/merge-train/desktop-safety.json`, `scripts/validate-release-gate-profile.test.mjs`, `docs/release/merge-train-2026-07-10.md`.
 
 - [ ] Do not edit Desktop Rust, CSS, IPC fixtures, credentials, redaction, or checkpoint code in this plan; those changes belong exclusively to `2026-07-10-desktop-safety-baseline.md`.
 - [ ] Require the five fixed Desktop Safety acceptance labels and their result artifacts in the R1 handoff. The handoff must include the deterministic memory-ID test, Tailwind 4 warning-free build, and continuity fixture evidence produced by the owning plan.
@@ -35,7 +35,7 @@
 
 ## Task 3: Specify the Eval Trustworthiness handoff (execute after Task 5)
 
-**Files:** `release/evidence/merge-train/eval-trustworthiness.json`, `scripts/release-gate-profile.test.mjs`, `docs/release/merge-train-2026-07-10.md`.
+**Files:** `release/evidence/merge-train/eval-trustworthiness.json`, `scripts/validate-release-gate-profile.test.mjs`, `docs/release/merge-train-2026-07-10.md`.
 
 - [ ] Require the four fixed Eval acceptance labels and their result artifacts in the R2 handoff. The handoff must prove strict provider identity, independent workspace observation, trusted orchestration, and authenticated/fenced worker behavior, plus the full Eval quality suite (`uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy app`); focused tests alone cannot claim R2.
 - [ ] **Red:** after Task 5 creates the profile validator, validate a handoff with an unknown provider, missing workspace evidence, or stale-worker failure; the release profile must reject it.
@@ -44,7 +44,7 @@
 
 ## Task 4: Bind deterministic signal evidence to its owning slice
 
-**Files:** `docs/release/merge-train-2026-07-10.md`, `scripts/release-gate-profile.test.mjs`.
+**Files:** `docs/release/merge-train-2026-07-10.md`, `scripts/validate-release-gate-profile.test.mjs`.
 
 - [ ] Record the unified-memory assertion fix, Tailwind 4 warning-free build, and console-clean continuity fixture only as Desktop Safety evidence; do not introduce a competing implementation here.
 - [ ] **Green:** require the owning slice's evidence paths and commit SHA in the R1 profile, then run the profile contract test.
@@ -52,16 +52,16 @@
 
 ## Task 5: Define the shared release-gate and manifest schemas first
 
-**Files:** `release/release-gate-profile.schema.json`, `release/release-gates.v1.json`, `release/release-manifest.schema.json`, `scripts/validate-release-manifest.mjs`, `scripts/validate-release-manifest.test.mjs`, `scripts/release-gate-profile.test.mjs`.
+**Files:** `release/release-gate-profile.schema.json`, `release/release-gates.v1.json`, `release/release-manifest.schema.json`, `scripts/validate-release-gate-profile.mjs`, `scripts/validate-release-gate-profile.test.mjs`, `scripts/validate-release-manifest.mjs`, `scripts/validate-release-manifest.test.mjs`.
 
 - [ ] Define gate states separately: `execution_status` (`not_started`, `running`, `completed`, `execution_failed`) and `condition_status` (`passed`, `failed`, `manual`, `unknown`). Preserve the legacy `status` field as a compatibility alias to `condition_status` for one migration window.
 - [ ] Define the profile fields `id`, `required_for` (`R1`–`R4`), `label`, `domain`, `tier`, `manual_allowed`, `command`, `evidence_schema`, and `ci_default`. A gate is required only when explicitly present in the profile.
-- [ ] Implement `scripts/validate-release-gate-profile.mjs` and its test. It must require these exact R1/R2/R3 labels: Desktop Safety (`desktop deterministic signal cleanup`, `desktop command execution safety baseline`, `desktop credential and redaction safety baseline`, `desktop checkpoint restore safety baseline`, `desktop CSP and capability safety baseline`); Eval (`eval execution identity baseline`, `eval independent workspace evidence baseline`, `eval trusted execution baseline`, `eval authenticated fenced worker baseline`); repository (`acceptance matrix contract tests`, `desktop frontend architecture`, `desktop protocol sync`, `website production build`, `eval quality suite`, `release candidate manifest validation`). R4 signing/notarization/install/website labels are separate Distribution gates. Reject duplicate/missing labels and any acceptance label that is not explicitly classified. Add `--release-profile release/release-gates.v1.json --require-state R3` as the only supported R3 selection path across acceptance, summary, and manifest commands.
+- [ ] Implement `scripts/validate-release-gate-profile.mjs` and its test. It must require these exact R1/R2/R3 labels: Desktop Safety (`desktop deterministic signal cleanup`, `desktop command execution safety baseline`, `desktop credential and redaction safety baseline`, `desktop checkpoint restore safety baseline`, `desktop CSP and capability safety baseline`); Eval (`eval execution identity baseline`, `eval independent workspace evidence baseline`, `eval trusted execution baseline`, `eval authenticated fenced worker baseline`); repository (`acceptance matrix contract tests`, `desktop frontend architecture`, `desktop protocol sync`, `website production build`, `eval quality suite`, `release manifest contract validation`). The manifest-contract gate validates schema/profile fixtures before generation; validation of the real candidate runs only after generation and is not one of its own inputs. R4 signing/notarization/install/website labels are separate Distribution gates. Reject duplicate/missing labels and any acceptance label that is not explicitly classified. Add `--release-profile release/release-gates.v1.json --require-state R3` as the only supported R3 selection path across acceptance, summary, and manifest commands.
 - [ ] Define manifest schema version 1 with `version`, `release_state`, `generated_at`, commit SHA, source branch, lockfile hashes, profile ID, selected gates, gate results, Eval evidence, artifacts, signing, notarization, installation smoke, website, previous release, GitNexus impact/fallback evidence, and residual risks. Require explicit `unknown` entries for selected gates that did not run.
 - [ ] Write validator tests for missing fields, duplicate gate labels, selected-vs-executed mismatch, failed/unknown required gates, mismatched commit SHA, missing lockfile hash, and a fully valid R3 fixture.
 - [ ] **Red:** run both test files before implementing validators; the invalid fixtures must fail validation.
 - [ ] Implement pure validation functions with no network calls. The CLI must return 2 for malformed schema and 1 for a structurally valid manifest that fails its required release state.
-- [ ] **Green:** run the two test files and validate `release/evidence/fixtures/r3-valid.json`.
+- [ ] **Green:** run `node --test scripts/validate-release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs`; the tests must cover a valid in-memory R3 fixture plus malformed, duplicate, missing, unknown, and failed cases.
 - [ ] Commit as `feat(release): add fail-closed gate and manifest contracts`.
 
 ## Task 6: Make acceptance results distinguish execution from conditions
@@ -131,20 +131,20 @@
 git status --short --branch
 npm --prefix apps/desktop ci
 npm --prefix apps/website ci
-cd apps/eval-runner && uv sync --dev && cd ../..
+cd apps/eval-runner && uv sync --frozen --dev && cd ../..
 npm run check:ci
 npm run build:desktop
 npm run build:website
 npm run test:eval
 cd apps/eval-runner && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app && cd ../..
-cd apps/eval-runner && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app && cd ../..
-node --test scripts/release-baseline.test.mjs scripts/release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs scripts/acceptance.test.mjs scripts/release-confidence-summary.test.mjs scripts/ci-workflow.test.mjs
+node --test scripts/release-baseline.test.mjs scripts/validate-release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs scripts/acceptance.test.mjs scripts/release-confidence-summary.test.mjs scripts/ci-workflow.test.mjs
 scripts/acceptance.sh --dry-run
 scripts/acceptance.sh --release-profile release/release-gates.v1.json --require-state R3 --results-json /tmp/forge-r3-gates.json
 scripts/acceptance.sh --ci-default --results-json /tmp/forge-ci-default-gates.json
 node scripts/validate-release-gate-profile.mjs --release-profile release/release-gates.v1.json --require-state R3
 node scripts/release-confidence-summary.mjs --release-profile release/release-gates.v1.json --gate-results /tmp/forge-r3-gates.json --require-state R3 --fail-on-attention
 node scripts/release-confidence-summary.mjs --gate-results /tmp/forge-ci-default-gates.json --ci-default-only --fail-on-attention
+TAG=desktop-v0.1.0-beta.1
 node scripts/validate-release-manifest.mjs --manifest release/evidence/$TAG/candidate-manifest.json --require-state R3
 git diff --check
 ```

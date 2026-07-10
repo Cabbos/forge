@@ -10,6 +10,8 @@ GREP_LABEL=""
 GREP_LABEL_MATCH=""
 CI_DEFAULT=0
 RESULTS_JSON=""
+RELEASE_PROFILE=""
+REQUIRE_STATE=""
 
 while [[ "$#" -gt 0 ]]; do
   arg="$1"
@@ -42,6 +44,22 @@ while [[ "$#" -gt 0 ]]; do
       CI_DEFAULT=1
       shift
       ;;
+    --release-profile)
+      if [[ "$#" -lt 2 || -z "$2" ]]; then
+        echo "Missing value for --release-profile" >&2
+        exit 2
+      fi
+      RELEASE_PROFILE="$2"
+      shift 2
+      ;;
+    --require-state)
+      if [[ "$#" -lt 2 || -z "$2" ]]; then
+        echo "Missing value for --require-state" >&2
+        exit 2
+      fi
+      REQUIRE_STATE="$2"
+      shift 2
+      ;;
     --results-json)
       if [[ "$#" -lt 2 || -z "$2" ]]; then
         echo "Missing value for --results-json" >&2
@@ -65,8 +83,18 @@ selector_count=0
 [[ -n "$ONLY_LABEL" ]] && selector_count=$((selector_count + 1))
 [[ -n "$GREP_LABEL" ]] && selector_count=$((selector_count + 1))
 [[ "$CI_DEFAULT" -eq 1 ]] && selector_count=$((selector_count + 1))
+[[ -n "$RELEASE_PROFILE" ]] && selector_count=$((selector_count + 1))
 if [[ "$selector_count" -gt 1 ]]; then
-  echo "Use only one selector: --only, --grep, or --ci-default." >&2
+  echo "Use only one selector: --only, --grep, --ci-default, or --release-profile." >&2
+  exit 2
+fi
+
+if [[ -n "$RELEASE_PROFILE" && -z "$REQUIRE_STATE" ]]; then
+  echo "Use --require-state with --release-profile." >&2
+  exit 2
+fi
+if [[ -z "$RELEASE_PROFILE" && -n "$REQUIRE_STATE" ]]; then
+  echo "Use --require-state only with --release-profile." >&2
   exit 2
 fi
 
@@ -208,9 +236,24 @@ add_gate 'gitnexus fallback wrapper contract tests' 'node --test scripts/gitnexu
 add_gate 'desktop production build' 'npm run build:desktop'
 add_gate 'website production build' 'npm run build:website'
 set_domain 'desktop-safety'
-add_gate 'desktop deterministic signal cleanup' 'tmp="${TMPDIR:-/tmp}/forge-desktop-build.$$"; npm --prefix apps/desktop run build >"$tmp" 2>&1; code=$?; cat "$tmp"; if [ "$code" -ne 0 ]; then rm -f "$tmp"; exit "$code"; fi; if rg -qi "Unknown at rule|@theme|@utility|@custom-variant" "$tmp"; then rm -f "$tmp"; exit 1; fi; rm -f "$tmp"; cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"'
+add_gate 'desktop deterministic signal cleanup' 'npm --prefix apps/desktop run check:deterministic-signals && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"'
+add_gate 'desktop command execution safety baseline' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test harness_test project_defined -- --nocapture'
+add_gate 'desktop credential and redaction safety baseline' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_store --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_migration --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml redaction --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml profile --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml log_store --lib'
+add_gate 'desktop checkpoint restore safety baseline' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib'
+add_gate 'desktop CSP and capability safety baseline' 'npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle'
+set_domain 'foundation'
+add_gate 'desktop frontend architecture' 'npm --prefix apps/desktop run check:frontend-architecture'
+add_gate 'desktop protocol sync' 'npm --prefix apps/desktop run check:protocol'
 set_domain 'eval'
 add_gate 'eval runner test suite' 'npm run test:eval'
+add_gate 'eval quality suite' 'cd apps/eval-runner && uv sync --frozen --dev && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app'
+add_gate 'eval execution identity baseline' 'cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py tests/test_smoke.py -q -k "execution_identity or unknown_provider or queued_forge"'
+add_gate 'eval independent workspace evidence baseline' 'cd apps/eval-runner && uv run pytest tests/test_workspace_observer.py tests/test_runner.py -q -k "workspace"'
+add_gate 'eval trusted execution baseline' 'cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_cli.py tests/test_api.py tests/test_worker.py -q -k "trust"'
+add_gate 'eval authenticated fenced worker baseline' 'cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py -q -k "auth or lease or stale"'
+set_domain 'foundation'
+add_gate 'release manifest contract validation' 'node --test scripts/validate-release-gate-profile.test.mjs scripts/validate-release-manifest.test.mjs'
+set_domain 'eval'
 add_gate 'release confidence summary contract tests' 'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && node scripts/release-confidence-summary.mjs --json --ci-default-only >/dev/null && node scripts/release-confidence-summary.mjs --help | rg -q "no-acceptance-matrix" && node scripts/release-confidence-summary.mjs --help | rg -q "out-dir" && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "ci-default-only" CHANGELOG.md && rg -q "ci-default-only" README.md && rg -q "ci-default-only" apps/eval-runner/README.md && rg -q "results-json" CHANGELOG.md && rg -q "results-json" README.md && rg -q "results-json" apps/eval-runner/README.md && rg -q "gate-results execution completeness" CHANGELOG.md && rg -q "gate-results execution completeness" README.md && rg -q "gate-results execution completeness" apps/eval-runner/README.md && rg -q "execution reason evidence" CHANGELOG.md && rg -q "execution reason evidence" README.md && rg -q "execution reason evidence" apps/eval-runner/README.md && rg -q "dashboard artifact output" CHANGELOG.md && rg -q "dashboard artifact output" README.md && rg -q "dashboard artifact output" apps/eval-runner/README.md && rg -q "acceptance domain/tier breakdowns" CHANGELOG.md && rg -q "acceptance domain/tier breakdowns" README.md && rg -q "acceptance domain/tier breakdowns" apps/eval-runner/README.md && rg -q "gate detail metadata" CHANGELOG.md && rg -q "gate detail metadata" README.md && rg -q "gate detail metadata" apps/eval-runner/README.md && rg -q "no-acceptance-matrix" CHANGELOG.md && rg -q "no-acceptance-matrix" README.md && rg -q "no-acceptance-matrix" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md'
 set_domain 'runtime'
 add_gate 'loop event journal contract tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib'
@@ -309,6 +352,9 @@ domain_title() {
     foundation)
       printf 'Foundation'
       ;;
+    desktop-safety)
+      printf 'Desktop Safety'
+      ;;
     runtime)
       printf 'Runtime'
       ;;
@@ -382,6 +428,40 @@ runtime_cost() {
   fi
 }
 
+RELEASE_LABELS=()
+if [[ -n "$RELEASE_PROFILE" ]]; then
+  if [[ "$RELEASE_PROFILE" != /* ]]; then
+    RELEASE_PROFILE="$ROOT_DIR/$RELEASE_PROFILE"
+  fi
+  node "$ROOT_DIR/scripts/validate-release-gate-profile.mjs" \
+    --release-profile "$RELEASE_PROFILE" \
+    --require-state "$REQUIRE_STATE" >/dev/null
+  while IFS= read -r label; do
+    RELEASE_LABELS+=("$label")
+  done < <(node -e '
+const fs = require("node:fs");
+const profile = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const state = process.argv[2];
+for (const gate of profile.gates ?? []) {
+  const states = Array.isArray(gate.required_for) ? gate.required_for : [];
+  if (states.includes(state) || (state === "R4" && states.includes("R3"))) {
+    process.stdout.write(`${gate.label}\n`);
+  }
+}
+' "$RELEASE_PROFILE" "$REQUIRE_STATE")
+fi
+
+release_label_selected() {
+  local candidate="$1"
+  local required_label
+  for required_label in "${RELEASE_LABELS[@]}"; do
+    if [[ "$candidate" == "$required_label" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 SELECTED_INDICES=()
 for index in "${!COMMANDS[@]}"; do
   if [[ -n "$ONLY_LABEL" && "${COMMAND_LABELS[$index]}" != "$ONLY_LABEL" ]]; then
@@ -399,8 +479,24 @@ for index in "${!COMMANDS[@]}"; do
       continue
     fi
   fi
+  if [[ -n "$RELEASE_PROFILE" ]] && ! release_label_selected "${COMMAND_LABELS[$index]}"; then
+    continue
+  fi
   SELECTED_INDICES+=("$index")
 done
+
+if [[ -n "$RELEASE_PROFILE" ]]; then
+  PROFILE_ORDERED_INDICES=()
+  for required_label in "${RELEASE_LABELS[@]}"; do
+    for index in "${SELECTED_INDICES[@]}"; do
+      if [[ "${COMMAND_LABELS[$index]}" == "$required_label" ]]; then
+        PROFILE_ORDERED_INDICES+=("$index")
+        break
+      fi
+    done
+  done
+  SELECTED_INDICES=("${PROFILE_ORDERED_INDICES[@]}")
+fi
 
 if [[ -n "$ONLY_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
   echo "No acceptance gate matched --only: $ONLY_LABEL" >&2
@@ -434,9 +530,14 @@ if [[ "$CI_DEFAULT" -eq 1 && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
   exit 2
 fi
 
+if [[ -n "$RELEASE_PROFILE" && "${#SELECTED_INDICES[@]}" -ne "${#RELEASE_LABELS[@]}" ]]; then
+  echo "Release profile labels do not match the acceptance matrix for $REQUIRE_STATE." >&2
+  exit 2
+fi
+
 if [[ "$SHOW_HELP" -eq 1 ]]; then
   cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>] [--ci-default] [--results-json <path>]
+Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>] [--ci-default] [--release-profile <path> --require-state <R1|R2|R3|R4>] [--results-json <path>]
 
 Runs the Forge Level 3 runtime acceptance gates:
 EOF
@@ -456,8 +557,9 @@ Use --list-json to print the same gate plan as machine-readable JSON.
 Use --only with an exact gate label to run or dry-run one gate.
 Use --grep to filter gates by case-insensitive label substring.
 Use --ci-default to run or list only fast-contract and runtime-core gates.
+Use --release-profile with --require-state to run or list the exact fail-closed release gate set.
 Use --results-json to write executed gate statuses for release confidence reports.
-Do not combine --only, --grep, and --ci-default.
+Do not combine --only, --grep, --ci-default, and --release-profile.
 EOF
   exit 0
 fi
@@ -475,6 +577,7 @@ const workingDirectory = parts.shift();
 if (parts.at(-1) === "") parts.pop();
 const domainLabels = new Map([
   ["foundation", "Foundation"],
+  ["desktop-safety", "Desktop Safety"],
   ["runtime", "Runtime"],
   ["permission", "Permission"],
   ["usage-context", "Usage / Context"],
