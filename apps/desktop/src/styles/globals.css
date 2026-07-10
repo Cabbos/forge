@@ -1,6 +1,6 @@
+@import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 @import "./tokens.css";
 @import "./layout.css";
 @import "./icons.css";
@@ -24,9 +24,7 @@
 @import "./settings.css";
 @import "./history.css";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config "../../tailwind.config.js";
 
 @layer components {
   .forge-app-shell {
