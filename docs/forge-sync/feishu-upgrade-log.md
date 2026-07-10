@@ -1061,3 +1061,21 @@ This file is the local audit trail for valuable Forge upgrade summaries synced t
 
 ### 边界
 - 本条同步由本地 hook 生成，只记录高层升级，不包含完整 diff。
+<!-- feishu-sync: uploaded url="https://www.feishu.cn/wiki/PQOcwfctwiQCE8kpT3zcTQJ2nne" -->
+## 2026-07-10 · ad3a600 · docs: design public beta convergence
+
+### 升级摘要
+本次 Forge 升级围绕「docs: design public beta convergence」展开，自动识别为需要同步的高价值变更。
+
+### 影响范围
+- Docs
+
+### 关键改动
+- docs/superpowers/specs/2026-07-10-public-beta-convergence-design.md
+
+### 验证证据
+- 自动同步脚本未推断出验证命令；请按需要补充。
+
+### 边界
+- 本条同步由本地 hook 生成，只记录高层升级，不包含完整 diff。
+
