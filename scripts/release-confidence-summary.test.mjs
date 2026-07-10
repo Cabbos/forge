@@ -336,6 +336,9 @@ test("summarizes gate-results execution completeness", () => {
     selectedGateCount: 3,
     executedGateCount: 2,
     failedGateCount: 1,
+    failedExecutionCount: 0,
+    failedConditionCount: 1,
+    unknownConditionCount: 1,
     incomplete: true,
   });
 
@@ -344,7 +347,52 @@ test("summarizes gate-results execution completeness", () => {
   assert.match(markdown, /Status: failed/);
   assert.match(markdown, /Selected gates: 3/);
   assert.match(markdown, /Executed gates: 2/);
+  assert.match(markdown, /Failed conditions: 1/);
+  assert.match(markdown, /Unknown conditions: 1/);
   assert.match(markdown, /Incomplete execution: yes/);
+});
+
+test("uses schema-v2 condition status instead of legacy command status", () => {
+  const summary = buildReleaseConfidenceSummary({
+    acceptanceMatrix,
+    gateResults: {
+      schemaVersion: 2,
+      status: "failed",
+      selectedGateCount: 3,
+      executedGateCount: 3,
+      failedConditionCount: 1,
+      gates: [
+        {
+          label: "runtime authority fast gate",
+          status: "passed",
+          executionStatus: "completed",
+          conditionStatus: "passed",
+        },
+        {
+          label: "gateway parity and degraded fallback smoke",
+          status: "passed",
+          executionStatus: "completed",
+          conditionStatus: "failed",
+        },
+        {
+          label: "desktop eval promotion evidence smoke",
+          status: "passed",
+          executionStatus: "execution_failed",
+          conditionStatus: "unknown",
+        },
+      ],
+    },
+    evalReport: { report: { total_tasks: 1, success_rate: 1, score_summary: {} } },
+  });
+
+  assert.equal(summary.status, "failed");
+  assert.deepEqual(summary.acceptance.failedGates.map((gate) => gate.label), [
+    "gateway parity and degraded fallback smoke",
+  ]);
+  assert.deepEqual(summary.acceptance.unknownGates.map((gate) => gate.label), [
+    "desktop eval promotion evidence smoke",
+  ]);
+  assert.equal(summary.acceptance.execution.failedExecutionCount, 1);
 });
 
 test("preserves gate-results execution reason evidence", () => {
@@ -653,6 +701,59 @@ test("cli can scope release confidence to CI-default gates", (t) => {
   assert.equal(parsed.acceptance.passedGates.length, 2);
   assert.equal(parsed.acceptance.unknownGates.length, 0);
   assert.equal(parsed.acceptance.ciDefault.totalGates, 2);
+});
+
+test("cli can summarize the exact validated R3 release profile", (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-release-profile-summary-"));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+  const profilePath = join(root, "release", "release-gates.v1.json");
+  const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+  const requiredGates = profile.gates.filter((gate) => gate.required_for.includes("R3"));
+  const gateResultsPath = join(tempDir, "gate-results.json");
+  const evalReportPath = join(tempDir, "eval-report.json");
+  writeFileSync(
+    gateResultsPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      status: "passed",
+      selectedGateCount: requiredGates.length,
+      executedGateCount: requiredGates.length,
+      gates: requiredGates.map((gate) => ({
+        label: gate.label,
+        executionStatus: "completed",
+        conditionStatus: "passed",
+        status: "passed",
+      })),
+    }),
+  );
+  writeFileSync(
+    evalReportPath,
+    JSON.stringify({ report: { total_tasks: 1, success_rate: 1, score_summary: {} } }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      scriptPath,
+      "--json",
+      "--release-profile",
+      profilePath,
+      "--require-state",
+      "R3",
+      "--gate-results",
+      gateResultsPath,
+      "--eval-report",
+      evalReportPath,
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.status, "passed");
+  assert.equal(summary.releaseProfileId, "public-beta-r3-v1");
+  assert.equal(summary.requiredState, "R3");
+  assert.equal(summary.acceptance.totalGates, requiredGates.length);
 });
 
 test("cli can summarize self-describing gate results without acceptance matrix", (t) => {
