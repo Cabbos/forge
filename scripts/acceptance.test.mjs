@@ -50,7 +50,8 @@ test("acceptance script dry-run lists the final product gates", () => {
     { label: "website production build", command: "npm run build:website" },
     {
       label: "desktop deterministic signal cleanup",
-      command: 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"',
+      command:
+        'tmp="${TMPDIR:-/tmp}/forge-desktop-build.$$"; npm --prefix apps/desktop run build >"$tmp" 2>&1; code=$?; cat "$tmp"; if [ "$code" -ne 0 ]; then rm -f "$tmp"; exit "$code"; fi; if rg -qi "Unknown at rule|@theme|@utility|@custom-variant" "$tmp"; then rm -f "$tmp"; exit 1; fi; rm -f "$tmp"; cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"',
     },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {

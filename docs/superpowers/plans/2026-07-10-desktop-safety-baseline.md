@@ -378,7 +378,7 @@ Run the focused Playwright command again. Expected: one passed test and no React
 Under a new `set_domain 'desktop-safety'` block in `scripts/acceptance.sh`, add:
 
 ```bash
-add_gate 'desktop deterministic signal cleanup' 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"'
+add_gate 'desktop deterministic signal cleanup' 'tmp="${TMPDIR:-/tmp}/forge-desktop-build.$$"; npm --prefix apps/desktop run build >"$tmp" 2>&1; code=$?; cat "$tmp"; if [ "$code" -ne 0 ]; then rm -f "$tmp"; exit "$code"; fi; if rg -qi "Unknown at rule|@theme|@utility|@custom-variant" "$tmp"; then rm -f "$tmp"; exit 1; fi; rm -f "$tmp"; cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep "continuity query stays console-clean"'
 ```
 
 Add the same label/command at the same relative position in `expectedEntries` in `scripts/acceptance.test.mjs`. Preserve the surrounding gate order.
