@@ -1,19 +1,14 @@
-import type { Config } from "tailwindcss";
-
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
       colors: {
-        // Legacy custom colors
         surface: {
           DEFAULT: "var(--color-surface)",
           alt: "var(--color-surface-alt)",
           hover: "var(--color-surface-hover)",
         },
-        border: {
-          DEFAULT: "var(--color-border)",
-        },
+        border: { DEFAULT: "var(--color-border)" },
         text: {
           primary: "var(--color-text-primary)",
           secondary: "var(--color-text-secondary)",
@@ -23,8 +18,6 @@ export default {
           DEFAULT: "var(--color-accent)",
           hover: "var(--color-accent-hover)",
         },
-
-        // shadcn semantic color tokens
         background: "var(--background)",
         foreground: "var(--foreground)",
         card: {
@@ -51,15 +44,9 @@ export default {
           DEFAULT: "var(--accent)",
           foreground: "var(--accent-foreground)",
         },
-        destructive: {
-          DEFAULT: "var(--destructive)",
-        },
-        warning: {
-          DEFAULT: "var(--color-warning)",
-        },
-        success: {
-          DEFAULT: "var(--color-success)",
-        },
+        destructive: { DEFAULT: "var(--destructive)" },
+        warning: { DEFAULT: "var(--color-warning)" },
+        success: { DEFAULT: "var(--color-success)" },
         input: "var(--input)",
         ring: "var(--ring)",
         chart: {
@@ -93,4 +80,4 @@ export default {
     },
   },
   plugins: [],
-} satisfies Config;
+};
