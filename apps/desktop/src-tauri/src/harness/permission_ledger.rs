@@ -88,6 +88,11 @@ impl PermissionLedgerEvent {
         }
     }
 
+    pub fn with_risk_tier(mut self, risk_tier: PermissionRiskTier) -> Self {
+        self.risk_tier = risk_tier;
+        self
+    }
+
     pub fn user_response(
         session_id: &str,
         approved: bool,

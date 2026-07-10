@@ -21,7 +21,7 @@ use crate::agent::time::now_ms;
 use crate::consts::{ASK_USER_TIMEOUT, SEARCH_TIMEOUT, WEB_FETCH_TIMEOUT, WEB_SEARCH_TIMEOUT};
 use crate::harness::permission_ledger::{PermissionLedgerEvent, PermissionLedgerEventKind};
 use crate::harness::permissions::PermissionMode;
-use crate::harness::shell_policy::validate_shell_command_failsafe;
+use crate::harness::shell_policy::validate_shell_command_failsafe_in_workspace;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -257,7 +257,9 @@ impl ToolExecutor {
             "run_shell" | "bash" | "execute_command" | "shell" | "shell_command"
             | "run_command" | "run_shell_command" => {
                 let command = get_str(tool_input, "command").unwrap_or("");
-                if let Err(reason) = validate_shell_command_failsafe(command) {
+                if let Err(reason) =
+                    validate_shell_command_failsafe_in_workspace(command, self.file.working_dir())
+                {
                     crate::app_log!(
                         "WARN",
                         "[tool] blocked shell command session={} block={} reason={}",
@@ -1515,9 +1517,10 @@ fn simple_match(name: &str, pattern: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_shell_command_failsafe, ToolExecutor};
+    use super::ToolExecutor;
     use crate::agent::event_sink::EventEmitter;
     use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
+    use crate::harness::shell_policy::validate_shell_command_failsafe;
     use crate::protocol::events::StreamEvent;
     use std::collections::HashMap;
     use std::sync::Arc;

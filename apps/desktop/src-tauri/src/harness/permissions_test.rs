@@ -190,6 +190,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shell_policy_matrix_is_fail_closed_in_every_permission_mode() {
+        let (db, dir) = temp_db();
+        let gate = PermissionGate::new(db);
+
+        for (session_id, mode) in [
+            ("manual-session", PermissionMode::ManualConfirm),
+            ("trusted-session", PermissionMode::TrustCurrentProject),
+            ("full-session", PermissionMode::FullAccess),
+        ] {
+            match mode {
+                PermissionMode::ManualConfirm => {
+                    gate.restore_manual_confirm(session_id, Some(&dir)).await;
+                }
+                PermissionMode::TrustCurrentProject => {
+                    gate.trust_current_project(session_id, &dir).await;
+                }
+                PermissionMode::FullAccess => {
+                    gate.full_access_current_project(session_id, &dir).await;
+                }
+            }
+
+            for (command, expected_decision, expected_kind, expected_risk, expected_reason) in [
+                (
+                    "git status --short",
+                    "allow",
+                    PermissionLedgerEventKind::AutoApproved,
+                    PermissionRiskTier::Normal,
+                    "proven_inspection",
+                ),
+                (
+                    "npm test",
+                    "ask",
+                    PermissionLedgerEventKind::ManualRequired,
+                    PermissionRiskTier::Caution,
+                    "project_defined_execution",
+                ),
+                (
+                    "some-new-tool inspect",
+                    "ask",
+                    PermissionLedgerEventKind::ManualRequired,
+                    PermissionRiskTier::High,
+                    "unknown_execution",
+                ),
+                (
+                    "cat /etc/hosts",
+                    "ask",
+                    PermissionLedgerEventKind::ManualRequired,
+                    PermissionRiskTier::Caution,
+                    "external_read",
+                ),
+                (
+                    "printf x > ../outside.txt",
+                    "deny",
+                    PermissionLedgerEventKind::BlockedExternalPath,
+                    PermissionRiskTier::High,
+                    "external_write",
+                ),
+                (
+                    "rm -rf /",
+                    "deny",
+                    PermissionLedgerEventKind::BlockedPolicy,
+                    PermissionRiskTier::High,
+                    "catastrophic",
+                ),
+            ] {
+                let check = gate
+                    .check_with_evidence(
+                        session_id,
+                        "run_shell",
+                        &serde_json::json!({"command": command}),
+                        &dir,
+                    )
+                    .await;
+                let actual_decision = match check.decision {
+                    PermissionDecision::Allow => "allow",
+                    PermissionDecision::Ask { .. } => "ask",
+                    PermissionDecision::Deny { .. } => "deny",
+                };
+                assert_eq!(actual_decision, expected_decision, "{mode:?}: {command}");
+                assert_eq!(check.evidence.kind, expected_kind, "{mode:?}: {command}");
+                assert_eq!(
+                    check.evidence.risk_tier, expected_risk,
+                    "{mode:?}: {command}"
+                );
+                assert_eq!(
+                    check.evidence.reason, expected_reason,
+                    "{mode:?}: {command}"
+                );
+                assert_eq!(check.evidence.permission_mode, mode, "{mode:?}: {command}");
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn trust_current_project_allows_workspace_writes_for_matching_workspace() {
         let (db, dir) = temp_db();
         std::fs::create_dir_all(dir.join("src")).expect("create src");
@@ -361,8 +457,8 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(shell_decision, PermissionDecision::Allow),
-            "full access should allow confirmable shell commands: {:?}",
+            matches!(shell_decision, PermissionDecision::Ask { .. }),
+            "full access must still ask before project-defined shell execution: {:?}",
             shell_decision
         );
 
@@ -403,8 +499,8 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(other_session, PermissionDecision::Allow),
-            "full access should follow the workspace into new sessions: {:?}",
+            matches!(other_session, PermissionDecision::Ask { .. }),
+            "workspace full access must still ask in new sessions before project execution: {:?}",
             other_session
         );
 
@@ -469,13 +565,24 @@ mod tests {
         let gate = PermissionGate::new(db);
         gate.full_access_current_project("session-1", &dir).await;
 
-        for command in [
-            "npm run build",
-            "npm test",
-            "cargo test",
-            "lsof -i :5173",
-            "curl http://localhost:5173/",
-        ] {
+        for command in ["npm run build", "npm test", "cargo test"] {
+            let decision = gate
+                .check(
+                    "session-1",
+                    "run_shell",
+                    &serde_json::json!({"command": command}),
+                    &dir,
+                )
+                .await;
+            assert!(
+                matches!(decision, PermissionDecision::Ask { .. }),
+                "full access must ask before project shell command `{}`: {:?}",
+                command,
+                decision
+            );
+        }
+
+        for command in ["lsof -i :5173", "curl http://localhost:5173/"] {
             let decision = gate
                 .check(
                     "session-1",
@@ -486,7 +593,7 @@ mod tests {
                 .await;
             assert!(
                 matches!(decision, PermissionDecision::Allow),
-                "full access should allow routine workspace shell command `{}`: {:?}",
+                "proven inspection should remain automatic in full access `{}`: {:?}",
                 command,
                 decision
             );
