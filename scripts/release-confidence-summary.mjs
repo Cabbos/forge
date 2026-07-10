@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateReleaseGateProfile } from "./validate-release-gate-profile.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,6 +20,8 @@ export function buildReleaseConfidenceSummary({
   boundaries = null,
   generatedAt = null,
   acceptanceScope = "all",
+  releaseProfileId = null,
+  requiredState = null,
 } = {}) {
   const normalizedAcceptanceScope = normalizeAcceptanceScope(acceptanceScope);
   const allGates = Array.isArray(acceptanceMatrix?.gates)
@@ -56,6 +59,8 @@ export function buildReleaseConfidenceSummary({
     schemaVersion: 1,
     generatedAt: generatedAt ?? new Date().toISOString(),
     acceptanceScope: normalizedAcceptanceScope,
+    releaseProfileId,
+    requiredState,
     status,
     affectedDomains,
     acceptance,
@@ -169,7 +174,7 @@ function summarizeAcceptance(gates, resultByLabel, gateResults) {
 
   for (const gate of gates) {
     const result = resultByLabel.get(gate.label);
-    const normalizedStatus = normalizeStatus(result?.status);
+    const normalizedStatus = gateConditionStatus(result);
     const item = {
       label: gate.label,
       domain: gate.domain ?? "unknown",
@@ -221,6 +226,9 @@ function summarizeGateExecution(gateResults) {
       selectedGateCount: 0,
       executedGateCount: 0,
       failedGateCount: 0,
+      failedExecutionCount: 0,
+      failedConditionCount: 0,
+      unknownConditionCount: 0,
       incomplete: false,
     };
   }
@@ -231,12 +239,28 @@ function summarizeGateExecution(gateResults) {
     gateResults.failedGateCount ??
       gates.filter((gate) => FAIL_STATUSES.has(normalizeStatus(gate?.status))).length,
   );
+  const failedExecutionCount = numberValue(
+    gateResults.failedExecutionCount ??
+      gates.filter((gate) => normalizeStatus(gate?.executionStatus) === "execution_failed").length,
+  );
+  const failedConditionCount = numberValue(
+    gateResults.failedConditionCount ??
+      gates.filter((gate) => FAIL_STATUSES.has(gateConditionStatus(gate))).length,
+  );
+  const unknownConditionCount = numberValue(
+    gateResults.unknownConditionCount ??
+      gates.filter((gate) => gateConditionStatus(gate) === "unknown").length +
+        Math.max(0, selectedGateCount - executedGateCount),
+  );
   const summary = {
     available: true,
     status: normalizeStatus(gateResults.status),
     selectedGateCount,
     executedGateCount,
     failedGateCount,
+    failedExecutionCount,
+    failedConditionCount,
+    unknownConditionCount,
     incomplete: selectedGateCount > executedGateCount,
   };
   const reason = stringValue(gateResults.reason ?? gateResults.message ?? gateResults.error);
@@ -404,7 +428,7 @@ function summarizeCapabilityEvidence({ claims, gates, resultByLabel, evalReport 
             status: "unknown",
           });
         } else {
-          const status = normalizeStatus(result.status);
+          const status = gateConditionStatus(result);
           if (!PASS_STATUSES.has(status)) {
             missing.push({
               id: claim.id,
@@ -559,6 +583,9 @@ function summarizeStatus({ acceptance, evalSummary, undeclaredBoundaries, capabi
   if (
     acceptance.manualEvidenceGates.length > 0 ||
     acceptance.unknownGates.length > 0 ||
+    acceptance.execution.incomplete ||
+    acceptance.execution.failedExecutionCount > 0 ||
+    acceptance.execution.unknownConditionCount > 0 ||
     evalSummary.failingScores.length > 0 ||
     undeclaredBoundaries.length > 0 ||
     asArray(capabilityEvidence?.missing).length > 0 ||
@@ -567,6 +594,10 @@ function summarizeStatus({ acceptance, evalSummary, undeclaredBoundaries, capabi
     return "attention_required";
   }
   return "passed";
+}
+
+function gateConditionStatus(result) {
+  return normalizeStatus(result?.conditionStatus ?? result?.condition_status ?? result?.status);
 }
 
 function normalizeStatus(status) {
@@ -641,6 +672,9 @@ function appendExecutionSummary(lines, execution) {
     `Selected gates: ${execution.selectedGateCount}`,
     `Executed gates: ${execution.executedGateCount}`,
     `Failed gates: ${execution.failedGateCount}`,
+    `Execution failures: ${execution.failedExecutionCount}`,
+    `Failed conditions: ${execution.failedConditionCount}`,
+    `Unknown conditions: ${execution.unknownConditionCount}`,
     `Incomplete execution: ${execution.incomplete ? "yes" : "no"}`,
   );
   if (execution.reason) {
@@ -703,6 +737,8 @@ function parseArgs(argv) {
     outMarkdown: null,
     outDir: null,
     ciDefaultOnly: false,
+    releaseProfile: null,
+    requireState: null,
     failOnAttention: false,
     help: false,
   };
@@ -731,6 +767,10 @@ function parseArgs(argv) {
       options.outDir = requireValue(argv, (index += 1), arg);
     } else if (arg === "--ci-default-only") {
       options.ciDefaultOnly = true;
+    } else if (arg === "--release-profile") {
+      options.releaseProfile = requireValue(argv, (index += 1), arg);
+    } else if (arg === "--require-state") {
+      options.requireState = requireValue(argv, (index += 1), arg);
     } else if (arg === "--fail-on-attention") {
       options.failOnAttention = true;
     } else if (arg === "-h" || arg === "--help") {
@@ -749,7 +789,7 @@ function requireValue(argv, index, flag) {
 }
 
 function printUsage() {
-  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH|--no-acceptance-matrix] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--out-dir PATH] [--ci-default-only] [--fail-on-attention]
+  console.log(`Usage: node scripts/release-confidence-summary.mjs [--json|--markdown] [--acceptance-json PATH|--no-acceptance-matrix|--release-profile PATH --require-state R3] [--gate-results PATH] [--eval-report PATH] [--boundaries-json PATH] [--out-json PATH] [--out-md PATH] [--out-dir PATH] [--ci-default-only] [--fail-on-attention]
 
 Builds a release confidence summary from acceptance matrix metadata plus optional gate-result, eval-report, and boundary evidence.
 
@@ -765,6 +805,8 @@ Options:
   --out-md PATH           Also write Markdown summary to a file.
   --out-dir PATH          Also write release-confidence-summary.json and .md under PATH.
   --ci-default-only       Summarize only gates marked ciDefault in the acceptance matrix.
+  --release-profile PATH  Summarize the exact gates required by a validated release profile.
+  --require-state STATE   Required release state used with --release-profile (R1-R4).
   --fail-on-attention     Exit 1 when the summary status is failed or attention_required.
 `);
 }
@@ -775,6 +817,30 @@ function writeDashboardArtifacts(outDir, json, markdown) {
   writeFileSync(join(outDir, "release-confidence-summary.md"), markdown, "utf8");
 }
 
+function loadReleaseProfile(path, requiredState) {
+  const profile = readJsonFile(path);
+  const validation = validateReleaseGateProfile(profile, { requiredState });
+  if (!validation.ok) {
+    throw new Error(`Invalid release profile: ${validation.errors.join("; ")}`);
+  }
+  const gates = asArray(profile.gates)
+    .filter((gate) => {
+      const states = asArray(gate.required_for);
+      return states.includes(requiredState) || (requiredState === "R4" && states.includes("R3"));
+    })
+    .map((gate, index) => ({
+      index: index + 1,
+      label: gate.label,
+      command: gate.command,
+      domain: gate.domain,
+      tier: gate.tier,
+      runtimeCost: "unknown",
+      manualRequirement: gate.manual_allowed === true,
+      ciDefault: gate.ci_default === true,
+    }));
+  return { profile, acceptanceMatrix: { schemaVersion: 1, gates } };
+}
+
 function main(argv) {
   const options = parseArgs(argv);
   if (options.help) {
@@ -782,9 +848,23 @@ function main(argv) {
     return 0;
   }
 
+  if (Boolean(options.releaseProfile) !== Boolean(options.requireState)) {
+    throw new Error("Use --release-profile and --require-state together");
+  }
+  if (options.releaseProfile && (options.acceptanceJson || options.noAcceptanceMatrix || options.ciDefaultOnly)) {
+    throw new Error("Do not combine --release-profile with acceptance-matrix or CI-default selectors");
+  }
+
   const gateResults = options.gateResults && existsSync(options.gateResults) ? readJsonFile(options.gateResults) : null;
+  const releaseProfile = options.releaseProfile
+    ? loadReleaseProfile(options.releaseProfile, options.requireState)
+    : null;
   const summary = buildReleaseConfidenceSummary({
-    acceptanceMatrix: options.noAcceptanceMatrix ? null : loadAcceptanceMatrix(options.acceptanceJson),
+    acceptanceMatrix: releaseProfile
+      ? releaseProfile.acceptanceMatrix
+      : options.noAcceptanceMatrix
+        ? null
+        : loadAcceptanceMatrix(options.acceptanceJson),
     gateResults,
     evalReport: options.evalReport && existsSync(options.evalReport) ? readJsonFile(options.evalReport) : null,
     boundaries:
@@ -792,6 +872,8 @@ function main(argv) {
         ? readJsonFile(options.boundariesJson)
         : null,
     acceptanceScope: options.ciDefaultOnly ? "ci-default" : "all",
+    releaseProfileId: releaseProfile?.profile?.id ?? null,
+    requiredState: options.requireState,
   });
   const json = `${JSON.stringify(summary, null, 2)}\n`;
   const markdown = renderReleaseConfidenceMarkdown(summary);

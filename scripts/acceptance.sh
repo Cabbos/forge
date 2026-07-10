@@ -121,6 +121,10 @@ RESULT_STATUSES=()
 RESULT_EXIT_CODES=()
 RESULT_DURATION_MS=()
 RESULT_REASONS=()
+RESULT_EXECUTION_STATUSES=()
+RESULT_CONDITION_STATUSES=()
+RESULT_STARTED_AT_MS=()
+RESULT_FINISHED_AT_MS=()
 CURRENT_DOMAIN="foundation"
 
 set_domain() {
@@ -148,11 +152,21 @@ record_gate_result() {
   local ci_default="$7"
   local exit_code="$8"
   local duration_ms="$9"
+  local started_at_ms="${10}"
+  local finished_at_ms="${11}"
   local status="passed"
   local reason=""
+  local execution_status="completed"
+  local condition_status="passed"
 
-  if [[ "$exit_code" -ne 0 ]]; then
+  if [[ "$exit_code" -eq 126 || "$exit_code" -eq 127 || "$exit_code" -eq 130 || "$exit_code" -eq 137 || "$exit_code" -eq 143 ]]; then
+    status="unknown"
+    execution_status="execution_failed"
+    condition_status="unknown"
+    reason="execution_exit_code_$exit_code"
+  elif [[ "$exit_code" -ne 0 ]]; then
     status="failed"
+    condition_status="failed"
     reason="exit_code_$exit_code"
   fi
 
@@ -167,6 +181,10 @@ record_gate_result() {
   RESULT_EXIT_CODES+=("$exit_code")
   RESULT_DURATION_MS+=("$duration_ms")
   RESULT_REASONS+=("$reason")
+  RESULT_EXECUTION_STATUSES+=("$execution_status")
+  RESULT_CONDITION_STATUSES+=("$condition_status")
+  RESULT_STARTED_AT_MS+=("$started_at_ms")
+  RESULT_FINISHED_AT_MS+=("$finished_at_ms")
 }
 
 write_results_json() {
@@ -178,7 +196,7 @@ write_results_json() {
   {
     printf '%s\0%s\0%s\0' "$ROOT_DIR" "$overall_exit_code" "${#SELECTED_INDICES[@]}"
     for index in "${!RESULT_LABELS[@]}"; do
-      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "${RESULT_LABELS[$index]}" \
         "${RESULT_COMMANDS[$index]}" \
         "${RESULT_DOMAINS[$index]}" \
@@ -189,7 +207,11 @@ write_results_json() {
         "${RESULT_STATUSES[$index]}" \
         "${RESULT_EXIT_CODES[$index]}" \
         "${RESULT_DURATION_MS[$index]}" \
-        "${RESULT_REASONS[$index]}"
+        "${RESULT_REASONS[$index]}" \
+        "${RESULT_EXECUTION_STATUSES[$index]}" \
+        "${RESULT_CONDITION_STATUSES[$index]}" \
+        "${RESULT_STARTED_AT_MS[$index]}" \
+        "${RESULT_FINISHED_AT_MS[$index]}"
     done
   } | node -e '
 const fs = require("node:fs");
@@ -201,7 +223,7 @@ const selectedGateCount = Number(parts.shift());
 if (parts.at(-1) === "") parts.pop();
 
 const gates = [];
-for (let index = 0; index < parts.length; index += 11) {
+for (let index = 0; index < parts.length; index += 15) {
   gates.push({
     label: parts[index],
     command: parts[index + 1],
@@ -214,17 +236,30 @@ for (let index = 0; index < parts.length; index += 11) {
     exitCode: Number(parts[index + 8]),
     durationMs: Number(parts[index + 9]),
     reason: parts[index + 10] || null,
+    executionStatus: parts[index + 11],
+    conditionStatus: parts[index + 12],
+    startedAt: new Date(Number(parts[index + 13])).toISOString(),
+    finishedAt: new Date(Number(parts[index + 14])).toISOString(),
   });
 }
 
 const payload = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   workingDirectory,
-  status: overallExitCode === 0 ? "passed" : "failed",
+  status: gates.some((gate) => gate.conditionStatus === "failed")
+    ? "failed"
+    : gates.some((gate) => gate.conditionStatus === "unknown") || gates.length < selectedGateCount
+      ? "unknown"
+      : "passed",
   selectedGateCount,
   executedGateCount: gates.length,
   failedGateCount: gates.filter((gate) => gate.status === "failed").length,
+  failedExecutionCount: gates.filter((gate) => gate.executionStatus === "execution_failed").length,
+  failedConditionCount: gates.filter((gate) => gate.conditionStatus === "failed").length,
+  unknownConditionCount:
+    gates.filter((gate) => gate.conditionStatus === "unknown").length +
+    Math.max(0, selectedGateCount - gates.length),
   gates,
 };
 fs.writeFileSync(outputPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
@@ -691,7 +726,7 @@ for index in "${SELECTED_INDICES[@]}"; do
     set -e
     finished_at_ms="$(now_ms)"
     duration_ms=$((finished_at_ms - started_at_ms))
-    record_gate_result "$label" "$command" "$domain" "$tier" "$cost" "$manual" "$ci_default" "$gate_exit_code" "$duration_ms"
+    record_gate_result "$label" "$command" "$domain" "$tier" "$cost" "$manual" "$ci_default" "$gate_exit_code" "$duration_ms" "$started_at_ms" "$finished_at_ms"
     if [[ "$gate_exit_code" -ne 0 ]]; then
       overall_exit_code="$gate_exit_code"
       break

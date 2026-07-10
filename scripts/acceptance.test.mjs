@@ -763,11 +763,14 @@ test("acceptance script can write gate results JSON", (t) => {
   );
 
   const results = JSON.parse(readFileSync(resultsPath, "utf8"));
-  assert.equal(results.schemaVersion, 1);
+  assert.equal(results.schemaVersion, 2);
   assert.equal(results.workingDirectory, root.replace(/\/$/, ""));
   assert.equal(results.status, "passed");
   assert.equal(results.selectedGateCount, 1);
   assert.equal(results.executedGateCount, 1);
+  assert.equal(results.failedExecutionCount, 0);
+  assert.equal(results.failedConditionCount, 0);
+  assert.equal(results.unknownConditionCount, 0);
   assert.deepEqual(results.gates.map(({ label, status, exitCode }) => ({ label, status, exitCode })), [
     {
       label: "desktop state consistency map status",
@@ -794,6 +797,53 @@ test("acceptance script can write gate results JSON", (t) => {
     ],
   );
   assert.equal(typeof results.gates[0].durationMs, "number");
+  assert.equal(results.gates[0].executionStatus, "completed");
+  assert.equal(results.gates[0].conditionStatus, "passed");
+  assert.ok(Number.isFinite(Date.parse(results.gates[0].startedAt)));
+  assert.ok(Number.isFinite(Date.parse(results.gates[0].finishedAt)));
+});
+
+test("gate results distinguish failed conditions from execution failures", (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-status-v2-"));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+  const source = readFileSync(scriptPath, "utf8");
+  const cases = [
+    {
+      command: "false",
+      exitCode: 1,
+      executionStatus: "completed",
+      conditionStatus: "failed",
+    },
+    {
+      command: "forge-command-that-does-not-exist",
+      exitCode: 127,
+      executionStatus: "execution_failed",
+      conditionStatus: "unknown",
+    },
+  ];
+
+  for (const [index, fixture] of cases.entries()) {
+    const tempScriptPath = join(tempDir, `acceptance-${index}.sh`);
+    const resultsPath = join(tempDir, `results-${index}.json`);
+    const modified = source.replace(
+      /add_gate 'desktop state consistency map status' '[^\n]+'/,
+      `add_gate 'desktop state consistency map status' '${fixture.command}'`,
+    );
+    assert.notEqual(modified, source);
+    writeFileSync(tempScriptPath, modified);
+    chmodSync(tempScriptPath, 0o755);
+
+    const result = spawnSync(
+      tempScriptPath,
+      ["--only", "desktop state consistency map status", "--results-json", resultsPath],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(result.status, fixture.exitCode);
+    const payload = JSON.parse(readFileSync(resultsPath, "utf8"));
+    assert.equal(payload.schemaVersion, 2);
+    assert.equal(payload.gates[0].executionStatus, fixture.executionStatus);
+    assert.equal(payload.gates[0].conditionStatus, fixture.conditionStatus);
+  }
 });
 
 test("acceptance script reports --grep misses", () => {
