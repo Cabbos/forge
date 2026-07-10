@@ -29,4 +29,9 @@ __pycache__/
 
 # Local eval output
 evals/artifacts/
+
+# Release candidates are generated in CI and uploaded by immutable SHA-bound artifacts.
+release/evidence/*/candidate-manifest.json
+release/evidence/*/release-manifest.json
+
 .gitnexus
