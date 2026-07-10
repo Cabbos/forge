@@ -505,6 +505,7 @@ def test_api_cancellation_during_task_preserves_cancelled(
     run_id = created.json()["run_id"]
 
     import app.worker as worker_mod
+
     original_create_runner = worker_mod.create_runner
 
     class SlowRunner:

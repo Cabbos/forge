@@ -226,12 +226,14 @@ def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
 
     # Monkey-patch runner to make task slow
     import app.worker as worker_mod
+
     original_create_runner = worker_mod.create_runner
 
     class SlowRunner:
         def run_task(self, _task):
             time.sleep(0.5)
             from app.models import AgentTrace, VerificationResult
+
             return AgentTrace(
                 task_id="task-pass",
                 user_prompt="pass",
@@ -279,6 +281,7 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) 
     storage.create_run(make_pending_run("run-1"))
 
     import app.worker as worker_mod
+
     original_create_runner = worker_mod.create_runner
 
     class SlowRunner:
@@ -341,6 +344,7 @@ def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) 
     storage.create_run(make_pending_run("run-1"))
 
     import app.worker as worker_mod
+
     original_create_runner = worker_mod.create_runner
 
     class SlowRunner:
@@ -403,6 +407,7 @@ def test_worker_exception_race_with_cancel_preserves_cancelled(tmp_path: Path) -
     storage.create_run(make_pending_run("run-1").model_copy(update={"max_retries": 0}))
 
     import app.worker as worker_mod
+
     original_create_runner = worker_mod.create_runner
 
     class FailingRunner:
@@ -453,6 +458,7 @@ def test_worker_retry_race_with_cancel_preserves_cancelled(tmp_path: Path) -> No
     storage.create_run(make_pending_run("run-1").model_copy(update={"max_retries": 1}))
 
     import app.worker as worker_mod
+
     original_create_runner = worker_mod.create_runner
 
     class FailingRunner:

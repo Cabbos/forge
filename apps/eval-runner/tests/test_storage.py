@@ -156,8 +156,7 @@ def test_sqlite_storage_creates_experiment_snapshot_table(tmp_path: Path) -> Non
 
     with sqlite3.connect(db_path) as connection:
         columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(eval_experiments)").fetchall()
+            row[1] for row in connection.execute("PRAGMA table_info(eval_experiments)").fetchall()
         }
 
     assert {

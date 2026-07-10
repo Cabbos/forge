@@ -32,8 +32,12 @@ class EvalRunner(Protocol):
 class DeterministicMockRunner:
     """A deterministic stand-in for a real coding agent execution loop."""
 
-    def __init__(self, provider: str = "mock", model: str = "deterministic-agent-v1") -> None:
-        self.provider = provider
+    def __init__(
+        self,
+        provider: EvalProvider | str = EvalProvider.MOCK,
+        model: str = "deterministic-agent-v1",
+    ) -> None:
+        self.provider = EvalProvider(provider)
         self.model = model
 
     def run_task(self, task: EvaluationTask) -> AgentTrace:
@@ -180,11 +184,11 @@ class ForgeAgentRunner:
 
     def __init__(
         self,
-        provider: str = "forge",
+        provider: EvalProvider | str = EvalProvider.FORGE,
         model: str = "local-forge",
         command: str | Sequence[str] | None = None,
     ) -> None:
-        self.provider = provider
+        self.provider = EvalProvider(provider)
         self.model = model
         self.command = normalize_command(command)
 
@@ -248,8 +252,8 @@ class ForgeAgentRunner:
                     shell_outputs=[
                         ShellOutput(
                             command=command_label(self.command),
-                            stdout=exc.stdout or "",
-                            stderr=exc.stderr or "",
+                            stdout=subprocess_timeout_text(exc.stdout),
+                            stderr=subprocess_timeout_text(exc.stderr),
                             exit_code=124,
                             duration_ms=timeout * 1000,
                         )
@@ -485,6 +489,12 @@ def validate_execution_identity(
     return provider, model, case_source
 
 
+def subprocess_timeout_text(value: bytes | str | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
 def create_runner(
     provider: EvalProvider | str,
     model: str,
@@ -538,10 +548,7 @@ def parse_forge_stdout(stdout: str) -> dict[str, Any]:
 
 
 def invalid_trace_failure_reason(exc: Exception, *, stdout: str, stderr: str) -> str:
-    reason = (
-        "Forge command returned invalid trace JSON: "
-        f"{type(exc).__name__}: {exc}"
-    )
+    reason = f"Forge command returned invalid trace JSON: {type(exc).__name__}: {exc}"
     stdout_preview = text_preview(stdout, 500)
     stderr_preview = text_preview(stderr, 500)
     if stdout_preview:

@@ -198,9 +198,7 @@ class ForgeRunEvidence(EvalModel):
     failure_reason: str | None = None
     recovery: dict[str, Any] | None = None
     recovery_cases: list[dict[str, Any]] = Field(default_factory=list)
-    completion_eligibility: dict[str, Any] = Field(
-        default_factory=lambda: {"status": "unknown"}
-    )
+    completion_eligibility: dict[str, Any] = Field(default_factory=lambda: {"status": "unknown"})
     a2a_child_capsules: list[dict[str, Any]] = Field(default_factory=list)
     gateway: dict[str, Any] = Field(default_factory=dict)
     continuity_lessons: list[dict[str, Any]] = Field(default_factory=list)

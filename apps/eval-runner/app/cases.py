@@ -46,7 +46,9 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
                     task_id=task.id,
                     severity="warning",
                     code="missing_verification",
-                    message="Executable eval case has no verification_command or validation_commands.",
+                    message=(
+                        "Executable eval case has no verification_command or validation_commands."
+                    ),
                 )
             )
         if not contract_only and not task.expected_files_changed:

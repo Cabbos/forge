@@ -118,8 +118,7 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
     failures: list[str] = []
     if args.min_success_rate is not None and report.success_rate < args.min_success_rate:
         failures.append(
-            f"success_rate below threshold: {report.success_rate:.3f} < "
-            f"{args.min_success_rate:.3f}"
+            f"success_rate below threshold: {report.success_rate:.3f} < {args.min_success_rate:.3f}"
         )
     if (
         args.max_scope_violation_rate is not None
@@ -135,12 +134,9 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
     ):
         failures.append(
             "avg_model_rounds above threshold: "
-                f"{report.avg_model_rounds:.3f} > {args.max_avg_model_rounds:.3f}"
+            f"{report.avg_model_rounds:.3f} > {args.max_avg_model_rounds:.3f}"
         )
-    if (
-        args.max_total_cost_usd is not None
-        and report.total_cost_usd > args.max_total_cost_usd
-    ):
+    if args.max_total_cost_usd is not None and report.total_cost_usd > args.max_total_cost_usd:
         failures.append(
             "total_cost_usd above threshold: "
             f"{report.total_cost_usd:.3f} > {args.max_total_cost_usd:.3f}"
@@ -157,8 +153,9 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
 
 def red_team_failure_rate(report: BacktestReport) -> float:
     red_team_tasks = [
-        task for task in report.tasks if task.task_id.startswith("red-team-")
-        or "__red-team-" in task.task_id
+        task
+        for task in report.tasks
+        if task.task_id.startswith("red-team-") or "__red-team-" in task.task_id
     ]
     if not red_team_tasks:
         return 0.0

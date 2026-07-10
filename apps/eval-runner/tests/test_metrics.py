@@ -308,9 +308,7 @@ def test_forge_runtime_scores_reject_usage_unknown_with_invented_values() -> Non
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -353,9 +351,7 @@ def test_forge_runtime_scores_reject_negative_provider_usage_values() -> None:
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -496,9 +492,7 @@ def test_forge_runtime_scores_grade_verification_evidence_quality() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -510,7 +504,7 @@ def test_forge_runtime_scores_grade_verification_evidence_quality() -> None:
                 },
                 provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
                 completion_eligibility={"status": "unknown"},
-            )
+            ),
         }
     )
 
@@ -544,9 +538,7 @@ def test_forge_runtime_scores_explain_verification_evidence_quality_failures() -
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -558,7 +550,7 @@ def test_forge_runtime_scores_explain_verification_evidence_quality_failures() -
                 },
                 provider_usage={"latest": {"input_tokens": 10, "output_tokens": 2}},
                 completion_eligibility={"status": "unknown"},
-            )
+            ),
         }
     )
 
@@ -593,9 +585,7 @@ def test_forge_runtime_scores_grade_file_effects_evidence_quality() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -635,9 +625,7 @@ def test_forge_runtime_scores_explain_file_effects_evidence_failures() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/from-evidence.py", "src/from-evidence.py"],
@@ -697,9 +685,7 @@ def test_forge_runtime_scores_grade_tool_shell_evidence_quality() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 tool_calls=[
@@ -755,9 +741,7 @@ def test_forge_runtime_scores_explain_tool_shell_evidence_failures() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 tool_calls=[
@@ -831,9 +815,7 @@ def test_forge_runtime_scores_grade_permission_decision_evidence() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 permission_decisions=[
@@ -881,9 +863,7 @@ def test_forge_runtime_scores_explain_permission_decision_evidence_failures() ->
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 permission_decisions=[
@@ -1172,7 +1152,9 @@ def test_forge_runtime_scores_explain_context_budget_bucket_failures() -> None:
     scores = score_trace(trace)
 
     assert scores["forge_context_budget_buckets_ok"].score == 0.0
-    assert scores["forge_context_budget_buckets_ok"].label == "context_budget_bucket_evidence_failed"
+    assert (
+        scores["forge_context_budget_buckets_ok"].label == "context_budget_bucket_evidence_failed"
+    )
     explanation = scores["forge_context_budget_buckets_ok"].explanation or ""
     assert "hidden_system:missing_bucket" in explanation
     assert "memory:invalid_token_count" in explanation
@@ -1301,9 +1283,7 @@ def test_forge_runtime_scores_grade_gateway_runtime_safety() -> None:
                 gateway={
                     "ownership_mode": "gateway_read_only_owner",
                     "gateway_can_own_session": True,
-                    "local_parity": {
-                        "differences": [{"field": "owner", "allowlisted": True}]
-                    },
+                    "local_parity": {"differences": [{"field": "owner", "allowlisted": True}]},
                     "degraded_fallback": {
                         "active": True,
                         "reason": "watchdog_timeout",
@@ -1342,9 +1322,7 @@ def test_forge_runtime_scores_explain_gateway_runtime_safety_failures() -> None:
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/changed.ts"],
@@ -1353,17 +1331,13 @@ def test_forge_runtime_scores_explain_gateway_runtime_safety_failures() -> None:
                 permission_decisions=[{"decision": "manual_approved", "operation": "write_file"}],
                 verification={"command": "cargo test gateway", "passed": True},
                 provider_usage={
-                    "events": [
-                        {"source": "provider_call", "input_tokens": 10, "output_tokens": 2}
-                    ]
+                    "events": [{"source": "provider_call", "input_tokens": 10, "output_tokens": 2}]
                 },
                 failure_category="none",
                 gateway={
                     "ownership_mode": "local_default",
                     "gateway_can_own_session": True,
-                    "local_parity": {
-                        "differences": [{"field": "permission_decision"}]
-                    },
+                    "local_parity": {"differences": [{"field": "permission_decision"}]},
                     "degraded_fallback": {
                         "active": True,
                         "queued_input_preserved": False,
@@ -1439,9 +1413,7 @@ def test_forge_runtime_scores_require_gateway_tool_owner_blocked_by_default() ->
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -1571,9 +1543,7 @@ def test_forge_runtime_scores_explain_incomplete_a2a_child_evidence() -> None:
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -1655,14 +1625,14 @@ def test_forge_runtime_scores_explain_incomplete_a2a_child_evidence() -> None:
 def test_forge_runtime_scores_require_a2a_review_gate_identity_fields() -> None:
     from app.scoring import score_trace
 
-    trace = make_trace("forge-a2a-missing-review-identity", passed=True, duration_ms=10, tool_count=1).model_copy(
+    trace = make_trace(
+        "forge-a2a-missing-review-identity", passed=True, duration_ms=10, tool_count=1
+    ).model_copy(
         update={
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -1698,14 +1668,14 @@ def test_forge_runtime_scores_require_a2a_review_gate_identity_fields() -> None:
 def test_forge_runtime_scores_reject_a2a_blocking_review_gate_states() -> None:
     from app.scoring import score_trace
 
-    trace = make_trace("forge-a2a-blocking-review-gates", passed=True, duration_ms=10, tool_count=1).model_copy(
+    trace = make_trace(
+        "forge-a2a-blocking-review-gates", passed=True, duration_ms=10, tool_count=1
+    ).model_copy(
         update={
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -1779,14 +1749,14 @@ def test_forge_runtime_scores_reject_a2a_blocking_review_gate_states() -> None:
 def test_forge_runtime_scores_require_a2a_child_context_capsule_contract() -> None:
     from app.scoring import score_trace
 
-    trace = make_trace("forge-a2a-capsule-contract", passed=True, duration_ms=10, tool_count=1).model_copy(
+    trace = make_trace(
+        "forge-a2a-capsule-contract", passed=True, duration_ms=10, tool_count=1
+    ).model_copy(
         update={
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=["src/example.py"],
@@ -1850,7 +1820,9 @@ def test_forge_runtime_scores_require_a2a_child_context_capsule_contract() -> No
 def test_forge_runtime_scores_require_a2a_failure_recovery_policy() -> None:
     from app.scoring import score_trace
 
-    trace = make_trace("forge-a2a-recovery-policy", passed=True, duration_ms=10, tool_count=1).model_copy(
+    trace = make_trace(
+        "forge-a2a-recovery-policy", passed=True, duration_ms=10, tool_count=1
+    ).model_copy(
         update={
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
@@ -1926,7 +1898,9 @@ def test_forge_runtime_scores_require_a2a_failure_recovery_policy() -> None:
 def test_forge_runtime_scores_require_a2a_worktree_worker_facts() -> None:
     from app.scoring import score_trace
 
-    trace = make_trace("forge-a2a-worktree-facts", passed=True, duration_ms=10, tool_count=1).model_copy(
+    trace = make_trace(
+        "forge-a2a-worktree-facts", passed=True, duration_ms=10, tool_count=1
+    ).model_copy(
         update={
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
@@ -2024,9 +1998,7 @@ def test_forge_runtime_scores_grade_runtime_recovery_quality() -> None:
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2091,9 +2063,7 @@ def test_forge_runtime_scores_explain_runtime_recovery_quality_failures() -> Non
             "forge_run_evidence": ForgeRunEvidence(
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2165,9 +2135,7 @@ def test_forge_runtime_scores_grade_failure_evidence_quality() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2202,9 +2170,7 @@ def test_forge_runtime_scores_explain_failure_evidence_failures() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2228,9 +2194,7 @@ def test_forge_runtime_scores_explain_failure_evidence_failures() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2249,7 +2213,10 @@ def test_forge_runtime_scores_explain_failure_evidence_failures() -> None:
     assert failed_scores["forge_failure_evidence_ok"].score == 0.0
     assert failed_scores["forge_failure_evidence_ok"].label == "failure_evidence_failed"
     failed_explanation = failed_scores["forge_failure_evidence_ok"].explanation or ""
-    assert "failure_category:trace_category_mismatch:verification_failed!=timeout" in failed_explanation
+    assert (
+        "failure_category:trace_category_mismatch:verification_failed!=timeout"
+        in failed_explanation
+    )
     assert "failure_reason:missing_failure_reason" in failed_explanation
 
     assert success_scores["forge_failure_evidence_ok"].score == 0.0
@@ -2274,9 +2241,7 @@ def test_forge_runtime_scores_grade_continuity_lessons_quality() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2317,9 +2282,7 @@ def test_forge_runtime_scores_explain_continuity_lessons_failures() -> None:
                 loop_task_id="loop-task-1",
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2381,9 +2344,7 @@ def test_forge_runtime_scores_accept_completion_eligibility_unknown() -> None:
                 schema_version=2,
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
@@ -2460,7 +2421,7 @@ def test_forge_runtime_scores_explain_schema_identity_failures() -> None:
                         "run_id": "other-run",
                         "context_estimate": {
                             "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        },
                     }
                 },
                 changed_files=[],
@@ -2495,9 +2456,7 @@ def test_forge_runtime_scores_explain_completion_eligibility_conflicts() -> None
                 schema_version=2,
                 prepared_context={
                     "turn_prepared": {
-                        "context_estimate": {
-                            "sources": [{"kind": "user_input", "label": "prompt"}]
-                        }
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
                     }
                 },
                 changed_files=[],
