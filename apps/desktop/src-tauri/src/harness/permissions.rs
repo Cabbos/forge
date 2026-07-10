@@ -7,8 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::harness::db::Database;
 use crate::harness::mcp;
-use crate::harness::permission_ledger::{PermissionLedgerEvent, PermissionLedgerEventKind};
-use crate::harness::shell_policy::{classify_shell_command, ShellPolicyDecision, ShellSafetyLevel};
+use crate::harness::permission_ledger::{
+    PermissionLedgerEvent, PermissionLedgerEventKind, PermissionRiskTier,
+};
+use crate::harness::shell_policy::{
+    classify_shell_command_in_workspace, ShellPolicyDecision, ShellPolicyReason, ShellRisk,
+};
 
 const DEFAULT_ALLOWED_PATTERNS: &[&str] = &[
     "read_file",
@@ -265,8 +269,8 @@ impl PermissionGate {
             }
             "run_shell" => {
                 let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                match classify_shell_command(command) {
-                    ShellPolicyDecision::AllowReadonly => {
+                match classify_shell_command_in_workspace(command, working_dir) {
+                    ShellPolicyDecision::AllowInspection => {
                         self.record_check(
                             PermissionDecision::Allow,
                             PermissionLedgerEvent::decision(
@@ -276,52 +280,43 @@ impl PermissionGate {
                                 input,
                                 working_dir,
                                 permission_mode,
-                                "readonly_shell_command",
+                                ShellPolicyReason::ProvenInspection.as_str(),
                             ),
                         )
                         .await
                     }
-                    ShellPolicyDecision::Blocked { reason } => {
+                    ShellPolicyDecision::Block { reason } => {
+                        let kind = if reason == ShellPolicyReason::ExternalWrite {
+                            PermissionLedgerEventKind::BlockedExternalPath
+                        } else {
+                            PermissionLedgerEventKind::BlockedPolicy
+                        };
+                        let message = reason.blocked_message().to_string();
                         self.record_check(
-                            PermissionDecision::Deny {
-                                reason: reason.clone(),
-                            },
+                            PermissionDecision::Deny { reason: message },
                             PermissionLedgerEvent::decision(
-                                PermissionLedgerEventKind::BlockedPolicy,
+                                kind,
                                 session_id,
                                 canonical,
                                 input,
                                 working_dir,
                                 permission_mode,
-                                reason,
-                            ),
+                                reason.as_str(),
+                            )
+                            .with_risk_tier(PermissionRiskTier::High),
                         )
                         .await
                     }
-                    ShellPolicyDecision::NeedsConfirmation { safety } => {
-                        if self
-                            .full_access_current_project_allows(session_id, working_dir)
-                            .await
-                        {
-                            return self
-                                .record_check(
-                                    PermissionDecision::Allow,
-                                    PermissionLedgerEvent::decision(
-                                        PermissionLedgerEventKind::AutoApproved,
-                                        session_id,
-                                        canonical,
-                                        input,
-                                        working_dir,
-                                        permission_mode,
-                                        "full_access_current_project",
-                                    ),
-                                )
-                                .await;
-                        }
+                    ShellPolicyDecision::RequireExplicitConfirmation { risk, reason } => {
+                        let risk_tier = match reason {
+                            ShellPolicyReason::ProjectDefinedExecution
+                            | ShellPolicyReason::ExternalRead => PermissionRiskTier::Caution,
+                            _ => PermissionRiskTier::High,
+                        };
                         self.record_check(
                             PermissionDecision::Ask {
                                 question: format_shell_question(command),
-                                kind: if safety == ShellSafetyLevel::Dangerous {
+                                kind: if risk == ShellRisk::Dangerous {
                                     "dangerous_cmd".to_string()
                                 } else {
                                     "shell_cmd".to_string()
@@ -335,8 +330,9 @@ impl PermissionGate {
                                 input,
                                 working_dir,
                                 permission_mode,
-                                "shell_command_requires_user_response",
-                            ),
+                                reason.as_str(),
+                            )
+                            .with_risk_tier(risk_tier),
                         )
                         .await
                     }

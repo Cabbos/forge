@@ -1,179 +1,266 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
 pub enum ShellPolicyDecision {
-    AllowReadonly,
-    NeedsConfirmation { safety: ShellSafetyLevel },
-    Blocked { reason: String },
+    AllowInspection,
+    RequireExplicitConfirmation {
+        risk: ShellRisk,
+        reason: ShellPolicyReason,
+    },
+    Block {
+        reason: ShellPolicyReason,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShellSafetyLevel {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellRisk {
     Normal,
     Dangerous,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShellPolicyReason {
+    ProvenInspection,
+    ProjectDefinedExecution,
+    UnknownExecution,
+    ExternalRead,
+    ExternalWrite,
+    ShellControl,
+    DangerousMutation,
+    Catastrophic,
+}
+
+impl ShellPolicyReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProvenInspection => "proven_inspection",
+            Self::ProjectDefinedExecution => "project_defined_execution",
+            Self::UnknownExecution => "unknown_execution",
+            Self::ExternalRead => "external_read",
+            Self::ExternalWrite => "external_write",
+            Self::ShellControl => "shell_control",
+            Self::DangerousMutation => "dangerous_mutation",
+            Self::Catastrophic => "catastrophic",
+        }
+    }
+
+    pub const fn blocked_message(self) -> &'static str {
+        match self {
+            Self::ExternalWrite => {
+                "已阻止：这条命令可能写入 Forge 工作区之外的路径。请改为项目内目标。"
+            }
+            _ => "已阻止：这条命令风险过高，Forge 不会执行。请改用更具体、可回退的项目内操作。",
+        }
+    }
+}
+
+/// Compatibility entry point for callers that do not own a workspace root.
+/// Authoritative execution paths must call `classify_shell_command_in_workspace`.
 pub fn classify_shell_command(command: &str) -> ShellPolicyDecision {
-    let normalized = command.trim().to_lowercase();
-    if normalized.is_empty() {
-        return ShellPolicyDecision::NeedsConfirmation {
-            safety: ShellSafetyLevel::Normal,
+    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    classify_shell_command_in_workspace(command, &workspace)
+}
+
+pub fn classify_shell_command_in_workspace(
+    command: &str,
+    workspace_root: &Path,
+) -> ShellPolicyDecision {
+    let command = command.trim();
+    if command.is_empty() {
+        return ShellPolicyDecision::Block {
+            reason: ShellPolicyReason::Catastrophic,
         };
     }
 
-    if is_catastrophic_shell_command(&normalized) {
-        return ShellPolicyDecision::Blocked {
-            reason: "已阻止：这条命令风险过高，Forge 不会执行。请改用更具体、可回退的项目内操作。"
-                .to_string(),
+    let normalized = command.to_ascii_lowercase();
+    let tokens = shell_tokens(command);
+
+    if is_catastrophic_shell_command(&normalized, &tokens) {
+        return ShellPolicyDecision::Block {
+            reason: ShellPolicyReason::Catastrophic,
         };
     }
 
-    if is_readonly_shell_command(&normalized) {
-        return ShellPolicyDecision::AllowReadonly;
+    let external_path = references_external_path(&tokens, workspace_root);
+    if external_path && command_may_write(&normalized, &tokens) {
+        return ShellPolicyDecision::Block {
+            reason: ShellPolicyReason::ExternalWrite,
+        };
     }
 
-    ShellPolicyDecision::NeedsConfirmation {
-        safety: if is_dangerous_shell_command(&normalized) {
-            ShellSafetyLevel::Dangerous
-        } else {
-            ShellSafetyLevel::Normal
-        },
+    if contains_shell_control(command) || invokes_shell_control(&tokens) {
+        return ShellPolicyDecision::RequireExplicitConfirmation {
+            risk: ShellRisk::Dangerous,
+            reason: ShellPolicyReason::ShellControl,
+        };
+    }
+
+    if external_path {
+        return ShellPolicyDecision::RequireExplicitConfirmation {
+            risk: ShellRisk::Normal,
+            reason: ShellPolicyReason::ExternalRead,
+        };
+    }
+
+    if is_proven_inspection(command, &normalized, &tokens) {
+        return ShellPolicyDecision::AllowInspection;
+    }
+
+    if is_project_defined_execution(&tokens) {
+        return ShellPolicyDecision::RequireExplicitConfirmation {
+            risk: ShellRisk::Normal,
+            reason: ShellPolicyReason::ProjectDefinedExecution,
+        };
+    }
+
+    if command_may_write(&normalized, &tokens) || is_dangerous_shell_command(&tokens) {
+        return ShellPolicyDecision::RequireExplicitConfirmation {
+            risk: if is_dangerous_shell_command(&tokens) {
+                ShellRisk::Dangerous
+            } else {
+                ShellRisk::Normal
+            },
+            reason: ShellPolicyReason::DangerousMutation,
+        };
+    }
+
+    ShellPolicyDecision::RequireExplicitConfirmation {
+        risk: ShellRisk::Dangerous,
+        reason: ShellPolicyReason::UnknownExecution,
     }
 }
 
 pub fn validate_shell_command_failsafe(command: &str) -> Result<(), String> {
-    match classify_shell_command(command) {
-        ShellPolicyDecision::Blocked { reason } => Err(reason),
-        ShellPolicyDecision::AllowReadonly | ShellPolicyDecision::NeedsConfirmation { .. } => {
-            Ok(())
+    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    validate_shell_command_failsafe_in_workspace(command, &workspace)
+}
+
+pub fn validate_shell_command_failsafe_in_workspace(
+    command: &str,
+    workspace_root: &Path,
+) -> Result<(), String> {
+    match classify_shell_command_in_workspace(command, workspace_root) {
+        ShellPolicyDecision::Block { reason } => Err(reason.blocked_message().to_string()),
+        ShellPolicyDecision::AllowInspection
+        | ShellPolicyDecision::RequireExplicitConfirmation { .. } => Ok(()),
+    }
+}
+
+fn is_proven_inspection(command: &str, normalized: &str, tokens: &[String]) -> bool {
+    if command_may_write(normalized, tokens) || contains_write_or_watch_option(tokens) {
+        return false;
+    }
+
+    if is_process_status_probe(normalized) || is_localhost_curl_probe(tokens) {
+        return true;
+    }
+
+    let Some((program, args)) = program_and_args(tokens) else {
+        return false;
+    };
+    match program.as_str() {
+        "pwd" | "ls" | "cat" | "wc" => true,
+        "lsof" => args
+            .first()
+            .is_some_and(|arg| arg == "-i" || arg.starts_with("-i:")),
+        "git" => args.first().is_some_and(|subcommand| {
+            matches!(subcommand.as_str(), "status" | "diff" | "log" | "show")
+        }),
+        "rg" | "grep" => true,
+        "find" => !args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "-delete" | "-exec" | "-execdir")),
+        "sed" => args.first().is_some_and(|arg| arg == "-n"),
+        _ => {
+            let _ = command;
+            false
         }
     }
 }
 
-fn is_readonly_shell_command(command: &str) -> bool {
-    if is_readonly_command_with_tail_output_clipping(command) {
-        return true;
-    }
-
-    if is_process_status_probe(command) || is_localhost_curl_probe(command) {
-        return true;
-    }
-
-    if contains_shell_control(command)
-        || contains_write_or_watch_option(command)
-        || references_external_path(command)
-        || is_dangerous_shell_command(command)
-    {
-        return false;
-    }
-
-    let allowed_prefixes = [
-        "pwd",
-        "ls",
-        "lsof -i",
-        "ps -p",
-        "git status",
-        "git diff",
-        "git log",
-        "git show",
-        "rg ",
-        "grep ",
-        "find ",
-        "cat ",
-        "sed -n",
-        "wc ",
-        "npm test",
-        "npm run build",
-        "cargo test",
-        "cargo check",
-        "cargo fmt --check",
-    ];
-    allowed_prefixes.iter().any(|prefix| {
-        let prefix = *prefix;
-        command == prefix.trim_end()
-            || command.starts_with(prefix)
-            || command
-                .strip_prefix(prefix.trim_end())
-                .map(|rest| rest.starts_with(' '))
-                .unwrap_or(false)
-    })
-}
-
-fn is_readonly_command_with_tail_output_clipping(command: &str) -> bool {
-    let parts = command.split('|').map(str::trim).collect::<Vec<_>>();
-    let [left, right] = parts.as_slice() else {
+fn is_project_defined_execution(tokens: &[String]) -> bool {
+    let Some((program, _)) = program_and_args(tokens) else {
         return false;
     };
-    if !is_tail_output_clip(right) {
-        return false;
-    }
-
-    let base = left.trim_end();
-    let base = base.strip_suffix("2>&1").map(str::trim_end).unwrap_or(base);
-    !base.is_empty() && is_readonly_shell_command(base)
-}
-
-fn is_tail_output_clip(command: &str) -> bool {
-    let words = command.split_whitespace().collect::<Vec<_>>();
-    match words.as_slice() {
-        ["tail"] => true,
-        ["tail", count] => is_tail_count_arg(count),
-        ["tail", "-n", count] => count.chars().all(|ch| ch.is_ascii_digit()),
-        _ => false,
-    }
-}
-
-fn is_tail_count_arg(value: &str) -> bool {
-    let Some(count) = value.strip_prefix('-') else {
-        return false;
-    };
-    !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit())
-}
-
-fn is_process_status_probe(command: &str) -> bool {
-    let words = command.split_whitespace().collect::<Vec<_>>();
     matches!(
-        words.as_slice(),
-        ["ps", "-p", pid, "-o", "command="]
-            if pid.chars().all(|ch| ch.is_ascii_digit())
-    )
+        program.as_str(),
+        "npm"
+            | "npx"
+            | "pnpm"
+            | "yarn"
+            | "bun"
+            | "cargo"
+            | "rustc"
+            | "make"
+            | "gmake"
+            | "cmake"
+            | "ninja"
+            | "python"
+            | "python3"
+            | "pytest"
+            | "node"
+            | "deno"
+            | "go"
+            | "java"
+            | "javac"
+            | "gradle"
+            | "gradlew"
+            | "mvn"
+            | "dotnet"
+            | "swift"
+            | "xcodebuild"
+            | "gcc"
+            | "g++"
+            | "clang"
+            | "clang++"
+    ) || program.starts_with("./")
+        || program.ends_with(".sh")
 }
 
-fn is_localhost_curl_probe(command: &str) -> bool {
-    let words = command.split_whitespace().collect::<Vec<_>>();
-    let Some(first) = words.first().copied() else {
+fn program_and_args(tokens: &[String]) -> Option<(String, Vec<String>)> {
+    let mut index = 0;
+    while let Some(token) = tokens.get(index) {
+        if is_environment_assignment(token) {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    let program = tokens.get(index)?.to_ascii_lowercase();
+    let program = Path::new(&program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&program)
+        .to_string();
+    let args = tokens[index + 1..]
+        .iter()
+        .map(|token| token.to_ascii_lowercase())
+        .collect();
+    Some((program, args))
+}
+
+fn is_environment_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
         return false;
     };
-    if first != "curl" {
-        return false;
-    }
-
-    let mut url: Option<&str> = None;
-    for word in words.iter().skip(1) {
-        let value = word.trim_matches(|ch| ch == '"' || ch == '\'');
-        if value.starts_with("http://127.0.0.1:") || value.starts_with("http://localhost:") {
-            url = Some(value);
-            continue;
-        }
-        if matches!(
-            value,
-            "-i" | "-I" | "--head" | "-s" | "-S" | "-L" | "-f" | "-fsS" | "-fsSL"
-        ) {
-            continue;
-        }
-        return false;
-    }
-
-    url.is_some()
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn contains_write_or_watch_option(command: &str) -> bool {
-    command.split_whitespace().any(|word| {
-        let option = word.trim_matches(|ch| ch == '"' || ch == '\'');
+fn contains_write_or_watch_option(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        let option = token.to_ascii_lowercase();
         matches!(
-            option,
+            option.as_str(),
             "-delete"
                 | "-exec"
                 | "-execdir"
-                | "-o"
                 | "--output"
                 | "--watch"
                 | "--watchall"
@@ -185,47 +272,122 @@ fn contains_write_or_watch_option(command: &str) -> bool {
                 | "--outputfile"
                 | "--cache-location"
                 | "--coverage"
-        ) || option.starts_with("--output=")
-            || option.starts_with("--watch=")
-            || option.starts_with("--watchall=")
-            || option.starts_with("--out-dir=")
-            || option.starts_with("--outdir=")
-            || option.starts_with("--output-file=")
-            || option.starts_with("--outputfile=")
-            || option.starts_with("--cache-location=")
-    })
-}
-
-fn is_catastrophic_shell_command(command: &str) -> bool {
-    is_destructive_root_shell_command(command)
-        || is_remote_install_pipe(command)
-        || is_direct_disk_destroy_command(command)
-}
-
-fn is_destructive_root_shell_command(command: &str) -> bool {
-    let words = command
-        .split_whitespace()
-        .map(|word| word.trim_matches(|ch| ch == '"' || ch == '\''))
-        .collect::<Vec<_>>();
-    if words.first().copied() != Some("rm") {
-        return false;
-    }
-
-    let recursive_or_force = words
+        ) || [
+            "--output=",
+            "--watch=",
+            "--watchall=",
+            "--out-dir=",
+            "--outdir=",
+            "--output-file=",
+            "--outputfile=",
+            "--cache-location=",
+        ]
         .iter()
-        .skip(1)
-        .take_while(|word| word.starts_with('-'))
-        .any(|word| word.contains('r') || word.contains('f'));
-    if !recursive_or_force {
-        return false;
+        .any(|prefix| option.starts_with(prefix))
+    })
+}
+
+fn command_may_write(normalized: &str, tokens: &[String]) -> bool {
+    if normalized.contains('>') || contains_write_or_watch_option(tokens) {
+        return true;
     }
 
-    words.iter().skip(1).any(|word| {
-        matches!(
-            *word,
-            "/" | "/*" | "~" | "~/" | "$home" | "$home/" | "${home}" | "${home}/"
-        )
-    })
+    let Some((program, args)) = program_and_args(tokens) else {
+        return false;
+    };
+    if matches!(
+        program.as_str(),
+        "cp" | "mv"
+            | "rm"
+            | "rmdir"
+            | "install"
+            | "tee"
+            | "touch"
+            | "mkdir"
+            | "chmod"
+            | "chown"
+            | "truncate"
+            | "dd"
+            | "mkfs"
+            | "unzip"
+    ) {
+        return true;
+    }
+    if program == "sed" && args.iter().any(|arg| arg == "-i" || arg.starts_with("-i")) {
+        return true;
+    }
+    if program == "find"
+        && args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "-delete" | "-exec" | "-execdir"))
+    {
+        return true;
+    }
+    if program == "tar"
+        && args
+            .iter()
+            .any(|arg| arg == "-x" || arg.starts_with("-x") || arg.contains('x'))
+    {
+        return true;
+    }
+    if program == "curl" || program == "wget" {
+        return args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "-o" | "--output") || arg.starts_with("--output="));
+    }
+    program == "git"
+        && args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "add"
+                    | "am"
+                    | "apply"
+                    | "branch"
+                    | "checkout"
+                    | "cherry-pick"
+                    | "clean"
+                    | "commit"
+                    | "merge"
+                    | "mv"
+                    | "pull"
+                    | "push"
+                    | "rebase"
+                    | "reset"
+                    | "restore"
+                    | "revert"
+                    | "rm"
+                    | "stash"
+                    | "switch"
+                    | "tag"
+            )
+        })
+}
+
+fn is_catastrophic_shell_command(normalized: &str, tokens: &[String]) -> bool {
+    is_destructive_root_shell_command(tokens)
+        || is_remote_install_pipe(normalized)
+        || is_direct_disk_destroy_command(normalized)
+        || is_catastrophic_git_clean(tokens)
+}
+
+fn is_destructive_root_shell_command(tokens: &[String]) -> bool {
+    let Some((program, args)) = program_and_args(tokens) else {
+        return false;
+    };
+    if program != "rm" {
+        return false;
+    }
+    let recursive_or_force = args
+        .iter()
+        .take_while(|arg| arg.starts_with('-'))
+        .any(|arg| arg.contains('r') || arg.contains('f'));
+    recursive_or_force
+        && args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "/" | "/*" | "~" | "~/" | "$home" | "$home/" | "${home}" | "${home}/"
+            )
+        })
 }
 
 fn is_remote_install_pipe(command: &str) -> bool {
@@ -233,7 +395,6 @@ fn is_remote_install_pipe(command: &str) -> bool {
     let pipes_to_shell = ["| sh", "| bash", "| zsh", "| sudo sh", "| sudo bash"]
         .iter()
         .any(|pipe| command.contains(pipe));
-
     fetches_remote_script && pipes_to_shell
 }
 
@@ -244,106 +405,351 @@ fn is_direct_disk_destroy_command(command: &str) -> bool {
             && (command.contains(" of=/dev/") || command.contains(" of=/"))
 }
 
-fn is_dangerous_shell_command(command: &str) -> bool {
-    let dangerous = [
-        "rm ",
-        "rmdir ",
-        "sudo ",
-        "su ",
-        "chmod ",
-        "chown ",
-        "git push",
-        "git reset",
-        "git checkout --",
-        "npm publish",
-        "cargo publish",
-        "curl ",
-        "wget ",
-        "dd ",
-        "mkfs",
-        "mv ",
-        "cp ",
-        "python -c",
-        "node -e",
-        "perl -e",
-        "ruby -e",
-    ];
-    dangerous.iter().any(|pattern| {
-        command.starts_with(pattern)
-            || command.contains(&format!("&& {}", pattern))
-            || command.contains(&format!("|| {}", pattern))
-            || command.contains(&format!("; {}", pattern))
-            || command.contains(&format!("| {}", pattern))
-    })
+fn is_catastrophic_git_clean(tokens: &[String]) -> bool {
+    let Some((program, args)) = program_and_args(tokens) else {
+        return false;
+    };
+    if program != "git" || args.first().map(String::as_str) != Some("clean") {
+        return false;
+    }
+    let flags = args
+        .iter()
+        .skip(1)
+        .filter(|arg| arg.starts_with('-'))
+        .flat_map(|arg| arg.trim_start_matches('-').chars())
+        .collect::<Vec<_>>();
+    flags.contains(&'f') && flags.contains(&'d') && flags.contains(&'x')
+}
+
+fn is_dangerous_shell_command(tokens: &[String]) -> bool {
+    let Some((program, args)) = program_and_args(tokens) else {
+        return true;
+    };
+    matches!(
+        program.as_str(),
+        "rm" | "rmdir"
+            | "sudo"
+            | "su"
+            | "chmod"
+            | "chown"
+            | "curl"
+            | "wget"
+            | "dd"
+            | "mkfs"
+            | "mv"
+            | "cp"
+            | "tee"
+    ) || program == "git"
+        && args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "push" | "reset" | "checkout" | "clean" | "restore" | "rebase"
+            )
+        })
 }
 
 fn contains_shell_control(command: &str) -> bool {
-    ["&&", "||", ";", "|", "`", "$(", ">", "<"]
-        .iter()
-        .any(|token| command.contains(token))
+    command.contains("&&")
+        || command.contains("||")
+        || command.contains(';')
+        || command.contains('|')
+        || command.contains('`')
+        || command.contains("$(")
+        || command.contains("<(")
+        || command.contains(">(")
+        || command.contains('\n')
+        || command.contains('\r')
+        || command.contains('>')
+        || command.contains('<')
 }
 
-fn references_external_path(command: &str) -> bool {
-    command.contains("~/")
-        || command.contains("$home")
-        || command.contains("../")
-        || command.contains("..\\")
-        || command.contains(" /")
-        || command.starts_with('/')
-        || command.contains(" file://")
+fn invokes_shell_control(tokens: &[String]) -> bool {
+    let Some((program, args)) = program_and_args(tokens) else {
+        return false;
+    };
+    program == "eval"
+        || matches!(program.as_str(), "sh" | "bash" | "zsh")
+            && args.first().is_some_and(|arg| arg == "-c")
+}
+
+fn references_external_path(tokens: &[String], workspace_root: &Path) -> bool {
+    let workspace_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_lexically(workspace_root));
+
+    tokens.iter().any(|token| {
+        let candidate = option_value(token).unwrap_or(token);
+        if candidate.is_empty()
+            || is_shell_operator(candidate)
+            || candidate.starts_with("http://")
+            || candidate.starts_with("https://")
+        {
+            return false;
+        }
+        if candidate.starts_with("file://")
+            || candidate.starts_with("$HOME")
+            || candidate.starts_with("${HOME}")
+            || candidate.starts_with("$home")
+            || candidate.starts_with("${home}")
+        {
+            return true;
+        }
+
+        let expanded = if candidate == "~" || candidate.starts_with("~/") {
+            let Some(home) = std::env::var_os("HOME") else {
+                return true;
+            };
+            let suffix = candidate.trim_start_matches('~').trim_start_matches('/');
+            PathBuf::from(home).join(suffix)
+        } else {
+            PathBuf::from(candidate)
+        };
+
+        if !looks_like_path(candidate, &workspace_root) {
+            return false;
+        }
+        let resolved = if expanded.is_absolute() {
+            expanded
+        } else {
+            workspace_root.join(expanded)
+        };
+        !path_is_within_workspace(&resolved, &workspace_root)
+    })
+}
+
+fn option_value(token: &str) -> Option<&str> {
+    token
+        .strip_prefix('-')
+        .and_then(|option| option.split_once('=').map(|(_, value)| value))
+}
+
+fn looks_like_path(token: &str, workspace_root: &Path) -> bool {
+    token.starts_with('/')
+        || token.starts_with('~')
+        || token == "."
+        || token == ".."
+        || token.starts_with("./")
+        || token.starts_with("../")
+        || token.contains('/')
+        || token.contains('\\')
+        || workspace_root.join(token).exists()
+}
+
+fn path_is_within_workspace(candidate: &Path, workspace_root: &Path) -> bool {
+    let candidate = normalize_lexically(candidate);
+    if !candidate.starts_with(workspace_root) {
+        return false;
+    }
+
+    let mut existing = candidate.clone();
+    while !existing.exists() {
+        if !existing.pop() {
+            return false;
+        }
+    }
+    existing
+        .canonicalize()
+        .map(|path| path.starts_with(workspace_root))
+        .unwrap_or(false)
+}
+
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+fn is_shell_operator(token: &str) -> bool {
+    matches!(
+        token,
+        ";" | "|" | "||" | "&" | "&&" | ">" | ">>" | "<" | "<<"
+    )
+}
+
+fn shell_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut chars = command.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if matches!(ch, '\'' | '"') {
+            if quote == Some(ch) {
+                quote = None;
+            } else if quote.is_none() {
+                quote = Some(ch);
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if quote.is_none() && ch.is_whitespace() {
+            push_token(&mut tokens, &mut current);
+            continue;
+        }
+        if quote.is_none() && matches!(ch, ';' | '|' | '&' | '>' | '<') {
+            push_token(&mut tokens, &mut current);
+            let mut operator = ch.to_string();
+            if chars.peek().copied() == Some(ch) {
+                operator.push(chars.next().expect("peeked operator"));
+            }
+            tokens.push(operator);
+            continue;
+        }
+        current.push(ch);
+    }
+    if escaped {
+        current.push('\\');
+    }
+    push_token(&mut tokens, &mut current);
+    tokens
+}
+
+fn push_token(tokens: &mut Vec<String>, current: &mut String) {
+    if !current.is_empty() {
+        tokens.push(std::mem::take(current));
+    }
+}
+
+fn is_process_status_probe(command: &str) -> bool {
+    let words = command.split_whitespace().collect::<Vec<_>>();
+    matches!(
+        words.as_slice(),
+        ["ps", "-p", pid, "-o", "command="] if pid.chars().all(|ch| ch.is_ascii_digit())
+    )
+}
+
+fn is_localhost_curl_probe(tokens: &[String]) -> bool {
+    let Some((program, args)) = program_and_args(tokens) else {
+        return false;
+    };
+    if program != "curl" {
+        return false;
+    }
+    let mut found_url = false;
+    for arg in args {
+        if arg.starts_with("http://127.0.0.1:") || arg.starts_with("http://localhost:") {
+            found_url = true;
+        } else if !matches!(
+            arg.as_str(),
+            "-i" | "--head" | "-s" | "-l" | "-f" | "-fss" | "-fssl"
+        ) {
+            return false;
+        }
+    }
+    found_url
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_shell_command, ShellPolicyDecision, ShellSafetyLevel};
+    use super::{
+        classify_shell_command_in_workspace, validate_shell_command_failsafe_in_workspace,
+        ShellPolicyDecision, ShellPolicyReason, ShellRisk,
+    };
+    use std::fs;
+    use std::path::Path;
+
+    fn classify(command: &str, workspace: &Path) -> ShellPolicyDecision {
+        classify_shell_command_in_workspace(command, workspace)
+    }
 
     #[test]
-    fn classifies_safe_readonly_commands_as_allow() {
+    fn policy_reason_strings_are_stable() {
+        assert_eq!(
+            ShellPolicyReason::ProvenInspection.as_str(),
+            "proven_inspection"
+        );
+        assert_eq!(
+            ShellPolicyReason::ProjectDefinedExecution.as_str(),
+            "project_defined_execution"
+        );
+        assert_eq!(
+            ShellPolicyReason::UnknownExecution.as_str(),
+            "unknown_execution"
+        );
+        assert_eq!(ShellPolicyReason::ExternalRead.as_str(), "external_read");
+        assert_eq!(ShellPolicyReason::ExternalWrite.as_str(), "external_write");
+        assert_eq!(ShellPolicyReason::ShellControl.as_str(), "shell_control");
+        assert_eq!(
+            ShellPolicyReason::DangerousMutation.as_str(),
+            "dangerous_mutation"
+        );
+        assert_eq!(ShellPolicyReason::Catastrophic.as_str(), "catastrophic");
+    }
+
+    #[test]
+    fn proven_workspace_inspection_is_automatically_allowed() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        fs::write(workspace.path().join("README.md"), "forge").expect("fixture");
+        fs::create_dir(workspace.path().join("src")).expect("src");
         for command in [
             "git status --short",
-            "git diff -- src/main.ts",
-            "rg --fixed-strings needle src",
-            "cargo test --manifest-path src-tauri/Cargo.toml",
-            "npm run build -- --mode production",
-        ] {
-            assert_eq!(
-                classify_shell_command(command),
-                ShellPolicyDecision::AllowReadonly,
-                "{command}"
-            );
-        }
-    }
-
-    #[test]
-    fn classifies_local_preview_probe_commands_as_readonly() {
-        for command in [
+            "git diff -- README.md",
+            "git log --oneline -10",
+            "git show --name-only abc123",
+            "rg -n credential src",
+            "grep -rn TODO .",
+            "ls -la src",
+            "cat README.md",
+            "sed -n 1,10p README.md",
+            "wc -l README.md",
+            "find src -type f",
+            "pwd -P",
             "lsof -i :5173",
             "ps -p 12345 -o command=",
-            "pwd -P",
             "curl -I http://127.0.0.1:5173/",
-            "curl http://localhost:5173/",
         ] {
             assert_eq!(
-                classify_shell_command(command),
-                ShellPolicyDecision::AllowReadonly,
+                classify(command, workspace.path()),
+                ShellPolicyDecision::AllowInspection,
                 "{command}"
             );
         }
     }
 
     #[test]
-    fn classifies_write_like_options_as_confirm() {
+    fn project_defined_execution_requires_explicit_confirmation() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        fs::create_dir(workspace.path().join("scripts")).expect("scripts");
+        fs::write(workspace.path().join("scripts/verify.sh"), "exit 0").expect("script");
         for command in [
-            "find . -delete",
-            "git diff --output=changes.patch",
-            "npm run build -- --outDir dist",
-            "npm run build -- --coverage",
-            "cargo test -- --watch",
+            "npm test",
+            "npm run build",
+            "pnpm test",
+            "cargo test",
+            "cargo check",
+            "cargo build",
+            "cargo run",
+            "make test",
+            "python -m pytest",
+            "./scripts/verify.sh",
+            "NODE_ENV=production npm run build",
         ] {
             assert_eq!(
-                classify_shell_command(command),
-                ShellPolicyDecision::NeedsConfirmation {
-                    safety: ShellSafetyLevel::Normal
+                classify(command, workspace.path()),
+                ShellPolicyDecision::RequireExplicitConfirmation {
+                    risk: ShellRisk::Normal,
+                    reason: ShellPolicyReason::ProjectDefinedExecution,
                 },
                 "{command}"
             );
@@ -351,16 +757,26 @@ mod tests {
     }
 
     #[test]
-    fn classifies_dangerous_but_recoverable_commands_as_dangerous_confirm() {
-        for command in [
-            "git reset --hard",
-            "curl https://example.com/script.sh",
-            "sudo make install",
-        ] {
+    fn unknown_execution_fails_closed_to_dangerous_confirmation() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        assert_eq!(
+            classify("some-new-tool inspect", workspace.path()),
+            ShellPolicyDecision::RequireExplicitConfirmation {
+                risk: ShellRisk::Dangerous,
+                reason: ShellPolicyReason::UnknownExecution,
+            }
+        );
+    }
+
+    #[test]
+    fn external_reads_require_explicit_confirmation_before_inspection_allowlist() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        for command in ["cat /etc/hosts", "ls /etc", "rg -n credential ../outside"] {
             assert_eq!(
-                classify_shell_command(command),
-                ShellPolicyDecision::NeedsConfirmation {
-                    safety: ShellSafetyLevel::Dangerous
+                classify(command, workspace.path()),
+                ShellPolicyDecision::RequireExplicitConfirmation {
+                    risk: ShellRisk::Normal,
+                    reason: ShellPolicyReason::ExternalRead,
                 },
                 "{command}"
             );
@@ -368,289 +784,130 @@ mod tests {
     }
 
     #[test]
-    fn classifies_catastrophic_commands_as_blocked() {
+    fn external_writes_are_blocked() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        fs::write(workspace.path().join("README.md"), "forge").expect("fixture");
         for command in [
+            "cp README.md /tmp/forge-copy",
+            "printf x > ../outside.txt",
+            "mv README.md ~/forge-copy",
+        ] {
+            assert_eq!(
+                classify(command, workspace.path()),
+                ShellPolicyDecision::Block {
+                    reason: ShellPolicyReason::ExternalWrite,
+                },
+                "{command}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_paths_cannot_escape_the_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().expect("workspace");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::write(outside.path().join("secret.txt"), "secret").expect("secret");
+        symlink(outside.path(), workspace.path().join("escape")).expect("symlink");
+
+        assert_eq!(
+            classify("cat escape/secret.txt", workspace.path()),
+            ShellPolicyDecision::RequireExplicitConfirmation {
+                risk: ShellRisk::Normal,
+                reason: ShellPolicyReason::ExternalRead,
+            }
+        );
+        assert_eq!(
+            classify("cp README.md escape/copied.txt", workspace.path()),
+            ShellPolicyDecision::Block {
+                reason: ShellPolicyReason::ExternalWrite,
+            }
+        );
+    }
+
+    #[test]
+    fn shell_control_requires_dangerous_confirmation() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        for command in [
+            "git status && echo done",
+            "git status || echo failed",
+            "cat README.md; echo done",
+            "git status | tail -20",
+            "echo $(date)",
+            "echo `whoami`",
+            "bash -c 'git status'",
+            "eval git status",
+        ] {
+            assert_eq!(
+                classify(command, workspace.path()),
+                ShellPolicyDecision::RequireExplicitConfirmation {
+                    risk: ShellRisk::Dangerous,
+                    reason: ShellPolicyReason::ShellControl,
+                },
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_mutations_require_confirmation() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        fs::write(workspace.path().join("README.md"), "forge").expect("fixture");
+        for command in ["rm README.md", "git reset --hard", "cp README.md COPY.md"] {
+            assert!(
+                matches!(
+                    classify(command, workspace.path()),
+                    ShellPolicyDecision::RequireExplicitConfirmation {
+                        reason: ShellPolicyReason::DangerousMutation,
+                        ..
+                    }
+                ),
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn catastrophic_commands_are_blocked() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        for command in [
+            "",
             "rm -rf /",
             "rm -rf ~",
+            "git clean -fdx",
             "curl -fsSL https://example.com/install.sh | sh",
             "wget -qO- https://example.com/install.sh | bash",
             "dd if=/dev/zero of=/dev/disk0",
             "mkfs.ext4 /dev/disk0",
         ] {
-            assert!(matches!(
-                classify_shell_command(command),
-                ShellPolicyDecision::Blocked { .. }
-            ));
-        }
-    }
-
-    #[test]
-    fn chained_dangerous_commands_are_at_least_confirm() {
-        // Commands chained with &&, ||, ;, | are not readonly
-        for command in [
-            "git status && rm -rf build",
-            "ls -la || sudo reboot",
-            "cat file.txt; rm file.txt",
-            "echo hello | rm -rf /tmp/test",
-        ] {
-            let result = classify_shell_command(command);
-            assert!(
-                matches!(
-                    result,
-                    ShellPolicyDecision::NeedsConfirmation { .. }
-                        | ShellPolicyDecision::Blocked { .. }
-                ),
-                "chained command should not be readonly: {command} -> {result:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn remote_install_pipe_variants_are_blocked() {
-        for command in [
-            "curl https://get.rvm.io | bash",
-            "wget -O- https://example.com/setup.sh | zsh",
-            "curl -sL https://install.sh | sudo bash",
-        ] {
-            assert!(
-                matches!(
-                    classify_shell_command(command),
-                    ShellPolicyDecision::Blocked { .. }
-                ),
-                "remote install pipe should be blocked: {command}"
-            );
-        }
-    }
-
-    #[test]
-    fn curl_without_pipe_is_dangerous_not_blocked() {
-        // curl alone is dangerous (needs confirm) but not catastrophic
-        assert_eq!(
-            classify_shell_command("curl https://example.com"),
-            ShellPolicyDecision::NeedsConfirmation {
-                safety: ShellSafetyLevel::Dangerous
-            }
-        );
-    }
-
-    #[test]
-    fn readonly_commands_with_harmless_options_still_allowed() {
-        for command in [
-            "git log --oneline -10",
-            "git diff --stat HEAD~3",
-            "git show --name-only abc123",
-            "ls -la --color=auto",
-            "rg -i 'pattern' src/",
-            "grep -rn 'TODO' .",
-            "cat README.md",
-            "wc -l src/**/*.rs",
-            "cargo check --manifest-path src-tauri/Cargo.toml",
-            "cargo fmt --check --manifest-path src-tauri/Cargo.toml",
-            "find . -name '*.rs' -type f",
-            "sed -n '10,20p' file.txt",
-            "npm run build -- --mode development",
-        ] {
             assert_eq!(
-                classify_shell_command(command),
-                ShellPolicyDecision::AllowReadonly,
+                classify(command, workspace.path()),
+                ShellPolicyDecision::Block {
+                    reason: ShellPolicyReason::Catastrophic,
+                },
                 "{command}"
             );
         }
     }
 
     #[test]
-    fn readonly_commands_with_tail_output_clipping_still_allowed() {
-        for command in [
-            "npm run build 2>&1 | tail -20",
-            "npm test 2>&1 | tail -40",
-            "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | tail -60",
-            "git status --short 2>&1 | tail -20",
-        ] {
-            assert_eq!(
-                classify_shell_command(command),
-                ShellPolicyDecision::AllowReadonly,
-                "{command}"
-            );
-        }
-    }
-
-    #[test]
-    fn destructive_root_variants_comprehensive() {
-        for command in [
-            "rm -rf /",
-            "rm -rf /*",
-            "rm -rf ~",
-            "rm -rf ~/",
-            "rm -fr /",
-            "rm -fR /",
-        ] {
-            assert!(
-                matches!(
-                    classify_shell_command(command),
-                    ShellPolicyDecision::Blocked { .. }
-                ),
-                "destructive root should be blocked: {command}"
-            );
-        }
-    }
-
-    #[test]
-    fn destructive_root_requires_recursive_or_force_flag() {
-        // rm without -r or -f is just dangerous, not catastrophic
-        assert_eq!(
-            classify_shell_command("rm /tmp/test.txt"),
-            ShellPolicyDecision::NeedsConfirmation {
-                safety: ShellSafetyLevel::Dangerous
-            }
+    fn executor_failsafe_rejects_hard_blocks() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        assert!(
+            validate_shell_command_failsafe_in_workspace("rm -rf /", workspace.path()).is_err()
         );
-    }
-
-    #[test]
-    fn inline_code_execution_is_dangerous() {
-        for command in [
-            "python -c 'import os; os.system(\"ls\")'",
-            "node -e 'console.log(42)'",
-            "perl -e 'print \"hello\"'",
-            "ruby -e 'puts 42'",
-        ] {
-            assert!(
-                matches!(
-                    classify_shell_command(command),
-                    ShellPolicyDecision::NeedsConfirmation {
-                        safety: ShellSafetyLevel::Dangerous
-                    }
-                ),
-                "inline code execution should be dangerous: {command}"
-            );
-        }
-    }
-
-    #[test]
-    fn git_push_and_publish_are_dangerous() {
-        for command in [
-            "git push origin main",
-            "git push --force",
-            "npm publish",
-            "cargo publish",
-        ] {
-            assert!(
-                matches!(
-                    classify_shell_command(command),
-                    ShellPolicyDecision::NeedsConfirmation {
-                        safety: ShellSafetyLevel::Dangerous
-                    }
-                ),
-                "publish/push should be dangerous: {command}"
-            );
-        }
-    }
-
-    #[test]
-    fn empty_command_needs_confirm() {
-        assert!(matches!(
-            classify_shell_command(""),
-            ShellPolicyDecision::NeedsConfirmation { .. }
-        ));
-        assert!(matches!(
-            classify_shell_command("   "),
-            ShellPolicyDecision::NeedsConfirmation { .. }
-        ));
-    }
-
-    #[test]
-    fn file_move_copy_are_dangerous() {
-        for command in ["mv important.txt /tmp/", "cp -r src/ backup/"] {
-            assert!(
-                matches!(
-                    classify_shell_command(command),
-                    ShellPolicyDecision::NeedsConfirmation {
-                        safety: ShellSafetyLevel::Dangerous
-                    }
-                ),
-                "mv/cp should be dangerous: {command}"
-            );
-        }
-    }
-
-    #[test]
-    fn shell_control_chars_prevent_readonly() {
-        for command in [
-            "cat file.txt > output.txt",
-            "cat file.txt >> log.txt",
-            "echo hello > /dev/null",
-            "cat file.txt | wc -l",
-            "git status && echo done",
-            "true || echo fail",
-            "echo `whoami`",
-            "echo $(date)",
-            "cat < input.txt",
-        ] {
-            let result = classify_shell_command(command);
-            assert!(
-                !matches!(result, ShellPolicyDecision::AllowReadonly),
-                "shell control should prevent readonly: {command} -> {result:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn env_assignment_with_command_is_not_readonly() {
-        for command in [
-            "NODE_ENV=production npm run build",
-            "RUST_LOG=debug cargo test",
-        ] {
-            let result = classify_shell_command(command);
-            assert!(
-                !matches!(result, ShellPolicyDecision::AllowReadonly),
-                "env assignment should prevent readonly: {command} -> {result:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn sudo_variants_are_dangerous() {
-        for command in [
-            "sudo rm -rf /tmp/test",
-            "sudo apt-get install vim",
-            "sudo systemctl restart nginx",
-        ] {
-            assert!(
-                matches!(
-                    classify_shell_command(command),
-                    ShellPolicyDecision::NeedsConfirmation {
-                        safety: ShellSafetyLevel::Dangerous
-                    }
-                ),
-                "sudo should be dangerous: {command}"
-            );
-        }
-    }
-
-    #[test]
-    fn git_checkout_discard_is_dangerous() {
-        assert!(matches!(
-            classify_shell_command("git checkout -- ."),
-            ShellPolicyDecision::NeedsConfirmation {
-                safety: ShellSafetyLevel::Dangerous
-            }
-        ));
-    }
-
-    #[test]
-    fn xargs_with_rm_is_at_least_confirm() {
-        for command in [
-            "find . -name '*.log' | xargs rm",
-            "find /tmp -type f -mtime +7 | xargs rm -f",
-        ] {
-            let result = classify_shell_command(command);
-            assert!(
-                matches!(
-                    result,
-                    ShellPolicyDecision::NeedsConfirmation { .. }
-                        | ShellPolicyDecision::Blocked { .. }
-                ),
-                "xargs rm should not be readonly: {command} -> {result:?}"
-            );
-        }
+        assert!(validate_shell_command_failsafe_in_workspace(
+            "printf x > ../outside.txt",
+            workspace.path()
+        )
+        .is_err());
+        assert!(validate_shell_command_failsafe_in_workspace("npm test", workspace.path()).is_ok());
+        assert!(validate_shell_command_failsafe_in_workspace(
+            "git status --short",
+            workspace.path()
+        )
+        .is_ok());
     }
 }
