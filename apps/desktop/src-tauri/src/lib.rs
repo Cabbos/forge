@@ -6,6 +6,7 @@ mod app_metadata;
 mod autosave;
 mod consts;
 pub mod continuity;
+mod credential_store;
 pub mod diagnostics;
 pub mod eval_headless;
 mod executor;

@@ -1,5 +1,6 @@
 use crate::agent::session::{AgentSession, SessionStatus};
 use crate::continuity::ContinuityService;
+use crate::credential_store::{system_credential_store, CredentialStore};
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
 use crate::memory::facts::MemoryFactStore;
@@ -38,10 +39,18 @@ pub struct AppState {
     pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
     pub delivery_states: Arc<RwLock<HashMap<String, DeliverySummary>>>,
     pub scheduler: Arc<SchedulerStore>,
+    pub(crate) credential_store: Arc<dyn CredentialStore>,
 }
 
 impl AppState {
     pub fn new(harness: Arc<Harness>) -> Self {
+        Self::new_with_credential_store(harness, system_credential_store())
+    }
+
+    pub(crate) fn new_with_credential_store(
+        harness: Arc<Harness>,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Self {
         let pending_confirms = harness.pending_confirms.clone();
         let continuity = Arc::new(ContinuityService::new());
         Self {
@@ -58,6 +67,7 @@ impl AppState {
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
             delivery_states: Arc::new(RwLock::new(HashMap::new())),
             scheduler: Arc::new(SchedulerStore::new(SchedulerStore::default_path())),
+            credential_store,
         }
     }
 
