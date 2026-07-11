@@ -140,6 +140,8 @@ Settings 的 Provider 行还支持手动刷新模型目录：OpenAI-compatible e
 
 桌面后端使用 reference-only 的系统凭据存储层：macOS 生产构建使用 Keychain，不支持系统存储的平台会 fail closed。桌面启动和 headless 启动会先分别迁移旧 `config.json` / `profiles.json` 中的明文 key：写入确定性引用、读回逐项比对后才原子替换源文件；任一步失败都保留原文件字节，单个文件已完成而另一个失败时下次启动可幂等续迁。Provider 会话、恢复、手动 probe、模型目录和诊断均从注入的系统存储解析凭据，引用缺失或存储不可用不会降级成普通“未配置”，而会阻止 provider 启动并给出重新保存密钥的恢复提示；API-key status IPC 只返回 configured/source/status/error，不返回 preview 或 secret。普通 `app.log` 与结构化 JSONL 日志会在创建、追加或轮转文件之前统一脱敏已登记凭据、鉴权 header、敏感 JSON 字段和 URL query/fragment；脱敏失败会直接抑制该条持久化。OpenAI-compatible 适配器只记录 provider、消息/工具数量和请求字节数，不记录请求正文。
 
+项目检查点使用 V2 Git 快照：保存完整 HEAD、porcelain-v2 状态、分离的 staged/unstaged full-index binary patch、未跟踪文件原始字节和 executable 位，可往返 staged-only、unstaged-only、同文件双层修改、rename/delete、二进制与 unborn 仓库。恢复会先验证 schema、路径、base64、大小、unsupported paths 和 HEAD；旧版、符号链接、特殊/超限路径或 HEAD 漂移会在修改工作区前拒绝。预检后的任何 apply/文件恢复失败都会把调用前状态完整恢复，并且不会用 `git clean` 删除未捕获路径。
+
 当前内置中国 coding preset 跟随官方推荐的 coding 默认模型：Kimi/Moonshot 默认 `kimi-k2.7-code`，GLM/Zhipu 默认 `glm-5.2`。旧的 Kimi/GLM 模型仍保留在 static fallback catalog 中，便于兼容已有配置。
 
 也可以只保存 API key：
