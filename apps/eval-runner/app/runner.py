@@ -2,7 +2,6 @@ import json
 import shlex
 import shutil
 import sqlite3
-import subprocess
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,16 +16,31 @@ from app.models import (
     FailureCategory,
     FileDiff,
     ForgeRunEvidence,
+    LeakageCheck,
+    ProcessOutcome,
     ShellOutput,
     VerificationResult,
+    WorkspaceCheck,
+    WorkspaceObservation,
 )
+from app.patches import replay_patch
+from app.process_control import CancelRequested, never_cancelled, run_bounded_process
+from app.sandbox import scrub_future_repo_state
 from app.trace import duration_ms, utc_now
+from app.workspace_observer import observe_workspace_changes, snapshot_workspace
 
 DEFAULT_FORGE_TIMEOUT_SECONDS = 900
+DEFAULT_SETUP_TIMEOUT_SECONDS = 300
+DEFAULT_VALIDATION_TIMEOUT_SECONDS = 300
 
 
 class EvalRunner(Protocol):
-    def run_task(self, task: EvaluationTask) -> AgentTrace: ...
+    def run_task(
+        self,
+        task: EvaluationTask,
+        *,
+        cancel_requested: CancelRequested = never_cancelled,
+    ) -> AgentTrace: ...
 
 
 class DeterministicMockRunner:
@@ -40,12 +54,45 @@ class DeterministicMockRunner:
         self.provider = EvalProvider(provider)
         self.model = model
 
-    def run_task(self, task: EvaluationTask) -> AgentTrace:
+    def run_task(
+        self,
+        task: EvaluationTask,
+        *,
+        cancel_requested: CancelRequested = never_cancelled,
+    ) -> AgentTrace:
         started_at = utc_now()
+        if cancel_requested():
+            ended_at = utc_now()
+            return AgentTrace(
+                task_id=task.id,
+                user_prompt=task.prompt,
+                model=self.model,
+                provider=self.provider,
+                changed_files=[],
+                workspace_observation=WorkspaceObservation(
+                    available=True,
+                    source="deterministic_mock_contract",
+                    changed_files=[],
+                    reported_changed_files=[],
+                ),
+                final_answer="Mock agent was cancelled before task execution.",
+                error="cancelled",
+                failure_reason="Eval run was cancelled before task execution.",
+                failure_category=FailureCategory.RUNNER_ERROR,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms(started_at, ended_at),
+            )
         target_file = task.context_files[0] if task.context_files else "workspace/changes.patch"
         mock = mock_metadata(task)
         forge_run_evidence = mock_forge_run_evidence(mock)
         changed_files = mock_changed_files(mock, default_target_file=target_file)
+        workspace_observation = WorkspaceObservation(
+            available=True,
+            source="deterministic_mock_contract",
+            changed_files=changed_files,
+            reported_changed_files=changed_files,
+        )
         file_diffs = build_mock_file_diffs(changed_files)
 
         tool_calls = mock_tool_calls(
@@ -78,6 +125,7 @@ class DeterministicMockRunner:
                 shell_outputs=shell_outputs,
                 file_diffs=file_diffs,
                 changed_files=changed_files,
+                workspace_observation=workspace_observation,
                 final_answer=f"Mock agent simulated failure for task {task.id}.",
                 verification_result=None,
                 error=error,
@@ -152,6 +200,7 @@ class DeterministicMockRunner:
             shell_outputs=shell_outputs,
             file_diffs=file_diffs,
             changed_files=changed_files,
+            workspace_observation=workspace_observation,
             scope_violations=scope_violations,
             expected_files_changed=task.expected_files_changed,
             forbidden_files_changed=task.forbidden_files_changed,
@@ -187,12 +236,23 @@ class ForgeAgentRunner:
         provider: EvalProvider | str = EvalProvider.FORGE,
         model: str = "local-forge",
         command: str | Sequence[str] | None = None,
+        command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
+        setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
+        validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
     ) -> None:
         self.provider = EvalProvider(provider)
         self.model = model
         self.command = normalize_command(command)
+        self.command_timeout_seconds = command_timeout_seconds
+        self.setup_timeout_seconds = setup_timeout_seconds
+        self.validation_timeout_seconds = validation_timeout_seconds
 
-    def run_task(self, task: EvaluationTask) -> AgentTrace:
+    def run_task(
+        self,
+        task: EvaluationTask,
+        *,
+        cancel_requested: CancelRequested = never_cancelled,
+    ) -> AgentTrace:
         started_at = utc_now()
         if self.command is None:
             return self._error_trace(
@@ -203,22 +263,78 @@ class ForgeAgentRunner:
                 failure_category=FailureCategory.RUNNER_ERROR,
             )
 
-        timeout = task.max_duration_seconds or DEFAULT_FORGE_TIMEOUT_SECONDS
+        if cancel_requested():
+            return self._error_trace(
+                task=task,
+                started_at=started_at,
+                error="cancelled",
+                failure_reason="Eval run was cancelled before task execution.",
+                failure_category=FailureCategory.RUNNER_ERROR,
+            )
+
+        timeout = task.max_duration_seconds or self.command_timeout_seconds
         with tempfile.TemporaryDirectory(prefix=f"forge-eval-{task.id}-") as temp_dir:
-            workspace = prepare_workspace(task, Path(temp_dir))
-            setup_outputs = run_setup_commands(task, workspace)
+            temp_root = Path(temp_dir)
+            workspace = prepare_workspace(task, temp_root)
+            setup_outputs = run_setup_commands(
+                task,
+                workspace,
+                timeout_seconds=self.setup_timeout_seconds,
+                cancel_requested=cancel_requested,
+            )
             setup_failure = next(
                 (output for output in setup_outputs if output.exit_code != 0),
                 None,
             )
             if setup_failure is not None:
+                error, reason, category = command_failure(
+                    setup_failure,
+                    phase="Setup",
+                    default_error="setup_failed",
+                    default_category=FailureCategory.RUNNER_ERROR,
+                )
                 return self._error_trace(
                     task=task,
                     started_at=started_at,
-                    error="setup_failed",
-                    failure_reason=f"Setup command failed: {setup_failure.command}",
+                    error=error,
+                    failure_reason=reason,
+                    failure_category=category,
+                    shell_outputs=setup_outputs,
+                )
+
+            sandbox_scrub = scrub_future_repo_state(
+                workspace,
+                timeout_seconds=self.setup_timeout_seconds,
+                cancel_requested=cancel_requested,
+            )
+            if not sandbox_scrub.ok:
+                return self._error_trace(
+                    task=task,
+                    started_at=started_at,
+                    error="sandbox_scrub_failed",
+                    failure_reason="Sandbox scrub failed: " + ", ".join(sandbox_scrub.findings),
                     failure_category=FailureCategory.RUNNER_ERROR,
                     shell_outputs=setup_outputs,
+                    sandbox_scrub=sandbox_scrub,
+                )
+
+            try:
+                before = snapshot_workspace(workspace)
+            except OSError as exc:
+                observation = WorkspaceObservation(
+                    available=False,
+                    source="filesystem_snapshot",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                return self._error_trace(
+                    task=task,
+                    started_at=started_at,
+                    error="workspace_observation_unavailable",
+                    failure_reason=f"Workspace snapshot failed: {type(exc).__name__}: {exc}",
+                    failure_category=FailureCategory.RUNNER_ERROR,
+                    shell_outputs=setup_outputs,
+                    workspace_observation=observation,
+                    sandbox_scrub=sandbox_scrub,
                 )
 
             task_dict = task.model_dump(mode="json")
@@ -232,41 +348,41 @@ class ForgeAgentRunner:
                 "model": self.model,
                 "workspace_path": str(workspace),
             }
-            try:
-                completed = subprocess.run(
-                    self.command,
-                    input=json.dumps(payload),
-                    text=True,
-                    capture_output=True,
-                    cwd=workspace,
-                    timeout=timeout,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as exc:
-                return self._error_trace(
-                    task=task,
-                    started_at=started_at,
-                    error="timeout",
-                    failure_reason=f"Forge command exceeded {timeout}s.",
-                    failure_category=FailureCategory.TIMEOUT,
-                    shell_outputs=[
-                        ShellOutput(
-                            command=command_label(self.command),
-                            stdout=subprocess_timeout_text(exc.stdout),
-                            stderr=subprocess_timeout_text(exc.stderr),
-                            exit_code=124,
-                            duration_ms=timeout * 1000,
-                        )
-                    ],
-                )
-
+            completed = run_bounded_process(
+                self.command,
+                input_text=json.dumps(payload),
+                cwd=workspace,
+                timeout_seconds=timeout,
+                cancel_requested=cancel_requested,
+            )
             command_output = ShellOutput(
                 command=command_label(self.command),
                 stdout=completed.stdout,
                 stderr=completed.stderr,
                 exit_code=completed.returncode,
-                duration_ms=duration_ms(started_at, utc_now()),
+                duration_ms=completed.duration_ms,
             )
+            if completed.outcome != ProcessOutcome.COMPLETED:
+                error = "timeout" if completed.outcome == ProcessOutcome.TIMED_OUT else "cancelled"
+                reason = (
+                    f"Forge command exceeded {timeout}s."
+                    if completed.outcome == ProcessOutcome.TIMED_OUT
+                    else "Eval run was cancelled during Forge execution."
+                )
+                return self._error_trace(
+                    task=task,
+                    started_at=started_at,
+                    error=error,
+                    failure_reason=reason,
+                    failure_category=(
+                        FailureCategory.TIMEOUT
+                        if completed.outcome == ProcessOutcome.TIMED_OUT
+                        else FailureCategory.RUNNER_ERROR
+                    ),
+                    shell_outputs=[*setup_outputs, command_output],
+                    sandbox_scrub=sandbox_scrub,
+                )
+
             if completed.returncode != 0:
                 return self._error_trace(
                     task=task,
@@ -275,16 +391,26 @@ class ForgeAgentRunner:
                     failure_reason=f"Forge command exited with {completed.returncode}.",
                     failure_category=FailureCategory.RUNNER_ERROR,
                     shell_outputs=[*setup_outputs, command_output],
+                    sandbox_scrub=sandbox_scrub,
                 )
 
             try:
                 raw_payload = parse_forge_stdout(completed.stdout)
+                reported_changed_files = reported_changed_files_from_payload(raw_payload)
+                workspace_observation = observe_workspace_changes(
+                    before,
+                    workspace,
+                    reported_changed_files=reported_changed_files,
+                )
                 trace = self._trace_from_payload(
                     task,
                     raw_payload,
                     started_at,
                     setup_outputs,
                     workspace,
+                    workspace_observation,
+                    sandbox_scrub,
+                    cancel_requested,
                 )
             except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
                 return self._error_trace(
@@ -298,9 +424,25 @@ class ForgeAgentRunner:
                     ),
                     failure_category=FailureCategory.FORGE_CONTRACT_ERROR,
                     shell_outputs=[*setup_outputs, command_output],
+                    sandbox_scrub=sandbox_scrub,
                 )
 
-            return trace
+            patch_replay = self._replay_trace_patch(
+                task,
+                trace,
+                temp_root,
+                cancel_requested=cancel_requested,
+            )
+            raw_events = [
+                *trace.raw_events,
+                {
+                    "event_type": "eval_patch_replay",
+                    **patch_replay.model_dump(mode="json"),
+                },
+            ]
+            return trace.model_copy(
+                update={"patch_replay": patch_replay, "raw_events": raw_events}
+            )
 
     def _trace_from_payload(
         self,
@@ -309,6 +451,9 @@ class ForgeAgentRunner:
         started_at,
         setup_outputs: list[ShellOutput],
         workspace: Path,
+        workspace_observation: WorkspaceObservation,
+        sandbox_scrub: LeakageCheck,
+        cancel_requested: CancelRequested,
     ) -> AgentTrace:
         ended_at = utc_now()
         final_answer = payload.get("final_answer")
@@ -316,10 +461,30 @@ class ForgeAgentRunner:
             raise ValueError("Forge trace is missing required string field: final_answer")
 
         tool_calls = TypeAdapter(list[ShellOutput]).validate_python(payload.get("tool_calls", []))
-        validation_outputs = run_validation_commands(task, workspace)
-        regression_outputs = run_shell_commands(task.pass_to_pass_commands, workspace)
-        fix_outputs = run_shell_commands(task.fail_to_pass_commands, workspace)
-        post_validation_outputs = run_post_validation_commands(task, workspace)
+        validation_outputs = run_validation_commands(
+            task,
+            workspace,
+            timeout_seconds=self.validation_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+        regression_outputs = run_shell_commands(
+            task.pass_to_pass_commands,
+            workspace,
+            timeout_seconds=self.validation_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+        fix_outputs = run_shell_commands(
+            task.fail_to_pass_commands,
+            workspace,
+            timeout_seconds=self.validation_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+        post_validation_outputs = run_post_validation_commands(
+            task,
+            workspace,
+            timeout_seconds=self.validation_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
         all_validation_outputs = [
             *validation_outputs,
             *regression_outputs,
@@ -352,8 +517,20 @@ class ForgeAgentRunner:
                 exit_code=last_validation.exit_code,
                 duration_ms=last_validation.duration_ms,
             )
-        changed_files = list(payload.get("changed_files") or [diff.path for diff in file_diffs])
+        changed_files = workspace_observation.changed_files
         raw_events = list(payload.get("raw_events", []))
+        raw_events.extend(
+            [
+                {
+                    "event_type": "eval_workspace_observation",
+                    **workspace_observation.model_dump(mode="json"),
+                },
+                {
+                    "event_type": "eval_sandbox_scrub",
+                    **sandbox_scrub.model_dump(mode="json"),
+                },
+            ]
+        )
         if task.pass_to_pass_commands or task.fail_to_pass_commands:
             raw_events.append(
                 {
@@ -387,7 +564,22 @@ class ForgeAgentRunner:
 
         regression_failure = first_failed_output(regression_outputs)
         bugfix_failure = None if regression_failure else first_failed_output(fix_outputs)
-        if regression_failure is not None and failure_category == FailureCategory.NONE:
+        interrupted_validation = next(
+            (
+                output
+                for output in all_validation_outputs
+                if output.exit_code in {124, 130}
+            ),
+            None,
+        )
+        if interrupted_validation is not None and failure_category == FailureCategory.NONE:
+            error, failure_reason, failure_category = command_failure(
+                interrupted_validation,
+                phase="Validation",
+                default_error="verification_failed",
+                default_category=FailureCategory.VERIFICATION_FAILED,
+            )
+        elif regression_failure is not None and failure_category == FailureCategory.NONE:
             error = "verification_failed"
             failure_reason = "Regression validation failed"
             failure_category = FailureCategory.VERIFICATION_FAILED
@@ -436,9 +628,50 @@ class ForgeAgentRunner:
             output_tokens=payload.get("output_tokens"),
             cost_usd=payload.get("cost_usd"),
             forge_run_evidence=forge_run_evidence,
+            workspace_observation=workspace_observation,
+            sandbox_scrub=sandbox_scrub,
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=duration_ms(started_at, ended_at),
+        )
+
+    def _replay_trace_patch(
+        self,
+        task: EvaluationTask,
+        trace: AgentTrace,
+        temp_root: Path,
+        *,
+        cancel_requested: CancelRequested,
+    ) -> WorkspaceCheck:
+        if not trace.file_diffs:
+            return WorkspaceCheck(
+                ok=not trace.changed_files,
+                modified_files=trace.changed_files if trace.changed_files else [],
+                message=(
+                    "Observed workspace changes have no replayable file diffs."
+                    if trace.changed_files
+                    else "No workspace changes to replay."
+                ),
+            )
+
+        replay_workspace = prepare_workspace(task, temp_root, workspace_name="patch-replay")
+        replay_setup = run_setup_commands(
+            task,
+            replay_workspace,
+            timeout_seconds=self.setup_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+        setup_failure = first_failed_output(replay_setup)
+        if setup_failure is not None:
+            return WorkspaceCheck(
+                ok=False,
+                message=f"Patch replay setup failed: {setup_failure.command}",
+            )
+        return replay_patch(
+            replay_workspace,
+            trace.file_diffs,
+            timeout_seconds=self.validation_timeout_seconds,
+            cancel_requested=cancel_requested,
         )
 
     def _error_trace(
@@ -450,6 +683,9 @@ class ForgeAgentRunner:
         failure_reason: str,
         failure_category: FailureCategory,
         shell_outputs: list[ShellOutput] | None = None,
+        workspace_observation: WorkspaceObservation | None = None,
+        sandbox_scrub: LeakageCheck | None = None,
+        patch_replay: WorkspaceCheck | None = None,
     ) -> AgentTrace:
         ended_at = utc_now()
         return AgentTrace(
@@ -467,6 +703,9 @@ class ForgeAgentRunner:
             error=error,
             failure_reason=failure_reason,
             failure_category=failure_category,
+            workspace_observation=workspace_observation,
+            sandbox_scrub=sandbox_scrub,
+            patch_replay=patch_replay,
             repair_attempts_used=0,
             validation_attempts=0,
             started_at=started_at,
@@ -487,12 +726,6 @@ def validate_execution_identity(
     if case_source is None or not case_source.strip():
         raise ValueError("Persisted eval run is missing case_source")
     return provider, model, case_source
-
-
-def subprocess_timeout_text(value: bytes | str | None) -> str:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value or ""
 
 
 def create_runner(
@@ -545,6 +778,20 @@ def parse_forge_stdout(stdout: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise TypeError("Forge command stdout must contain a JSON object.")
     return parsed
+
+
+def reported_changed_files_from_payload(payload: dict[str, Any]) -> list[str]:
+    changed_files = payload.get("changed_files")
+    if isinstance(changed_files, list):
+        return [str(path) for path in changed_files]
+    file_diffs = payload.get("file_diffs")
+    if not isinstance(file_diffs, list):
+        return []
+    return [
+        str(diff["path"])
+        for diff in file_diffs
+        if isinstance(diff, dict) and diff.get("path") is not None
+    ]
 
 
 def invalid_trace_failure_reason(exc: Exception, *, stdout: str, stderr: str) -> str:
@@ -635,8 +882,13 @@ def build_mock_file_diffs(changed_files: Sequence[str]) -> list[FileDiff]:
     ]
 
 
-def prepare_workspace(task: EvaluationTask, temp_dir: Path) -> Path:
-    workspace = temp_dir / "workspace"
+def prepare_workspace(
+    task: EvaluationTask,
+    temp_dir: Path,
+    *,
+    workspace_name: str = "workspace",
+) -> Path:
+    workspace = temp_dir / workspace_name
     if task.fixture_path is None:
         workspace.mkdir(parents=True, exist_ok=True)
         return workspace
@@ -793,16 +1045,49 @@ def sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return bool(row and row[0])
 
 
-def run_setup_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutput]:
-    return run_shell_commands(task.setup_commands, workspace)
+def run_setup_commands(
+    task: EvaluationTask,
+    workspace: Path,
+    *,
+    timeout_seconds: float,
+    cancel_requested: CancelRequested = never_cancelled,
+) -> list[ShellOutput]:
+    return run_shell_commands(
+        task.setup_commands,
+        workspace,
+        timeout_seconds=timeout_seconds,
+        cancel_requested=cancel_requested,
+    )
 
 
-def run_validation_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutput]:
-    return run_shell_commands(task.validation_commands, workspace)
+def run_validation_commands(
+    task: EvaluationTask,
+    workspace: Path,
+    *,
+    timeout_seconds: float,
+    cancel_requested: CancelRequested = never_cancelled,
+) -> list[ShellOutput]:
+    return run_shell_commands(
+        task.validation_commands,
+        workspace,
+        timeout_seconds=timeout_seconds,
+        cancel_requested=cancel_requested,
+    )
 
 
-def run_post_validation_commands(task: EvaluationTask, workspace: Path) -> list[ShellOutput]:
-    return run_shell_commands(task.post_validation_commands, workspace)
+def run_post_validation_commands(
+    task: EvaluationTask,
+    workspace: Path,
+    *,
+    timeout_seconds: float,
+    cancel_requested: CancelRequested = never_cancelled,
+) -> list[ShellOutput]:
+    return run_shell_commands(
+        task.post_validation_commands,
+        workspace,
+        timeout_seconds=timeout_seconds,
+        cancel_requested=cancel_requested,
+    )
 
 
 def first_failed_output(outputs: Sequence[ShellOutput]) -> ShellOutput | None:
@@ -842,17 +1127,21 @@ def normalize_error(error: str | None, failure_category: FailureCategory) -> str
     return error
 
 
-def run_shell_commands(commands: Sequence[str], workspace: Path) -> list[ShellOutput]:
+def run_shell_commands(
+    commands: Sequence[str],
+    workspace: Path,
+    *,
+    timeout_seconds: float,
+    cancel_requested: CancelRequested = never_cancelled,
+) -> list[ShellOutput]:
     outputs: list[ShellOutput] = []
     for command in commands:
-        started_at = utc_now()
-        completed = subprocess.run(
+        completed = run_bounded_process(
             command,
-            shell=True,
-            text=True,
-            capture_output=True,
             cwd=workspace,
-            check=False,
+            timeout_seconds=timeout_seconds,
+            cancel_requested=cancel_requested,
+            shell=True,
         )
         outputs.append(
             ShellOutput(
@@ -860,10 +1149,38 @@ def run_shell_commands(commands: Sequence[str], workspace: Path) -> list[ShellOu
                 stdout=completed.stdout,
                 stderr=completed.stderr,
                 exit_code=completed.returncode,
-                duration_ms=duration_ms(started_at, utc_now()),
+                duration_ms=completed.duration_ms,
             )
         )
+        if completed.outcome != ProcessOutcome.COMPLETED or completed.returncode != 0:
+            break
     return outputs
+
+
+def command_failure(
+    output: ShellOutput,
+    *,
+    phase: str,
+    default_error: str,
+    default_category: FailureCategory,
+) -> tuple[str, str, FailureCategory]:
+    if output.exit_code == 124:
+        return (
+            "timeout",
+            f"{phase} command timed out: {output.command}",
+            FailureCategory.TIMEOUT,
+        )
+    if output.exit_code == 130:
+        return (
+            "cancelled",
+            f"{phase} command was cancelled: {output.command}",
+            FailureCategory.RUNNER_ERROR,
+        )
+    return (
+        default_error,
+        f"{phase} command failed: {output.command}",
+        default_category,
+    )
 
 
 def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> list[str]:

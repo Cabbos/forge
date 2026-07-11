@@ -60,7 +60,7 @@ def test_golden_harness_check_passes_for_expected_success_cases(tmp_path: Path) 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
 
-    assert run_golden_harness_check(tasks_path) is True
+    assert run_golden_harness_check(tasks_path).ok is True
 
 
 def test_queued_sqlite_forge_run_preserves_execution_identity(
