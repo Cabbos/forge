@@ -788,27 +788,15 @@ fn redaction_values(api_key: &str, base_url: Option<&str>) -> Vec<String> {
 }
 
 fn sanitize_text(input: &str, redaction_values: &[String]) -> String {
-    let mut output = input.to_string();
+    let redactor = crate::redaction::PersistentLogRedactor::new();
     for value in redaction_values {
         if value.len() >= 4 {
-            output = output.replace(value, "[redacted]");
+            redactor.register_secret(value);
         }
     }
-    let patterns = [
-        (r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}", "$1[redacted]"),
-        (
-            r"(?i)(api[_-]?key|access[_-]?token|token|secret|password)=([^\s&#]+)",
-            "$1=[redacted]",
-        ),
-        (r"sk-[A-Za-z0-9._-]{8,}", "[redacted]"),
-        (r"\b[A-Za-z0-9][A-Za-z0-9._-]{31,}\b", "[redacted]"),
-    ];
-    for (pattern, replacement) in patterns {
-        if let Ok(regex) = regex::Regex::new(pattern) {
-            output = regex.replace_all(&output, replacement).into_owned();
-        }
-    }
-    output
+    redactor
+        .redact_text(input)
+        .unwrap_or_else(|_| "[redacted]".to_string())
 }
 
 fn validate_streaming_response(
