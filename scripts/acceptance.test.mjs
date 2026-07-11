@@ -71,7 +71,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "desktop CSP and capability safety baseline",
       command:
-        "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle",
+        "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle && npm --prefix apps/desktop run check:backend",
     },
     {
       label: "desktop frontend architecture",

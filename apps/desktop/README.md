@@ -1,5 +1,7 @@
 # Forge
 
+桌面 WebView 现在启用显式生产 CSP、本机开发 CSP 与 prototype freeze；主窗口 capability 仅保留目录选择和会话事件 listen/unlisten，并已移除未使用的 shell 插件。
+
 [English](./README.en.md)
 
 ![Forge mark](./src/assets/forge-mark.svg)

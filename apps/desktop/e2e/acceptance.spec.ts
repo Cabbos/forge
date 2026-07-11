@@ -9,6 +9,41 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
   });
 
+  test("desktop capability baseline preserves project, output, and dialog flows", async ({ page }) => {
+    const sessionId = "desktop-capability-smoke";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockDirectoryPicker = async () => "/Users/cabbos/project/security-smoke";
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    const sidebar = page.locator("aside").first();
+    await sidebar.getByTestId("workspace-trigger").click();
+    await page.getByRole("menuitem", { name: "选择文件夹" }).click();
+    await expect(sidebar.getByRole("button", { name: /security-smoke/ })).toBeVisible();
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+    await simulateStream(page, sessionId, [
+      { event_type: "text_start", session_id: sessionId, block_id: "security-output" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "security-output",
+        content: "capability smoke output",
+      },
+      { event_type: "text_end", session_id: sessionId, block_id: "security-output" },
+    ]);
+    await expect(page.getByText("capability smoke output")).toBeVisible();
+
+    await page.getByRole("button", { name: "设置" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     await expect
