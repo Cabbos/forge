@@ -1,5 +1,6 @@
 # Changelog
 
+- Eval reports now publish per-score observed/expected coverage, preserve universal-score denominators across every trace, and reject case files that declare unknown required score names.
 - Eval Forge runs now derive changed-file and scope evidence from independent filesystem snapshots, isolate setup/validation effects, bound and cancel subprocess groups, scrub future repository state, and record fresh-fixture patch replay evidence.
 - Hardened the desktop WebView with explicit production/development CSPs, frozen prototypes, an exact three-permission main-window capability, and removal of the unused shell plugin while preserving project picker, session output, and dialog smoke coverage.
 
