@@ -56,7 +56,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "desktop command execution safety baseline",
       command:
-        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test harness_test project_defined -- --nocapture",
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test harness_test project_defined -- --nocapture && npm --prefix apps/desktop run check:backend",
     },
     {
       label: "desktop credential and redaction safety baseline",

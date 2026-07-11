@@ -24,11 +24,12 @@ use tauri::AppHandle;
 use tokio::sync::{Notify, RwLock};
 
 use crate::adapters::base::ToolDef;
-use crate::agent::event_sink::EventEmitter;
+#[doc(hidden)]
+pub use crate::agent::event_sink::EventEmitter;
 use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
 use crate::agent::time::now_ms;
 use crate::consts::CONFIRM_TIMEOUT;
-use crate::executor::ToolExecutor;
+use crate::executor::{ToolExecutionOptions, ToolExecutor};
 use crate::harness::capabilities::hooks::BuiltinHookCap;
 use crate::harness::capabilities::mcp::McpServerCap;
 use crate::harness::capabilities::skills::SkillLoaderCap;
@@ -36,7 +37,10 @@ use crate::harness::capabilities::tools;
 use crate::harness::capability::{CapabilityDispatchReport, Event};
 use crate::harness::db::Database;
 use crate::harness::registry::CapabilityRegistry;
+use crate::harness::shell_policy::{issue_shell_approval, ShellApproval};
 use crate::harness::write_boundary::build_write_boundary;
+#[doc(hidden)]
+pub use crate::protocol::events::StreamEvent;
 use event_bus::EventBus;
 use hooks::{
     FileSystemAuditHook, HookEngine, LoggingHook, SensitiveContentHook, WorkspaceBoundaryHook,
@@ -641,7 +645,8 @@ impl Harness {
 
     /// Execute a tool call through the full hook + permission pipeline,
     /// using an abstract event emitter instead of `AppHandle`.
-    pub(crate) async fn execute_tool_with_emitter(
+    #[doc(hidden)]
+    pub async fn execute_tool_with_emitter(
         &self,
         session_id: &str,
         tool_name: &str,
@@ -699,6 +704,7 @@ impl Harness {
                     .check_with_evidence(session_id, tool_name, &input, &self.working_dir)
                     .await;
                 let mut permission_evidence = permission_check.evidence.clone();
+                let mut shell_approval: Option<ShellApproval> = None;
                 let permission_block_id = tool_block_id
                     .map(ToOwned::to_owned)
                     .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
@@ -820,6 +826,43 @@ impl Harness {
                                 .await;
                             return result;
                         }
+
+                        if matches!(
+                            tool_name,
+                            "run_shell"
+                                | "bash"
+                                | "execute_command"
+                                | "shell"
+                                | "shell_command"
+                                | "run_command"
+                                | "run_shell_command"
+                        ) {
+                            let command = input
+                                .get("command")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("");
+                            match issue_shell_approval(command, &self.working_dir) {
+                                Ok(approval) => shell_approval = Some(approval),
+                                Err(reason) => {
+                                    let result = format!(
+                                        "Shell approval could not be bound to the command: {reason}"
+                                    );
+                                    emit_blocked_tool_result_with_emitter(
+                                        session_id,
+                                        tool_block_id,
+                                        &result,
+                                        &*emitter,
+                                    );
+                                    self.dispatch_post_tool_event(
+                                        session_id,
+                                        tool_name,
+                                        result.clone(),
+                                    )
+                                    .await;
+                                    return result;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -852,13 +895,16 @@ impl Harness {
 
                 let result = self
                     .tool_executor
-                    .execute_with_emitter(
+                    .execute_with_emitter_and_shell_approval(
                         session_id,
                         tool_name,
                         &input,
                         emitter.clone(),
-                        tool_block_id,
-                        cancel,
+                        ToolExecutionOptions {
+                            tool_block_id,
+                            cancel,
+                            shell_approval,
+                        },
                     )
                     .await;
 
