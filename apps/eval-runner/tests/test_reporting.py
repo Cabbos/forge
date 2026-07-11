@@ -14,6 +14,7 @@ from app.models import (
     TrustGateResult,
     TrustStatus,
     VerificationResult,
+    WorkspaceCheck,
 )
 from app.reporting import build_report
 
@@ -105,10 +106,14 @@ def test_trust_gates_fail_closed_without_harness_check() -> None:
     from app.trust_gates import evaluate_trust_gates
 
     result = evaluate_trust_gates(
-        harness_ok=False,
+        harness_check=WorkspaceCheck(ok=False),
         dataset_fingerprint="abc",
+        case_quality_issues=[],
+        traces=[],
         scorer_calibrated=True,
         red_team_passed=True,
+        require_red_team=True,
+        score_coverage={},
     )
 
     assert result.trusted is False
@@ -119,10 +124,14 @@ def test_trust_gates_fail_closed_without_dataset_fingerprint() -> None:
     from app.trust_gates import evaluate_trust_gates
 
     result = evaluate_trust_gates(
-        harness_ok=True,
+        harness_check=WorkspaceCheck(ok=True),
         dataset_fingerprint=None,
+        case_quality_issues=[],
+        traces=[],
         scorer_calibrated=True,
         red_team_passed=True,
+        require_red_team=True,
+        score_coverage={},
     )
 
     assert result.trusted is False
@@ -133,10 +142,14 @@ def test_trust_gates_fail_closed_without_scorer_calibration() -> None:
     from app.trust_gates import evaluate_trust_gates
 
     result = evaluate_trust_gates(
-        harness_ok=True,
+        harness_check=WorkspaceCheck(ok=True),
         dataset_fingerprint="abc",
+        case_quality_issues=[],
+        traces=[],
         scorer_calibrated=False,
         red_team_passed=True,
+        require_red_team=True,
+        score_coverage={},
     )
 
     assert result.trusted is False
@@ -147,10 +160,14 @@ def test_trust_gates_fail_closed_when_red_team_fails() -> None:
     from app.trust_gates import evaluate_trust_gates
 
     result = evaluate_trust_gates(
-        harness_ok=True,
+        harness_check=WorkspaceCheck(ok=True),
         dataset_fingerprint="abc",
+        case_quality_issues=[],
+        traces=[],
         scorer_calibrated=True,
         red_team_passed=False,
+        require_red_team=True,
+        score_coverage={},
     )
 
     assert result.trusted is False

@@ -731,6 +731,9 @@ def create_runner(
     provider: EvalProvider | str,
     model: str,
     forge_command: str | Sequence[str] | None = None,
+    command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
+    setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
+    validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
 ) -> EvalRunner:
     try:
         normalized_provider = EvalProvider(provider)
@@ -743,6 +746,9 @@ def create_runner(
             provider=normalized_provider,
             model=model,
             command=forge_command,
+            command_timeout_seconds=command_timeout_seconds,
+            setup_timeout_seconds=setup_timeout_seconds,
+            validation_timeout_seconds=validation_timeout_seconds,
         )
     raise ValueError(f"Unsupported eval provider: {provider}")
 
