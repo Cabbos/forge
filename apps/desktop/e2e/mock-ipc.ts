@@ -71,7 +71,7 @@ export function createMockIPC(handlers: MockIPCHandlers = {}) {
       case "confirm_response":
         return handlers.confirm_response?.(args) ?? undefined;
       case "get_api_key_status":
-        return handlers.get_api_key_status?.(args) ?? [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+        return handlers.get_api_key_status?.(args) ?? [{ provider: "deepseek", configured: true, source: "system_store", status: "available", error: null }];
       case "set_api_key":
         return handlers.set_api_key?.(args) ?? undefined;
       case "get_default_working_dir":

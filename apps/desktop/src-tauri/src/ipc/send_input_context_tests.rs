@@ -626,7 +626,6 @@ async fn send_input_memory_selection_includes_active_profile_and_global_facts() 
             default_provider: None,
             default_model: None,
             default_workspace: None,
-            api_key_overrides: None,
         })
         .expect("work profile");
     state

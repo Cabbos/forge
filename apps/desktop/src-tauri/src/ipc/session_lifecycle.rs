@@ -226,7 +226,11 @@ pub(crate) async fn restore_session_from_snapshot(
 ) -> Result<RestoredSession, String> {
     let snapshot = load_session_snapshot(session_id)?;
     let provider = normalize_provider(Some(&snapshot.provider));
-    let credentials = settings::detect_credentials(&provider);
+    let profile = state.profiles.get_active_profile();
+    let credentials = state
+        .credential_resolver()
+        .resolve(&provider, profile.as_ref())
+        .map_err(|error| error.to_string())?;
     let latest_workflow = snapshot.latest_workflow.clone();
     let latest_delivery = snapshot.latest_delivery.clone();
     let pending_confirms = snapshot.pending_confirms.clone();
@@ -387,7 +391,11 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
 
     let snapshot = session.snapshot();
     let provider = normalize_provider(Some(&snapshot.provider));
-    let credentials = settings::detect_credentials(&provider);
+    let profile = state.profiles.get_active_profile();
+    let credentials = state
+        .credential_resolver()
+        .resolve(&provider, profile.as_ref())
+        .map_err(|error| error.to_string())?;
     if credentials.api_key.trim().is_empty() && settings::provider_requires_api_key(&provider) {
         return Ok(session);
     }

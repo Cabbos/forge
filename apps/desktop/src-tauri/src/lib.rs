@@ -6,6 +6,7 @@ mod app_metadata;
 mod autosave;
 mod consts;
 pub mod continuity;
+mod credential_migration;
 mod credential_store;
 pub mod diagnostics;
 pub mod eval_headless;
@@ -62,9 +63,23 @@ pub fn run() {
     };
     crate::app_log!("INFO", "Working directory: {}", project_root.display());
 
+    let credential_store = credential_store::system_credential_store();
+    if credential_migration::migrate_legacy_credentials(
+        &credential_migration::CredentialMigrationPaths::default_paths(),
+        credential_store.as_ref(),
+    )
+    .is_err()
+    {
+        eprintln!("Forge startup blocked: credential migration failed");
+        return;
+    }
+
     // Create harness with default working directory
     let harness = Arc::new(Harness::new(project_root));
-    let app_state = Arc::new(AppState::new(harness));
+    let app_state = Arc::new(AppState::new_with_credential_store(
+        harness,
+        credential_store,
+    ));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())

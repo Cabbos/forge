@@ -71,6 +71,10 @@ impl AppState {
         }
     }
 
+    pub(crate) fn credential_resolver(&self) -> crate::settings::CredentialResolver {
+        crate::settings::CredentialResolver::new(Arc::clone(&self.credential_store))
+    }
+
     pub async fn register_session(&self, session_id: String, session: Arc<AgentSession>) {
         self.register_session_with_limit(session_id, session, MAX_ACTIVE_SESSIONS)
             .await;

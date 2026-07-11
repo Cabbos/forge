@@ -125,7 +125,7 @@ test.describe("First loop v1", () => {
       const original = window.__tauriMockIPC;
       // @ts-expect-error mock
       window.__tauriMockIPC = async (cmd: string, args: Record<string, unknown>) => {
-        if (cmd === "get_api_key_status") return [{ provider: "deepseek", set: false, preview: "" }];
+        if (cmd === "get_api_key_status") return [{ provider: "deepseek", configured: false, source: "none", status: "not_configured", error: null }];
         return original?.(cmd, args);
       };
     }, sessionId);

@@ -833,7 +833,6 @@ mod tests {
                 default_provider: None,
                 default_model: None,
                 default_workspace: None,
-                api_key_overrides: None,
             })
             .expect("profile");
         state.profiles.set_active(&work.id).expect("active profile");
@@ -1531,7 +1530,6 @@ mod tests {
                     default_provider: None,
                     default_model: None,
                     default_workspace: None,
-                    api_key_overrides: None,
                 })
                 .expect("profile");
         }

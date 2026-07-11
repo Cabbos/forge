@@ -479,7 +479,7 @@ export interface ForgeProfile {
   default_provider?: string | null;
   default_model?: string | null;
   default_workspace?: string | null;
-  api_key_overrides?: Record<string, string> | null;
+  credential_overrides?: Record<string, { service: string; account: string }>;
   created_at_ms: number;
   updated_at_ms: number;
 }
@@ -490,7 +490,6 @@ export interface UpsertProfileInput {
   default_provider?: string | null;
   default_model?: string | null;
   default_workspace?: string | null;
-  api_key_overrides?: Record<string, string> | null;
 }
 
 export interface ProfileListPayload {

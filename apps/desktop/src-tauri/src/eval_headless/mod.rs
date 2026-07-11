@@ -27,6 +27,19 @@ pub async fn run_stdin_json(input: &str) -> Result<serde_json::Value, String> {
 }
 
 pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Value, String> {
+    let credential_store = crate::credential_store::system_credential_store();
+    crate::credential_migration::migrate_legacy_credentials(
+        &crate::credential_migration::CredentialMigrationPaths::default_paths(),
+        credential_store.as_ref(),
+    )
+    .map_err(|_| "credential migration failed before headless startup".to_string())?;
+    let profile_store =
+        crate::profile::ProfileStore::new(crate::profile::ProfileStore::default_path());
+    let selected_profile = request
+        .profile_id
+        .as_deref()
+        .and_then(|profile_id| profile_store.get(profile_id));
+
     let started = Instant::now();
     let task_id = request
         .task
@@ -53,7 +66,9 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
 
     let before_snapshot = snapshot::snapshot_workspace(&workspace_path)?;
     let agent_provider = resolve::resolve_agent_provider(Some(&effective_provider));
-    let credentials = settings::detect_credentials(&agent_provider);
+    let credentials = settings::CredentialResolver::new(credential_store)
+        .resolve(&agent_provider, selected_profile.as_ref())
+        .map_err(|error| error.to_string())?;
     let agent_model = resolve::resolve_agent_model(
         Some(&effective_model),
         credentials.model.as_deref(),
@@ -1414,7 +1429,6 @@ mod tests {
                 default_provider: Some("anthropic".into()),
                 default_model: Some("claude-opus-4-8".into()),
                 default_workspace: None,
-                api_key_overrides: None,
             })
             .expect("create profile");
 
@@ -1451,7 +1465,6 @@ mod tests {
                 default_provider: None,
                 default_model: None,
                 default_workspace: None,
-                api_key_overrides: None,
             })
             .expect("create profile");
 

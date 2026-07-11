@@ -586,7 +586,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
           default_provider: "deepseek",
           default_model: "deepseek-v4-flash[1m]",
           default_workspace: null,
-          api_key_overrides: null,
+          credential_overrides: {},
           created_at_ms: now,
           updated_at_ms: now,
         },
@@ -910,7 +910,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
   test("settings models renders cached manual provider probe evidence", async ({ page }) => {
     await page.addInitScript(() => {
       // @ts-expect-error acceptance mock
-      window.__mockApiKeyStatus = [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+      window.__mockApiKeyStatus = [{ provider: "deepseek", configured: true, source: "system_store", status: "available", error: null }];
       // @ts-expect-error acceptance mock
       window.__mockProviderCatalog = [
         {
@@ -962,7 +962,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
   test("settings models clears stale provider evidence after manual recheck", async ({ page }) => {
     await page.addInitScript(() => {
       // @ts-expect-error acceptance mock
-      window.__mockApiKeyStatus = [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+      window.__mockApiKeyStatus = [{ provider: "deepseek", configured: true, source: "system_store", status: "available", error: null }];
       // @ts-expect-error acceptance mock
       window.__mockProviderCatalogCache = [
         {
@@ -1127,7 +1127,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
   test("settings models clears stale catalog evidence after manual refresh", async ({ page }) => {
     await page.addInitScript(() => {
       // @ts-expect-error acceptance mock
-      window.__mockApiKeyStatus = [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+      window.__mockApiKeyStatus = [{ provider: "deepseek", configured: true, source: "system_store", status: "available", error: null }];
       // @ts-expect-error acceptance mock
       window.__mockProviderCatalogCache = [
         {
@@ -1201,7 +1201,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
       };
       // @ts-expect-error acceptance mock
       window.__mockApiKeyStatus = [
-        { provider: "kimi", set: false, preview: "" },
+        { provider: "kimi", configured: false, source: "none", status: "not_configured", error: null },
       ];
     });
 
@@ -1338,7 +1338,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
         },
       ];
       // @ts-expect-error acceptance mock
-      window.__mockApiKeyStatus = [{ provider: "local-openai", set: false, preview: "" }];
+      window.__mockApiKeyStatus = [{ provider: "local-openai", configured: false, source: "none", status: "not_configured", error: null }];
     });
 
     await page.reload();
@@ -1402,7 +1402,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
         },
       ];
       // @ts-expect-error acceptance mock
-      window.__mockApiKeyStatus = [{ provider: "openai", set: true, preview: "sk-...1234" }];
+      window.__mockApiKeyStatus = [{ provider: "openai", configured: true, source: "system_store", status: "available", error: null }];
     });
 
     await page.reload();

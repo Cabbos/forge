@@ -1,18 +1,22 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::adapters::provider_registry::{
     find_loaded_provider_profile, get_provider_definition, load_provider_profiles,
     normalize_provider_id, EnvVarList, LoadedProviderProfile, ProviderProfileConfig,
     ProviderProfileLoadError, ProviderProfileSource, ProviderTransport,
 };
+use crate::credential_store::{CredentialRef, CredentialStore};
+use crate::profile::ForgeProfile;
+use crate::redaction::{global_redactor, PersistentLogRedactor};
 
 /// Persisted user settings stored in ~/.forge/config.json
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
-    #[serde(default)]
-    pub api_keys: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub credential_refs: HashMap<String, CredentialRef>,
     #[serde(default)]
     pub(crate) providers: Vec<ProviderProfileConfig>,
     #[serde(default)]
@@ -71,23 +75,74 @@ impl ClaudeSettings {
     }
 }
 
-/// Detect credentials for a given provider by reading local config files + env vars.
-///
-/// Priority (highest first):
-/// 1. Our stored API key in ~/.forge/config.json
-/// 2. Anthropic-only Claude Code config (`apiKey` / `apiBase` / `model`)
-/// 3. Registry-defined provider API key and base URL env vars
-/// 4. Provider-specific model env vars; `ANTHROPIC_MODEL` only applies to Anthropic
-pub fn detect_credentials(provider: &str) -> Credentials {
-    // 1. Check our own stored keys
-    let settings = Settings::load();
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CredentialResolutionError {
+    #[error(
+        "System credential store is unavailable. Open Settings and save the provider key again."
+    )]
+    StoreUnavailable,
+    #[error("A saved credential reference has no matching secret. Open Settings and save the provider key again.")]
+    MissingReferencedSecret,
+}
 
-    // 2. Try Claude Code config
-    let claude_config = read_claude_settings();
+pub struct CredentialResolver {
+    store: Arc<dyn CredentialStore>,
+    redactor: Arc<PersistentLogRedactor>,
+}
 
-    detect_credentials_from_sources(provider, &settings, &claude_config, |key| {
-        std::env::var(key).ok()
-    })
+impl CredentialResolver {
+    pub fn new(store: Arc<dyn CredentialStore>) -> Self {
+        Self {
+            store,
+            redactor: global_redactor(),
+        }
+    }
+
+    pub fn resolve(
+        &self,
+        provider: &str,
+        profile: Option<&ForgeProfile>,
+    ) -> Result<Credentials, CredentialResolutionError> {
+        let settings = Settings::load();
+        let claude_config = read_claude_settings();
+        self.resolve_from_sources(provider, profile, &settings, &claude_config, |key| {
+            std::env::var(key).ok()
+        })
+    }
+
+    fn resolve_from_sources<F>(
+        &self,
+        provider: &str,
+        profile: Option<&ForgeProfile>,
+        settings: &Settings,
+        claude_config: &ClaudeSettings,
+        env: F,
+    ) -> Result<Credentials, CredentialResolutionError>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let reference = stored_credential_ref(settings, profile, provider);
+        let stored_key = match reference {
+            Some(reference) => self
+                .store
+                .get(reference)
+                .map_err(|_| CredentialResolutionError::StoreUnavailable)?
+                .ok_or(CredentialResolutionError::MissingReferencedSecret)?
+                .into(),
+            None => None,
+        };
+        let credentials = detect_credentials_with_stored_key_from_sources(
+            provider,
+            settings,
+            claude_config,
+            stored_key,
+            env,
+        );
+        if !credentials.api_key.trim().is_empty() {
+            self.redactor.register_secret(&credentials.api_key);
+        }
+        Ok(credentials)
+    }
 }
 
 pub(crate) fn load_configured_provider_profiles() -> Vec<LoadedProviderProfile> {
@@ -107,6 +162,19 @@ fn detect_credentials_from_sources<F>(
 where
     F: Fn(&str) -> Option<String>,
 {
+    detect_credentials_with_stored_key_from_sources(provider, settings, claude_config, None, env)
+}
+
+fn detect_credentials_with_stored_key_from_sources<F>(
+    provider: &str,
+    settings: &Settings,
+    claude_config: &ClaudeSettings,
+    stored_key: Option<String>,
+    env: F,
+) -> Credentials
+where
+    F: Fn(&str) -> Option<String>,
+{
     let raw_provider = provider.trim();
     let profiles = settings.provider_profiles_or_builtin();
     let loaded_profile = find_loaded_provider_profile(&profiles, raw_provider);
@@ -114,12 +182,6 @@ where
         .map(|profile| profile.id.clone())
         .unwrap_or_else(|| normalize_settings_provider(raw_provider));
     let definition = get_provider_definition(&provider_id);
-    let loaded_aliases = loaded_profile
-        .map(|profile| profile.aliases.as_slice())
-        .unwrap_or(&[]);
-    let stored_key =
-        stored_api_key(settings, &provider_id, raw_provider, loaded_aliases).map(str::to_string);
-
     let registry_api_key = loaded_profile
         .and_then(|profile| first_profile_env_value(&env, &provider_id, &profile.api_key_env))
         .or_else(|| {
@@ -181,25 +243,55 @@ fn normalize_settings_provider(provider: &str) -> String {
     }
 }
 
-fn stored_api_key<'a>(
+fn stored_credential_ref<'a>(
     settings: &'a Settings,
-    provider_id: &str,
-    raw_provider: &str,
-    loaded_aliases: &[String],
-) -> Option<&'a str> {
-    settings
-        .get_api_key(provider_id)
-        .or_else(|| settings.get_api_key(raw_provider))
-        .or_else(|| {
-            loaded_aliases
-                .iter()
-                .find_map(|alias| settings.get_api_key(alias))
-        })
-        .or_else(|| {
-            provider_alias_keys(provider_id)
-                .iter()
-                .find_map(|alias| settings.get_api_key(alias))
-        })
+    profile: Option<&'a ForgeProfile>,
+    provider: &str,
+) -> Option<&'a CredentialRef> {
+    let raw_provider = provider.trim();
+    let profiles = settings.provider_profiles_or_builtin();
+    let loaded_profile = find_loaded_provider_profile(&profiles, raw_provider);
+    let provider_id = loaded_profile
+        .map(|profile| profile.id.clone())
+        .unwrap_or_else(|| normalize_settings_provider(raw_provider));
+    let loaded_aliases = loaded_profile
+        .map(|profile| profile.aliases.as_slice())
+        .unwrap_or(&[]);
+    let find = |references: &'a HashMap<String, CredentialRef>| {
+        references
+            .get(&provider_id)
+            .or_else(|| references.get(raw_provider))
+            .or_else(|| {
+                loaded_aliases
+                    .iter()
+                    .find_map(|alias| references.get(alias))
+            })
+            .or_else(|| {
+                provider_alias_keys(&provider_id)
+                    .iter()
+                    .find_map(|alias| references.get(*alias))
+            })
+    };
+    profile
+        .and_then(|profile| find(&profile.credential_overrides))
+        .or_else(|| find(&settings.credential_refs))
+}
+
+fn credential_store_recovery_message() -> String {
+    "System credential store is unavailable. Open Settings and save the provider key again."
+        .to_string()
+}
+
+fn rollback_credential(
+    store: &dyn CredentialStore,
+    reference: &CredentialRef,
+    previous: Option<&str>,
+) {
+    if let Some(previous) = previous {
+        let _ = store.put(reference, previous);
+    } else {
+        let _ = store.delete(reference);
+    }
 }
 
 fn first_profile_env_value<F>(env: &F, provider_id: &str, keys: &[String]) -> Option<String>
@@ -356,46 +448,122 @@ impl Settings {
     }
 
     fn save(&self) -> Result<(), String> {
-        let path = Self::path();
+        self.save_to_path(&Self::path())
+    }
+
+    fn save_to_path(&self, path: &PathBuf) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
         }
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(&path, json).map_err(|e| format!("Failed to write config: {e}"))?;
+        let temporary = path.with_extension("tmp");
+        fs::write(&temporary, json).map_err(|e| format!("Failed to write config temp: {e}"))?;
+        fs::rename(&temporary, path).map_err(|e| format!("Failed to replace config: {e}"))?;
         Ok(())
     }
 
-    pub fn set_api_key(&mut self, provider: &str, key: &str) -> Result<(), String> {
-        let provider_id = provider.trim().to_ascii_lowercase();
+    pub fn set_api_key(
+        &mut self,
+        store: &dyn CredentialStore,
+        provider: &str,
+        key: &str,
+    ) -> Result<(), String> {
+        self.set_api_key_at_path(store, provider, key, &Self::path())
+    }
+
+    fn set_api_key_at_path(
+        &mut self,
+        store: &dyn CredentialStore,
+        provider: &str,
+        key: &str,
+        path: &PathBuf,
+    ) -> Result<(), String> {
+        let provider_id = normalize_settings_provider(provider);
+        if provider_id.is_empty() {
+            return Err("Provider is required.".to_string());
+        }
+        let matching_keys = self
+            .credential_refs
+            .keys()
+            .filter(|key| normalize_settings_provider(key) == provider_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let reference = matching_keys
+            .iter()
+            .find_map(|key| self.credential_refs.get(key))
+            .cloned()
+            .unwrap_or_else(|| CredentialRef::provider(&provider_id));
+        let previous = store
+            .get(&reference)
+            .map_err(|_| credential_store_recovery_message())?;
+
         if key.trim().is_empty() {
-            self.api_keys.remove(provider);
+            store
+                .delete(&reference)
+                .map_err(|_| credential_store_recovery_message())?;
+            self.credential_refs
+                .retain(|key, _| normalize_settings_provider(key) != provider_id);
         } else {
-            self.api_keys.insert(provider.to_string(), key.to_string());
+            store
+                .put(&reference, key)
+                .map_err(|_| credential_store_recovery_message())?;
+            let verified = store
+                .get(&reference)
+                .map_err(|_| credential_store_recovery_message())?;
+            if verified.as_deref() != Some(key) {
+                rollback_credential(store, &reference, previous.as_deref());
+                return Err(
+                    "Credential store verification failed. Save the provider key again."
+                        .to_string(),
+                );
+            }
+            self.credential_refs
+                .retain(|key, _| normalize_settings_provider(key) != provider_id);
+            self.credential_refs
+                .insert(provider_id.clone(), reference.clone());
         }
         self.provider_probe_evidence.remove(&provider_id);
-        self.save()
+        if let Err(error) = self.save_to_path(path) {
+            rollback_credential(store, &reference, previous.as_deref());
+            return Err(error);
+        }
+        if !key.trim().is_empty() {
+            global_redactor().register_secret(key);
+        }
+        Ok(())
     }
 
-    pub fn get_api_key(&self, provider: &str) -> Option<&str> {
-        self.api_keys.get(provider).map(|s| s.as_str())
-    }
-
-    pub fn key_status(&self) -> Vec<KeyStatus> {
+    pub fn key_status(&self, store: &dyn CredentialStore) -> Vec<KeyStatus> {
         let mut status = Vec::new();
-        for (provider, key) in &self.api_keys {
+        for (provider, reference) in &self.credential_refs {
+            let (credential_status, error) = match store.get(reference) {
+                Ok(Some(_)) => ("available".to_string(), None),
+                Ok(None) => (
+                    "missing".to_string(),
+                    Some("Saved credential is missing. Save the provider key again.".to_string()),
+                ),
+                Err(_) => (
+                    "unavailable".to_string(),
+                    Some(credential_store_recovery_message()),
+                ),
+            };
             status.push(KeyStatus {
                 provider: provider.clone(),
-                set: !key.is_empty(),
-                preview: mask_key(key),
+                configured: true,
+                source: "system_store".to_string(),
+                status: credential_status,
+                error,
             });
         }
         // Always include known and configured providers, even if not set.
         for profile in self.provider_profiles_or_builtin() {
-            if !self.api_keys.contains_key(&profile.id) {
+            if !self.credential_refs.contains_key(&profile.id) {
                 status.push(KeyStatus {
                     provider: profile.id,
-                    set: false,
-                    preview: String::new(),
+                    configured: false,
+                    source: "none".to_string(),
+                    status: "not_configured".to_string(),
+                    error: None,
                 });
             }
         }
@@ -606,8 +774,11 @@ impl Settings {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KeyStatus {
     pub provider: String,
-    pub set: bool,
-    pub preview: String,
+    pub configured: bool,
+    pub source: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -753,25 +924,213 @@ fn current_epoch_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Arc;
 
     use crate::adapters::provider_registry::{
         valid_provider_ids, EnvVarList, ProviderProfileConfig,
     };
+    use crate::credential_store::{
+        CredentialRef, CredentialStore, MemoryCredentialStore, UnavailableCredentialStore,
+    };
     use crate::settings::ProviderProfileInput;
 
     use super::{
-        detect_credentials_from_sources, mask_key, CachedProviderProbeCheck,
-        CachedProviderProbeEvidence, ClaudeSettings, ProviderCatalogModel,
-        ProviderModelCatalogSource, ProviderProbeEvidenceCheckStatus, ProviderProbeEvidenceSource,
-        ProviderProbeEvidenceStatus, Settings,
+        detect_credentials_from_sources, detect_credentials_with_stored_key_from_sources, mask_key,
+        CachedProviderProbeCheck, CachedProviderProbeEvidence, ClaudeSettings, CredentialResolver,
+        ForgeProfile, ProviderCatalogModel, ProviderModelCatalogSource,
+        ProviderProbeEvidenceCheckStatus, ProviderProbeEvidenceSource, ProviderProbeEvidenceStatus,
+        Settings,
     };
 
     #[test]
-    fn detect_credentials_prefers_stored_provider_key_over_claude_and_env() {
-        let settings = Settings {
-            api_keys: HashMap::from([("anthropic".to_string(), "stored-key".to_string())]),
-            ..Default::default()
+    fn settings_save_never_serializes_api_keys() {
+        let settings: Settings = serde_json::from_value(serde_json::json!({
+            "api_keys": {"openai": "forge-settings-serialization-secret"},
+            "credential_refs": {
+                "openai": {"service": CredentialRef::SERVICE, "account": "provider:openai"}
+            }
+        }))
+        .expect("deserialize settings");
+
+        let serialized = serde_json::to_string(&settings).expect("serialize settings");
+
+        assert!(!serialized.contains("api_keys"));
+        assert!(!serialized.contains("forge-settings-serialization-secret"));
+    }
+
+    fn temp_settings_path(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("forge-settings-{name}-{nanos}.json"))
+    }
+
+    #[test]
+    fn setting_key_creates_reference_and_keychain_item() {
+        let path = temp_settings_path("create-reference");
+        let store = MemoryCredentialStore::default();
+        let mut settings = Settings::default();
+
+        settings
+            .set_api_key_at_path(&store, "openai", "forge-write-only-secret", &path)
+            .expect("set key");
+
+        let reference = settings
+            .credential_refs
+            .get("openai")
+            .expect("credential reference");
+        assert_eq!(
+            store.get(reference).expect("read key").as_deref(),
+            Some("forge-write-only-secret")
+        );
+        let persisted = fs::read_to_string(&path).expect("read settings");
+        assert!(persisted.contains("credential_refs"));
+        assert!(!persisted.contains("forge-write-only-secret"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deleting_key_removes_reference_and_keychain_item() {
+        let path = temp_settings_path("delete-reference");
+        let store = MemoryCredentialStore::default();
+        let mut settings = Settings::default();
+        settings
+            .set_api_key_at_path(&store, "openai", "forge-delete-secret", &path)
+            .expect("set key");
+        let reference = settings
+            .credential_refs
+            .get("openai")
+            .cloned()
+            .expect("credential reference");
+
+        settings
+            .set_api_key_at_path(&store, "openai", "", &path)
+            .expect("delete key");
+
+        assert!(!settings.credential_refs.contains_key("openai"));
+        assert_eq!(store.get(&reference).expect("read deleted key"), None);
+        let persisted = fs::read_to_string(&path).expect("read settings");
+        assert!(!persisted.contains("forge-delete-secret"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deleting_canonical_key_removes_legacy_alias_reference() {
+        let path = temp_settings_path("delete-alias-reference");
+        let store = MemoryCredentialStore::default();
+        let reference = CredentialRef::provider("moonshot");
+        store
+            .put(&reference, "forge-alias-delete-secret")
+            .expect("put alias key");
+        let mut settings = Settings {
+            credential_refs: HashMap::from([("moonshot".to_string(), reference.clone())]),
+            ..Settings::default()
         };
+
+        settings
+            .set_api_key_at_path(&store, "kimi", "", &path)
+            .expect("delete canonical key");
+
+        assert!(settings.credential_refs.is_empty());
+        assert_eq!(store.get(&reference).expect("read deleted alias"), None);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn key_status_reports_configured_without_returning_secret() {
+        let store = MemoryCredentialStore::default();
+        let reference = CredentialRef::provider("openai");
+        store
+            .put(&reference, "forge-status-secret")
+            .expect("put key");
+        let settings = Settings {
+            credential_refs: HashMap::from([("openai".to_string(), reference)]),
+            ..Settings::default()
+        };
+
+        let status = settings.key_status(&store);
+        let serialized = serde_json::to_string(&status).expect("serialize status");
+
+        assert!(status.iter().any(|item| {
+            item.provider == "openai" && item.configured && item.status == "available"
+        }));
+        assert!(!serialized.contains("forge-status-secret"));
+        assert!(!serialized.contains("preview"));
+    }
+
+    #[test]
+    fn unavailable_store_prevents_provider_start_with_recovery_message() {
+        let reference = CredentialRef::provider("openai");
+        let settings = Settings {
+            credential_refs: HashMap::from([("openai".to_string(), reference)]),
+            ..Settings::default()
+        };
+        let resolver = CredentialResolver::new(Arc::new(UnavailableCredentialStore::new(
+            "test_unavailable",
+        )));
+
+        let error = resolver
+            .resolve_from_sources(
+                "openai",
+                None,
+                &settings,
+                &ClaudeSettings::default(),
+                |_| None,
+            )
+            .expect_err("unavailable store must block resolution");
+
+        assert_eq!(
+            error.to_string(),
+            "System credential store is unavailable. Open Settings and save the provider key again."
+        );
+    }
+
+    #[test]
+    fn profile_credential_reference_precedes_provider_reference() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        let provider_reference = CredentialRef::provider("openai");
+        let profile_reference = CredentialRef::profile("work", "openai");
+        store
+            .put(&provider_reference, "provider-secret")
+            .expect("put provider secret");
+        store
+            .put(&profile_reference, "profile-secret")
+            .expect("put profile secret");
+        let settings = Settings {
+            credential_refs: HashMap::from([("openai".to_string(), provider_reference)]),
+            ..Settings::default()
+        };
+        let profile = ForgeProfile {
+            id: "work".to_string(),
+            name: "Work".to_string(),
+            default_provider: Some("openai".to_string()),
+            default_model: None,
+            default_workspace: None,
+            credential_overrides: HashMap::from([("openai".to_string(), profile_reference)]),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+        let resolver = CredentialResolver::new(store);
+
+        let credentials = resolver
+            .resolve_from_sources(
+                "openai",
+                Some(&profile),
+                &settings,
+                &ClaudeSettings::default(),
+                |_| None,
+            )
+            .expect("resolve profile credential");
+
+        assert_eq!(credentials.api_key, "profile-secret");
+    }
+
+    #[test]
+    fn detect_credentials_prefers_stored_provider_key_over_claude_and_env() {
+        let settings = Settings::default();
         let claude = ClaudeSettings {
             api_key: Some("claude-key".to_string()),
             api_base: Some("https://claude.example".to_string()),
@@ -779,13 +1138,18 @@ mod tests {
             ..Default::default()
         };
 
-        let credentials =
-            detect_credentials_from_sources("anthropic", &settings, &claude, |key| match key {
+        let credentials = detect_credentials_with_stored_key_from_sources(
+            "anthropic",
+            &settings,
+            &claude,
+            Some("stored-key".to_string()),
+            |key| match key {
                 "ANTHROPIC_API_KEY" => Some("env-key".to_string()),
                 "ANTHROPIC_BASE_URL" => Some("https://env.example".to_string()),
                 "ANTHROPIC_MODEL" => Some("env-model".to_string()),
                 _ => None,
-            });
+            },
+        );
 
         assert_eq!(credentials.api_key, "stored-key");
         assert_eq!(
@@ -971,19 +1335,21 @@ mod tests {
 
     #[test]
     fn detect_credentials_prefers_stored_key_over_registry_env_key() {
-        let settings = Settings {
-            api_keys: HashMap::from([("kimi".to_string(), "stored-kimi-key".to_string())]),
-            ..Default::default()
-        };
+        let settings = Settings::default();
         let claude = ClaudeSettings::default();
 
-        let credentials =
-            detect_credentials_from_sources("moonshot", &settings, &claude, |key| match key {
+        let credentials = detect_credentials_with_stored_key_from_sources(
+            "moonshot",
+            &settings,
+            &claude,
+            Some("stored-kimi-key".to_string()),
+            |key| match key {
                 "KIMI_API_KEY" => Some("env-kimi-key".to_string()),
                 "MOONSHOT_API_KEY" => Some("env-moonshot-key".to_string()),
                 "KIMI_BASE_URL" => Some("https://kimi.example".to_string()),
                 _ => None,
-            });
+            },
+        );
 
         assert_eq!(credentials.api_key, "stored-kimi-key");
         assert_eq!(
@@ -994,24 +1360,35 @@ mod tests {
 
     #[test]
     fn detect_credentials_falls_back_to_alias_saved_keys_for_canonical_providers() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        let moonshot = CredentialRef::provider("moonshot");
+        let qwen = CredentialRef::provider("qwen");
+        store
+            .put(&moonshot, "stored-moonshot-key")
+            .expect("store moonshot");
+        store.put(&qwen, "stored-qwen-key").expect("store qwen");
         let settings = Settings {
-            api_keys: HashMap::from([
-                ("moonshot".to_string(), "stored-moonshot-key".to_string()),
-                ("qwen".to_string(), "stored-qwen-key".to_string()),
+            credential_refs: HashMap::from([
+                ("moonshot".to_string(), moonshot),
+                ("qwen".to_string(), qwen),
             ]),
             ..Default::default()
         };
         let claude = ClaudeSettings::default();
+        let resolver = CredentialResolver::new(store);
 
-        let kimi = detect_credentials_from_sources("kimi", &settings, &claude, |key| match key {
-            "KIMI_API_KEY" => Some("env-kimi-key".to_string()),
-            _ => None,
-        });
-        let alibaba =
-            detect_credentials_from_sources("alibaba", &settings, &claude, |key| match key {
+        let kimi = resolver
+            .resolve_from_sources("kimi", None, &settings, &claude, |key| match key {
+                "KIMI_API_KEY" => Some("env-kimi-key".to_string()),
+                _ => None,
+            })
+            .expect("resolve kimi alias");
+        let alibaba = resolver
+            .resolve_from_sources("alibaba", None, &settings, &claude, |key| match key {
                 "ALIBABA_API_KEY" => Some("env-alibaba-key".to_string()),
                 _ => None,
-            });
+            })
+            .expect("resolve alibaba alias");
 
         assert_eq!(kimi.api_key, "stored-moonshot-key");
         assert_eq!(alibaba.api_key, "stored-qwen-key");
@@ -1119,11 +1496,14 @@ mod tests {
 
     #[test]
     fn detect_credentials_key_status_includes_registry_known_providers() {
+        let store = MemoryCredentialStore::default();
+        let kimi_ref = CredentialRef::provider("kimi");
+        store.put(&kimi_ref, "stored-kimi-key").expect("store kimi");
         let settings = Settings {
-            api_keys: HashMap::from([("kimi".to_string(), "stored-kimi-key".to_string())]),
+            credential_refs: HashMap::from([("kimi".to_string(), kimi_ref)]),
             ..Default::default()
         };
-        let status = settings.key_status();
+        let status = settings.key_status(&store);
         let providers = status
             .iter()
             .map(|entry| entry.provider.as_str())
@@ -1136,15 +1516,20 @@ mod tests {
             );
         }
         assert!(!providers.contains(&"nvidia"));
-        assert!(status
-            .iter()
-            .any(|entry| entry.provider == "kimi" && entry.set));
+        assert!(status.iter().any(|entry| entry.provider == "kimi"
+            && entry.configured
+            && entry.status == "available"));
     }
 
     #[test]
     fn detect_credentials_uses_configured_user_provider_profile() {
+        let store = MemoryCredentialStore::default();
+        let nvidia_ref = CredentialRef::provider("nvidia");
+        store
+            .put(&nvidia_ref, "stored-nvidia-key")
+            .expect("store nvidia");
         let settings = Settings {
-            api_keys: HashMap::from([("nvidia".to_string(), "stored-nvidia-key".to_string())]),
+            credential_refs: HashMap::from([("nvidia".to_string(), nvidia_ref)]),
             providers: vec![ProviderProfileConfig {
                 id: "nvidia".to_string(),
                 label: Some("NVIDIA NIM".to_string()),
@@ -1162,12 +1547,17 @@ mod tests {
         };
         let claude = ClaudeSettings::default();
 
-        let credentials =
-            detect_credentials_from_sources("nim", &settings, &claude, |key| match key {
+        let credentials = detect_credentials_with_stored_key_from_sources(
+            "nim",
+            &settings,
+            &claude,
+            Some("stored-nvidia-key".to_string()),
+            |key| match key {
                 "NVIDIA_API_KEY" => Some("env-nvidia-key".to_string()),
                 "NVIDIA_BASE_URL" => Some("https://env.nvidia.example/v1".to_string()),
                 _ => None,
-            });
+            },
+        );
 
         assert_eq!(credentials.api_key, "stored-nvidia-key");
         assert_eq!(
@@ -1180,9 +1570,9 @@ mod tests {
         );
         assert!(settings.provider_requires_api_key("nim"));
         assert!(settings
-            .key_status()
+            .key_status(&store)
             .iter()
-            .any(|status| status.provider == "nvidia" && status.set));
+            .any(|status| status.provider == "nvidia" && status.configured));
     }
 
     #[test]
@@ -1394,8 +1784,9 @@ mod tests {
             local.base_url_env,
             vec!["LOCAL_OPENAI_BASE_URL".to_string()]
         );
+        let store = MemoryCredentialStore::default();
         assert!(settings
-            .key_status()
+            .key_status(&store)
             .iter()
             .any(|status| status.provider == "local-openai"));
 

@@ -28,7 +28,10 @@ pub async fn get_diagnostics_report(
     // Collect capabilities from the harness registry + skill loader
     let capabilities = Some(collect_capabilities(&state).await);
 
-    Ok(diagnostics::run_diagnostics(capabilities))
+    Ok(diagnostics::run_diagnostics_with_store(
+        capabilities,
+        state.credential_store.as_ref(),
+    ))
 }
 
 #[tauri::command]

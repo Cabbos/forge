@@ -3,8 +3,10 @@ import { hasTauriRuntime } from "./core.ts";
 
 export interface KeyStatus {
   provider: string;
-  set: boolean;
-  preview: string;
+  configured: boolean;
+  source: string;
+  status: "available" | "missing" | "unavailable" | "not_configured";
+  error?: string | null;
 }
 
 export interface ProviderCatalogEntry {

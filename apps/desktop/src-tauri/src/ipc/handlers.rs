@@ -20,7 +20,6 @@ use crate::ipc::session_lifecycle::{
 };
 use crate::profile::ForgeProfile;
 use crate::protocol::commands::SessionCreated;
-use crate::settings;
 use crate::state::AppState;
 use crate::workspace_safety::resolve_session_workspace_path as resolve_session_working_dir;
 
@@ -40,13 +39,19 @@ pub async fn create_session(
     let profile = selected_create_session_profile(&state, profile_id.as_deref());
     let defaults = resolve_create_session_defaults(working_dir, provider, model, profile.as_ref());
     let provider = normalize_provider(defaults.provider.as_deref());
-    let credentials = settings::detect_credentials(&provider);
+    let credentials = state
+        .credential_resolver()
+        .resolve(&provider, profile.as_ref())
+        .map_err(|error| error.to_string())?;
 
     let key = if api_key.is_empty() {
         credentials.api_key
     } else {
         api_key
     };
+    if !key.trim().is_empty() {
+        crate::redaction::global_redactor().register_secret(&key);
+    }
 
     let model_str = defaults
         .model
