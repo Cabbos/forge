@@ -1,5 +1,6 @@
 # Forge Eval Runner
 
+CLI runs share the fail-closed trust orchestrator. Exit code `0` requires trusted evidence and passing thresholds, `1` indicates trust/threshold failure, and argparse/input errors use `2`; `--report-only` preserves report generation while ignoring trust blockers.
 Reports include `score_coverage` entries with `observed`, `expected`, and `coverage` for every universal, emitted, or case-required score; unknown required score names fail case-quality validation.
 Forge-provider traces use independent filesystem snapshots as the changed-file authority. Setup and validation are outside the observation window; subprocesses are bounded/cancellable, future repository state is scrubbed, and emitted diffs are replayed in a fresh fixture workspace.
 
