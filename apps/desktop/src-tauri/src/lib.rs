@@ -24,6 +24,7 @@ mod profile;
 mod protocol;
 mod provider_model_catalog;
 mod provider_probe;
+mod redaction;
 pub mod scheduler;
 pub mod service;
 pub mod session_store;

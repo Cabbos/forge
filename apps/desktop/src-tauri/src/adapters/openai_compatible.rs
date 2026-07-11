@@ -367,13 +367,14 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             request.messages.len()
         );
 
-        // Debug: log request body for troubleshooting tool message issues
         let body_json = serde_json::to_string_pretty(&request).unwrap_or_default();
         crate::app_log!(
             "INFO",
-            "OpenAI request body ({} bytes): {}",
+            "OpenAI request prepared — provider={}, messages={}, tools={}, bytes={}",
+            self.provider_id,
+            request.messages.len(),
+            request.tools.as_ref().map_or(0, Vec::len),
             body_json.len(),
-            &body_json[..body_json.len().min(2000)]
         );
 
         let response = self

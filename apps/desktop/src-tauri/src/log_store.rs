@@ -3,11 +3,12 @@
 //! Each entry is one line of JSON.  The store rotates files when they exceed
 //! `MAX_LOG_BYTES` (5 MiB), keeping up to `MAX_ROTATIONS` (3) old files.
 
+use crate::redaction::{global_redactor, PersistentLogRedactor};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
@@ -32,6 +33,7 @@ pub struct LogEntry {
 /// Append-only structured log store with rotation.
 pub struct LogStore {
     path: PathBuf,
+    redactor: Arc<PersistentLogRedactor>,
     write_mutex: Mutex<()>,
 }
 
@@ -46,17 +48,33 @@ impl LogStore {
     }
 
     pub fn new(path: PathBuf) -> Self {
+        Self::new_with_redactor(path, global_redactor())
+    }
+
+    pub(crate) fn new_with_redactor(path: PathBuf, redactor: Arc<PersistentLogRedactor>) -> Self {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
         Self {
             path,
+            redactor,
             write_mutex: Mutex::new(()),
         }
     }
 
     /// Append a log entry as one JSON line.
     pub fn append(&self, entry: &LogEntry) -> Result<(), String> {
+        let value = serde_json::to_value(entry).map_err(|_| "serialize log entry".to_string())?;
+        let redacted = self
+            .redactor
+            .redact_json(&value)
+            .map_err(|_| "redaction failed".to_string())?;
+        let entry: LogEntry =
+            serde_json::from_value(redacted).map_err(|_| "serialize log entry".to_string())?;
+        let mut json =
+            serde_json::to_string(&entry).map_err(|_| "serialize log entry".to_string())?;
+        json.push('\n');
+
         let _guard = self.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
 
         // Rotate if needed.
@@ -65,9 +83,6 @@ impl LogStore {
                 self.rotate()?;
             }
         }
-
-        let mut json = serde_json::to_string(entry).map_err(|e| format!("serialize: {e}"))?;
-        json.push('\n');
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -167,9 +182,8 @@ pub fn log_event(level: &str, source: &str, message: &str, session_id: Option<&s
         session_id: session_id.map(|s| s.to_string()),
     };
 
-    if let Err(e) = GLOBAL_STORE.append(&entry) {
-        // Fallback: write to stderr so it's not completely lost.
-        eprintln!("log_store error: {e}");
+    if GLOBAL_STORE.append(&entry).is_err() {
+        eprintln!("Forge structured log entry suppressed: persistence failed");
     }
 }
 
@@ -210,6 +224,42 @@ mod tests {
     }
 
     // ── Append / read ────────────────────────────────────────────────────
+
+    #[test]
+    fn append_redacts_sensitive_entry_before_persistence() {
+        let path = temp_path("redacted");
+        let redactor = std::sync::Arc::new(crate::redaction::PersistentLogRedactor::new());
+        redactor.register_secret("forge-persisted-secret");
+        let store = LogStore::new_with_redactor(path.clone(), redactor);
+
+        store
+            .append(&info_entry(
+                "Authorization: Bearer forge-persisted-secret at https://example.test/run?token=forge-persisted-secret",
+            ))
+            .expect("append redacted entry");
+
+        let persisted = fs::read_to_string(&path).expect("read persisted log");
+        assert!(!persisted.contains("forge-persisted-secret"));
+        assert!(!persisted.contains("?token="));
+        assert!(persisted.contains("[redacted]"));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn structured_redaction_error_suppresses_persistence() {
+        let path = temp_path("redaction-error");
+        let redactor = std::sync::Arc::new(crate::redaction::PersistentLogRedactor::new());
+        redactor.set_fail_for_test(true);
+        let store = LogStore::new_with_redactor(path.clone(), redactor);
+
+        let error = store
+            .append(&info_entry("must never reach disk"))
+            .expect_err("redaction failure must suppress persistence");
+
+        assert_eq!(error, "redaction failed");
+        assert!(!path.exists());
+        cleanup(&path);
+    }
 
     #[test]
     fn append_and_read_single_entry() {

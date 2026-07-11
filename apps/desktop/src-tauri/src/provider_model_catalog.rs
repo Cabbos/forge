@@ -560,11 +560,13 @@ fn sanitize_url_like_text(value: &str) -> String {
 }
 
 fn sanitize_text(value: &str, api_key: &str) -> String {
-    let mut sanitized = value.to_string();
+    let redactor = crate::redaction::PersistentLogRedactor::new();
     if !api_key.trim().is_empty() {
-        sanitized = sanitized.replace(api_key, "[redacted]");
+        redactor.register_secret(api_key);
     }
-    sanitized
+    redactor
+        .redact_text(value)
+        .unwrap_or_else(|_| "[redacted]".to_string())
 }
 
 fn looks_secret_like(value: &str) -> bool {
