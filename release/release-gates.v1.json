@@ -64,7 +64,7 @@
       "domain": "desktop-safety",
       "tier": "security",
       "manual_allowed": false,
-      "command": "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle",
+      "command": "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle && npm --prefix apps/desktop run check:backend",
       "evidence_schema": "desktop-csp.v1",
       "ci_default": false
     },

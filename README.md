@@ -1,5 +1,7 @@
 # Forge
 
+The desktop runtime now enforces an explicit production CSP, a localhost-only development CSP, frozen JavaScript prototypes, and a minimal main-window capability covering only folder selection and session event subscription.
+
 Forge is a local-first AI Agent Workbench product.
 
 This monorepo keeps the three main product lines together:

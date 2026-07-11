@@ -1,5 +1,7 @@
 # Changelog
 
+- Hardened the desktop WebView with explicit production/development CSPs, frozen prototypes, an exact three-permission main-window capability, and removal of the unused shell plugin while preserving project picker, session output, and dialog smoke coverage.
+
 ## Unreleased
 
 - Hardened backend runtime reliability with observable nightly eval failures, gateway session-host run evidence, and a backend restart-smoke dry-run gate.
