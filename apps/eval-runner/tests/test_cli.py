@@ -3,6 +3,42 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+
+def test_cli_exits_nonzero_when_trust_is_unknown(tmp_path: Path, capsys) -> None:
+    from app.cli import main
+
+    cases_dir = tmp_path / "empty-cases"
+    cases_dir.mkdir()
+
+    exit_code = main(["--cases", str(cases_dir), "--provider", "mock"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["trust_result"]["status"] == "unknown"
+
+
+def test_cli_report_only_prints_blockers_and_exits_zero(tmp_path: Path, capsys) -> None:
+    from app.cli import main
+
+    cases_dir = tmp_path / "empty-cases"
+    cases_dir.mkdir()
+
+    exit_code = main(["--cases", str(cases_dir), "--provider", "mock", "--report-only"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["trust_result"]["trusted"] is False
+
+
+def test_cli_invalid_provider_exits_two(capsys) -> None:
+    from app.cli import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--cases", "eval_cases", "--provider", "unknown"])
+    assert exc_info.value.code == 2
+
 
 def write_case(
     cases_dir: Path,

@@ -5,11 +5,10 @@ from pathlib import Path
 
 from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
+from app.execution import EvaluationExecution, ExecutionOptions, execute_evaluation
 from app.experiments import experiment_artifact_metadata
-from app.models import AgentTrace, BacktestReport
+from app.models import AgentTrace, BacktestReport, EvalProvider, TrustStatus
 from app.red_team import is_red_team_task
-from app.reporting import build_report
-from app.runner import create_runner
 from app.trace_import import promote_failed_traces
 
 
@@ -25,6 +24,33 @@ def run_backtest_with_traces(
     include_red_team: bool = False,
     red_team_only: bool = False,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
+    execution = run_backtest_execution(
+        cases_path,
+        provider=provider,
+        model=model,
+        forge_command=forge_command,
+        trials=trials,
+        prompt_mutations=prompt_mutations,
+        mutations_only=mutations_only,
+        include_red_team=include_red_team,
+        red_team_only=red_team_only,
+    )
+    return execution.report, execution.traces
+
+
+def run_backtest_execution(
+    cases_path: Path,
+    *,
+    provider: str,
+    model: str,
+    forge_command: str | None,
+    trials: int = 1,
+    prompt_mutations: list[str] | None = None,
+    mutations_only: bool = False,
+    include_red_team: bool = False,
+    red_team_only: bool = False,
+    require_red_team: bool = False,
+) -> EvaluationExecution:
     tasks = load_backtest_tasks(
         cases_path,
         prompt_mutations=prompt_mutations or [],
@@ -32,9 +58,21 @@ def run_backtest_with_traces(
         include_red_team=include_red_team,
         red_team_only=red_team_only,
     )
-    runner = create_runner(provider=provider, model=model, forge_command=forge_command)
-    traces = [runner.run_task(task) for _ in range(trials) for task in tasks]
-    return build_report(traces), traces
+    settings = get_settings()
+    trial_tasks = [task for _ in range(trials) for task in tasks]
+    return execute_evaluation(
+        cases_path=cases_path,
+        tasks=trial_tasks,
+        options=ExecutionOptions(
+            provider=EvalProvider(provider),
+            model=model,
+            forge_command=forge_command,
+            command_timeout_seconds=settings.command_timeout_seconds,
+            setup_timeout_seconds=settings.setup_timeout_seconds,
+            validation_timeout_seconds=settings.validation_timeout_seconds,
+            require_red_team=require_red_team,
+        ),
+    )
 
 
 def run_backtest(
@@ -194,6 +232,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--include-red-team", action="store_true")
     parser.add_argument("--red-team-only", action="store_true")
     parser.add_argument("--max-red-team-failure-rate", type=float, default=None)
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Print results without using trust blockers as an exit gate.",
+    )
+    parser.add_argument(
+        "--require-red-team",
+        action="store_true",
+        help="Require red-team evidence for this trusted run.",
+    )
     args = parser.parse_args(argv)
 
     if args.trials < 1:
@@ -202,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     model = args.model or ("local-forge" if args.provider == "forge" else "deterministic-agent-v1")
     settings = get_settings()
     try:
-        report, traces = run_backtest_with_traces(
+        execution = run_backtest_execution(
             args.cases,
             provider=args.provider,
             model=model,
@@ -212,10 +260,14 @@ def main(argv: list[str] | None = None) -> int:
             mutations_only=args.mutations_only,
             include_red_team=args.include_red_team,
             red_team_only=args.red_team_only,
+            require_red_team=args.require_red_team,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    report = execution.report
+    traces = execution.traces
 
     if args.output is not None:
         experiment = None
@@ -238,6 +290,12 @@ def main(argv: list[str] | None = None) -> int:
     failures = threshold_failures(report, args)
     for failure in failures:
         print(f"error: {failure}", file=sys.stderr)
+    if args.report_only:
+        return 1 if failures else 0
+    if execution.trust_result.status != TrustStatus.TRUSTED:
+        for blocker in execution.trust_result.blockers:
+            print(f"error: trust blocker: {blocker}", file=sys.stderr)
+        return 1
     return 1 if failures else 0
 
 
