@@ -4,7 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::adapters::provider_registry::{
     find_loaded_provider_profile, LoadedProviderProfile, ModelCatalogPolicy, ProviderTransport,
 };
-use crate::settings::{Credentials, ProviderCatalogModel, ProviderModelCatalogSource, Settings};
+use crate::profile::ForgeProfile;
+use crate::settings::{
+    CredentialResolutionError, CredentialResolver, Credentials, ProviderCatalogModel,
+    ProviderModelCatalogSource, Settings,
+};
 
 const MODEL_CATALOG_TIMEOUT_SECS: u64 = 12;
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
@@ -35,8 +39,12 @@ pub(crate) struct ProviderModelCatalogResult {
     pub(crate) remediation: Option<String>,
 }
 
-pub(crate) async fn list_provider_models(provider: &str) -> ProviderModelCatalogResult {
-    let credentials = crate::settings::detect_credentials(provider);
+pub(crate) async fn list_provider_models(
+    provider: &str,
+    resolver: &CredentialResolver,
+    profile: Option<&ForgeProfile>,
+) -> Result<ProviderModelCatalogResult, CredentialResolutionError> {
+    let credentials = resolver.resolve(provider, profile)?;
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(MODEL_CATALOG_TIMEOUT_SECS))
@@ -71,7 +79,7 @@ pub(crate) async fn list_provider_models(provider: &str) -> ProviderModelCatalog
             ));
         }
     }
-    result
+    Ok(result)
 }
 
 pub(crate) async fn list_provider_models_with_credentials_and_profiles(

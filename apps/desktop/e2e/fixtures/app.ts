@@ -58,7 +58,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             default_provider: "deepseek",
             default_model: "deepseek-v4-flash[1m]",
             default_workspace: workingDir,
-            api_key_overrides: null,
+            credential_overrides: {},
             created_at_ms: now - 300_000,
             updated_at_ms: now - 300_000,
           },
@@ -68,7 +68,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             default_provider: "openai",
             default_model: "gpt-4o",
             default_workspace: "/Users/test/work",
-            api_key_overrides: null,
+            credential_overrides: {},
             created_at_ms: now - 200_000,
             updated_at_ms: now - 200_000,
           },
@@ -78,7 +78,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             default_provider: "anthropic",
             default_model: "claude-sonnet-4",
             default_workspace: "/Users/test/personal",
-            api_key_overrides: null,
+            credential_overrides: {},
             created_at_ms: now - 100_000,
             updated_at_ms: now - 100_000,
           },
@@ -109,7 +109,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         default_provider: cleanOptionalString(input.default_provider ?? existing?.default_provider),
         default_model: cleanOptionalString(input.default_model ?? existing?.default_model),
         default_workspace: cleanOptionalString(input.default_workspace ?? existing?.default_workspace),
-        api_key_overrides: existing?.api_key_overrides ?? null,
+        credential_overrides: existing?.credential_overrides ?? {},
         created_at_ms: Number(existing?.created_at_ms ?? now),
         updated_at_ms: now,
       };
@@ -1332,7 +1332,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "get_api_key_status":
           // @ts-expect-error mock
           if (window.__mockApiKeyStatus) return window.__mockApiKeyStatus;
-          return [{ provider: "deepseek", set: true, preview: "sk-e0...23ef" }];
+          return [{ provider: "deepseek", configured: true, source: "system_store", status: "available", error: null }];
         case "get_provider_catalog":
           // @ts-expect-error acceptance mock
           window.__providerCatalogRequestCount = Number(window.__providerCatalogRequestCount ?? 0) + 1;

@@ -127,8 +127,16 @@ impl DiagnosticCheck {
 /// `capabilities` is optional — when `Some`, the tool-inventory check can
 /// report real data; when `None`, it emits a `Warn` with a TODO message.
 pub fn run_diagnostics(capabilities: Option<Vec<CapabilitySummary>>) -> DiagnosticsReport {
+    let store = crate::credential_store::system_credential_store();
+    run_diagnostics_with_store(capabilities, store.as_ref())
+}
+
+pub fn run_diagnostics_with_store(
+    capabilities: Option<Vec<CapabilitySummary>>,
+    store: &dyn crate::credential_store::CredentialStore,
+) -> DiagnosticsReport {
     let checks: Vec<DiagnosticCheck> = vec![
-        check_config_key_presence(),
+        check_config_key_presence_with_store(store),
         check_session_snapshots(),
         check_a2a_ledgers(),
         check_app_metadata(),
@@ -161,7 +169,14 @@ pub fn run_diagnostics_basic() -> DiagnosticsReport {
 
 /// Check that the config file is readable and summarize API-key presence.
 pub fn check_config_key_presence() -> DiagnosticCheck {
-    match crate::settings::Settings::load().key_status() {
+    let store = crate::credential_store::system_credential_store();
+    check_config_key_presence_with_store(store.as_ref())
+}
+
+pub fn check_config_key_presence_with_store(
+    store: &dyn crate::credential_store::CredentialStore,
+) -> DiagnosticCheck {
+    match crate::settings::Settings::load().key_status(store) {
         key_statuses if key_statuses.is_empty() => {
             DiagnosticCheck::warn(
                 "config_settings",
@@ -171,15 +186,20 @@ pub fn check_config_key_presence() -> DiagnosticCheck {
             .with_remediation("Add an API key in Settings → Models or set an environment variable like DEEPSEEK_API_KEY.")
         }
         key_statuses => {
-            let set_count = key_statuses.iter().filter(|k| k.set).count();
+            let set_count = key_statuses
+                .iter()
+                .filter(|key| key.configured && key.status == "available")
+                .count();
             let total = key_statuses.len();
             let details: Vec<serde_json::Value> = key_statuses
                 .iter()
                 .map(|k| {
                     serde_json::json!({
                         "provider": k.provider,
-                        "set": k.set,
-                        "preview": k.preview,
+                        "configured": k.configured,
+                        "source": k.source,
+                        "status": k.status,
+                        "error": k.error,
                     })
                 })
                 .collect();

@@ -136,7 +136,7 @@ export function ProfilesPanel() {
               default_provider: null,
               default_model: null,
               default_workspace: null,
-              api_key_overrides: null,
+              credential_overrides: {},
               created_at_ms: 0,
               updated_at_ms: 0,
             }}

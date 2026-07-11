@@ -34,7 +34,8 @@ export function deriveStartReadiness(input: {
   const keyStatuses = Array.isArray(input.keyStatuses) ? input.keyStatuses : [];
   const providerRequiresApiKey = input.provider?.requiresApiKey !== false;
   const keySet = providerRequiresApiKey
-    ? keyStatuses.some((item) => item.provider === input.providerId && item.set)
+    ? keyStatuses.some((item) =>
+        item.provider === input.providerId && item.configured && item.status === "available")
     : true;
   const workspaceBlocked = !input.workspace;
   const keyBlocked = providerRequiresApiKey && !keySet;

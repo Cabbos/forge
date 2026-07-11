@@ -1,5 +1,5 @@
 //! User profile store — named profiles with optional provider/model/workspace
-//! defaults and API key overrides.
+//! defaults and credential references.
 //!
 //! Persisted as JSON at `~/.forge/profiles.json`.  Supports create, update,
 //! delete, and active-profile selection.  Atomic save: write temp then rename.
@@ -11,14 +11,15 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::credential_store::CredentialRef;
+
 // ── Schema ───────────────────────────────────────────────────────────────────
 
 const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// A named user profile with optional provider/model/workspace defaults and
-/// API key overrides.  `api_key_overrides` is a map of provider → key string
-/// for future runtime use; the UI MUST NOT expose raw key values unless
-/// masking is implemented.
+/// Credential overrides contain references only; secret values live in the
+/// injected system credential store and never appear in this IPC type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ForgeProfile {
     pub id: String,
@@ -29,8 +30,8 @@ pub struct ForgeProfile {
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_workspace: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_key_overrides: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub credential_overrides: HashMap<String, CredentialRef>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -59,10 +60,6 @@ pub struct UpsertProfileInput {
     pub default_model: Option<String>,
     #[serde(default)]
     pub default_workspace: Option<String>,
-    /// If present, replaces api_key_overrides entirely.  Omit to leave
-    /// existing overrides untouched on update.
-    #[serde(default)]
-    pub api_key_overrides: Option<HashMap<String, String>>,
 }
 
 /// Payload returned by list_profiles IPC so the UI can render profiles and
@@ -193,29 +190,6 @@ impl ProfileStore {
         let def_model = optional_trimmed(input.default_model.as_deref());
         let def_workspace = optional_trimmed(input.default_workspace.as_deref());
 
-        // Normalize api_key_overrides: trim keys, drop empty values. Omitted
-        // overrides preserve existing values on update because the Settings UI
-        // does not expose raw keys.
-        let has_api_key_overrides_patch = input.api_key_overrides.is_some();
-        let api_key_overrides = input.api_key_overrides.map(|m| {
-            m.into_iter()
-                .filter_map(|(k, v)| {
-                    let key = k.trim();
-                    let value = v.trim();
-                    if key.is_empty() || value.is_empty() {
-                        None
-                    } else {
-                        Some((key.to_string(), value.to_string()))
-                    }
-                })
-                .collect::<HashMap<String, String>>()
-        });
-        let api_key_overrides = if api_key_overrides.as_ref().is_some_and(|m| m.is_empty()) {
-            None
-        } else {
-            api_key_overrides
-        };
-
         let now_ms = now_millis();
 
         let mut profiles = self.profiles.lock().unwrap_or_else(|e| e.into_inner());
@@ -227,9 +201,6 @@ impl ProfileStore {
                 existing.default_provider = def_provider;
                 existing.default_model = def_model;
                 existing.default_workspace = def_workspace;
-                if has_api_key_overrides_patch {
-                    existing.api_key_overrides = api_key_overrides;
-                }
                 existing.updated_at_ms = now_ms;
 
                 let profile = existing.clone();
@@ -252,7 +223,7 @@ impl ProfileStore {
             default_provider: def_provider,
             default_model: def_model,
             default_workspace: def_workspace,
-            api_key_overrides,
+            credential_overrides: HashMap::new(),
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
         };
@@ -328,7 +299,7 @@ impl ProfileStore {
             default_provider: None,
             default_model: None,
             default_workspace: None,
-            api_key_overrides: None,
+            credential_overrides: HashMap::new(),
             created_at_ms: now_ms,
             updated_at_ms: now_ms,
         };
@@ -427,6 +398,29 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[test]
+    fn profile_save_never_serializes_api_key_overrides() {
+        let profile = ForgeProfile {
+            id: "work".to_string(),
+            name: "Work".to_string(),
+            default_provider: None,
+            default_model: None,
+            default_workspace: None,
+            credential_overrides: HashMap::from([(
+                "openai".to_string(),
+                CredentialRef::profile("work", "openai"),
+            )]),
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        };
+
+        let serialized = serde_json::to_string(&profile).expect("serialize profile");
+
+        assert!(!serialized.contains("api_key_overrides"));
+        assert!(!serialized.contains("forge-profile-serialization-secret"));
+        assert!(serialized.contains("credential_overrides"));
+    }
+
     fn temp_path(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -442,7 +436,6 @@ mod tests {
             default_provider: None,
             default_model: None,
             default_workspace: None,
-            api_key_overrides: None,
         }
     }
 
@@ -489,7 +482,6 @@ mod tests {
                 default_provider: Some("deepseek".into()),
                 default_model: Some("deepseek-chat".into()),
                 default_workspace: Some("/home/user/projects".into()),
-                api_key_overrides: None,
             })
             .expect("upsert");
 
@@ -539,7 +531,6 @@ mod tests {
                 default_provider: Some("  deepseek  ".into()),
                 default_model: Some("  ".into()),
                 default_workspace: Some("  /tmp  ".into()),
-                api_key_overrides: None,
             })
             .expect("upsert");
         assert_eq!(out.default_provider.as_deref(), Some("deepseek"));
@@ -582,7 +573,6 @@ mod tests {
                 default_provider: Some("anthropic".into()),
                 default_model: Some("claude-opus-4-8".into()),
                 default_workspace: None,
-                api_key_overrides: None,
             })
             .expect("upsert");
 
@@ -610,7 +600,6 @@ mod tests {
                 default_provider: None,
                 default_model: None,
                 default_workspace: None,
-                api_key_overrides: None,
             })
             .expect("upsert");
         assert_eq!(out.id, "my-custom-id");
@@ -701,99 +690,6 @@ mod tests {
         // Still can't delete 'default' because it's the default seed id
         let err = store.delete("default").expect_err("delete default");
         assert!(err.contains("default profile"));
-
-        assert_cleanup(&path);
-    }
-
-    // ── API key overrides ────────────────────────────────────────────────
-
-    #[test]
-    fn api_key_overrides_are_stored() {
-        let path = temp_path("api-keys");
-        let store = ProfileStore::new(path.clone());
-
-        let mut overrides = HashMap::new();
-        overrides.insert("deepseek".to_string(), "sk-test-key".to_string());
-
-        let out = store
-            .upsert(UpsertProfileInput {
-                id: None,
-                name: "WithKeys".into(),
-                default_provider: None,
-                default_model: None,
-                default_workspace: None,
-                api_key_overrides: Some(overrides),
-            })
-            .expect("upsert");
-
-        let keys = out.api_key_overrides.expect("api_key_overrides");
-        assert_eq!(
-            keys.get("deepseek").map(String::as_str),
-            Some("sk-test-key")
-        );
-
-        assert_cleanup(&path);
-    }
-
-    #[test]
-    fn api_key_overrides_empty_vals_are_dropped() {
-        let path = temp_path("api-keys-empty");
-        let store = ProfileStore::new(path.clone());
-
-        let mut overrides = HashMap::new();
-        overrides.insert("deepseek".to_string(), "  ".to_string());
-
-        let out = store
-            .upsert(UpsertProfileInput {
-                id: None,
-                name: "NoKeys".into(),
-                default_provider: None,
-                default_model: None,
-                default_workspace: None,
-                api_key_overrides: Some(overrides),
-            })
-            .expect("upsert");
-
-        assert_eq!(out.api_key_overrides, None);
-
-        assert_cleanup(&path);
-    }
-
-    #[test]
-    fn update_without_api_key_overrides_preserves_existing_keys() {
-        let path = temp_path("api-keys-preserve");
-        let store = ProfileStore::new(path.clone());
-
-        let mut overrides = HashMap::new();
-        overrides.insert(" deepseek ".to_string(), " sk-test-key ".to_string());
-
-        let created = store
-            .upsert(UpsertProfileInput {
-                id: None,
-                name: "WithKeys".into(),
-                default_provider: None,
-                default_model: None,
-                default_workspace: None,
-                api_key_overrides: Some(overrides),
-            })
-            .expect("create");
-
-        let updated = store
-            .upsert(UpsertProfileInput {
-                id: Some(created.id.clone()),
-                name: "Renamed".into(),
-                default_provider: Some("deepseek".into()),
-                default_model: None,
-                default_workspace: None,
-                api_key_overrides: None,
-            })
-            .expect("update");
-
-        let keys = updated.api_key_overrides.expect("keys preserved");
-        assert_eq!(
-            keys.get("deepseek").map(String::as_str),
-            Some("sk-test-key")
-        );
 
         assert_cleanup(&path);
     }

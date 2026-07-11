@@ -13,7 +13,13 @@ export function buildSettingsProviderState(
 ): SettingsProviderState {
   const keyByProvider = new Map(keys.map((key) => [key.provider, key]));
   const knownProviderStatuses: KeyStatus[] = providers.map((provider) =>
-    keyByProvider.get(provider.id) ?? { provider: provider.id, set: false, preview: "" },
+    keyByProvider.get(provider.id) ?? {
+      provider: provider.id,
+      configured: false,
+      source: "none",
+      status: "not_configured",
+      error: null,
+    },
   );
   const unknownProviderStatuses = keys.filter((key) => !providers.some((provider) => provider.id === key.provider));
   const sortedKeys = [...knownProviderStatuses, ...unknownProviderStatuses].sort((a, b) => {
@@ -23,7 +29,7 @@ export function buildSettingsProviderState(
   });
 
   return {
-    configuredCount: sortedKeys.filter((key) => key.set).length,
+    configuredCount: sortedKeys.filter((key) => key.configured && key.status === "available").length,
     providerTotal: sortedKeys.length || providers.length,
     sortedKeys,
   };

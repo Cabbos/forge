@@ -132,8 +132,10 @@ export function useSettingsDialogController({
       await queryClient.invalidateQueries({ queryKey: queryKeys.apiKeyStatus });
     } catch (e) {
       setError(String(e));
+    } finally {
+      setValue("");
+      setSaving(false);
     }
-    setSaving(false);
   }, [editing, queryClient, value]);
 
   const handleRemove = useCallback(async (provider: string) => {

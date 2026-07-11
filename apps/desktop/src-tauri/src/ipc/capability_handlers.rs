@@ -51,7 +51,7 @@ pub async fn list_capabilities(
             });
         }
     }
-    result.extend(provider_capability_infos());
+    result.extend(provider_capability_infos(state.credential_store.as_ref()));
     Ok(result)
 }
 
@@ -169,9 +169,11 @@ fn ecosystem_item_from_entry(entry: CapabilityEntry) -> EcosystemItem {
     item
 }
 
-fn provider_capability_infos() -> Vec<CapabilityInfo> {
+fn provider_capability_infos(
+    store: &dyn crate::credential_store::CredentialStore,
+) -> Vec<CapabilityInfo> {
     settings::Settings::load()
-        .key_status()
+        .key_status(store)
         .into_iter()
         .map(|key| CapabilityInfo {
             id: provider_item_id(&key.provider),
@@ -182,14 +184,16 @@ fn provider_capability_infos() -> Vec<CapabilityInfo> {
             version: provider_default_model(&key.provider)
                 .unwrap_or("custom")
                 .to_string(),
-            enabled: key.set,
+            enabled: key.configured && key.status == "available",
         })
         .collect()
 }
 
-fn provider_ecosystem_items() -> Vec<EcosystemItem> {
+fn provider_ecosystem_items(
+    store: &dyn crate::credential_store::CredentialStore,
+) -> Vec<EcosystemItem> {
     settings::Settings::load()
-        .key_status()
+        .key_status(store)
         .into_iter()
         .map(provider_ecosystem_item)
         .collect()
@@ -197,6 +201,7 @@ fn provider_ecosystem_items() -> Vec<EcosystemItem> {
 
 fn provider_ecosystem_item(key: settings::KeyStatus) -> EcosystemItem {
     let default_model = provider_default_model(&key.provider);
+    let available = key.configured && key.status == "available";
     EcosystemItem {
         id: provider_item_id(&key.provider),
         name: provider_display_name(&key.provider),
@@ -204,16 +209,16 @@ fn provider_ecosystem_item(key: settings::KeyStatus) -> EcosystemItem {
         kind: CapabilityKind::Provider,
         source: "~/.forge/config.json".into(),
         version: default_model.unwrap_or("custom").to_string(),
-        enabled: key.set,
-        status: if key.set {
+        enabled: available,
+        status: if available {
             EcosystemItemStatus::Healthy
         } else {
             EcosystemItemStatus::Unavailable
         },
-        status_message: Some(if key.set {
-            format!("API key configured ({})", key.preview)
+        status_message: Some(if available {
+            "API key configured in system credential store".to_string()
         } else {
-            "API key missing".to_string()
+            key.error.unwrap_or_else(|| "API key missing".to_string())
         }),
         configurable: true,
         config_summary: Some(match default_model {
@@ -705,8 +710,10 @@ mod tests {
     fn provider_ecosystem_item_marks_configured_key_healthy() {
         let item = provider_ecosystem_item(settings::KeyStatus {
             provider: "openai".into(),
-            set: true,
-            preview: "sk-o...1234".into(),
+            configured: true,
+            source: "system_store".into(),
+            status: "available".into(),
+            error: None,
         });
 
         assert_eq!(item.id, "provider:openai");
@@ -716,7 +723,7 @@ mod tests {
         assert_eq!(item.status, EcosystemItemStatus::Healthy);
         assert_eq!(
             item.status_message.as_deref(),
-            Some("API key configured (sk-o...1234)")
+            Some("API key configured in system credential store")
         );
         assert_eq!(
             item.config_summary.as_deref(),
@@ -728,8 +735,10 @@ mod tests {
     fn provider_ecosystem_item_marks_missing_key_unavailable() {
         let item = provider_ecosystem_item(settings::KeyStatus {
             provider: "deepseek".into(),
-            set: false,
-            preview: String::new(),
+            configured: false,
+            source: "none".into(),
+            status: "not_configured".into(),
+            error: None,
         });
 
         assert_eq!(item.id, "provider:deepseek");
@@ -1115,7 +1124,7 @@ pub async fn list_ecosystem_items(
             });
         }
     }
-    items.extend(provider_ecosystem_items());
+    items.extend(provider_ecosystem_items(state.credential_store.as_ref()));
 
     Ok(items)
 }

@@ -90,18 +90,19 @@ export function SettingsProviderRows({
         const modelCatalogResult = modelCatalogResults[key.provider];
         const refreshingModels = refreshingModelsProvider === key.provider;
         const editableProviderProfile = provider?.source === "user_defined" || provider?.source === "user_override";
+        const available = key.configured && key.status === "available";
 
         return (
           <div
             key={key.provider}
             data-testid="settings-provider-row"
             data-forge-motion="settings-entry"
-            data-configured={key.set}
+            data-configured={available}
             className="forge-settings-row"
           >
             <div
               className="forge-settings-provider-mark"
-              data-configured={key.set ? "true" : "false"}
+              data-configured={available ? "true" : "false"}
               aria-hidden="true"
             >
               {providerLabel.slice(0, 1)}
@@ -116,7 +117,7 @@ export function SettingsProviderRows({
                   {providerLabel}
                 </div>
                 <div className="truncate text-[11px] text-muted-foreground">
-                  {key.set ? "已连接" : "等待密钥"}
+                  {available ? "已连接" : key.configured ? "凭据需修复" : "等待密钥"}
                 </div>
               </div>
               {defaultModel && (
@@ -147,11 +148,11 @@ export function SettingsProviderRows({
             <div className="forge-settings-row-side">
               <span
                 data-testid="settings-provider-status"
-                data-state={key.set ? "configured" : "empty"}
+                data-state={available ? "configured" : key.configured ? "error" : "empty"}
                 className="forge-settings-status-pill"
-                title={key.set ? key.preview : undefined}
+                title={key.error ?? undefined}
               >
-                {key.set ? "已配置" : "未配置"}
+                {available ? "已配置" : key.configured ? "需修复" : "未配置"}
               </span>
               {editing !== key.provider && (
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -177,9 +178,9 @@ export function SettingsProviderRows({
                     {refreshingModels ? "刷新中" : "模型"}
                   </ForgeButton>
                   <ForgeButton size="xs" variant="outline" onClick={() => onEdit(key.provider)}>
-                    {key.set ? "更新" : "添加"}
+                    {key.configured ? "更新" : "添加"}
                   </ForgeButton>
-                  {key.set && (
+                  {key.configured && (
                     <ForgeButton
                       size="xs"
                       variant="ghost"

@@ -2248,7 +2248,7 @@ test.describe("Timeline Messages", () => {
       await page.addInitScript(() => {
         // @ts-expect-error mock
         window.__mockApiKeyStatus = [
-          { provider: "deepseek", set: false, preview: "" },
+          { provider: "deepseek", configured: false, source: "none", status: "not_configured", error: null },
         ];
       });
       await page.goto("http://localhost:1420");

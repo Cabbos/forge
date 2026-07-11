@@ -129,7 +129,7 @@ fn test_profile(
         default_provider: Some("anthropic".to_string()),
         default_model: Some("claude-sonnet-4-5".to_string()),
         default_workspace: Some("/Users/cabbos/project/ops".to_string()),
-        api_key_overrides: None,
+        credential_overrides: Default::default(),
         created_at_ms: 1,
         updated_at_ms: 1,
     };

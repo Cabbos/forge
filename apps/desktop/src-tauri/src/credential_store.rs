@@ -50,6 +50,10 @@ fn canonical_provider_account(provider: &str) -> String {
         .unwrap_or_else(|| provider.trim().to_ascii_lowercase())
 }
 
+pub(crate) fn canonical_provider_reference_key(provider: &str) -> String {
+    canonical_provider_account(provider)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialStoreError {
     #[error("credential store unavailable: {category}")]

@@ -281,8 +281,12 @@ async fn probe_provider_with_credentials_and_profiles(
     )
 }
 
-pub(crate) async fn probe_provider(provider: &str) -> ProviderProbeResult {
-    let credentials = crate::settings::detect_credentials(provider);
+pub(crate) async fn probe_provider(
+    provider: &str,
+    resolver: &crate::settings::CredentialResolver,
+    profile: Option<&crate::profile::ForgeProfile>,
+) -> Result<ProviderProbeResult, crate::settings::CredentialResolutionError> {
+    let credentials = resolver.resolve(provider, profile)?;
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(PROBE_TIMEOUT_SECS))
@@ -297,7 +301,7 @@ pub(crate) async fn probe_provider(provider: &str) -> ProviderProbeResult {
             "Probe ran, but Forge could not save the probe evidence: {error}"
         ));
     }
-    result
+    Ok(result)
 }
 
 fn cached_probe_evidence(result: &ProviderProbeResult) -> CachedProviderProbeEvidence {
