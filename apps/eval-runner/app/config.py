@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     worker_id: str = "local-worker"
     heartbeat_interval_seconds: float = 30.0
     poll_interval_seconds: float = 5.0
+    command_timeout_seconds: float = 900.0
+    setup_timeout_seconds: float = 300.0
+    validation_timeout_seconds: float = 300.0
+    lease_duration_seconds: float = 300.0
 
     model_config = SettingsConfigDict(env_prefix="FORGE_EVAL_", env_file=".env", extra="ignore")
 
