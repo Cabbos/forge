@@ -66,7 +66,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "desktop checkpoint restore safety baseline",
       command:
-        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib",
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib && npm --prefix apps/desktop run check:backend",
     },
     {
       label: "desktop CSP and capability safety baseline",

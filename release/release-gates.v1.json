@@ -53,7 +53,7 @@
       "domain": "desktop-safety",
       "tier": "security",
       "manual_allowed": false,
-      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib && npm --prefix apps/desktop run check:backend",
       "evidence_schema": "desktop-checkpoint.v1",
       "ci_default": false
     },
