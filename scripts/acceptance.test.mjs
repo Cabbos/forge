@@ -95,7 +95,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "eval independent workspace evidence baseline",
       command:
-        'cd apps/eval-runner && uv run pytest tests/test_workspace_observer.py tests/test_runner.py -q -k "workspace"',
+        'cd apps/eval-runner && uv run pytest tests/test_process_control.py tests/test_workspace_observer.py tests/test_runner.py -k "workspace or scope or timeout or cancellation or sandbox or patch" -q',
     },
     {
       label: "eval trusted execution baseline",

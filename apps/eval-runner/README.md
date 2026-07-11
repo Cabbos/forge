@@ -1,5 +1,7 @@
 # Forge Eval Runner
 
+Forge-provider traces use independent filesystem snapshots as the changed-file authority. Setup and validation are outside the observation window; subprocesses are bounded/cancellable, future repository state is scrubbed, and emitted diffs are replayed in a fresh fixture workspace.
+
 Forge Eval Runner is a Python MVP for evaluating coding agents. It focuses on the parts hiring teams usually care about for AI Product Engineer, LLM Application Engineer, and Agent Engineer roles: trace capture, task-level metrics, failure analysis, typed API contracts, tests, and containerized delivery.
 
 The default version still uses a deterministic mock runner for reproducible tests. It now also has a `provider=forge` runner seam for connecting a real Forge headless command without changing the API shape. Both paths produce the same trace contract: prompts, context files, raw events, tool calls, shell output, file diffs, changed files, scope violations, final answer, verification result, timing, and failure reason.

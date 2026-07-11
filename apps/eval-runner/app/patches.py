@@ -20,13 +20,9 @@ def replay_patch(
         cancel_requested=cancel_requested,
     )
     return WorkspaceCheck(
-        ok=(
-            completed.outcome == ProcessOutcome.COMPLETED
-            and completed.returncode == 0
-        ),
+        ok=(completed.outcome == ProcessOutcome.COMPLETED and completed.returncode == 0),
         message=(
-            f"patch replay {completed.outcome.value}: "
-            f"{completed.stderr or completed.stdout}"
+            f"patch replay {completed.outcome.value}: {completed.stderr or completed.stdout}"
             if completed.outcome != ProcessOutcome.COMPLETED
             else completed.stderr or completed.stdout
         ),

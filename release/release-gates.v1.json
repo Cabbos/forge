@@ -86,7 +86,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "cd apps/eval-runner && uv run pytest tests/test_workspace_observer.py tests/test_runner.py -q -k \"workspace\"",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_process_control.py tests/test_workspace_observer.py tests/test_runner.py -k \"workspace or scope or timeout or cancellation or sandbox or patch\" -q",
       "evidence_schema": "eval-workspace.v1",
       "ci_default": false
     },

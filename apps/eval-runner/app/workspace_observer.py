@@ -72,9 +72,7 @@ def observe_workspace_changes(
     after_paths = set(after)
     added = sorted(after_paths - before_paths)
     deleted = sorted(before_paths - after_paths)
-    modified = sorted(
-        path for path in before_paths & after_paths if before[path] != after[path]
-    )
+    modified = sorted(path for path in before_paths & after_paths if before[path] != after[path])
     changed = sorted([*added, *deleted, *modified])
     mismatch = sorted(set(changed).symmetric_difference(reported))
 

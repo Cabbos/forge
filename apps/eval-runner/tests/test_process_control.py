@@ -33,10 +33,7 @@ def test_bounded_process_timeout_preserves_partial_output(tmp_path: Path) -> Non
 
 def test_bounded_process_cancellation_kills_descendant(tmp_path: Path) -> None:
     marker = tmp_path / "child-finished"
-    child_code = (
-        "import time,pathlib; time.sleep(2); "
-        f"pathlib.Path(r'{marker}').write_text('x')"
-    )
+    child_code = f"import time,pathlib; time.sleep(2); pathlib.Path(r'{marker}').write_text('x')"
     cancelled = threading.Event()
     timer = threading.Timer(0.2, cancelled.set)
     timer.start()
