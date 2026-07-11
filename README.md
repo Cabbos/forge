@@ -1,5 +1,6 @@
 # Forge
 
+The Eval runner independently observes workspace effects instead of trusting agent-reported paths, with bounded process groups, sandbox scrub evidence, and fresh-fixture patch replay in the R2/R3 gate.
 The desktop runtime now enforces an explicit production CSP, a localhost-only development CSP, frozen JavaScript prototypes, and a minimal main-window capability covering only folder selection and session event subscription.
 
 Forge is a local-first AI Agent Workbench product.

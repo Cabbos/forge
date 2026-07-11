@@ -440,9 +440,7 @@ class ForgeAgentRunner:
                     **patch_replay.model_dump(mode="json"),
                 },
             ]
-            return trace.model_copy(
-                update={"patch_replay": patch_replay, "raw_events": raw_events}
-            )
+            return trace.model_copy(update={"patch_replay": patch_replay, "raw_events": raw_events})
 
     def _trace_from_payload(
         self,
@@ -565,11 +563,7 @@ class ForgeAgentRunner:
         regression_failure = first_failed_output(regression_outputs)
         bugfix_failure = None if regression_failure else first_failed_output(fix_outputs)
         interrupted_validation = next(
-            (
-                output
-                for output in all_validation_outputs
-                if output.exit_code in {124, 130}
-            ),
+            (output for output in all_validation_outputs if output.exit_code in {124, 130}),
             None,
         )
         if interrupted_validation is not None and failure_category == FailureCategory.NONE:

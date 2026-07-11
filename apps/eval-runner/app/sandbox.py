@@ -81,9 +81,7 @@ def scrub_future_repo_state(
     scrubbed_items: list[str] = []
     try:
         if (workspace / ".git").exists():
-            scrubbed_items.extend(
-                remove_git_remotes(workspace, timeout_seconds, cancel_requested)
-            )
+            scrubbed_items.extend(remove_git_remotes(workspace, timeout_seconds, cancel_requested))
             scrubbed_items.extend(
                 remove_extra_git_branches(workspace, timeout_seconds, cancel_requested)
             )
@@ -347,7 +345,5 @@ def run_git(
         cancel_requested=cancel_requested,
     )
     if result.outcome != ProcessOutcome.COMPLETED:
-        raise SandboxProcessInterrupted(
-            f"git {' '.join(args)} {result.outcome.value}"
-        )
+        raise SandboxProcessInterrupted(f"git {' '.join(args)} {result.outcome.value}")
     return result

@@ -664,8 +664,7 @@ def test_forge_runner_does_not_attribute_setup_or_validation_changes_to_agent(
     fixture.mkdir()
     script = tmp_path / "agent.py"
     script.write_text(
-        "import json,sys\n"
-        "json.dump({'changed_files': [], 'final_answer': 'done'}, sys.stdout)\n",
+        "import json,sys\njson.dump({'changed_files': [], 'final_answer': 'done'}, sys.stdout)\n",
         encoding="utf-8",
     )
     task = EvaluationTask(
@@ -673,10 +672,8 @@ def test_forge_runner_does_not_attribute_setup_or_validation_changes_to_agent(
         title="Snapshot boundaries",
         prompt="Run without edits.",
         fixture_path=str(fixture),
-        setup_commands=[f'{sys.executable} -c "open(\'setup.txt\',\'w\').write(\'x\')"'],
-        validation_commands=[
-            f'{sys.executable} -c "open(\'validation.txt\',\'w\').write(\'x\')"'
-        ],
+        setup_commands=[f"{sys.executable} -c \"open('setup.txt','w').write('x')\""],
+        validation_commands=[f"{sys.executable} -c \"open('validation.txt','w').write('x')\""],
     )
 
     trace = ForgeAgentRunner(
