@@ -1,6 +1,7 @@
 import sqlite3
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -13,9 +14,11 @@ from app.models import (
     FailureCategory,
     FileDiff,
     ForgeRunEvidence,
+    LeakageCheck,
     ProcessOutcome,
     RunCreateRequest,
     ShellOutput,
+    WorkspaceCheck,
     WorkspaceObservation,
 )
 from app.runner import (
@@ -511,6 +514,7 @@ import sys
 payload = json.loads(sys.stdin.read())
 workspace = pathlib.Path(payload["workspace_path"])
 assert (workspace / "src" / "app.py").exists()
+(workspace / "src" / "app.py").write_text("print('forge')\\n")
 json.dump(
     {
         "raw_events": [
@@ -532,7 +536,14 @@ json.dump(
             {
                 "path": "src/app.py",
                 "change_type": "modified",
-                "diff": "diff --git a/src/app.py b/src/app.py",
+                "diff": (
+                    "diff --git a/src/app.py b/src/app.py\\n"
+                    "--- a/src/app.py\\n"
+                    "+++ b/src/app.py\\n"
+                    "@@ -1 +1 @@\\n"
+                    "-print('hello')\\n"
+                    "+print('forge')\\n"
+                ),
             }
         ],
         "changed_files": ["src/app.py"],
@@ -612,13 +623,209 @@ json.dump(
     assert trace.forge_run_evidence.normalized_goal == "modify-and-verify"
 
 
+def test_forge_runner_detects_unreported_forbidden_workspace_change(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "allowed.txt").write_text("before\n", encoding="utf-8")
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,pathlib,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "(workspace/'.env').write_text('SECRET=x\\n')\n"
+        "json.dump({'changed_files': [], 'file_diffs': [], 'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="independent-scope",
+        title="Independent scope",
+        prompt="Change allowed.txt only.",
+        fixture_path=str(fixture),
+        expected_files_changed=["allowed.txt"],
+        forbidden_files_changed=[".env"],
+    )
+
+    trace = ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.changed_files == [".env"]
+    assert trace.workspace_observation is not None
+    assert trace.workspace_observation.reported_changed_files == []
+    assert trace.scope_violations == ["forbidden_change:.env", "unexpected_change:.env"]
+
+
+def test_forge_runner_does_not_attribute_setup_or_validation_changes_to_agent(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,sys\n"
+        "json.dump({'changed_files': [], 'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="snapshot-boundaries",
+        title="Snapshot boundaries",
+        prompt="Run without edits.",
+        fixture_path=str(fixture),
+        setup_commands=[f'{sys.executable} -c "open(\'setup.txt\',\'w\').write(\'x\')"'],
+        validation_commands=[
+            f'{sys.executable} -c "open(\'validation.txt\',\'w\').write(\'x\')"'
+        ],
+    )
+
+    trace = ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.changed_files == []
+
+
+def test_forge_runner_times_out_setup_command(tmp_path: Path) -> None:
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="setup-timeout",
+        title="Setup timeout",
+        prompt="Run.",
+        setup_commands=[f'{sys.executable} -c "import time; time.sleep(10)"'],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(script)],
+        setup_timeout_seconds=0.1,
+    ).run_task(task)
+
+    assert trace.error == "timeout"
+    assert trace.failure_category == FailureCategory.TIMEOUT
+    assert trace.shell_outputs[-1].exit_code == 124
+
+
+def test_forge_runner_times_out_validation_command(tmp_path: Path) -> None:
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="validation-timeout",
+        title="Validation timeout",
+        prompt="Run.",
+        validation_commands=[f'{sys.executable} -c "import time; time.sleep(10)"'],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(script)],
+        validation_timeout_seconds=0.1,
+    ).run_task(task)
+
+    assert trace.error == "timeout"
+    assert trace.failure_category == FailureCategory.TIMEOUT
+    assert trace.verification_result is not None
+    assert trace.verification_result.exit_code == 124
+
+
+def test_forge_runner_cancellation_preserves_partial_output(tmp_path: Path) -> None:
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import time\nprint('started', flush=True)\ntime.sleep(10)\n",
+        encoding="utf-8",
+    )
+    cancelled = threading.Event()
+    timer = threading.Timer(0.2, cancelled.set)
+    timer.start()
+    try:
+        trace = ForgeAgentRunner(
+            command=[sys.executable, "-u", str(script)],
+        ).run_task(
+            EvaluationTask(id="cancelled", title="Cancelled", prompt="Run."),
+            cancel_requested=cancelled.is_set,
+        )
+    finally:
+        timer.cancel()
+
+    assert trace.error == "cancelled"
+    assert trace.shell_outputs[-1].exit_code == 130
+    assert "started" in trace.shell_outputs[-1].stdout
+
+
+def test_forge_runner_records_failed_sandbox_scrub(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    failed = LeakageCheck(ok=False, findings=["git scrub timed_out"])
+    monkeypatch.setattr("app.runner.scrub_future_repo_state", lambda *args, **kwargs: failed)
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(
+        EvaluationTask(id="scrub-failed", title="Scrub failed", prompt="Run.")
+    )
+
+    assert trace.error == "sandbox_scrub_failed"
+    assert trace.sandbox_scrub == failed
+
+
+def test_forge_runner_records_failed_patch_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "file.txt").write_text("before\n", encoding="utf-8")
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,pathlib,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "path=pathlib.Path(payload['workspace_path'])/'file.txt'\n"
+        "path.write_text('after\\n')\n"
+        "json.dump({'final_answer':'done','file_diffs':["
+        "{'path':'file.txt','change_type':'modified','diff':'invalid'}]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    failed = WorkspaceCheck(ok=False, message="patch replay failed")
+    monkeypatch.setattr("app.runner.replay_patch", lambda *args, **kwargs: failed)
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(
+        EvaluationTask(
+            id="patch-failed",
+            title="Patch failed",
+            prompt="Edit.",
+            fixture_path=str(fixture),
+        )
+    )
+
+    assert trace.changed_files == ["file.txt"]
+    assert trace.patch_replay == failed
+    assert trace.raw_events[-1]["event_type"] == "eval_patch_replay"
+
+
 def test_forge_runner_reports_scope_violations_from_changed_files(tmp_path: Path) -> None:
     script = tmp_path / "fake_scope_violation.py"
     script.write_text(
         """
 import json
+import pathlib
 import sys
 
+payload = json.loads(sys.stdin.read())
+workspace = pathlib.Path(payload["workspace_path"])
+(workspace / "src").mkdir()
+(workspace / "src" / "app.py").write_text("changed\\n")
+(workspace / ".env").write_text("SECRET=x\\n")
 json.dump(
     {
         "changed_files": ["src/app.py", ".env"],
