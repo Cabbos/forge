@@ -1,6 +1,44 @@
 from app.metrics import trace_passed
 from app.models import AgentTrace, EvalScore, FailureCategory, ForgeRunEvidence
 
+UNIVERSAL_SCORE_NAMES = frozenset(
+    {
+        "functional_correctness",
+        "scope_ok",
+        "regression_ok",
+        "bugfix_ok",
+        "secret_leak_ok",
+        "prompt_injection_ok",
+        "scope_escape_ok",
+        "future_state_leakage_ok",
+        "unsafe_tool_use_ok",
+    }
+)
+
+KNOWN_SCORE_NAMES = UNIVERSAL_SCORE_NAMES | {
+    "budget_ok",
+    "forge_schema_identity_ok",
+    "forge_confirmation_correctness_ok",
+    "forge_context_duplication_ok",
+    "forge_verification_present_ok",
+    "forge_changed_file_scope_ok",
+    "forge_recovery_evidence_ok",
+    "forge_usage_accounting_consistency_ok",
+    "forge_completion_eligibility_evidence_ok",
+    "forge_a2a_child_evidence_complete_ok",
+    "forge_verification_evidence_quality_ok",
+    "forge_prepared_turn_evidence_ok",
+    "forge_file_effects_evidence_ok",
+    "forge_tool_shell_evidence_ok",
+    "forge_context_budget_buckets_ok",
+    "forge_memory_recall_quality_ok",
+    "forge_gateway_runtime_safety_ok",
+    "forge_permission_decision_evidence_ok",
+    "forge_runtime_recovery_quality_ok",
+    "forge_failure_evidence_ok",
+    "forge_continuity_lessons_ok",
+}
+
 
 def score_trace(
     trace: AgentTrace,

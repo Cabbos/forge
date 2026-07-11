@@ -2,8 +2,15 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from app.metrics import calculate_metrics
-from app.models import AgentTrace, BacktestReport, ContinuityReport, TaskMetric, TraceSummary
-from app.scoring import score_trace
+from app.models import (
+    AgentTrace,
+    BacktestReport,
+    ContinuityReport,
+    ScoreCoverage,
+    TaskMetric,
+    TraceSummary,
+)
+from app.scoring import UNIVERSAL_SCORE_NAMES, score_trace
 
 
 def build_report(traces: list[AgentTrace]) -> BacktestReport:
@@ -52,6 +59,7 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         for trace, task_metric in zip(traces, metrics.tasks, strict=False)
     ]
 
+    score_summary, score_coverage = build_score_aggregates(traces)
     return BacktestReport(
         total_tasks=total,
         success_rate=metrics.success_rate,
@@ -64,20 +72,47 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         avg_validation_attempts=metrics.average_validation_attempts,
         total_cost_usd=sum(trace.cost_usd or 0.0 for trace in traces),
         failure_categories=metrics.failure_categories,
-        score_summary=build_score_summary(traces),
+        score_summary=score_summary,
+        score_coverage=score_coverage,
         tasks=task_summaries,
         continuity=build_continuity_report(traces),
     )
 
 
 def build_score_summary(traces: list[AgentTrace]) -> dict[str, float]:
-    totals: dict[str, float] = {}
-    counts: Counter[str] = Counter()
-    for trace in traces:
-        for name, score in score_trace(trace).items():
-            totals[name] = totals.get(name, 0.0) + score.score
-            counts[name] += 1
-    return {name: totals[name] / counts[name] for name in sorted(totals)}
+    summary, _coverage = build_score_aggregates(traces)
+    return summary
+
+
+def build_score_aggregates(
+    traces: list[AgentTrace],
+) -> tuple[dict[str, float], dict[str, ScoreCoverage]]:
+    emitted = [score_trace(trace) for trace in traces]
+    names = set(UNIVERSAL_SCORE_NAMES)
+    names.update(name for scores in emitted for name in scores)
+    names.update(name for trace in traces for name in trace.required_scores)
+    summary: dict[str, float] = {}
+    coverage: dict[str, ScoreCoverage] = {}
+    for name in sorted(names):
+        values = [scores[name].score for scores in emitted if name in scores]
+        expected = (
+            len(traces)
+            if name in UNIVERSAL_SCORE_NAMES
+            else sum(1 for trace in traces if name in trace.required_scores)
+        )
+        if expected == 0:
+            expected = len(values)
+        observed = min(len(values), expected)
+        mean = sum(values[:observed]) / observed if observed else None
+        if mean is not None:
+            summary[name] = mean
+        coverage[name] = ScoreCoverage(
+            mean=mean,
+            observed=observed,
+            expected=expected,
+            coverage=observed / expected if expected else 1.0,
+        )
+    return summary, coverage
 
 
 def aggregate_trial_metrics(

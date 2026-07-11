@@ -7,6 +7,7 @@ from app.models import (
     AgentTrace,
     BacktestReport,
     FailureCategory,
+    ForgeRunEvidence,
     ScoreCoverage,
     ShellOutput,
     TaskMetric,
@@ -15,6 +16,58 @@ from app.models import (
     VerificationResult,
 )
 from app.reporting import build_report
+
+
+def test_score_coverage_uses_required_trace_denominator() -> None:
+    first = make_trace(
+        "required-a",
+        verification_passed=True,
+        duration_ms=10,
+        model_rounds=1,
+        confirm_requests=0,
+    ).model_copy(update={"required_scores": ["forge_file_effects_evidence_ok"]})
+    second = make_trace(
+        "required-b",
+        verification_passed=True,
+        duration_ms=10,
+        model_rounds=1,
+        confirm_requests=0,
+    ).model_copy(update={"required_scores": ["forge_file_effects_evidence_ok"]})
+    first = first.model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="s",
+                loop_task_id="l",
+                changed_files=["src/app.py"],
+                file_diffs=[{"path": "src/app.py", "diff": "patch"}],
+            )
+        }
+    )
+
+    aggregate = build_report([first, second]).score_coverage["forge_file_effects_evidence_ok"]
+
+    assert aggregate.observed == 1
+    assert aggregate.expected == 2
+    assert aggregate.coverage == 0.5
+
+
+def test_universal_score_coverage_uses_all_traces() -> None:
+    traces = [
+        make_trace(
+            f"task-{index}",
+            verification_passed=True,
+            duration_ms=10,
+            model_rounds=1,
+            confirm_requests=0,
+        )
+        for index in range(3)
+    ]
+
+    aggregate = build_report(traces).score_coverage["functional_correctness"]
+
+    assert aggregate.observed == 3
+    assert aggregate.expected == 3
+    assert aggregate.coverage == 1.0
 
 
 def test_trust_result_rejects_inconsistent_status_and_boolean() -> None:

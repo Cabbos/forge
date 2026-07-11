@@ -6,6 +6,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.models import CaseQualityIssue, EvaluationTask
 from app.prompt_mutation import mutate_prompt
+from app.scoring import KNOWN_SCORE_NAMES
 
 CASE_FILE_NAMES = {"case.json", "task.json"}
 
@@ -67,6 +68,15 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
                     severity="error",
                     code="missing_fixture_path",
                     message="Eval case fixture_path does not exist.",
+                )
+            )
+        for score_name in sorted(set(task.required_scores) - KNOWN_SCORE_NAMES):
+            issues.append(
+                CaseQualityIssue(
+                    task_id=task.id,
+                    severity="error",
+                    code="unknown_required_score",
+                    message=f"Eval case declares unknown required score: {score_name}",
                 )
             )
     return issues

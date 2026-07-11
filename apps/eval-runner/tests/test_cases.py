@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.cases import CaseLoadError, load_cases
+from app.cases import CaseLoadError, load_cases, validate_case_quality
 from app.models import AgentTrace, FailureCategory, ForgeRunEvidence, VerificationResult
 
 
@@ -30,6 +30,17 @@ def write_case(cases_dir: Path, case_id: str, *, title: str | None = None) -> Pa
         encoding="utf-8",
     )
     return case_dir
+
+
+def test_case_quality_rejects_unknown_required_score(tmp_path: Path) -> None:
+    case_dir = write_case(tmp_path, "unknown-score")
+    task = load_cases(case_dir)[0].model_copy(update={"required_scores": ["not_a_real_score"]})
+
+    issues = validate_case_quality([task])
+
+    assert [(issue.severity, issue.code) for issue in issues] == [
+        ("error", "unknown_required_score")
+    ]
 
 
 def make_trace(
