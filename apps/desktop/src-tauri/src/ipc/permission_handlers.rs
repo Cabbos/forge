@@ -504,6 +504,15 @@ mod tests {
             Some(canonical_dir.to_string_lossy().as_ref())
         );
         assert!(!full_access.session_scoped);
+        assert_eq!(
+            state
+                .harness
+                .permission_gate
+                .permission_mode_state("session-1", Some(&dir))
+                .await
+                .mode,
+            PermissionMode::FullAccess
+        );
 
         let shell_decision = state
             .harness
@@ -516,8 +525,8 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(shell_decision, GateDecision::Allow),
-            "full access should feed the runtime permission gate: {:?}",
+            matches!(shell_decision, GateDecision::Ask { .. }),
+            "full access must not bypass project-defined execution confirmation: {:?}",
             shell_decision
         );
 
@@ -662,6 +671,15 @@ mod tests {
         let synced = sync_app_permission_mode_to_session(&state, &session, "session-2", &dir).await;
         assert_eq!(synced.mode, PermissionMode::FullAccess);
         assert!(!synced.session_scoped);
+        assert_eq!(
+            session
+                .harness
+                .permission_gate
+                .permission_mode_state("session-2", Some(&dir))
+                .await
+                .mode,
+            PermissionMode::FullAccess
+        );
 
         let after = session
             .harness
@@ -674,8 +692,8 @@ mod tests {
             )
             .await;
         assert!(
-            matches!(after, GateDecision::Allow),
-            "send_input sync path should install full access into the live session harness: {:?}",
+            matches!(after, GateDecision::Ask { .. }),
+            "synced full access must not bypass project-defined execution confirmation: {:?}",
             after
         );
 

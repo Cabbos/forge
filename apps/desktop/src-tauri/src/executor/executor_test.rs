@@ -3,10 +3,11 @@ mod tests {
     use super::super::{
         append_line_capped, get_str, git_output_z_with_timeout, next_stream_line, preview_for_log,
         summarize_tool_input, truncate_text, GitSnapshotCommandOutput, ShellFileEffectDelta,
-        ShellFileEffectSnapshot, ToolExecutor,
+        ShellFileEffectSnapshot, ToolExecutionOptions, ToolExecutor,
     };
-    use crate::agent::event_sink::CollectingEventEmitter;
+    use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
     use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
+    use crate::harness::shell_policy::issue_shell_approval;
     use crate::protocol::events::StreamEvent;
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
@@ -19,6 +20,29 @@ mod tests {
         ));
         std::fs::create_dir_all(&workspace).expect("workspace");
         workspace
+    }
+
+    async fn execute_shell_with_approval(
+        executor: &ToolExecutor,
+        workspace: &std::path::Path,
+        command: &str,
+        emitter: Arc<dyn EventEmitter>,
+        block_id: &str,
+    ) -> String {
+        let approval = issue_shell_approval(command, workspace).expect("shell approval");
+        executor
+            .execute_with_emitter_and_shell_approval(
+                "session-1",
+                "run_shell",
+                &serde_json::json!({"command": command}),
+                emitter,
+                ToolExecutionOptions {
+                    tool_block_id: Some(block_id),
+                    cancel: None,
+                    shell_approval: Some(approval),
+                },
+            )
+            .await
     }
 
     #[allow(clippy::type_complexity)]
@@ -903,16 +927,14 @@ mod tests {
         let executor = ToolExecutor::new(workspace.clone(), pending);
         let emitter = Arc::new(CollectingEventEmitter::new());
 
-        let result = executor
-            .execute_with_emitter(
-                "session-1",
-                "run_shell",
-                &serde_json::json!({"command": "printf 'hello' > shell.txt"}),
-                emitter.clone(),
-                Some("block-shell"),
-                None,
-            )
-            .await;
+        let result = execute_shell_with_approval(
+            &executor,
+            &workspace,
+            "printf 'hello' > shell.txt",
+            emitter.clone(),
+            "block-shell",
+        )
+        .await;
 
         assert!(
             !result.starts_with("Error:"),
@@ -1005,16 +1027,14 @@ mod tests {
         let executor = ToolExecutor::new(workspace.clone(), pending);
         let emitter = Arc::new(CollectingEventEmitter::new());
 
-        let result = executor
-            .execute_with_emitter(
-                "session-1",
-                "run_shell",
-                &serde_json::json!({"command": "printf 'hello' > shell.txt; exit 7"}),
-                emitter.clone(),
-                Some("block-shell-failed"),
-                None,
-            )
-            .await;
+        let result = execute_shell_with_approval(
+            &executor,
+            &workspace,
+            "printf 'hello' > shell.txt; exit 7",
+            emitter.clone(),
+            "block-shell-failed",
+        )
+        .await;
 
         assert!(
             result.contains("Exit code: 7"),
@@ -1036,16 +1056,14 @@ mod tests {
         let executor = ToolExecutor::new(workspace.clone(), pending);
         let emitter = Arc::new(CollectingEventEmitter::new());
 
-        let result = executor
-            .execute_with_emitter(
-                "session-1",
-                "run_shell",
-                &serde_json::json!({"command": "printf 'hello' > shell.txt"}),
-                emitter.clone(),
-                Some("block-shell-non-git"),
-                None,
-            )
-            .await;
+        let result = execute_shell_with_approval(
+            &executor,
+            &workspace,
+            "printf 'hello' > shell.txt",
+            emitter.clone(),
+            "block-shell-non-git",
+        )
+        .await;
 
         assert!(
             !result.starts_with("Error:"),
@@ -1147,16 +1165,14 @@ mod tests {
         let executor = ToolExecutor::new(workspace.clone(), pending);
         let emitter = Arc::new(CollectingEventEmitter::new());
 
-        let result = executor
-            .execute_with_emitter(
-                "session-1",
-                "run_shell",
-                &serde_json::json!({"command": "printf 'hello' > shell.txt"}),
-                emitter.clone(),
-                Some("block-shell-owner"),
-                None,
-            )
-            .await;
+        let result = execute_shell_with_approval(
+            &executor,
+            &workspace,
+            "printf 'hello' > shell.txt",
+            emitter.clone(),
+            "block-shell-owner",
+        )
+        .await;
 
         assert!(
             !result.starts_with("Error:"),

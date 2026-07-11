@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +34,12 @@ pub enum ShellPolicyReason {
     ShellControl,
     DangerousMutation,
     Catastrophic,
+}
+
+#[derive(Debug)]
+pub(crate) struct ShellApproval {
+    command_digest: [u8; 32],
+    reason: ShellPolicyReason,
 }
 
 impl ShellPolicyReason {
@@ -143,11 +151,72 @@ pub fn validate_shell_command_failsafe_in_workspace(
     command: &str,
     workspace_root: &Path,
 ) -> Result<(), String> {
+    validate_shell_command_for_execution(command, workspace_root, None)
+}
+
+pub(crate) fn issue_shell_approval(
+    command: &str,
+    workspace_root: &Path,
+) -> Result<ShellApproval, String> {
+    match classify_shell_command_in_workspace(command, workspace_root) {
+        ShellPolicyDecision::RequireExplicitConfirmation { reason, .. } => Ok(ShellApproval {
+            command_digest: shell_approval_digest(command, workspace_root, reason),
+            reason,
+        }),
+        ShellPolicyDecision::AllowInspection => {
+            Err("inspection commands do not require a shell approval".to_string())
+        }
+        ShellPolicyDecision::Block { reason } => Err(reason.blocked_message().to_string()),
+    }
+}
+
+pub(crate) fn validate_shell_command_for_execution(
+    command: &str,
+    workspace_root: &Path,
+    approval: Option<ShellApproval>,
+) -> Result<(), String> {
     match classify_shell_command_in_workspace(command, workspace_root) {
         ShellPolicyDecision::Block { reason } => Err(reason.blocked_message().to_string()),
-        ShellPolicyDecision::AllowInspection
-        | ShellPolicyDecision::RequireExplicitConfirmation { .. } => Ok(()),
+        ShellPolicyDecision::AllowInspection => Ok(()),
+        ShellPolicyDecision::RequireExplicitConfirmation { reason, .. } => {
+            let Some(approval) = approval else {
+                return Err(
+                    "shell command requires a one-time approval from the permission gate"
+                        .to_string(),
+                );
+            };
+            if approval.reason != reason
+                || approval.command_digest != shell_approval_digest(command, workspace_root, reason)
+            {
+                return Err(
+                    "shell approval does not match the command selected for execution".to_string(),
+                );
+            }
+            Ok(())
+        }
     }
+}
+
+fn shell_approval_digest(
+    command: &str,
+    workspace_root: &Path,
+    reason: ShellPolicyReason,
+) -> [u8; 32] {
+    let workspace_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_lexically(workspace_root));
+    let normalized_command = command.trim();
+    let mut digest = [0_u8; 32];
+    for domain in 0_u64..4 {
+        let mut hasher = DefaultHasher::new();
+        domain.hash(&mut hasher);
+        normalized_command.hash(&mut hasher);
+        workspace_root.hash(&mut hasher);
+        reason.as_str().hash(&mut hasher);
+        digest[(domain as usize) * 8..(domain as usize + 1) * 8]
+            .copy_from_slice(&hasher.finish().to_le_bytes());
+    }
+    digest
 }
 
 fn is_proven_inspection(command: &str, normalized: &str, tokens: &[String]) -> bool {
@@ -663,7 +732,8 @@ fn is_localhost_curl_probe(tokens: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_shell_command_in_workspace, validate_shell_command_failsafe_in_workspace,
+        classify_shell_command_in_workspace, issue_shell_approval,
+        validate_shell_command_failsafe_in_workspace, validate_shell_command_for_execution,
         ShellPolicyDecision, ShellPolicyReason, ShellRisk,
     };
     use std::fs;
@@ -903,11 +973,27 @@ mod tests {
             workspace.path()
         )
         .is_err());
-        assert!(validate_shell_command_failsafe_in_workspace("npm test", workspace.path()).is_ok());
+        assert!(
+            validate_shell_command_failsafe_in_workspace("npm test", workspace.path()).is_err()
+        );
         assert!(validate_shell_command_failsafe_in_workspace(
             "git status --short",
             workspace.path()
         )
         .is_ok());
+
+        let approval = issue_shell_approval("npm test", workspace.path()).expect("approval");
+        assert!(
+            validate_shell_command_for_execution("npm test", workspace.path(), Some(approval))
+                .is_ok()
+        );
+
+        let swapped = issue_shell_approval("npm test", workspace.path()).expect("approval");
+        assert!(validate_shell_command_for_execution(
+            "cargo test",
+            workspace.path(),
+            Some(swapped)
+        )
+        .is_err());
     }
 }

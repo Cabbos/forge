@@ -21,7 +21,7 @@ use crate::agent::time::now_ms;
 use crate::consts::{ASK_USER_TIMEOUT, SEARCH_TIMEOUT, WEB_FETCH_TIMEOUT, WEB_SEARCH_TIMEOUT};
 use crate::harness::permission_ledger::{PermissionLedgerEvent, PermissionLedgerEventKind};
 use crate::harness::permissions::PermissionMode;
-use crate::harness::shell_policy::validate_shell_command_failsafe_in_workspace;
+use crate::harness::shell_policy::{validate_shell_command_for_execution, ShellApproval};
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
 
@@ -44,6 +44,12 @@ pub struct ToolExecutor {
     pending_confirms: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
     pending_confirm_descriptors: Option<Arc<RwLock<Vec<PendingConfirmDescriptor>>>>,
     active_tool_call_descriptors: Option<Arc<RwLock<Vec<ActiveToolCallDescriptor>>>>,
+}
+
+pub(crate) struct ToolExecutionOptions<'a> {
+    pub(crate) tool_block_id: Option<&'a str>,
+    pub(crate) cancel: Option<Arc<Notify>>,
+    pub(crate) shell_approval: Option<ShellApproval>,
 }
 
 impl ToolExecutor {
@@ -130,6 +136,33 @@ impl ToolExecutor {
         tool_block_id: Option<&str>,
         cancel: Option<Arc<Notify>>,
     ) -> String {
+        self.execute_with_emitter_and_shell_approval(
+            session_id,
+            tool_name,
+            tool_input,
+            emitter,
+            ToolExecutionOptions {
+                tool_block_id,
+                cancel,
+                shell_approval: None,
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_with_emitter_and_shell_approval(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_input: &serde_json::Value,
+        emitter: Arc<dyn EventEmitter>,
+        options: ToolExecutionOptions<'_>,
+    ) -> String {
+        let ToolExecutionOptions {
+            tool_block_id,
+            cancel,
+            shell_approval,
+        } = options;
         let block_id = tool_block_id
             .map(str::to_string)
             .unwrap_or_else(|| BlockId::new().to_string());
@@ -257,9 +290,11 @@ impl ToolExecutor {
             "run_shell" | "bash" | "execute_command" | "shell" | "shell_command"
             | "run_command" | "run_shell_command" => {
                 let command = get_str(tool_input, "command").unwrap_or("");
-                if let Err(reason) =
-                    validate_shell_command_failsafe_in_workspace(command, self.file.working_dir())
-                {
+                if let Err(reason) = validate_shell_command_for_execution(
+                    command,
+                    self.file.working_dir(),
+                    shell_approval,
+                ) {
                     crate::app_log!(
                         "WARN",
                         "[tool] blocked shell command session={} block={} reason={}",
@@ -1517,10 +1552,10 @@ fn simple_match(name: &str, pattern: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::ToolExecutor;
+    use super::{ToolExecutionOptions, ToolExecutor};
     use crate::agent::event_sink::EventEmitter;
     use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
-    use crate::harness::shell_policy::validate_shell_command_failsafe;
+    use crate::harness::shell_policy::{issue_shell_approval, validate_shell_command_failsafe};
     use crate::protocol::events::StreamEvent;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1627,10 +1662,10 @@ mod tests {
 
     #[test]
     fn shell_failsafe_allows_project_local_dev_commands() {
-        validate_shell_command_failsafe("npm install").expect("npm install is not hard-blocked");
-        validate_shell_command_failsafe("npm run build").expect("build is not hard-blocked");
+        assert!(validate_shell_command_failsafe("npm install").is_err());
+        assert!(validate_shell_command_failsafe("npm run build").is_err());
         validate_shell_command_failsafe("git status --short")
-            .expect("git status is not hard-blocked");
+            .expect("proven inspection does not need approval");
     }
 
     #[tokio::test]
@@ -1643,14 +1678,19 @@ mod tests {
         let pending_confirms = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         let executor = ToolExecutor::new(workspace.clone(), pending_confirms);
         for alias in ["shell_command", "run_command", "run_shell_command"] {
+            let command = "echo alias-ok";
+            let approval = issue_shell_approval(command, &workspace).expect("shell approval");
             let result = executor
-                .execute_with_emitter(
+                .execute_with_emitter_and_shell_approval(
                     "session-1",
                     alias,
-                    &serde_json::json!({"command": "echo alias-ok"}),
+                    &serde_json::json!({"command": command}),
                     Arc::new(crate::agent::event_sink::NoopEventEmitter),
-                    Some("tool-block-1"),
-                    None,
+                    ToolExecutionOptions {
+                        tool_block_id: Some("tool-block-1"),
+                        cancel: None,
+                        shell_approval: Some(approval),
+                    },
                 )
                 .await;
 

@@ -8,10 +8,10 @@ mod harness {
         FileSystemAuditHook, Hook, HookDecision, HookEngine, HookTrigger, LoggingHook,
         SensitiveContentHook, WorkspaceBoundaryHook,
     };
-    use forge::harness::permissions::{PermissionDecision, PermissionGate};
+    use forge::harness::permissions::{PermissionDecision, PermissionGate, PermissionMode};
     use forge::harness::skills::SkillLoader;
     use forge::harness::write_boundary::{build_write_boundary, WriteBoundaryRisk};
-    use forge::harness::Harness;
+    use forge::harness::{EventEmitter, Harness, StreamEvent};
     use std::sync::{Arc, Mutex};
 
     fn unique_temp_workspace(prefix: &str) -> std::path::PathBuf {
@@ -23,6 +23,130 @@ mod harness {
             std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanos));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    struct DecliningShellConfirmEmitter {
+        pending_confirms: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        >,
+        reasons: Mutex<Vec<String>>,
+    }
+
+    impl DecliningShellConfirmEmitter {
+        fn new(
+            pending_confirms: Arc<
+                tokio::sync::RwLock<
+                    std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+                >,
+            >,
+        ) -> Self {
+            Self {
+                pending_confirms,
+                reasons: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn reasons(&self) -> Vec<String> {
+            self.reasons.lock().expect("reasons").clone()
+        }
+    }
+
+    impl EventEmitter for DecliningShellConfirmEmitter {
+        fn emit(&self, event: StreamEvent) {
+            if let StreamEvent::ConfirmAsk {
+                block_id,
+                permission_evidence,
+                ..
+            } = event
+            {
+                self.reasons.lock().expect("reasons").push(
+                    permission_evidence
+                        .map(|evidence| evidence.reason)
+                        .unwrap_or_default(),
+                );
+                let mut pending = self
+                    .pending_confirms
+                    .try_write()
+                    .expect("confirmation map must be available during emission");
+                let sender = pending
+                    .remove(&block_id)
+                    .expect("confirmation sender must exist before emission");
+                let _ = sender.send(false);
+            }
+        }
+    }
+
+    async fn set_shell_permission_mode(
+        harness: &Harness,
+        session_id: &str,
+        mode: PermissionMode,
+        workspace: &std::path::Path,
+    ) {
+        match mode {
+            PermissionMode::ManualConfirm => {
+                harness
+                    .permission_gate
+                    .restore_manual_confirm(session_id, Some(workspace))
+                    .await;
+            }
+            PermissionMode::TrustCurrentProject => {
+                harness
+                    .permission_gate
+                    .trust_current_project(session_id, workspace)
+                    .await;
+            }
+            PermissionMode::FullAccess => {
+                harness
+                    .permission_gate
+                    .full_access_current_project(session_id, workspace)
+                    .await;
+            }
+        }
+    }
+
+    async fn assert_project_defined_command_is_declined_before_spawn(
+        workspace: &std::path::Path,
+        command: &str,
+        marker: &std::path::Path,
+    ) {
+        for (session_id, mode) in [
+            ("manual-project-defined", PermissionMode::ManualConfirm),
+            (
+                "trusted-project-defined",
+                PermissionMode::TrustCurrentProject,
+            ),
+            ("full-project-defined", PermissionMode::FullAccess),
+        ] {
+            let harness = Harness::new(workspace.to_path_buf());
+            set_shell_permission_mode(&harness, session_id, mode, workspace).await;
+            let emitter = Arc::new(DecliningShellConfirmEmitter::new(
+                harness.pending_confirms.clone(),
+            ));
+
+            let result = harness
+                .execute_tool_with_emitter(
+                    session_id,
+                    "run_shell",
+                    &serde_json::json!({"command": command}),
+                    emitter.clone(),
+                    Some("project-defined-block"),
+                    None,
+                )
+                .await;
+
+            assert_eq!(result, "Permission denied by user", "{mode:?}: {command}");
+            assert_eq!(
+                emitter.reasons(),
+                vec!["project_defined_execution".to_string()],
+                "{mode:?}: {command}"
+            );
+            assert!(
+                !marker.exists(),
+                "declined command started a subprocess in {mode:?}: {command}"
+            );
+        }
     }
 
     struct RecordingCapability {
@@ -237,6 +361,9 @@ mod harness {
             "npm run build -- --cache-location .cache/vite",
             "npm run build -- --coverage",
             "cargo test -- --watch",
+            "cargo test --manifest-path src-tauri/Cargo.toml --test harness_test shell_",
+            "npm run build -- --mode production",
+            "npm run build -- --reporter compact",
         ] {
             let decision = gate
                 .check(
@@ -267,9 +394,6 @@ mod harness {
         for command in [
             "rg --fixed-strings Forge src-tauri/src",
             "git diff -- src-tauri/src/harness/permissions.rs",
-            "cargo test --manifest-path src-tauri/Cargo.toml --test harness_test shell_",
-            "npm run build -- --mode production",
-            "npm run build -- --reporter compact",
         ] {
             let decision = gate
                 .check(
@@ -400,6 +524,114 @@ mod harness {
         );
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
+    async fn project_defined_commands_never_spawn_when_confirmation_is_declined() {
+        let workspace = unique_temp_workspace("forge-project-defined-shell");
+        let parent = workspace.parent().expect("workspace parent");
+
+        let package_marker = parent.join("package-ran");
+        let _ = std::fs::remove_file(&package_marker);
+        std::fs::write(
+            workspace.join("package.json"),
+            r#"{"scripts":{"test":"printf package-ran > ../package-ran"}}"#,
+        )
+        .expect("package fixture");
+        assert_project_defined_command_is_declined_before_spawn(
+            &workspace,
+            "npm test",
+            &package_marker,
+        )
+        .await;
+
+        let build_hook_marker = parent.join("build-hook-ran");
+        let _ = std::fs::remove_file(&build_hook_marker);
+        std::fs::write(
+            workspace.join("Cargo.toml"),
+            "[package]\nname = \"forge-shell-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("cargo fixture");
+        std::fs::create_dir_all(workspace.join("src")).expect("cargo src");
+        std::fs::write(workspace.join("src/lib.rs"), "pub fn fixture() {}\n").expect("cargo lib");
+        std::fs::write(
+            workspace.join("build.rs"),
+            "fn main() { std::fs::write(\"../build-hook-ran\", \"ran\").unwrap(); }\n",
+        )
+        .expect("build hook fixture");
+        assert_project_defined_command_is_declined_before_spawn(
+            &workspace,
+            "cargo check",
+            &build_hook_marker,
+        )
+        .await;
+
+        let script_marker = parent.join("test-command-ran");
+        let _ = std::fs::remove_file(&script_marker);
+        let script = workspace.join("test-command.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf test-command-ran > ../test-command-ran\n",
+        )
+        .expect("script fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&script)
+                .expect("script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&script, permissions).expect("script permissions");
+        }
+        assert_project_defined_command_is_declined_before_spawn(
+            &workspace,
+            "./test-command.sh",
+            &script_marker,
+        )
+        .await;
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn project_defined_hard_blocks_never_prompt_or_spawn() {
+        let workspace = unique_temp_workspace("forge-project-defined-hard-block");
+        let outside_marker = workspace
+            .parent()
+            .expect("workspace parent")
+            .join("outside.txt");
+        let _ = std::fs::remove_file(&outside_marker);
+
+        for (session_id, mode) in [
+            ("manual-hard-block", PermissionMode::ManualConfirm),
+            ("trusted-hard-block", PermissionMode::TrustCurrentProject),
+            ("full-hard-block", PermissionMode::FullAccess),
+        ] {
+            for command in ["printf x > ../outside.txt", "rm -rf /"] {
+                let harness = Harness::new(workspace.clone());
+                set_shell_permission_mode(&harness, session_id, mode, &workspace).await;
+                let emitter = Arc::new(DecliningShellConfirmEmitter::new(
+                    harness.pending_confirms.clone(),
+                ));
+
+                let result = harness
+                    .execute_tool_with_emitter(
+                        session_id,
+                        "run_shell",
+                        &serde_json::json!({"command": command}),
+                        emitter.clone(),
+                        Some("hard-block"),
+                        None,
+                    )
+                    .await;
+
+                assert!(result.contains("已阻止"), "{mode:?}: {command}: {result}");
+                assert!(emitter.reasons().is_empty(), "{mode:?}: {command}");
+                assert!(!outside_marker.exists(), "{mode:?}: {command}");
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&workspace);
     }
 
     // ═══ HookEngine Tests ═══
