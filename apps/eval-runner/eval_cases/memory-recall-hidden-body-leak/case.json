@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "memory-recall-hidden-body-leak",
+    "title": "Memory recall keeps hidden bodies out of prepared context",
+    "prompt": "Evaluate memory recall evidence and confirm hidden memory body text is not exposed through prepared context sources.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "memory recall quality: hidden body not exposed",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "memory",
+      "memory-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 111,
+        "input_tokens": 142,
+        "output_tokens": 25,
+        "forge_run_evidence": {
+          "session_id": "memory-hidden-body-session",
+          "loop_task_id": "memory-hidden-body-task",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "memory",
+                    "source_id": "memory-hidden-safe",
+                    "label": "Hidden project preference",
+                    "visibility": "hidden"
+                  }
+                ]
+              }
+            }
+          },
+          "memory_audit": {
+            "selected_memory_audit": [
+              {
+                "memory_id": "memory-hidden-safe",
+                "decision": "injected",
+                "status": "active",
+                "visibility": "hidden",
+                "project_match": true,
+                "profile_match": true
+              }
+            ]
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "memory recall quality: hidden body not exposed",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 142,
+            "output_tokens": 25
+          },
+          "failure_category": "none"
+        }
+      }
+    }
+  }
+}

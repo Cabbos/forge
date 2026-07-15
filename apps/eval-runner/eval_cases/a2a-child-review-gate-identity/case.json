@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "a2a-child-review-gate-identity",
+    "title": "A2A review gate identity binds child, parent, and session",
+    "prompt": "Evaluate A2A child evidence and confirm an approved review gate is explicitly bound to the matching child task, parent task, and session.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "A2A child evidence completeness: review gate identity",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "a2a",
+      "a2a-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 142,
+        "input_tokens": 192,
+        "output_tokens": 41,
+        "forge_run_evidence": {
+          "session_id": "a2a-review-identity-session",
+          "loop_task_id": "a2a-review-identity-parent-task",
+          "prompt": "Evaluate A2A child evidence and confirm an approved review gate is explicitly bound to the matching child task, parent task, and session.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  },
+                  {
+                    "kind": "a2a_child_capsule",
+                    "capsule_id": "child-capsule:a2a-review-identity-parent-task:child-review-identity"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "A2A child evidence completeness: review gate identity",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 192,
+            "output_tokens": 41
+          },
+          "failure_category": "none",
+          "a2a_child_capsules": [
+            {
+              "capsule_id": "child-capsule:a2a-review-identity-parent-task:child-review-identity",
+              "child_task_id": "child-review-identity",
+              "parent_task_id": "a2a-review-identity-parent-task",
+              "session_id": "a2a-review-identity-session",
+              "child_goal": "Bind the review gate to the matching parent session.",
+              "status": "completed",
+              "artifact_titles": [
+                "Patch proposal",
+                "Review decision"
+              ],
+              "changed_files": [
+                "src/App.tsx"
+              ],
+              "review_decision": "approved",
+              "review_gate": {
+                "kind": "approved",
+                "parent_task_id": "a2a-review-identity-parent-task",
+                "child_task_id": "child-review-identity",
+                "session_id": "a2a-review-identity-session"
+              },
+              "estimated_tokens": 74,
+              "next_action": "Use this child evidence only for the matching parent session."
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -2,6 +2,87 @@ use serde::{Deserialize, Serialize};
 
 use crate::loop_runtime::LoopUsageLedger;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentA2AChildEventKind {
+    Assigned,
+    LeaseClaimed,
+    Started,
+    Progress,
+    FileFact,
+    PatchProposed,
+    WaitingReview,
+    Completed,
+    Failed,
+    Abandoned,
+    Recovered,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentA2AChildRuntimeEvent {
+    pub kind: AgentA2AChildEventKind,
+    pub label: String,
+    pub detail: String,
+    pub created_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentA2AChildCapsule {
+    pub capsule_id: String,
+    pub parent_task_id: String,
+    pub child_task_id: String,
+    pub child_goal: String,
+    pub status: String,
+    pub artifact_titles: Vec<String>,
+    pub changed_files: Vec<String>,
+    pub review_decision: Option<String>,
+    pub failure_reason: Option<String>,
+    pub next_action: String,
+    pub estimated_tokens: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentA2AReviewGateKind {
+    Approved,
+    ChangesRequested,
+    Rejected,
+    StaleReview,
+    WrongParent,
+    MissingEvidence,
+    WaitingReview,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentA2AReviewGateProjection {
+    pub kind: AgentA2AReviewGateKind,
+    pub label: String,
+    pub reason: String,
+    pub completion_impact: String,
+    pub parent_task_id: Option<String>,
+    pub child_task_id: String,
+    pub reviewed_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentA2ARecoveryActionKind {
+    Retry,
+    Abandon,
+    Reassign,
+    InspectWorktree,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentA2ARecoveryActionSuggestion {
+    pub action: AgentA2ARecoveryActionKind,
+    pub label: String,
+    pub reason: String,
+    pub requires_human_approval: bool,
+    pub retryable: bool,
+    pub next_attempt: Option<u32>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentA2AProjection {
     pub running_count: usize,
@@ -72,6 +153,19 @@ pub struct AgentA2ATaskProjection {
     pub attempt_count: u32,
     #[serde(default)]
     pub max_attempts: u32,
+    // A2A runtime contract — compact, replayable child event facts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_events: Vec<AgentA2AChildRuntimeEvent>,
+    // Parent-consumable summaries of direct child tasks. These intentionally avoid
+    // embedding full child transcripts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_capsules: Vec<AgentA2AChildCapsule>,
+    // A2A Review Gate V2 — typed task-local review facts. Parent approval is not implied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_gate: Option<AgentA2AReviewGateProjection>,
+    // A2A Failure Recovery — suggestions only; callers must explicitly execute commands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_actions: Vec<AgentA2ARecoveryActionSuggestion>,
     // Phase 4-B — diff-derived file visibility (safe: parsed from existing artifacts).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_available: Option<bool>,

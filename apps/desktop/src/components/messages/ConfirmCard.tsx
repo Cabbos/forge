@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import type { BlockState } from "@/lib/protocol";
+import type { BlockState, PermissionLedgerEvent } from "@/lib/protocol";
 import { confirmResponse } from "@/lib/tauri";
 import { parseWriteBoundary } from "@/lib/write-boundary";
-import { useStore } from "@/store";
 import {
   ConfirmBoundaryInterruptedView,
   ConfirmBoundaryPendingView,
@@ -14,14 +13,14 @@ import {
   deriveConfirmPromptView,
 } from "@/components/messages/confirmPresentation";
 
-export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId?: string }) {
-  const updateBlock = useStore((s) => s.updateBlock);
+export function ConfirmCard({ block }: { block: BlockState; sessionId?: string }) {
   const interrupted = block.metadata.confirm_interrupted === true;
   const alreadyResolved = block.metadata.confirmed === true;
   const savedAnswer = block.metadata.answer as boolean | undefined;
   const [responded, setResponded] = useState(alreadyResolved);
   const [answer, setAnswer] = useState<boolean | null>(savedAnswer ?? null);
   const boundary = parseWriteBoundary(block.metadata.boundary);
+  const permissionEvidence = parsePermissionEvidence(block.metadata.permission_evidence);
   const promptView = deriveConfirmPromptView(block.content, block.metadata.kind);
 
   useEffect(() => {
@@ -41,28 +40,22 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
       setAnswer(null);
       return;
     }
-    // Persist confirmation state so it survives session reload
-    if (sessionId) {
-      updateBlock(sessionId, block.block_id, {
-        metadata: { ...block.metadata, confirmed: true, answer: approved },
-      });
-    }
   };
 
   if (boundary) {
     if (interrupted) {
-      return <ConfirmBoundaryInterruptedView boundary={boundary} />;
+      return <ConfirmBoundaryInterruptedView boundary={boundary} evidence={permissionEvidence} />;
     }
 
     if (responded) {
-      return <ConfirmBoundaryResolvedView boundary={boundary} answer={answer} />;
+      return <ConfirmBoundaryResolvedView boundary={boundary} answer={answer} evidence={permissionEvidence} />;
     }
 
-    return <ConfirmBoundaryPendingView boundary={boundary} onResponse={handleResponse} />;
+    return <ConfirmBoundaryPendingView boundary={boundary} evidence={permissionEvidence} onResponse={handleResponse} />;
   }
 
   if (interrupted) {
-    return <ConfirmPromptInterruptedView prompt={promptView} />;
+    return <ConfirmPromptInterruptedView prompt={promptView} evidence={permissionEvidence} />;
   }
 
   return (
@@ -70,7 +63,25 @@ export function ConfirmCard({ block, sessionId }: { block: BlockState; sessionId
       prompt={promptView}
       responded={responded}
       answer={answer}
+      evidence={permissionEvidence}
       onResponse={handleResponse}
     />
   );
+}
+
+function parsePermissionEvidence(value: unknown): PermissionLedgerEvent | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Partial<PermissionLedgerEvent>;
+  if (
+    typeof record.kind !== "string" ||
+    typeof record.workspace_path !== "string" ||
+    typeof record.risk_tier !== "string" ||
+    !Array.isArray(record.affected_files) ||
+    typeof record.operation !== "string" ||
+    typeof record.permission_mode !== "string" ||
+    typeof record.reason !== "string"
+  ) {
+    return null;
+  }
+  return record as PermissionLedgerEvent;
 }

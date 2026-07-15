@@ -99,6 +99,7 @@ pub(crate) fn pending_confirm_replay_event(
         question: descriptor.question.clone(),
         kind: descriptor.kind.clone(),
         boundary: descriptor.boundary.clone(),
+        permission_evidence: descriptor.permission_evidence.clone(),
         replayed_interrupted: true,
     }
 }
@@ -114,6 +115,14 @@ pub(crate) fn confirm_response_event(
         question: Some(descriptor.question.clone()),
         kind: Some(descriptor.kind.clone()),
         boundary: descriptor.boundary.clone(),
+        permission_evidence: Some(
+            crate::harness::permission_ledger::PermissionLedgerEvent::user_response(
+                session_id,
+                approved,
+                descriptor.permission_evidence.as_ref(),
+                descriptor.boundary.as_ref(),
+            ),
+        ),
         approved: Some(approved),
         responded_at_ms: now_ms(),
         reason: Some("user_response".to_string()),
@@ -125,6 +134,7 @@ pub(crate) fn minimal_confirm_response_event(
     session_id: &str,
     block_id: &str,
     approved: bool,
+    workspace: Option<&std::path::Path>,
 ) -> StreamEvent {
     StreamEvent::ConfirmResponse {
         session_id: session_id.to_string(),
@@ -132,6 +142,11 @@ pub(crate) fn minimal_confirm_response_event(
         question: None,
         kind: None,
         boundary: None,
+        permission_evidence: Some(
+            crate::harness::permission_ledger::PermissionLedgerEvent::user_response_with_workspace(
+                session_id, approved, None, None, workspace,
+            ),
+        ),
         approved: Some(approved),
         responded_at_ms: now_ms(),
         reason: Some("user_response".to_string()),
@@ -149,6 +164,7 @@ pub(crate) fn pending_confirm_response_replay_event(
         question: Some(descriptor.question.clone()),
         kind: Some(descriptor.kind.clone()),
         boundary: descriptor.boundary.clone(),
+        permission_evidence: descriptor.permission_evidence.clone(),
         approved: None,
         responded_at_ms: now_ms(),
         reason: Some("session_restored".to_string()),
@@ -448,6 +464,7 @@ mod tests {
             question: "Allow?".to_string(),
             kind: "file_write".to_string(),
             boundary: None,
+            permission_evidence: None,
             replayed_interrupted: false,
         };
         let json = serde_json::to_value(&normal).unwrap();
@@ -463,6 +480,7 @@ mod tests {
             question: "Allow?".to_string(),
             kind: "file_write".to_string(),
             boundary: None,
+            permission_evidence: None,
             replayed_interrupted: true,
         };
         let json = serde_json::to_value(&replay).unwrap();

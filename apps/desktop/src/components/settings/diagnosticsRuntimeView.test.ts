@@ -6,6 +6,7 @@ import {
   buildGatewaySessionEventRows,
   buildGatewaySessionInput,
   buildGatewayRuntimeSummary,
+  formatGatewayOwnershipSummary,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
   buildGatewayTriggerInput,
@@ -96,6 +97,71 @@ describe("buildGatewayRuntimeSummary", () => {
     assert.equal(summary.counts, "0 pending · 2 inputs · 0 claimed · 0 dead-letter");
   });
 
+  it("prefers runtime health snapshot counts over legacy flat counters", () => {
+    const summary = buildGatewayRuntimeSummary({
+      ok: true,
+      message: "Gateway runtime is reachable.",
+      uptime_seconds: 42,
+      active_sessions: 1,
+      pending_triggers: 0,
+      pending_session_inputs: 0,
+      pending_loop_tasks: 0,
+      running_loop_tasks: 0,
+      claimed_triggers: 0,
+      dead_letter_runs: 0,
+      recent_runs: [],
+      runtime_tasks: [],
+      runtime_health: {
+        gateway_queue: {
+          pending_triggers: 2,
+          pending_session_inputs: 1,
+          claimed_triggers: 1,
+          dead_letter_runs: 0,
+        },
+        loop_tasks: {
+          pending: 1,
+          running: 1,
+          stale_leases: 1,
+          orphaned: 1,
+          recoverable: 1,
+        },
+      },
+    });
+
+    assert.equal(summary.tone, "warn");
+    assert.equal(summary.statusText, "有积压");
+    assert.equal(
+      summary.counts,
+      "2 pending · 1 inputs · 1 claimed · 0 dead-letter · 1 loop pending · 1 loop running · 1 stale lease · 1 orphaned · 1 recoverable",
+    );
+  });
+
+  it("warns when gateway degraded mode is active", () => {
+    const summary = buildGatewayRuntimeSummary({
+      ok: true,
+      message: "Gateway runtime is reachable, but degraded mode is active.",
+      degraded_mode: {
+        active: true,
+        reason: "runtime task 'loop_runner' failed: panic",
+        fallback: "desktop_runtime",
+        recovery_command: "forge service restart",
+      },
+      uptime_seconds: 42,
+      active_sessions: 1,
+      pending_triggers: 0,
+      pending_session_inputs: 0,
+      claimed_triggers: 0,
+      dead_letter_runs: 0,
+      recent_runs: [],
+      runtime_tasks: [],
+    });
+
+    assert.equal(summary.tone, "warn");
+    assert.equal(summary.statusText, "降级中");
+    assert.equal(summary.counts, "0 pending · 0 inputs · 0 claimed · 0 dead-letter");
+    assert.equal(summary.recoveryCommand, "forge service restart");
+  });
+
   it("includes nonzero loop task and headless owner counters", () => {
     const summary = buildGatewayRuntimeSummary({
       ok: true,
@@ -109,6 +175,9 @@ describe("buildGatewayRuntimeSummary", () => {
       pending_loop_tasks: 2,
       running_loop_tasks: 1,
       stale_loop_task_leases: 1,
+      orphaned_loop_tasks: 1,
+      interrupted_loop_tasks: 1,
+      recoverable_loop_tasks: 2,
       dry_run_headless_owner_runs: 3,
       waiting_headless_owner_runs: 2,
       denied_headless_owner_runs: 1,
@@ -121,7 +190,25 @@ describe("buildGatewayRuntimeSummary", () => {
     assert.equal(summary.statusText, "有积压");
     assert.equal(
       summary.counts,
-      "0 pending · 0 inputs · 0 claimed · 0 dead-letter · 2 loop pending · 1 loop running · 1 stale lease · 3 owner dry-runs · 2 owners waiting · 1 owner denied · 1 owner expired",
+      "0 pending · 0 inputs · 0 claimed · 0 dead-letter · 2 loop pending · 1 loop running · 1 stale lease · 1 orphaned · 1 interrupted · 2 recoverable · 3 owner dry-runs · 2 owners waiting · 1 owner denied · 1 owner expired",
+    );
+  });
+});
+
+describe("formatGatewayOwnershipSummary", () => {
+  it("renders the patch proposal owner gate explicitly without implying file writes", () => {
+    assert.equal(
+      formatGatewayOwnershipSummary({
+        ownership_mode: "gateway_patch_proposal_owner",
+        gateway_default_enabled: false,
+        gateway_can_own_sessions: false,
+        requires_opt_in: true,
+        parity_gate: "proposal-only",
+        recovery_gate: "review-required",
+        required_action:
+          "Patch proposals require review; direct apply/write remains blocked.",
+      }),
+      "gateway patch proposal owner · default off · desktop owns sessions · parity proposal-only · recovery review-required",
     );
   });
 });

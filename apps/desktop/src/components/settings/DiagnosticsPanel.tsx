@@ -312,6 +312,8 @@ function GatewayRuntimePanel({
   const summary = buildGatewayRuntimeSummary(runtime);
   const triggerRows = buildGatewayTriggerRows(triggers);
   const sessionRows = buildGatewaySessionRows(sessions, Date.now());
+  const ownershipText = formatGatewayOwnership(runtime.ownership);
+  const degradedText = formatGatewayDegradedMode(runtime.degraded_mode);
   const Icon = STATUS_ICON[summary.tone] ?? CheckCircle;
   const cls = STATUS_CLASS[summary.tone] ?? STATUS_CLASS.pass;
   const handleEnqueueTrigger = async (event: FormEvent<HTMLFormElement>) => {
@@ -486,6 +488,16 @@ function GatewayRuntimePanel({
           <dt>队列</dt>
           <dd>{summary.counts}</dd>
         </div>
+        <div className="forge-settings-info-row">
+          <dt>归属</dt>
+          <dd>{ownershipText}</dd>
+        </div>
+        {degradedText && (
+          <div className="forge-settings-info-row">
+            <dt>降级</dt>
+            <dd>{degradedText}</dd>
+          </div>
+        )}
         <div className="forge-settings-info-row">
           <dt>会话</dt>
           <dd>
@@ -820,6 +832,19 @@ function formatRuntimeTaskName(name: string): string {
     default:
       return name.replace(/_/g, " ");
   }
+}
+
+function formatGatewayOwnership(ownership?: GatewayRuntimeStatus["ownership"]): string {
+  return formatGatewayOwnershipSummary(ownership);
+}
+
+function formatGatewayDegradedMode(
+  degraded?: GatewayRuntimeStatus["degraded_mode"],
+): string | null {
+  if (!degraded?.active) return null;
+  const fallback = degraded.fallback || "desktop_runtime";
+  const recovery = degraded.recovery_command || "forge service restart";
+  return `${degraded.reason || "Gateway degraded mode is active."} · fallback ${fallback} · recovery ${recovery}`;
 }
 
 function GatewayRuntimeRuns({

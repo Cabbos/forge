@@ -7,6 +7,7 @@ use crate::adapters::base::ChatMessage;
 use crate::agent::a2a::bus::AgentA2ABus;
 use crate::agent::goal_state::GoalLedger;
 use crate::agent::turn_state::AgentTurnState;
+use crate::harness::permission_ledger::PermissionLedgerEvent;
 use crate::harness::write_boundary::WriteBoundary;
 use crate::protocol::events::DeliverySummary;
 use crate::workflow::WorkflowState;
@@ -89,6 +90,8 @@ pub struct PendingConfirmDescriptor {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boundary: Option<WriteBoundary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_evidence: Option<PermissionLedgerEvent>,
     pub created_at_ms: u64,
 }
 
@@ -99,12 +102,18 @@ impl PendingConfirmDescriptor {
             question,
             kind,
             boundary: None,
+            permission_evidence: None,
             created_at_ms,
         }
     }
 
     pub fn with_boundary(mut self, boundary: WriteBoundary) -> Self {
         self.boundary = Some(boundary);
+        self
+    }
+
+    pub fn with_permission_evidence(mut self, evidence: PermissionLedgerEvent) -> Self {
+        self.permission_evidence = Some(evidence);
         self
     }
 }

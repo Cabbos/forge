@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "runtime-recovery-verification-missing",
+    "title": "Runtime recovery requests verification when evidence is missing",
+    "prompt": "Evaluate runtime recovery evidence for a task that lacks verification and confirm the recovery action asks for verification instead of claiming completion.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "cargo test loop_runtime::completion --lib",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "runtime-recovery",
+      "recovery-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 125,
+        "input_tokens": 150,
+        "output_tokens": 30,
+        "forge_run_evidence": {
+          "session_id": "recovery-verification-session",
+          "loop_task_id": "recovery-verification-task",
+          "prompt": "Evaluate runtime recovery evidence for a task that lacks verification and confirm the recovery action asks for verification instead of claiming completion.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "cargo test loop_runtime::completion --lib",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 150,
+            "output_tokens": 30
+          },
+          "failure_category": "none",
+          "completion_eligibility": {
+            "status": "blocked",
+            "commit_eligible": false,
+            "commit_blockers": [
+              "verification_missing"
+            ],
+            "facts": {
+              "verification": {
+                "status": "missing",
+                "reason": "verification_evidence_missing"
+              }
+            }
+          },
+          "recovery_cases": [
+            {
+              "case_id": "verify-1",
+              "kind": "verification_missing",
+              "verification_status": "missing",
+              "recovery_action": "request_verification"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

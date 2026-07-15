@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::agent::capability_context::{
@@ -6,11 +5,16 @@ use crate::agent::capability_context::{
     TurnCapabilitySnapshot, TurnInputIntent,
 };
 use crate::agent::context_builder::{ContextSourceKind, HiddenContextPart};
+use crate::agent::prepared_turn::{
+    build_prepared_turn, PreparedTurn, PreparedTurnBuildRequest, PreparedTurnMemoryAudit,
+};
 use crate::agent::session::{AgentSession, TurnInflightGuard};
 use crate::agent::time::now_ms;
 use crate::agent::turn_state::{AgentTurnInputIntent, AgentTurnMetadata};
 use crate::continuity::form_continuity_experience_context;
+use crate::forge_wiki::model::SelectedForgeWikiPage;
 use crate::harness::capability::CapabilityKind;
+use crate::harness::permissions::PermissionMode;
 use crate::harness::registry::CapabilityEntry;
 use crate::harness::Harness;
 use crate::ipc::delivery_summary::build_store_emit_delivery_summary;
@@ -29,9 +33,9 @@ use crate::ipc::send_input_continuity::{
 use crate::ipc::session_lifecycle::{
     save_session_snapshot_with_workflow, upgrade_missing_key_session_if_possible,
 };
-use crate::memory::facts::{MemoryFact, MemoryFactListFilter};
 use crate::memory::{
-    format_selected_memory_context, MemoryCategory, MemoryScope, SelectedContextMemory,
+    format_unified_memory_context, MemoryCategory, MemoryScope, RecallPlan, SelectedContextMemory,
+    UnifiedMemoryKind, UnifiedMemoryScope, UnifiedMemorySelection, UnifiedMemorySource,
 };
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -42,14 +46,15 @@ pub(crate) struct PreparedSendInputTurnContext {
     pub(crate) hidden_contexts: Vec<HiddenContextPart>,
     pub(crate) turn_metadata: AgentTurnMetadata,
     pub(crate) activation_text: String,
+    pub(crate) prepared_turn: PreparedTurn,
 }
 
 pub(crate) struct SendInputMemorySelection {
     pub(crate) selected: Vec<SelectedContextMemory>,
+    pub(crate) audit: Vec<PreparedTurnMemoryAudit>,
     pub(crate) context: Option<String>,
+    pub(crate) recall_plan: Option<RecallPlan>,
 }
-
-const MEMORY_FACT_CONTEXT_LIMIT: usize = 6;
 
 pub(crate) async fn resolve_send_input_session(
     app_handle: &tauri::AppHandle,
@@ -89,10 +94,48 @@ pub(crate) async fn select_send_input_memory_context(
     text: &str,
     project_path: &str,
 ) -> SendInputMemorySelection {
-    let mut selected = state.wiki_memory.select(text, Some(project_path), 8).await;
-    selected.extend(select_send_input_memory_facts(state, text));
-    let context = format_selected_memory_context(&selected);
-    SendInputMemorySelection { selected, context }
+    let unified_recall = match crate::ipc::unified_memory::select_unified_memories_for_send_input(
+        state,
+        text,
+        project_path,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            crate::app_log!("WARN", "[memory] unified recall failed: {}", error);
+            return SendInputMemorySelection {
+                selected: Vec::new(),
+                audit: Vec::new(),
+                context: None,
+                recall_plan: None,
+            };
+        }
+    };
+    let unified = unified_recall.selected;
+    if !unified.is_empty() {
+        let ids = unified
+            .iter()
+            .map(|selection| selection.record.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        crate::app_log!("INFO", "[memory] unified recalled records: {}", ids);
+    }
+    let context = format_unified_memory_context(&unified);
+    let audit = unified
+        .iter()
+        .map(|selection| unified_selection_to_audit(selection, project_path))
+        .collect();
+    let selected = unified
+        .into_iter()
+        .map(unified_selection_to_selected_context)
+        .collect();
+    SendInputMemorySelection {
+        selected,
+        audit,
+        context,
+        recall_plan: Some(unified_recall.plan),
+    }
 }
 
 pub(crate) async fn select_send_input_continuity_context(
@@ -182,6 +225,11 @@ pub(crate) struct PrepareSendInputTurnRequest<'a> {
     pub(crate) wiki_context: Option<String>,
     pub(crate) continuity_context: Option<String>,
     pub(crate) connector_context: Option<String>,
+    pub(crate) selected_memories: Vec<SelectedContextMemory>,
+    pub(crate) selected_memory_audit: Vec<PreparedTurnMemoryAudit>,
+    pub(crate) memory_recall_plan: Option<RecallPlan>,
+    pub(crate) selected_project_records: Vec<SelectedForgeWikiPage>,
+    pub(crate) permission_mode: PermissionMode,
 }
 
 async fn collect_turn_capability_snapshot(
@@ -246,6 +294,11 @@ pub(crate) async fn prepare_send_input_turn_context(
         wiki_context,
         continuity_context,
         connector_context,
+        selected_memories,
+        selected_memory_audit,
+        memory_recall_plan,
+        selected_project_records,
+        permission_mode,
     } = request;
     let project_path = session.harness.working_dir.to_string_lossy().to_string();
     let resolved_file_references = resolved_file_reference_paths_for_turn(
@@ -311,19 +364,31 @@ pub(crate) async fn prepare_send_input_turn_context(
             context,
         ));
     }
+    let workflow_route = workflow_route_label(workflow);
+    let workflow_phase = workflow_phase_label(workflow);
+    let prepared_turn = build_prepared_turn(PreparedTurnBuildRequest {
+        session_id,
+        project_path: &project_path,
+        user_text: text,
+        activation_text: &activation_text,
+        input_intent: &input_intent,
+        workflow_route: workflow_route.clone(),
+        workflow_phase: workflow_phase.clone(),
+        hidden_contexts: &hidden_contexts,
+        selected_memories: &selected_memories,
+        selected_memory_audit: &selected_memory_audit,
+        memory_recall_plan: memory_recall_plan.as_ref(),
+        selected_project_records: &selected_project_records,
+        permission_mode,
+        context_window_tokens: session.context_window_tokens,
+    });
     let turn_metadata = AgentTurnMetadata {
         session_id: session_id.to_string(),
         workspace_path: project_path,
         provider: session.agent_type.clone(),
         model: session.model_id.clone(),
-        route: serde_json::to_value(&workflow.route)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_else(|| workflow.developer_label.clone()),
-        phase: serde_json::to_value(&workflow.phase)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_else(|| workflow.developer_label.clone()),
+        route: workflow_route,
+        phase: workflow_phase,
         user_goal: text.to_string(),
         input_intent: AgentTurnInputIntent {
             slash_command: input_intent.slash_command.clone(),
@@ -340,7 +405,22 @@ pub(crate) async fn prepare_send_input_turn_context(
         hidden_contexts,
         turn_metadata,
         activation_text,
+        prepared_turn,
     }
+}
+
+fn workflow_route_label(workflow: &WorkflowState) -> String {
+    serde_json::to_value(&workflow.route)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| workflow.developer_label.clone())
+}
+
+fn workflow_phase_label(workflow: &WorkflowState) -> String {
+    serde_json::to_value(&workflow.phase)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| workflow.developer_label.clone())
 }
 
 pub(crate) async fn finalize_send_input_turn(
@@ -461,7 +541,6 @@ pub(crate) async fn select_send_input_contexts(
             selected: memory_selection.selected.clone(),
         },
     );
-    let continuity_context = select_send_input_continuity_context(state, text, project_path).await;
     let mcp_result =
         build_mcp_context(harness, &mcp_context_selections, app_handle, session_id).await;
     SendInputContextBundle {
@@ -469,7 +548,7 @@ pub(crate) async fn select_send_input_contexts(
         workflow,
         project_records,
         memory_selection,
-        continuity_context,
+        continuity_context: None,
         mcp_result,
     }
 }
@@ -485,6 +564,11 @@ pub(crate) struct BuildPreparedSendInputTurnRequest<'a> {
     pub(crate) wiki_context: Option<String>,
     pub(crate) continuity_context: Option<String>,
     pub(crate) connector_context: Option<String>,
+    pub(crate) selected_memories: Vec<SelectedContextMemory>,
+    pub(crate) selected_memory_audit: Vec<PreparedTurnMemoryAudit>,
+    pub(crate) memory_recall_plan: Option<RecallPlan>,
+    pub(crate) selected_project_records: Vec<SelectedForgeWikiPage>,
+    pub(crate) permission_mode: PermissionMode,
 }
 
 pub(crate) async fn build_prepared_send_input_turn(
@@ -501,6 +585,11 @@ pub(crate) async fn build_prepared_send_input_turn(
         wiki_context,
         continuity_context,
         connector_context,
+        selected_memories,
+        selected_memory_audit,
+        memory_recall_plan,
+        selected_project_records,
+        permission_mode,
     } = request;
 
     prepare_send_input_turn_context(PrepareSendInputTurnRequest {
@@ -514,8 +603,27 @@ pub(crate) async fn build_prepared_send_input_turn(
         wiki_context,
         continuity_context,
         connector_context,
+        selected_memories,
+        selected_memory_audit,
+        memory_recall_plan,
+        selected_project_records,
+        permission_mode,
     })
     .await
+}
+
+pub(crate) fn emit_prepared_send_input_turn(
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    prepared: &PreparedSendInputTurnContext,
+) {
+    crate::transcript::emit_stream_event(
+        app_handle,
+        StreamEvent::TurnPrepared {
+            session_id: session_id.to_string(),
+            prepared: prepared.prepared_turn.clone(),
+        },
+    );
 }
 
 pub(crate) struct RunReservedSendInputTurnRequest<'a> {
@@ -566,112 +674,89 @@ pub(crate) async fn run_reserved_send_input_turn(
     result
 }
 
-fn select_send_input_memory_facts(state: &Arc<AppState>, text: &str) -> Vec<SelectedContextMemory> {
-    let active_profile_id = state.profiles.active_profile_id();
-    let mut facts = Vec::new();
-    let mut seen = HashSet::new();
-
-    if let Some(profile_id) = active_profile_id.as_deref() {
-        for fact in state.memory_facts.list_with_filter(MemoryFactListFilter {
-            query: Some(text),
-            profile_id: Some(profile_id),
-        }) {
-            if seen.insert(fact.id.clone()) {
-                facts.push(fact);
-            }
-        }
-    }
-
-    for fact in state
-        .memory_facts
-        .list_with_filter(MemoryFactListFilter {
-            query: Some(text),
-            profile_id: None,
-        })
-        .into_iter()
-        .filter(|fact| fact.profile_id.is_none())
-    {
-        if seen.insert(fact.id.clone()) {
-            facts.push(fact);
-        }
-    }
-
-    facts.sort_by(|a, b| {
-        b.updated_at_ms
-            .cmp(&a.updated_at_ms)
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    facts
-        .into_iter()
-        .take(MEMORY_FACT_CONTEXT_LIMIT)
-        .map(memory_fact_to_selected_context)
-        .collect()
-}
-
-fn memory_fact_to_selected_context(fact: MemoryFact) -> SelectedContextMemory {
-    let scope_reason = if fact.profile_id.is_some() {
-        "来自当前资料档案的手动记忆"
-    } else {
-        "来自全局手动记忆"
-    };
-    let title = memory_fact_title(&fact);
-    let category = memory_fact_category(&fact);
+fn unified_selection_to_selected_context(
+    selection: UnifiedMemorySelection,
+) -> SelectedContextMemory {
+    let category = unified_kind_to_memory_category(&selection.record.kind);
+    let scope = unified_scope_to_memory_scope(&selection.record.scope);
     SelectedContextMemory {
-        memory_id: format!("fact:{}", fact.id),
-        title,
-        body: fact.text,
+        memory_id: selection.record.id,
+        title: selection.record.title,
+        body: selection.record.body,
         category,
-        scope: MemoryScope::UserProfile,
-        score: 1.0,
-        reason: scope_reason.to_string(),
-        injected: true,
+        scope,
+        score: selection.score,
+        reason: selection.reason,
+        injected: selection.injected,
     }
 }
 
-fn memory_fact_title(fact: &MemoryFact) -> String {
-    if !fact.tags.is_empty() {
-        return format!("手动记忆: {}", fact.tags.join(", "));
-    }
-    let summary = fact.text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = summary.chars();
-    let title = chars.by_ref().take(48).collect::<String>();
-    if chars.next().is_some() {
-        format!("{title}...")
-    } else if title.is_empty() {
-        "手动记忆".to_string()
-    } else {
-        title
+fn unified_selection_to_audit(
+    selection: &UnifiedMemorySelection,
+    project_path: &str,
+) -> PreparedTurnMemoryAudit {
+    PreparedTurnMemoryAudit {
+        memory_id: selection.record.id.clone(),
+        source: unified_source_label(&selection.record.source).to_string(),
+        source_id: selection.record.source_id.clone(),
+        kind: unified_kind_label(&selection.record.kind).to_string(),
+        score: selection.score,
+        reason: selection.reason.clone(),
+        project_match: selection
+            .record
+            .project_path
+            .as_deref()
+            .is_some_and(|record_project| {
+                normalize_path(record_project) == normalize_path(project_path)
+            }),
+        profile_match: selection.record.profile_id.is_some(),
+        injected: selection.injected,
     }
 }
 
-fn memory_fact_category(fact: &MemoryFact) -> MemoryCategory {
-    if fact
-        .tags
-        .iter()
-        .any(|tag| tag_matches(tag, &["preference", "pref", "偏好"]))
-    {
-        return MemoryCategory::Preference;
+fn unified_source_label(source: &UnifiedMemorySource) -> &'static str {
+    match source {
+        UnifiedMemorySource::WikiMemory => "wiki_memory",
+        UnifiedMemorySource::MemoryFact => "memory_fact",
+        UnifiedMemorySource::ContinuityExperience => "continuity_experience",
     }
-    if fact
-        .tags
-        .iter()
-        .any(|tag| tag_matches(tag, &["decision", "决定"]))
-    {
-        return MemoryCategory::Decision;
-    }
-    if fact
-        .tags
-        .iter()
-        .any(|tag| tag_matches(tag, &["task", "todo", "progress", "任务", "进度"]))
-    {
-        return MemoryCategory::TaskState;
-    }
-    MemoryCategory::ProjectFact
 }
 
-fn tag_matches(tag: &str, needles: &[&str]) -> bool {
-    let tag = tag.trim().to_lowercase();
-    needles.iter().any(|needle| tag.contains(needle))
+fn unified_kind_label(kind: &UnifiedMemoryKind) -> &'static str {
+    match kind {
+        UnifiedMemoryKind::Preference => "preference",
+        UnifiedMemoryKind::ProjectFact => "project_fact",
+        UnifiedMemoryKind::Decision => "decision",
+        UnifiedMemoryKind::TaskState => "task_state",
+        UnifiedMemoryKind::Lesson => "lesson",
+        UnifiedMemoryKind::BugPattern => "bug_pattern",
+        UnifiedMemoryKind::Workflow => "workflow",
+    }
+}
+
+fn normalize_path(path: &str) -> String {
+    path.trim_end_matches('/').to_string()
+}
+
+fn unified_kind_to_memory_category(kind: &UnifiedMemoryKind) -> MemoryCategory {
+    match kind {
+        UnifiedMemoryKind::Preference => MemoryCategory::Preference,
+        UnifiedMemoryKind::Decision => MemoryCategory::Decision,
+        UnifiedMemoryKind::TaskState => MemoryCategory::TaskState,
+        UnifiedMemoryKind::ProjectFact
+        | UnifiedMemoryKind::Lesson
+        | UnifiedMemoryKind::BugPattern
+        | UnifiedMemoryKind::Workflow => MemoryCategory::ProjectFact,
+    }
+}
+
+fn unified_scope_to_memory_scope(scope: &UnifiedMemoryScope) -> MemoryScope {
+    match scope {
+        UnifiedMemoryScope::Session => MemoryScope::Session,
+        UnifiedMemoryScope::UserProfile => MemoryScope::UserProfile,
+        UnifiedMemoryScope::Project => MemoryScope::Project,
+        UnifiedMemoryScope::Document => MemoryScope::Document,
+    }
 }
 
 #[cfg(test)]

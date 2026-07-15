@@ -1,7 +1,7 @@
 use crate::loop_runtime::gates::{HumanGateDecision, HumanGateDecisionKind};
 use crate::loop_runtime::types::{
-    EvidenceRecord, LoopCompletionResult, LoopCompletionStatus, LoopReviewStatus, LoopTaskRecord,
-    LoopTaskStatus,
+    CompletionFactBucket, CompletionFactStatus, EvidenceRecord, LoopCompletionEligibilityFacts,
+    LoopCompletionResult, LoopCompletionStatus, LoopReviewStatus, LoopTaskRecord, LoopTaskStatus,
 };
 
 pub fn evaluate_completion(
@@ -163,6 +163,7 @@ fn result_with_review_facts(
         commit_blockers: facts.commit_blockers,
         human_gate_id: facts.human_gate_id,
         last_review_decision: facts.last_review_decision,
+        eligibility_facts: facts.eligibility_facts,
     }
 }
 
@@ -234,6 +235,7 @@ struct CompletionFacts {
     commit_blockers: Vec<String>,
     human_gate_id: Option<String>,
     last_review_decision: Option<HumanGateDecision>,
+    eligibility_facts: LoopCompletionEligibilityFacts,
 }
 
 fn completion_facts(
@@ -285,6 +287,13 @@ fn completion_facts(
             review_status,
             LoopReviewStatus::Approved | LoopReviewStatus::NotRequired
         );
+    let eligibility_facts = completion_eligibility_facts(
+        task,
+        evidence,
+        contract_blockers,
+        &commit_blockers,
+        review_status,
+    );
 
     CompletionFacts {
         review_status,
@@ -292,7 +301,235 @@ fn completion_facts(
         commit_blockers,
         human_gate_id,
         last_review_decision,
+        eligibility_facts,
     }
+}
+
+fn completion_eligibility_facts(
+    task: &LoopTaskRecord,
+    evidence: &[EvidenceRecord],
+    contract_blockers: &[String],
+    commit_blockers: &[String],
+    review_status: LoopReviewStatus,
+) -> LoopCompletionEligibilityFacts {
+    LoopCompletionEligibilityFacts {
+        verification: verification_fact(task, evidence, contract_blockers),
+        changed_file_scope: CompletionFactBucket::new(
+            CompletionFactStatus::Unknown,
+            "changed_file_scope_not_connected_to_completion_contract",
+        ),
+        permission: CompletionFactBucket::new(
+            CompletionFactStatus::Unknown,
+            "permission_evidence_not_connected_to_completion_contract",
+        ),
+        review: review_fact(review_status, commit_blockers),
+        docs: docs_fact(task, evidence, contract_blockers),
+        eval: CompletionFactBucket::new(
+            CompletionFactStatus::Unknown,
+            "eval_evidence_not_connected_to_completion_contract",
+        ),
+        residual_risk: residual_risk_fact(task, evidence, contract_blockers),
+        commit: commit_fact(task, evidence, commit_blockers),
+    }
+}
+
+fn verification_fact(
+    task: &LoopTaskRecord,
+    evidence: &[EvidenceRecord],
+    contract_blockers: &[String],
+) -> CompletionFactBucket {
+    if task.completion_contract.required_checks.is_empty() {
+        return CompletionFactBucket::new(CompletionFactStatus::NotRequired, "no_required_checks");
+    }
+    let blockers = contract_blockers
+        .iter()
+        .filter(|reason| reason.starts_with("missing_required_check:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !blockers.is_empty() {
+        return CompletionFactBucket::new(CompletionFactStatus::Missing, "required_checks_missing")
+            .with_blockers(blockers);
+    }
+    let evidence_ids = evidence
+        .iter()
+        .filter_map(|evidence| match evidence {
+            EvidenceRecord::Command {
+                evidence_id,
+                check_name,
+                success: true,
+                ..
+            } if task
+                .completion_contract
+                .required_checks
+                .iter()
+                .any(|required| required == check_name) =>
+            {
+                Some(evidence_id.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    CompletionFactBucket::new(CompletionFactStatus::Satisfied, "required_checks_satisfied")
+        .with_evidence_ids(evidence_ids)
+}
+
+fn docs_fact(
+    task: &LoopTaskRecord,
+    evidence: &[EvidenceRecord],
+    contract_blockers: &[String],
+) -> CompletionFactBucket {
+    if !task.completion_contract.require_docs {
+        return CompletionFactBucket::new(CompletionFactStatus::NotRequired, "docs_not_required");
+    }
+    let blockers = contract_blockers
+        .iter()
+        .filter(|reason| reason.as_str() == "missing_docs")
+        .cloned()
+        .collect::<Vec<_>>();
+    if !blockers.is_empty() {
+        return CompletionFactBucket::new(CompletionFactStatus::Missing, "docs_missing")
+            .with_blockers(blockers);
+    }
+    let evidence_ids = evidence
+        .iter()
+        .filter_map(|evidence| match evidence {
+            EvidenceRecord::Docs { evidence_id, paths } if !paths.is_empty() => {
+                Some(evidence_id.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    CompletionFactBucket::new(CompletionFactStatus::Satisfied, "docs_evidence_satisfied")
+        .with_evidence_ids(evidence_ids)
+}
+
+fn residual_risk_fact(
+    task: &LoopTaskRecord,
+    evidence: &[EvidenceRecord],
+    contract_blockers: &[String],
+) -> CompletionFactBucket {
+    if task.completion_contract.max_gitnexus_risk.is_none() {
+        return CompletionFactBucket::new(
+            CompletionFactStatus::NotRequired,
+            "residual_risk_not_required",
+        );
+    }
+    let blockers = contract_blockers
+        .iter()
+        .filter(|reason| {
+            reason.as_str() == "missing_gitnexus_risk"
+                || reason.starts_with("invalid_max_gitnexus_risk:")
+                || reason.starts_with("invalid_gitnexus_risk:")
+                || reason.starts_with("gitnexus_risk_exceeded:")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !blockers.is_empty() {
+        let status = if blockers
+            .iter()
+            .any(|blocker| blocker.as_str() == "missing_gitnexus_risk")
+        {
+            CompletionFactStatus::Missing
+        } else {
+            CompletionFactStatus::Blocked
+        };
+        return CompletionFactBucket::new(status, "residual_risk_blocked").with_blockers(blockers);
+    }
+    let evidence_ids = evidence
+        .iter()
+        .rev()
+        .find_map(|evidence| match evidence {
+            EvidenceRecord::GitNexus { evidence_id, .. } => Some(vec![evidence_id.clone()]),
+            _ => None,
+        })
+        .unwrap_or_default();
+    if evidence_ids.is_empty() {
+        CompletionFactBucket::new(CompletionFactStatus::Missing, "residual_risk_missing")
+            .with_blockers(vec!["missing_gitnexus_risk".to_string()])
+    } else {
+        CompletionFactBucket::new(CompletionFactStatus::Satisfied, "residual_risk_satisfied")
+            .with_evidence_ids(evidence_ids)
+    }
+}
+
+fn review_fact(
+    review_status: LoopReviewStatus,
+    commit_blockers: &[String],
+) -> CompletionFactBucket {
+    match review_status {
+        LoopReviewStatus::NotRequired => {
+            CompletionFactBucket::new(CompletionFactStatus::NotRequired, "review_not_required")
+        }
+        LoopReviewStatus::Approved => {
+            CompletionFactBucket::new(CompletionFactStatus::Satisfied, "review_approved")
+        }
+        LoopReviewStatus::ReadyForReview => {
+            CompletionFactBucket::new(CompletionFactStatus::Missing, "review_decision_missing")
+                .with_blockers(review_blockers(commit_blockers))
+        }
+        LoopReviewStatus::Rejected => {
+            CompletionFactBucket::new(CompletionFactStatus::Blocked, "review_rejected")
+                .with_blockers(review_blockers(commit_blockers))
+        }
+        LoopReviewStatus::Blocked => {
+            CompletionFactBucket::new(CompletionFactStatus::Blocked, "review_blocked")
+                .with_blockers(review_blockers(commit_blockers))
+        }
+    }
+}
+
+fn commit_fact(
+    task: &LoopTaskRecord,
+    evidence: &[EvidenceRecord],
+    commit_blockers: &[String],
+) -> CompletionFactBucket {
+    if !task.completion_contract.require_commit {
+        return CompletionFactBucket::new(CompletionFactStatus::NotRequired, "commit_not_required");
+    }
+    let blockers = commit_blockers
+        .iter()
+        .filter(|blocker| {
+            blocker.as_str() == "missing_commit"
+                || blocker.as_str() == "commit_missing_human_gate"
+                || blocker.starts_with("commit_without_approved_human_gate:")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !blockers.is_empty() {
+        let status = if blockers
+            .iter()
+            .any(|blocker| blocker.as_str() == "missing_commit")
+        {
+            CompletionFactStatus::Missing
+        } else {
+            CompletionFactStatus::Blocked
+        };
+        return CompletionFactBucket::new(status, "commit_blocked").with_blockers(blockers);
+    }
+    let evidence_ids = evidence
+        .iter()
+        .filter_map(|evidence| match evidence {
+            EvidenceRecord::Commit { evidence_id, .. } => Some(evidence_id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    CompletionFactBucket::new(CompletionFactStatus::Satisfied, "commit_evidence_satisfied")
+        .with_evidence_ids(evidence_ids)
+}
+
+fn review_blockers(commit_blockers: &[String]) -> Vec<String> {
+    commit_blockers
+        .iter()
+        .filter(|blocker| {
+            blocker.as_str() == "missing_human_review"
+                || blocker.starts_with("review_rejected:")
+                || blocker.starts_with("review_canceled:")
+                || blocker.as_str() == "review_rejected"
+                || blocker.as_str() == "review_canceled"
+                || blocker.starts_with("open_human_gate:")
+        })
+        .cloned()
+        .collect()
 }
 
 fn latest_review_decision(evidence: &[EvidenceRecord]) -> Option<(&str, &HumanGateDecision)> {
@@ -498,6 +735,65 @@ mod tests {
         assert_eq!(result.commit_blockers, vec!["missing_human_review"]);
         assert_eq!(result.human_gate_id, None);
         assert_eq!(result.last_review_decision, None);
+    }
+
+    #[test]
+    fn completion_result_includes_v2_eligibility_fact_buckets() {
+        let task = LoopTaskRecord::new_for_test("task-1", "finish runtime")
+            .with_completion_contract(LoopCompletionContract {
+                required_checks: vec!["build:desktop".to_string()],
+                max_gitnexus_risk: Some("medium".to_string()),
+                require_docs: true,
+                require_commit: false,
+                require_review_decision: true,
+                stop_on_budget_exceeded: true,
+            });
+
+        let result = evaluate_completion(
+            &task,
+            &[
+                EvidenceRecord::command_for_test("build:desktop", true),
+                EvidenceRecord::gitnexus_for_test("low"),
+                EvidenceRecord::docs_for_test(vec!["README.md"]),
+            ],
+        );
+
+        assert_eq!(
+            result.eligibility_facts.verification.status,
+            crate::loop_runtime::CompletionFactStatus::Satisfied
+        );
+        assert_eq!(
+            result.eligibility_facts.verification.evidence_ids,
+            vec!["evidence-command-build:desktop"]
+        );
+        assert_eq!(
+            result.eligibility_facts.docs.status,
+            crate::loop_runtime::CompletionFactStatus::Satisfied
+        );
+        assert_eq!(
+            result.eligibility_facts.residual_risk.status,
+            crate::loop_runtime::CompletionFactStatus::Satisfied
+        );
+        assert_eq!(
+            result.eligibility_facts.review.status,
+            crate::loop_runtime::CompletionFactStatus::Missing
+        );
+        assert_eq!(
+            result.eligibility_facts.review.blockers,
+            vec!["missing_human_review"]
+        );
+        assert_eq!(
+            result.eligibility_facts.changed_file_scope.status,
+            crate::loop_runtime::CompletionFactStatus::Unknown
+        );
+        assert_eq!(
+            result.eligibility_facts.permission.status,
+            crate::loop_runtime::CompletionFactStatus::Unknown
+        );
+        assert_eq!(
+            result.eligibility_facts.eval.status,
+            crate::loop_runtime::CompletionFactStatus::Unknown
+        );
     }
 
     #[test]

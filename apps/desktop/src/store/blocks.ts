@@ -68,6 +68,10 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     return applyConfirmResponseToBlocks(blocks, event);
   }
 
+  if (event_type === "permission_decision") {
+    return applyPermissionDecisionToBlocks(blocks, event);
+  }
+
   if (event_type === "context_compacted" || event_type === "context_compact_skipped") {
     return applyCompactResultToBlocks(blocks, event);
   }
@@ -78,12 +82,14 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
     if (existingIdx >= 0) {
       next[existingIdx] = {
         ...next[existingIdx],
+        event_type: next[existingIdx].event_type === "permission_decision" ? "tool_call" : next[existingIdx].event_type,
         content: event.result,
         isComplete: true,
         metadata: {
           ...next[existingIdx].metadata,
           is_error: event.is_error,
           duration_ms: event.duration_ms,
+          tool_name: next[existingIdx].metadata.tool_name ?? "Tool",
           ...interruptedToolResultMetadata(event.result, event.is_error),
         },
       };
@@ -230,7 +236,40 @@ export function applyConfirmResponseToBlocks(
       metadata: confirmResponseMetadata({
         kind: event.kind ?? "confirm",
         boundary: event.boundary ?? null,
+        permission_evidence: event.permission_evidence ?? null,
       }, event, true),
+    },
+  ];
+}
+
+export function applyPermissionDecisionToBlocks(
+  blocks: BlockState[],
+  event: Extract<StreamEvent, { event_type: "permission_decision" }>,
+): BlockState[] {
+  const next = [...blocks];
+  const existingIdx = next.findIndex((block) => block.block_id === event.block_id);
+  if (existingIdx >= 0) {
+    const existing = next[existingIdx];
+    next[existingIdx] = {
+      ...existing,
+      metadata: {
+        ...existing.metadata,
+        permission_evidence: event.evidence,
+      },
+    };
+    return next;
+  }
+
+  return [
+    ...next,
+    {
+      block_id: event.block_id,
+      event_type: "permission_decision",
+      content: "",
+      isComplete: false,
+      metadata: {
+        permission_evidence: event.evidence,
+      },
     },
   ];
 }
@@ -247,6 +286,7 @@ function confirmResponseMetadata(
     ...base,
     kind: event.kind ?? base.kind,
     boundary: event.boundary ?? base.boundary ?? null,
+    permission_evidence: event.permission_evidence ?? base.permission_evidence ?? null,
     confirmed: true,
     answer: event.approved,
     confirm_response_reason: event.reason ?? null,
@@ -393,7 +433,7 @@ export function findToolResultTargetBlockIndex(blocks: BlockState[], blockId: st
   if (shellIdx >= 0) return shellIdx;
   return blocks.findIndex((block) =>
     block.block_id === blockId &&
-    (block.event_type === "tool_call" || block.event_type === "thinking")
+    (block.event_type === "tool_call" || block.event_type === "thinking" || block.event_type === "permission_decision")
   );
 }
 
@@ -514,6 +554,7 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
           metadata: {
             kind: event.kind,
             boundary: event.boundary ?? null,
+            permission_evidence: event.permission_evidence ?? null,
             confirmed: true,
             answer: null,
             confirm_interrupted: true,
@@ -528,6 +569,7 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
         metadata: {
           kind: event.kind,
           boundary: event.boundary ?? null,
+          permission_evidence: event.permission_evidence ?? null,
         },
       };
     case "context_compact_start":

@@ -51,6 +51,28 @@ impl WikiMemoryStore {
             .collect()
     }
 
+    pub async fn list_all_statuses(&self, filter: MemoryListFilter) -> Vec<WikiMemory> {
+        let memories = self.memories.read().unwrap_or_else(|err| err.into_inner());
+        memories
+            .iter()
+            .filter(|memory| {
+                matches!(
+                    memory.status,
+                    MemoryStatus::Accepted | MemoryStatus::Pinned | MemoryStatus::Archived
+                )
+            })
+            .filter(|memory| !is_hidden_candidate(memory, &memories))
+            .filter(|memory| {
+                filter
+                    .scope
+                    .as_ref()
+                    .is_none_or(|scope| &memory.scope == scope)
+            })
+            .filter(|memory| matches_project_filter(memory, filter.project_path.as_deref()))
+            .cloned()
+            .collect()
+    }
+
     pub async fn upsert_candidate(
         &self,
         candidate: WikiMemory,

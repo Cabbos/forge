@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if [ "$FORGE_FEISHU_SYNC_SKIP" = "1" ]; then
+  exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)" || exit 0
+node scripts/sync-forge-feishu.mjs --hook post-commit --commit HEAD || true

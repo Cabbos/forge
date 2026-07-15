@@ -25,6 +25,7 @@ pub mod session_input_inbox;
 pub mod session_lifecycle;
 pub mod session_store_handlers;
 pub mod settings_handlers;
+pub mod unified_memory;
 pub mod workflow_handlers;
 pub mod workspace;
 pub mod workspace_files;

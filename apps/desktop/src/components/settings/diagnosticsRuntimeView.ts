@@ -3,6 +3,9 @@ export type GatewayRuntimeSummaryTone = "pass" | "warn" | "fail";
 export interface GatewayRuntimeSnapshotLike {
   ok: boolean;
   message: string;
+  ownership?: GatewayOwnershipCapabilityLike;
+  degraded_mode?: GatewayDegradedModeLike;
+  runtime_health?: RuntimeHealthSnapshotLike;
   uptime_seconds: number;
   active_sessions: number;
   pending_triggers: number;
@@ -11,6 +14,9 @@ export interface GatewayRuntimeSnapshotLike {
   pending_loop_tasks?: number;
   running_loop_tasks?: number;
   stale_loop_task_leases?: number;
+  orphaned_loop_tasks?: number;
+  interrupted_loop_tasks?: number;
+  recoverable_loop_tasks?: number;
   dry_run_headless_owner_runs?: number;
   waiting_headless_owner_runs?: number;
   denied_headless_owner_runs?: number;
@@ -20,6 +26,53 @@ export interface GatewayRuntimeSnapshotLike {
   recent_runs: unknown[];
   recent_session_inputs?: unknown[];
   runtime_tasks?: GatewayRuntimeTaskLike[];
+}
+
+export interface RuntimeHealthSnapshotLike {
+  loop_tasks?: RuntimeLoopTaskHealthLike;
+  gateway_queue?: RuntimeGatewayQueueHealthLike;
+}
+
+export interface RuntimeLoopTaskHealthLike {
+  pending?: number;
+  running?: number;
+  stale_leases?: number;
+  orphaned?: number;
+  interrupted?: number;
+  recoverable?: number;
+}
+
+export interface RuntimeGatewayQueueHealthLike {
+  pending_triggers?: number;
+  claimed_triggers?: number;
+  pending_session_inputs?: number;
+  dead_letter_runs?: number;
+}
+
+export interface GatewayOwnershipCapabilityLike {
+  ownership_mode?:
+    | "local_default"
+    | "gateway_opt_in"
+    | "gateway_opt_in_dry_run"
+    | "gateway_read_only_owner"
+    | "gateway_patch_proposal_owner"
+    | "gateway_tool_owner_blocked_by_default"
+    | string;
+  gateway_default_enabled?: boolean;
+  gateway_can_own_sessions?: boolean;
+  requires_opt_in?: boolean;
+  parity_gate?: string;
+  recovery_gate?: string;
+  required_action?: string;
+}
+
+export interface GatewayDegradedModeLike {
+  active?: boolean;
+  reason?: string;
+  fallback?: string;
+  input_policy?: string;
+  confirmation_policy?: string;
+  recovery_command?: string;
 }
 
 export interface GatewayRuntimeTaskLike {
@@ -44,6 +97,38 @@ export interface GatewayRuntimeSummary {
   tone: GatewayRuntimeSummaryTone;
   statusText: string;
   counts: string;
+  recoveryCommand?: string;
+}
+
+export function formatGatewayOwnershipSummary(
+  ownership?: GatewayOwnershipCapabilityLike,
+): string {
+  const mode = formatGatewayOwnershipMode(ownership?.ownership_mode);
+  const defaultState = ownership?.gateway_default_enabled ? "default on" : "default off";
+  const canOwn = ownership?.gateway_can_own_sessions ? "can own sessions" : "desktop owns sessions";
+  const parity = ownership?.parity_gate ?? "pending";
+  const recovery = ownership?.recovery_gate ?? "pending";
+  return `${mode} · ${defaultState} · ${canOwn} · parity ${parity} · recovery ${recovery}`;
+}
+
+function formatGatewayOwnershipMode(
+  mode?: GatewayOwnershipCapabilityLike["ownership_mode"],
+): string {
+  switch (mode) {
+    case "gateway_opt_in":
+      return "gateway opt-in";
+    case "gateway_opt_in_dry_run":
+      return "gateway opt-in dry-run";
+    case "gateway_read_only_owner":
+      return "gateway read-only owner";
+    case "gateway_patch_proposal_owner":
+      return "gateway patch proposal owner";
+    case "gateway_tool_owner_blocked_by_default":
+      return "gateway tool owner blocked";
+    case "local_default":
+    default:
+      return "local default";
+  }
 }
 
 export interface GatewayTriggerFormState {
@@ -179,10 +264,26 @@ export function buildGatewayRuntimeSummary(
   const runningTasks = runtimeTasks.filter((task) => task.running).length;
   const taskCounts =
     runtimeTasks.length > 0 ? ` · ${runningTasks}/${runtimeTasks.length} loops` : "";
-  const pendingSessionInputs = status.pending_session_inputs ?? 0;
-  const pendingLoopTasks = status.pending_loop_tasks ?? 0;
-  const runningLoopTasks = status.running_loop_tasks ?? 0;
-  const staleLoopTaskLeases = status.stale_loop_task_leases ?? 0;
+  const pendingSessionInputs =
+    status.runtime_health?.gateway_queue?.pending_session_inputs ?? status.pending_session_inputs ?? 0;
+  const pendingTriggers =
+    status.runtime_health?.gateway_queue?.pending_triggers ?? status.pending_triggers;
+  const claimedTriggers =
+    status.runtime_health?.gateway_queue?.claimed_triggers ?? status.claimed_triggers;
+  const deadLetterRuns =
+    status.runtime_health?.gateway_queue?.dead_letter_runs ?? status.dead_letter_runs;
+  const pendingLoopTasks =
+    status.runtime_health?.loop_tasks?.pending ?? status.pending_loop_tasks ?? 0;
+  const runningLoopTasks =
+    status.runtime_health?.loop_tasks?.running ?? status.running_loop_tasks ?? 0;
+  const staleLoopTaskLeases =
+    status.runtime_health?.loop_tasks?.stale_leases ?? status.stale_loop_task_leases ?? 0;
+  const orphanedLoopTasks =
+    status.runtime_health?.loop_tasks?.orphaned ?? status.orphaned_loop_tasks ?? 0;
+  const interruptedLoopTasks =
+    status.runtime_health?.loop_tasks?.interrupted ?? status.interrupted_loop_tasks ?? 0;
+  const recoverableLoopTasks =
+    status.runtime_health?.loop_tasks?.recoverable ?? status.recoverable_loop_tasks ?? 0;
   const dryRunOwnerRuns = status.dry_run_headless_owner_runs ?? 0;
   const waitingOwnerRuns = status.waiting_headless_owner_runs ?? 0;
   const deniedOwnerRuns = status.denied_headless_owner_runs ?? 0;
@@ -193,6 +294,9 @@ export function buildGatewayRuntimeSummary(
     pendingLoopTasks > 0 ? `${pendingLoopTasks} loop pending` : null,
     runningLoopTasks > 0 ? `${runningLoopTasks} loop running` : null,
     staleLoopTaskLeases > 0 ? `${staleLoopTaskLeases} stale lease` : null,
+    orphanedLoopTasks > 0 ? `${orphanedLoopTasks} orphaned` : null,
+    interruptedLoopTasks > 0 ? `${interruptedLoopTasks} interrupted` : null,
+    recoverableLoopTasks > 0 ? `${recoverableLoopTasks} recoverable` : null,
     dryRunOwnerRuns > 0
       ? `${dryRunOwnerRuns} owner dry-run${dryRunOwnerRuns === 1 ? "" : "s"}`
       : null,
@@ -202,7 +306,8 @@ export function buildGatewayRuntimeSummary(
   ].filter(Boolean);
   const loopCounters =
     loopCounterParts.length > 0 ? ` · ${loopCounterParts.join(" · ")}` : "";
-  const counts = `${status.pending_triggers} pending · ${pendingSessionInputs} inputs · ${status.claimed_triggers} claimed · ${status.dead_letter_runs} dead-letter${taskCounts}${loopCounters}`;
+  const counts = `${pendingTriggers} pending · ${pendingSessionInputs} inputs · ${claimedTriggers} claimed · ${deadLetterRuns} dead-letter${taskCounts}${loopCounters}`;
+  const degradedActive = status.degraded_mode?.active === true;
 
   if (!status.ok) {
     return {
@@ -212,8 +317,17 @@ export function buildGatewayRuntimeSummary(
     };
   }
 
+  if (degradedActive) {
+    return {
+      tone: "warn",
+      statusText: "降级中",
+      counts,
+      recoveryCommand: status.degraded_mode?.recovery_command || "forge service restart",
+    };
+  }
+
   if (
-    status.pending_triggers > 0 ||
+    pendingTriggers > 0 ||
     pendingSessionInputs > 0 ||
     pendingLoopTasks > 0 ||
     runningLoopTasks > 0 ||
@@ -222,8 +336,8 @@ export function buildGatewayRuntimeSummary(
     waitingOwnerRuns > 0 ||
     deniedOwnerRuns > 0 ||
     expiredOwnerRuns > 0 ||
-    status.claimed_triggers > 0 ||
-    status.dead_letter_runs > 0 ||
+    claimedTriggers > 0 ||
+    deadLetterRuns > 0 ||
     runtimeTasks.some((task) => !task.running || task.last_error)
   ) {
     return {

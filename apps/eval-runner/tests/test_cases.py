@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.cases import CaseLoadError, load_cases
-from app.models import AgentTrace, FailureCategory, VerificationResult
+from app.models import AgentTrace, FailureCategory, ForgeRunEvidence, VerificationResult
 
 
 def write_case(cases_dir: Path, case_id: str, *, title: str | None = None) -> Path:
@@ -86,6 +86,161 @@ def test_failed_trace_can_be_promoted_to_eval_case() -> None:
     assert task.verification_command == "pytest"
     assert task.metadata["source"] == "trace"
     assert task.metadata["failure_reason"] == "test failed"
+
+
+def test_trace_promotion_includes_forge_run_evidence_metadata() -> None:
+    from app.trace_import import case_from_trace
+
+    trace = make_trace(
+        task_id="forge-runtime-failure",
+        error="verification_failed",
+        failure_reason="test failed",
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                loop_task_id="loop-1",
+                prompt="Fix the runtime issue.",
+                normalized_goal="fix-runtime",
+                failure_category="verification_failed",
+                verification={"command": "pytest", "passed": False},
+            )
+        }
+    )
+
+    task = case_from_trace(trace)
+
+    assert task.metadata["normalized_goal"] == "fix-runtime"
+    assert task.metadata["failure_category"] == "verification_failed"
+    assert task.metadata["forge_run_evidence"]["session_id"] == "session-1"
+    assert task.metadata["forge_run_evidence"]["loop_task_id"] == "loop-1"
+
+
+def test_trace_promotion_preserves_v1_evidence_with_unknown_v2_fields() -> None:
+    from app.trace_import import case_from_trace
+
+    trace = make_trace(task_id="legacy-forge-runtime").model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                schema_version=1,
+                session_id="session-legacy",
+                prompt="Legacy Forge trace.",
+            )
+        }
+    )
+
+    task = case_from_trace(trace)
+
+    assert task.metadata["forge_run_evidence"]["schema_version"] == 1
+    assert task.metadata["forge_run_evidence"]["completion_eligibility"] == {
+        "status": "unknown"
+    }
+
+
+def test_load_traces_normalizes_single_desktop_trace_payload(tmp_path: Path) -> None:
+    from app.trace_import import load_traces
+
+    trace_path = tmp_path / "desktop-trace.json"
+    trace_path.write_text(
+        json.dumps(
+            {
+                "task_id": "desktop-session-1",
+                "session_id": "session-1",
+                "user_prompt": "Fix the button feedback.",
+                "provider": "forge",
+                "model": "local-forge",
+                "loop_task": {
+                    "task_id": "loop-1",
+                    "recovery_state": {"kind": "orphaned", "notice": "Recovered stale lease."},
+                    "completion_result": {
+                        "status": "blocked",
+                        "commit_eligible": False,
+                        "commit_blockers": ["missing_human_review"],
+                        "eligibility_facts": {
+                            "review": {
+                                "status": "missing",
+                                "reason": "review_decision_missing",
+                            }
+                        },
+                    },
+                },
+                "tool_calls": [],
+                "shell_outputs": [],
+                "file_diffs": [],
+                "changed_files": ["src/App.tsx"],
+                "verification_result": {
+                    "command": "npm test",
+                    "passed": True,
+                    "stdout": "passed",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration_ms": 50,
+                },
+                "final_answer": "Done.",
+                "input_tokens": 12,
+                "output_tokens": 4,
+                "failure_category": "orphaned",
+                "duration_ms": 100,
+                "a2a_child_capsules": [
+                    {
+                        "child_task_id": "child-1",
+                        "status": "completed",
+                        "artifact_titles": ["Patch proposal"],
+                        "changed_files": ["src/App.tsx"],
+                        "review_decision": "approved",
+                        "review_gate": {"kind": "approved"},
+                        "next_action": "Review child evidence.",
+                    }
+                ],
+                "compact_count": 0,
+                "headless_continuity_formed_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    traces = load_traces(trace_path)
+
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace.task_id == "desktop-session-1"
+    assert trace.failure_category == FailureCategory.RUNNER_ERROR
+    assert trace.forge_run_evidence is not None
+    assert trace.forge_run_evidence.session_id == "session-1"
+    assert trace.forge_run_evidence.loop_task_id == "loop-1"
+    assert trace.forge_run_evidence.schema_version == 2
+    assert trace.forge_run_evidence.completion_eligibility == {
+        "status": "blocked",
+        "commit_eligible": False,
+        "commit_blockers": ["missing_human_review"],
+        "facts": {
+            "review": {
+                "status": "missing",
+                "reason": "review_decision_missing",
+            }
+        },
+    }
+    assert trace.forge_run_evidence.failure_category == "orphaned"
+    assert trace.forge_run_evidence.recovery == {
+        "kind": "orphaned",
+        "notice": "Recovered stale lease.",
+    }
+    assert trace.forge_run_evidence.a2a_child_capsules[0]["child_task_id"] == "child-1"
+    assert trace.forge_run_evidence.a2a_child_capsules[0]["review_gate"]["kind"] == "approved"
+
+
+def test_load_traces_keeps_legacy_trace_without_forge_evidence(tmp_path: Path) -> None:
+    from app.trace_import import load_traces
+
+    trace_path = tmp_path / "legacy-traces.json"
+    trace_path.write_text(
+        json.dumps({"traces": [make_trace("legacy-ok").model_dump(mode="json")]}),
+        encoding="utf-8",
+    )
+
+    traces = load_traces(trace_path)
+
+    assert traces[0].forge_run_evidence is None
 
 
 def test_load_cases_reads_case_directories_and_resolves_fixture_paths(tmp_path: Path) -> None:
@@ -193,6 +348,166 @@ def test_load_cases_includes_agent_loop_stop_reason_backtests() -> None:
         assert mock["failure_category"] == "budget_exhausted"
         assert mock["error"] == stop_reason
         assert stop_reason in raw_stop_reasons
+
+
+def test_load_cases_includes_gateway_eval_pack() -> None:
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    expected_ids = {
+        "gateway-local-parity-dry-run",
+        "gateway-degraded-fallback",
+        "gateway-read-only-owner-diagnostics",
+        "gateway-patch-proposal-owner-gate",
+        "gateway-direct-write-owner-blocked",
+        "gateway-lease-timeout-recovery",
+        "gateway-duplicate-input-prevention",
+    }
+
+    assert expected_ids.issubset(task_by_id)
+    for task_id in expected_ids:
+        task = task_by_id[task_id]
+        assert "gateway" in task.tags
+        assert "forge-runtime-evidence" in task.tags
+        assert task.metadata.get("contract_only") is True
+        evidence = task.metadata["mock"]["forge_run_evidence"]
+        assert evidence["gateway"]
+        assert evidence["verification"]["passed"] is True
+
+
+def test_load_cases_includes_a2a_eval_pack() -> None:
+    from app.runner import DeterministicMockRunner
+    from app.scoring import score_trace
+
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    passing_ids = {
+        "a2a-child-completed-review-evidence",
+        "a2a-child-context-capsule-contract",
+        "a2a-child-failed-recovery-evidence",
+        "a2a-child-runtime-event-file-facts",
+        "a2a-child-review-gate-identity",
+        "a2a-child-worktree-facts",
+    }
+    failing_ids = {
+        "a2a-child-failure-recovery-policy",
+        "a2a-child-runtime-event-missing-file-fact",
+        "a2a-child-review-gate-blocking-states",
+        "a2a-child-worktree-missing-facts",
+    }
+    expected_ids = passing_ids | failing_ids
+
+    assert expected_ids.issubset(task_by_id)
+    for task_id in expected_ids:
+        task = task_by_id[task_id]
+        assert "a2a" in task.tags
+        assert "a2a-eval-pack" in task.tags
+        assert "forge-runtime-evidence" in task.tags
+        assert task.metadata.get("contract_only") is True
+        evidence = task.metadata["mock"]["forge_run_evidence"]
+        assert evidence["a2a_child_capsules"]
+        assert evidence["verification"]["passed"] is (task_id in passing_ids)
+        prepared_context_json = json.dumps(evidence["prepared_context"])
+        for capsule in evidence["a2a_child_capsules"]:
+            assert capsule["capsule_id"]
+            assert capsule["child_goal"]
+            assert capsule["estimated_tokens"] > 0
+            assert capsule["capsule_id"] in prepared_context_json
+
+    blocking_trace = DeterministicMockRunner().run_task(
+        task_by_id["a2a-child-review-gate-blocking-states"]
+    )
+    blocking_score = score_trace(blocking_trace)["forge_a2a_child_evidence_complete_ok"]
+    assert blocking_score.score == 0.0
+    assert "review_gate_stale_review" in (blocking_score.explanation or "")
+    assert "review_gate_wrong_parent" in (blocking_score.explanation or "")
+    assert "review_gate_missing_evidence" in (blocking_score.explanation or "")
+
+    recovery_trace = DeterministicMockRunner().run_task(
+        task_by_id["a2a-child-failure-recovery-policy"]
+    )
+    recovery_score = score_trace(recovery_trace)["forge_a2a_child_evidence_complete_ok"]
+    assert recovery_score.score == 0.0
+    recovery_explanation = recovery_score.explanation or ""
+    assert "recovery_action_requires_human_approval:retry" in recovery_explanation
+    assert "retry_missing_new_attempt" in recovery_explanation
+    assert "retry_missing_new_lease" in recovery_explanation
+    assert "recovery_action_auto_executes:abandon" in recovery_explanation
+
+    runtime_trace = DeterministicMockRunner().run_task(
+        task_by_id["a2a-child-runtime-event-file-facts"]
+    )
+    runtime_score = score_trace(runtime_trace)["forge_a2a_child_evidence_complete_ok"]
+    assert runtime_score.score == 1.0
+
+    missing_runtime_trace = DeterministicMockRunner().run_task(
+        task_by_id["a2a-child-runtime-event-missing-file-fact"]
+    )
+    missing_runtime_score = score_trace(missing_runtime_trace)[
+        "forge_a2a_child_evidence_complete_ok"
+    ]
+    assert missing_runtime_score.score == 0.0
+    missing_runtime_explanation = missing_runtime_score.explanation or ""
+    assert "runtime_event_missing:file_fact" in missing_runtime_explanation
+
+    worktree_trace = DeterministicMockRunner().run_task(
+        task_by_id["a2a-child-worktree-missing-facts"]
+    )
+    worktree_score = score_trace(worktree_trace)["forge_a2a_child_evidence_complete_ok"]
+    assert worktree_score.score == 0.0
+    worktree_explanation = worktree_score.explanation or ""
+    assert "worktree_missing_path" in worktree_explanation
+    assert "worktree_missing_test_report" in worktree_explanation
+    assert "worktree_missing_cleanup_status" in worktree_explanation
+
+
+def test_load_cases_includes_runtime_recovery_eval_pack() -> None:
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    expected_ids = {
+        "runtime-recovery-orphaned-run",
+        "runtime-recovery-interrupted-shell",
+        "runtime-recovery-pending-confirmation",
+        "runtime-recovery-provider-usage-unknown",
+        "runtime-recovery-verification-missing",
+    }
+
+    assert expected_ids.issubset(task_by_id)
+    for task_id in expected_ids:
+        task = task_by_id[task_id]
+        assert "runtime-recovery" in task.tags
+        assert "forge-runtime-evidence" in task.tags
+        assert task.metadata.get("contract_only") is True
+        evidence = task.metadata["mock"]["forge_run_evidence"]
+        assert evidence["recovery_cases"]
+        assert evidence["verification"]["passed"] is True
+
+
+def test_load_cases_includes_memory_eval_pack() -> None:
+    tasks = load_cases(Path("eval_cases"))
+    task_by_id = {task.id: task for task in tasks}
+
+    expected_ids = {
+        "memory-recall-correct",
+        "memory-recall-duplicate-overbudget",
+        "memory-recall-continuity-dedupe",
+        "memory-recall-wrong-project",
+        "memory-recall-wrong-profile",
+        "memory-recall-archived-forgotten",
+        "memory-recall-hidden-body-leak",
+    }
+
+    assert expected_ids.issubset(task_by_id)
+    for task_id in expected_ids:
+        task = task_by_id[task_id]
+        assert "memory-eval-pack" in task.tags
+        assert "forge-runtime-evidence" in task.tags
+        assert task.metadata.get("contract_only") is True
+        evidence = task.metadata["mock"]["forge_run_evidence"]
+        assert evidence["memory_audit"]
+        assert evidence["verification"]["passed"] is True
 
 
 def test_case_quality_reports_missing_verification_for_executable_case(tmp_path: Path) -> None:

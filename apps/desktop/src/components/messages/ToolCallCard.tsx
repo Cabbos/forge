@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Check, CheckCircle2, Copy, Loader2, Wrench, XCircle } from "lucide-react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ForgeCollapsible, ForgeCollapsibleTrigger, ForgeCollapsibleContent } from "@/components/primitives/collapsible";
-import type { BlockState } from "@/lib/protocol";
+import type { BlockState, PermissionLedgerEvent } from "@/lib/protocol";
 import { SubAgentTrace } from "@/components/messages/SubAgentTrace";
 import { WriteFilePreview } from "@/components/messages/WriteFilePreview";
 import { deriveToolCallView } from "./processToolPresentation";
@@ -84,6 +84,7 @@ export function ToolCallCard({ block }: { block: BlockState }) {
                 </div>
               )}
               <WriteFilePreview preview={writePreview} />
+              <ToolPermissionEvidence evidence={parsePermissionEvidence(block.metadata.permission_evidence)} />
               <div data-testid="log-detail-output" className="forge-log-output">
                 {toolView.detailText}
               </div>
@@ -93,4 +94,31 @@ export function ToolCallCard({ block }: { block: BlockState }) {
       </ForgeCollapsible>
     </div>
   );
+}
+
+function ToolPermissionEvidence({ evidence }: { evidence: PermissionLedgerEvent | null }) {
+  if (!evidence) return null;
+  return (
+    <div data-testid="tool-permission-evidence" className="forge-log-summary" data-tone="default">
+      <span>后端权限依据</span>
+      <strong>{evidence.kind} · {evidence.permission_mode} · {evidence.reason}</strong>
+    </div>
+  );
+}
+
+function parsePermissionEvidence(value: unknown): PermissionLedgerEvent | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Partial<PermissionLedgerEvent>;
+  if (
+    typeof record.kind !== "string" ||
+    typeof record.workspace_path !== "string" ||
+    typeof record.risk_tier !== "string" ||
+    !Array.isArray(record.affected_files) ||
+    typeof record.operation !== "string" ||
+    typeof record.permission_mode !== "string" ||
+    typeof record.reason !== "string"
+  ) {
+    return null;
+  }
+  return record as PermissionLedgerEvent;
 }

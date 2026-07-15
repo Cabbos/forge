@@ -8,6 +8,7 @@ from app.models import (
     EvaluationTask,
     FailureCategory,
     FileDiff,
+    ForgeRunEvidence,
     ShellOutput,
 )
 from app.runner import (
@@ -73,6 +74,80 @@ def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     assert trace.failure_reason is None
     assert trace.duration_ms >= 0
     assert trace.model_dump(mode="json")["started_at"].endswith("+00:00")
+
+
+def test_mock_runner_preserves_forge_run_evidence_from_case_metadata() -> None:
+    task = EvaluationTask(
+        id="gateway-read-only-owner",
+        title="Gateway read-only owner",
+        prompt="Evaluate gateway read-only diagnostics owner safety.",
+        context_files=["src/runtime.rs"],
+        verification_command="cargo test gateway",
+        expected_success=True,
+        metadata={
+            "mock": {
+                "changed_files": [],
+                "forge_run_evidence": {
+                    "session_id": "session-gateway-1",
+                    "loop_task_id": "loop-gateway-readonly",
+                    "prepared_context": {
+                        "turn_prepared": {
+                            "context_estimate": {
+                                "sources": [{"kind": "user_input", "label": "prompt"}]
+                            }
+                        }
+                    },
+                    "changed_files": [],
+                    "verification": {"command": "cargo test gateway", "passed": True},
+                    "provider_usage": {"input_tokens": 120, "output_tokens": 24},
+                    "failure_category": "none",
+                    "gateway": {
+                        "ownership_mode": "gateway_read_only_owner",
+                        "gateway_can_own_session": True,
+                        "owner_run": {
+                            "mode": "read_only_diagnostics",
+                            "human_approved": True,
+                            "side_effects": [],
+                            "lease_id": "lease-1",
+                            "heartbeat_ms": 1000,
+                            "timeout_ms": 30000,
+                        },
+                    },
+                },
+            }
+        },
+    )
+    runner = DeterministicMockRunner(provider="mock", model="deterministic-agent-v1")
+
+    trace = runner.run_task(task)
+
+    assert trace.forge_run_evidence == ForgeRunEvidence(
+        session_id="session-gateway-1",
+        loop_task_id="loop-gateway-readonly",
+        prepared_context={
+            "turn_prepared": {
+                "context_estimate": {
+                    "sources": [{"kind": "user_input", "label": "prompt"}]
+                }
+            }
+        },
+        changed_files=[],
+        verification={"command": "cargo test gateway", "passed": True},
+        provider_usage={"input_tokens": 120, "output_tokens": 24},
+        failure_category="none",
+        gateway={
+            "ownership_mode": "gateway_read_only_owner",
+            "gateway_can_own_session": True,
+            "owner_run": {
+                "mode": "read_only_diagnostics",
+                "human_approved": True,
+                "side_effects": [],
+                "lease_id": "lease-1",
+                "heartbeat_ms": 1000,
+                "timeout_ms": 30000,
+            },
+        },
+    )
 
 
 def test_forge_runner_reports_regression_validation_failure(tmp_path: Path) -> None:
@@ -410,6 +485,25 @@ json.dump(
         "confirm_requests": 1,
         "input_tokens": 120,
         "output_tokens": 40,
+        "forge_run_evidence": {
+            "session_id": "session-1",
+            "loop_task_id": "loop-1",
+            "prompt": payload["prompt"],
+            "normalized_goal": "modify-and-verify",
+            "prepared_context": {
+                "turn_prepared": {
+                    "context_estimate": {
+                        "sources": [{"kind": "user_input", "label": "prompt"}]
+                    }
+                }
+            },
+            "memory_audit": {"selected_memory_ids": []},
+            "permission_decisions": [{"approved": True, "decision": "allow"}],
+            "changed_files": ["src/app.py"],
+            "verification": {"command": "pytest", "passed": True},
+            "provider_usage": {"input_tokens": 120, "output_tokens": 40},
+            "failure_category": "none",
+        },
     },
     sys.stdout,
 )
@@ -448,6 +542,10 @@ json.dump(
     assert trace.input_tokens == 120
     assert trace.output_tokens == 40
     assert trace.failure_category == FailureCategory.NONE
+    assert trace.forge_run_evidence is not None
+    assert trace.forge_run_evidence.session_id == "session-1"
+    assert trace.forge_run_evidence.loop_task_id == "loop-1"
+    assert trace.forge_run_evidence.normalized_goal == "modify-and-verify"
 
 
 def test_forge_runner_reports_scope_violations_from_changed_files(tmp_path: Path) -> None:

@@ -151,6 +151,68 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
       // @ts-expect-error acceptance mock
       return window.__mockMemoryFacts as Array<Record<string, unknown>>;
     };
+    const mockUnifiedMemories = () => {
+      // @ts-expect-error acceptance mock
+      if (!Array.isArray(window.__mockUnifiedMemories)) {
+        const now = Date.now();
+        // @ts-expect-error acceptance mock
+        window.__mockUnifiedMemories = [
+          {
+            id: "wiki_memory:acceptance-progress",
+            source: "wiki_memory",
+            source_id: "acceptance-progress",
+            kind: "task_state",
+            status: "accepted",
+            scope: "project",
+            title: "权限进度",
+            body: "完全访问按钮已完成，下一步检查确认卡片。",
+            project_path: workingDir,
+            profile_id: null,
+            source_session_id: "session-acceptance",
+            confidence: 0.82,
+            created_at_ms: now - 120_000,
+            updated_at_ms: now - 120_000,
+            tags: ["progress"],
+          },
+          {
+            id: "memory_fact:acceptance-permission-fact",
+            source: "memory_fact",
+            source_id: "acceptance-permission-fact",
+            kind: "project_fact",
+            status: "accepted",
+            scope: "user_profile",
+            title: "记忆事实: permission",
+            body: "完全访问模式用于测试权限绕过。",
+            project_path: null,
+            profile_id: activeProfileId(),
+            source_session_id: null,
+            confidence: 1,
+            created_at_ms: now - 90_000,
+            updated_at_ms: now - 90_000,
+            tags: ["permission"],
+          },
+          {
+            id: "continuity_experience:acceptance-confirm-card",
+            source: "continuity_experience",
+            source_id: "acceptance-confirm-card",
+            kind: "bug_pattern",
+            status: "pinned",
+            scope: "project",
+            title: "确认卡片回归",
+            body: "信任状态跨会话恢复后仍可能出现确认卡片。",
+            project_path: workingDir,
+            profile_id: null,
+            source_session_id: "session-continuity",
+            confidence: 0.91,
+            created_at_ms: now - 60_000,
+            updated_at_ms: now - 60_000,
+            tags: ["permission", "confirmation"],
+          },
+        ];
+      }
+      // @ts-expect-error acceptance mock
+      return window.__mockUnifiedMemories as Array<Record<string, unknown>>;
+    };
     const memoryFactFromInput = (input: Record<string, unknown>, existing?: Record<string, unknown>) => {
       const now = Date.now();
       const rawTags = Array.isArray(input.tags) ? input.tags : Array.isArray(existing?.tags) ? existing.tags : [];
@@ -340,6 +402,77 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
     const gatewayRuntimeStatus = () => ({
       ok: true,
       message: "Gateway runtime is healthy.",
+      ownership: {
+        ownership_mode: "local_default",
+        gateway_default_enabled: false,
+        gateway_can_own_sessions: false,
+        requires_opt_in: true,
+        parity_gate: "pending",
+        recovery_gate: "pending",
+        required_action:
+          "Keep the desktop runtime as owner until parity and restart/recovery gates pass.",
+      },
+      degraded_mode: {
+        active: false,
+        reason: "Gateway runtime is reachable.",
+        fallback: "desktop_runtime",
+        input_policy:
+          "Queued session input stays pending until the owning desktop runtime accepts it.",
+        confirmation_policy: "Pending confirmations stay with the owning desktop runtime.",
+      },
+      runtime_health: {
+        ok: true,
+        generated_at_ms: Date.now(),
+        active_runs: {
+          active_sessions: 0,
+          running_loop_tasks: 0,
+        },
+        pending_confirmations: {
+          count: 0,
+          available: false,
+          source: "acceptance_mock",
+        },
+        loop_tasks: {
+          total: 0,
+          pending: 0,
+          running: 0,
+          waiting_for_input: 0,
+          waiting_for_review: 0,
+          completed: 0,
+          failed: 0,
+          canceled: 0,
+          interrupted: 0,
+          stale_leases: 0,
+          orphaned: 0,
+          recoverable: 0,
+        },
+        gateway_queue: {
+          pending_triggers: 0,
+          claimed_triggers: 0,
+          pending_session_inputs: 0,
+          dead_letter_runs: 0,
+        },
+        scheduler_queue: {
+          running: true,
+          pending_tasks: 0,
+          source: "acceptance_mock",
+        },
+        runtime_tasks: {
+          total: 2,
+          running: 2,
+          failed: 0,
+          webhook_listener_running: true,
+          trigger_runner_running: false,
+          loop_runner_running: false,
+          scheduler_tick_running: true,
+          dashboard_http_running: false,
+        },
+        last_replay: {
+          ok: true,
+          task_count: 0,
+          message: "Loop projection replay succeeded.",
+        },
+      },
       uptime_seconds: 125,
       active_sessions: 0,
       pending_triggers: 0,
@@ -842,6 +975,23 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "confirm_response":
           // @ts-expect-error mock
           window.__lastConfirmResponseArgs = args;
+          window.setTimeout(() => {
+            // @ts-expect-error listeners
+            for (const listener of window.__tauriListeners?.["session-output"] ?? []) {
+              listener({
+                payload: {
+                  event_type: "confirm_response",
+                  // @ts-expect-error acceptance mock
+                  session_id: String(window.__mockSessionId ?? "session"),
+                  block_id: String(args.blockId ?? ""),
+                  approved: Boolean(args.approved),
+                  responded_at_ms: Date.now(),
+                  reason: "user_response",
+                  replayed: false,
+                },
+              });
+            }
+          }, 0);
           return undefined;
         case "set_api_key":
           return undefined;
@@ -1381,6 +1531,173 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
           return mcpContextSources;
         case "list_memories":
           return [];
+        case "list_unified_memories": {
+          const query = String(args.query ?? "").trim().toLowerCase();
+          const filter = String(args.filter ?? "current");
+          return mockUnifiedMemories().filter((memory) => {
+            const status = String(memory.status ?? "");
+            if (filter === "archived") {
+              if (status !== "archived") return false;
+            } else if (status !== "accepted" && status !== "pinned") {
+              return false;
+            }
+            if (!query) return true;
+            return [
+              memory.title,
+              memory.body,
+              memory.source,
+              memory.kind,
+              memory.status,
+              ...(Array.isArray(memory.tags) ? memory.tags : []),
+            ].join(" ").toLowerCase().includes(query);
+          });
+        }
+        case "apply_unified_memory_action": {
+          const action = args.action && typeof args.action === "object"
+            ? args.action as Record<string, unknown>
+            : {};
+          const memoryId = String(action.memory_id ?? "");
+          const kind = String(action.action ?? "");
+          const patch = action.patch && typeof action.patch === "object"
+            ? action.patch as Record<string, unknown>
+            : null;
+          const memories = mockUnifiedMemories();
+          const index = memories.findIndex((memory) => memory.id === memoryId);
+          if (index === -1) {
+            throw {
+              kind: "not_found",
+              memory_id: memoryId,
+              source: memoryId.split(":")[0] || null,
+              source_id: memoryId.split(":")[1] || null,
+              action: kind,
+              message: `${memoryId} not found`,
+            };
+          }
+          const source = String(memories[index].source ?? "");
+          const sourceId = String(memories[index].source_id ?? "");
+          const result = (evidence: string[]) => ({
+            memory_id: memoryId,
+            source,
+            source_id: sourceId,
+            action: kind,
+            changed: true,
+            resulting_status: memories[index]?.status ?? (kind === "forget" ? "forgotten" : null),
+            record: memories[index] ?? null,
+            evidence,
+          });
+          if (kind === "archive") {
+            if (source === "memory_fact") {
+              throw {
+                kind: "unsupported_action",
+                memory_id: memoryId,
+                source,
+                source_id: sourceId,
+                action: kind,
+                message: `archive is unsupported for memory facts: ${memoryId}`,
+              };
+            }
+            memories[index] = {
+              ...memories[index],
+              status: "archived",
+              updated_at_ms: Date.now(),
+            };
+            return result(["archive_supported"]);
+          }
+          if (kind === "restore") {
+            if (source === "memory_fact") {
+              throw {
+                kind: "unsupported_action",
+                memory_id: memoryId,
+                source,
+                source_id: sourceId,
+                action: kind,
+                message: `restore is unsupported for memory facts: ${memoryId}`,
+              };
+            }
+            memories[index] = {
+              ...memories[index],
+              status: "accepted",
+              updated_at_ms: Date.now(),
+            };
+            return result(["restore_supported"]);
+          }
+          if (kind === "pin" || kind === "unpin") {
+            if (source === "memory_fact") {
+              throw {
+                kind: "unsupported_action",
+                memory_id: memoryId,
+                source,
+                source_id: sourceId,
+                action: kind,
+                message: `${kind} is unsupported for memory facts: ${memoryId}`,
+              };
+            }
+            memories[index] = {
+              ...memories[index],
+              status: kind === "pin" ? "pinned" : "accepted",
+              updated_at_ms: Date.now(),
+            };
+            return result([`${kind}_supported`]);
+          }
+          if (kind === "mark_wrong_project" || kind === "mark_low_value") {
+            if (source === "memory_fact") {
+              throw {
+                kind: "unsupported_action",
+                memory_id: memoryId,
+                source,
+                source_id: sourceId,
+                action: kind,
+                message: `${kind} is unsupported for memory facts: ${memoryId}`,
+              };
+            }
+            memories[index] = {
+              ...memories[index],
+              status: "archived",
+              updated_at_ms: Date.now(),
+            };
+            return result([`${kind}_archives_record`]);
+          }
+          if (kind === "forget") {
+            memories.splice(index, 1);
+            return {
+              memory_id: memoryId,
+              source,
+              source_id: sourceId,
+              action: kind,
+              changed: true,
+              resulting_status: "forgotten",
+              record: null,
+              evidence: source === "memory_fact" ? ["memory_fact_deleted"] : ["forget_supported"],
+            };
+          }
+          if (kind === "edit") {
+            if (source !== "memory_fact") {
+              throw {
+                kind: "unsupported_action",
+                memory_id: memoryId,
+                source,
+                source_id: sourceId,
+                action: kind,
+                message: "edit is only supported for memory facts",
+              };
+            }
+            memories[index] = {
+              ...memories[index],
+              body: typeof patch?.body === "string" ? patch.body : memories[index].body,
+              tags: Array.isArray(patch?.tags) ? patch.tags.map(String) : memories[index].tags,
+              updated_at_ms: Date.now(),
+            };
+            return result(["edit_policy=profile_fact_detail_editor", "memory_fact_updated"]);
+          }
+          throw {
+            kind: "unsupported_action",
+            memory_id: memoryId,
+            source,
+            source_id: sourceId,
+            action: kind,
+            message: `Unsupported unified memory action: ${kind}`,
+          };
+        }
         case "get_workflow_state":
           return null;
         case "override_workflow_route":

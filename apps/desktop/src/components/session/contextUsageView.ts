@@ -122,11 +122,16 @@ function formatComposerContextUsageTitle(
   ) return "压缩当前上下文";
 
   const percent = usage?.percentUsed !== null && usage?.percentUsed !== undefined ? ` · ${usage.percentUsed}%` : "";
-  const source = usage?.source === "local_estimate" ? " · 压缩后估算" : " · 模型 usage";
+  const compactedFromTokens = usage?.compactedFromTokens ?? null;
+  const compactedToTokens = usage?.compactedToTokens ?? null;
+  const hasCompactionEstimate = Boolean(compactedFromTokens && compactedToTokens);
+  const source = usage?.source === "local_estimate"
+    ? hasCompactionEstimate ? " · 压缩后估算" : " · 预运行估算"
+    : " · 模型 usage";
   const contextRemaining = formatContextRemainingDistance(usedTokens, contextWindowTokens);
   const autoCompact = formatAutoCompactDistance(usedTokens, contextWindowTokens);
-  const compacted = usage?.compactedFromTokens && usage.compactedToTokens
-    ? ` · 上次压缩 ${formatTokenCount(usage.compactedFromTokens)} -> ${formatTokenCount(usage.compactedToTokens)}`
+  const compacted = hasCompactionEstimate
+    ? ` · 上次压缩 ${formatTokenCount(compactedFromTokens!)} -> ${formatTokenCount(compactedToTokens!)}`
     : "";
 
   return `上下文 ${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowTokens)}${percent}${source}${contextRemaining}${autoCompact}${compacted}`;

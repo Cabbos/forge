@@ -34,7 +34,6 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
   const [permissionBusy, setPermissionBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
-  const updateBlock = useStore((s) => s.updateBlock);
 
   const {
     data: runtime = null,
@@ -117,16 +116,13 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
       );
       if (pendingConfirm) {
         await confirmResponse(pendingConfirm.block_id, true);
-        updateBlock(sessionId, pendingConfirm.block_id, {
-          metadata: { ...pendingConfirm.metadata, confirmed: true, answer: true },
-        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPermissionBusy(false);
     }
-  }, [session?.blocks, sessionId, updateBlock, workingDir]);
+  }, [session?.blocks, sessionId, workingDir]);
 
   const fullAccessCurrentProject = useCallback(async () => {
     if (!sessionId || !workingDir) return;
@@ -147,16 +143,13 @@ export function ProjectStatusCard({ sessionId }: ProjectStatusCardProps) {
       );
       if (pendingConfirm) {
         await confirmResponse(pendingConfirm.block_id, true);
-        updateBlock(sessionId, pendingConfirm.block_id, {
-          metadata: { ...pendingConfirm.metadata, confirmed: true, answer: true },
-        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPermissionBusy(false);
     }
-  }, [session?.blocks, sessionId, updateBlock, workingDir]);
+  }, [session?.blocks, sessionId, workingDir]);
 
   const restoreManualConfirm = useCallback(async () => {
     if (!sessionId || !workingDir) return;

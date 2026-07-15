@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "a2a-child-review-gate-blocking-states",
+    "title": "A2A blocking review gates reject completed child evidence",
+    "prompt": "Evaluate A2A child evidence and confirm stale, wrong-parent, and missing-evidence review gates block parent completion even when a top-level review decision says approved.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "A2A child evidence completeness: blocking review gates",
+    "expected_success": false,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "a2a",
+      "a2a-eval-pack",
+      "forge-runtime-evidence",
+      "contract",
+      "negative-contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 149,
+        "input_tokens": 206,
+        "output_tokens": 44,
+        "failure_category": "validation_failed",
+        "forge_run_evidence": {
+          "session_id": "a2a-blocking-review-session",
+          "loop_task_id": "a2a-blocking-review-parent-task",
+          "prompt": "Evaluate A2A child evidence and confirm stale, wrong-parent, and missing-evidence review gates block parent completion even when a top-level review decision says approved.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  },
+                  {
+                    "kind": "a2a_child_capsule",
+                    "capsule_id": "child-capsule:a2a-blocking-review-parent-task:child-stale-review"
+                  },
+                  {
+                    "kind": "a2a_child_capsule",
+                    "capsule_id": "child-capsule:a2a-blocking-review-parent-task:child-wrong-parent"
+                  },
+                  {
+                    "kind": "a2a_child_capsule",
+                    "capsule_id": "child-capsule:a2a-blocking-review-parent-task:child-missing-evidence"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "A2A child evidence completeness: blocking review gates",
+            "passed": false
+          },
+          "provider_usage": {
+            "input_tokens": 206,
+            "output_tokens": 44
+          },
+          "failure_category": "validation_failed",
+          "a2a_child_capsules": [
+            {
+              "capsule_id": "child-capsule:a2a-blocking-review-parent-task:child-stale-review",
+              "child_task_id": "child-stale-review",
+              "parent_task_id": "a2a-blocking-review-parent-task",
+              "session_id": "a2a-blocking-review-session",
+              "child_goal": "Demonstrate stale review gate blocking behavior.",
+              "status": "completed",
+              "artifact_titles": [
+                "Patch proposal"
+              ],
+              "changed_files": [
+                "src/App.tsx"
+              ],
+              "review_decision": "approved",
+              "review_gate": {
+                "kind": "stale_review",
+                "parent_task_id": "a2a-blocking-review-parent-task",
+                "child_task_id": "child-stale-review",
+                "session_id": "a2a-blocking-review-session"
+              },
+              "estimated_tokens": 66,
+              "next_action": "Refresh review before parent completion."
+            },
+            {
+              "capsule_id": "child-capsule:a2a-blocking-review-parent-task:child-wrong-parent",
+              "child_task_id": "child-wrong-parent",
+              "parent_task_id": "a2a-blocking-review-parent-task",
+              "session_id": "a2a-blocking-review-session",
+              "child_goal": "Demonstrate wrong parent review gate blocking behavior.",
+              "status": "completed",
+              "artifact_titles": [
+                "Patch proposal"
+              ],
+              "changed_files": [
+                "src/App.tsx"
+              ],
+              "review_decision": "approved",
+              "review_gate": {
+                "kind": "wrong_parent",
+                "parent_task_id": "a2a-blocking-review-parent-task",
+                "child_task_id": "child-wrong-parent",
+                "session_id": "a2a-blocking-review-session"
+              },
+              "estimated_tokens": 66,
+              "next_action": "Use review evidence only for the matching parent task."
+            },
+            {
+              "capsule_id": "child-capsule:a2a-blocking-review-parent-task:child-missing-evidence",
+              "child_task_id": "child-missing-evidence",
+              "parent_task_id": "a2a-blocking-review-parent-task",
+              "session_id": "a2a-blocking-review-session",
+              "child_goal": "Demonstrate missing review evidence blocking behavior.",
+              "status": "completed",
+              "artifact_titles": [
+                "Patch proposal"
+              ],
+              "changed_files": [
+                "src/App.tsx"
+              ],
+              "review_decision": "approved",
+              "review_gate": {
+                "kind": "missing_evidence",
+                "parent_task_id": "a2a-blocking-review-parent-task",
+                "child_task_id": "child-missing-evidence",
+                "session_id": "a2a-blocking-review-session"
+              },
+              "estimated_tokens": 66,
+              "next_action": "Collect missing review evidence before parent completion."
+            }
+          ]
+        }
+      }
+    }
+  }
+}

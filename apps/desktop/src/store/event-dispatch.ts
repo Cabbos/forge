@@ -5,6 +5,7 @@ import {
   applyConfirmResponseToBlocks,
   applyCompactResultToBlocks,
   applyFileIoToBlocks,
+  applyPermissionDecisionToBlocks,
   applyShellStartToBlocks,
   closeInterruptedConfirmBlocks,
   eventToBlock,
@@ -303,7 +304,9 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
         : applyProviderUsageToLedger(previousLedger, providerEvent);
       const contextUsage = isProviderReplay && session.contextUsage
         ? session.contextUsage
-        : contextUsageFromLedger(usageLedger, contextWindowTokens, session.contextUsage);
+        : usageLedger.hasUnknownInputTokens
+          ? null
+          : contextUsageFromLedger(usageLedger, contextWindowTokens, session.contextUsage);
       const shouldRestoreMissingReplayCost = isProviderReplay
         && !previousLedger
         && existingProviderBlockIndex >= 0
@@ -328,6 +331,18 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       set({ sessions });
       persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
       persistBlocks(session_id, blocks);
+      return;
+    }
+
+    if (event_type === "turn_prepared") {
+      const preparedEvent = event as Extract<StreamEvent, { event_type: "turn_prepared" }>;
+      const contextUsage = contextUsageFromPreparedTurn(
+        preparedEvent,
+        session.contextWindowTokens ?? getModelContextWindow(session.model),
+      );
+      sessions.set(session_id, touchSession(session, { blocks, contextUsage }));
+      set({ sessions });
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
       return;
     }
 
@@ -449,12 +464,14 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       if (existingIdx >= 0) {
         blocks[existingIdx] = {
           ...blocks[existingIdx],
+          event_type: blocks[existingIdx].event_type === "permission_decision" ? "tool_call" : blocks[existingIdx].event_type,
           content: resultEvent.result,
           isComplete: true,
           metadata: {
             ...blocks[existingIdx].metadata,
             is_error: resultEvent.is_error,
             duration_ms: resultEvent.duration_ms,
+            tool_name: blocks[existingIdx].metadata.tool_name ?? "Tool",
             ...interruptedToolResultMetadata(resultEvent.result, resultEvent.is_error),
           },
         };
@@ -586,6 +603,17 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
       return;
     }
 
+    if (event_type === "permission_decision") {
+      blocks = applyPermissionDecisionToBlocks(
+        blocks,
+        event as Extract<StreamEvent, { event_type: "permission_decision" }>,
+      );
+      sessions.set(session_id, touchSession(session, { blocks }));
+      set({ sessions });
+      persistBlocks(session_id, blocks);
+      return;
+    }
+
     const newBlock = eventToBlock(event);
     if (newBlock) {
       blocks.push(newBlock);
@@ -611,4 +639,24 @@ function isLegacyProviderCompanion(
   if (previous.inputTokens !== next.inputTokens) return false;
   if (previous.outputTokens !== next.outputTokens) return false;
   return sameUsageCost(previous.costUsd, next.costUsd);
+}
+
+function contextUsageFromPreparedTurn(
+  event: Extract<StreamEvent, { event_type: "turn_prepared" }>,
+  fallbackContextWindowTokens: number | null | undefined,
+) {
+  const estimate = event.prepared.context_estimate;
+  const usage = buildContextUsage(
+    estimate.used_tokens,
+    estimate.context_window_tokens ?? fallbackContextWindowTokens,
+    "local_estimate",
+    null,
+  );
+  const percentUsed = sanitizePreparedPercent(estimate.percent_used);
+  return percentUsed === null ? usage : { ...usage, percentUsed };
+}
+
+function sanitizePreparedPercent(percent: number | null | undefined): number | null {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) return null;
+  return Math.min(100, Math.max(0, Math.round(percent)));
 }

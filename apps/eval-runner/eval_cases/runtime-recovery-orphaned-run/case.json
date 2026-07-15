@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "runtime-recovery-orphaned-run",
+    "title": "Runtime recovery marks orphaned run interrupted with replayable evidence",
+    "prompt": "Evaluate runtime recovery evidence for an orphaned loop run and confirm the journal replay records the interruption action.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "cargo test recover_loop_task_marks_running_task_interrupted_and_recoverable",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "runtime-recovery",
+      "recovery-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 130,
+        "input_tokens": 160,
+        "output_tokens": 34,
+        "forge_run_evidence": {
+          "session_id": "recovery-orphan-session",
+          "loop_task_id": "recovery-orphan-task",
+          "prompt": "Evaluate runtime recovery evidence for an orphaned loop run and confirm the journal replay records the interruption action.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "cargo test recover_loop_task_marks_running_task_interrupted_and_recoverable",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 160,
+            "output_tokens": 34
+          },
+          "failure_category": "orphaned",
+          "recovery": {
+            "kind": "orphaned",
+            "source_event_id": "evt-orphan-1",
+            "notice": "Recovered orphaned loop task with journal replay."
+          },
+          "recovery_cases": [
+            {
+              "case_id": "orphan-1",
+              "kind": "orphaned_run",
+              "source_event_id": "evt-orphan-1",
+              "action": "mark_interrupted",
+              "journal_replayed": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}

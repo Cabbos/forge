@@ -38,12 +38,14 @@ When touching these surfaces, keep docs and acceptance coverage in sync:
 This project is indexed by GitNexus as **forge** (12778 symbols, 33301 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter --allow-build=tree-sitter-kotlin dlx gitnexus@latest analyze --index-only` from the project root. The generated `.gitnexus/run.cjs` can fall back to an npx cache missing optional grammars (`tree-sitter-swift` / Kotlin native build), so prefer the explicit pnpm command until the upstream runner is fixed.
+> Local GitNexus CLI or index refresh commands should be wrapped with `node scripts/gitnexus-safe.mjs -- <command>` so they time out after 60 seconds and print the required fallback template. For the template alone, run `node scripts/gitnexus-safe.mjs --print-template`.
 
 ## Always Do
 
 - **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
 - **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- If GitNexus MCP/CLI is unavailable, stale, or times out, **MUST record a fallback impact report** before editing: command attempted, timeout/error, index freshness, symbols searched, files inspected, direct callers found, tests selected, affected authority domains, and residual risk.
 - When exploring unfamiliar code, use `query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
 

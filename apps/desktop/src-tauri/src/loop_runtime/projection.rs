@@ -1,8 +1,8 @@
 use crate::loop_runtime::headless::{HeadlessOwnerRun, HeadlessResumeMode};
 use crate::loop_runtime::journal::LoopEventJournal;
 use crate::loop_runtime::types::{
-    LoopEventEnvelope, LoopRuntimeEvent, LoopTaskOutcome, LoopTaskRecord, LoopTaskStatus,
-    LOOP_RUNTIME_SCHEMA_VERSION,
+    LoopEventEnvelope, LoopRuntimeEvent, LoopTaskOutcome, LoopTaskRecord, LoopTaskRecoveryState,
+    LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
 };
 use crate::loop_runtime::{HumanGateDecisionKind, HumanGateStatus};
 use serde::{Deserialize, Serialize};
@@ -56,6 +56,7 @@ impl LoopTaskProjection {
                     }
                     task.status = LoopTaskStatus::Running;
                     task.lease = Some(lease.clone());
+                    task.recovery_state = None;
                     task.updated_at_ms = event.created_at_ms;
                     task.latest_event_id = Some(event.event_id.clone());
                 }
@@ -86,6 +87,31 @@ impl LoopTaskProjection {
                         completed_at_ms: *waiting_at_ms,
                     });
                 }
+                LoopRuntimeEvent::TaskRequeued {
+                    task_id,
+                    reason: _,
+                    requeued_at_ms,
+                } => {
+                    if task_id != &event.task_id {
+                        return Err(format!(
+                            "task requeued id mismatch: envelope {}, payload {}",
+                            event.task_id, task_id
+                        ));
+                    }
+                    let Some(task) = tasks.get_mut(task_id) else {
+                        return Err(format!("task requeued before creation: {task_id}"));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    task.status = LoopTaskStatus::Pending;
+                    task.lease = None;
+                    task.recovery_state = None;
+                    task.outcome = None;
+                    task.completion_result = None;
+                    task.updated_at_ms = *requeued_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
+                }
                 LoopRuntimeEvent::TaskInterrupted { task_id, reason } => {
                     if task_id != &event.task_id {
                         return Err(format!(
@@ -101,6 +127,11 @@ impl LoopTaskProjection {
                     }
                     task.status = LoopTaskStatus::Interrupted;
                     task.lease = None;
+                    task.recovery_state = Some(LoopTaskRecoveryState::interrupted(
+                        reason.clone(),
+                        event.created_at_ms,
+                        Some(event.event_id.clone()),
+                    ));
                     task.updated_at_ms = event.created_at_ms;
                     task.latest_event_id = Some(event.event_id.clone());
                     task.outcome = Some(LoopTaskOutcome {
@@ -121,6 +152,7 @@ impl LoopTaskProjection {
                         continue;
                     }
                     task.status = LoopTaskStatus::Canceled;
+                    task.recovery_state = None;
                     task.updated_at_ms = *canceled_at_ms;
                     task.latest_event_id = Some(event.event_id.clone());
                     task.outcome = Some(LoopTaskOutcome {
@@ -400,8 +432,7 @@ impl LoopTaskProjection {
                     task.latest_event_id = Some(event.event_id.clone());
                     task.latest_budget_snapshot = Some(snapshot.clone());
                 }
-                LoopRuntimeEvent::SubagentFileIoRecorded { task_id, .. }
-                | LoopRuntimeEvent::UsageLedgerRecorded { task_id, .. } => {
+                LoopRuntimeEvent::SubagentFileIoRecorded { task_id, .. } => {
                     if task_id != &event.task_id {
                         return Err(format!(
                             "telemetry task id mismatch: envelope {}, payload {}",
@@ -418,6 +449,25 @@ impl LoopTaskProjection {
                     }
                     task.updated_at_ms = event.created_at_ms;
                     task.latest_event_id = Some(event.event_id.clone());
+                }
+                LoopRuntimeEvent::UsageLedgerRecorded { task_id, usage } => {
+                    if task_id != &event.task_id {
+                        return Err(format!(
+                            "telemetry task id mismatch: envelope {}, payload {}",
+                            event.task_id, task_id
+                        ));
+                    }
+                    let Some(task) = tasks.get_mut(task_id) else {
+                        return Err(format!(
+                            "telemetry recorded before task creation: {task_id}"
+                        ));
+                    };
+                    if task.status.is_terminal() {
+                        continue;
+                    }
+                    task.updated_at_ms = event.created_at_ms;
+                    task.latest_event_id = Some(event.event_id.clone());
+                    task.latest_usage_ledger = Some(usage.clone());
                 }
                 LoopRuntimeEvent::CompletionEvaluated { task_id, result } => {
                     if task_id != &event.task_id {
@@ -820,6 +870,43 @@ mod tests {
     }
 
     #[test]
+    fn task_requeued_projects_waiting_task_back_to_pending() {
+        let created = LoopEventEnvelope::task_created_for_test("loop-1", "first");
+        let waiting = event_for_test(
+            "loop-1",
+            2,
+            LoopRuntimeEvent::TaskWaitingForInput {
+                task_id: "loop-1".to_string(),
+                reason: "needs human decision".to_string(),
+                waiting_at_ms: 3,
+            },
+        );
+        let mut requeued = event_for_test(
+            "loop-1",
+            3,
+            LoopRuntimeEvent::TaskRequeued {
+                task_id: "loop-1".to_string(),
+                reason: "operator requested safe retry".to_string(),
+                requeued_at_ms: 5,
+            },
+        );
+        requeued.created_at_ms = 6;
+
+        let projection = LoopTaskProjection::from_events(&[created, waiting, requeued.clone()])
+            .expect("projection replays task requeue");
+
+        assert_eq!(projection.tasks[0].status, LoopTaskStatus::Pending);
+        assert_eq!(projection.tasks[0].lease, None);
+        assert!(projection.tasks[0].outcome.is_none());
+        assert!(projection.tasks[0].completion_result.is_none());
+        assert_eq!(projection.tasks[0].updated_at_ms, 5);
+        assert_eq!(
+            projection.tasks[0].latest_event_id,
+            Some(requeued.event_id.clone())
+        );
+    }
+
+    #[test]
     fn task_interrupted_projects_clears_lease_and_records_outcome() {
         let created = LoopEventEnvelope::task_created_for_test("loop-1", "first");
         let started = event_for_test(
@@ -1167,6 +1254,7 @@ mod tests {
             commit_blockers: vec!["missing_required_check:test".to_string()],
             human_gate_id: None,
             last_review_decision: None,
+            eligibility_facts: crate::loop_runtime::LoopCompletionEligibilityFacts::default(),
         };
         let completion = event_for_test(
             "loop-1",

@@ -377,7 +377,10 @@ fn dashboard_html() -> &'static str {
         metric('loop runner', status.loop_runner),
         metric('pending loop tasks', status.pending_loop_tasks),
         metric('running loop tasks', status.running_loop_tasks),
-        metric('stale loop leases', status.stale_loop_task_leases)
+        metric('stale loop leases', status.stale_loop_task_leases),
+        metric('orphaned loop tasks', status.orphaned_loop_tasks),
+        metric('interrupted loop tasks', status.interrupted_loop_tasks),
+        metric('recoverable loop tasks', status.recoverable_loop_tasks)
       );
 
       replace('runtime-tasks', table([

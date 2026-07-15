@@ -15,6 +15,7 @@ from app.models import (
     EvaluationTask,
     FailureCategory,
     FileDiff,
+    ForgeRunEvidence,
     ShellOutput,
     VerificationResult,
 )
@@ -38,6 +39,7 @@ class DeterministicMockRunner:
         started_at = utc_now()
         target_file = task.context_files[0] if task.context_files else "workspace/changes.patch"
         mock = mock_metadata(task)
+        forge_run_evidence = mock_forge_run_evidence(mock)
         changed_files = mock_changed_files(mock, default_target_file=target_file)
         file_diffs = build_mock_file_diffs(changed_files)
 
@@ -83,6 +85,7 @@ class DeterministicMockRunner:
                 input_tokens=mock.get("input_tokens"),
                 output_tokens=mock.get("output_tokens"),
                 cost_usd=mock.get("cost_usd"),
+                forge_run_evidence=forge_run_evidence,
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=int(mock.get("duration_ms", duration_ms(started_at, ended_at))),
@@ -159,6 +162,7 @@ class DeterministicMockRunner:
             input_tokens=mock.get("input_tokens"),
             output_tokens=mock.get("output_tokens"),
             cost_usd=mock.get("cost_usd"),
+            forge_run_evidence=forge_run_evidence,
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=int(mock.get("duration_ms", duration_ms(started_at, ended_at))),
@@ -326,6 +330,11 @@ class ForgeAgentRunner:
             if payload.get("verification_result") is not None
             else None
         )
+        forge_run_evidence = (
+            ForgeRunEvidence.model_validate(payload["forge_run_evidence"])
+            if payload.get("forge_run_evidence") is not None
+            else None
+        )
         if all_validation_outputs:
             last_validation = (
                 first_failed_output(all_validation_outputs) or all_validation_outputs[-1]
@@ -421,6 +430,7 @@ class ForgeAgentRunner:
             input_tokens=payload.get("input_tokens"),
             output_tokens=payload.get("output_tokens"),
             cost_usd=payload.get("cost_usd"),
+            forge_run_evidence=forge_run_evidence,
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=duration_ms(started_at, ended_at),
@@ -519,6 +529,13 @@ def invalid_trace_failure_reason(exc: Exception, *, stdout: str, stderr: str) ->
 def mock_metadata(task: EvaluationTask) -> dict[str, Any]:
     raw_mock = task.metadata.get("mock", {})
     return raw_mock if isinstance(raw_mock, dict) else {}
+
+
+def mock_forge_run_evidence(mock: dict[str, Any]) -> ForgeRunEvidence | None:
+    raw_evidence = mock.get("forge_run_evidence")
+    if raw_evidence is None:
+        return None
+    return ForgeRunEvidence.model_validate(raw_evidence)
 
 
 def mock_changed_files(mock: dict[str, Any], *, default_target_file: str) -> list[str]:

@@ -191,6 +191,10 @@ export function normalizeA2ATaskProjection(task: AgentA2ATaskProjection): AgentA
     last_heartbeat_at_ms: task.last_heartbeat_at_ms ?? null,
     attempt_count: task.attempt_count ?? 0,
     max_attempts: task.max_attempts ?? 3,
+    runtime_events: task.runtime_events ?? [],
+    child_capsules: task.child_capsules ?? [],
+    review_gate: task.review_gate ?? null,
+    recovery_actions: task.recovery_actions ?? [],
     // Phase 4-B fields
     diff_available: task.diff_available ?? null,
     changed_file_count: task.changed_file_count ?? null,

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::harness::db::Database;
 use crate::harness::mcp;
+use crate::harness::permission_ledger::{PermissionLedgerEvent, PermissionLedgerEventKind};
 use crate::harness::shell_policy::{classify_shell_command, ShellPolicyDecision, ShellSafetyLevel};
 
 const DEFAULT_ALLOWED_PATTERNS: &[&str] = &[
@@ -23,6 +24,7 @@ const DEFAULT_ALLOWED_PATTERNS: &[&str] = &[
     "web_fetch",
     "git_diff",
 ];
+pub(crate) const MAX_PERMISSION_LEDGER_EVENTS: usize = 512;
 
 #[derive(Debug, Clone)]
 pub enum PermissionDecision {
@@ -35,6 +37,12 @@ pub enum PermissionDecision {
     Deny {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct PermissionCheck {
+    pub decision: PermissionDecision,
+    pub evidence: PermissionLedgerEvent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +75,8 @@ pub struct PermissionGate {
     full_access_session_workspaces: RwLock<HashMap<String, PathBuf>>,
     /// Runtime full access by canonical workspace path.
     full_access_workspace_paths: RwLock<HashSet<PathBuf>>,
+    /// Replayable policy evidence for permission decisions in this gate.
+    ledger_events: RwLock<Vec<PermissionLedgerEvent>>,
     /// Persistent database-backed permission store.
     db: Arc<Database>,
 }
@@ -85,6 +95,7 @@ impl PermissionGate {
             trusted_workspace_paths: RwLock::new(HashSet::new()),
             full_access_session_workspaces: RwLock::new(HashMap::new()),
             full_access_workspace_paths: RwLock::new(HashSet::new()),
+            ledger_events: RwLock::new(Vec::new()),
             db,
         }
     }
@@ -96,126 +107,439 @@ impl PermissionGate {
         input: &serde_json::Value,
         working_dir: &std::path::Path,
     ) -> PermissionDecision {
+        self.check_with_evidence(session_id, tool, input, working_dir)
+            .await
+            .decision
+    }
+
+    pub async fn check_with_evidence(
+        &self,
+        session_id: &str,
+        tool: &str,
+        input: &serde_json::Value,
+        working_dir: &std::path::Path,
+    ) -> PermissionCheck {
         let canonical = canonical_tool(tool);
+        let permission_mode = self
+            .permission_mode_state(session_id, Some(working_dir))
+            .await
+            .mode;
         if self.db.is_permission_denied(canonical).unwrap_or(false) {
-            return PermissionDecision::Deny {
-                reason: format!(
-                    "工具 `{}` 已被加入拒绝列表。请在权限设置中重置后再试。",
-                    canonical
-                ),
-            };
+            let reason = format!(
+                "工具 `{}` 已被加入拒绝列表。请在权限设置中重置后再试。",
+                canonical
+            );
+            return self
+                .record_check(
+                    PermissionDecision::Deny {
+                        reason: reason.clone(),
+                    },
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::BlockedPolicy,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        reason,
+                    ),
+                )
+                .await;
         }
 
         match canonical {
             "write_to_file" | "edit_file" => {
                 if let Some(path) = input.get("path").and_then(|v| v.as_str()) {
                     if let Err(reason) = ensure_path_in_workspace(working_dir, path) {
-                        return PermissionDecision::Deny { reason };
+                        return self
+                            .record_check(
+                                PermissionDecision::Deny {
+                                    reason: reason.clone(),
+                                },
+                                PermissionLedgerEvent::decision(
+                                    PermissionLedgerEventKind::BlockedExternalPath,
+                                    session_id,
+                                    canonical,
+                                    input,
+                                    working_dir,
+                                    permission_mode,
+                                    reason,
+                                ),
+                            )
+                            .await;
                     }
                     if self
                         .full_access_current_project_allows(session_id, working_dir)
                         .await
                     {
-                        return PermissionDecision::Allow;
+                        return self
+                            .record_check(
+                                PermissionDecision::Allow,
+                                PermissionLedgerEvent::decision(
+                                    PermissionLedgerEventKind::AutoApproved,
+                                    session_id,
+                                    canonical,
+                                    input,
+                                    working_dir,
+                                    permission_mode,
+                                    "full_access_current_project",
+                                ),
+                            )
+                            .await;
                     }
                     if self
                         .trusted_current_project_allows_write(session_id, path, working_dir)
                         .await
                     {
-                        return PermissionDecision::Allow;
+                        return self
+                            .record_check(
+                                PermissionDecision::Allow,
+                                PermissionLedgerEvent::decision(
+                                    PermissionLedgerEventKind::AutoApproved,
+                                    session_id,
+                                    canonical,
+                                    input,
+                                    working_dir,
+                                    permission_mode,
+                                    "trust_current_project_workspace_write",
+                                ),
+                            )
+                            .await;
+                    }
+                    if permission_mode == PermissionMode::TrustCurrentProject
+                        && is_sensitive_write_path(path)
+                    {
+                        return self
+                            .record_check(
+                                PermissionDecision::Ask {
+                                    question: format_file_question(tool, input),
+                                    kind: "file_write".to_string(),
+                                    remember_key: None,
+                                },
+                                PermissionLedgerEvent::decision(
+                                    PermissionLedgerEventKind::BlockedSensitivePath,
+                                    session_id,
+                                    canonical,
+                                    input,
+                                    working_dir,
+                                    permission_mode,
+                                    "trust_current_project_requires_sensitive_file_confirmation",
+                                ),
+                            )
+                            .await;
                     }
                 }
                 if self.is_allowed(session_id, tool, input).await {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "allow_rule",
+                            ),
+                        )
+                        .await;
                 }
-                PermissionDecision::Ask {
-                    question: format_file_question(tool, input),
-                    kind: "file_write".to_string(),
-                    remember_key: None,
-                }
+                self.record_check(
+                    PermissionDecision::Ask {
+                        question: format_file_question(tool, input),
+                        kind: "file_write".to_string(),
+                        remember_key: None,
+                    },
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::ManualRequired,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        "manual_confirm_requires_user_response",
+                    ),
+                )
+                .await
             }
             "run_shell" => {
                 let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 match classify_shell_command(command) {
-                    ShellPolicyDecision::AllowReadonly => PermissionDecision::Allow,
-                    ShellPolicyDecision::Blocked { reason } => PermissionDecision::Deny { reason },
+                    ShellPolicyDecision::AllowReadonly => {
+                        self.record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "readonly_shell_command",
+                            ),
+                        )
+                        .await
+                    }
+                    ShellPolicyDecision::Blocked { reason } => {
+                        self.record_check(
+                            PermissionDecision::Deny {
+                                reason: reason.clone(),
+                            },
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::BlockedPolicy,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                reason,
+                            ),
+                        )
+                        .await
+                    }
                     ShellPolicyDecision::NeedsConfirmation { safety } => {
                         if self
                             .full_access_current_project_allows(session_id, working_dir)
                             .await
                         {
-                            return PermissionDecision::Allow;
+                            return self
+                                .record_check(
+                                    PermissionDecision::Allow,
+                                    PermissionLedgerEvent::decision(
+                                        PermissionLedgerEventKind::AutoApproved,
+                                        session_id,
+                                        canonical,
+                                        input,
+                                        working_dir,
+                                        permission_mode,
+                                        "full_access_current_project",
+                                    ),
+                                )
+                                .await;
                         }
-                        PermissionDecision::Ask {
-                            question: format_shell_question(command),
-                            kind: if safety == ShellSafetyLevel::Dangerous {
-                                "dangerous_cmd".to_string()
-                            } else {
-                                "shell_cmd".to_string()
+                        self.record_check(
+                            PermissionDecision::Ask {
+                                question: format_shell_question(command),
+                                kind: if safety == ShellSafetyLevel::Dangerous {
+                                    "dangerous_cmd".to_string()
+                                } else {
+                                    "shell_cmd".to_string()
+                                },
+                                remember_key: None,
                             },
-                            remember_key: None,
-                        }
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::ManualRequired,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "shell_command_requires_user_response",
+                            ),
+                        )
+                        .await
                     }
                 }
             }
-            "ask_user" => PermissionDecision::Allow,
+            "ask_user" => {
+                self.record_check(
+                    PermissionDecision::Allow,
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::AutoApproved,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        "ask_user_tool",
+                    ),
+                )
+                .await
+            }
             "mcp_read_resource" => {
                 if self
                     .full_access_current_project_allows(session_id, working_dir)
                     .await
                 {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "full_access_current_project",
+                            ),
+                        )
+                        .await;
                 }
-                PermissionDecision::Ask {
-                    question: format_mcp_resource_question(input),
-                    kind: "mcp_resource_read".to_string(),
-                    remember_key: None,
-                }
+                self.record_check(
+                    PermissionDecision::Ask {
+                        question: format_mcp_resource_question(input),
+                        kind: "mcp_resource_read".to_string(),
+                        remember_key: None,
+                    },
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::ManualRequired,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        "connector_resource_requires_user_response",
+                    ),
+                )
+                .await
             }
             "mcp_get_prompt" => {
                 if self
                     .full_access_current_project_allows(session_id, working_dir)
                     .await
                 {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "full_access_current_project",
+                            ),
+                        )
+                        .await;
                 }
-                PermissionDecision::Ask {
-                    question: format_mcp_prompt_question(input),
-                    kind: "mcp_prompt_get".to_string(),
-                    remember_key: None,
-                }
+                self.record_check(
+                    PermissionDecision::Ask {
+                        question: format_mcp_prompt_question(input),
+                        kind: "mcp_prompt_get".to_string(),
+                        remember_key: None,
+                    },
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::ManualRequired,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        "connector_prompt_requires_user_response",
+                    ),
+                )
+                .await
             }
             tool if mcp::is_public_tool_name(tool) => {
                 if self
                     .full_access_current_project_allows(session_id, working_dir)
                     .await
                 {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "full_access_current_project",
+                            ),
+                        )
+                        .await;
                 }
                 if self.is_allowed(session_id, tool, input).await {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "allow_rule",
+                            ),
+                        )
+                        .await;
                 }
-                PermissionDecision::Ask {
-                    question: format_mcp_question(tool, input),
-                    kind: "mcp_tool".to_string(),
-                    remember_key: Some(canonical.to_string()),
-                }
+                self.record_check(
+                    PermissionDecision::Ask {
+                        question: format_mcp_question(tool, input),
+                        kind: "mcp_tool".to_string(),
+                        remember_key: Some(canonical.to_string()),
+                    },
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::ManualRequired,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        "connector_tool_requires_user_response",
+                    ),
+                )
+                .await
             }
             _ => {
                 if self
                     .full_access_current_project_allows(session_id, working_dir)
                     .await
                 {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "full_access_current_project",
+                            ),
+                        )
+                        .await;
                 }
                 if self.is_allowed(session_id, tool, input).await {
-                    return PermissionDecision::Allow;
+                    return self
+                        .record_check(
+                            PermissionDecision::Allow,
+                            PermissionLedgerEvent::decision(
+                                PermissionLedgerEventKind::AutoApproved,
+                                session_id,
+                                canonical,
+                                input,
+                                working_dir,
+                                permission_mode,
+                                "allow_rule",
+                            ),
+                        )
+                        .await;
                 }
-                PermissionDecision::Ask {
-                    question: format!("这个操作需要你确认后才能继续：{}", tool),
-                    kind: "confirm".to_string(),
-                    remember_key: Some(canonical.to_string()),
-                }
+                self.record_check(
+                    PermissionDecision::Ask {
+                        question: format!("这个操作需要你确认后才能继续：{}", tool),
+                        kind: "confirm".to_string(),
+                        remember_key: Some(canonical.to_string()),
+                    },
+                    PermissionLedgerEvent::decision(
+                        PermissionLedgerEventKind::ManualRequired,
+                        session_id,
+                        canonical,
+                        input,
+                        working_dir,
+                        permission_mode,
+                        "tool_requires_user_response",
+                    ),
+                )
+                .await
             }
         }
     }
@@ -293,7 +617,17 @@ impl PermissionGate {
             .write()
             .await
             .insert(session_id.to_string(), workspace.clone());
-        self.trusted_workspace_paths.write().await.insert(workspace);
+        self.trusted_workspace_paths
+            .write()
+            .await
+            .insert(workspace.clone());
+        self.record_ledger_event(PermissionLedgerEvent::mode_changed(
+            session_id,
+            Some(&workspace),
+            PermissionMode::TrustCurrentProject,
+            "mode_changed",
+        ))
+        .await;
     }
 
     pub async fn full_access_current_project(&self, session_id: &str, workspace: &Path) {
@@ -324,7 +658,14 @@ impl PermissionGate {
         self.full_access_workspace_paths
             .write()
             .await
-            .insert(workspace);
+            .insert(workspace.clone());
+        self.record_ledger_event(PermissionLedgerEvent::mode_changed(
+            session_id,
+            Some(&workspace),
+            PermissionMode::FullAccess,
+            "mode_changed",
+        ))
+        .await;
     }
 
     pub async fn restore_manual_confirm(&self, session_id: &str, workspace: Option<&Path>) {
@@ -361,6 +702,21 @@ impl PermissionGate {
                 .write()
                 .await
                 .remove(&workspace);
+            self.record_ledger_event(PermissionLedgerEvent::mode_changed(
+                session_id,
+                Some(&workspace),
+                PermissionMode::ManualConfirm,
+                "mode_changed",
+            ))
+            .await;
+        } else {
+            self.record_ledger_event(PermissionLedgerEvent::mode_changed(
+                session_id,
+                None,
+                PermissionMode::ManualConfirm,
+                "mode_changed",
+            ))
+            .await;
         }
     }
 
@@ -483,6 +839,14 @@ impl PermissionGate {
             .write()
             .await
             .remove(session_id);
+        self.ledger_events
+            .write()
+            .await
+            .retain(|event| event.session_id.as_deref() != Some(session_id));
+    }
+
+    pub async fn ledger_events(&self) -> Vec<PermissionLedgerEvent> {
+        self.ledger_events.read().await.clone()
     }
 
     async fn remove_custom_allowed_pattern(&self, tool: &str) {
@@ -542,6 +906,24 @@ impl PermissionGate {
             .read()
             .await
             .contains(&workspace)
+    }
+
+    async fn record_check(
+        &self,
+        decision: PermissionDecision,
+        evidence: PermissionLedgerEvent,
+    ) -> PermissionCheck {
+        self.record_ledger_event(evidence.clone()).await;
+        PermissionCheck { decision, evidence }
+    }
+
+    async fn record_ledger_event(&self, event: PermissionLedgerEvent) {
+        let mut events = self.ledger_events.write().await;
+        events.push(event);
+        let excess = events.len().saturating_sub(MAX_PERMISSION_LEDGER_EVENTS);
+        if excess > 0 {
+            events.drain(0..excess);
+        }
     }
 }
 

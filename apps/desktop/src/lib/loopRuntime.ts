@@ -1,6 +1,7 @@
 import type {
   HeadlessResumeApproval,
   HeadlessResumeMode,
+  LoopCompletionEligibilityFacts,
   LoopTaskRecord,
   SubagentRuntimePayload,
 } from "./protocol.ts";
@@ -35,6 +36,7 @@ export interface LoopRuntimeSummary {
   reviewStatus: string | null;
   commitEligible: boolean;
   commitBlockers: string[];
+  eligibilityFacts: LoopCompletionEligibilityFacts | null;
   humanGateId: string | null;
   lastReviewDecision: Record<string, unknown> | null;
   headlessResumeReadiness: HeadlessResumeReadinessSummary | null;
@@ -77,12 +79,14 @@ export function summarizeLoopTask(
   const reviewStatus = stringValue(completion?.review_status);
   const commitEligible = completion?.commit_eligible === true;
   const commitBlockers = stringArray(completion?.commit_blockers);
+  const eligibilityFacts = readRecord(completion?.eligibility_facts) as LoopCompletionEligibilityFacts | null;
   const humanGateId = stringValue(completion?.human_gate_id);
   const lastReviewDecision = readRecord(completion?.last_review_decision);
   const outcomeMessage = stringValue(readRecord(task.outcome)?.message);
   const budgetSnapshot = readRecord(task.latest_budget_snapshot);
+  const usageLedger = readRecord(task.latest_usage_ledger);
   const budgetWarning = budgetWarningFor(budgetSnapshot);
-  const usageDetail = usageDetailFor(budgetSnapshot);
+  const usageDetail = usageDetailFor(usageLedger ?? budgetSnapshot);
   const headlessResumeReadiness = headlessResumeReadinessForTask(task, options);
   const detail = detailFor(
     task.status,
@@ -110,6 +114,7 @@ export function summarizeLoopTask(
     reviewStatus,
     commitEligible,
     commitBlockers,
+    eligibilityFacts,
     humanGateId,
     lastReviewDecision,
     headlessResumeReadiness,
@@ -319,8 +324,8 @@ function budgetWarningFor(snapshot: Record<string, unknown> | null): string | nu
 
 function usageDetailFor(snapshot: Record<string, unknown> | null): string | null {
   if (!snapshot) return null;
-  const rounds = numberValue(snapshot.model_rounds_used);
-  const tools = numberValue(snapshot.tool_calls_used);
+  const rounds = numberValue(snapshot.turn_count) ?? numberValue(snapshot.model_rounds_used);
+  const tools = numberValue(snapshot.tool_call_count) ?? numberValue(snapshot.tool_calls_used);
   const elapsed = numberValue(snapshot.elapsed_ms);
   const parts = [];
   if (rounds != null) parts.push(`${rounds} 轮模型`);

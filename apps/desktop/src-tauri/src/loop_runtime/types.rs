@@ -294,6 +294,11 @@ pub enum LoopRuntimeEvent {
         reason: String,
         waiting_at_ms: u64,
     },
+    TaskRequeued {
+        task_id: String,
+        reason: String,
+        requeued_at_ms: u64,
+    },
     TaskInterrupted {
         task_id: String,
         reason: String,
@@ -367,6 +372,7 @@ impl LoopRuntimeEvent {
             Self::TaskCreated { .. } => "task_created",
             Self::TaskStarted { .. } => "task_started",
             Self::TaskWaitingForInput { .. } => "task_waiting_for_input",
+            Self::TaskRequeued { .. } => "task_requeued",
             Self::TaskInterrupted { .. } => "task_interrupted",
             Self::TaskCanceled { .. } => "task_canceled",
             Self::HumanGateRequested { .. } => "human_gate_requested",
@@ -428,6 +434,10 @@ pub struct LoopTaskRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_budget_snapshot: Option<BudgetSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_usage_ledger: Option<LoopUsageLedger>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_state: Option<LoopTaskRecoveryState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_event_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<LoopTaskOutcome>,
@@ -468,6 +478,8 @@ impl LoopTaskRecord {
             evidence: Vec::new(),
             policy_decisions: Vec::new(),
             latest_budget_snapshot: None,
+            latest_usage_ledger: None,
+            recovery_state: None,
             latest_event_id: None,
             outcome: None,
             completion_result: None,
@@ -497,6 +509,8 @@ impl LoopTaskRecord {
             evidence: Vec::new(),
             policy_decisions: Vec::new(),
             latest_budget_snapshot: None,
+            latest_usage_ledger: None,
+            recovery_state: None,
             latest_event_id: None,
             outcome: None,
             completion_result: None,
@@ -526,6 +540,56 @@ pub enum LoopTaskStatus {
 impl LoopTaskStatus {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Canceled)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopTaskRecoveryKind {
+    Orphaned,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoopTaskRecoveryState {
+    pub kind: LoopTaskRecoveryKind,
+    pub recoverable: bool,
+    pub reason: String,
+    pub notice: String,
+    pub recorded_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<String>,
+}
+
+impl LoopTaskRecoveryState {
+    pub fn interrupted(
+        reason: impl Into<String>,
+        recorded_at_ms: u64,
+        source_event_id: Option<String>,
+    ) -> Self {
+        let reason = reason.into();
+        let kind = classify_recovery_kind(&reason);
+        let label = match kind {
+            LoopTaskRecoveryKind::Orphaned => "Loop task was orphaned and marked interrupted.",
+            LoopTaskRecoveryKind::Interrupted => "Loop task was interrupted.",
+        };
+        Self {
+            kind,
+            recoverable: true,
+            notice: format!("{label} Recovery evidence remains attached to the task."),
+            reason,
+            recorded_at_ms,
+            source_event_id,
+        }
+    }
+}
+
+fn classify_recovery_kind(reason: &str) -> LoopTaskRecoveryKind {
+    let normalized = reason.to_ascii_lowercase();
+    if normalized.contains("orphan") || normalized.contains("stale lease") {
+        LoopTaskRecoveryKind::Orphaned
+    } else {
+        LoopTaskRecoveryKind::Interrupted
     }
 }
 
@@ -745,6 +809,73 @@ pub struct LoopCompletionResult {
     pub human_gate_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_review_decision: Option<HumanGateDecision>,
+    #[serde(default)]
+    pub eligibility_facts: LoopCompletionEligibilityFacts,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionFactStatus {
+    Satisfied,
+    Missing,
+    Blocked,
+    NotRequired,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompletionFactBucket {
+    pub status: CompletionFactStatus,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
+}
+
+impl Default for CompletionFactBucket {
+    fn default() -> Self {
+        Self {
+            status: CompletionFactStatus::Unknown,
+            reason: "not_evaluated".to_string(),
+            evidence_ids: Vec::new(),
+            blockers: Vec::new(),
+        }
+    }
+}
+
+impl CompletionFactBucket {
+    pub fn new(status: CompletionFactStatus, reason: impl Into<String>) -> Self {
+        Self {
+            status,
+            reason: reason.into(),
+            evidence_ids: Vec::new(),
+            blockers: Vec::new(),
+        }
+    }
+
+    pub fn with_evidence_ids(mut self, evidence_ids: Vec<String>) -> Self {
+        self.evidence_ids = evidence_ids;
+        self
+    }
+
+    pub fn with_blockers(mut self, blockers: Vec<String>) -> Self {
+        self.blockers = blockers;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoopCompletionEligibilityFacts {
+    pub verification: CompletionFactBucket,
+    pub changed_file_scope: CompletionFactBucket,
+    pub permission: CompletionFactBucket,
+    pub review: CompletionFactBucket,
+    pub docs: CompletionFactBucket,
+    pub eval: CompletionFactBucket,
+    pub residual_risk: CompletionFactBucket,
+    pub commit: CompletionFactBucket,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

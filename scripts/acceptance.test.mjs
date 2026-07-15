@@ -45,9 +45,15 @@ test("acceptance script dry-run lists the final product gates", () => {
   const dryRunEntries = parseDryRunEntries(output);
   const expectedEntries = [
     { label: "acceptance matrix contract tests", command: "node --test scripts/acceptance.test.mjs" },
+    { label: "gitnexus fallback wrapper contract tests", command: "node --test scripts/gitnexus-safe.test.mjs" },
     { label: "desktop production build", command: "npm run build:desktop" },
     { label: "website production build", command: "npm run build:website" },
     { label: "eval runner test suite", command: "npm run test:eval" },
+    {
+      label: "release confidence summary contract tests",
+      command:
+        'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md',
+    },
     {
       label: "loop event journal contract tests",
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib",
@@ -69,6 +75,16 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib",
     },
     {
+      label: "runtime health snapshot smoke",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runtime_health_snapshot_counts_loop_gateway_and_recovery_facts --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib && node --test apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts",
+    },
+    {
+      label: "runtime authority fast gate",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runtime_health_snapshot_counts_loop_gateway_and_recovery_facts --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_marks_running_task_interrupted_and_recoverable --lib && node --test apps/desktop/src/lib/loopRuntime.test.ts apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts",
+    },
+    {
       label: "gateway loop runner status smoke",
       command:
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib",
@@ -82,6 +98,21 @@ test("acceptance script dry-run lists the final product gates", () => {
       command: "npm --prefix apps/desktop run smoke:gateway:restart -- --json --dry-run",
     },
     {
+      label: "desktop eval promotion evidence smoke",
+      command:
+        'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_session build_session_eval_trace_payload_uses_snapshot_and_transcript_facts && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml trace_payload_maps_forge_events_turn_state_and_diffs --lib && cd apps/eval-runner && uv run pytest tests/test_cases.py tests/test_metrics.py tests/test_runner.py -q && cd ../.. && rg -q "A2A child evidence completeness" CHANGELOG.md && rg -q "A2A eval pack" CHANGELOG.md && rg -q "context capsule contract" CHANGELOG.md && rg -q "context capsule contract" apps/eval-runner/README.md && rg -q "review gate identity" CHANGELOG.md && rg -q "review gate identity" apps/eval-runner/README.md && rg -q "blocking review gates" CHANGELOG.md && rg -q "blocking review gates" apps/eval-runner/README.md && rg -q "failure recovery policy" CHANGELOG.md && rg -q "failure recovery policy" apps/eval-runner/README.md && rg -q "runtime event file facts" CHANGELOG.md && rg -q "runtime event file facts" apps/eval-runner/README.md && rg -q "worktree worker facts" CHANGELOG.md && rg -q "worktree worker facts" apps/eval-runner/README.md && rg -q "gateway runtime safety" CHANGELOG.md && rg -q "gateway eval pack" CHANGELOG.md && rg -q "direct-write owner blocked" CHANGELOG.md && rg -q "direct-write owner blocked" apps/eval-runner/README.md && rg -q "lease timeout recovery" CHANGELOG.md && rg -q "duplicate input prevention" CHANGELOG.md && rg -q "runtime recovery quality" CHANGELOG.md && rg -q "runtime recovery eval pack" CHANGELOG.md && rg -q "ForgeRunEvidence V2" CHANGELOG.md && rg -q "completion eligibility evidence scoring" CHANGELOG.md',
+    },
+    {
+      label: "memory recall and archive coverage status",
+      command:
+        'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml memory::unified --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::unified_memory --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::send_input_context --lib && cd apps/eval-runner && uv run pytest tests/test_cases.py tests/test_metrics.py -q && cd ../.. && rg -q "Project Archive unified memory" CHANGELOG.md && rg -q "recall audit" CHANGELOG.md && rg -q "context budget buckets" CHANGELOG.md && rg -q "memory recall quality" CHANGELOG.md && rg -q "memory eval pack" CHANGELOG.md && rg -q "memory/continuity dedupe" CHANGELOG.md && rg -q "memory/continuity dedupe" apps/eval-runner/README.md && rg -q "project archive shows unified memory overview and search" apps/desktop/e2e/acceptance.spec.ts',
+    },
+    {
+      label: "memory physical migration dry-run report",
+      command:
+        'node --test scripts/memory-migration-dry-run.test.mjs && node scripts/memory-migration-dry-run.mjs --json >/dev/null && rg -q "memory physical migration dry-run" CHANGELOG.md && rg -q "physical store migration dry-run" README.md && rg -q "physical store migration dry-run" apps/desktop/README.md',
+    },
+    {
       label: "subagent runtime event projection smoke",
       command: "node --test apps/desktop/src/store/blocks.test.ts",
     },
@@ -91,8 +122,9 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib",
     },
     {
-      label: "A2A child runtime file IO bridge",
-      command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib",
+      label: "A2A child runtime event capsule and file IO bridge",
+      command:
+        'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib && node --test apps/desktop/src/store/workbenchSummary.test.ts && rg -q "child runtime events" CHANGELOG.md && rg -q "child capsules" CHANGELOG.md && rg -q "review gate V2" CHANGELOG.md && rg -q "recovery suggestions" CHANGELOG.md',
     },
     {
       label: "executor file IO stream smoke",
@@ -127,6 +159,10 @@ test("acceptance script dry-run lists the final product gates", () => {
       label: "confirmation response replay contract tests",
       command:
         'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"',
+    },
+    {
+      label: "permission confirmation full access trust smoke specs",
+      command: 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|confirmation|full access|trust"',
     },
     {
       label: "desktop UI evidence observer preflight",
@@ -276,6 +312,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     "desktop restart harness preflight contract tests",
     "desktop restart harness blocker documentation status",
     "confirmation response replay contract tests",
+    "permission confirmation full access trust smoke specs",
     "desktop UI evidence observer preflight",
     "desktop UI evidence doctor",
     "desktop UI evidence recovery checks",
@@ -353,12 +390,138 @@ test("acceptance script exposes a machine-readable gate list", () => {
 
   assert.equal(matrix.schemaVersion, 1);
   assert.equal(matrix.workingDirectory, root.replace(/\/$/, ""));
+  assert.ok(Array.isArray(matrix.domains));
   assert.deepEqual(
-    matrix.gates,
+    matrix.gates.map(({ index, label, command }) => ({ index, label, command })),
     dryRunEntries.map((entry, index) => ({
       index: index + 1,
       ...entry,
     })),
+  );
+  assert.ok(matrix.gates.every((gate) => typeof gate.domain === "string" && gate.domain.length > 0));
+  assert.ok(matrix.gates.every((gate) => typeof gate.tier === "string" && gate.tier.length > 0));
+  assert.ok(
+    matrix.gates.every(
+      (gate) => typeof gate.runtimeCost === "string" && gate.runtimeCost.length > 0,
+    ),
+  );
+  assert.ok(
+    matrix.gates.every((gate) => typeof gate.manualRequirement === "boolean"),
+  );
+  assert.ok(matrix.gates.every((gate) => typeof gate.ciDefault === "boolean"));
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "runtime authority fast gate").ciDefault,
+    true,
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "desktop production build").ciDefault,
+    false,
+  );
+});
+
+test("acceptance script annotates gates with backend authority domains", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.deepEqual(
+    matrix.domains.map(({ id }) => id),
+    ["foundation", "runtime", "permission", "usage-context", "memory", "gateway", "eval", "ui-evidence"],
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "runtime journal authority and recovery smoke").domain,
+    "runtime",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "runtime health snapshot smoke").domain,
+    "runtime",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "permission mode, live-session sync, and shell policy contract tests").domain,
+    "permission",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "provider usage known/unknown telemetry").domain,
+    "usage-context",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "memory recall and archive coverage status").domain,
+    "memory",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "memory physical migration dry-run report").domain,
+    "memory",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "gateway loop runner status smoke").domain,
+    "gateway",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "gateway parity and degraded fallback smoke").domain,
+    "gateway",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "desktop eval promotion evidence smoke").domain,
+    "eval",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "desktop UI evidence observer preflight").domain,
+    "ui-evidence",
+  );
+  assert.equal(matrix.domains.find(({ id }) => id === "memory").gateCount, 2);
+});
+
+test("acceptance script annotates gates with release tiers and manual requirements", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const matrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.deepEqual(
+    matrix.tiers.map(({ id }) => id),
+    ["fast-contract", "runtime-core", "desktop-ui", "manual-evidence", "full-release"],
+  );
+  assert.deepEqual(
+    matrix.tiers.filter(({ ciDefault }) => ciDefault).map(({ id }) => id),
+    ["fast-contract", "runtime-core"],
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "acceptance matrix contract tests").tier,
+    "fast-contract",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "runtime authority fast gate").tier,
+    "runtime-core",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "completion contract mocked desktop smoke").tier,
+    "desktop-ui",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "manual desktop restart smoke protocol").tier,
+    "manual-evidence",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "desktop production build").tier,
+    "full-release",
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "manual desktop restart smoke protocol")
+      .manualRequirement,
+    true,
+  );
+  assert.equal(
+    matrix.gates.find(({ label }) => label === "runtime authority fast gate").manualRequirement,
+    false,
   );
 });
 
@@ -428,6 +591,17 @@ test("acceptance script can dry-run gates by case-insensitive label substring", 
   ]);
 });
 
+test("runtime grep includes the runtime authority fast gate", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const output = execFileSync(scriptPath, ["--dry-run", "--grep", "runtime"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.match(output, /\[dry-run\] runtime authority fast gate:/);
+});
+
 test("acceptance script list-json uses the same grep-filtered gates as dry-run", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
@@ -447,6 +621,44 @@ test("acceptance script list-json uses the same grep-filtered gates as dry-run",
     matrix.gates.map(({ label, command }) => ({ label, command })),
     parseDryRunEntries(dryRunOutput),
   );
+});
+
+test("acceptance script can dry-run and list CI-default gates", () => {
+  assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
+
+  const fullMatrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+  const ciDefaultLabels = fullMatrix.gates
+    .filter(({ ciDefault }) => ciDefault)
+    .map(({ label }) => label);
+
+  const dryRunOutput = execFileSync(scriptPath, ["--dry-run", "--ci-default"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const ciMatrix = JSON.parse(
+    execFileSync(scriptPath, ["--list-json", "--ci-default"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+
+  assert.ok(ciDefaultLabels.length > 0, "fixture should expose CI-default gates");
+  assert.ok(ciDefaultLabels.includes("runtime authority fast gate"));
+  assert.ok(!ciDefaultLabels.includes("desktop production build"));
+  assert.deepEqual(
+    parseDryRunEntries(dryRunOutput).map(({ label }) => label),
+    ciDefaultLabels,
+  );
+  assert.deepEqual(
+    ciMatrix.gates.map(({ label }) => label),
+    ciDefaultLabels,
+  );
+  assert.ok(ciMatrix.gates.every((gate) => ["fast-contract", "runtime-core"].includes(gate.tier)));
 });
 
 test("acceptance script reports --grep misses", () => {
@@ -495,7 +707,7 @@ test("acceptance script rejects combining --only and --grep", () => {
   });
 
   assert.equal(result.status, 2);
-  assert.match(result.stderr, /Use either --only or --grep, not both\./);
+  assert.match(result.stderr, /Use only one selector: --only, --grep, or --ci-default\./);
 });
 
 test("acceptance script suggests a close gate label for --only misses", () => {

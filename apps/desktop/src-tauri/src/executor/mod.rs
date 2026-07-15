@@ -19,6 +19,8 @@ use crate::agent::event_sink::EventEmitter;
 use crate::agent::snapshot::{ActiveToolCallDescriptor, PendingConfirmDescriptor};
 use crate::agent::time::now_ms;
 use crate::consts::{ASK_USER_TIMEOUT, SEARCH_TIMEOUT, WEB_FETCH_TIMEOUT, WEB_SEARCH_TIMEOUT};
+use crate::harness::permission_ledger::{PermissionLedgerEvent, PermissionLedgerEventKind};
+use crate::harness::permissions::PermissionMode;
 use crate::harness::shell_policy::validate_shell_command_failsafe;
 use crate::protocol::events::StreamEvent;
 use crate::protocol::BlockId;
@@ -504,12 +506,22 @@ impl ToolExecutor {
             "ask_user" => {
                 let question = get_str(tool_input, "question").unwrap_or("");
                 let (tx, rx) = tokio::sync::oneshot::channel();
+                let permission_evidence = PermissionLedgerEvent::decision(
+                    PermissionLedgerEventKind::ManualRequired,
+                    session_id,
+                    "ask_user",
+                    tool_input,
+                    self.file.working_dir(),
+                    PermissionMode::ManualConfirm,
+                    "ask_user_requires_user_response",
+                );
                 let descriptor = PendingConfirmDescriptor::new(
                     block_id.clone(),
                     question.to_string(),
                     "ask_user".to_string(),
                     now_ms(),
-                );
+                )
+                .with_permission_evidence(permission_evidence.clone());
                 {
                     self.pending_confirms
                         .write()
@@ -525,6 +537,7 @@ impl ToolExecutor {
                     question: question.to_string(),
                     kind: "ask_user".to_string(),
                     boundary: None,
+                    permission_evidence: Some(permission_evidence),
                     replayed_interrupted: false,
                 });
                 let approved = tokio::time::timeout(ASK_USER_TIMEOUT, rx).await;

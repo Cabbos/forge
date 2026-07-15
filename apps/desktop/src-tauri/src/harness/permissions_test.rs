@@ -1,6 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use super::super::permissions::{PermissionDecision, PermissionGate, PermissionMode};
+    use super::super::permission_ledger::{
+        PermissionLedgerEvent, PermissionLedgerEventKind, PermissionRiskTier,
+    };
+    use super::super::permissions::{
+        PermissionDecision, PermissionGate, PermissionMode, MAX_PERMISSION_LEDGER_EVENTS,
+    };
     use crate::harness::db::Database;
     use std::sync::Arc;
 
@@ -41,6 +46,146 @@ mod tests {
             "write_to_file should ask for confirmation: {:?}",
             decision
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ledger_records_permission_decision_evidence_for_required_kinds() {
+        let (db, dir) = temp_db();
+        std::fs::create_dir_all(dir.join("src")).expect("create src");
+        std::fs::write(dir.join("src/main.rs"), "fn main() {}").expect("write main.rs");
+        std::fs::write(dir.join(".env"), "SECRET=1").expect("write env");
+        let gate = PermissionGate::new(db);
+
+        gate.trust_current_project("session-1", &dir).await;
+        let mode_event = gate
+            .ledger_events()
+            .await
+            .into_iter()
+            .find(|event| event.kind == PermissionLedgerEventKind::ModeChanged)
+            .expect("mode changed event");
+        assert_eq!(mode_event.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            mode_event.permission_mode,
+            PermissionMode::TrustCurrentProject
+        );
+        assert_eq!(mode_event.operation, "set_permission_mode");
+        assert_eq!(mode_event.reason, "mode_changed");
+
+        let sensitive = gate
+            .check_with_evidence(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({"path": ".env"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(sensitive.decision, PermissionDecision::Ask { .. }),
+            "trusted sensitive write should still require confirmation: {:?}",
+            sensitive.decision
+        );
+        assert_eq!(
+            sensitive.evidence.kind,
+            PermissionLedgerEventKind::BlockedSensitivePath
+        );
+        assert_eq!(sensitive.evidence.affected_files, vec![".env".to_string()]);
+        assert_eq!(
+            sensitive.evidence.permission_mode,
+            PermissionMode::TrustCurrentProject
+        );
+
+        gate.restore_manual_confirm("session-1", Some(&dir)).await;
+        let manual = gate
+            .check_with_evidence(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({"path": "src/main.rs"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(manual.decision, PermissionDecision::Ask { .. }),
+            "manual mode write should require confirmation: {:?}",
+            manual.decision
+        );
+        assert_eq!(
+            manual.evidence.kind,
+            PermissionLedgerEventKind::ManualRequired
+        );
+        assert_eq!(manual.evidence.risk_tier, PermissionRiskTier::Caution);
+        assert_eq!(manual.evidence.operation, "write_to_file");
+
+        let readonly = gate
+            .check_with_evidence(
+                "session-1",
+                "read_file",
+                &serde_json::json!({"path": "src/main.rs"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(readonly.decision, PermissionDecision::Allow),
+            "read_file should be auto-approved: {:?}",
+            readonly.decision
+        );
+        assert_eq!(
+            readonly.evidence.kind,
+            PermissionLedgerEventKind::AutoApproved
+        );
+        assert_eq!(readonly.evidence.risk_tier, PermissionRiskTier::Normal);
+
+        let external = gate
+            .check_with_evidence(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({"path": "/etc/passwd"}),
+                &dir,
+            )
+            .await;
+        assert!(
+            matches!(external.decision, PermissionDecision::Deny { .. }),
+            "external write should be denied: {:?}",
+            external.decision
+        );
+        assert_eq!(
+            external.evidence.kind,
+            PermissionLedgerEventKind::BlockedExternalPath
+        );
+        assert_eq!(external.evidence.risk_tier, PermissionRiskTier::High);
+        assert!(external.evidence.reason.contains("项目目录之外"));
+
+        let user_approved =
+            PermissionLedgerEvent::user_response("session-1", true, Some(&manual.evidence), None);
+        let user_declined =
+            PermissionLedgerEvent::user_response("session-1", false, Some(&manual.evidence), None);
+        assert_eq!(
+            user_approved.workspace_path, manual.evidence.workspace_path,
+            "user response evidence should preserve workspace path"
+        );
+        assert_eq!(
+            user_declined.affected_files, manual.evidence.affected_files,
+            "user response evidence should preserve affected files"
+        );
+
+        let mut ledger_events = gate.ledger_events().await;
+        ledger_events.push(user_approved);
+        ledger_events.push(user_declined);
+        for required in [
+            PermissionLedgerEventKind::ModeChanged,
+            PermissionLedgerEventKind::BlockedSensitivePath,
+            PermissionLedgerEventKind::ManualRequired,
+            PermissionLedgerEventKind::AutoApproved,
+            PermissionLedgerEventKind::BlockedExternalPath,
+            PermissionLedgerEventKind::UserApproved,
+            PermissionLedgerEventKind::UserDeclined,
+        ] {
+            assert!(
+                ledger_events.iter().any(|event| event.kind == required),
+                "missing ledger event kind {required:?}: {ledger_events:?}"
+            );
+        }
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -86,6 +231,54 @@ mod tests {
             "manual confirmation should be restored after disabling trust mode: {:?}",
             restored
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ledger_is_capped_and_session_clear_prunes_events() {
+        let (db, dir) = temp_db();
+        let gate = PermissionGate::new(db);
+
+        for idx in 0..(MAX_PERMISSION_LEDGER_EVENTS + 24) {
+            let session_id = format!("session-{idx}");
+            gate.check_with_evidence(
+                &session_id,
+                "read_file",
+                &serde_json::json!({"path": "src/main.rs"}),
+                &dir,
+            )
+            .await;
+        }
+
+        let events = gate.ledger_events().await;
+        assert!(events.len() <= MAX_PERMISSION_LEDGER_EVENTS);
+        assert!(
+            events
+                .iter()
+                .any(|event| event.session_id.as_deref() == Some("session-512")),
+            "newest evidence should be retained"
+        );
+
+        gate.check_with_evidence(
+            "session-to-clear",
+            "read_file",
+            &serde_json::json!({"path": "src/main.rs"}),
+            &dir,
+        )
+        .await;
+        assert!(gate
+            .ledger_events()
+            .await
+            .iter()
+            .any(|event| event.session_id.as_deref() == Some("session-to-clear")));
+
+        gate.clear_session("session-to-clear").await;
+        assert!(!gate
+            .ledger_events()
+            .await
+            .iter()
+            .any(|event| event.session_id.as_deref() == Some("session-to-clear")));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

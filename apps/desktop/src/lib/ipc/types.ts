@@ -4,6 +4,8 @@ import type {
   ForgeWikiState,
   ForgeWikiUpdateProposal,
   AgentA2AProjection,
+  HeadlessOwnerRun,
+  LoopTaskRecord,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
@@ -20,6 +22,8 @@ export type {
   ForgeWikiState,
   ForgeWikiUpdateProposal,
   AgentA2AProjection,
+  HeadlessOwnerRun,
+  LoopTaskRecord,
   MemoryPatch,
   MemoryScope,
   SelectedContextMemory,
@@ -209,6 +213,110 @@ export interface ContinuityExperience {
   created_at_ms: number;
   updated_at_ms: number;
   tags: string[];
+}
+
+export type UnifiedMemorySource = "wiki_memory" | "memory_fact" | "continuity_experience";
+export type UnifiedMemoryActionKind =
+  | "archive"
+  | "restore"
+  | "forget"
+  | "pin"
+  | "unpin"
+  | "mark_wrong_project"
+  | "mark_low_value"
+  | "edit";
+export type UnifiedMemoryListFilter = "current" | "archived";
+export type UnifiedMemoryKind =
+  | "preference"
+  | "project_fact"
+  | "decision"
+  | "task_state"
+  | "lesson"
+  | "bug_pattern"
+  | "workflow";
+export type UnifiedMemoryScope = "session" | "user_profile" | "project" | "document";
+export type UnifiedMemoryStatus = "candidate" | "accepted" | "pinned" | "forgotten" | "archived";
+export type UnifiedMemoryVisibility = "user_visible" | "hidden_context" | "audit_only";
+
+export interface UnifiedMemoryProvenance {
+  owner: string;
+  storage: string;
+  source_label: string;
+}
+
+export interface UnifiedMemoryRecord {
+  id: string;
+  source: UnifiedMemorySource;
+  source_id: string;
+  kind: UnifiedMemoryKind;
+  status: UnifiedMemoryStatus;
+  scope: UnifiedMemoryScope;
+  title: string;
+  body: string;
+  project_path?: string | null;
+  profile_id?: string | null;
+  source_session_id?: string | null;
+  confidence: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  tags: string[];
+  visibility?: UnifiedMemoryVisibility;
+  provenance?: UnifiedMemoryProvenance;
+  last_used_at_ms?: number | null;
+  archived_at_ms?: number | null;
+  forget_policy?: string;
+  recall_policy?: string;
+}
+
+export interface UnifiedMemoryAction {
+  memory_id: string;
+  action: UnifiedMemoryActionKind;
+  patch?: UnifiedMemoryActionPatch | null;
+}
+
+export interface UnifiedMemoryActionPatch {
+  body?: string | null;
+  tags?: string[] | null;
+}
+
+export interface UnifiedMemoryActionResult {
+  memory_id: string;
+  source: UnifiedMemorySource;
+  source_id: string;
+  action: UnifiedMemoryActionKind;
+  changed: boolean;
+  resulting_status?: UnifiedMemoryStatus | null;
+  record?: UnifiedMemoryRecord | null;
+  evidence: string[];
+}
+
+export type UnifiedMemoryActionErrorKind =
+  | "invalid_id"
+  | "unknown_source"
+  | "not_found"
+  | "unsupported_action"
+  | "invalid_patch"
+  | "store_error";
+
+export interface UnifiedMemoryActionError {
+  kind: UnifiedMemoryActionErrorKind;
+  memory_id: string;
+  source?: UnifiedMemorySource | string | null;
+  source_id?: string | null;
+  action: UnifiedMemoryActionKind;
+  message: string;
+}
+
+export interface UnifiedMemorySelectionAudit {
+  memory_id: string;
+  source: UnifiedMemorySource;
+  source_id: string;
+  kind: UnifiedMemoryKind;
+  score: number;
+  reason: string;
+  project_match: boolean;
+  profile_match: boolean;
+  injected: boolean;
 }
 
 export interface McpContextResource {
@@ -430,6 +538,9 @@ export interface GatewayTriggerRunRecord {
 export interface GatewayRuntimeStatus {
   ok: boolean;
   message: string;
+  ownership?: GatewayOwnershipCapability;
+  degraded_mode?: GatewayDegradedModeStatus;
+  runtime_health?: RuntimeHealthSnapshot;
   uptime_seconds: number;
   active_sessions: number;
   pending_triggers: number;
@@ -438,6 +549,9 @@ export interface GatewayRuntimeStatus {
   pending_loop_tasks?: number;
   running_loop_tasks?: number;
   stale_loop_task_leases?: number;
+  orphaned_loop_tasks?: number;
+  interrupted_loop_tasks?: number;
+  recoverable_loop_tasks?: number;
   dry_run_headless_owner_runs?: number;
   waiting_headless_owner_runs?: number;
   denied_headless_owner_runs?: number;
@@ -449,12 +563,162 @@ export interface GatewayRuntimeStatus {
   runtime_tasks: GatewayRuntimeTaskStatus[];
 }
 
+export interface RuntimeHealthSnapshot {
+  ok: boolean;
+  generated_at_ms: number;
+  active_runs: RuntimeActiveRunHealth;
+  pending_confirmations: RuntimePendingConfirmationHealth;
+  loop_tasks: RuntimeLoopTaskHealth;
+  gateway_queue: RuntimeGatewayQueueHealth;
+  scheduler_queue: RuntimeSchedulerQueueHealth;
+  runtime_tasks: RuntimeTaskHealth;
+  last_replay: RuntimeReplayHealth;
+  last_recovery_action?: RuntimeRecoveryActionSnapshot | null;
+}
+
+export interface RuntimeActiveRunHealth {
+  active_sessions: number;
+  running_loop_tasks: number;
+}
+
+export interface RuntimePendingConfirmationHealth {
+  count: number;
+  available: boolean;
+  source: string;
+}
+
+export interface RuntimeLoopTaskHealth {
+  total: number;
+  pending: number;
+  running: number;
+  waiting_for_input: number;
+  waiting_for_review: number;
+  completed: number;
+  failed: number;
+  canceled: number;
+  interrupted: number;
+  stale_leases: number;
+  orphaned: number;
+  recoverable: number;
+}
+
+export interface RuntimeGatewayQueueHealth {
+  pending_triggers: number;
+  claimed_triggers: number;
+  pending_session_inputs: number;
+  dead_letter_runs: number;
+}
+
+export interface RuntimeSchedulerQueueHealth {
+  running: boolean;
+  pending_tasks: number;
+  source: string;
+}
+
+export interface RuntimeTaskHealth {
+  total: number;
+  running: number;
+  failed: number;
+  webhook_listener_running: boolean;
+  trigger_runner_running: boolean;
+  loop_runner_running: boolean;
+  scheduler_tick_running: boolean;
+  dashboard_http_running: boolean;
+}
+
+export interface RuntimeReplayHealth {
+  ok: boolean;
+  task_count: number;
+  message: string;
+}
+
+export interface RuntimeRecoveryActionSnapshot {
+  task_id: string;
+  kind: "orphaned" | "interrupted" | string;
+  reason: string;
+  notice: string;
+  recorded_at_ms: number;
+}
+
+export type GatewayOwnershipMode =
+  | "local_default"
+  | "gateway_opt_in"
+  | "gateway_opt_in_dry_run"
+  | "gateway_read_only_owner"
+  | "gateway_patch_proposal_owner"
+  | "gateway_tool_owner_blocked_by_default";
+
+export interface GatewayOwnershipCapability {
+  ownership_mode: GatewayOwnershipMode;
+  gateway_default_enabled: boolean;
+  gateway_can_own_sessions: boolean;
+  requires_opt_in: boolean;
+  parity_gate: string;
+  recovery_gate: string;
+  required_action: string;
+}
+
+export type GatewayOwnershipEligibilityDecision =
+  | "allow"
+  | "deny"
+  | "requires_human_approval";
+
+export interface GatewayOwnershipEligibilityResult {
+  ok: boolean;
+  decision: GatewayOwnershipEligibilityDecision;
+  requested_mode: GatewayOwnershipMode;
+  session_id?: string | null;
+  task_id?: string | null;
+  reasons: string[];
+  missing_evidence: string[];
+  required_action: string;
+  proposal_only?: boolean;
+  would_generate_patch_proposal?: boolean;
+  would_apply_patch?: boolean;
+  would_execute_provider: boolean;
+  would_execute_tools: boolean;
+  would_write_files: boolean;
+  changes_task_state: boolean;
+}
+
+export interface GatewayReadOnlyOwnerSideEffects {
+  provider: boolean;
+  tools: boolean;
+  shell: boolean;
+  write_files: boolean;
+  confirmations: boolean;
+  commits: boolean;
+}
+
+export interface GatewayReadOnlyOwnerDiagnosticsResult {
+  ok: boolean;
+  started: boolean;
+  completed: boolean;
+  gateway_can_resume: boolean;
+  task: LoopTaskRecord;
+  owner_run?: HeadlessOwnerRun | null;
+  summary: string;
+  message: string;
+  side_effects: GatewayReadOnlyOwnerSideEffects;
+}
+
+export interface GatewayDegradedModeStatus {
+  active: boolean;
+  reason: string;
+  fallback: string;
+  input_policy: string;
+  confirmation_policy: string;
+  recovery_command?: string;
+}
+
 export interface GatewaySessionInputCompletionRecord {
   input_id: string;
   session_id: string;
   message_preview: string;
   received_at_ms: number;
   completed_at_ms: number;
+  action?: "accepted" | "cleared_stale";
+  reason?: string | null;
 }
 
 export interface GatewayRuntimeTaskStatus {
@@ -473,6 +737,8 @@ export type GatewaySessionControlPlane =
 
 export interface GatewaySessionControl {
   control_plane: GatewaySessionControlPlane;
+  ownership_mode?: GatewayOwnershipMode;
+  gateway_can_own_session?: boolean;
   gateway_can_stream: boolean;
   gateway_can_send_input: boolean;
   gateway_can_resume: boolean;

@@ -4,6 +4,7 @@ import { PendingUpdatesSection } from "./WikiPendingUpdatesSection";
 import { ProjectRecordsSection } from "./WikiProjectRecordsSection";
 import { SavedBackgroundSection } from "./WikiSavedBackgroundSection";
 import { ContinuityExperiencesSection } from "./ContinuityExperiencesSection";
+import { UnifiedMemorySection } from "./UnifiedMemorySection";
 
 interface WikiSectionsViewProps {
   currentProjectPath: string;
@@ -64,6 +65,8 @@ export function WikiSectionsView({
         onRefresh={onRefresh}
         onInitForgeWiki={onInitForgeWiki}
       />
+
+      <UnifiedMemorySection currentProjectPath={currentProjectPath} sessionId={sessionId} />
 
       <PendingUpdatesSection
         candidateMemories={candidateMemories}

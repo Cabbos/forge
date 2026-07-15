@@ -8,6 +8,7 @@ SHOW_HELP=0
 ONLY_LABEL=""
 GREP_LABEL=""
 GREP_LABEL_MATCH=""
+CI_DEFAULT=0
 
 while [[ "$#" -gt 0 ]]; do
   arg="$1"
@@ -36,6 +37,10 @@ while [[ "$#" -gt 0 ]]; do
       GREP_LABEL="$2"
       shift 2
       ;;
+    --ci-default)
+      CI_DEFAULT=1
+      shift
+      ;;
     -h|--help)
       SHOW_HELP=1
       shift
@@ -47,8 +52,12 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$ONLY_LABEL" && -n "$GREP_LABEL" ]]; then
-  echo "Use either --only or --grep, not both." >&2
+selector_count=0
+[[ -n "$ONLY_LABEL" ]] && selector_count=$((selector_count + 1))
+[[ -n "$GREP_LABEL" ]] && selector_count=$((selector_count + 1))
+[[ "$CI_DEFAULT" -eq 1 ]] && selector_count=$((selector_count + 1))
+if [[ "$selector_count" -gt 1 ]]; then
+  echo "Use only one selector: --only, --grep, or --ci-default." >&2
   exit 2
 fi
 
@@ -58,36 +67,55 @@ fi
 
 COMMAND_LABELS=()
 COMMANDS=()
+GATE_DOMAINS=()
+CURRENT_DOMAIN="foundation"
+
+set_domain() {
+  CURRENT_DOMAIN="$1"
+}
 
 # Keep each gate as one add_gate call so label/command order cannot drift.
 add_gate() {
+  GATE_DOMAINS+=("$CURRENT_DOMAIN")
   COMMAND_LABELS+=("$1")
   COMMANDS+=("$2")
 }
 
 add_gate 'acceptance matrix contract tests' 'node --test scripts/acceptance.test.mjs'
+add_gate 'gitnexus fallback wrapper contract tests' 'node --test scripts/gitnexus-safe.test.mjs'
 add_gate 'desktop production build' 'npm run build:desktop'
 add_gate 'website production build' 'npm run build:website'
+set_domain 'eval'
 add_gate 'eval runner test suite' 'npm run test:eval'
+add_gate 'release confidence summary contract tests' 'node --test scripts/release-confidence-summary.test.mjs && node scripts/release-confidence-summary.mjs --json >/dev/null && rg -q "release confidence summary" CHANGELOG.md && rg -q "capability evidence" CHANGELOG.md && rg -q "verified capability evidence" CHANGELOG.md && rg -q "verified capability evidence" README.md && rg -q "verified capability evidence" apps/eval-runner/README.md && rg -q "fail-on-attention" CHANGELOG.md'
+set_domain 'runtime'
 add_gate 'loop event journal contract tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib'
 add_gate 'projection rebuild/replay tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib'
 add_gate 'policy preflight tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::policy --lib'
 add_gate 'budget preflight tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::budget --lib'
 add_gate 'durable human gate tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::gates --lib'
+add_gate 'runtime health snapshot smoke' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runtime_health_snapshot_counts_loop_gateway_and_recovery_facts --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib && node --test apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts'
+add_gate 'runtime authority fast gate' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runtime_health_snapshot_counts_loop_gateway_and_recovery_facts --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_marks_running_task_interrupted_and_recoverable --lib && node --test apps/desktop/src/lib/loopRuntime.test.ts apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts'
+set_domain 'gateway'
 add_gate 'gateway loop runner status smoke' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib'
 add_gate 'gateway session-host run evidence' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway::runner --lib'
 add_gate 'backend gateway restart smoke dry-run' 'npm --prefix apps/desktop run smoke:gateway:restart -- --json --dry-run'
 add_gate 'subagent runtime event projection smoke' 'node --test apps/desktop/src/store/blocks.test.ts'
 add_gate 'live worktree worker lifecycle harness' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child::tests::run_worktree_worker --lib'
-add_gate 'A2A child runtime file IO bridge' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib'
+add_gate 'A2A child runtime event capsule and file IO bridge' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::child --lib && node --test apps/desktop/src/store/workbenchSummary.test.ts && rg -q "child runtime events" CHANGELOG.md && rg -q "child capsules" CHANGELOG.md && rg -q "review gate V2" CHANGELOG.md && rg -q "recovery suggestions" CHANGELOG.md'
 add_gate 'executor file IO stream smoke' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml executor_file_io_stream --lib'
 add_gate 'completion contract desktop helper smoke' 'node --test apps/desktop/src/lib/loopRuntime.test.ts'
+set_domain 'ui-evidence'
 add_gate 'completion contract mocked desktop smoke' 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts'
 add_gate 'mocked desktop restart runtime smoke (partial macOS evidence)' 'npm --prefix apps/desktop run test:e2e -- e2e/level3-runtime-restart.spec.ts'
+set_domain 'gateway'
 add_gate 'desktop restart harness availability preflight' 'node scripts/desktop-restart-harness-preflight.mjs --json'
 add_gate 'desktop restart harness preflight contract tests' 'node --test scripts/desktop-restart-harness-preflight.test.mjs'
 add_gate 'desktop restart harness blocker documentation status' 'rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "desktop restart harness launch command" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "node --test scripts/desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/desktop-restart-smoke-protocol.md && rg -q "blocked_official_macos" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "official macOS WKWebView WebDriver support" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop restart harness launch command" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md && rg -q "desktop-restart-harness-preflight.test.mjs" apps/desktop/docs/product/v1-internal-beta-run-2026-06-25.md'
+set_domain 'permission'
 add_gate 'confirmation response replay contract tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::confirmations --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session_events --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "confirm response replay|startup transcript hydration"'
+add_gate 'permission confirmation full access trust smoke specs' 'npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|confirmation|full access|trust"'
+set_domain 'ui-evidence'
 add_gate 'desktop UI evidence observer preflight' 'node scripts/desktop-ui-evidence-preflight.mjs --json'
 add_gate 'desktop UI evidence doctor' 'node scripts/desktop-ui-evidence-doctor.mjs --json'
 add_gate 'desktop UI evidence recovery checks' 'node scripts/desktop-ui-evidence-doctor.mjs --json --run-checks'
@@ -106,6 +134,7 @@ add_gate 'disposable edit/build loop row finalizer dry-run' 'node scripts/finali
 add_gate 'disposable edit/build loop row runbook' 'node scripts/phase8-disposable-loop-runbook.mjs --json --row 1'
 add_gate 'disposable edit/build loop status summary' 'node scripts/phase8-disposable-loop-status.mjs --json'
 add_gate 'disposable edit/build loop live-ready hard gate' 'node scripts/phase8-disposable-loop-status.mjs --json --require-live-ready'
+set_domain 'usage-context'
 add_gate 'provider usage known/unknown telemetry' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml usage --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml unknown_pricing --lib'
 add_gate 'composer context usage from provider_usage' 'npm --prefix apps/desktop run test:e2e -- e2e/composer.spec.ts -g "provider_usage without legacy usage"'
 add_gate 'provider usage trace rendering' 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "provider usage"'
@@ -116,13 +145,15 @@ add_gate 'post-shell file-effect evidence smoke (bounded, not shell-internal)' '
 add_gate 'persisted A2A lineage tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::assign_child_task_persists_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_task_id_survives_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::bus::tests::parent_child_task_ids_survive_bus_serialization_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::a2a::ledger::tests::ledger_roundtrips_parent_child_task_ids --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml agent::session::a2a::tests::snapshot_restore_preserves_a2a_parent_child_task_ids --lib'
 add_gate 'typed completion evidence and review-to-commit eligibility tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::completion --lib'
 add_gate 'gated headless ownership policy tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml headless_resume --lib'
+set_domain 'permission'
 add_gate 'permission mode, live-session sync, and shell policy contract tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml permission_handlers --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib'
 add_gate 'slash command review calibration contract tests' 'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml capability_context --lib'
+set_domain 'ui-evidence'
 add_gate 'desktop trust-loop trust mode, preview ownership, health alert, confirmation, and review calibration smoke specs' 'npm --prefix apps/desktop run test:e2e -- e2e/resume.spec.ts e2e/workbench.spec.ts e2e/a2a-confirm-runtime.spec.ts e2e/acceptance.spec.ts'
 add_gate 'rich preview e2e smoke specs' 'npm --prefix apps/desktop run test:e2e -- e2e/messages.spec.ts -g "write_file tool details show|diff cards show|image diff cards show"'
 
-if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" ]]; then
-  echo "Acceptance matrix mismatch: ${#COMMAND_LABELS[@]} labels for ${#COMMANDS[@]} commands" >&2
+if [[ "${#COMMAND_LABELS[@]}" -ne "${#COMMANDS[@]}" || "${#COMMAND_LABELS[@]}" -ne "${#GATE_DOMAINS[@]}" ]]; then
+  echo "Acceptance matrix mismatch: ${#COMMAND_LABELS[@]} labels, ${#COMMANDS[@]} commands, ${#GATE_DOMAINS[@]} domains" >&2
   exit 1
 fi
 
@@ -149,6 +180,67 @@ assert_unique() {
 assert_unique "label" "${COMMAND_LABELS[@]}"
 assert_unique "command" "${COMMANDS[@]}"
 
+domain_title() {
+  case "$1" in
+    foundation)
+      printf 'Foundation'
+      ;;
+    runtime)
+      printf 'Runtime'
+      ;;
+    permission)
+      printf 'Permission'
+      ;;
+    usage-context)
+      printf 'Usage / Context'
+      ;;
+    memory)
+      printf 'Memory'
+      ;;
+    gateway)
+      printf 'Gateway'
+      ;;
+    eval)
+      printf 'Eval'
+      ;;
+    ui-evidence)
+      printf 'UI Evidence'
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
+  esac
+}
+
+manual_requirement() {
+  local label="$1"
+  [[ "$label" == manual\ * || "$label" == *"manual evidence"* || "$label" == *"beta-log archive"* ]]
+}
+
+gate_tier() {
+  local domain="$1"
+  local label="$2"
+  local command="$3"
+
+  if manual_requirement "$label"; then
+    printf 'manual-evidence'
+  elif [[ "$label" =~ production\ build || "$label" =~ eval\ runner\ test\ suite ]]; then
+    printf 'full-release'
+  elif [[ "$command" =~ e2e || "$command" =~ test:e2e ]]; then
+    printf 'desktop-ui'
+  elif [[ "$label" =~ contract || "$label" =~ preflight || "$label" =~ doctor || "$label" =~ summary || "$label" =~ template || "$label" =~ review || "$label" =~ dry-run || "$label" =~ list-json || "$label" =~ state\ consistency ]]; then
+    printf 'fast-contract'
+  elif [[ "$domain" == "ui-evidence" ]]; then
+    printf 'desktop-ui'
+  else
+    printf 'runtime-core'
+  fi
+}
+
+ci_default_tier() {
+  [[ "$1" == "fast-contract" || "$1" == "runtime-core" ]]
+}
+
 SELECTED_INDICES=()
 for index in "${!COMMANDS[@]}"; do
   if [[ -n "$ONLY_LABEL" && "${COMMAND_LABELS[$index]}" != "$ONLY_LABEL" ]]; then
@@ -157,6 +249,12 @@ for index in "${!COMMANDS[@]}"; do
   if [[ -n "$GREP_LABEL" ]]; then
     label_match="$(printf '%s' "${COMMAND_LABELS[$index]}" | tr '[:upper:]' '[:lower:]')"
     if [[ "$label_match" != *"$GREP_LABEL_MATCH"* ]]; then
+      continue
+    fi
+  fi
+  if [[ "$CI_DEFAULT" -eq 1 ]]; then
+    tier="$(gate_tier "${GATE_DOMAINS[$index]}" "${COMMAND_LABELS[$index]}" "${COMMANDS[$index]}")"
+    if ! ci_default_tier "$tier"; then
       continue
     fi
   fi
@@ -189,21 +287,35 @@ if [[ -n "$GREP_LABEL" && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
   exit 2
 fi
 
+if [[ "$CI_DEFAULT" -eq 1 && "${#SELECTED_INDICES[@]}" -eq 0 ]]; then
+  echo "No acceptance gates matched --ci-default." >&2
+  echo "Run scripts/acceptance.sh --list-json to inspect gate tiers." >&2
+  exit 2
+fi
+
 if [[ "$SHOW_HELP" -eq 1 ]]; then
   cat <<'EOF'
-Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>]
+Usage: scripts/acceptance.sh [--dry-run] [--list-json] [--only <label>] [--grep <text>] [--ci-default]
 
 Runs the Forge Level 3 runtime acceptance gates:
 EOF
+  previous_domain=""
   for index in "${!COMMAND_LABELS[@]}"; do
-    printf '  %s. %s\n' "$((index + 1))" "${COMMAND_LABELS[$index]}"
+    domain="${GATE_DOMAINS[$index]}"
+    if [[ "$domain" != "$previous_domain" ]]; then
+      printf '\n  %s:\n' "$(domain_title "$domain")"
+      previous_domain="$domain"
+    fi
+    printf '    %s. %s\n' "$((index + 1))" "${COMMAND_LABELS[$index]}"
   done
   cat <<'EOF'
 
 Use --dry-run to print the command plan without executing it.
 Use --list-json to print the same gate plan as machine-readable JSON.
 Use --only with an exact gate label to run or dry-run one gate.
-Use --grep to filter gates by case-insensitive label substring; do not combine it with --only.
+Use --grep to filter gates by case-insensitive label substring.
+Use --ci-default to run or list only fast-contract and runtime-core gates.
+Do not combine --only, --grep, and --ci-default.
 EOF
   exit 0
 fi
@@ -212,22 +324,91 @@ if [[ "$LIST_JSON" -eq 1 ]]; then
   {
     printf '%s\0' "$ROOT_DIR"
     for index in "${SELECTED_INDICES[@]}"; do
-      printf '%s\0%s\0%s\0' "$((index + 1))" "${COMMAND_LABELS[$index]}" "${COMMANDS[$index]}"
+      printf '%s\0%s\0%s\0%s\0' "$((index + 1))" "${GATE_DOMAINS[$index]}" "${COMMAND_LABELS[$index]}" "${COMMANDS[$index]}"
     done
   } | node -e '
 const fs = require("node:fs");
 const parts = fs.readFileSync(0).toString("utf8").split("\0");
 const workingDirectory = parts.shift();
 if (parts.at(-1) === "") parts.pop();
+const domainLabels = new Map([
+  ["foundation", "Foundation"],
+  ["runtime", "Runtime"],
+  ["permission", "Permission"],
+  ["usage-context", "Usage / Context"],
+  ["memory", "Memory"],
+  ["gateway", "Gateway"],
+  ["eval", "Eval"],
+  ["ui-evidence", "UI Evidence"],
+]);
+const tierLabels = new Map([
+  ["fast-contract", "Fast Contract"],
+  ["runtime-core", "Runtime Core"],
+  ["desktop-ui", "Desktop UI"],
+  ["manual-evidence", "Manual Evidence"],
+  ["full-release", "Full Release"],
+]);
+
+function gateTier({ domain, label, command }) {
+  if (manualRequirement(label)) return "manual-evidence";
+  if (/production build|eval runner test suite/.test(label)) return "full-release";
+  if (/e2e|test:e2e/.test(command)) return "desktop-ui";
+  if (
+    /contract|preflight|doctor|summary|template|review|dry-run|list-json|state consistency/.test(
+      label,
+    )
+  ) {
+    return "fast-contract";
+  }
+  if (domain === "ui-evidence") return "desktop-ui";
+  return "runtime-core";
+}
+
+function runtimeCost({ label, command }) {
+  if (/production build|test:eval|test:e2e|uv run pytest tests\/test_cases.py/.test(command)) {
+    return "long";
+  }
+  if (/cargo test|uv run pytest|node --test/.test(command)) {
+    return /&&/.test(command) || /runtime authority fast gate|desktop eval/.test(label)
+      ? "medium"
+      : "short";
+  }
+  return "short";
+}
+
+function manualRequirement(label) {
+  return /^manual /.test(label) || /manual evidence|beta-log archive/.test(label);
+}
+
 const gates = [];
-for (let index = 0; index < parts.length; index += 3) {
-  gates.push({
+for (let index = 0; index < parts.length; index += 4) {
+  const gate = {
     index: Number(parts[index]),
-    label: parts[index + 1],
-    command: parts[index + 2],
+    domain: parts[index + 1],
+    label: parts[index + 2],
+    command: parts[index + 3],
+  };
+  gate.tier = gateTier(gate);
+  gate.runtimeCost = runtimeCost(gate);
+  gate.manualRequirement = manualRequirement(gate.label);
+  gate.ciDefault = gate.tier === "fast-contract" || gate.tier === "runtime-core";
+  gates.push({
+    ...gate,
   });
 }
-process.stdout.write(JSON.stringify({ schemaVersion: 1, workingDirectory, gates }, null, 2) + "\n");
+const domains = [...domainLabels].map(([id, label]) => ({
+  id,
+  label,
+  gateCount: gates.filter((gate) => gate.domain === id).length,
+}));
+const tiers = [...tierLabels].map(([id, label]) => ({
+  id,
+  label,
+  ciDefault: id === "fast-contract" || id === "runtime-core",
+  gateCount: gates.filter((gate) => gate.tier === id).length,
+  manualGateCount: gates.filter((gate) => gate.tier === id && gate.manualRequirement).length,
+}));
+process.stdout.write(JSON.stringify({ schemaVersion: 1, workingDirectory, domains, tiers, gates }, null, 2) + "\n");
 '
   exit 0
 fi
