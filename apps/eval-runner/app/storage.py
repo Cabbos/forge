@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 from pydantic import TypeAdapter
 
@@ -28,6 +29,10 @@ class TaskLoadError(RuntimeError):
     pass
 
 
+class LeaseLostError(RuntimeError):
+    """Raised when a worker no longer owns the claimed run attempt."""
+
+
 class EvalStorage(Protocol):
     def list_tasks(self) -> list[EvaluationTask]: ...
     def get_tasks(self, task_ids: list[str] | None) -> list[EvaluationTask]: ...
@@ -36,16 +41,53 @@ class EvalStorage(Protocol):
     def get_run(self, run_id: str) -> EvaluationRun | None: ...
     def list_runs(self, status_filter: str | None = None) -> list[EvaluationRun]: ...
     def queue_status(self) -> QueueStatus: ...
-    def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None: ...
-    def save_task(self, run_id: str, trace: AgentTrace) -> None: ...
+    def claim_pending_run(
+        self,
+        worker_id: str | None = None,
+        lease_duration_seconds: float = 300.0,
+    ) -> EvaluationRun | None: ...
+    def save_task(
+        self,
+        run_id: str,
+        trace: AgentTrace,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> None: ...
     def save_artifact(self, artifact: EvalArtifact) -> EvalArtifact: ...
-    def list_artifacts(self, run_id: str) -> list[EvalArtifact]: ...
+    def list_artifacts(
+        self, run_id: str, *, include_attempts: bool = False
+    ) -> list[EvalArtifact]: ...
     def update_run_status(self, run_id: str, status: RunStatus) -> None: ...
     def cancel_run(self, run_id: str) -> EvaluationRun | None: ...
-    def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None: ...
-    def complete_run(self, run: EvaluationRun) -> EvaluationRun: ...
-    def fail_run(self, run: EvaluationRun) -> EvaluationRun: ...
-    def retry_run(self, run: EvaluationRun) -> EvaluationRun: ...
+    def heartbeat_run(
+        self,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+        lease_expires_at: datetime,
+    ) -> None: ...
+    def complete_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun: ...
+    def fail_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun: ...
+    def retry_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun: ...
 
 
 class InMemoryStorage:
@@ -114,16 +156,22 @@ class InMemoryStorage:
             oldest_running_run_id=oldest_running_run_id,
         )
 
-    def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
+    def claim_pending_run(
+        self,
+        worker_id: str | None = None,
+        lease_duration_seconds: float = 300.0,
+    ) -> EvaluationRun | None:
         now = datetime.now(UTC)
-        lease_expires = now + timedelta(seconds=300)
+        lease_expires = now + timedelta(seconds=lease_duration_seconds)
         for run in self._runs.values():
             if run.status == RunStatus.PENDING:
                 claimed = run.model_copy(
                     update={
                         "status": RunStatus.RUNNING,
                         "worker_id": worker_id,
+                        "lease_token": str(uuid4()),
                         "claimed_at": now,
+                        "heartbeat_at": None,
                         "lease_expires_at": lease_expires,
                     }
                 )
@@ -137,7 +185,9 @@ class InMemoryStorage:
                 reclaimed = run.model_copy(
                     update={
                         "worker_id": worker_id,
+                        "lease_token": str(uuid4()),
                         "claimed_at": now,
+                        "heartbeat_at": None,
                         "lease_expires_at": lease_expires,
                     }
                 )
@@ -145,8 +195,15 @@ class InMemoryStorage:
                 return reclaimed
         return None
 
-    def save_task(self, run_id: str, trace: AgentTrace) -> None:
-        run = self._require_run(run_id)
+    def save_task(
+        self,
+        run_id: str,
+        trace: AgentTrace,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> None:
+        run = self._require_active_lease(run_id, worker_id, lease_token)
         traces = replace_trace(run.traces, trace)
         self._runs[run_id] = run.model_copy(
             update={
@@ -165,8 +222,16 @@ class InMemoryStorage:
         self._artifacts[artifact.run_id] = artifacts
         return artifact
 
-    def list_artifacts(self, run_id: str) -> list[EvalArtifact]:
-        return list(self._artifacts.get(run_id, []))
+    def list_artifacts(
+        self,
+        run_id: str,
+        *,
+        include_attempts: bool = False,
+    ) -> list[EvalArtifact]:
+        artifacts = list(self._artifacts.get(run_id, []))
+        if include_attempts:
+            return artifacts
+        return [artifact for artifact in artifacts if not artifact.kind.endswith("_attempt")]
 
     def update_run_status(self, run_id: str, status: RunStatus) -> None:
         run = self._require_run(run_id)
@@ -182,8 +247,14 @@ class InMemoryStorage:
         self._runs[run_id] = cancelled
         return cancelled
 
-    def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None:
-        run = self._require_run(run_id)
+    def heartbeat_run(
+        self,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+        lease_expires_at: datetime,
+    ) -> None:
+        run = self._require_active_lease(run_id, worker_id, lease_token)
         self._runs[run_id] = run.model_copy(
             update={
                 "worker_id": worker_id,
@@ -192,25 +263,92 @@ class InMemoryStorage:
             }
         )
 
-    def complete_run(self, run: EvaluationRun) -> EvaluationRun:
-        return self._finalize_run(run, RunStatus.COMPLETED)
+    def complete_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.COMPLETED, worker_id, lease_token)
 
-    def fail_run(self, run: EvaluationRun) -> EvaluationRun:
-        return self._finalize_run(run, RunStatus.FAILED)
+    def fail_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.FAILED, worker_id, lease_token)
 
-    def retry_run(self, run: EvaluationRun) -> EvaluationRun:
-        return self._finalize_run(run, RunStatus.PENDING)
+    def retry_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.PENDING, worker_id, lease_token)
 
-    def _finalize_run(self, run: EvaluationRun, target_status: RunStatus) -> EvaluationRun:
+    def _finalize_run(
+        self,
+        run: EvaluationRun,
+        target_status: RunStatus,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
         current = self._runs.get(run.run_id)
         if current is None:
             raise KeyError(f"Unknown run id: {run.run_id}")
-        if current.status != RunStatus.RUNNING:
+        if (
+            current.status == RunStatus.CANCELLED
+            and current.worker_id == worker_id
+            and current.lease_token == lease_token
+        ):
             return current
-        finalized = run.model_copy(update={"status": target_status})
+        self._require_active_lease(run.run_id, worker_id, lease_token)
+        update: dict[str, object] = {
+            "status": target_status,
+            "worker_id": worker_id,
+            "lease_token": lease_token,
+        }
+        if target_status == RunStatus.PENDING:
+            update.update(
+                {
+                    "worker_id": None,
+                    "lease_token": None,
+                    "claimed_at": None,
+                    "heartbeat_at": None,
+                    "lease_expires_at": None,
+                }
+            )
+        finalized = run.model_copy(update=update)
         self._runs[run.run_id] = finalized
         self._artifacts.setdefault(run.run_id, [])
         return finalized
+
+    def _require_active_lease(
+        self,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        run = self._require_run(run_id)
+        now = datetime.now(UTC)
+        active = (
+            run.status == RunStatus.RUNNING
+            and run.worker_id == worker_id
+            and run.lease_token == lease_token
+            and run.lease_expires_at is not None
+            and run.lease_expires_at >= now
+        )
+        if not active:
+            raise LeaseLostError(f"Worker {worker_id} lost lease for run {run_id}")
+        return run
+
+    def force_lease_expiry_for_test(self, run_id: str, lease_expires_at: datetime) -> None:
+        run = self._require_run(run_id)
+        self._runs[run_id] = run.model_copy(update={"lease_expires_at": lease_expires_at})
 
     def _require_run(self, run_id: str) -> EvaluationRun:
         run = self.get_run(run_id)
@@ -281,17 +419,21 @@ class SQLiteStorage:
         if row is None:
             return None
 
-        traces = self._read_trace_artifact(run_id)
-
         def _row_val(key: str, default=None):
             try:
                 return row[key]
             except IndexError:
                 return default
 
+        run_status = RunStatus(row["status"])
+        lease_token = _row_val("lease_token")
+        attempt_token = (
+            lease_token if run_status in {RunStatus.RUNNING, RunStatus.CANCELLED} else None
+        )
+        traces = self._read_trace_artifact(run_id, attempt_token=attempt_token)
         return EvaluationRun(
             run_id=row["id"],
-            status=RunStatus(row["status"]),
+            status=run_status,
             provider=(
                 EvalProvider(provider_value)
                 if (provider_value := _row_val("provider")) is not None
@@ -315,7 +457,7 @@ class SQLiteStorage:
             failure_reason=_row_val("failure_reason"),
             failure_category=FailureCategory(_row_val("failure_category") or "none"),
             worker_id=_row_val("worker_id"),
-            lease_token=_row_val("lease_token"),
+            lease_token=lease_token,
             claimed_at=_parse_datetime(_row_val("claimed_at")),
             heartbeat_at=_parse_datetime(_row_val("heartbeat_at")),
             lease_expires_at=_parse_datetime(_row_val("lease_expires_at")),
@@ -348,31 +490,58 @@ class SQLiteStorage:
             oldest_running_run_id=oldest_running_run_id,
         )
 
-    def save_task(self, run_id: str, trace: AgentTrace) -> None:
-        run = self.get_run(run_id)
-        if run is None:
-            raise KeyError(f"Unknown run id: {run_id}")
-        traces = replace_trace(run.traces, trace)
-        self.save_run(
-            run.model_copy(
+    def save_task(
+        self,
+        run_id: str,
+        trace: AgentTrace,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._require_active_lease_connection(
+                connection,
+                run_id,
+                worker_id,
+                lease_token,
+            )
+            traces = replace_trace(run.traces, trace)
+            updated = run.model_copy(
                 update={
                     "traces": traces,
                     "metrics": calculate_metrics(traces),
                 }
             )
-        )
+            self._write_attempt_artifacts(updated, lease_token, connection)
+            self._upsert_run_connection(connection, updated)
+            self._upsert_task(connection, run_id, trace)
+            connection.execute("COMMIT")
 
     def save_artifact(self, artifact: EvalArtifact) -> EvalArtifact:
         with self._connect() as connection:
             self._upsert_artifact(connection, artifact)
         return artifact
 
-    def list_artifacts(self, run_id: str) -> list[EvalArtifact]:
+    def list_artifacts(
+        self,
+        run_id: str,
+        *,
+        include_attempts: bool = False,
+    ) -> list[EvalArtifact]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM eval_artifacts WHERE run_id = ? ORDER BY created_at ASC, id ASC",
-                (run_id,),
-            ).fetchall()
+            if include_attempts:
+                rows = connection.execute(
+                    "SELECT * FROM eval_artifacts WHERE run_id = ? ORDER BY created_at ASC, id ASC",
+                    (run_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM eval_artifacts "
+                    "WHERE run_id = ? AND kind NOT LIKE '%_attempt' "
+                    "ORDER BY created_at ASC, id ASC",
+                    (run_id,),
+                ).fetchall()
         return [artifact_from_row(row) for row in rows]
 
     def update_run_status(self, run_id: str, status: RunStatus) -> None:
@@ -435,6 +604,7 @@ class SQLiteStorage:
                     path TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
+                    attempt_token TEXT,
                     FOREIGN KEY (run_id) REFERENCES eval_runs(id) ON DELETE CASCADE
                 );
 
@@ -465,10 +635,16 @@ class SQLiteStorage:
             ensure_column(connection, "eval_runs", "claimed_at", "TEXT")
             ensure_column(connection, "eval_runs", "heartbeat_at", "TEXT")
             ensure_column(connection, "eval_runs", "lease_expires_at", "TEXT")
+            ensure_column(connection, "eval_artifacts", "attempt_token", "TEXT")
 
-    def claim_pending_run(self, worker_id: str | None = None) -> EvaluationRun | None:
+    def claim_pending_run(
+        self,
+        worker_id: str | None = None,
+        lease_duration_seconds: float = 300.0,
+    ) -> EvaluationRun | None:
         now = datetime.now(UTC)
-        lease_expires = now + timedelta(seconds=300)
+        lease_expires = now + timedelta(seconds=lease_duration_seconds)
+        lease_token = str(uuid4())
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             # First try to claim a pending run
@@ -500,13 +676,15 @@ class SQLiteStorage:
             connection.execute(
                 """
                 UPDATE eval_runs
-                SET status = ?, updated_at = ?, worker_id = ?, claimed_at = ?, lease_expires_at = ?
+                SET status = ?, updated_at = ?, worker_id = ?, lease_token = ?,
+                    claimed_at = ?, heartbeat_at = NULL, lease_expires_at = ?
                 WHERE id = ?
                 """,
                 (
                     RunStatus.RUNNING.value,
                     utc_now_iso(),
                     worker_id,
+                    lease_token,
                     now.isoformat(),
                     lease_expires.isoformat(),
                     row["id"],
@@ -538,59 +716,174 @@ class SQLiteStorage:
             )
         return self.get_run(run_id)
 
-    def heartbeat_run(self, run_id: str, worker_id: str, lease_expires_at: datetime) -> None:
+    def heartbeat_run(
+        self,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+        lease_expires_at: datetime,
+    ) -> None:
         with self._connect() as connection:
-            connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_active_lease_connection(
+                connection,
+                run_id,
+                worker_id,
+                lease_token,
+            )
+            cursor = connection.execute(
                 """
                 UPDATE eval_runs
-                SET worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
-                WHERE id = ?
+                SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+                WHERE id = ? AND status = ? AND worker_id = ? AND lease_token = ?
+                    AND lease_expires_at >= ?
                 """,
                 (
-                    worker_id,
                     datetime.now(UTC).isoformat(),
                     lease_expires_at.isoformat(),
                     utc_now_iso(),
                     run_id,
+                    RunStatus.RUNNING.value,
+                    worker_id,
+                    lease_token,
+                    datetime.now(UTC).isoformat(),
                 ),
             )
+            if cursor.rowcount != 1:
+                raise LeaseLostError(f"Worker {worker_id} lost lease for run {run_id}")
+            connection.execute("COMMIT")
 
-    def complete_run(self, run: EvaluationRun) -> EvaluationRun:
-        return self._finalize_run(run, RunStatus.COMPLETED)
+    def complete_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.COMPLETED, worker_id, lease_token)
 
-    def fail_run(self, run: EvaluationRun) -> EvaluationRun:
-        return self._finalize_run(run, RunStatus.FAILED)
+    def fail_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.FAILED, worker_id, lease_token)
 
-    def retry_run(self, run: EvaluationRun) -> EvaluationRun:
-        return self._finalize_run(run, RunStatus.PENDING)
+    def retry_run(
+        self,
+        run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        return self._finalize_run(run, RunStatus.PENDING, worker_id, lease_token)
 
-    def _finalize_run(self, run: EvaluationRun, target_status: RunStatus) -> EvaluationRun:
+    def _finalize_run(
+        self,
+        run: EvaluationRun,
+        target_status: RunStatus,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT status FROM eval_runs WHERE id = ?", (run.run_id,)
+                "SELECT status, worker_id, lease_token FROM eval_runs WHERE id = ?",
+                (run.run_id,),
             ).fetchone()
             if row is None:
-                connection.execute("ROLLBACK")
                 raise KeyError(f"Unknown run id: {run.run_id}")
             current_status = RunStatus(row["status"])
-            if current_status != RunStatus.RUNNING:
+            if current_status == RunStatus.CANCELLED:
+                same_attempt = row["worker_id"] == worker_id and row["lease_token"] == lease_token
+                if not same_attempt:
+                    raise LeaseLostError(f"Worker {worker_id} lost lease for run {run.run_id}")
                 connection.execute("ROLLBACK")
                 stored_run = self.get_run(run.run_id)
                 if stored_run is None:
                     raise KeyError(f"Unknown run id after rollback: {run.run_id}")
                 return stored_run
-            run = run.model_copy(update={"status": target_status})
-            self._write_run_artifacts(run, connection)
-            self._upsert_run_connection(connection, run)
+            self._require_active_lease_connection(
+                connection,
+                run.run_id,
+                worker_id,
+                lease_token,
+            )
+            update: dict[str, object] = {
+                "status": target_status,
+                "worker_id": worker_id,
+                "lease_token": lease_token,
+            }
+            if target_status == RunStatus.PENDING:
+                update.update(
+                    {
+                        "worker_id": None,
+                        "lease_token": None,
+                        "claimed_at": None,
+                        "heartbeat_at": None,
+                        "lease_expires_at": None,
+                    }
+                )
+            finalized = run.model_copy(update=update)
+            if target_status != RunStatus.PENDING:
+                self._write_run_artifacts(
+                    finalized,
+                    connection,
+                    attempt_token=lease_token,
+                )
+            self._upsert_run_connection(connection, finalized)
             connection.execute("DELETE FROM eval_run_tasks WHERE run_id = ?", (run.run_id,))
-            for trace in run.traces:
-                self._upsert_task(connection, run.run_id, trace)
+            if target_status != RunStatus.PENDING:
+                for trace in finalized.traces:
+                    self._upsert_task(connection, finalized.run_id, trace)
             connection.execute("COMMIT")
         stored_run = self.get_run(run.run_id)
         if stored_run is None:
             raise KeyError(f"Unknown run id after finalize: {run.run_id}")
         return stored_run
+
+    def _require_active_lease_connection(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        row = connection.execute(
+            """
+            SELECT status, worker_id, lease_token, lease_expires_at
+            FROM eval_runs
+            WHERE id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown run id: {run_id}")
+        lease_expires_at = _parse_datetime(row["lease_expires_at"])
+        active = (
+            row["status"] == RunStatus.RUNNING.value
+            and row["worker_id"] == worker_id
+            and row["lease_token"] == lease_token
+            and lease_expires_at is not None
+            and lease_expires_at >= datetime.now(UTC)
+        )
+        if not active:
+            raise LeaseLostError(f"Worker {worker_id} lost lease for run {run_id}")
+        run = self.get_run(run_id)
+        if run is None:
+            raise KeyError(f"Unknown run id after lease check: {run_id}")
+        return run
+
+    def force_lease_expiry_for_test(self, run_id: str, lease_expires_at: datetime) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE eval_runs SET lease_expires_at = ?, updated_at = ? WHERE id = ?",
+                (lease_expires_at.isoformat(), utc_now_iso(), run_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Unknown run id: {run_id}")
 
     def _upsert_run(self, run: EvaluationRun) -> None:
         with self._connect() as connection:
@@ -676,6 +969,8 @@ class SQLiteStorage:
         self,
         run: EvaluationRun,
         connection: sqlite3.Connection | None = None,
+        *,
+        attempt_token: str | None = None,
     ) -> None:
         run_artifacts_path = self.artifacts_path / run.run_id
         run_artifacts_path.mkdir(parents=True, exist_ok=True)
@@ -687,42 +982,136 @@ class SQLiteStorage:
             encoding="utf-8",
         )
         report_path.write_text(
-            build_report(run.traces).model_dump_json(indent=2),
+            build_report(run.traces)
+            .model_copy(update={"trust_result": run.trust_result})
+            .model_dump_json(indent=2),
             encoding="utf-8",
         )
         if connection is not None:
             self._upsert_artifact(
                 connection,
-                artifact_for_path(run.run_id, "trace", trace_path),
+                artifact_for_path(
+                    run.run_id,
+                    "trace",
+                    trace_path,
+                    attempt_token=attempt_token,
+                ),
             )
             self._upsert_artifact(
                 connection,
-                artifact_for_path(run.run_id, "report", report_path),
+                artifact_for_path(
+                    run.run_id,
+                    "report",
+                    report_path,
+                    attempt_token=attempt_token,
+                ),
             )
             for trace, trajectory_path in zip(run.traces, trajectory_paths, strict=False):
                 self._upsert_artifact(
                     connection,
-                    trajectory_artifact_for_path(run.run_id, trace.task_id, trajectory_path),
+                    trajectory_artifact_for_path(
+                        run.run_id,
+                        trace.task_id,
+                        trajectory_path,
+                        attempt_token=attempt_token,
+                    ),
                 )
         else:
             with self._connect() as connection:
                 self._upsert_artifact(
                     connection,
-                    artifact_for_path(run.run_id, "trace", trace_path),
+                    artifact_for_path(
+                        run.run_id,
+                        "trace",
+                        trace_path,
+                        attempt_token=attempt_token,
+                    ),
                 )
                 self._upsert_artifact(
                     connection,
-                    artifact_for_path(run.run_id, "report", report_path),
+                    artifact_for_path(
+                        run.run_id,
+                        "report",
+                        report_path,
+                        attempt_token=attempt_token,
+                    ),
                 )
                 for trace, trajectory_path in zip(run.traces, trajectory_paths, strict=False):
                     self._upsert_artifact(
                         connection,
-                        trajectory_artifact_for_path(run.run_id, trace.task_id, trajectory_path),
+                        trajectory_artifact_for_path(
+                            run.run_id,
+                            trace.task_id,
+                            trajectory_path,
+                            attempt_token=attempt_token,
+                        ),
                     )
 
-    def _read_trace_artifact(self, run_id: str) -> list[AgentTrace]:
+    def _write_attempt_artifacts(
+        self,
+        run: EvaluationRun,
+        lease_token: str,
+        connection: sqlite3.Connection,
+    ) -> None:
+        attempt_path = self.artifacts_path / run.run_id / "attempts" / lease_token
+        attempt_path.mkdir(parents=True, exist_ok=True)
+        trace_path = attempt_path / "trace.json"
+        report_path = attempt_path / "report.json"
+        trajectory_paths = write_trajectory_artifacts(run, attempt_path)
+        trace_path.write_text(
+            json.dumps([trace.model_dump(mode="json") for trace in run.traces], indent=2),
+            encoding="utf-8",
+        )
+        report_path.write_text(
+            build_report(run.traces)
+            .model_copy(update={"trust_result": run.trust_result})
+            .model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        self._upsert_artifact(
+            connection,
+            artifact_for_path(
+                run.run_id,
+                "trace_attempt",
+                trace_path,
+                attempt_token=lease_token,
+            ),
+        )
+        self._upsert_artifact(
+            connection,
+            artifact_for_path(
+                run.run_id,
+                "report_attempt",
+                report_path,
+                attempt_token=lease_token,
+            ),
+        )
+        for trace, trajectory_path in zip(run.traces, trajectory_paths, strict=False):
+            self._upsert_artifact(
+                connection,
+                trajectory_artifact_for_path(
+                    run.run_id,
+                    trace.task_id,
+                    trajectory_path,
+                    kind="trajectory_attempt",
+                    attempt_token=lease_token,
+                ),
+            )
+
+    def _read_trace_artifact(
+        self,
+        run_id: str,
+        *,
+        attempt_token: str | None = None,
+    ) -> list[AgentTrace]:
+        artifacts = self.list_artifacts(run_id, include_attempts=attempt_token is not None)
         trace_artifacts = [
-            artifact for artifact in self.list_artifacts(run_id) if artifact.kind == "trace"
+            artifact
+            for artifact in artifacts
+            if (
+                artifact.kind == ("trace_attempt" if attempt_token is not None else "trace")
+                and (attempt_token is None or artifact.attempt_token == attempt_token)
+            )
         ]
         if not trace_artifacts:
             return []
@@ -783,14 +1172,17 @@ class SQLiteStorage:
     ) -> None:
         connection.execute(
             """
-            INSERT INTO eval_artifacts (id, run_id, kind, path, size_bytes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO eval_artifacts (
+                id, run_id, kind, path, size_bytes, created_at, attempt_token
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 run_id = excluded.run_id,
                 kind = excluded.kind,
                 path = excluded.path,
                 size_bytes = excluded.size_bytes,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                attempt_token = excluded.attempt_token
             """,
             (
                 artifact.id,
@@ -799,6 +1191,7 @@ class SQLiteStorage:
                 artifact.path,
                 artifact.size_bytes,
                 artifact.created_at.isoformat(),
+                artifact.attempt_token,
             ),
         )
 
@@ -836,20 +1229,46 @@ def optional_bool_to_int(value: bool | None) -> int | None:
     return int(value)
 
 
-def artifact_for_path(run_id: str, kind: str, path: Path) -> EvalArtifact:
+def artifact_for_path(
+    run_id: str,
+    kind: str,
+    path: Path,
+    *,
+    attempt_token: str | None = None,
+) -> EvalArtifact:
+    attempt_suffix = (
+        f":{safe_artifact_id_part(attempt_token)}"
+        if attempt_token is not None and kind.endswith("_attempt")
+        else ""
+    )
     return EvalArtifact(
-        id=f"{run_id}:{kind}",
+        id=f"{run_id}:{kind}{attempt_suffix}",
         run_id=run_id,
         kind=kind,
         path=str(path),
         size_bytes=path.stat().st_size,
         created_at=datetime.now(UTC),
+        attempt_token=attempt_token,
     )
 
 
-def trajectory_artifact_for_path(run_id: str, task_id: str, path: Path) -> EvalArtifact:
-    return artifact_for_path(run_id, "trajectory", path).model_copy(
-        update={"id": f"{run_id}:trajectory:{safe_artifact_id_part(task_id)}"}
+def trajectory_artifact_for_path(
+    run_id: str,
+    task_id: str,
+    path: Path,
+    *,
+    kind: str = "trajectory",
+    attempt_token: str | None = None,
+) -> EvalArtifact:
+    artifact = artifact_for_path(
+        run_id,
+        kind,
+        path,
+        attempt_token=attempt_token,
+    )
+    token_suffix = f":{safe_artifact_id_part(attempt_token)}" if attempt_token is not None else ""
+    return artifact.model_copy(
+        update={"id": f"{run_id}:{kind}{token_suffix}:{safe_artifact_id_part(task_id)}"}
     )
 
 
@@ -881,6 +1300,7 @@ def artifact_from_row(row: sqlite3.Row) -> EvalArtifact:
         path=row["path"],
         size_bytes=row["size_bytes"],
         created_at=datetime.fromisoformat(row["created_at"]),
+        attempt_token=row["attempt_token"],
     )
 
 

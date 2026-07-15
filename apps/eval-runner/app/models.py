@@ -343,6 +343,7 @@ class EvalArtifact(EvalModel):
     path: str
     size_bytes: int = Field(ge=0)
     created_at: datetime
+    attempt_token: str | None = None
 
     @field_serializer("created_at")
     def serialize_datetime(self, value: datetime) -> str:
