@@ -118,6 +118,17 @@ impl Harness {
             RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
         >,
     ) -> Self {
+        let registry_path = working_dir.join(".forge").join("registry.db");
+        Self::new_with_pending_and_registry_path(working_dir, pending_confirms, registry_path)
+    }
+
+    pub(crate) fn new_with_pending_and_registry_path(
+        working_dir: PathBuf,
+        pending_confirms: Arc<
+            RwLock<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+        >,
+        registry_path: PathBuf,
+    ) -> Self {
         let hook_engine = Arc::new(HookEngine::new());
         let skill_loader = Arc::new(SkillLoader::new_for_workspace(&working_dir));
         let event_bus = EventBus::new();
@@ -130,13 +141,11 @@ impl Harness {
             active_tool_call_descriptors.clone(),
         ));
 
-        // Open SQLite database at <working_dir>/.forge/registry.db
-        let db_path = working_dir.join(".forge").join("registry.db");
-        if let Some(parent) = db_path.parent() {
+        if let Some(parent) = registry_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         let database =
-            Arc::new(Database::open(&db_path).expect("Failed to open registry database"));
+            Arc::new(Database::open(&registry_path).expect("Failed to open registry database"));
         skill_loader.attach_database(database.clone());
 
         let permission_gate = Arc::new(PermissionGate::new(database.clone()));
@@ -1022,6 +1031,24 @@ pub fn read_project_context(working_dir: &std::path::Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::Harness;
+
+    #[test]
+    fn isolated_registry_path_does_not_write_runtime_state_into_workspace() {
+        let workspace = temp_workspace("isolated-registry-workspace");
+        let runtime_state = temp_workspace("isolated-registry-state");
+        let registry_path = runtime_state.join("registry.db");
+
+        let _harness = Harness::new_with_pending_and_registry_path(
+            workspace.clone(),
+            std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            registry_path.clone(),
+        );
+
+        assert!(registry_path.exists());
+        assert!(!workspace.join(".forge").join("registry.db").exists());
+        let _ = std::fs::remove_dir_all(workspace);
+        let _ = std::fs::remove_dir_all(runtime_state);
+    }
 
     #[tokio::test]
     async fn system_prompt_has_honest_conversation_recall_rule_for_chinese_users() {

@@ -28,6 +28,13 @@ pub(crate) struct BuildAgentSessionRequest<'a> {
 pub(crate) async fn build_agent_session(
     request: BuildAgentSessionRequest<'_>,
 ) -> Result<(AgentSession, bool), String> {
+    build_agent_session_with_registry_path(request, None).await
+}
+
+pub(crate) async fn build_agent_session_with_registry_path(
+    request: BuildAgentSessionRequest<'_>,
+    registry_path: Option<std::path::PathBuf>,
+) -> Result<(AgentSession, bool), String> {
     let BuildAgentSessionRequest {
         session_id,
         provider,
@@ -39,10 +46,14 @@ pub(crate) async fn build_agent_session(
         existing_context_window_tokens,
     } = request;
 
-    let harness = Arc::new(Harness::new_with_pending(
-        working_dir.to_path_buf(),
-        pending_confirms,
-    ));
+    let harness = Arc::new(match registry_path {
+        Some(registry_path) => Harness::new_with_pending_and_registry_path(
+            working_dir.to_path_buf(),
+            pending_confirms,
+            registry_path,
+        ),
+        None => Harness::new_with_pending(working_dir.to_path_buf(), pending_confirms),
+    });
     let context_window_tokens =
         existing_context_window_tokens.or_else(|| context_window_tokens(&provider, &model));
     let provider_profiles = settings::load_configured_provider_profiles();

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -10,6 +10,7 @@ use super::{
 
 pub struct ContinuityService {
     stores: Mutex<HashMap<String, Arc<ContinuityStore>>>,
+    database_path_override: Option<PathBuf>,
 }
 
 impl Default for ContinuityService {
@@ -22,6 +23,14 @@ impl ContinuityService {
     pub fn new() -> Self {
         Self {
             stores: Mutex::new(HashMap::new()),
+            database_path_override: None,
+        }
+    }
+
+    pub(crate) fn new_with_database_path(database_path: PathBuf) -> Self {
+        Self {
+            stores: Mutex::new(HashMap::new()),
+            database_path_override: Some(database_path),
         }
     }
 
@@ -34,9 +43,11 @@ impl ContinuityService {
         if let Some(store) = stores.get(project_path) {
             return Ok(store.clone());
         }
-        let db_path = std::path::PathBuf::from(project_path)
-            .join(".forge")
-            .join("continuity.db");
+        let db_path = self.database_path_override.clone().unwrap_or_else(|| {
+            std::path::PathBuf::from(project_path)
+                .join(".forge")
+                .join("continuity.db")
+        });
         let store = Arc::new(ContinuityStore::open(&db_path)?);
         stores.insert(project_path.to_string(), store.clone());
         Ok(store)
@@ -142,5 +153,34 @@ impl ContinuityService {
         }
 
         Ok(updated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ContinuityEvent, ContinuityService};
+
+    #[test]
+    fn isolated_database_path_does_not_write_continuity_state_into_project() {
+        let root = tempfile::tempdir().expect("temp root");
+        let workspace = root.path().join("workspace");
+        let database_path = root.path().join("runtime-state").join("continuity.db");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let service = ContinuityService::new_with_database_path(database_path.clone());
+        let project_path = workspace.to_string_lossy().to_string();
+
+        service
+            .record_event(
+                &project_path,
+                &ContinuityEvent::UserMessage {
+                    session_id: "session-1".to_string(),
+                    content: "remember this".to_string(),
+                    timestamp_ms: 1,
+                },
+            )
+            .expect("record isolated continuity event");
+
+        assert!(database_path.exists());
+        assert!(!workspace.join(".forge").join("continuity.db").exists());
     }
 }

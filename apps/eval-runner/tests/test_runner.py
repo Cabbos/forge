@@ -356,6 +356,46 @@ def test_patch_replay_applies_trace_diff(tmp_path: Path) -> None:
     assert (workspace / "hello.txt").read_text(encoding="utf-8") == "hello forge\n"
 
 
+def test_patch_replay_applies_added_and_deleted_files(tmp_path: Path) -> None:
+    from app.patches import replay_patch
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "delete.txt").write_text("delete me\n", encoding="utf-8")
+    diffs = [
+        FileDiff(
+            path="add.txt",
+            change_type="added",
+            diff=(
+                "diff --git a/add.txt b/add.txt\n"
+                "new file mode 100644\n"
+                "--- /dev/null\n"
+                "+++ b/add.txt\n"
+                "@@ -0,0 +1 @@\n"
+                "+added\n"
+            ),
+        ),
+        FileDiff(
+            path="delete.txt",
+            change_type="deleted",
+            diff=(
+                "diff --git a/delete.txt b/delete.txt\n"
+                "deleted file mode 100644\n"
+                "--- a/delete.txt\n"
+                "+++ /dev/null\n"
+                "@@ -1 +0,0 @@\n"
+                "-delete me\n"
+            ),
+        ),
+    ]
+
+    result = replay_patch(workspace, diffs)
+
+    assert result.ok is True
+    assert (workspace / "add.txt").read_text(encoding="utf-8") == "added\n"
+    assert not (workspace / "delete.txt").exists()
+
+
 def test_mock_runner_records_verification_failure_reason() -> None:
     task = EvaluationTask(
         id="fix-bug",
@@ -683,6 +723,55 @@ def test_forge_runner_does_not_attribute_setup_or_validation_changes_to_agent(
     ).run_task(task)
 
     assert trace.changed_files == []
+
+
+def test_forge_runner_isolates_forbidden_runtime_state_from_workspace(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "src").mkdir(parents=True)
+    (fixture / "src" / "app.py").write_text("before\n", encoding="utf-8")
+    script = tmp_path / "isolated_runtime_agent.py"
+    script.write_text(
+        "import json,pathlib,sqlite3,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "runtime_state=pathlib.Path(payload['runtime_state_path'])\n"
+        "continuity_db=pathlib.Path(payload['continuity_database_path'])\n"
+        "assert runtime_state.parent == workspace.parent\n"
+        "assert runtime_state != workspace and workspace not in runtime_state.parents\n"
+        "assert continuity_db == runtime_state/'continuity.db'\n"
+        "runtime_state.mkdir(parents=True,exist_ok=True)\n"
+        "sqlite3.connect(runtime_state/'registry.db').close()\n"
+        "sqlite3.connect(continuity_db).close()\n"
+        "(workspace/'src'/'app.py').write_text('after\\n')\n"
+        "json.dump({'final_answer':'done','changed_files':['src/app.py'],'file_diffs':["
+        "{'path':'src/app.py','change_type':'modified','diff':"
+        "\"diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n+++ b/src/app.py\\n@@ -1 +1 @@\\n-before\\n+after\\n\"}]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="isolated-runtime-state",
+        title="Isolate runtime state",
+        prompt="Change src/app.py only.",
+        fixture_path=str(fixture),
+        expected_files_changed=["src/app.py"],
+        forbidden_files_changed=[
+            ".forge/continuity.db",
+            ".forge/registry.db",
+        ],
+    )
+
+    trace = ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.changed_files == ["src/app.py"]
+    assert trace.scope_violations == []
+    assert trace.patch_replay is not None
+    assert trace.patch_replay.ok is True
 
 
 def test_forge_runner_times_out_setup_command(tmp_path: Path) -> None:

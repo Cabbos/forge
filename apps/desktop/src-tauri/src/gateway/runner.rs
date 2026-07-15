@@ -218,6 +218,8 @@ pub fn build_headless_request_from_trigger(
         model: trigger.model.clone(),
         profile_id: trigger.profile_id.clone(),
         workspace_path,
+        runtime_state_path: None,
+        continuity_database_path: None,
     })
 }
 
