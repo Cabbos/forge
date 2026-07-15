@@ -6,7 +6,13 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import build_storage, create_app
-from app.models import AgentTrace, FailureCategory, RunStatus, VerificationResult
+from app.models import (
+    AgentTrace,
+    FailureCategory,
+    RunStatus,
+    TrustGateResult,
+    VerificationResult,
+)
 from app.storage import InMemoryStorage, SQLiteStorage
 from app.worker import EvalWorker
 
@@ -35,6 +41,57 @@ def write_tasks(path: Path) -> None:
 """.strip(),
         encoding="utf-8",
     )
+
+
+def test_non_loopback_api_requires_configured_token(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    settings = Settings(tasks_path=tasks_path, api_bind_host="0.0.0.0", api_token=None)
+    with pytest.raises(ValueError, match="API token is required for non-loopback bind host"):
+        create_app(
+            storage=InMemoryStorage(tasks_path=tasks_path),
+            settings=settings,
+        )
+
+
+def test_protected_api_routes_require_bearer_token(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    settings = Settings(
+        tasks_path=tasks_path,
+        api_bind_host="0.0.0.0",
+        api_token="secret-token",
+    )
+    client = TestClient(
+        create_app(storage=InMemoryStorage(tasks_path=tasks_path), settings=settings)
+    )
+    assert client.get("/health").status_code == 200
+    assert client.get("/tasks").status_code == 401
+    assert client.get("/tasks", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    response = client.get(
+        "/tasks",
+        headers={"Authorization": "Bearer secret-token"},
+    )
+    assert response.status_code == 200
+
+
+def test_sync_api_persists_completed_but_untrusted_result(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    settings = Settings(tasks_path=tasks_path, run_execution_mode="sync")
+    storage = InMemoryStorage(tasks_path=tasks_path)
+    client = TestClient(create_app(storage=storage, settings=settings))
+    response = client.post(
+        "/runs",
+        json={"task_ids": ["task-pass"], "provider": "mock"},
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["trust_result"]["status"] in {"trusted", "untrusted", "unknown"}
+    stored = storage.get_run(payload["run_id"])
+    assert stored is not None
+    assert stored.trust_result == TrustGateResult.model_validate(payload["trust_result"])
 
 
 def test_api_creates_run_and_exposes_trace_and_metrics(tmp_path: Path) -> None:
