@@ -33,6 +33,12 @@ pub struct EvalHeadlessRequest {
     #[serde(default)]
     pub profile_id: Option<String>,
     pub workspace_path: PathBuf,
+    /// Optional eval-only root for internal runtime state such as registry.db.
+    #[serde(default)]
+    pub runtime_state_path: Option<PathBuf>,
+    /// Optional eval-only Continuity database path outside the observed workspace.
+    #[serde(default)]
+    pub continuity_database_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]

@@ -13,7 +13,7 @@ def replay_patch(
 ) -> WorkspaceCheck:
     patch_text = "\n".join(diff.diff for diff in diffs)
     completed = run_bounded_process(
-        ["patch", "-p1"],
+        ["git", "apply", "--whitespace=nowarn", "-"],
         cwd=workspace,
         input_text=patch_text,
         timeout_seconds=timeout_seconds,

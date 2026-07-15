@@ -96,21 +96,95 @@ pub(crate) fn diff_workspace_snapshots(
         if is_ignored_snapshot_path(&path) {
             continue;
         }
-        let change_type = match (before.get(&path), after.get(&path)) {
-            (None, Some(_)) => Some("added"),
-            (Some(_), None) => Some("deleted"),
-            (Some(before), Some(after)) if before != after => Some("modified"),
+        let change = match (before.get(&path), after.get(&path)) {
+            (None, Some(after)) => Some((
+                "added",
+                build_unified_diff(&path, None, Some(&after.contents)),
+            )),
+            (Some(before), None) => Some((
+                "deleted",
+                build_unified_diff(&path, Some(&before.contents), None),
+            )),
+            (Some(before), Some(after)) if before != after => Some((
+                "modified",
+                build_unified_diff(&path, Some(&before.contents), Some(&after.contents)),
+            )),
             _ => None,
         };
-        if let Some(change_type) = change_type {
+        if let Some((change_type, diff)) = change {
             changed_files.push(path.clone());
             file_diffs.push(HeadlessFileDiff {
                 path: path.clone(),
                 change_type: change_type.to_string(),
-                diff: format!("workspace snapshot detected {change_type}: {path}"),
+                diff,
             });
         }
     }
 
     (changed_files, file_diffs)
+}
+
+fn build_unified_diff(path: &str, before: Option<&[u8]>, after: Option<&[u8]>) -> String {
+    let (Ok(before_text), Ok(after_text)) = (
+        std::str::from_utf8(before.unwrap_or_default()),
+        std::str::from_utf8(after.unwrap_or_default()),
+    ) else {
+        return format!("Binary files a/{path} and b/{path} differ\n");
+    };
+    let old_count = line_count(before_text);
+    let new_count = line_count(after_text);
+    let mut diff = format!("diff --git a/{path} b/{path}\n");
+    match (before, after) {
+        (None, Some(_)) => {
+            diff.push_str("new file mode 100644\n");
+            diff.push_str("--- /dev/null\n");
+            diff.push_str(&format!("+++ b/{path}\n"));
+        }
+        (Some(_), None) => {
+            diff.push_str("deleted file mode 100644\n");
+            diff.push_str(&format!("--- a/{path}\n"));
+            diff.push_str("+++ /dev/null\n");
+        }
+        (Some(_), Some(_)) => {
+            diff.push_str(&format!("--- a/{path}\n"));
+            diff.push_str(&format!("+++ b/{path}\n"));
+        }
+        (None, None) => return diff,
+    }
+    diff.push_str(&format!(
+        "@@ {} {} @@\n",
+        hunk_range('-', old_count),
+        hunk_range('+', new_count)
+    ));
+    append_prefixed_contents(&mut diff, '-', before_text);
+    append_prefixed_contents(&mut diff, '+', after_text);
+    diff
+}
+
+fn line_count(contents: &str) -> usize {
+    if contents.is_empty() {
+        0
+    } else {
+        contents.bytes().filter(|byte| *byte == b'\n').count()
+            + usize::from(!contents.ends_with('\n'))
+    }
+}
+
+fn hunk_range(prefix: char, count: usize) -> String {
+    match count {
+        0 => format!("{prefix}0,0"),
+        1 => format!("{prefix}1"),
+        _ => format!("{prefix}1,{count}"),
+    }
+}
+
+fn append_prefixed_contents(diff: &mut String, prefix: char, contents: &str) {
+    for line in contents.split_inclusive('\n') {
+        diff.push(prefix);
+        diff.push_str(line);
+    }
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        diff.push('\n');
+        diff.push_str("\\ No newline at end of file\n");
+    }
 }

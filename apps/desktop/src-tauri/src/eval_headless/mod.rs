@@ -13,7 +13,9 @@ use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::time::now_ms;
 use crate::agent::turn_state::AgentTurnState;
 use crate::continuity::ContinuityService;
-use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
+use crate::ipc::session_builder::{
+    build_agent_session_with_registry_path, BuildAgentSessionRequest,
+};
 use crate::settings;
 
 pub use types::{EvalHeadlessRequest, EvalHeadlessTask, HeadlessFileDiff, TracePayloadInput};
@@ -56,6 +58,14 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         .clone()
         .unwrap_or_else(|| "local-forge".to_string());
     let workspace_path = request.workspace_path.clone();
+    let (registry_database_path, continuity_database_path) = resolve_headless_runtime_paths(
+        &workspace_path,
+        request.runtime_state_path.as_deref(),
+        request.continuity_database_path.as_deref(),
+    )?;
+    let continuity_service = continuity_database_path
+        .map(ContinuityService::new_with_database_path)
+        .unwrap_or_else(ContinuityService::new);
 
     // Resolve provider/model from profile when profile_id is set.
     let (effective_provider, effective_model) = resolve::resolve_profile_defaults(
@@ -95,16 +105,19 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
 
     let pending_confirms = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
     let session_id = uuid::Uuid::now_v7().to_string();
-    let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
-        session_id: session_id.clone(),
-        provider: agent_provider.clone(),
-        model: agent_model.clone(),
-        api_key: &credentials.api_key,
-        api_base: credentials.api_base.as_deref(),
-        working_dir: &workspace_path,
-        pending_confirms: pending_confirms.clone(),
-        existing_context_window_tokens: None,
-    })
+    let (session, missing_api_key) = build_agent_session_with_registry_path(
+        BuildAgentSessionRequest {
+            session_id: session_id.clone(),
+            provider: agent_provider.clone(),
+            model: agent_model.clone(),
+            api_key: &credentials.api_key,
+            api_base: credentials.api_base.as_deref(),
+            working_dir: &workspace_path,
+            pending_confirms: pending_confirms.clone(),
+            existing_context_window_tokens: None,
+        },
+        registry_database_path,
+    )
     .await?;
 
     if missing_api_key {
@@ -234,7 +247,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     let mut continuity_formed_count = None;
     let mut continuity_error = None;
     match runner::record_headless_continuity(
-        &ContinuityService::new(),
+        &continuity_service,
         &workspace_path,
         &session_id,
         &prompt,
@@ -311,6 +324,79 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     }
 
     Ok(payload)
+}
+
+fn resolve_headless_runtime_paths(
+    workspace_path: &std::path::Path,
+    runtime_state_path: Option<&std::path::Path>,
+    continuity_database_path: Option<&std::path::Path>,
+) -> Result<(Option<std::path::PathBuf>, Option<std::path::PathBuf>), String> {
+    let Some(runtime_state_path) = runtime_state_path else {
+        if continuity_database_path.is_some() {
+            return Err(
+                "continuity_database_path requires an isolated runtime_state_path".to_string(),
+            );
+        }
+        return Ok((None, None));
+    };
+    if !runtime_state_path.is_absolute() {
+        return Err("runtime_state_path must be absolute".to_string());
+    }
+
+    let workspace = workspace_path.canonicalize().map_err(|error| {
+        format!(
+            "failed to resolve Forge eval workspace {}: {error}",
+            workspace_path.display()
+        )
+    })?;
+    let runtime_state = canonicalize_runtime_target(runtime_state_path)?;
+    if runtime_state.starts_with(&workspace) {
+        return Err(format!(
+            "runtime_state_path must be outside the Forge eval workspace: {}",
+            runtime_state_path.display()
+        ));
+    }
+
+    let continuity_database = match continuity_database_path {
+        Some(path) => {
+            if !path.is_absolute() {
+                return Err("continuity_database_path must be absolute".to_string());
+            }
+            let resolved = canonicalize_runtime_target(path)?;
+            if !resolved.starts_with(&runtime_state) {
+                return Err(format!(
+                    "continuity_database_path must be inside runtime_state_path: {}",
+                    path.display()
+                ));
+            }
+            Some(resolved)
+        }
+        None => None,
+    };
+
+    Ok((Some(runtime_state.join("registry.db")), continuity_database))
+}
+
+fn canonicalize_runtime_target(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if path.exists() {
+        return path.canonicalize().map_err(|error| {
+            format!("failed to resolve runtime path {}: {error}", path.display())
+        });
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("runtime path has no parent: {}", path.display()))?
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "failed to resolve runtime path parent for {}: {error}",
+                path.display()
+            )
+        })?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("runtime path has no final component: {}", path.display()))?;
+    Ok(parent.join(file_name))
 }
 
 fn save_headless_session_snapshot(
@@ -780,19 +866,19 @@ mod tests {
             (
                 "src/old.py".to_string(),
                 types::SnapshotFile {
-                    contents: b"old".to_vec(),
+                    contents: b"old\n".to_vec(),
                 },
             ),
             (
                 "src/keep.py".to_string(),
                 types::SnapshotFile {
-                    contents: b"same".to_vec(),
+                    contents: b"same\n".to_vec(),
                 },
             ),
             (
                 "src/delete.py".to_string(),
                 types::SnapshotFile {
-                    contents: b"delete me".to_vec(),
+                    contents: b"delete me\n".to_vec(),
                 },
             ),
         ]);
@@ -806,19 +892,19 @@ mod tests {
             (
                 "src/old.py".to_string(),
                 types::SnapshotFile {
-                    contents: b"new".to_vec(),
+                    contents: b"new\n".to_vec(),
                 },
             ),
             (
                 "src/keep.py".to_string(),
                 types::SnapshotFile {
-                    contents: b"same".to_vec(),
+                    contents: b"same\n".to_vec(),
                 },
             ),
             (
                 "src/add.py".to_string(),
                 types::SnapshotFile {
-                    contents: b"add me".to_vec(),
+                    contents: b"add me\n".to_vec(),
                 },
             ),
         ]);
@@ -836,6 +922,178 @@ mod tests {
         assert_eq!(file_diffs[0].change_type, "added");
         assert_eq!(file_diffs[1].change_type, "deleted");
         assert_eq!(file_diffs[2].change_type, "modified");
+        assert_eq!(
+            file_diffs[0].diff,
+            "diff --git a/src/add.py b/src/add.py\n\
+new file mode 100644\n\
+--- /dev/null\n\
++++ b/src/add.py\n\
+@@ -0,0 +1 @@\n\
++add me\n"
+        );
+        assert_eq!(
+            file_diffs[1].diff,
+            "diff --git a/src/delete.py b/src/delete.py\n\
+deleted file mode 100644\n\
+--- a/src/delete.py\n\
++++ /dev/null\n\
+@@ -1 +0,0 @@\n\
+-delete me\n"
+        );
+        assert_eq!(
+            file_diffs[2].diff,
+            "diff --git a/src/old.py b/src/old.py\n\
+--- a/src/old.py\n\
++++ b/src/old.py\n\
+@@ -1 +1 @@\n\
+-old\n\
++new\n"
+        );
+    }
+
+    #[test]
+    fn workspace_snapshot_diffs_replay_with_patch() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::fs::create_dir_all(workspace.path().join("src")).expect("src");
+        std::fs::write(workspace.path().join("src/old.py"), "old\n").expect("old file");
+        std::fs::write(workspace.path().join("src/delete.py"), "delete me\n")
+            .expect("deleted file");
+        let before = std::collections::HashMap::from([
+            (
+                "src/old.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"old\n".to_vec(),
+                },
+            ),
+            (
+                "src/delete.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"delete me\n".to_vec(),
+                },
+            ),
+        ]);
+        let after = std::collections::HashMap::from([
+            (
+                "src/old.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"new\n".to_vec(),
+                },
+            ),
+            (
+                "src/add.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"add me\n".to_vec(),
+                },
+            ),
+        ]);
+        let (_, diffs) = snapshot::diff_workspace_snapshots(&before, &after);
+        let patch_text = diffs
+            .iter()
+            .map(|diff| diff.diff.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut child = Command::new("git")
+            .args(["apply", "--whitespace=nowarn", "-"])
+            .current_dir(workspace.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn patch");
+        child
+            .stdin
+            .take()
+            .expect("patch stdin")
+            .write_all(patch_text.as_bytes())
+            .expect("write patch");
+        let output = child.wait_with_output().expect("patch output");
+
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("src/old.py")).unwrap(),
+            "new\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("src/add.py")).unwrap(),
+            "add me\n"
+        );
+        assert!(
+            !workspace.path().join("src/delete.py").exists(),
+            "delete patch left file behind; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn headless_request_accepts_explicit_isolated_runtime_paths() {
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "prompt": "test",
+            "workspace_path": "/tmp/workspace",
+            "runtime_state_path": "/tmp/runtime-state",
+            "continuity_database_path": "/tmp/runtime-state/continuity.db"
+        }))
+        .expect("headless request");
+
+        assert_eq!(
+            request.runtime_state_path.as_deref(),
+            Some(std::path::Path::new("/tmp/runtime-state"))
+        );
+        assert_eq!(
+            request.continuity_database_path.as_deref(),
+            Some(std::path::Path::new("/tmp/runtime-state/continuity.db"))
+        );
+    }
+
+    #[test]
+    fn headless_runtime_paths_resolve_to_sibling_state_directory() {
+        let root = tempfile::tempdir().expect("root");
+        let workspace = root.path().join("workspace");
+        let runtime_state = root.path().join("runtime-state");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::create_dir_all(&runtime_state).expect("runtime state");
+        let continuity_database = runtime_state.join("continuity.db");
+
+        let (registry, continuity) = super::resolve_headless_runtime_paths(
+            &workspace,
+            Some(&runtime_state),
+            Some(&continuity_database),
+        )
+        .expect("isolated paths");
+
+        let resolved_runtime_state = runtime_state
+            .canonicalize()
+            .expect("resolved runtime state");
+        assert_eq!(registry, Some(resolved_runtime_state.join("registry.db")));
+        assert_eq!(
+            continuity,
+            Some(resolved_runtime_state.join("continuity.db"))
+        );
+    }
+
+    #[test]
+    fn headless_runtime_paths_reject_state_inside_observed_workspace() {
+        let root = tempfile::tempdir().expect("root");
+        let workspace = root.path().join("workspace");
+        let runtime_state = workspace.join(".forge").join("eval-state");
+        std::fs::create_dir_all(&runtime_state).expect("runtime state");
+
+        let error = super::resolve_headless_runtime_paths(
+            &workspace,
+            Some(&runtime_state),
+            Some(&runtime_state.join("continuity.db")),
+        )
+        .expect_err("workspace-local runtime state must fail closed");
+
+        assert!(error.contains("must be outside"), "{error}");
     }
 
     #[test]

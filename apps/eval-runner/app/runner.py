@@ -280,6 +280,13 @@ class ForgeAgentRunner:
         with tempfile.TemporaryDirectory(prefix=f"forge-eval-{task.id}-") as temp_dir:
             temp_root = Path(temp_dir)
             workspace = prepare_workspace(task, temp_root)
+            runtime_state = temp_root / "runtime-state"
+            runtime_state.mkdir(parents=True, exist_ok=True)
+            continuity_database_path = (
+                runtime_state / "continuity.db"
+                if ".forge/continuity.db" in task.forbidden_files_changed
+                else None
+            )
             setup_outputs = run_setup_commands(
                 task,
                 workspace,
@@ -351,7 +358,10 @@ class ForgeAgentRunner:
                 "provider": self.provider,
                 "model": self.model,
                 "workspace_path": str(workspace),
+                "runtime_state_path": str(runtime_state),
             }
+            if continuity_database_path is not None:
+                payload["continuity_database_path"] = str(continuity_database_path)
             completed = run_bounded_process(
                 self.command,
                 input_text=json.dumps(payload),
@@ -414,6 +424,7 @@ class ForgeAgentRunner:
                     workspace,
                     workspace_observation,
                     sandbox_scrub,
+                    continuity_database_path,
                     cancel_requested,
                 )
             except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
@@ -455,6 +466,7 @@ class ForgeAgentRunner:
         workspace: Path,
         workspace_observation: WorkspaceObservation,
         sandbox_scrub: LeakageCheck,
+        continuity_database_path: Path | None,
         cancel_requested: CancelRequested,
     ) -> AgentTrace:
         ended_at = utc_now()
@@ -544,7 +556,14 @@ class ForgeAgentRunner:
         headless_continuity_diagnostic = headless_continuity_diagnostic_from_payload(payload)
         if headless_continuity_diagnostic is not None:
             raw_events.append(headless_continuity_diagnostic)
-        continuity_diagnostic = continuity_db_diagnostic(workspace)
+        continuity_diagnostic = continuity_db_diagnostic_at(
+            continuity_database_path or workspace / ".forge" / "continuity.db",
+            display_path=(
+                "runtime-state/continuity.db"
+                if continuity_database_path is not None
+                else ".forge/continuity.db"
+            ),
+        )
         if continuity_diagnostic is not None:
             raw_events.append(continuity_diagnostic)
         scope_violations = scope_violations_for(task, changed_files)
@@ -909,14 +928,24 @@ def prepare_workspace(
 
 
 def continuity_db_diagnostic(workspace: Path) -> dict[str, Any] | None:
-    db_path = workspace / ".forge" / "continuity.db"
+    return continuity_db_diagnostic_at(
+        workspace / ".forge" / "continuity.db",
+        display_path=".forge/continuity.db",
+    )
+
+
+def continuity_db_diagnostic_at(
+    db_path: Path,
+    *,
+    display_path: str,
+) -> dict[str, Any] | None:
     if not db_path.exists():
         return None
 
     diagnostic: dict[str, Any] = {
         "event_type": "eval_continuity_db_diagnostic",
         "exists": True,
-        "db_path": ".forge/continuity.db",
+        "db_path": display_path,
     }
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
