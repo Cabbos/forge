@@ -13,6 +13,7 @@ RESULTS_JSON=""
 RELEASE_PROFILE=""
 RELEASE_PROFILE_ID=""
 REQUIRE_STATE=""
+COMMIT_SHA="${FORGE_ACCEPTANCE_COMMIT_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || git -C "$PWD" rev-parse HEAD 2>/dev/null)}"
 
 while [[ "$#" -gt 0 ]]; do
   arg="$1"
@@ -195,11 +196,12 @@ write_results_json() {
   fi
 
   {
-    printf '%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0' \
       "$ROOT_DIR" \
       "$overall_exit_code" \
       "${#SELECTED_INDICES[@]}" \
-      "$RELEASE_PROFILE_ID"
+      "$RELEASE_PROFILE_ID" \
+      "$COMMIT_SHA"
     for index in "${!RESULT_LABELS[@]}"; do
       printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "${RESULT_LABELS[$index]}" \
@@ -226,6 +228,7 @@ const workingDirectory = parts.shift();
 const overallExitCode = Number(parts.shift());
 const selectedGateCount = Number(parts.shift());
 const gateProfileId = parts.shift() || null;
+const commitSha = parts.shift();
 if (parts.at(-1) === "") parts.pop();
 
 const gates = [];
@@ -254,6 +257,7 @@ const payload = {
   generatedAt: new Date().toISOString(),
   workingDirectory,
   gateProfileId,
+  commitSha,
   status: gates.some((gate) => gate.conditionStatus === "failed")
     ? "failed"
     : gates.some((gate) => gate.conditionStatus === "unknown") || gates.length < selectedGateCount

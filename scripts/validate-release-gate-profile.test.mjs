@@ -45,6 +45,20 @@ test("profile rejects missing or duplicate required labels", () => {
   assert.match(result.errors.join("\n"), /duplicate gate label/);
 });
 
+test("profile rejects missing gate contract fields and duplicate ids", () => {
+  const broken = structuredClone(profile);
+  delete broken.gates[0].command;
+  delete broken.gates[0].evidence_schema;
+  broken.gates[1].id = broken.gates[0].id;
+  broken.gates[2].required_for = ["R3", "R3"];
+  const result = validateReleaseGateProfile(broken, { requiredState: "R3" });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /gates\[0\]\.command is required/);
+  assert.match(result.errors.join("\n"), /gates\[0\]\.evidence_schema is required/);
+  assert.match(result.errors.join("\n"), /duplicate gate id/);
+  assert.match(result.errors.join("\n"), /duplicate required_for state/);
+});
+
 test("public beta profile locks the four fixed R4 distribution labels", () => {
   assert.deepEqual(validateReleaseGateProfile(profile, { requiredState: "R4" }), {
     ok: true,

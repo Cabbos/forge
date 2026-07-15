@@ -8,6 +8,8 @@
     "build:desktop": "npm --prefix apps/desktop run build",
     "build:website": "npm --prefix apps/website run build",
     "check:ci": "node --test scripts/ci-workflow.test.mjs",
+    "release:candidate": "node scripts/build-release-candidate.mjs",
+    "release:validate": "node scripts/validate-release-manifest.mjs --release-profile release/release-gates.v1.json",
     "forge:feishu:dry-run": "node scripts/sync-forge-feishu.mjs --commit HEAD --dry-run",
     "forge:feishu:setup": "node scripts/sync-forge-feishu.mjs --setup-feishu",
     "forge:feishu:sync": "node scripts/sync-forge-feishu.mjs --commit HEAD",

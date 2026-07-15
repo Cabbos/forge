@@ -10,10 +10,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "required_for", "label", "domain", "tier", "manual_allowed", "command", "ci_default"],
+        "required": ["id", "required_for", "label", "domain", "tier", "manual_allowed", "command", "evidence_schema", "ci_default"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
-          "required_for": { "type": "array", "items": { "enum": ["R1", "R2", "R3", "R4"] }, "minItems": 1 },
+          "required_for": { "type": "array", "items": { "enum": ["R1", "R2", "R3", "R4"] }, "minItems": 1, "uniqueItems": true },
           "label": { "type": "string", "minLength": 1 },
           "domain": { "type": "string", "minLength": 1 },
           "tier": { "type": "string", "minLength": 1 },
