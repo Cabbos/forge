@@ -203,7 +203,7 @@ class InMemoryStorage:
         worker_id: str,
         lease_token: str,
     ) -> None:
-        run = self._require_active_lease(run_id, worker_id, lease_token)
+        run = self._require_task_write_lease(run_id, worker_id, lease_token)
         traces = replace_trace(run.traces, trace)
         self._runs[run_id] = run.model_copy(
             update={
@@ -305,7 +305,15 @@ class InMemoryStorage:
             and current.worker_id == worker_id
             and current.lease_token == lease_token
         ):
-            return current
+            cancelled = run.model_copy(
+                update={
+                    "status": RunStatus.CANCELLED,
+                    "worker_id": worker_id,
+                    "lease_token": lease_token,
+                }
+            )
+            self._runs[run.run_id] = cancelled
+            return cancelled
         self._require_active_lease(run.run_id, worker_id, lease_token)
         update: dict[str, object] = {
             "status": target_status,
@@ -345,6 +353,21 @@ class InMemoryStorage:
         if not active:
             raise LeaseLostError(f"Worker {worker_id} lost lease for run {run_id}")
         return run
+
+    def _require_task_write_lease(
+        self,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        run = self._require_run(run_id)
+        if (
+            run.status == RunStatus.CANCELLED
+            and run.worker_id == worker_id
+            and run.lease_token == lease_token
+        ):
+            return run
+        return self._require_active_lease(run_id, worker_id, lease_token)
 
     def force_lease_expiry_for_test(self, run_id: str, lease_expires_at: datetime) -> None:
         run = self._require_run(run_id)
@@ -500,7 +523,7 @@ class SQLiteStorage:
     ) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            run = self._require_active_lease_connection(
+            run = self._require_task_write_lease_connection(
                 connection,
                 run_id,
                 worker_id,
@@ -800,10 +823,24 @@ class SQLiteStorage:
                 same_attempt = row["worker_id"] == worker_id and row["lease_token"] == lease_token
                 if not same_attempt:
                     raise LeaseLostError(f"Worker {worker_id} lost lease for run {run.run_id}")
-                connection.execute("ROLLBACK")
+                cancelled = run.model_copy(
+                    update={
+                        "status": RunStatus.CANCELLED,
+                        "worker_id": worker_id,
+                        "lease_token": lease_token,
+                    }
+                )
+                self._write_attempt_artifacts(cancelled, lease_token, connection)
+                self._upsert_run_connection(connection, cancelled)
+                connection.execute(
+                    "DELETE FROM eval_run_tasks WHERE run_id = ?", (cancelled.run_id,)
+                )
+                for trace in cancelled.traces:
+                    self._upsert_task(connection, cancelled.run_id, trace)
+                connection.execute("COMMIT")
                 stored_run = self.get_run(run.run_id)
                 if stored_run is None:
-                    raise KeyError(f"Unknown run id after rollback: {run.run_id}")
+                    raise KeyError(f"Unknown run id after cancellation finalize: {run.run_id}")
                 return stored_run
             self._require_active_lease_connection(
                 connection,
@@ -875,6 +912,35 @@ class SQLiteStorage:
         if run is None:
             raise KeyError(f"Unknown run id after lease check: {run_id}")
         return run
+
+    def _require_task_write_lease_connection(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
+        row = connection.execute(
+            "SELECT status, worker_id, lease_token FROM eval_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown run id: {run_id}")
+        if (
+            row["status"] == RunStatus.CANCELLED.value
+            and row["worker_id"] == worker_id
+            and row["lease_token"] == lease_token
+        ):
+            run = self.get_run(run_id)
+            if run is None:
+                raise KeyError(f"Unknown run id after cancellation check: {run_id}")
+            return run
+        return self._require_active_lease_connection(
+            connection,
+            run_id,
+            worker_id,
+            lease_token,
+        )
 
     def force_lease_expiry_for_test(self, run_id: str, lease_expires_at: datetime) -> None:
         with self._connect() as connection:
