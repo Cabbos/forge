@@ -764,6 +764,7 @@ test("acceptance script can write gate results JSON", (t) => {
 
   const results = JSON.parse(readFileSync(resultsPath, "utf8"));
   assert.equal(results.schemaVersion, 2);
+  assert.equal(results.gateProfileId, null);
   assert.equal(results.workingDirectory, root.replace(/\/$/, ""));
   assert.equal(results.status, "passed");
   assert.equal(results.selectedGateCount, 1);
@@ -801,6 +802,45 @@ test("acceptance script can write gate results JSON", (t) => {
   assert.equal(results.gates[0].conditionStatus, "passed");
   assert.ok(Number.isFinite(Date.parse(results.gates[0].startedAt)));
   assert.ok(Number.isFinite(Date.parse(results.gates[0].finishedAt)));
+});
+
+test("gate results bind an exact release profile id", (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), "forge-acceptance-profile-results-"));
+  t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+  const profilePath = join(tempDir, "profile.json");
+  const resultsPath = join(tempDir, "gate-results.json");
+  writeFileSync(
+    profilePath,
+    `${JSON.stringify({
+      id: "test-r2-profile",
+      version: 1,
+      gates: [
+        {
+          id: "state-map",
+          required_for: ["R2"],
+          label: "desktop state consistency map status",
+        },
+      ],
+    })}\n`,
+  );
+
+  execFileSync(
+    scriptPath,
+    [
+      "--release-profile",
+      profilePath,
+      "--require-state",
+      "R2",
+      "--results-json",
+      resultsPath,
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+
+  const results = JSON.parse(readFileSync(resultsPath, "utf8"));
+  assert.equal(results.gateProfileId, "test-r2-profile");
+  assert.equal(results.selectedGateCount, 1);
+  assert.equal(results.gates[0].label, "desktop state consistency map status");
 });
 
 test("gate results distinguish failed conditions from execution failures", (t) => {
