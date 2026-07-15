@@ -214,7 +214,8 @@ Add tests for:
 
 - `syncToFeishu` returns `{ ok: false, reason: "missing_upgrade_log_url" }` when config lacks `upgradeLogUrl`
 - hook mode writes a pending local entry and returns success status when upload cannot run
-- `setupFeishu` parses a fake `lark-cli docs +create` JSON response and writes `upgradeLogUrl`
+- `setupFeishu` uses the lark-doc v2 create contract, parses a fake JSON response, and writes `upgradeLogUrl`
+- `syncToFeishu` uses the lark-doc v2 append contract (`--command append --doc-format markdown --content`)
 
 - [ ] **Step 2: Run RED**
 
@@ -235,9 +236,9 @@ Add:
 - `syncToFeishu({ config, markdown, execFileSync })`
 - hook-mode fallback that calls `appendLocalLog(... pending ...)`
 
-Implementation must use `lark-cli docs +create` only for explicit `--setup-feishu`.
+Implementation must use `lark-cli docs +create --parent-token ... --doc-format markdown --content ...` only for explicit `--setup-feishu`.
 
-Implementation must use `lark-cli docs +update --mode append` for upload.
+Implementation must use `lark-cli docs +update --command append --doc-format markdown --content ...` for upload. The retired v1 flags (`--wiki-node`, `--mode`, and `--markdown`) must not be used.
 
 - [ ] **Step 4: Run GREEN**
 

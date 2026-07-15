@@ -163,6 +163,43 @@ test("Feishu sync reports missing upgrade log URL without shelling out", () => {
   });
 });
 
+test("Feishu sync uses the lark-cli docs v2 append contract", () => {
+  const calls = [];
+  const markdown = "## Upgrade\n\nRuntime hardening.\n";
+  const upgradeLogUrl = "https://www.feishu.cn/wiki/ForgeSyncChild";
+
+  const result = syncToFeishu({
+    config: { upgradeLogUrl },
+    markdown,
+    execFileSync: (command, args) => {
+      calls.push([command, args]);
+      return "";
+    },
+  });
+
+  assert.deepEqual(calls, [
+    [
+      "lark-cli",
+      [
+        "docs",
+        "+update",
+        "--doc",
+        upgradeLogUrl,
+        "--command",
+        "append",
+        "--doc-format",
+        "markdown",
+        "--content",
+        markdown,
+      ],
+    ],
+  ]);
+  assert.deepEqual(result, {
+    ok: true,
+    url: upgradeLogUrl,
+  });
+});
+
 test("hook mode writes pending local log and returns success when upload cannot run", async () => {
   const dir = mkdtempSync(join(tmpdir(), "forge-feishu-hook-"));
   const configPath = join(dir, "feishu-sync.config.json");
@@ -225,7 +262,18 @@ test("setupFeishu creates a child doc and writes upgrade log URL", () => {
   const fakeExecFileSync = (command, args) => {
     calls.push([command, args]);
     assert.equal(command, "lark-cli");
-    assert.deepEqual(args.slice(0, 3), ["docs", "+create", "--wiki-node"]);
+    assert.deepEqual(args, [
+      "docs",
+      "+create",
+      "--parent-token",
+      "U7OrwxDUCiwTbak7xyhcD03FnPc",
+      "--title",
+      "Forge 升级同步",
+      "--doc-format",
+      "markdown",
+      "--content",
+      "这里自动汇总本地 Hook 识别出的高价值 Forge 升级记录。\n",
+    ]);
     return 'ok\n{"url":"https://www.feishu.cn/wiki/ForgeSyncChild","token":"ForgeSyncChild"}\n';
   };
 
