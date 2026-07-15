@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   REQUIRED_R3_LABELS,
   REQUIRED_R4_LABELS,
+  validateReleaseHandoff,
   validateReleaseGateProfile,
 } from "./validate-release-gate-profile.mjs";
 
@@ -53,4 +54,144 @@ test("public beta profile locks the four fixed R4 distribution labels", () => {
     profile.gates.filter((gate) => gate.required_for.includes("R4")).map((gate) => gate.label),
     [...REQUIRED_R4_LABELS],
   );
+});
+
+const PRODUCER_COMMIT = "0a3d758d64c50b485b357c16d8eb221ffe193a31";
+const RESULT_SHA = "a".repeat(64);
+
+function passedGate(label, artifactId) {
+  const gate = profile.gates.find((candidate) => candidate.label === label);
+  return {
+    id: gate.id,
+    label: gate.label,
+    command: gate.command,
+    execution_status: "completed",
+    condition_status: "passed",
+    status: "passed",
+    exit_code: 0,
+    duration_ms: 1,
+    started_at: "2026-07-15T00:00:00.000Z",
+    finished_at: "2026-07-15T00:00:01.000Z",
+    result_artifact_id: artifactId,
+  };
+}
+
+function artifact(id, gateLabels, sha256 = RESULT_SHA) {
+  return {
+    id,
+    schema_version: 2,
+    generated_at: "2026-07-15T00:00:01.000Z",
+    sha256,
+    status: "passed",
+    selected_gate_count: gateLabels.length,
+    executed_gate_count: gateLabels.length,
+    failed_gate_count: 0,
+    failed_execution_count: 0,
+    failed_condition_count: 0,
+    unknown_condition_count: 0,
+    gate_labels: gateLabels,
+  };
+}
+
+function ownedEvidence(id, gateLabel, artifactId) {
+  return {
+    id,
+    gate_label: gateLabel,
+    execution_status: "completed",
+    condition_status: "passed",
+    result_artifact_id: artifactId,
+  };
+}
+
+function validHandoff(state) {
+  const requiredLabels = profile.gates
+    .filter((gate) => gate.required_for.includes(state))
+    .map((gate) => gate.label);
+  const artifactId = `${state.toLowerCase()}-gate-results`;
+  const handoff = {
+    schema_version: 1,
+    release_state: state,
+    profile_id: profile.id,
+    producer_commit: PRODUCER_COMMIT,
+    result_artifacts: [artifact(artifactId, requiredLabels)],
+    gates: requiredLabels.map((label) => passedGate(label, artifactId)),
+    owned_evidence: [],
+  };
+  if (state === "R1") {
+    const deterministic = "desktop deterministic signal cleanup";
+    handoff.owned_evidence = [
+      ownedEvidence("unified-memory-id-assertion", deterministic, artifactId),
+      ownedEvidence("tailwind-4-warning-free-build", deterministic, artifactId),
+      ownedEvidence("continuity-console-clean-fixture", deterministic, artifactId),
+    ];
+  }
+  if (state === "R2") {
+    const qualityLabel = "eval quality suite";
+    const qualityArtifactId = "r2-eval-quality-results";
+    handoff.result_artifacts.push(artifact(qualityArtifactId, [qualityLabel], "b".repeat(64)));
+    handoff.gates.push(passedGate(qualityLabel, qualityArtifactId));
+    handoff.owned_evidence = [
+      ownedEvidence("strict-provider-identity", "eval execution identity baseline", artifactId),
+      ownedEvidence("independent-workspace-observation", "eval independent workspace evidence baseline", artifactId),
+      ownedEvidence("trusted-orchestration", "eval trusted execution baseline", artifactId),
+      ownedEvidence("authenticated-fenced-worker", "eval authenticated fenced worker baseline", artifactId),
+      ownedEvidence("full-eval-quality-suite", qualityLabel, qualityArtifactId),
+    ];
+  }
+  return handoff;
+}
+
+test("release profile accepts complete commit-bound R1 and R2 handoffs", () => {
+  for (const state of ["R1", "R2"]) {
+    assert.deepEqual(
+      validateReleaseHandoff(profile, validHandoff(state), {
+        requiredState: state,
+        expectedCommit: PRODUCER_COMMIT,
+      }),
+      { ok: true, errors: [] },
+    );
+  }
+});
+
+test("release profile rejects an R1 handoff with a missing label or failed condition", () => {
+  const handoff = validHandoff("R1");
+  handoff.gates.shift();
+  handoff.gates[0].condition_status = "failed";
+  const result = validateReleaseHandoff(profile, handoff, {
+    requiredState: "R1",
+    expectedCommit: PRODUCER_COMMIT,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /missing required R1 handoff gate/);
+  assert.match(result.errors.join("\n"), /failed condition/);
+});
+
+test("release profile rejects unknown provider, missing workspace, and stale-worker R2 evidence", () => {
+  const handoff = validHandoff("R2");
+  handoff.gates.find((gate) => gate.id === "eval-identity").condition_status = "unknown";
+  handoff.owned_evidence = handoff.owned_evidence.filter(
+    (evidence) => evidence.id !== "independent-workspace-observation",
+  );
+  handoff.gates.find((gate) => gate.id === "eval-worker").condition_status = "failed";
+  const result = validateReleaseHandoff(profile, handoff, {
+    requiredState: "R2",
+    expectedCommit: PRODUCER_COMMIT,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /eval execution identity baseline.*unknown/);
+  assert.match(result.errors.join("\n"), /missing required R2 owned evidence: independent-workspace-observation/);
+  assert.match(result.errors.join("\n"), /eval authenticated fenced worker baseline.*failed/);
+});
+
+test("release profile rejects handoffs from a different commit or malformed result artifact", () => {
+  const handoff = validHandoff("R1");
+  handoff.producer_commit = "f".repeat(40);
+  handoff.result_artifacts[0].sha256 = "not-a-digest";
+  const result = validateReleaseHandoff(profile, handoff, {
+    requiredState: "R1",
+    expectedCommit: PRODUCER_COMMIT,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join("\n"), /producer_commit does not match/);
+  assert.match(result.errors.join("\n"), /sha256/);
 });
