@@ -765,6 +765,10 @@ test("acceptance script can write gate results JSON", (t) => {
   const results = JSON.parse(readFileSync(resultsPath, "utf8"));
   assert.equal(results.schemaVersion, 2);
   assert.equal(results.gateProfileId, null);
+  assert.equal(
+    results.commitSha,
+    execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
+  );
   assert.equal(results.workingDirectory, root.replace(/\/$/, ""));
   assert.equal(results.status, "passed");
   assert.equal(results.selectedGateCount, 1);
@@ -819,6 +823,13 @@ test("gate results bind an exact release profile id", (t) => {
           id: "state-map",
           required_for: ["R2"],
           label: "desktop state consistency map status",
+          domain: "usage-context",
+          tier: "fast-contract",
+          manual_allowed: false,
+          command:
+            'rg -q "provider_usage" docs/desktop/state-consistency-map.md && rg -q "Tauri transcript replay" docs/desktop/state-consistency-map.md && rg -q "transcript usage hydration" docs/desktop/state-consistency-map.md',
+          evidence_schema: "acceptance.v1",
+          ci_default: true,
         },
       ],
     })}\n`,

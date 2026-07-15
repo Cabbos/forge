@@ -49,12 +49,33 @@ export function validateReleaseGateProfile(profile, { requiredState = null } = {
   if (profile.version !== 1) errors.push("version must be 1");
   if (typeof profile.id !== "string" || !profile.id) errors.push("id is required");
   if (!Array.isArray(profile.gates)) errors.push("gates must be an array");
+  const ids = new Set();
   const labels = new Set();
   for (const [index, gate] of (profile.gates ?? []).entries()) {
-    if (!gate || typeof gate.label !== "string" || !gate.label) errors.push(`gates[${index}].label is required`);
+    if (!gate || typeof gate !== "object" || Array.isArray(gate)) {
+      errors.push(`gates[${index}] must be an object`);
+      continue;
+    }
+    for (const field of ["id", "label", "domain", "tier", "command", "evidence_schema"]) {
+      if (typeof gate[field] !== "string" || !gate[field]) errors.push(`gates[${index}].${field} is required`);
+    }
+    if (ids.has(gate.id)) errors.push(`duplicate gate id: ${gate.id}`);
+    if (gate.id) ids.add(gate.id);
     if (labels.has(gate?.label)) errors.push(`duplicate gate label: ${gate.label}`);
     if (gate?.label) labels.add(gate.label);
     if (!Array.isArray(gate?.required_for) || gate.required_for.length === 0) errors.push(`gates[${index}].required_for is required`);
+    else {
+      const states = new Set();
+      for (const state of gate.required_for) {
+        if (!new Set(["R1", "R2", "R3", "R4"]).has(state)) {
+          errors.push(`gates[${index}].required_for contains invalid state: ${state}`);
+        }
+        if (states.has(state)) errors.push(`gates[${index}].required_for contains duplicate required_for state: ${state}`);
+        states.add(state);
+      }
+    }
+    if (typeof gate.manual_allowed !== "boolean") errors.push(`gates[${index}].manual_allowed must be boolean`);
+    if (typeof gate.ci_default !== "boolean") errors.push(`gates[${index}].ci_default must be boolean`);
   }
   if (requiredState === "R3") {
     for (const label of REQUIRED_R3_LABELS) {
