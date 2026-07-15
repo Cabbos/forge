@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     db_path: Path = Path("forge_eval.db")
     artifacts_path: Path = Path("artifacts")
     run_execution_mode: str = "sync"
+    api_bind_host: str = "127.0.0.1"
+    api_token: str | None = None
     forge_agent_command: str | None = None
     worker_id: str = "local-worker"
     heartbeat_interval_seconds: float = 30.0

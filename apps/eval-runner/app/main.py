@@ -1,8 +1,12 @@
+import ipaddress
+import secrets
+from collections.abc import Callable
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 
-from app.config import get_settings
+from app.config import Settings, get_settings
+from app.execution import ExecutionOptions, execute_evaluation
 from app.metrics import calculate_metrics
 from app.models import (
     AgentTrace,
@@ -14,14 +18,14 @@ from app.models import (
     QueueStatus,
     RunCreateRequest,
     RunStatus,
+    TrustGateResult,
 )
 from app.reporting import build_report
-from app.runner import create_runner
 from app.storage import EvalStorage, InMemoryStorage, RunAlreadyTerminalError, SQLiteStorage
 from app.trace import duration_ms, utc_now
 
 
-def build_storage(settings) -> EvalStorage:
+def build_storage(settings: Settings) -> EvalStorage:
     if settings.storage_backend == "sqlite":
         return SQLiteStorage(
             tasks_path=settings.tasks_path,
@@ -33,8 +37,47 @@ def build_storage(settings) -> EvalStorage:
     raise ValueError(f"Unsupported storage backend: {settings.storage_backend}")
 
 
-def create_app(storage: EvalStorage | None = None) -> FastAPI:
-    settings = get_settings()
+def is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_api_exposure(settings: Settings) -> None:
+    if not is_loopback_host(settings.api_bind_host) and not settings.api_token:
+        raise ValueError("API token is required for non-loopback bind host")
+
+
+def build_auth_dependency(settings: Settings) -> Callable[[str | None], None]:
+    def require_api_token(authorization: str | None = Header(default=None)) -> None:
+        if settings.api_token is None:
+            return
+        scheme, separator, supplied = (authorization or "").partition(" ")
+        valid = (
+            separator == " "
+            and scheme.casefold() == "bearer"
+            and secrets.compare_digest(supplied, settings.api_token)
+        )
+        if not valid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing API token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    return require_api_token
+
+
+def create_app(
+    storage: EvalStorage | None = None,
+    settings: Settings | None = None,
+) -> FastAPI:
+    settings = settings or get_settings()
+    validate_api_exposure(settings)
+    require_api_token = build_auth_dependency(settings)
     app = FastAPI(
         title="Forge Eval Runner",
         summary="Agent evaluation runner with trace capture and metrics APIs.",
@@ -55,11 +98,20 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "service": settings.app_name}
 
-    @app.get("/tasks", response_model=list[EvaluationTask])
+    @app.get(
+        "/tasks",
+        response_model=list[EvaluationTask],
+        dependencies=[Depends(require_api_token)],
+    )
     def list_tasks() -> list[EvaluationTask]:
         return get_storage().list_tasks()
 
-    @app.post("/runs", response_model=EvaluationRun, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/runs",
+        response_model=EvaluationRun,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_api_token)],
+    )
     def create_run(request: RunCreateRequest) -> EvaluationRun:
         try:
             tasks = get_storage().get_tasks(request.task_ids)
@@ -81,6 +133,7 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
                 ended_at=started_at,
                 duration_ms=0,
                 max_retries=request.max_retries,
+                trust_result=TrustGateResult(),
             )
             get_storage().create_run(run)
             return run
@@ -90,12 +143,19 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
                 detail=f"Unsupported run execution mode: {settings.run_execution_mode}",
             )
 
-        runner = create_runner(
-            provider=request.provider,
-            model=request.model,
-            forge_command=settings.forge_agent_command,
+        execution = execute_evaluation(
+            cases_path=settings.tasks_path,
+            tasks=tasks,
+            options=ExecutionOptions(
+                provider=request.provider,
+                model=request.model,
+                forge_command=settings.forge_agent_command,
+                command_timeout_seconds=settings.command_timeout_seconds,
+                setup_timeout_seconds=settings.setup_timeout_seconds,
+                validation_timeout_seconds=settings.validation_timeout_seconds,
+                require_red_team=False,
+            ),
         )
-        traces = [runner.run_task(task) for task in tasks]
         ended_at = utc_now()
         run = EvaluationRun(
             run_id=str(uuid4()),
@@ -104,8 +164,9 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
             model=request.model,
             case_source=str(settings.tasks_path),
             requested_task_ids=[task.id for task in tasks],
-            traces=traces,
-            metrics=calculate_metrics(traces),
+            traces=execution.traces,
+            metrics=calculate_metrics(execution.traces),
+            trust_result=execution.trust_result,
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=duration_ms(started_at, ended_at),
@@ -113,36 +174,69 @@ def create_app(storage: EvalStorage | None = None) -> FastAPI:
         get_storage().save_run(run)
         return run
 
-    @app.get("/runs", response_model=list[EvaluationRun])
+    @app.get(
+        "/runs",
+        response_model=list[EvaluationRun],
+        dependencies=[Depends(require_api_token)],
+    )
     def list_runs(status: str | None = None) -> list[EvaluationRun]:
         return get_storage().list_runs(status_filter=status)
 
-    @app.get("/queue/status", response_model=QueueStatus)
+    @app.get(
+        "/queue/status",
+        response_model=QueueStatus,
+        dependencies=[Depends(require_api_token)],
+    )
     def get_queue_status() -> QueueStatus:
         return get_storage().queue_status()
 
-    @app.get("/runs/{run_id}", response_model=EvaluationRun)
+    @app.get(
+        "/runs/{run_id}",
+        response_model=EvaluationRun,
+        dependencies=[Depends(require_api_token)],
+    )
     def get_run(run_id: str) -> EvaluationRun:
         return require_run(run_id)
 
-    @app.get("/runs/{run_id}/trace", response_model=list[AgentTrace])
+    @app.get(
+        "/runs/{run_id}/trace",
+        response_model=list[AgentTrace],
+        dependencies=[Depends(require_api_token)],
+    )
     def get_run_trace(run_id: str) -> list[AgentTrace]:
         return require_run(run_id).traces
 
-    @app.get("/runs/{run_id}/metrics", response_model=MetricsSummary)
+    @app.get(
+        "/runs/{run_id}/metrics",
+        response_model=MetricsSummary,
+        dependencies=[Depends(require_api_token)],
+    )
     def get_run_metrics(run_id: str) -> MetricsSummary:
         return require_run(run_id).metrics
 
-    @app.get("/runs/{run_id}/report", response_model=BacktestReport)
+    @app.get(
+        "/runs/{run_id}/report",
+        response_model=BacktestReport,
+        dependencies=[Depends(require_api_token)],
+    )
     def get_run_report(run_id: str) -> BacktestReport:
-        return build_report(require_run(run_id).traces)
+        run = require_run(run_id)
+        return build_report(run.traces).model_copy(update={"trust_result": run.trust_result})
 
-    @app.get("/runs/{run_id}/artifacts", response_model=list[EvalArtifact])
+    @app.get(
+        "/runs/{run_id}/artifacts",
+        response_model=list[EvalArtifact],
+        dependencies=[Depends(require_api_token)],
+    )
     def get_run_artifacts(run_id: str) -> list[EvalArtifact]:
         require_run(run_id)
         return get_storage().list_artifacts(run_id)
 
-    @app.post("/runs/{run_id}/cancel", response_model=EvaluationRun)
+    @app.post(
+        "/runs/{run_id}/cancel",
+        response_model=EvaluationRun,
+        dependencies=[Depends(require_api_token)],
+    )
     def cancel_run(run_id: str) -> EvaluationRun:
         require_run(run_id)
         try:
