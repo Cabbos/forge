@@ -11,6 +11,7 @@ GREP_LABEL_MATCH=""
 CI_DEFAULT=0
 RESULTS_JSON=""
 RELEASE_PROFILE=""
+RELEASE_PROFILE_ID=""
 REQUIRE_STATE=""
 
 while [[ "$#" -gt 0 ]]; do
@@ -194,7 +195,11 @@ write_results_json() {
   fi
 
   {
-    printf '%s\0%s\0%s\0' "$ROOT_DIR" "$overall_exit_code" "${#SELECTED_INDICES[@]}"
+    printf '%s\0%s\0%s\0%s\0' \
+      "$ROOT_DIR" \
+      "$overall_exit_code" \
+      "${#SELECTED_INDICES[@]}" \
+      "$RELEASE_PROFILE_ID"
     for index in "${!RESULT_LABELS[@]}"; do
       printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "${RESULT_LABELS[$index]}" \
@@ -220,6 +225,7 @@ const parts = fs.readFileSync(0).toString("utf8").split("\0");
 const workingDirectory = parts.shift();
 const overallExitCode = Number(parts.shift());
 const selectedGateCount = Number(parts.shift());
+const gateProfileId = parts.shift() || null;
 if (parts.at(-1) === "") parts.pop();
 
 const gates = [];
@@ -247,6 +253,7 @@ const payload = {
   schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   workingDirectory,
+  gateProfileId,
   status: gates.some((gate) => gate.conditionStatus === "failed")
     ? "failed"
     : gates.some((gate) => gate.conditionStatus === "unknown") || gates.length < selectedGateCount
@@ -471,6 +478,11 @@ if [[ -n "$RELEASE_PROFILE" ]]; then
   node "$ROOT_DIR/scripts/validate-release-gate-profile.mjs" \
     --release-profile "$RELEASE_PROFILE" \
     --require-state "$REQUIRE_STATE" >/dev/null
+  RELEASE_PROFILE_ID="$(node -e '
+const fs = require("node:fs");
+const profile = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(profile.id);
+' "$RELEASE_PROFILE")"
   while IFS= read -r label; do
     RELEASE_LABELS+=("$label")
   done < <(node -e '
