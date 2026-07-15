@@ -96,6 +96,21 @@ test("CI workflow avoids runner context in job-level env", () => {
   );
 });
 
+test("Linux release jobs install ripgrep before acceptance gates", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const releaseContract = workflow.slice(
+    workflow.indexOf("release-contract:"),
+    workflow.indexOf("desktop-frontend:"),
+  );
+  const nightlyEval = workflow.slice(
+    workflow.indexOf("nightly-eval:"),
+    workflow.indexOf("release-candidate:"),
+  );
+
+  assert.match(releaseContract, /sudo apt-get install -y ripgrep/);
+  assert.match(nightlyEval, /sudo apt-get install -y ripgrep/);
+});
+
 test("Desktop release workflow is manual or tag gated", () => {
   const workflow = read(".github/workflows/desktop-release.yml");
 
