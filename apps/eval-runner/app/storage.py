@@ -425,12 +425,14 @@ class SQLiteStorage:
         return run
 
     def save_run(self, run: EvaluationRun) -> EvaluationRun:
-        self._write_run_artifacts(run)
-        self._upsert_run(run)
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._upsert_run_connection(connection, run)
+            self._write_run_artifacts(run, connection)
             connection.execute("DELETE FROM eval_run_tasks WHERE run_id = ?", (run.run_id,))
             for trace in run.traces:
                 self._upsert_task(connection, run.run_id, trace)
+            connection.execute("COMMIT")
         return run
 
     def get_run(self, run_id: str) -> EvaluationRun | None:
@@ -1262,8 +1264,11 @@ class SQLiteStorage:
         )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
     def _oldest_run_id_by_status(
