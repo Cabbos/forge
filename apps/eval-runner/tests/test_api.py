@@ -548,6 +548,7 @@ def test_api_cancellation_during_task_preserves_cancelled(
     import threading
     import time
     from datetime import UTC, datetime
+    from types import SimpleNamespace
 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
@@ -563,26 +564,30 @@ def test_api_cancellation_during_task_preserves_cancelled(
 
     import app.worker as worker_mod
 
-    original_create_runner = worker_mod.create_runner
+    original_execute_evaluation = worker_mod.execute_evaluation
 
-    class SlowRunner:
-        def run_task(self, _task):
-            time.sleep(0.3)
-            return AgentTrace(
-                task_id="task-pass",
-                user_prompt="pass",
-                model="mock",
-                provider="mock",
-                final_answer="done",
-                verification_result=VerificationResult(
-                    command="pytest", passed=True, exit_code=0, duration_ms=10
-                ),
-                started_at=datetime.now(UTC),
-                ended_at=datetime.now(UTC),
-                duration_ms=10,
-            )
+    def slow_execution(**_kwargs):
+        time.sleep(0.3)
+        return SimpleNamespace(
+            traces=[
+                AgentTrace(
+                    task_id="task-pass",
+                    user_prompt="pass",
+                    model="mock",
+                    provider="mock",
+                    final_answer="done",
+                    verification_result=VerificationResult(
+                        command="pytest", passed=True, exit_code=0, duration_ms=10
+                    ),
+                    started_at=datetime.now(UTC),
+                    ended_at=datetime.now(UTC),
+                    duration_ms=10,
+                )
+            ],
+            trust_result=TrustGateResult(),
+        )
 
-    worker_mod.create_runner = lambda **kwargs: SlowRunner()  # type: ignore[assignment]
+    worker_mod.execute_evaluation = slow_execution  # type: ignore[assignment]
 
     worker = EvalWorker(storage=storage, forge_command=None)
     worker_thread = threading.Thread(target=worker.run_once)
@@ -591,7 +596,7 @@ def test_api_cancellation_during_task_preserves_cancelled(
     client.post(f"/runs/{run_id}/cancel")
     worker_thread.join(timeout=2)
 
-    worker_mod.create_runner = original_create_runner
+    worker_mod.execute_evaluation = original_execute_evaluation
 
     fetched = client.get(f"/runs/{run_id}")
     assert fetched.json()["status"] == "cancelled", (

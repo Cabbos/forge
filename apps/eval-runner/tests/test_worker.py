@@ -1,9 +1,23 @@
 import json
+import shlex
+import sys
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from app.metrics import calculate_metrics
-from app.models import AgentTrace, EvaluationRun, RunStatus, VerificationResult
+from app.models import (
+    AgentTrace,
+    EvalProvider,
+    EvaluationRun,
+    RunStatus,
+    TrustGateResult,
+    VerificationResult,
+)
 from app.storage import SQLiteStorage
 from app.worker import EvalWorker
 
@@ -42,6 +56,143 @@ def make_pending_run(run_id: str, *, max_retries: int = 0) -> EvaluationRun:
         duration_ms=0,
         max_retries=max_retries,
     )
+
+
+def make_successful_trace() -> AgentTrace:
+    now = datetime.now(UTC)
+    return AgentTrace(
+        task_id="task-pass",
+        user_prompt="pass",
+        model="mock",
+        provider="mock",
+        final_answer="done",
+        verification_result=VerificationResult(
+            command="pytest", passed=True, exit_code=0, duration_ms=10
+        ),
+        started_at=now,
+        ended_at=now,
+        duration_ms=10,
+    )
+
+
+def execution_with_trace(trace: AgentTrace):
+    return SimpleNamespace(traces=[trace], trust_result=TrustGateResult())
+
+
+def queued_sqlite_storage(tmp_path: Path) -> SQLiteStorage:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    return SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+
+
+def wait_until(predicate, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise TimeoutError("condition was not met before timeout")
+
+
+def stale_reclaiming_save_task(
+    storage: SQLiteStorage,
+    *,
+    replacement_worker: str,
+):
+    original = storage.save_task
+
+    def save_task(
+        run_id: str,
+        trace: AgentTrace,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> None:
+        storage.force_lease_expiry_for_test(run_id, datetime(2000, 1, 1, tzinfo=UTC))
+        replacement = storage.claim_pending_run(worker_id=replacement_worker)
+        assert replacement is not None
+        original(
+            run_id,
+            trace,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
+
+    return save_task
+
+
+def test_worker_stops_publication_when_lease_is_reclaimed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    storage = queued_sqlite_storage(tmp_path)
+    storage.create_run(make_pending_run("run-1"))
+    worker = EvalWorker(storage=storage, forge_command=None, worker_id="worker-a")
+    monkeypatch.setattr(
+        storage,
+        "save_task",
+        stale_reclaiming_save_task(storage, replacement_worker="worker-b"),
+    )
+
+    result = worker.run_once()
+
+    assert result is not None
+    assert result.worker_id == "worker-b"
+    assert result.status == RunStatus.RUNNING
+    assert "lost lease for run run-1" in capsys.readouterr().err
+
+
+def test_worker_cancellation_interrupts_running_subprocess(tmp_path: Path) -> None:
+    storage = queued_sqlite_storage(tmp_path)
+    script = tmp_path / "long_agent.py"
+    script.write_text(
+        "import time\nprint('started', flush=True)\ntime.sleep(30)\n",
+        encoding="utf-8",
+    )
+    run = make_pending_run("run-1").model_copy(update={"provider": EvalProvider.FORGE})
+    storage.create_run(run)
+    worker = EvalWorker(
+        storage=storage,
+        forge_command=shlex.join([sys.executable, "-u", str(script)]),
+    )
+    thread = threading.Thread(target=worker.run_once)
+    thread.start()
+    wait_until(
+        lambda: (
+            (current := storage.get_run("run-1")) is not None
+            and current.status == RunStatus.RUNNING
+        )
+    )
+
+    storage.cancel_run("run-1")
+    thread.join(timeout=3)
+
+    assert not thread.is_alive()
+    current = storage.get_run("run-1")
+    assert current is not None
+    assert current.status == RunStatus.CANCELLED
+    assert current.traces[0].error == "cancelled"
+
+
+def test_worker_fails_missing_persisted_execution_identity(tmp_path: Path) -> None:
+    storage = queued_sqlite_storage(tmp_path)
+    storage.create_run(
+        make_pending_run("run-1").model_copy(
+            update={"provider": None, "model": None, "case_source": None, "max_retries": 0}
+        )
+    )
+
+    result = EvalWorker(storage=storage, forge_command=None).run_once()
+
+    assert result is not None
+    assert result.status == RunStatus.FAILED
+    assert result.traces == []
+    assert "missing provider" in (result.failure_reason or "")
 
 
 def test_worker_claims_pending_run_executes_tasks_and_persists_artifacts(tmp_path: Path) -> None:
@@ -218,37 +369,26 @@ def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
     heartbeats: list[datetime] = []
     original_heartbeat = storage.heartbeat_run
 
-    def spy_heartbeat(run_id: str, worker_id: str, lease_expires_at: datetime) -> None:
+    def spy_heartbeat(
+        run_id: str,
+        worker_id: str,
+        lease_token: str,
+        lease_expires_at: datetime,
+    ) -> None:
         heartbeats.append(datetime.now(UTC))
-        original_heartbeat(run_id, worker_id, lease_expires_at)
+        original_heartbeat(run_id, worker_id, lease_token, lease_expires_at)
 
     storage.heartbeat_run = spy_heartbeat  # type: ignore[method-assign]
 
-    # Monkey-patch runner to make task slow
     import app.worker as worker_mod
 
-    original_create_runner = worker_mod.create_runner
+    original_execute_evaluation = worker_mod.execute_evaluation
 
-    class SlowRunner:
-        def run_task(self, _task):
-            time.sleep(0.5)
-            from app.models import AgentTrace, VerificationResult
+    def slow_execution(**_kwargs):
+        time.sleep(0.5)
+        return execution_with_trace(make_successful_trace())
 
-            return AgentTrace(
-                task_id="task-pass",
-                user_prompt="pass",
-                model="mock",
-                provider="mock",
-                final_answer="done",
-                verification_result=VerificationResult(
-                    command="pytest", passed=True, exit_code=0, duration_ms=10
-                ),
-                started_at=datetime.now(UTC),
-                ended_at=datetime.now(UTC),
-                duration_ms=10,
-            )
-
-    worker_mod.create_runner = lambda **kwargs: SlowRunner()  # type: ignore[assignment]
+    worker_mod.execute_evaluation = slow_execution  # type: ignore[assignment]
 
     try:
         worker = EvalWorker(
@@ -258,7 +398,7 @@ def test_worker_heartbeats_during_long_task(tmp_path: Path) -> None:
         )
         worker.run_once()
     finally:
-        worker_mod.create_runner = original_create_runner
+        worker_mod.execute_evaluation = original_execute_evaluation
 
     assert len(heartbeats) >= 2, (
         f"Expected at least 2 heartbeats during slow task, got {len(heartbeats)}"
@@ -269,7 +409,6 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) 
     """If a run is cancelled DURING task execution, worker must not overwrite with COMPLETED."""
     import threading
     import time
-    from datetime import UTC, datetime
 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
@@ -282,29 +421,13 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) 
 
     import app.worker as worker_mod
 
-    original_create_runner = worker_mod.create_runner
+    original_execute_evaluation = worker_mod.execute_evaluation
 
-    class SlowRunner:
-        def __init__(self, storage_ref) -> None:
-            self.storage_ref = storage_ref
+    def slow_execution(**_kwargs):
+        time.sleep(0.2)
+        return execution_with_trace(make_successful_trace())
 
-        def run_task(self, _task):
-            time.sleep(0.2)
-            return AgentTrace(
-                task_id="task-pass",
-                user_prompt="pass",
-                model="mock",
-                provider="mock",
-                final_answer="done",
-                verification_result=VerificationResult(
-                    command="pytest", passed=True, exit_code=0, duration_ms=10
-                ),
-                started_at=datetime.now(UTC),
-                ended_at=datetime.now(UTC),
-                duration_ms=10,
-            )
-
-    worker_mod.create_runner = lambda **kwargs: SlowRunner(storage)  # type: ignore[assignment]
+    worker_mod.execute_evaluation = slow_execution  # type: ignore[assignment]
 
     worker = EvalWorker(
         storage=storage,
@@ -319,7 +442,7 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) 
     storage.cancel_run("run-1")
     worker_thread.join(timeout=3)
 
-    worker_mod.create_runner = original_create_runner
+    worker_mod.execute_evaluation = original_execute_evaluation
 
     fetched = storage.get_run("run-1")
     assert fetched.status == RunStatus.CANCELLED, (
@@ -332,7 +455,6 @@ def test_worker_detects_cancellation_after_task_returns(tmp_path: Path, capsys) 
 def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) -> None:
     """If cancel happens between save_task and complete_run, final status must be CANCELLED."""
     import time
-    from datetime import UTC, datetime
 
     tasks_path = tmp_path / "tasks.json"
     write_tasks(tasks_path)
@@ -345,26 +467,13 @@ def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) 
 
     import app.worker as worker_mod
 
-    original_create_runner = worker_mod.create_runner
+    original_execute_evaluation = worker_mod.execute_evaluation
 
-    class SlowRunner:
-        def run_task(self, _task):
-            time.sleep(0.05)
-            return AgentTrace(
-                task_id="task-pass",
-                user_prompt="pass",
-                model="mock",
-                provider="mock",
-                final_answer="done",
-                verification_result=VerificationResult(
-                    command="pytest", passed=True, exit_code=0, duration_ms=10
-                ),
-                started_at=datetime.now(UTC),
-                ended_at=datetime.now(UTC),
-                duration_ms=10,
-            )
+    def slow_execution(**_kwargs):
+        time.sleep(0.05)
+        return execution_with_trace(make_successful_trace())
 
-    worker_mod.create_runner = lambda **kwargs: SlowRunner()  # type: ignore[assignment]
+    worker_mod.execute_evaluation = slow_execution  # type: ignore[assignment]
 
     worker = EvalWorker(storage=storage, forge_command=None)
 
@@ -372,8 +481,19 @@ def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) 
     # but before the worker reaches complete_run.
     original_save_task = storage.save_task
 
-    def cancel_in_save_task(run_id: str, trace: AgentTrace) -> None:
-        original_save_task(run_id, trace)
+    def cancel_in_save_task(
+        run_id: str,
+        trace: AgentTrace,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> None:
+        original_save_task(
+            run_id,
+            trace,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
         storage.cancel_run(run_id)
 
     storage.save_task = cancel_in_save_task  # type: ignore[method-assign]
@@ -381,7 +501,7 @@ def test_worker_completion_race_with_cancel_preserves_cancelled(tmp_path: Path) 
     try:
         result = worker.run_once()
     finally:
-        worker_mod.create_runner = original_create_runner
+        worker_mod.execute_evaluation = original_execute_evaluation
         storage.save_task = original_save_task  # type: ignore[method-assign]
 
     assert result is not None
@@ -408,14 +528,13 @@ def test_worker_exception_race_with_cancel_preserves_cancelled(tmp_path: Path) -
 
     import app.worker as worker_mod
 
-    original_create_runner = worker_mod.create_runner
+    original_execute_evaluation = worker_mod.execute_evaluation
 
-    class FailingRunner:
-        def run_task(self, _task):
-            time.sleep(0.05)
-            raise RuntimeError("simulated failure")
+    def failing_execution(**_kwargs):
+        time.sleep(0.05)
+        raise RuntimeError("simulated failure")
 
-    worker_mod.create_runner = lambda **kwargs: FailingRunner()  # type: ignore[assignment]
+    worker_mod.execute_evaluation = failing_execution  # type: ignore[assignment]
 
     worker = EvalWorker(storage=storage, forge_command=None)
 
@@ -423,16 +542,25 @@ def test_worker_exception_race_with_cancel_preserves_cancelled(tmp_path: Path) -
     # attempts to write FAILED.
     original_fail_run = storage.fail_run
 
-    def cancel_then_fail(failed_run: EvaluationRun) -> EvaluationRun:
+    def cancel_then_fail(
+        failed_run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
         storage.cancel_run(failed_run.run_id)
-        return original_fail_run(failed_run)
+        return original_fail_run(
+            failed_run,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
 
     storage.fail_run = cancel_then_fail  # type: ignore[method-assign]
 
     try:
         result = worker.run_once()
     finally:
-        worker_mod.create_runner = original_create_runner
+        worker_mod.execute_evaluation = original_execute_evaluation
         storage.fail_run = original_fail_run  # type: ignore[method-assign]
 
     assert result is not None
@@ -459,14 +587,13 @@ def test_worker_retry_race_with_cancel_preserves_cancelled(tmp_path: Path) -> No
 
     import app.worker as worker_mod
 
-    original_create_runner = worker_mod.create_runner
+    original_execute_evaluation = worker_mod.execute_evaluation
 
-    class FailingRunner:
-        def run_task(self, _task):
-            time.sleep(0.05)
-            raise RuntimeError("simulated failure")
+    def failing_execution(**_kwargs):
+        time.sleep(0.05)
+        raise RuntimeError("simulated failure")
 
-    worker_mod.create_runner = lambda **kwargs: FailingRunner()  # type: ignore[assignment]
+    worker_mod.execute_evaluation = failing_execution  # type: ignore[assignment]
 
     worker = EvalWorker(storage=storage, forge_command=None)
 
@@ -474,16 +601,25 @@ def test_worker_retry_race_with_cancel_preserves_cancelled(tmp_path: Path) -> No
     # attempts to write PENDING.
     original_retry_run = storage.retry_run
 
-    def cancel_then_retry(retry_run: EvaluationRun) -> EvaluationRun:
+    def cancel_then_retry(
+        retry_run: EvaluationRun,
+        *,
+        worker_id: str,
+        lease_token: str,
+    ) -> EvaluationRun:
         storage.cancel_run(retry_run.run_id)
-        return original_retry_run(retry_run)
+        return original_retry_run(
+            retry_run,
+            worker_id=worker_id,
+            lease_token=lease_token,
+        )
 
     storage.retry_run = cancel_then_retry  # type: ignore[method-assign]
 
     try:
         result = worker.run_once()
     finally:
-        worker_mod.create_runner = original_create_runner
+        worker_mod.execute_evaluation = original_execute_evaluation
         storage.retry_run = original_retry_run  # type: ignore[method-assign]
 
     assert result is not None
