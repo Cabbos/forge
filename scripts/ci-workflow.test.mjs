@@ -35,7 +35,7 @@ test("CI workflow covers the monorepo quality gates", () => {
   assert.match(workflow, /cargo test[\s\S]*?src-tauri\/Cargo.toml/);
 
   assert.match(workflow, /eval-runner:/);
-  assert.match(workflow, /uv sync --dev/);
+  assert.match(workflow, /uv sync --frozen --dev/);
   assert.match(workflow, /uv run pytest/);
 
   assert.match(workflow, /website:/);
@@ -51,12 +51,12 @@ test("CI workflow covers the monorepo quality gates", () => {
   assert.doesNotMatch(prPushSection, /smoke:real/);
   assert.match(nightlySection, /smoke:real/);
 
-  // Nightly should run eval report and have API-key-gated real smoke
-  assert.match(nightlySection, /eval:report:latest/);
-  assert.match(nightlySection, /npm run eval:report:latest -- --failures/);
-  assert.doesNotMatch(nightlySection, /eval:report:latest[^\n]*\|\|\s*true/);
+  // Nightly should retain the exact mock and real Eval reports and require a real API key.
+  assert.match(nightlySection, /mock-backtest\.json/);
+  assert.match(nightlySection, /real-forge-backtest\.json/);
   assert.match(nightlySection, /ANTHROPIC_API_KEY/);
-  assert.match(nightlySection, /Skipping real smoke/);
+  assert.doesNotMatch(nightlySection, /Skipping real smoke/);
+  assert.match(nightlySection, /ANTHROPIC_API_KEY is required for trusted real-Forge evidence/);
 
   const forwardedRootScripts = [
     "eval:forge:mock",
@@ -92,4 +92,61 @@ test("Desktop release workflow is manual or tag gated", () => {
   assert.match(workflow, /runs-on:\s*macos-latest/);
   assert.match(workflow, /npm run tauri:build/);
   assert.match(workflow, /upload-artifact/);
+});
+
+test("CI shares fail-closed release inputs and immutable candidate artifacts", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const representativeHelper = read("scripts/build-representative-evidence.mjs");
+
+  for (const path of [
+    "scripts/\\*\\*",
+    "release/\\*\\*",
+    "docs/release/\\*\\*",
+    "docs/superpowers/specs/2026-07-10-public-beta-convergence-design.md",
+    "docs/superpowers/plans/2026-07-10-main-integration-release-truth.md",
+    "package.json",
+    "apps/desktop/package-lock.json",
+    "apps/desktop/src-tauri/Cargo.lock",
+    "apps/eval-runner/uv.lock",
+    "apps/website/package-lock.json",
+    "\\.github/workflows/desktop-release.yml",
+  ]) {
+    assert.match(workflow, new RegExp(path), `CI path filters should include ${path}`);
+  }
+
+  const releaseContract = workflow.slice(
+    workflow.indexOf("release-contract:"),
+    workflow.indexOf("desktop-frontend:"),
+  );
+  assert.match(releaseContract, /needs:\s*workflow-contract/);
+  assert.match(releaseContract, /build-release-candidate\.test\.mjs/);
+  assert.match(releaseContract, /validate-release-gate-profile\.test\.mjs/);
+  assert.match(releaseContract, /validate-release-manifest\.test\.mjs/);
+  assert.match(releaseContract, /release-confidence-summary\.test\.mjs/);
+  assert.match(releaseContract, /forge-release-contract-\$\{\{ github\.sha \}\}/);
+  assert.match(releaseContract, /if-no-files-found:\s*error/);
+
+  const nightlySection = workflow.slice(
+    workflow.indexOf("nightly-eval:"),
+    workflow.indexOf("release-candidate:"),
+  );
+  assert.match(nightlySection, /--require-state R2/);
+  assert.match(nightlySection, /eval-gate-results\.json/);
+  assert.match(nightlySection, /build-representative-evidence\.mjs/);
+  assert.match(nightlySection, /representative-mock\.json/);
+  assert.match(nightlySection, /representative-real-forge\.json/);
+  assert.match(nightlySection, /forge-eval-inputs-\$\{\{ github\.sha \}\}/);
+  assert.match(nightlySection, /if-no-files-found:\s*error/);
+  assert.doesNotMatch(nightlySection, /Skipping real smoke/);
+
+  const candidateSection = workflow.slice(workflow.indexOf("release-candidate:"));
+  assert.match(candidateSection, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(candidateSection, /scripts\/acceptance\.sh --release-profile release\/release-gates\.v1\.json --require-state R3/);
+  assert.match(candidateSection, /npm run release:candidate/);
+  assert.match(candidateSection, /forge-r3-\$\{\{ github\.sha \}\}/);
+  assert.match(candidateSection, /candidate-manifest\.json/);
+  assert.match(candidateSection, /if-no-files-found:\s*error/);
+
+  assert.match(representativeHelper, /condition_status:\s*"passed"/);
+  assert.doesNotMatch(workflow, /APPLE_(CERTIFICATE|CERTIFICATE_PASSWORD|SIGNING_IDENTITY|ID|PASSWORD)/);
 });
