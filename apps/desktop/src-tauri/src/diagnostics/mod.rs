@@ -884,6 +884,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credential_store::MemoryCredentialStore;
     use std::fs;
 
     fn temp_root(prefix: &str) -> std::path::PathBuf {
@@ -901,7 +902,8 @@ mod tests {
 
     #[test]
     fn basic_report_has_stable_check_order_and_generated_timestamp() {
-        let report = run_diagnostics_basic();
+        let store = MemoryCredentialStore::default();
+        let report = run_diagnostics_with_store(None, &store);
         assert!(report.generated_at_ms > 0);
         // The checks must appear in a stable order
         let ids: Vec<&str> = report.checks.iter().map(|c| c.id.as_str()).collect();
@@ -995,7 +997,8 @@ mod tests {
 
     #[test]
     fn config_check_uses_correct_id_and_label() {
-        let check = check_config_key_presence();
+        let store = MemoryCredentialStore::default();
+        let check = check_config_key_presence_with_store(&store);
         assert_eq!(check.id, "config_settings");
         assert_eq!(check.label, "Config / API keys");
         // In test environment there are no stored keys, but known providers
@@ -1476,7 +1479,8 @@ mod tests {
 
     #[test]
     fn full_report_serializes_camelcase() {
-        let report = run_diagnostics_basic();
+        let store = MemoryCredentialStore::default();
+        let report = run_diagnostics_with_store(None, &store);
         let json = serde_json::to_value(&report).unwrap();
         assert!(json["ok"].as_bool().is_some());
         assert!(json["generatedAtMs"].is_u64());

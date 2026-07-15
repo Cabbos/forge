@@ -11,6 +11,7 @@ use crate::agent::snapshot::{
 use crate::agent::snapshot::{
     ActiveToolCallDescriptor, ActiveToolCallStatus, PendingConfirmDescriptor,
 };
+use crate::credential_store::{CredentialStore, MemoryCredentialStore};
 use crate::harness::Harness;
 use crate::ipc::session_lifecycle::{
     choose_startup_snapshot, gateway_session_ids_for_shutdown, gateway_session_info_for_session,
@@ -18,7 +19,18 @@ use crate::ipc::session_lifecycle::{
     session_snapshot_with_workflow_state,
 };
 use crate::protocol::events::DeliverySummary;
+use crate::settings::Settings;
 use crate::state::AppState;
+
+fn memory_credential_store_for_saved_references() -> Arc<dyn CredentialStore> {
+    let store = Arc::new(MemoryCredentialStore::default());
+    for reference in Settings::load().credential_refs.values() {
+        store
+            .put(reference, "test-credential")
+            .expect("seed test credential reference");
+    }
+    store
+}
 
 fn test_agent_session(id: &str, workspace: &std::path::Path) -> Arc<AgentSession> {
     Arc::new(AgentSession::new(
@@ -321,7 +333,10 @@ async fn restore_session_from_snapshot_carries_pending_confirms_without_fake_sen
     let session_id = format!("restore-pending-{nonce}");
     let workspace = std::env::temp_dir().join(format!("forge-restore-pending-{nonce}"));
     std::fs::create_dir_all(&workspace).expect("workspace");
-    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
     let descriptor = PendingConfirmDescriptor::new(
         "confirm-restore-1".to_string(),
         "Allow write?".to_string(),
@@ -365,7 +380,10 @@ async fn restore_session_from_snapshot_carries_active_tool_calls_without_fake_re
     let session_id = format!("restore-tool-{nonce}");
     let workspace = std::env::temp_dir().join(format!("forge-restore-tool-{nonce}"));
     std::fs::create_dir_all(&workspace).expect("workspace");
-    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
     let descriptor = ActiveToolCallDescriptor::new(
         "tool-restore-1".to_string(),
         "write_to_file".to_string(),
