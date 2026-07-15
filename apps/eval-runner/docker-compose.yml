@@ -1,8 +1,47 @@
 services:
-  forge-eval-runner:
+  forge-eval-api:
     build: .
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "8000:8000"
-    environment:
-      FORGE_EVAL_TASKS_PATH: tasks/sample_tasks.json
+      - "127.0.0.1:8000:8000"
+    environment: &eval-environment
+      FORGE_EVAL_STORAGE_BACKEND: sqlite
+      FORGE_EVAL_RUN_EXECUTION_MODE: queued
+      FORGE_EVAL_TASKS_PATH: /app/eval_cases
+      FORGE_EVAL_DB_PATH: /data/forge_eval.db
+      FORGE_EVAL_ARTIFACTS_PATH: /artifacts
+      FORGE_EVAL_API_BIND_HOST: 0.0.0.0
+      FORGE_EVAL_API_TOKEN: ${FORGE_EVAL_API_TOKEN:?set FORGE_EVAL_API_TOKEN}
+    volumes:
+      - eval-db:/data
+      - eval-artifacts:/artifacts
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
 
+  forge-eval-worker:
+    build: .
+    command: python -m app.worker
+    environment:
+      <<: *eval-environment
+      FORGE_EVAL_WORKER_ID: docker-worker
+    volumes:
+      - eval-db:/data
+      - eval-artifacts:/artifacts
+    depends_on:
+      forge-eval-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  eval-db:
+  eval-artifacts:
