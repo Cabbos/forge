@@ -196,7 +196,7 @@ jobs:
       - eval-runner
       - release-contract
     env:
-      RELEASE_INPUT_DIR: ${{ runner.temp }}/forge-release-inputs
+      RELEASE_INPUT_DIR: ${{ github.workspace }}/.forge-release-inputs
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -260,12 +260,12 @@ jobs:
         with:
           name: forge-eval-inputs-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/forge-release-inputs/eval-gate-results.json
-            ${{ runner.temp }}/forge-release-inputs/mock-backtest.json
-            ${{ runner.temp }}/forge-release-inputs/representative-mock.json
-            ${{ runner.temp }}/forge-release-inputs/real-forge-backtest.json
-            ${{ runner.temp }}/forge-release-inputs/representative-real-forge.json
-            ${{ runner.temp }}/forge-release-inputs/eval-trustworthiness.json
+            ${{ env.RELEASE_INPUT_DIR }}/eval-gate-results.json
+            ${{ env.RELEASE_INPUT_DIR }}/mock-backtest.json
+            ${{ env.RELEASE_INPUT_DIR }}/representative-mock.json
+            ${{ env.RELEASE_INPUT_DIR }}/real-forge-backtest.json
+            ${{ env.RELEASE_INPUT_DIR }}/representative-real-forge.json
+            ${{ env.RELEASE_INPUT_DIR }}/eval-trustworthiness.json
           if-no-files-found: error
 
   release-candidate:
@@ -278,8 +278,8 @@ jobs:
       - website
       - nightly-eval
     env:
-      RELEASE_INPUT_DIR: ${{ runner.temp }}/forge-release-inputs
-      GITNEXUS_EVIDENCE: ${{ runner.temp }}/forge-release-inputs/gitnexus.json
+      RELEASE_INPUT_DIR: ${{ github.workspace }}/.forge-release-inputs
+      GITNEXUS_EVIDENCE: ${{ github.workspace }}/.forge-release-inputs/gitnexus.json
     steps:
       - uses: actions/checkout@v4
         with:
@@ -308,7 +308,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: forge-eval-inputs-${{ github.sha }}
-          path: ${{ runner.temp }}/forge-release-inputs
+          path: ${{ env.RELEASE_INPUT_DIR }}
       - name: Run exact R3 profile
         run: >-
           scripts/acceptance.sh --release-profile release/release-gates.v1.json --require-state R3

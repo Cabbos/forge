@@ -83,6 +83,19 @@ test("CI workflow covers the monorepo quality gates", () => {
   );
 });
 
+test("CI workflow avoids runner context in job-level env", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const invalidJobEnvExpressions = workflow.match(
+    /^ {6}[A-Z][A-Z0-9_]*:\s*\$\{\{\s*runner\./gm,
+  );
+
+  assert.deepEqual(
+    invalidJobEnvExpressions,
+    null,
+    "runner context is unavailable while GitHub evaluates job-level env",
+  );
+});
+
 test("Desktop release workflow is manual or tag gated", () => {
   const workflow = read(".github/workflows/desktop-release.yml");
 
