@@ -20,7 +20,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_cli.py tests/test_api.py tests/test_worker.py -q -k \"trust\"",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_reporting.py tests/test_cli.py -q",
       "evidence_schema": "eval-trust.v1",
       "ci_default": false
     },
@@ -75,7 +75,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py tests/test_smoke.py -q -k \"execution_identity or unknown_provider or queued_forge\"",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py -k \"execution_identity or unknown_provider or queued_sqlite_forge\" -q",
       "evidence_schema": "eval-identity.v1",
       "ci_default": false
     },
@@ -97,7 +97,7 @@
       "domain": "eval",
       "tier": "trust",
       "manual_allowed": false,
-      "command": "cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py -q -k \"auth or lease or stale\"",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py tests/test_docker_contract.py -k \"auth or token or lease or stale or fence or docker\" -q",
       "evidence_schema": "eval-worker.v1",
       "ci_default": false
     },
